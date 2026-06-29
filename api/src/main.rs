@@ -43,6 +43,7 @@ async fn main() {
         .init();
 
     let config = Config::from_env();
+    let host = config.host.clone();
     let port = config.port;
     let database_url = config.database_url.clone();
 
@@ -80,11 +81,11 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let listener = TcpListener::bind(("0.0.0.0", port))
+    let listener = TcpListener::bind((host.as_str(), port))
         .await
         .expect("failed to bind TCP listener");
 
-    tracing::info!("TCGLense API listening on http://0.0.0.0:{port}");
+    tracing::info!("TCGLense API listening on http://{host}:{port}");
 
     axum::serve(listener, app)
         .await

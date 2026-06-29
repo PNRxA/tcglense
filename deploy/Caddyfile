@@ -1,0 +1,28 @@
+# TCGLense production reverse proxy (Caddy v2).
+#
+# Serves the built Vue SPA AND forwards /api/* to the Rust API on the same origin,
+# so the httpOnly refresh cookie stays first-party. Caddy auto-provisions HTTPS for
+# a real domain (needs ports 80+443 reachable and DNS pointing at this host).
+#
+#   caddy run --config deploy/Caddyfile
+#
+# Edit the domain and the site root below to match your server. To test locally,
+# change the site address to `localhost` (Caddy issues a local-CA cert).
+
+tcglense.example.com {
+	encode zstd gzip
+
+	# API: forward /api/* to the Rust backend (bound to 127.0.0.1 in production).
+	# `handle` (not `handle_path`) preserves the /api prefix the backend expects.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# SPA: serve the static build, falling back to index.html so client-side
+	# routes (/login, /register, ...) resolve.
+	handle {
+		root * /srv/tcglense/web
+		try_files {path} /index.html
+		file_server
+	}
+}

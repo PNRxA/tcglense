@@ -11,6 +11,8 @@ pub struct Config {
     pub refresh_token_expiry_days: i64,
     /// Whether the refresh cookie is marked `Secure` (HTTPS-only).
     pub cookie_secure: bool,
+    /// Network interface to bind (0.0.0.0 in dev/containers, 127.0.0.1 behind a proxy).
+    pub host: String,
     pub port: u16,
 }
 
@@ -65,6 +67,11 @@ impl Config {
             .filter(|d| *d > 0)
             .unwrap_or(30);
 
+        let host = env::var("HOST")
+            .ok()
+            .filter(|h| !h.trim().is_empty())
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+
         let port = env::var("PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
@@ -76,6 +83,7 @@ impl Config {
             access_token_expiry_minutes,
             refresh_token_expiry_days,
             cookie_secure,
+            host,
             port,
         }
     }

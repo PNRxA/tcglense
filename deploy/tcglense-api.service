@@ -1,0 +1,22 @@
+# systemd unit for the TCGLense API.
+#
+# Install: copy to /etc/systemd/system/tcglense-api.service, adjust User/paths,
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now tcglense-api
+
+[Unit]
+Description=TCGLense API
+After=network.target
+
+[Service]
+Type=simple
+User=tcglense
+WorkingDirectory=/srv/tcglense
+# Production env (JWT_SECRET, COOKIE_SECURE=true, HOST=127.0.0.1, DATABASE_URL, ...).
+# KEY=VALUE per line; start from api/.env.example.
+EnvironmentFile=/srv/tcglense/api.env
+ExecStart=/srv/tcglense/tcglense-api
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
