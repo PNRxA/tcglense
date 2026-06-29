@@ -54,31 +54,40 @@ const released = computed(() => {
 <template>
   <RouterLink
     :to="`/cards/${game}/sets/${set.code}`"
-    class="flex items-center gap-3 transition-colors"
+    class="block transition-colors"
     :class="rootClass"
     :aria-label="linkLabel"
   >
-    <div class="flex shrink-0 items-center justify-center" :class="nested ? 'size-8' : 'size-10'">
-      <img
-        v-if="showIcon"
-        :src="setIconUrl(game, set.code)"
-        alt=""
-        class="object-contain dark:invert"
-        :class="nested ? 'size-6' : 'size-8'"
-        loading="lazy"
-        @error="iconFailed = true"
-      />
-      <Layers v-else class="text-muted-foreground" :class="nested ? 'size-5' : 'size-6'" />
+    <div class="flex items-center gap-3">
+      <div class="flex shrink-0 items-center justify-center" :class="nested ? 'size-8' : 'size-10'">
+        <img
+          v-if="showIcon"
+          :src="setIconUrl(game, set.code)"
+          alt=""
+          class="object-contain dark:invert"
+          :class="nested ? 'size-6' : 'size-8'"
+          loading="lazy"
+          @error="iconFailed = true"
+        />
+        <Layers v-else class="text-muted-foreground" :class="nested ? 'size-5' : 'size-6'" />
+      </div>
+      <div class="min-w-0">
+        <p class="truncate font-medium" :class="nested ? 'text-sm' : ''" :title="set.name">
+          {{ displayName }}
+        </p>
+        <p class="text-muted-foreground truncate text-xs">
+          {{ set.code.toUpperCase() }}
+          <template v-if="released"> · {{ released }}</template>
+          <template v-if="set.card_count"> · {{ set.card_count }} cards</template>
+        </p>
+      </div>
     </div>
-    <div class="min-w-0">
-      <p class="truncate font-medium" :class="nested ? 'text-sm' : ''" :title="set.name">
-        {{ displayName }}
-      </p>
-      <p class="text-muted-foreground truncate text-xs">
-        {{ set.code.toUpperCase() }}
-        <template v-if="released"> · {{ released }}</template>
-        <template v-if="set.card_count"> · {{ set.card_count }} cards</template>
-      </p>
-    </div>
+    <!-- A standalone tile (no collapsible sub-sets) reserves the height of the
+         "Show related" toggle that SetGroup renders, so a childless tile lines
+         up with the collapsible tiles sharing its row instead of looking
+         stunted (1.5rem = the text-xs toggle line + its pb-2). Only needed once
+         the grid is multi-column (sm+); in the single-column layout there is no
+         row neighbour to match, so the tile stays compact. -->
+    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-6 sm:block"></div>
   </RouterLink>
 </template>
