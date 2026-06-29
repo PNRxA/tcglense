@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ChevronDown } from '@lucide/vue'
+import { ChevronDown, Layers } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
+import { buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import SetTile from '@/components/cards/SetTile.vue'
 import type { SetGroup } from '@/lib/setGroups'
 
@@ -30,16 +33,28 @@ function childLabel(name: string): string {
   <div class="bg-card rounded-xl border" :class="expanded ? 'border-ring/40' : ''">
     <SetTile :game="game" :set="group.main" variant="plain" />
 
-    <button
-      type="button"
-      class="text-muted-foreground hover:text-foreground flex w-full items-center gap-1.5 px-3 pb-2 text-xs"
-      :aria-expanded="expanded"
-      @click="expanded = !expanded"
-    >
-      <ChevronDown class="size-3.5 transition-transform" :class="expanded ? 'rotate-180' : ''" />
-      {{ expanded ? 'Hide' : 'Show' }} {{ group.children.length }} related
-      {{ group.children.length === 1 ? 'set' : 'sets' }}
-    </button>
+    <div class="flex items-center justify-between gap-2 px-3 pb-2">
+      <button
+        type="button"
+        class="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs"
+        :aria-expanded="expanded"
+        @click="expanded = !expanded"
+      >
+        <ChevronDown class="size-3.5 transition-transform" :class="expanded ? 'rotate-180' : ''" />
+        {{ expanded ? 'Hide' : 'Show' }} {{ group.children.length }} related
+        {{ group.children.length === 1 ? 'set' : 'sets' }}
+      </button>
+
+      <!-- One-click jump straight to every card across the whole group. -->
+      <RouterLink
+        :to="{ path: `/cards/${game}/sets/${group.main.code}`, query: { related: '1' } }"
+        :class="cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-7 px-2 text-xs')"
+        :aria-label="`View all cards in ${group.main.name} and its related sets`"
+      >
+        <Layers class="size-3.5" />
+        View all
+      </RouterLink>
+    </div>
 
     <ul
       v-if="expanded"

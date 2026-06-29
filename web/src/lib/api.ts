@@ -184,6 +184,8 @@ export interface CardListParams {
   page?: number
   pageSize?: number
   q?: string
+  /** Set-cards only: span the set's whole group (root + related sub-sets). */
+  includeRelated?: boolean
 }
 
 function cardQuery(params: CardListParams = {}): string {
@@ -191,6 +193,7 @@ function cardQuery(params: CardListParams = {}): string {
   if (params.page) search.set('page', String(params.page))
   if (params.pageSize) search.set('page_size', String(params.pageSize))
   if (params.q) search.set('q', params.q)
+  if (params.includeRelated) search.set('include_related', 'true')
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }

@@ -105,3 +105,14 @@ export function groupSets(sets: CardSet[]): SetGroup[] {
     (a, b) => (position.get(a.main.code) ?? 0) - (position.get(b.main.code) ?? 0),
   )
 }
+
+/**
+ * Find the group a given set code belongs to — whether `code` is the main set or
+ * one of its sub-sets. Returns `undefined` if the code isn't in `sets`. Used by
+ * the set page to offer an "include related sets" view rooted at the main set.
+ */
+export function findGroup(sets: CardSet[], code: string): SetGroup | undefined {
+  return groupSets(sets).find(
+    (group) => group.main.code === code || group.children.some((c) => c.code === code),
+  )
+}
