@@ -10,6 +10,14 @@ use thiserror::Error;
 /// and a JSON body of the shape `{ "error": "<message>" }`.
 #[derive(Debug, Error)]
 pub enum AppError {
+    /// Malformed request (e.g. syntactically invalid JSON body) -> 400 Bad Request.
+    #[error("{0}")]
+    BadRequest(String),
+
+    /// Unsupported request media type (e.g. missing JSON Content-Type) -> 415.
+    #[error("{0}")]
+    UnsupportedMediaType(String),
+
     /// Input validation failed -> 422 Unprocessable Entity.
     #[error("{0}")]
     Validation(String),
@@ -42,6 +50,10 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::UnsupportedMediaType(msg) => {
+                (StatusCode::UNSUPPORTED_MEDIA_TYPE, msg.clone())
+            }
             AppError::Validation(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::InvalidCredentials => (

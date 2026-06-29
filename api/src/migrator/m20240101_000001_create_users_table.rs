@@ -18,7 +18,15 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Users::Email).string().not_null())
+                    // COLLATE NOCASE enforces case-insensitive uniqueness at the
+                    // storage layer, so the unique index below can't be bypassed by
+                    // a writer that forgets to lowercase the email.
+                    .col(
+                        ColumnDef::new(Users::Email)
+                            .string()
+                            .not_null()
+                            .extra("COLLATE NOCASE"),
+                    )
                     .col(ColumnDef::new(Users::PasswordHash).string().not_null())
                     .col(ColumnDef::new(Users::DisplayName).string().null())
                     .col(

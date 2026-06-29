@@ -40,8 +40,21 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
+  // Single-flight guards: concurrent callers share one in-flight request so the
+  // rotating, single-use refresh cookie is never submitted in parallel (which the
+  // server treats as token reuse and would revoke the whole session).
+  let refreshInFlight: Promise<boolean> | null = null
+  let restoreInFlight: Promise<boolean> | null = null
+
   /** Mint a fresh access token from the refresh cookie. Clears state on failure. */
-  async function refresh(): Promise<boolean> {
+  function refresh(): Promise<boolean> {
+    refreshInFlight ??= doRefresh().finally(() => {
+      refreshInFlight = null
+    })
+    return refreshInFlight
+  }
+
+  async function doRefresh(): Promise<boolean> {
     try {
       const response = await apiRefresh()
       accessToken.value = response.access_token
@@ -61,9 +74,17 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Restore a session on app start. If an access token is already in memory we are
    * done; otherwise try the refresh cookie. Always resolves (never throws) so it is
-   * safe to call from the router guard even when the API is unreachable.
+   * safe to call from the router guard even when the API is unreachable. Single-
+   * flighted so concurrent callers share one restore.
    */
-  async function tryRestore(): Promise<boolean> {
+  function tryRestore(): Promise<boolean> {
+    restoreInFlight ??= doRestore().finally(() => {
+      restoreInFlight = null
+    })
+    return restoreInFlight
+  }
+
+  async function doRestore(): Promise<boolean> {
     if (accessToken.value) {
       return true
     }

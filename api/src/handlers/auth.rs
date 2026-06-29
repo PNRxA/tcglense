@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use axum::{
     Json,
     extract::State,
@@ -83,11 +81,23 @@ pub struct MeResponse {
 
 // ---------- Validation helpers ----------
 
+/// Upper bound on a stored email (RFC 5321 caps an address at 254 octets).
+const MAX_EMAIL_LEN: usize = 254;
+/// Upper bound on a password. Argon2 does not truncate, so an unbounded password
+/// is a cheap-to-send, expensive-to-hash DoS vector; cap it generously enough to
+/// still allow long passphrases.
+const MAX_PASSWORD_LEN: usize = 1024;
+
 fn validate_email(email: &str) -> Result<(), AppError> {
     if email.is_empty() || !email.contains('@') {
         return Err(AppError::Validation(
             "email must be non-empty and contain '@'".to_string(),
         ));
+    }
+    if email.len() > MAX_EMAIL_LEN {
+        return Err(AppError::Validation(format!(
+            "email must be at most {MAX_EMAIL_LEN} characters"
+        )));
     }
     Ok(())
 }
@@ -98,16 +108,12 @@ fn validate_password(password: &str) -> Result<(), AppError> {
             "password must be at least 8 characters".to_string(),
         ));
     }
+    if password.len() > MAX_PASSWORD_LEN {
+        return Err(AppError::Validation(format!(
+            "password must be at most {MAX_PASSWORD_LEN} characters"
+        )));
+    }
     Ok(())
-}
-
-/// Perform a throwaway hash verification to keep the timing of "user not found"
-/// roughly equal to "wrong password", mitigating user-enumeration via timing.
-fn equalize_timing(password: &str) {
-    static DUMMY_HASH: OnceLock<String> = OnceLock::new();
-    let dummy = DUMMY_HASH
-        .get_or_init(|| hash_password("tcglense-timing-equalizer").unwrap_or_default());
-    let _ = verify_password(dummy, password);
 }
 
 // ---------- Handlers ----------
@@ -190,8 +196,9 @@ pub async fn login(
     let user = match user {
         Some(u) => u,
         None => {
-            // Keep timing comparable to the wrong-password path, then fail generically.
-            equalize_timing(&payload.password);
+            // Keep timing comparable to the wrong-password path (a real Argon2
+            // verify against the precomputed dummy hash), then fail generically.
+            let _ = verify_password(&state.dummy_password_hash, &payload.password);
             return Err(AppError::InvalidCredentials);
         }
     };
