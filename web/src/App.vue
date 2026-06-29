@@ -12,9 +12,10 @@ import UserMenu from '@/components/UserMenu.vue'
       <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
         <div class="flex items-center gap-1">
           <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
-          <nav class="ml-3">
+          <!-- CardsNav renders its own <nav> landmark (reka NavigationMenu), so this is a div. -->
+          <div class="ml-3">
             <CardsNav />
-          </nav>
+          </div>
         </div>
         <UserMenu />
       </div>

@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
-import { ChevronDown, Layers } from '@lucide/vue'
-import { RouterLink, useRouter } from 'vue-router'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Layers } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  NavigationMenu,
+  NavigationMenuContent,
+  NavigationMenuItem,
+  NavigationMenuLink,
+  NavigationMenuList,
+  NavigationMenuTrigger,
+} from '@/components/ui/navigation-menu'
 import { listGames } from '@/lib/api'
-
-const router = useRouter()
 
 // Drive the menu from the same registry the /cards landing uses (cached), so a new
 // TCG appears here automatically. The /cards landing page lists games too; this is
@@ -27,30 +25,35 @@ const games = computed(() => data.value?.data ?? [])
 </script>
 
 <template>
-  <div class="flex items-center">
-    <!-- Clicking the parent goes to the games landing page. -->
-    <RouterLink to="/cards" :class="buttonVariants({ variant: 'ghost', size: 'sm' })">
-      <Layers />
-      Cards
-    </RouterLink>
-    <!-- The chevron opens the game shortcut menu. -->
-    <DropdownMenu>
-      <DropdownMenuTrigger as-child>
-        <Button variant="ghost" size="icon-sm">
-          <ChevronDown class="size-4 opacity-60" />
-          <span class="sr-only">Choose a game</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" class="w-56">
-        <DropdownMenuLabel>Games</DropdownMenuLabel>
-        <DropdownMenuItem
-          v-for="game in games"
-          :key="game.id"
-          @select="() => router.push(`/cards/${game.id}`)"
-        >
-          {{ game.name }}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  </div>
+  <NavigationMenu>
+    <NavigationMenuList>
+      <NavigationMenuItem>
+        <NavigationMenuTrigger>
+          <Layers class="mr-1.5 size-4" aria-hidden="true" />
+          Cards
+        </NavigationMenuTrigger>
+        <NavigationMenuContent>
+          <ul class="grid w-56 gap-1">
+            <!-- Browse-all keeps the old parent link to the games landing page. -->
+            <li>
+              <!-- Override lives on the wrapper so cn()/tailwind-merge resolves the
+                   flex-col→flex-row + gap conflict deterministically (not via CSS order). -->
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/cards">
+                  <Layers aria-hidden="true" />
+                  Browse all games
+                </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <!-- One quick-access shortcut per game, from the same cached registry. -->
+            <li v-for="game in games" :key="game.id">
+              <NavigationMenuLink as-child>
+                <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
+              </NavigationMenuLink>
+            </li>
+          </ul>
+        </NavigationMenuContent>
+      </NavigationMenuItem>
+    </NavigationMenuList>
+  </NavigationMenu>
 </template>
