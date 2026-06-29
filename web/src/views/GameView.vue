@@ -5,7 +5,9 @@ import { LayoutGrid, Loader2 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import SetTile from '@/components/cards/SetTile.vue'
+import SetGroup from '@/components/cards/SetGroup.vue'
 import { gameStatus, listGames, listSets } from '@/lib/api'
+import { groupSets } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
@@ -51,6 +53,10 @@ const importing = computed(() => {
   return status !== undefined && status !== 'complete' && status !== 'error'
 })
 const sets = computed(() => setsQuery.data.value?.data ?? [])
+// Nest sub-sets (tokens, promos, Commander decks, art series, …) under the main
+// set they belong to instead of scattering them across the date-sorted list.
+const groups = computed(() => groupSets(sets.value))
+const relatedCount = computed(() => sets.value.length - groups.value.length)
 </script>
 
 <template>
@@ -64,7 +70,10 @@ const sets = computed(() => setsQuery.data.value?.data ?? [])
     <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-3xl font-semibold tracking-tight">{{ gameName }}</h1>
-        <p class="text-muted-foreground mt-1">{{ sets.length }} sets</p>
+        <p class="text-muted-foreground mt-1">
+          {{ groups.length }} sets
+          <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+        </p>
       </div>
       <RouterLink :to="`/cards/${game}/cards`" :class="buttonVariants({ variant: 'default' })">
         <LayoutGrid />
@@ -101,8 +110,11 @@ const sets = computed(() => setsQuery.data.value?.data ?? [])
       No sets available yet.
     </p>
 
-    <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <SetTile v-for="set in sets" :key="set.code" :game="game" :set="set" />
+    <div v-else class="grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <template v-for="group in groups" :key="group.main.code">
+        <SetTile v-if="!group.children.length" :game="game" :set="group.main" />
+        <SetGroup v-else :game="game" :group="group" />
+      </template>
     </div>
   </div>
 </template>
