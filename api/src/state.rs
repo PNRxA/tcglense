@@ -9,4 +9,9 @@ use crate::config::Config;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub config: Arc<Config>,
+    /// Precomputed Argon2 hash of a fixed dummy password, used by login to
+    /// equalize timing on the user-not-found path (mitigating user enumeration).
+    /// Computed once at startup so the request path can never degrade to a
+    /// fast no-op if hashing were to fail.
+    pub dummy_password_hash: Arc<str>,
 }

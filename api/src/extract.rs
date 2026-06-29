@@ -19,9 +19,29 @@ where
     type Rejection = AppError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let Json(value) = Json::<T>::from_request(req, state)
-            .await
-            .map_err(|rejection: JsonRejection| AppError::Validation(rejection.body_text()))?;
-        Ok(JsonBody(value))
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(JsonBody(value)),
+            Err(rejection) => {
+                // Log the detailed serde/axum reason server-side, but return a
+                // fixed message (no parser internals echoed) with the HTTP status
+                // that matches the failure kind instead of collapsing all to 422.
+                tracing::debug!(rejection = %rejection.body_text(), "rejected JSON request body");
+                Err(match rejection {
+                    JsonRejection::JsonSyntaxError(_) => {
+                        AppError::BadRequest("request body is not valid JSON".to_string())
+                    }
+                    JsonRejection::MissingJsonContentType(_) => AppError::UnsupportedMediaType(
+                        "Content-Type must be application/json".to_string(),
+                    ),
+                    JsonRejection::JsonDataError(_) => AppError::Validation(
+                        "request body does not match the expected schema".to_string(),
+                    ),
+                    JsonRejection::BytesRejection(_) => {
+                        AppError::BadRequest("could not read request body".to_string())
+                    }
+                    _ => AppError::BadRequest("invalid request body".to_string()),
+                })
+            }
+        }
     }
 }

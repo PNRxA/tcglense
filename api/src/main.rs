@@ -7,7 +7,7 @@ mod handlers;
 mod migrator;
 mod state;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Router,
@@ -55,12 +55,41 @@ async fn main() {
         .await
         .expect("failed to run database migrations");
 
+    // Precompute the timing-equalization dummy hash once (panics here at startup
+    // are acceptable; a request-path hash failure must never silently disable it).
+    let dummy_password_hash: Arc<str> = auth::password::hash_password("tcglense-timing-equalizer")
+        .expect("hashing the timing-equalizer constant must succeed")
+        .into();
+
     let state = AppState {
         db,
         config: Arc::new(config),
+        dummy_password_hash,
     };
 
+    // Periodically prune expired refresh tokens so the table can't grow unbounded.
+    // The first tick fires immediately, then every 6 hours.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));
+            loop {
+                ticker.tick().await;
+                match crate::auth::refresh::prune_expired(&db).await {
+                    Ok(n) if n > 0 => tracing::info!("pruned {n} expired refresh tokens"),
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to prune expired refresh tokens")
+                    }
+                }
+            }
+        });
+    }
+
     // CORS: allow the Vite dev origin with the required methods and headers.
+    // allow_credentials is required because the browser sends the refresh cookie
+    // (credentials: 'include') on cross-origin refresh/logout; it is valid here
+    // because the origin is an explicit value, never a wildcard.
     let cors = CorsLayer::new()
         .allow_origin(
             "http://localhost:5173"
@@ -68,7 +97,8 @@ async fn main() {
                 .expect("valid CORS origin"),
         )
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_credentials(true);
 
     let app = Router::new()
         .route("/api/health", get(health))

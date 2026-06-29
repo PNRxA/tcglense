@@ -35,18 +35,18 @@ const router = createRouter({
   ],
 })
 
-let hydrated = false
+let restorePromise: Promise<unknown> | null = null
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
   // Restore the session exactly once, before the first routing decision, so we do
-  // not briefly flash protected UI. tryRestore() uses the httpOnly refresh cookie
-  // and never throws, so the guard is safe even when the API is unreachable.
-  if (!hydrated) {
-    await auth.tryRestore()
-    hydrated = true
-  }
+  // not briefly flash protected UI. Cache the promise (not a post-await boolean) so
+  // concurrent initial navigations share a single restore instead of racing into
+  // parallel refreshes. tryRestore() uses the httpOnly refresh cookie and never
+  // throws, so the guard is safe even when the API is unreachable.
+  restorePromise ??= auth.tryRestore()
+  await restorePromise
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login' }

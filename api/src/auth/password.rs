@@ -1,5 +1,5 @@
 use argon2::{
-    Argon2,
+    Algorithm, Argon2, Params, Version,
     password_hash::{
         PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng,
     },
@@ -7,10 +7,20 @@ use argon2::{
 
 use crate::error::AppError;
 
-/// Hash a plaintext password into a PHC string using Argon2 with a fresh random salt.
+/// Argon2id hasher with explicitly pinned parameters (OWASP-recommended floor:
+/// 19 MiB memory, 2 iterations, 1 lane). Pinning the algorithm, version, and cost
+/// here means a future change to the crate's defaults can't silently weaken
+/// hashing. Verification reads its cost from the stored PHC string, so old hashes
+/// keep verifying even if these values are raised later.
+fn hasher() -> Argon2<'static> {
+    let params = Params::new(19_456, 2, 1, None).expect("static argon2 params are valid");
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+}
+
+/// Hash a plaintext password into a PHC string using Argon2id with a fresh random salt.
 pub fn hash_password(plain: &str) -> Result<String, AppError> {
     let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
+    hasher()
         .hash_password(plain.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|e| AppError::Internal(format!("failed to hash password: {e}")))
@@ -20,9 +30,7 @@ pub fn hash_password(plain: &str) -> Result<String, AppError> {
 /// Returns `false` for any mismatch or malformed hash (never panics).
 pub fn verify_password(hash: &str, plain: &str) -> bool {
     match PasswordHash::new(hash) {
-        Ok(parsed) => Argon2::default()
-            .verify_password(plain.as_bytes(), &parsed)
-            .is_ok(),
+        Ok(parsed) => hasher().verify_password(plain.as_bytes(), &parsed).is_ok(),
         Err(_) => false,
     }
 }

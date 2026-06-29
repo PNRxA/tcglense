@@ -71,6 +71,7 @@ mod tests {
             access_token_expiry_minutes: 15,
             refresh_token_expiry_days: 30,
             cookie_secure: false,
+            host: "127.0.0.1".to_string(),
             port: 8080,
         }
     }

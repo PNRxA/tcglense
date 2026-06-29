@@ -27,7 +27,8 @@ A monorepo with two independent apps:
 The two talk over HTTP. In dev the API runs on `:8080` and the web app on
 `:5173`, and the **web dev server proxies `/api` to the API** (`web/vite.config.ts`)
 so the browser is same-origin — the httpOnly refresh cookie is first-party. The
-API's CORS layer also allows the `:5173` origin for any direct cross-origin calls.
+API's CORS layer also allows the `:5173` origin **with credentials** for any direct
+cross-origin calls (needed so the browser sends the refresh cookie cross-origin).
 
 ## Running it
 
@@ -41,9 +42,13 @@ cargo run                 # serves http://localhost:8080, runs DB migrations on 
 ```
 
 The SQLite file is created automatically (`tcglense.db`, gitignored). Migrations
-run on every startup via `Migrator::up`. If `JWT_SECRET` is unset the server boots
-with an **insecure dev-only secret and logs a warning**; with `COOKIE_SECURE=true`
-(the production signal) it instead **refuses to start** without a real `JWT_SECRET`.
+run on every startup via `Migrator::up`. The server **refuses to start without a
+real `JWT_SECRET`** (≥ 32 bytes, and not the public dev constant). For local dev
+without a secret, set `ALLOW_INSECURE_DEV_SECRET=true` to opt into a publicly-known
+insecure secret (logged as a warning) — never set that outside local dev. The shipped
+`.env.example` includes a placeholder `JWT_SECRET`, so `cp .env.example .env` then
+`cargo run` works out of the box. The server binds `127.0.0.1` by default (set
+`HOST=0.0.0.0` for containers/LAN).
 
 **Web** (from `web/`):
 
@@ -104,23 +109,30 @@ server-side as a SHA-256 hash).
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
 
-All responses (success or error) are JSON; errors are `{ "error": string }`.
+All responses (success or error) are JSON; errors are `{ "error": string }`. A
+malformed JSON body is `400`, a missing/wrong `Content-Type` is `415`, and a
+schema/validation failure is `422` (the `JsonBody` extractor maps each kind to its
+correct status; the client message is fixed and the parser detail is logged only).
 
-Security rules baked in: emails trimmed + lowercased (case-insensitive accounts);
-password ≥ 8 chars, email must contain `@`; login returns a **generic** 401 (with
-timing equalization on user-not-found). Access JWTs are HS256 with `exp`, decoded
-with the algorithm pinned to HS256. **Refresh tokens are single-use** — every
-`/refresh` rotates them (claimed via an atomic conditional `UPDATE`) with **reuse
-detection**: replaying a revoked token revokes that user's whole token family. The
-cookie is `HttpOnly; SameSite=Lax; Path=/api/auth; Secure=COOKIE_SECURE`
-(SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
+Security rules baked in: emails trimmed + lowercased (case-insensitive accounts,
+also enforced at the DB via `COLLATE NOCASE`); password 8–1024 chars, email must
+contain `@` and be ≤ 254 chars; login returns a **generic** 401 (with timing
+equalization on user-not-found, against a dummy hash precomputed at startup).
+Access JWTs are HS256 with `exp`, decoded with the algorithm pinned to HS256.
+**Refresh tokens are single-use** — every `/refresh` rotates them (claimed via an
+atomic conditional `UPDATE`) with **lineage-based reuse detection**: each token
+records its successor, so replaying a *superseded* token (whose successor has itself
+been consumed) revokes the user's whole token family, while a benign concurrent
+double-submit (successor still active) is just rejected. A revoked token is never
+exchanged for a new one. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
+Secure=COOKIE_SECURE` (SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
 
 ## Backend structure (`api/src/`)
 
 ```
 main.rs            bootstrap: env → tracing → DB connect → migrate → router → serve
-config.rs          Config from env (DATABASE_URL, JWT_SECRET, ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS, COOKIE_SECURE, PORT)
-state.rs           AppState { db, config: Arc<Config> } (cloned into handlers)
+config.rs          Config from env (DATABASE_URL, JWT_SECRET, ALLOW_INSECURE_DEV_SECRET, ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS, COOKIE_SECURE, HOST, PORT); Debug redacts the secret
+state.rs           AppState { db, config: Arc<Config>, dummy_password_hash } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
 entities/          SeaORM entities (user = `users`, refresh_token = `refresh_tokens`)
@@ -128,7 +140,7 @@ migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<nam
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
   jwt.rs           access-token Claims + encode/decode (HS256, expiry in minutes)
-  refresh.rs       opaque refresh-token service: issue / rotate (single-use) / revoke_one / revoke_all
+  refresh.rs       opaque refresh-token service: issue / rotate (single-use, successor-linked reuse detection) / revoke_one / revoke_all / prune_expired
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
 handlers/
@@ -193,9 +205,11 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 ## Environment variables
 
 - **API:** `DATABASE_URL` (default `sqlite://tcglense.db?mode=rwc`), `JWT_SECRET`
-  (dev fallback + warning if unset; required when `COOKIE_SECURE=true`),
+  (**required**, ≥ 32 bytes, not the dev constant), `ALLOW_INSECURE_DEV_SECRET`
+  (false; opt-in to the insecure compiled-in secret for local dev only),
   `ACCESS_TOKEN_EXPIRY_MINUTES` (15), `REFRESH_TOKEN_EXPIRY_DAYS` (30),
-  `COOKIE_SECURE` (false), `PORT` (8080), `RUST_LOG` (`info`). See `api/.env.example`.
+  `COOKIE_SECURE` (false), `HOST` (`127.0.0.1`), `PORT` (8080),
+  `RUST_LOG` (`info`). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
 
 ## Known trade-offs / future work
@@ -209,6 +223,16 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   gated on `rows_affected`, so it's race-safe across connections. The
   revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation
   degrades to a forced re-login (no security impact).
+- **Concurrent refresh:** reuse detection is lineage-based (a token stores its
+  successor's id) so a benign concurrent double-submit of the same token doesn't
+  burn the family — only replay of a token whose successor was itself consumed does.
+  The client also **single-flights** `refresh()`/`tryRestore()` so concurrent 401s
+  coalesce into one rotation. Residual caveat: two browser *tabs* refreshing at the
+  same instant still race (one wins, the other's request clears its cookie); fixing
+  that fully needs cross-tab coordination (e.g. `BroadcastChannel`) — not done yet.
+- **Refresh-token pruning:** a background task deletes rows past `expires_at` every
+  6h so the table can't grow unbounded; revoked-but-unexpired rows are retained so
+  reuse detection still works.
 - **Gotcha — `jsonwebtoken`:** v10 needs a crypto provider feature or it panics at
   runtime; this crate pins `default-features = false, features = ["rust_crypto"]`
   (pure Rust, no C toolchain). Don't drop that when bumping it.
