@@ -1,7 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import DashboardView from '@/views/DashboardView.vue'
+import HomeView from '@/views/HomeView.vue'
 import LoginView from '@/views/LoginView.vue'
+import ProfileView from '@/views/ProfileView.vue'
 import RegisterView from '@/views/RegisterView.vue'
 
 declare module 'vue-router' {
@@ -15,9 +17,21 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      // Public landing page — shown to everyone, signed in or not.
       path: '/',
+      name: 'home',
+      component: HomeView,
+    },
+    {
+      path: '/dashboard',
       name: 'dashboard',
       component: DashboardView,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/profile',
+      name: 'profile',
+      component: ProfileView,
       meta: { requiresAuth: true },
     },
     {
@@ -49,7 +63,8 @@ router.beforeEach(async (to) => {
   await restorePromise
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
-    return { name: 'login' }
+    // Remember where they were headed so login can send them back there.
+    return { name: 'login', query: { redirect: to.fullPath } }
   }
 
   if (to.meta.requiresGuest && auth.isAuthenticated) {
