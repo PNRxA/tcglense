@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 
 // Session restore happens once in the router guard (see router/index.ts).
@@ -10,7 +11,10 @@ import UserMenu from '@/components/UserMenu.vue'
     <header class="border-b">
       <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
         <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
-        <UserMenu />
+        <div class="flex items-center gap-1">
+          <ThemeToggle />
+          <UserMenu />
+        </div>
       </div>
     </header>
     <main>

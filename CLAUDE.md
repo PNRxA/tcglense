@@ -165,16 +165,22 @@ handlers/
 
 ```
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
-App.vue            shell: top bar (brand, user, sign-out) + <RouterView>
+App.vue            shell: top bar (brand, theme toggle, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
 lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
 lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
+stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
+components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown)
 views/             LoginView, RegisterView, DashboardView
-components/ui/      shadcn-vue primitives (button, input, label, card)
-assets/main.css    Tailwind 4 theme + CSS variables (light/dark)
+components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu)
+assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```
+
+The theme is applied before Vue mounts by a tiny inline script in `index.html`
+(reads the same `tcglense_theme` localStorage key) so there's no flash of the wrong
+theme on load; `stores/theme.ts` then owns it reactively for the rest of the session.
 
 On first navigation the guard calls `auth.tryRestore()` once: it hits
 `/api/auth/refresh` (the httpOnly cookie is sent automatically) to mint an access
