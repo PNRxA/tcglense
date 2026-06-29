@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
 import CardsNav from '@/components/CardsNav.vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 
 // Session restore happens once in the router guard (see router/index.ts).
@@ -17,7 +18,10 @@ import UserMenu from '@/components/UserMenu.vue'
             <CardsNav />
           </div>
         </div>
-        <UserMenu />
+        <div class="flex items-center gap-1">
+          <ThemeToggle />
+          <UserMenu />
+        </div>
       </div>
     </header>
     <main>

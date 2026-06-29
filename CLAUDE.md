@@ -217,18 +217,23 @@ up newer prices/sets; the import streams the bulk file with bounded memory and
 
 ```
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
-App.vue            shell: top bar (brand, Cards nav, user menu) + <RouterView>
+App.vue            shell: top bar (brand, Cards nav, theme toggle, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
 lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types; catalog fns + cardImageUrl()
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
 lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
-components/CardsNav.vue   top-bar "Cards" link (→ /cards) + game dropdown shortcut
+stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
+components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), CardsNav (top-bar "Cards" link → /cards + game dropdown shortcut)
 components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile, CardGrid, SetTile, CardPagination
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu)
-assets/main.css    Tailwind 4 theme + CSS variables (light/dark)
+assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```
+
+The theme is applied before Vue mounts by a tiny inline script in `index.html`
+(reads the same `tcglense_theme` localStorage key) so there's no flash of the wrong
+theme on load; `stores/theme.ts` then owns it reactively for the rest of the session.
 
 The card-catalog pages are **public** (no `requiresAuth`) and read **public**
 endpoints, so they use `useQuery` from vue-query directly (not the `useAuthedQuery`
