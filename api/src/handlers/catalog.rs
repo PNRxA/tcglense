@@ -257,6 +257,44 @@ pub async fn get_set(
     Ok(Json(SetResponse::from(set)))
 }
 
+/// `GET /api/games/{game}/sets/{code}/icon` -> the set's SVG icon.
+///
+/// Cached on disk on first request (like card images) so the provider is only
+/// hit once per icon rather than hotlinked on every page view.
+pub async fn set_icon(
+    State(state): State<AppState>,
+    Path((game, code)): Path<(String, String)>,
+) -> Result<Response, AppError> {
+    require_game(&game)?;
+    let set = load_set(&state, &game, &code).await?;
+    let source_url = set
+        .icon_svg_uri
+        .ok_or_else(|| AppError::NotFound(format!("set '{code}' has no icon")))?;
+
+    if !is_allowed_image_url(&source_url) {
+        tracing::warn!(set = %set.code, url = %source_url, "refusing to proxy non-allowlisted icon URL");
+        return Err(AppError::NotFound("no icon available".to_string()));
+    }
+
+    let image = state
+        .images
+        .get_svg(&game, "set-icons", &set.code, &source_url)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, set = %set.code, "failed to cache set icon");
+            AppError::Internal(format!("image cache error: {err}"))
+        })?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, image.content_type),
+            (header::CACHE_CONTROL, IMAGE_CACHE_CONTROL),
+        ],
+        image.bytes,
+    )
+        .into_response())
+}
+
 /// `GET /api/games/{game}/sets/{code}/cards` -> a set's cards, by collector number.
 pub async fn list_set_cards(
     State(state): State<AppState>,

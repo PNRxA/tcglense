@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { cardImageUrl } from '../api'
+import { cardImageUrl, setIconUrl } from '../api'
 
 describe('cardImageUrl', () => {
   it('builds a proxy URL with the default size', () => {
@@ -15,5 +15,11 @@ describe('cardImageUrl', () => {
 
   it('encodes path segments to avoid breaking the URL', () => {
     expect(cardImageUrl('mtg', 'a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('setIconUrl', () => {
+  it('builds the set-icon proxy URL', () => {
+    expect(setIconUrl('mtg', 'blb')).toBe('/api/games/mtg/sets/blb/icon')
   })
 })

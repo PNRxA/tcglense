@@ -229,6 +229,13 @@ export function getCard(game: string, id: string): Promise<Card> {
   return request<Card>(`/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`)
 }
 
+/** URL of the caching proxy for a set's SVG icon, for `<img src>`. */
+export function setIconUrl(game: string, code: string): string {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return `${API_URL}/api/games/${g}/sets/${c}/icon`
+}
+
 /** URL of the caching image proxy for a card (and optional face), for `<img src>`. */
 export function cardImageUrl(
   game: string,

@@ -46,7 +46,7 @@ impl ImageCache {
         }
     }
 
-    /// Return the cached image for `(game, size, key)`, downloading it from
+    /// Return the cached card image for `(game, size, key)`, downloading it from
     /// `source_url` on a miss and persisting it first. `source_url` is resolved
     /// by the caller from trusted stored data, never from user input.
     pub async fn get(
@@ -60,8 +60,36 @@ impl ImageCache {
             "png" => ("png", "image/png"),
             _ => ("jpg", "image/jpeg"),
         };
+        self.get_cached(game, size, key, ext, content_type, source_url).await
+    }
+
+    /// Return a cached SVG (e.g. a set icon) under `<base>/<game>/<category>/`,
+    /// downloading it from `source_url` on a miss. Same caching guarantees as
+    /// [`get`]; the bytes are served as `image/svg+xml`.
+    pub async fn get_svg(
+        &self,
+        game: &str,
+        category: &str,
+        key: &str,
+        source_url: &str,
+    ) -> Result<CachedImage, ImageError> {
+        self.get_cached(game, category, key, "svg", "image/svg+xml", source_url)
+            .await
+    }
+
+    /// Core cache-or-fetch: serve `<base>/<game>/<category>/<key>.<ext>` from
+    /// disk, downloading + persisting it (temp file + atomic rename) on a miss.
+    async fn get_cached(
+        &self,
+        game: &str,
+        category: &str,
+        key: &str,
+        ext: &str,
+        content_type: &'static str,
+        source_url: &str,
+    ) -> Result<CachedImage, ImageError> {
         // Sanitise every path segment defensively against traversal.
-        let dir = self.base_dir.join(sanitize(game)).join(sanitize(size));
+        let dir = self.base_dir.join(sanitize(game)).join(sanitize(category));
         let path = dir.join(format!("{}.{ext}", sanitize(key)));
 
         if let Ok(bytes) = tokio::fs::read(&path).await {

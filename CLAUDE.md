@@ -144,6 +144,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/status` | import status `{ status, detail, sets_imported, cards_imported, source_updated_at, finished_at }` (`status`: `idle`/`running`/`complete`/`error`) |
 | `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code }` |
 | `GET /api/games/{game}/sets/{code}` | one `Set` |
+| `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
 | `GET /api/games/{game}/sets/{code}/cards?page&page_size` | page of `Card`, by collector number |
 | `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` name search), by name |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
@@ -158,7 +159,8 @@ prices: { usd, usd_foil, eur, tix }, has_image, faces: { name, mana_cost, type_l
 is downloaded from Scryfall (HTTPS, host allow-listed to `scryfall.io`, redirects
 disabled), written under `<DATA_DIR>/images/<game>/<size>/`, and served from disk
 thereafter (`Cache-Control: immutable`). We never bulk-download the whole image
-catalogue — images are cached lazily, on view.
+catalogue — images are cached lazily, on view. Set icons are cached the same way
+(`.../sets/{code}/icon`, served as `image/svg+xml`).
 
 ## Backend structure (`api/src/`)
 
@@ -328,7 +330,8 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   of 8. The image route is public and card ids are enumerable, so it's open to
   scripted disk-fill / bandwidth-amplification abuse — there's no per-IP rate limit,
   cache budget, or eviction yet (same posture as the unfinished login rate-limiting).
-  Set icons (`icon_svg_uri`) are hotlinked from Scryfall, not cached.
+  Set icons go through the same cache (`.../sets/{code}/icon`, `image/svg+xml`), so
+  the provider is hit only once per asset rather than hotlinked on every view.
 - **Gotcha — `reqwest`:** pinned `default-features = false, features = ["rustls",
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on

@@ -29,7 +29,7 @@ use crate::{
         auth::{login, logout, me, refresh, register},
         catalog::{
             card_image, get_card, get_set, ingest_status, list_cards, list_games, list_set_cards,
-            list_sets,
+            list_sets, set_icon,
         },
         health::health,
     },
@@ -155,6 +155,7 @@ async fn main() {
         .route("/api/games/{game}/status", get(ingest_status))
         .route("/api/games/{game}/sets", get(list_sets))
         .route("/api/games/{game}/sets/{code}", get(get_set))
+        .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
         .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
         .route("/api/games/{game}/cards", get(list_cards))
         .route("/api/games/{game}/cards/{id}", get(get_card))

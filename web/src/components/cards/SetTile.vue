@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
-import type { CardSet } from '@/lib/api'
+import { setIconUrl, type CardSet } from '@/lib/api'
 
 const props = defineProps<{
   game: string
   set: CardSet
 }>()
+
+// Show the icon (served through our caching proxy) when the set has one, with a
+// graceful fallback if the fetch fails.
+const iconFailed = ref(false)
+const showIcon = computed(() => !!props.set.icon_svg_uri && !iconFailed.value)
 
 const released = computed(() => {
   if (!props.set.released_at) return null
@@ -24,11 +29,12 @@ const released = computed(() => {
   >
     <div class="flex size-10 shrink-0 items-center justify-center">
       <img
-        v-if="set.icon_svg_uri"
-        :src="set.icon_svg_uri"
+        v-if="showIcon"
+        :src="setIconUrl(game, set.code)"
         alt=""
         class="size-8 object-contain dark:invert"
         loading="lazy"
+        @error="iconFailed = true"
       />
       <Layers v-else class="text-muted-foreground size-6" />
     </div>
