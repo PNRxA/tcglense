@@ -22,6 +22,10 @@ pub struct Config {
     pub scryfall_user_agent: String,
     /// Whether to import card data from providers on startup (disable in tests).
     pub sync_on_startup: bool,
+    /// How often to re-import card data after the startup import, in hours.
+    /// Defaults to 24 (daily); `0` disables the periodic refresh (startup only).
+    /// Only takes effect when `sync_on_startup` is enabled.
+    pub sync_interval_hours: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -38,6 +42,7 @@ impl std::fmt::Debug for Config {
             .field("data_dir", &self.data_dir)
             .field("scryfall_user_agent", &self.scryfall_user_agent)
             .field("sync_on_startup", &self.sync_on_startup)
+            .field("sync_interval_hours", &self.sync_interval_hours)
             .finish()
     }
 }
@@ -164,6 +169,14 @@ impl Config {
             })
             .unwrap_or(true);
 
+        // Re-import cadence after the startup import. Default daily; `0` means
+        // "startup only" (no periodic refresh). An unparseable value falls back to
+        // the default rather than disabling refreshes silently.
+        let sync_interval_hours = env::var("SYNC_INTERVAL_HOURS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(24);
+
         Config {
             database_url,
             jwt_secret,
@@ -175,6 +188,7 @@ impl Config {
             data_dir,
             scryfall_user_agent,
             sync_on_startup,
+            sync_interval_hours,
         }
     }
 }
@@ -196,6 +210,7 @@ mod tests {
             data_dir: std::path::PathBuf::from("./data"),
             scryfall_user_agent: "TCGLense/test".to_string(),
             sync_on_startup: false,
+            sync_interval_hours: 24,
         };
 
         let rendered = format!("{config:?}");
