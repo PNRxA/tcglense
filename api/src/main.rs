@@ -1,6 +1,7 @@
 mod auth;
 mod catalog;
 mod config;
+mod db;
 mod entities;
 mod error;
 mod extract;
@@ -57,8 +58,9 @@ async fn main() {
     let sync_interval_hours = config.sync_interval_hours;
     let image_dir = config.data_dir.join("images");
 
-    // Connect to the database and run migrations.
-    let db = Database::connect(&database_url)
+    // Connect to the database (with SQLite WAL + cache pragmas; see `db`) and run
+    // migrations.
+    let db = Database::connect(db::connect_options(database_url))
         .await
         .expect("failed to connect to the database");
     Migrator::up(&db, None)
