@@ -7,7 +7,7 @@
     "noUncheckedIndexedAccess": true,
 
     // Path mapping for cleaner imports.
-    "baseUrl": ".",
+    // `paths` resolves relative to this config's directory; `baseUrl` is deprecated in TS 6+.
     "paths": {
       "@/*": ["./src/*"],
     },

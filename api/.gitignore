@@ -1,1 +1,9 @@
 /target
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Local environment overrides
+.env
