@@ -13,7 +13,7 @@ use axum::{
 };
 use sea_orm::{
     ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, prelude::DateTimeUtc,
-    sea_query::{Expr, LikeExpr, NullOrdering},
+    sea_query::{Expr, LikeExpr, NullOrdering, SimpleExpr},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -295,7 +295,8 @@ pub async fn set_icon(
         .into_response())
 }
 
-/// `GET /api/games/{game}/sets/{code}/cards` -> a set's cards, by collector number.
+/// `GET /api/games/{game}/sets/{code}/cards` -> a set's cards (optional `q` name
+/// search), by collector number.
 pub async fn list_set_cards(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
@@ -305,9 +306,13 @@ pub async fn list_set_cards(
     let set = load_set(&state, &game, &code).await?;
     let (page, page_size) = params.page_and_size();
 
-    let paginator = Card::find()
+    let mut query = Card::find()
         .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()))
+        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    if let Some(search) = params.search() {
+        query = query.filter(name_like(search));
+    }
+    let paginator = query
         // Numeric collector order; cards without a leading digit (NULL int) sort last.
         .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last)
         .order_by_asc(card::Column::CollectorNumber)
@@ -329,12 +334,7 @@ pub async fn list_cards(
 
     let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
     if let Some(search) = params.search() {
-        // Escape LIKE metacharacters so a literal `%`/`_` in the query matches
-        // literally rather than acting as a wildcard.
-        let pattern = format!("%{}%", escape_like(search));
-        query = query.filter(
-            Expr::col((card::Entity, card::Column::Name)).like(LikeExpr::new(pattern).escape('\\')),
-        );
+        query = query.filter(name_like(search));
     }
     let paginator = query
         .order_by_asc(card::Column::Name)
@@ -472,6 +472,14 @@ fn split_csv(value: Option<String>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// A `name LIKE %term%` filter for the optional `q` search shared by the card-list
+/// endpoints, with LIKE metacharacters in `search` escaped so they match literally
+/// (paired with an explicit `ESCAPE '\'`).
+fn name_like(search: &str) -> SimpleExpr {
+    let pattern = format!("%{}%", escape_like(search));
+    Expr::col((card::Entity, card::Column::Name)).like(LikeExpr::new(pattern).escape('\\'))
 }
 
 /// Escape LIKE wildcards (`%`, `_`) and the escape char so user search input is

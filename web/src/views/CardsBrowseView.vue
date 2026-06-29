@@ -16,22 +16,30 @@ const page = ref(1)
 const searchInput = ref('')
 const query = ref('')
 
-// Debounce typing into the search box, and snap back to page 1 on a new query.
+// Debounce typing into the search box into the committed query.
 let timer: ReturnType<typeof setTimeout> | undefined
 watch(searchInput, (value) => {
   clearTimeout(timer)
   timer = setTimeout(() => {
     query.value = value.trim()
-    page.value = 1
   }, 300)
 })
 onUnmounted(() => clearTimeout(timer))
 
+// A new query always restarts pagination from the first page. Driving the page
+// reset off `query` (rather than the debounce timer) keeps a programmatic reset —
+// e.g. clearing the box on game navigation below — from arming a stray timer that
+// could later snap the page back to 1.
+watch(query, () => {
+  page.value = 1
+})
+
 // Switching games (same route component, different :game) starts fresh.
 watch(game, () => {
-  page.value = 1
+  clearTimeout(timer)
   searchInput.value = ''
   query.value = ''
+  page.value = 1
 })
 
 const gamesQuery = useQuery({
