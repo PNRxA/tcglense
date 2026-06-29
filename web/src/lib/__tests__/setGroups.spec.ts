@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { groupSets } from '../setGroups'
+import { groupByYear, groupSets } from '../setGroups'
 import type { CardSet } from '../api'
 
 function set(code: string, over: Partial<CardSet> = {}): CardSet {
@@ -83,5 +83,65 @@ describe('groupSets', () => {
     ])
     // Degenerate data: both resolve to themselves rather than hanging.
     expect(groups).toHaveLength(2)
+  })
+})
+
+describe('groupByYear', () => {
+  it('splits groups into year sections, newest year first', () => {
+    const sections = groupByYear(
+      groupSets([
+        set('a', { released_at: '2024-09-01' }),
+        set('b', { released_at: '2023-05-01' }),
+        set('c', { released_at: '2025-01-01' }),
+      ]),
+    )
+    expect(sections.map((s) => s.year)).toEqual([2025, 2024, 2023])
+    expect(sections.map((s) => s.groups.map((g) => g.main.code))).toEqual([['c'], ['a'], ['b']])
+  })
+
+  it('keeps several groups from the same year in their incoming order', () => {
+    const sections = groupByYear(
+      groupSets([
+        set('a', { released_at: '2024-09-01' }),
+        set('b', { released_at: '2024-03-01' }),
+        set('c', { released_at: '2023-01-01' }),
+      ]),
+    )
+    expect(
+      sections.map((s) => ({ year: s.year, codes: s.groups.map((g) => g.main.code) })),
+    ).toEqual([
+      { year: 2024, codes: ['a', 'b'] },
+      { year: 2023, codes: ['c'] },
+    ])
+  })
+
+  it('buckets a child under its parent set year, not its own release date', () => {
+    // A promo released in 2025 still belongs to its 2024 parent's section.
+    const sections = groupByYear(
+      groupSets([
+        set('blb', { released_at: '2024-08-01' }),
+        set('pblb', { parent_set_code: 'blb', set_type: 'promo', released_at: '2025-02-01' }),
+      ]),
+    )
+    expect(sections.map((s) => s.year)).toEqual([2024])
+    expect(sections.flatMap((s) => s.groups.flatMap((g) => g.children.map((c) => c.code)))).toEqual(
+      ['pblb'],
+    )
+  })
+
+  it('sinks undated sets into a trailing null section', () => {
+    const sections = groupByYear(
+      groupSets([
+        set('a', { released_at: '2024-01-01' }),
+        set('b', { released_at: null }),
+        set('c', { released_at: '' }),
+      ]),
+    )
+    expect(
+      sections.map((s) => ({ year: s.year, codes: s.groups.map((g) => g.main.code) })),
+    ).toEqual([
+      { year: 2024, codes: ['a'] },
+      { year: null, codes: ['b', 'c'] },
+    ])
   })
 })
