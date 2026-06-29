@@ -56,6 +56,7 @@ async fn main() {
     let database_url = config.database_url.clone();
     let sync_on_startup = config.sync_on_startup;
     let sync_interval_hours = config.sync_interval_hours;
+    let seed_dummy_data = config.seed_dummy_data;
     let image_dir = config.data_dir.join("images");
 
     // Connect to the database (with SQLite WAL + cache pragmas; see `db`) and run
@@ -120,12 +121,24 @@ async fn main() {
         });
     }
 
-    // Import card data from each provider in the background so the server is
-    // available immediately (the SPA shows import progress via the status route),
-    // then re-import on a fixed interval to pick up Scryfall's newer prices/sets.
-    // The import is idempotent and version-gated, so a tick with no upstream change
-    // is cheap (a small bulk-data catalog check, no ~500 MB download).
-    if sync_on_startup {
+    // SEED_DUMMY_DATA takes precedence over SYNC_ON_STARTUP / SYNC_INTERVAL_HOURS:
+    // seed a small offline dummy catalog and perform NO network sync (no startup
+    // import, no periodic refresh). We await it here rather than spawning — unlike
+    // the ~500 MB real import it's a handful of local inserts, so the catalog is
+    // present before the first request (handy for CI/e2e). A seed error is logged but
+    // does not abort startup. Never enable this outside dev/CI/test.
+    if seed_dummy_data {
+        tracing::warn!(
+            "SEED_DUMMY_DATA enabled: seeding a dummy offline catalog and skipping all \
+             network card-data sync. Never enable this in production."
+        );
+        catalog::seed_all(&state.db).await;
+    } else if sync_on_startup {
+        // Import card data from each provider in the background so the server is
+        // available immediately (the SPA shows import progress via the status route),
+        // then re-import on a fixed interval to pick up Scryfall's newer prices/sets.
+        // The import is idempotent and version-gated, so a tick with no upstream change
+        // is cheap (a small bulk-data catalog check, no ~500 MB download).
         let db = state.db.clone();
         let http = http.clone();
         tokio::spawn(async move {

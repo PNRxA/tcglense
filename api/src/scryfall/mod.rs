@@ -5,9 +5,11 @@
 //! which provider to invoke per game.
 
 pub mod client;
+mod dummy;
 pub mod ingest;
 pub mod model;
 
+pub use dummy::seed;
 pub use ingest::refresh;
 
 /// Game id this provider populates.

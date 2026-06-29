@@ -28,7 +28,7 @@ use crate::entities::{card, card_set, ingest_state};
 
 /// Rows per upsert. ~31 card columns × 400 ≈ 12.4k bound parameters, comfortably
 /// under SQLite's default 32 766 parameter limit.
-const CARD_BATCH: usize = 400;
+pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.
 const PROGRESS_EVERY: u32 = 25;
@@ -156,7 +156,10 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
 }
 
 /// Upsert all non-digital (paper) sets. Returns the number stored.
-async fn import_sets(db: &DatabaseConnection, sets: &[ScryfallSet]) -> Result<i32, IngestError> {
+pub(super) async fn import_sets(
+    db: &DatabaseConnection,
+    sets: &[ScryfallSet],
+) -> Result<i32, IngestError> {
     let now = Utc::now();
     let models: Vec<card_set::ActiveModel> = sets
         .iter()
@@ -274,7 +277,10 @@ async fn import_cards(
     Ok(total)
 }
 
-async fn flush_cards(db: &DatabaseConnection, batch: Vec<card::ActiveModel>) -> Result<(), IngestError> {
+pub(super) async fn flush_cards(
+    db: &DatabaseConnection,
+    batch: Vec<card::ActiveModel>,
+) -> Result<(), IngestError> {
     if batch.is_empty() {
         return Ok(());
     }
@@ -335,7 +341,7 @@ fn map_set(set: &ScryfallSet, now: DateTimeUtc) -> card_set::ActiveModel {
     }
 }
 
-fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveModel {
+pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveModel {
     // Resolve display images from the top-level `image_uris`, falling back to the
     // first face for multi-faced cards (which have no top-level images).
     let (image_small, image_normal, image_large, image_art_crop, image_png) = {
@@ -422,7 +428,7 @@ fn leading_int(collector_number: &str) -> Option<i32> {
     digits.parse().ok()
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(super) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
@@ -433,7 +439,7 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// Upsert the single `ingest_state` row for `(GAME, DATASET)`.
 #[allow(clippy::too_many_arguments)]
-async fn put_state(
+pub(super) async fn put_state(
     db: &DatabaseConnection,
     source_updated_at: Option<String>,
     status: &str,
