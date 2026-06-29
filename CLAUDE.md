@@ -148,14 +148,30 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code }` |
 | `GET /api/games/{game}/sets/{code}` | one `Set` |
 | `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
-| `GET /api/games/{game}/sets/{code}/cards?q&page&page_size` | page of `Card` (optional `q` name search), by collector number |
-| `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` name search), by name |
+| `GET /api/games/{game}/sets/{code}/cards?q&page&page_size` | page of `Card` (optional `q` Scryfall-style search), by collector number |
+| `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` Scryfall-style search), by name |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
-mana_cost, cmc, type_line, color_identity: string[], colors: string[], layout,
-prices: { usd, usd_foil, eur, tix }, has_image, faces: { name, mana_cost, type_line }[] }`.
+mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
+color_identity: string[], colors: string[], layout,
+prices: { usd, usd_foil, eur, tix }, has_image,
+faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
+
+**Search syntax (`q`):** the MTG card-list endpoints parse `q` as a subset of
+[Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search.rs`).
+Bare words / `"quoted phrases"` are card-name substrings (ANDed); `!"exact name"`
+is an exact match. Supported filters: `name`/`n`, `t`/`type`, `o`/`oracle`,
+`m`/`mana`, `c`/`color` and `id`/`identity` (set comparison, `:` means `>=`),
+`cmc`/`mv` (incl. `:even`/`:odd`), `pow`/`tou`/`loy` (numeric, incl. cross-column
+like `pow>tou`), `usd`/`usdfoil`/`eur`/`tix`, `year`, `date`, `r`/`rarity`
+(ordered), `s`/`set`/`e`, `cn`/`number`, `lang`, `layout`, `is:`/`not:`
+(layout/colour/mana-derived), `game`, `oracleid` — with comparison operators
+`: = != > >= < <=`, boolean `and`/`or`, `-` negation, and parentheses. Filters we
+don't ingest (`f:` legality, `kw:`, `a:` artist, `ft:` flavour, …) and malformed
+queries return **422** `{ error }` (surfaced in the UI under the search box). All
+user values bind as SeaORM parameters — never interpolated into SQL.
 
 **Image proxy:** `size` ∈ `small|normal|large|png|art_crop` (default `normal`),
 `face` is a 0-based face index for double-faced cards. On first request the image
@@ -188,6 +204,7 @@ scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
   client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
   ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping
+  search.rs        Scryfall-style query parser: lexer + recursive-descent (and/or/-/parens/quotes) → sea_orm::Condition; SearchError → 422; values always parameterised
   dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path
 handlers/
   auth.rs          register / login / refresh / logout / me

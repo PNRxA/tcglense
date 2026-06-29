@@ -8,6 +8,7 @@ pub mod client;
 mod dummy;
 pub mod ingest;
 pub mod model;
+pub mod search;
 
 pub use dummy::seed;
 pub use ingest::refresh;

@@ -12,7 +12,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, prelude::DateTimeUtc,
+    ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    prelude::DateTimeUtc,
     sea_query::{Expr, LikeExpr, NullOrdering, SimpleExpr},
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,7 @@ use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 use crate::error::AppError;
 use crate::scryfall::model::StoredFace;
+use crate::scryfall::search::escape_like;
 use crate::state::AppState;
 
 const DEFAULT_PAGE_SIZE: u64 = 60;
@@ -70,6 +72,10 @@ pub struct CardFaceResponse {
     pub name: Option<String>,
     pub mana_cost: Option<String>,
     pub type_line: Option<String>,
+    pub oracle_text: Option<String>,
+    pub power: Option<String>,
+    pub toughness: Option<String>,
+    pub loyalty: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +91,10 @@ pub struct CardResponse {
     pub mana_cost: Option<String>,
     pub cmc: Option<f64>,
     pub type_line: Option<String>,
+    pub oracle_text: Option<String>,
+    pub power: Option<String>,
+    pub toughness: Option<String>,
+    pub loyalty: Option<String>,
     pub color_identity: Vec<String>,
     pub colors: Vec<String>,
     pub layout: Option<String>,
@@ -116,6 +126,10 @@ impl From<card::Model> for CardResponse {
                 name: f.name,
                 mana_cost: f.mana_cost,
                 type_line: f.type_line,
+                oracle_text: f.oracle_text,
+                power: f.power,
+                toughness: f.toughness,
+                loyalty: f.loyalty,
             })
             .collect();
 
@@ -131,6 +145,10 @@ impl From<card::Model> for CardResponse {
             mana_cost: m.mana_cost,
             cmc: m.cmc,
             type_line: m.type_line,
+            oracle_text: m.oracle_text,
+            power: m.power,
+            toughness: m.toughness,
+            loyalty: m.loyalty,
             color_identity: split_csv(m.color_identity),
             colors: split_csv(m.colors),
             layout: m.layout,
@@ -302,7 +320,7 @@ pub async fn list_set_cards(
     Path((game, code)): Path<(String, String)>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CardResponse>>, AppError> {
-    require_game(&game)?;
+    let game_meta = require_game(&game)?;
     let set = load_set(&state, &game, &code).await?;
     let (page, page_size) = params.page_and_size();
 
@@ -310,7 +328,7 @@ pub async fn list_set_cards(
         .filter(card::Column::Game.eq(game.as_str()))
         .filter(card::Column::SetCode.eq(set.code.as_str()));
     if let Some(search) = params.search() {
-        query = query.filter(name_like(search));
+        query = query.filter(search_condition(game_meta, search)?);
     }
     let paginator = query
         // Numeric collector order; cards without a leading digit (NULL int) sort last.
@@ -329,12 +347,12 @@ pub async fn list_cards(
     Path(game): Path<String>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CardResponse>>, AppError> {
-    require_game(&game)?;
+    let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
 
     let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
     if let Some(search) = params.search() {
-        query = query.filter(name_like(search));
+        query = query.filter(search_condition(game_meta, search)?);
     }
     let paginator = query
         .order_by_asc(card::Column::Name)
@@ -474,25 +492,23 @@ fn split_csv(value: Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A `name LIKE %term%` filter for the optional `q` search shared by the card-list
-/// endpoints, with LIKE metacharacters in `search` escaped so they match literally
-/// (paired with an explicit `ESCAPE '\'`).
+/// Build the `q` search filter, dispatching to the game's query syntax. MTG
+/// (Scryfall) gets the full Scryfall-style grammar (see [`crate::scryfall::search`]);
+/// any other game falls back to a plain card-name substring match. A malformed
+/// Scryfall query becomes an `AppError::Validation` (HTTP 422).
+fn search_condition(game: &Game, search: &str) -> Result<Condition, AppError> {
+    match game.id {
+        crate::scryfall::GAME => Ok(crate::scryfall::search::parse(search)?),
+        _ => Ok(Condition::all().add(name_like(search))),
+    }
+}
+
+/// A `name LIKE %term%` filter for the fallback (non-Scryfall) game search, with
+/// LIKE metacharacters in `search` escaped so they match literally (paired with an
+/// explicit `ESCAPE '\'`).
 fn name_like(search: &str) -> SimpleExpr {
     let pattern = format!("%{}%", escape_like(search));
     Expr::col((card::Entity, card::Column::Name)).like(LikeExpr::new(pattern).escape('\\'))
-}
-
-/// Escape LIKE wildcards (`%`, `_`) and the escape char so user search input is
-/// matched literally. Pair with an explicit `ESCAPE '\'` clause.
-fn escape_like(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 /// Whether the image proxy is allowed to fetch a URL: HTTPS on a provider CDN.

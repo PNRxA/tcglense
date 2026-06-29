@@ -6,6 +6,7 @@ mod m20240101_000003_add_replaced_by_to_refresh_tokens;
 mod m20240101_000004_create_card_sets_table;
 mod m20240101_000005_create_cards_table;
 mod m20240101_000006_create_ingest_state_table;
+mod m20240101_000007_add_text_stats_to_cards;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000004_create_card_sets_table::Migration),
             Box::new(m20240101_000005_create_cards_table::Migration),
             Box::new(m20240101_000006_create_ingest_state_table::Migration),
+            Box::new(m20240101_000007_add_text_stats_to_cards::Migration),
         ]
     }
 }
