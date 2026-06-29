@@ -4,12 +4,12 @@ import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
 
-// Persisted-token validation happens once in the router guard (see router/index.ts).
+// Session restore happens once in the router guard (see router/index.ts).
 const auth = useAuthStore()
 const router = useRouter()
 
 async function onLogout() {
-  auth.logout()
+  await auth.logout()
   await router.push('/login')
 }
 </script>

@@ -6,14 +6,19 @@ edition = "2024"
 [dependencies]
 argon2 = "0.5.3"
 axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
+hex = "0.4.3"
 jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto"] }
+rand = "0.10.1"
 sea-orm = { version = "1.1.20", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono"] }
 sea-orm-migration = { version = "1.1.20", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha2 = "0.11.0"
 thiserror = "2.0.18"
+time = "0.3.51"
 tokio = { version = "1.52.3", features = ["full"] }
 tower = "0.5.3"
 tower-http = { version = "0.7.0", features = ["cors", "trace"] }

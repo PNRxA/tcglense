@@ -40,13 +40,13 @@ let hydrated = false
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // Validate a persisted token exactly once, before the first routing decision,
-  // so an expired/invalid token redirects to login instead of briefly flashing
-  // protected UI. fetchMe() clears the token on a 401.
-  if (!hydrated && auth.token) {
-    await auth.fetchMe()
+  // Restore the session exactly once, before the first routing decision, so we do
+  // not briefly flash protected UI. tryRestore() uses the httpOnly refresh cookie
+  // and never throws, so the guard is safe even when the API is unreachable.
+  if (!hydrated) {
+    await auth.tryRestore()
+    hydrated = true
   }
-  hydrated = true
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login' }

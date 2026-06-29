@@ -1,4 +1,6 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
+// Empty base -> relative '/api/...' URLs, which go through the Vite dev proxy in
+// dev and are same-origin in production. Override with VITE_API_URL if needed.
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export interface User {
   id: number
@@ -8,8 +10,12 @@ export interface User {
 }
 
 export interface AuthResponse {
-  token: string
+  access_token: string
   user: User
+}
+
+export interface RefreshResponse {
+  access_token: string
 }
 
 export interface RegisterPayload {
@@ -51,18 +57,31 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const response = await fetch(`${API_URL}${path}`, {
     method: options.method ?? 'GET',
     headers,
+    // Always send/receive the httpOnly refresh cookie (tcglense_refresh).
+    credentials: 'include',
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   })
 
-  const data = await response.json().catch(() => null)
+  // 204 No Content and other empty bodies have nothing to parse; tolerate
+  // non-JSON bodies (e.g. a proxy error page) rather than throwing on parse.
+  const text = await response.text()
+  let data: unknown = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+  }
 
   if (!response.ok) {
+    const error = (data as { error?: unknown } | null)?.error
     const message =
-      typeof data?.error === 'string' ? data.error : `Request failed with status ${response.status}`
+      typeof error === 'string' ? error : `Request failed with status ${response.status}`
     throw new ApiError(message, response.status)
   }
 
-  return data as T
+  return (data ?? undefined) as T
 }
 
 export function register(payload: RegisterPayload): Promise<AuthResponse> {
@@ -75,4 +94,12 @@ export function login(payload: LoginPayload): Promise<AuthResponse> {
 
 export function me(token: string): Promise<{ user: User }> {
   return request<{ user: User }>('/api/auth/me', { token })
+}
+
+export function refresh(): Promise<RefreshResponse> {
+  return request<RefreshResponse>('/api/auth/refresh', { method: 'POST' })
+}
+
+export function logout(): Promise<void> {
+  return request<void>('/api/auth/logout', { method: 'POST' })
 }

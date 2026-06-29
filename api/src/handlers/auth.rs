@@ -1,6 +1,12 @@
 use std::sync::OnceLock;
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use axum_extra::extract::cookie::CookieJar;
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, SqlErr, prelude::DateTimeUtc,
@@ -9,9 +15,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     auth::{
+        cookie::{REFRESH_COOKIE_NAME, build_refresh_cookie, removal_cookie},
         extractor::AuthUser,
         jwt::encode_token,
         password::{hash_password, verify_password},
+        refresh::{issue_refresh_token, revoke_one, rotate},
     },
     entities::{prelude::User, user},
     error::AppError,
@@ -57,8 +65,15 @@ impl From<user::Model> for UserResponse {
 
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
-    pub token: String,
+    pub access_token: String,
     pub user: UserResponse,
+}
+
+/// Body returned by `/api/auth/refresh` (the rotated refresh token rides in the
+/// `Set-Cookie` header, never in the JSON body).
+#[derive(Debug, Serialize)]
+pub struct AccessTokenResponse {
+    pub access_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,6 +115,7 @@ fn equalize_timing(password: &str) {
 /// `POST /api/auth/register`
 pub async fn register(
     State(state): State<AppState>,
+    jar: CookieJar,
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Canonicalise the email so look-alike casings map to a single account.
@@ -143,12 +159,16 @@ pub async fn register(
             return Err(err.into());
         }
     };
-    let token = encode_token(&model, &state.config)?;
+    let access_token = encode_token(&model, &state.config)?;
+    let refresh_plaintext =
+        issue_refresh_token(&state.db, model.id, state.config.refresh_token_expiry_days).await?;
+    let jar = jar.add(build_refresh_cookie(refresh_plaintext, &state.config));
 
     Ok((
         StatusCode::CREATED,
+        jar,
         Json(AuthResponse {
-            token,
+            access_token,
             user: model.into(),
         }),
     ))
@@ -157,6 +177,7 @@ pub async fn register(
 /// `POST /api/auth/login`
 pub async fn login(
     State(state): State<AppState>,
+    jar: CookieJar,
     JsonBody(payload): JsonBody<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let email = payload.email.trim().to_lowercase();
@@ -179,15 +200,80 @@ pub async fn login(
         return Err(AppError::InvalidCredentials);
     }
 
-    let token = encode_token(&user, &state.config)?;
+    let access_token = encode_token(&user, &state.config)?;
+    let refresh_plaintext =
+        issue_refresh_token(&state.db, user.id, state.config.refresh_token_expiry_days).await?;
+    let jar = jar.add(build_refresh_cookie(refresh_plaintext, &state.config));
 
     Ok((
         StatusCode::OK,
+        jar,
         Json(AuthResponse {
-            token,
+            access_token,
             user: user.into(),
         }),
     ))
+}
+
+/// `POST /api/auth/refresh`
+///
+/// Reads the `tcglense_refresh` cookie, rotates it, and returns a new access
+/// token. Any failure clears the cookie and returns 401.
+pub async fn refresh(State(state): State<AppState>, jar: CookieJar) -> Response {
+    let Some(cookie) = jar.get(REFRESH_COOKIE_NAME) else {
+        return (
+            jar.remove(removal_cookie()),
+            AppError::Unauthorized("missing refresh token".to_string()),
+        )
+            .into_response();
+    };
+    let presented = cookie.value().to_string();
+
+    match issue_rotated_access_token(&state, &presented).await {
+        Ok((access_token, new_refresh)) => {
+            let jar = jar.add(build_refresh_cookie(new_refresh, &state.config));
+            (jar, Json(AccessTokenResponse { access_token })).into_response()
+        }
+        Err(err) => (jar.remove(removal_cookie()), err).into_response(),
+    }
+}
+
+/// Rotate the presented refresh token and mint a fresh access token for the
+/// owning user. Returns `(access_token, new_refresh_plaintext)`.
+async fn issue_rotated_access_token(
+    state: &AppState,
+    presented: &str,
+) -> Result<(String, String), AppError> {
+    let rotated = rotate(
+        &state.db,
+        presented,
+        state.config.refresh_token_expiry_days,
+    )
+    .await?;
+
+    let user = User::find_by_id(rotated.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("user no longer exists".to_string()))?;
+
+    let access_token = encode_token(&user, &state.config)?;
+    Ok((access_token, rotated.plaintext))
+}
+
+/// `POST /api/auth/logout`
+///
+/// Revokes the presented refresh token (best-effort) and clears the cookie.
+/// Always 204, even when no/invalid cookie is present.
+pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoResponse {
+    if let Some(cookie) = jar.get(REFRESH_COOKIE_NAME) {
+        let presented = cookie.value().to_string();
+        // Best-effort: logout must remain idempotent and always succeed.
+        if let Err(err) = revoke_one(&state.db, &presented).await {
+            tracing::warn!(error = %err, "failed to revoke refresh token on logout");
+        }
+    }
+
+    (StatusCode::NO_CONTENT, jar.remove(removal_cookie()))
 }
 
 /// `GET /api/auth/me`

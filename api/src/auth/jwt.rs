@@ -19,7 +19,7 @@ pub struct Claims {
 pub fn encode_token(user: &user::Model, config: &Config) -> Result<String, AppError> {
     let now = Utc::now();
     let iat = now.timestamp().max(0) as usize;
-    let exp = (now + Duration::days(config.jwt_expiry_days))
+    let exp = (now + Duration::minutes(config.access_token_expiry_minutes))
         .timestamp()
         .max(0) as usize;
 
@@ -68,7 +68,9 @@ mod tests {
         Config {
             database_url: "sqlite::memory:".to_string(),
             jwt_secret: "test-secret-key-for-unit-tests".to_string(),
-            jwt_expiry_days: 7,
+            access_token_expiry_minutes: 15,
+            refresh_token_expiry_days: 30,
+            cookie_secure: false,
             port: 8080,
         }
     }

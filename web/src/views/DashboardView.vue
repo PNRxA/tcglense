@@ -9,7 +9,7 @@ const auth = useAuthStore()
 const router = useRouter()
 
 async function onLogout() {
-  auth.logout()
+  await auth.logout()
   await router.push('/login')
 }
 </script>

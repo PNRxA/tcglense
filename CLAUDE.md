@@ -25,7 +25,9 @@ A monorepo with two independent apps:
 | `web/` | Frontend (SPA) | Vue 3.5 · Vite 8 · Pinia · vue-router · Tailwind 4 · shadcn-vue (new-york) · TypeScript |
 
 The two talk over HTTP. In dev the API runs on `:8080` and the web app on
-`:5173`; the API's CORS layer allows exactly that web origin.
+`:5173`, and the **web dev server proxies `/api` to the API** (`web/vite.config.ts`)
+so the browser is same-origin — the httpOnly refresh cookie is first-party. The
+API's CORS layer also allows the `:5173` origin for any direct cross-origin calls.
 
 ## Running it
 
@@ -39,9 +41,9 @@ cargo run                 # serves http://localhost:8080, runs DB migrations on 
 ```
 
 The SQLite file is created automatically (`tcglense.db`, gitignored). Migrations
-run on every startup via `Migrator::up`. If `JWT_SECRET` is unset the server
-boots with an **insecure dev-only secret and logs a warning** — set a real one
-before deploying.
+run on every startup via `Migrator::up`. If `JWT_SECRET` is unset the server boots
+with an **insecure dev-only secret and logs a warning**; with `COOKIE_SECURE=true`
+(the production signal) it instead **refuses to start** without a real `JWT_SECRET`.
 
 **Web** (from `web/`):
 
@@ -50,8 +52,9 @@ npm install               # first run only
 npm run dev               # serves http://localhost:5173
 ```
 
-Point the frontend at a non-default API with `VITE_API_URL` (default
-`http://localhost:8080`).
+The frontend calls **relative `/api/...` URLs** (routed through the Vite proxy in
+dev, same-origin in prod). Set `VITE_API_URL` only when the API lives on a
+different origin.
 
 ## Commands
 
@@ -61,7 +64,7 @@ Point the frontend at a non-default API with `VITE_API_URL` (default
 |---------|---------|
 | `cargo run` | Run the server (migrations included) |
 | `cargo check` | Fast type/borrow check |
-| `cargo test` | Unit tests (password + JWT round-trips) |
+| `cargo test` | Unit tests (password, JWT, refresh rotation/reuse) |
 | `cargo build --release` | Optimized build |
 | `cargo clippy` | Lints |
 
@@ -87,35 +90,49 @@ success or error — is JSON. Errors are always `{ "error": string }`.
 
 `User` shape: `{ id: number, email: string, display_name: string | null, created_at: string (RFC3339 UTC) }`
 
-| Method & path | Body | Success | Errors |
-|---------------|------|---------|--------|
-| `POST /api/auth/register` | `{ email, password, display_name? }` | `201 { token, user }` | `409` email taken · `422` validation |
-| `POST /api/auth/login` | `{ email, password }` | `200 { token, user }` | `401 "invalid email or password"` (generic) |
-| `GET /api/auth/me` | — (header `Authorization: Bearer <token>`) | `200 { user }` | `401` missing/invalid/expired token |
+**Two-token model:** a short-lived **access token** (JWT, 15 min, returned as
+`access_token`, kept in memory on the client) plus a long-lived **refresh token**
+(opaque, 30 days, delivered only as the `tcglense_refresh` httpOnly cookie, stored
+server-side as a SHA-256 hash).
+
+| Method & path | Body | Success | Notes |
+|---------------|------|---------|-------|
+| `POST /api/auth/register` | `{ email, password, display_name? }` | `201 { access_token, user }` + refresh cookie | `409` taken · `422` invalid |
+| `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic) |
+| `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/revoked (clears cookie) |
+| `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes token + clears cookie) | idempotent |
+| `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
 
-Rules baked into the backend: emails are trimmed + lowercased (case-insensitive
-accounts); passwords must be ≥ 8 chars and contain `@` for the email; login
-returns a **generic** 401 that never reveals which field was wrong (and equalizes
-timing on the user-not-found path); JWTs are HS256 with `exp`, decoded with the
-algorithm pinned to HS256 (no `alg:none`/confusion).
+All responses (success or error) are JSON; errors are `{ "error": string }`.
+
+Security rules baked in: emails trimmed + lowercased (case-insensitive accounts);
+password ≥ 8 chars, email must contain `@`; login returns a **generic** 401 (with
+timing equalization on user-not-found). Access JWTs are HS256 with `exp`, decoded
+with the algorithm pinned to HS256. **Refresh tokens are single-use** — every
+`/refresh` rotates them (claimed via an atomic conditional `UPDATE`) with **reuse
+detection**: replaying a revoked token revokes that user's whole token family. The
+cookie is `HttpOnly; SameSite=Lax; Path=/api/auth; Secure=COOKIE_SECURE`
+(SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
 
 ## Backend structure (`api/src/`)
 
 ```
 main.rs            bootstrap: env → tracing → DB connect → migrate → router → serve
-config.rs          Config from env (DATABASE_URL, JWT_SECRET, JWT_EXPIRY_DAYS, PORT)
+config.rs          Config from env (DATABASE_URL, JWT_SECRET, ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS, COOKIE_SECURE, PORT)
 state.rs           AppState { db, config: Arc<Config> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
-entities/          SeaORM entities (entities/user.rs = `users` table)
+entities/          SeaORM entities (user = `users`, refresh_token = `refresh_tokens`)
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
-  jwt.rs           Claims + encode/decode (HS256)
-  extractor.rs     AuthUser: FromRequestParts that validates the Bearer token + loads the user
+  jwt.rs           access-token Claims + encode/decode (HS256, expiry in minutes)
+  refresh.rs       opaque refresh-token service: issue / rotate (single-use) / revoke_one / revoke_all
+  cookie.rs        build + clear the tcglense_refresh httpOnly cookie
+  extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
 handlers/
-  auth.rs          register / login / me
+  auth.rs          register / login / refresh / logout / me
   health.rs        health
 ```
 
@@ -137,23 +154,26 @@ handlers/
 ```
 main.ts            createApp + pinia + router
 App.vue            shell: top bar (brand, user, sign-out) + <RouterView>
-router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time token validation)
-lib/api.ts         typed fetch client + ApiError + User/AuthResponse/... types
-stores/auth.ts     Pinia store: token (localStorage), user, isAuthenticated, login/register/logout/fetchMe
+router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
+lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types
+stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 views/             LoginView, RegisterView, DashboardView
 components/ui/      shadcn-vue primitives (button, input, label, card)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark)
 ```
 
-The router guard validates a persisted token **once** before the first route
-resolves (calls `fetchMe`, which logs out on a 401), so an expired token redirects
-to `/login` instead of flashing the dashboard.
+On first navigation the guard calls `auth.tryRestore()` once: it hits
+`/api/auth/refresh` (the httpOnly cookie is sent automatically) to mint an access
+token and hydrate the user, so a session survives a page reload. The access token
+lives **only in memory** (no localStorage). The exported `authFetch` helper
+transparently refreshes once on a 401 and retries, logging out if that still fails.
 
 ### Adding a frontend feature
 
 - **State that talks to the API:** add functions + types to `lib/api.ts`, then a
-  Pinia setup store under `stores/`. Read the token from the `auth` store and pass
-  it to API calls.
+  Pinia setup store under `stores/`. For authenticated calls use the `auth` store's
+  exported `authFetch((token) => api.xxx(token))` so access-token expiry refreshes
+  transparently.
 - **Pages:** add a view under `views/` and a route in `router/index.ts`. Mark
   authenticated pages with `meta: { requiresAuth: true }`.
 - **UI primitives:** prefer adding shadcn-vue components
@@ -173,17 +193,22 @@ to `/login` instead of flashing the dashboard.
 ## Environment variables
 
 - **API:** `DATABASE_URL` (default `sqlite://tcglense.db?mode=rwc`), `JWT_SECRET`
-  (dev fallback + warning if unset), `JWT_EXPIRY_DAYS` (7), `PORT` (8080),
-  `RUST_LOG` (`info`). See `api/.env.example`.
-- **Web:** `VITE_API_URL` (default `http://localhost:8080`).
+  (dev fallback + warning if unset; required when `COOKIE_SECURE=true`),
+  `ACCESS_TOKEN_EXPIRY_MINUTES` (15), `REFRESH_TOKEN_EXPIRY_DAYS` (30),
+  `COOKIE_SECURE` (false), `PORT` (8080), `RUST_LOG` (`info`). See `api/.env.example`.
+- **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
 
 ## Known trade-offs / future work
 
-- **Token storage:** the JWT lives in `localStorage`, which is readable by any
-  injected script (XSS exfiltration risk). Acceptable for this scaffold; for
-  production prefer an httpOnly Secure SameSite cookie set by the backend + a
-  strict CSP.
+- **Token storage:** the refresh token is an `HttpOnly` cookie (not readable by JS)
+  and the access token is held in memory only, so an XSS can't exfiltrate the
+  long-lived credential. In production set `COOKIE_SECURE=true` (HTTPS) and serve
+  web + API same-origin (or configure cross-origin CORS credentials).
 - **No rate limiting / brute-force protection** on login yet.
+- **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
+  gated on `rows_affected`, so it's race-safe across connections. The
+  revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation
+  degrades to a forced re-login (no security impact).
 - **Gotcha — `jsonwebtoken`:** v10 needs a crypto provider feature or it panics at
   runtime; this crate pins `default-features = false, features = ["rust_crypto"]`
   (pure Rust, no C toolchain). Don't drop that when bumping it.

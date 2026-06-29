@@ -5,7 +5,12 @@ use std::env;
 pub struct Config {
     pub database_url: String,
     pub jwt_secret: String,
-    pub jwt_expiry_days: i64,
+    /// Lifetime of an access JWT, in minutes (short-lived).
+    pub access_token_expiry_minutes: i64,
+    /// Lifetime of an opaque refresh token, in days (long-lived).
+    pub refresh_token_expiry_days: i64,
+    /// Whether the refresh cookie is marked `Secure` (HTTPS-only).
+    pub cookie_secure: bool,
     pub port: u16,
 }
 
@@ -19,9 +24,27 @@ impl Config {
         let database_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://tcglense.db?mode=rwc".to_string());
 
+        let cookie_secure = env::var("COOKIE_SECURE")
+            .ok()
+            .map(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+
         let jwt_secret = match env::var("JWT_SECRET") {
             Ok(secret) if !secret.trim().is_empty() => secret,
             _ => {
+                // COOKIE_SECURE=true signals a production (HTTPS) deployment; refuse
+                // to start with a forgeable, compiled-in signing secret there.
+                if cookie_secure {
+                    panic!(
+                        "JWT_SECRET must be set when COOKIE_SECURE is enabled. Refusing to \
+                         start with the insecure dev-only fallback secret in production."
+                    );
+                }
                 tracing::warn!(
                     "JWT_SECRET is not set; falling back to an INSECURE dev-only secret. \
                      Set JWT_SECRET before deploying to production."
@@ -30,11 +53,17 @@ impl Config {
             }
         };
 
-        let jwt_expiry_days = env::var("JWT_EXPIRY_DAYS")
+        let access_token_expiry_minutes = env::var("ACCESS_TOKEN_EXPIRY_MINUTES")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .filter(|m| *m > 0)
+            .unwrap_or(15);
+
+        let refresh_token_expiry_days = env::var("REFRESH_TOKEN_EXPIRY_DAYS")
             .ok()
             .and_then(|v| v.parse::<i64>().ok())
             .filter(|d| *d > 0)
-            .unwrap_or(7);
+            .unwrap_or(30);
 
         let port = env::var("PORT")
             .ok()
@@ -44,7 +73,9 @@ impl Config {
         Config {
             database_url,
             jwt_secret,
-            jwt_expiry_days,
+            access_token_expiry_minutes,
+            refresh_token_expiry_days,
+            cookie_secure,
             port,
         }
     }
