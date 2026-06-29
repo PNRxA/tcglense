@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 
+use crate::catalog::images::ImageCache;
 use crate::config::Config;
 
 /// Shared, cheaply-clonable application state passed to every handler.
@@ -14,4 +15,6 @@ pub struct AppState {
     /// Computed once at startup so the request path can never degrade to a
     /// fast no-op if hashing were to fail.
     pub dummy_password_hash: Arc<str>,
+    /// Lazy on-disk cache + downloader for card images.
+    pub images: Arc<ImageCache>,
 }

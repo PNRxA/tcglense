@@ -5,5 +5,8 @@
 *.db-shm
 *.db-wal
 
+# Downloaded card data + lazily-cached card images (see DATA_DIR)
+/data
+
 # Local environment overrides
 .env

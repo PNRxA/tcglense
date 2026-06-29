@@ -1,0 +1,165 @@
+<script setup lang="ts">
+import { computed, toRef } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
+import { ArrowLeft, Loader2 } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
+import CardImage from '@/components/cards/CardImage.vue'
+import { getCard } from '@/lib/api'
+
+const props = defineProps<{ game: string; id: string }>()
+const game = toRef(props, 'game')
+const id = toRef(props, 'id')
+
+const cardQuery = useQuery({
+  queryKey: ['card', game, id],
+  queryFn: () => getCard(game.value, id.value),
+  staleTime: 5 * 60 * 1000,
+})
+
+const card = computed(() => cardQuery.data.value)
+
+// Layouts whose faces carry their OWN images (so we render one image per face).
+// Split / flip / adventure / aftermath also have two faces, but only a single
+// top-level image — those use the one-image path so we don't 404 per face.
+const SEPARATE_FACE_IMAGE_LAYOUTS = [
+  'transform',
+  'modal_dfc',
+  'double_faced_token',
+  'reversible_card',
+  'battle',
+  'art_series',
+]
+const isMultiFace = computed(() => (card.value?.faces.length ?? 0) >= 2)
+const hasSeparateFaceImages = computed(
+  () => isMultiFace.value && SEPARATE_FACE_IMAGE_LAYOUTS.includes(card.value?.layout ?? ''),
+)
+
+const priceRows = computed(() => {
+  const p = card.value?.prices
+  if (!p) return []
+  return [
+    { label: 'USD', value: p.usd ? `$${p.usd}` : null },
+    { label: 'USD foil', value: p.usd_foil ? `$${p.usd_foil}` : null },
+    { label: 'EUR', value: p.eur ? `€${p.eur}` : null },
+    { label: 'MTGO tix', value: p.tix ?? null },
+  ].filter((row) => row.value)
+})
+</script>
+
+<template>
+  <div class="mx-auto max-w-5xl px-4 py-10">
+    <div
+      v-if="cardQuery.isPending.value"
+      class="text-muted-foreground flex items-center gap-2 py-12"
+    >
+      <Loader2 class="size-4 animate-spin" />
+      Loading card…
+    </div>
+    <p v-else-if="cardQuery.isError.value || !card" class="text-destructive py-12">
+      Card not found.
+    </p>
+
+    <template v-else-if="card">
+      <RouterLink
+        :to="`/cards/${game}/sets/${card.set_code}`"
+        class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
+      >
+        <ArrowLeft class="size-4" />
+        {{ card.set_name }}
+      </RouterLink>
+
+      <div class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
+        <!-- Image(s): one per face only for layouts with separate face images. -->
+        <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
+          <template v-if="hasSeparateFaceImages">
+            <CardImage
+              v-for="(face, index) in card.faces"
+              :key="index"
+              :game="game"
+              :id="card.id"
+              :name="face.name ?? card.name"
+              :face="index"
+              size="large"
+              class="w-full"
+            />
+          </template>
+          <CardImage
+            v-else
+            :game="game"
+            :id="card.id"
+            :name="card.name"
+            :has-image="card.has_image"
+            size="large"
+            class="w-full"
+          />
+        </div>
+
+        <!-- Details -->
+        <div>
+          <h1 class="text-3xl font-semibold tracking-tight">{{ card.name }}</h1>
+          <p v-if="card.type_line" class="text-muted-foreground mt-1">{{ card.type_line }}</p>
+
+          <dl class="mt-6 grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
+            <dt class="text-muted-foreground">Set</dt>
+            <dd>
+              <RouterLink :to="`/cards/${game}/sets/${card.set_code}`" class="hover:underline">
+                {{ card.set_name }} ({{ card.set_code.toUpperCase() }})
+              </RouterLink>
+            </dd>
+
+            <dt class="text-muted-foreground">Number</dt>
+            <dd>#{{ card.collector_number }}</dd>
+
+            <template v-if="card.rarity">
+              <dt class="text-muted-foreground">Rarity</dt>
+              <dd class="capitalize">{{ card.rarity }}</dd>
+            </template>
+
+            <template v-if="card.mana_cost">
+              <dt class="text-muted-foreground">Mana cost</dt>
+              <dd>{{ card.mana_cost }}</dd>
+            </template>
+
+            <template v-if="card.color_identity.length">
+              <dt class="text-muted-foreground">Color identity</dt>
+              <dd>{{ card.color_identity.join(', ') }}</dd>
+            </template>
+
+            <template v-if="card.released_at">
+              <dt class="text-muted-foreground">Released</dt>
+              <dd>{{ card.released_at }}</dd>
+            </template>
+          </dl>
+
+          <!-- Per-face text breakdown for any multi-faced card (incl. split/flip). -->
+          <div v-if="isMultiFace" class="mt-6 space-y-3">
+            <div v-for="(face, index) in card.faces" :key="index" class="rounded-lg border p-3">
+              <p class="font-medium">{{ face.name }}</p>
+              <p v-if="face.type_line" class="text-muted-foreground text-sm">
+                {{ face.type_line }}
+              </p>
+              <p v-if="face.mana_cost" class="text-muted-foreground text-sm">
+                {{ face.mana_cost }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Prices -->
+          <div v-if="priceRows.length" class="mt-6">
+            <h2 class="mb-2 text-sm font-semibold">Prices</h2>
+            <dl class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div
+                v-for="row in priceRows"
+                :key="row.label"
+                class="bg-muted/50 rounded-lg border p-3"
+              >
+                <dt class="text-muted-foreground text-xs">{{ row.label }}</dt>
+                <dd class="mt-0.5 font-medium tabular-nums">{{ row.value }}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</template>

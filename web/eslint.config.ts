@@ -38,6 +38,10 @@ export default defineConfigWithVueTs(
     rules: {
       // shadcn-vue primitives are intentionally single-word (Button, Card, Input, ...).
       'vue/multi-word-component-names': 'off',
+      // Primitives strip `class` (and `viewport`) via `const { class: _class, ...rest } = props`
+      // before forwarding the rest to the underlying reka-ui component — the discarded
+      // siblings are deliberate, not dead code.
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },
 

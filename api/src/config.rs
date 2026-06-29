@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 /// Application configuration, sourced from environment variables.
 ///
@@ -16,6 +16,16 @@ pub struct Config {
     /// Network interface to bind. Defaults to 127.0.0.1; set 0.0.0.0 in dev/containers.
     pub host: String,
     pub port: u16,
+    /// Base directory for downloaded assets; card images live under `images/`.
+    pub data_dir: PathBuf,
+    /// `User-Agent` sent to Scryfall (their API guidelines require a descriptive one).
+    pub scryfall_user_agent: String,
+    /// Whether to import card data from providers on startup (disable in tests).
+    pub sync_on_startup: bool,
+    /// How often to re-import card data after the startup import, in hours.
+    /// Defaults to 24 (daily); `0` disables the periodic refresh (startup only).
+    /// Only takes effect when `sync_on_startup` is enabled.
+    pub sync_interval_hours: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -29,6 +39,10 @@ impl std::fmt::Debug for Config {
             .field("cookie_secure", &self.cookie_secure)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("data_dir", &self.data_dir)
+            .field("scryfall_user_agent", &self.scryfall_user_agent)
+            .field("sync_on_startup", &self.sync_on_startup)
+            .field("sync_interval_hours", &self.sync_interval_hours)
             .finish()
     }
 }
@@ -131,6 +145,38 @@ impl Config {
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(8080);
 
+        let data_dir = env::var("DATA_DIR")
+            .ok()
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("./data"));
+
+        let scryfall_user_agent = env::var("SCRYFALL_USER_AGENT")
+            .ok()
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| {
+                "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string()
+            });
+
+        // Importing card data is the default; tests and offline runs disable it.
+        let sync_on_startup = env::var("SYNC_ON_STARTUP")
+            .ok()
+            .map(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(true);
+
+        // Re-import cadence after the startup import. Default daily; `0` means
+        // "startup only" (no periodic refresh). An unparseable value falls back to
+        // the default rather than disabling refreshes silently.
+        let sync_interval_hours = env::var("SYNC_INTERVAL_HOURS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(24);
+
         Config {
             database_url,
             jwt_secret,
@@ -139,6 +185,10 @@ impl Config {
             cookie_secure,
             host,
             port,
+            data_dir,
+            scryfall_user_agent,
+            sync_on_startup,
+            sync_interval_hours,
         }
     }
 }
@@ -157,6 +207,10 @@ mod tests {
             cookie_secure: true,
             host: "127.0.0.1".to_string(),
             port: 8080,
+            data_dir: std::path::PathBuf::from("./data"),
+            scryfall_user_agent: "TCGLense/test".to_string(),
+            sync_on_startup: false,
+            sync_interval_hours: 24,
         };
 
         let rendered = format!("{config:?}");

@@ -3,8 +3,10 @@
 A trading-card-game tracking app — track retail/MSRP and singles prices over time,
 your personal collection, and set-completion progress.
 
-> Status: early scaffold. Auth (register / login / refresh / logout) is built;
-> price-tracking, collection, and set-completion features are next.
+> Status: early scaffold. Auth (register / login / refresh / logout) is built, plus
+> **MTG card browsing** — sets and cards sourced from [Scryfall](https://scryfall.com)
+> (a "Cards" menu in the top bar → games → sets → cards, with search). Price-tracking,
+> collection, and set-completion features are next.
 
 ## Stack
 
@@ -79,7 +81,11 @@ origin (keeping the httpOnly refresh cookie first-party). Config lives in
    COOKIE_SECURE=true      # HTTPS-only refresh cookie
    HOST=127.0.0.1          # API listens on localhost; only Caddy reaches it
    DATABASE_URL=sqlite:///var/lib/tcglense/tcglense.db?mode=rwc   # dir must exist + be writable
+   DATA_DIR=/var/lib/tcglense/data   # persistent + writable; holds cached card images
    ```
+   On first boot the API imports MTG card data from Scryfall in the background
+   (~100k paper cards, a one-off ~30s); card images are then cached to `DATA_DIR`
+   on first view. Both are skippable/relocatable via `SYNC_ON_STARTUP` / `DATA_DIR`.
 4. **Run the API as a service** (Linux/systemd): copy
    `deploy/tcglense-api.service` to `/etc/systemd/system/`, adjust paths/user, then
    ```sh
