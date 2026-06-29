@@ -73,6 +73,9 @@ mod tests {
             cookie_secure: false,
             host: "127.0.0.1".to_string(),
             port: 8080,
+            data_dir: std::path::PathBuf::from("./data"),
+            scryfall_user_agent: "TCGLense/test".to_string(),
+            sync_on_startup: false,
         }
     }
 

@@ -35,9 +35,8 @@ pub enum AppError {
     #[error("{0}")]
     Unauthorized(String),
 
-    /// Resource not found -> 404. Part of the required error surface; reserved
-    /// for upcoming collection/set endpoints.
-    #[allow(dead_code)]
+    /// Resource not found -> 404. Used by the card-catalog endpoints (unknown
+    /// game/set/card) and available to future collection endpoints.
     #[error("{0}")]
     NotFound(String),
 
