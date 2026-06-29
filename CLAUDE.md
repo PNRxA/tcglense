@@ -44,9 +44,12 @@ cp .env.example .env      # first run only; edit JWT_SECRET
 cargo run                 # serves http://localhost:8080, runs DB migrations on boot
 ```
 
-The SQLite file is created automatically (`tcglense.db`, gitignored). Migrations
-run on every startup via `Migrator::up`. The server **refuses to start without a
-real `JWT_SECRET`** (≥ 32 bytes, and not the public dev constant). For local dev
+The SQLite file is created automatically (`tcglense.db`, gitignored) and runs in **WAL
+journal mode** with a ~20 MB per-connection page cache (`db.rs`) so reads and writes
+don't block each other at the SQLite layer and hot pages stay resident in RAM; WAL adds
+`tcglense.db-wal`/`-shm` sidecar files (also gitignored). Migrations run on every
+startup via `Migrator::up`. The server **refuses to start without a real `JWT_SECRET`**
+(≥ 32 bytes, and not the public dev constant). For local dev
 without a secret, set `ALLOW_INSECURE_DEV_SECRET=true` to opt into a publicly-known
 insecure secret (logged as a warning) — never set that outside local dev. The shipped
 `.env.example` includes a placeholder `JWT_SECRET`, so `cp .env.example .env` then
@@ -167,6 +170,7 @@ catalogue — images are cached lazily, on view. Set icons are cached the same w
 ```
 main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → spawn periodic card-data import (daily) → router → serve
 config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS); Debug redacts the secret
+db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000), applied to every pooled connection
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
