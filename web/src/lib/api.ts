@@ -103,3 +103,148 @@ export function refresh(): Promise<RefreshResponse> {
 export function logout(): Promise<void> {
   return request<void>('/api/auth/logout', { method: 'POST' })
 }
+
+// ---------- Card catalog (public, game-agnostic) ----------
+
+/** A supported trading-card game. */
+export interface Game {
+  id: string
+  name: string
+  publisher: string
+  data_source: string
+}
+
+/** A set/expansion within a game. */
+export interface CardSet {
+  code: string
+  name: string
+  set_type: string | null
+  released_at: string | null
+  card_count: number
+  icon_svg_uri: string | null
+  parent_set_code: string | null
+}
+
+export interface CardFace {
+  name: string | null
+  mana_cost: string | null
+  type_line: string | null
+}
+
+export interface CardPrices {
+  usd: string | null
+  usd_foil: string | null
+  eur: string | null
+  tix: string | null
+}
+
+/** A single printing of a card. */
+export interface Card {
+  id: string
+  name: string
+  set_code: string
+  set_name: string
+  collector_number: string
+  rarity: string | null
+  lang: string
+  released_at: string | null
+  mana_cost: string | null
+  cmc: number | null
+  type_line: string | null
+  color_identity: string[]
+  colors: string[]
+  layout: string | null
+  prices: CardPrices
+  has_image: boolean
+  faces: CardFace[]
+}
+
+/** A page of cards plus pagination cursors. */
+export interface CardPage {
+  data: Card[]
+  page: number
+  page_size: number
+  total: number
+  has_more: boolean
+}
+
+/** Background import status for a game's card data. */
+export interface IngestStatus {
+  status: string
+  detail: string | null
+  sets_imported: number
+  cards_imported: number
+  source_updated_at: string | null
+  finished_at: string | null
+}
+
+export type ImageSize = 'small' | 'normal' | 'large' | 'png' | 'art_crop'
+
+export interface CardListParams {
+  page?: number
+  pageSize?: number
+  q?: string
+}
+
+function cardQuery(params: CardListParams = {}): string {
+  const search = new URLSearchParams()
+  if (params.page) search.set('page', String(params.page))
+  if (params.pageSize) search.set('page_size', String(params.pageSize))
+  if (params.q) search.set('q', params.q)
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
+export function listGames(): Promise<{ data: Game[] }> {
+  return request<{ data: Game[] }>('/api/games')
+}
+
+export function gameStatus(game: string): Promise<IngestStatus> {
+  return request<IngestStatus>(`/api/games/${encodeURIComponent(game)}/status`)
+}
+
+export function listSets(game: string): Promise<{ data: CardSet[] }> {
+  return request<{ data: CardSet[] }>(`/api/games/${encodeURIComponent(game)}/sets`)
+}
+
+export function getSet(game: string, code: string): Promise<CardSet> {
+  return request<CardSet>(`/api/games/${encodeURIComponent(game)}/sets/${encodeURIComponent(code)}`)
+}
+
+export function listSetCards(
+  game: string,
+  code: string,
+  params?: CardListParams,
+): Promise<CardPage> {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return request<CardPage>(`/api/games/${g}/sets/${c}/cards${cardQuery(params)}`)
+}
+
+export function listCards(game: string, params?: CardListParams): Promise<CardPage> {
+  return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`)
+}
+
+export function getCard(game: string, id: string): Promise<Card> {
+  return request<Card>(`/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`)
+}
+
+/** URL of the caching proxy for a set's SVG icon, for `<img src>`. */
+export function setIconUrl(game: string, code: string): string {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return `${API_URL}/api/games/${g}/sets/${c}/icon`
+}
+
+/** URL of the caching image proxy for a card (and optional face), for `<img src>`. */
+export function cardImageUrl(
+  game: string,
+  id: string,
+  size: ImageSize = 'normal',
+  face?: number,
+): string {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  const faceParam = face === undefined ? '' : `&face=${face}`
+  return `${API_URL}/api/games/${g}/cards/${i}/image?size=${size}${faceParam}`
+}

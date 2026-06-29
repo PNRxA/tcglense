@@ -11,9 +11,12 @@ Guidance for working in this repository.
 - A user's personal collection
 - Set-completion progress (how much of a set you own)
 
-Only the **auth foundation** (register / login / session) is built so far. The
+The **auth foundation** (register / login / session) is built, plus a **card
+catalog**: browse trading-card games → sets → cards, with search. Magic: The
+Gathering is the first game, sourced from [Scryfall](https://scryfall.com). The
 price-history, collection, and set-completion features are not yet implemented —
-they are the next things to build on top of this scaffold.
+they are the next things to build on top of this scaffold (the catalog gives them
+the card/set data to hang off).
 
 ## Layout
 
@@ -127,15 +130,47 @@ double-submit (successor still active) is just rejected. A revoked token is neve
 exchanged for a new one. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
 Secure=COOKIE_SECURE` (SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
 
+## Card catalog API contract
+
+Public (no auth), game-agnostic reads under `/api/games`. `{game}` is a slug like
+`mtg`; an unknown game/set/card is `404`. The **card-list** endpoints (`.../cards`)
+paginate with `?page` (1-based) + `?page_size` (default 60, max 200) and return
+`{ data, page, page_size, total, has_more }`; `/api/games` and `/sets` return a
+plain `{ data: [...] }`.
+
+| Method & path | Returns |
+|---------------|---------|
+| `GET /api/games` | `{ data: Game[] }` — `Game = { id, name, publisher, data_source }` |
+| `GET /api/games/{game}/status` | import status `{ status, detail, sets_imported, cards_imported, source_updated_at, finished_at }` (`status`: `idle`/`running`/`complete`/`error`) |
+| `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code }` |
+| `GET /api/games/{game}/sets/{code}` | one `Set` |
+| `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
+| `GET /api/games/{game}/sets/{code}/cards?page&page_size` | page of `Card`, by collector number |
+| `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` name search), by name |
+| `GET /api/games/{game}/cards/{id}` | one `Card` |
+| `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
+
+`Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
+mana_cost, cmc, type_line, color_identity: string[], colors: string[], layout,
+prices: { usd, usd_foil, eur, tix }, has_image, faces: { name, mana_cost, type_line }[] }`.
+
+**Image proxy:** `size` ∈ `small|normal|large|png|art_crop` (default `normal`),
+`face` is a 0-based face index for double-faced cards. On first request the image
+is downloaded from Scryfall (HTTPS, host allow-listed to `scryfall.io`, redirects
+disabled), written under `<DATA_DIR>/images/<game>/<size>/`, and served from disk
+thereafter (`Cache-Control: immutable`). We never bulk-download the whole image
+catalogue — images are cached lazily, on view. Set icons are cached the same way
+(`.../sets/{code}/icon`, served as `image/svg+xml`).
+
 ## Backend structure (`api/src/`)
 
 ```
-main.rs            bootstrap: env → tracing → DB connect → migrate → router → serve
-config.rs          Config from env (DATABASE_URL, JWT_SECRET, ALLOW_INSECURE_DEV_SECRET, ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS, COOKIE_SECURE, HOST, PORT); Debug redacts the secret
-state.rs           AppState { db, config: Arc<Config>, dummy_password_hash } (cloned into handlers)
+main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → spawn card-data import → router → serve
+config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP); Debug redacts the secret
+state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
-entities/          SeaORM entities (user = `users`, refresh_token = `refresh_tokens`)
+entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`)
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -143,10 +178,25 @@ auth/
   refresh.rs       opaque refresh-token service: issue / rotate (single-use, successor-linked reuse detection) / revoke_one / revoke_all / prune_expired
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
+catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all() (dispatch per game to its provider)
+  images.rs        ImageCache: lazy on-disk image cache/downloader (<DATA_DIR>/images/<game>/<size>/<key>.<ext>), path-sanitised, fetch-concurrency-limited
+scryfall/          MTG provider (the first game)
+  model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
+  client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
+  ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping
 handlers/
   auth.rs          register / login / refresh / logout / me
+  catalog.rs       games / status / sets / set cards / all cards (search+paginate) / card detail / image proxy
   health.rs        health
 ```
+
+**Multi-TCG by design:** `cards`/`card_sets`/`ingest_state` carry a `game`
+discriminator column; the catalog layer + routes are generic. Adding a TCG = add a
+`Game` to `catalog::GAMES`, a provider module (like `scryfall/`), and one arm in
+`catalog::refresh_all`. On startup `main.rs` spawns `catalog::refresh_all` in the
+background (gated by `SYNC_ON_STARTUP`) so the server is up immediately; the import
+streams the bulk file with bounded memory and **skips re-import when the provider's
+`updated_at` is unchanged** (`ingest_state.source_updated_at`).
 
 ### Adding a backend feature (e.g. collection, prices)
 
@@ -165,16 +215,24 @@ handlers/
 
 ```
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
-App.vue            shell: top bar (brand, user, sign-out) + <RouterView>
+App.vue            shell: top bar (brand, Cards nav, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
-lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types
+lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types; catalog fns + cardImageUrl()
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
 lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
-views/             LoginView, RegisterView, DashboardView
-components/ui/      shadcn-vue primitives (button, input, label, card)
+components/CardsNav.vue   top-bar "Cards" link (→ /cards) + game dropdown shortcut
+components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile, CardGrid, SetTile, CardPagination
+views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView
+components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark)
 ```
+
+The card-catalog pages are **public** (no `requiresAuth`) and read **public**
+endpoints, so they use `useQuery` from vue-query directly (not the `useAuthedQuery`
+wrapper, which routes through `authFetch`). Card images are plain `<img :src>`
+pointing at the proxy URL from `cardImageUrl()` — they don't go through the fetch
+client.
 
 On first navigation the guard calls `auth.tryRestore()` once: it hits
 `/api/auth/refresh` (the httpOnly cookie is sent automatically) to mint an access
@@ -224,7 +282,10 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   (false; opt-in to the insecure compiled-in secret for local dev only),
   `ACCESS_TOKEN_EXPIRY_MINUTES` (15), `REFRESH_TOKEN_EXPIRY_DAYS` (30),
   `COOKIE_SECURE` (false), `HOST` (`127.0.0.1`), `PORT` (8080),
-  `RUST_LOG` (`info`). See `api/.env.example`.
+  `RUST_LOG` (`info`), `DATA_DIR` (`./data`; holds cached card images under
+  `images/`), `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
+  `SYNC_ON_STARTUP` (`true`; import card data on boot — set `false` for offline
+  dev/tests). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
 
 ## Known trade-offs / future work
@@ -251,3 +312,27 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 - **Gotcha — `jsonwebtoken`:** v10 needs a crypto provider feature or it panics at
   runtime; this crate pins `default-features = false, features = ["rust_crypto"]`
   (pure Rust, no C toolchain). Don't drop that when bumping it.
+- **Card data import:** runs in the background on boot, streaming Scryfall's
+  `default_cards` bulk file (~550 MB gz) line-by-line and upserting paper cards in
+  batches (~100k rows, ~30s, bounded memory). It's idempotent and version-gated
+  (`ingest_state.source_updated_at`), so reboots are cheap; a run that imports zero
+  cards is recorded as `error` (not version-locked) so it retries next boot. No
+  periodic refresh yet — re-importing newer prices/sets needs a restart (or a future
+  scheduled task). `default_cards` is English-or-sole-language and **paper-only**
+  (digital Arena/MTGO printings filtered out); switch datasets/filters in `scryfall/`.
+  The parser assumes Scryfall's one-object-per-line bulk format; per-line length
+  isn't capped, so a format change to a single-line array would not be parsed safely
+  (it'd hit the zero-card guard but only after buffering).
+- **Image caching:** card images download lazily on first view to `<DATA_DIR>/images`
+  and are served from disk after — deliberately *not* a bulk image download (that
+  would be hundreds of GB and against Scryfall's guidelines). Fetches go through a
+  redirect-disabled, host-allow-listed (`scryfall.io`) client with a concurrency cap
+  of 8. The image route is public and card ids are enumerable, so it's open to
+  scripted disk-fill / bandwidth-amplification abuse — there's no per-IP rate limit,
+  cache budget, or eviction yet (same posture as the unfinished login rate-limiting).
+  Set icons go through the same cache (`.../sets/{code}/icon`, `image/svg+xml`), so
+  the provider is hit only once per asset rather than hotlinked on every view.
+- **Gotcha — `reqwest`:** pinned `default-features = false, features = ["rustls",
+  "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
+  and to stream + auto-decompress the gzip bulk file. No overall request timeout on
+  the client (the bulk download streams for a while); a `read_timeout` guards stalls.

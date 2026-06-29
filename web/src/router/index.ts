@@ -22,6 +22,38 @@ const router = createRouter({
       name: 'home',
       component: HomeView,
     },
+    // Public card catalog. Browsing card data needs no account; collection
+    // features (future) will. Views are lazy-loaded so they don't weigh down the
+    // initial auth bundle. `props: true` passes route params straight in.
+    {
+      path: '/cards',
+      name: 'cards',
+      component: () => import('@/views/CardsView.vue'),
+    },
+    {
+      path: '/cards/:game',
+      name: 'game',
+      component: () => import('@/views/GameView.vue'),
+      props: true,
+    },
+    {
+      path: '/cards/:game/cards',
+      name: 'game-cards',
+      component: () => import('@/views/CardsBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/cards/:game/cards/:id',
+      name: 'card',
+      component: () => import('@/views/CardDetailView.vue'),
+      props: true,
+    },
+    {
+      path: '/cards/:game/sets/:code',
+      name: 'set',
+      component: () => import('@/views/SetView.vue'),
+      props: true,
+    },
     {
       path: '/dashboard',
       name: 'dashboard',

@@ -1,10 +1,12 @@
 mod auth;
+mod catalog;
 mod config;
 mod entities;
 mod error;
 mod extract;
 mod handlers;
 mod migrator;
+mod scryfall;
 mod state;
 
 use std::{sync::Arc, time::Duration};
@@ -21,9 +23,14 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
+    catalog::images::ImageCache,
     config::Config,
     handlers::{
         auth::{login, logout, me, refresh, register},
+        catalog::{
+            card_image, get_card, get_set, ingest_status, list_cards, list_games, list_set_cards,
+            list_sets, set_icon,
+        },
         health::health,
     },
     migrator::Migrator,
@@ -46,6 +53,8 @@ async fn main() {
     let host = config.host.clone();
     let port = config.port;
     let database_url = config.database_url.clone();
+    let sync_on_startup = config.sync_on_startup;
+    let image_dir = config.data_dir.join("images");
 
     // Connect to the database and run migrations.
     let db = Database::connect(&database_url)
@@ -54,6 +63,27 @@ async fn main() {
     Migrator::up(&db, None)
         .await
         .expect("failed to run database migrations");
+
+    // Shared HTTP client for outbound provider calls (Scryfall data + images).
+    // No overall timeout: the bulk download streams for a while. A read timeout
+    // guards against a stalled connection.
+    let http = reqwest::Client::builder()
+        .user_agent(config.scryfall_user_agent.clone())
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(30))
+        .build()
+        .expect("failed to build the HTTP client");
+
+    // The image proxy fetches with redirects disabled so a stored image URL can't
+    // bounce the request to an unexpected host (the bulk download on `http` does
+    // redirect to a storage CDN, so that client keeps the default redirect policy).
+    let image_http = reqwest::Client::builder()
+        .user_agent(config.scryfall_user_agent.clone())
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build the image HTTP client");
 
     // Precompute the timing-equalization dummy hash once (panics here at startup
     // are acceptable; a request-path hash failure must never silently disable it).
@@ -65,6 +95,7 @@ async fn main() {
         db,
         config: Arc::new(config),
         dummy_password_hash,
+        images: Arc::new(ImageCache::new(image_dir, image_http)),
     };
 
     // Periodically prune expired refresh tokens so the table can't grow unbounded.
@@ -84,6 +115,18 @@ async fn main() {
                 }
             }
         });
+    }
+
+    // Import card data from each provider in the background so the server is
+    // available immediately; the SPA shows import progress via the status route.
+    if sync_on_startup {
+        let db = state.db.clone();
+        let http = http.clone();
+        tokio::spawn(async move {
+            catalog::refresh_all(&db, &http).await;
+        });
+    } else {
+        tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
     }
 
     // CORS: allow the Vite dev origin with the required methods and headers.
@@ -107,6 +150,16 @@ async fn main() {
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        // Public, game-agnostic card catalog.
+        .route("/api/games", get(list_games))
+        .route("/api/games/{game}/status", get(ingest_status))
+        .route("/api/games/{game}/sets", get(list_sets))
+        .route("/api/games/{game}/sets/{code}", get(get_set))
+        .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
+        .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
+        .route("/api/games/{game}/cards", get(list_cards))
+        .route("/api/games/{game}/cards/{id}", get(get_card))
+        .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
