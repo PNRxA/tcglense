@@ -125,11 +125,29 @@ const priceRows = computed(() => {
               <dd>{{ card.color_identity.join(', ') }}</dd>
             </template>
 
+            <template v-if="!isMultiFace && card.power && card.toughness">
+              <dt class="text-muted-foreground">Power / Toughness</dt>
+              <dd class="tabular-nums">{{ card.power }} / {{ card.toughness }}</dd>
+            </template>
+
+            <template v-if="!isMultiFace && card.loyalty">
+              <dt class="text-muted-foreground">Loyalty</dt>
+              <dd class="tabular-nums">{{ card.loyalty }}</dd>
+            </template>
+
             <template v-if="card.released_at">
               <dt class="text-muted-foreground">Released</dt>
               <dd>{{ card.released_at }}</dd>
             </template>
           </dl>
+
+          <!-- Oracle text (single-faced cards; multi-faced show text per face below). -->
+          <p
+            v-if="!isMultiFace && card.oracle_text"
+            class="mt-6 text-sm leading-relaxed whitespace-pre-line"
+          >
+            {{ card.oracle_text }}
+          </p>
 
           <!-- Per-face text breakdown for any multi-faced card (incl. split/flip). -->
           <div v-if="isMultiFace" class="mt-6 space-y-3">
@@ -140,6 +158,18 @@ const priceRows = computed(() => {
               </p>
               <p v-if="face.mana_cost" class="text-muted-foreground text-sm">
                 {{ face.mana_cost }}
+              </p>
+              <p v-if="face.oracle_text" class="mt-1 text-sm leading-relaxed whitespace-pre-line">
+                {{ face.oracle_text }}
+              </p>
+              <p
+                v-if="face.power && face.toughness"
+                class="text-muted-foreground mt-1 text-sm tabular-nums"
+              >
+                {{ face.power }} / {{ face.toughness }}
+              </p>
+              <p v-if="face.loyalty" class="text-muted-foreground mt-1 text-sm tabular-nums">
+                Loyalty {{ face.loyalty }}
               </p>
             </div>
           </div>

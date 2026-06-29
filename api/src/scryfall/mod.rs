@@ -7,6 +7,7 @@
 pub mod client;
 pub mod ingest;
 pub mod model;
+pub mod search;
 
 pub use ingest::refresh;
 

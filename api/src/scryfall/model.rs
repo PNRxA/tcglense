@@ -75,6 +75,14 @@ pub struct ScryfallCard {
     #[serde(default)]
     pub type_line: Option<String>,
     #[serde(default)]
+    pub oracle_text: Option<String>,
+    #[serde(default)]
+    pub power: Option<String>,
+    #[serde(default)]
+    pub toughness: Option<String>,
+    #[serde(default)]
+    pub loyalty: Option<String>,
+    #[serde(default)]
     pub color_identity: Option<Vec<String>>,
     #[serde(default)]
     pub colors: Option<Vec<String>>,
@@ -117,6 +125,14 @@ pub struct CardFace {
     #[serde(default)]
     pub type_line: Option<String>,
     #[serde(default)]
+    pub oracle_text: Option<String>,
+    #[serde(default)]
+    pub power: Option<String>,
+    #[serde(default)]
+    pub toughness: Option<String>,
+    #[serde(default)]
+    pub loyalty: Option<String>,
+    #[serde(default)]
     pub image_uris: Option<ImageUris>,
 }
 
@@ -141,6 +157,14 @@ pub struct StoredFace {
     pub name: Option<String>,
     pub mana_cost: Option<String>,
     pub type_line: Option<String>,
+    #[serde(default)]
+    pub oracle_text: Option<String>,
+    #[serde(default)]
+    pub power: Option<String>,
+    #[serde(default)]
+    pub toughness: Option<String>,
+    #[serde(default)]
+    pub loyalty: Option<String>,
     pub image_small: Option<String>,
     pub image_normal: Option<String>,
     pub image_large: Option<String>,
@@ -155,6 +179,10 @@ impl StoredFace {
             name: face.name.clone(),
             mana_cost: face.mana_cost.clone(),
             type_line: face.type_line.clone(),
+            oracle_text: face.oracle_text.clone(),
+            power: face.power.clone(),
+            toughness: face.toughness.clone(),
+            loyalty: face.loyalty.clone(),
             image_small: img.and_then(|u| u.small.clone()),
             image_normal: img.and_then(|u| u.normal.clone()),
             image_large: img.and_then(|u| u.large.clone()),

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, toRef, watch } from 'vue'
+import { computed, toRef } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { ArrowLeft, Loader2, Search } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Input } from '@/components/ui/input'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
+import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { getSet, listSetCards } from '@/lib/api'
 
 const props = defineProps<{ game: string; code: string }>()
@@ -13,35 +15,8 @@ const game = toRef(props, 'game')
 const code = toRef(props, 'code')
 
 const PAGE_SIZE = 60
-const page = ref(1)
-const searchInput = ref('')
-const query = ref('')
-
-// Debounce typing into the search box into the committed query.
-let timer: ReturnType<typeof setTimeout> | undefined
-watch(searchInput, (value) => {
-  clearTimeout(timer)
-  timer = setTimeout(() => {
-    query.value = value.trim()
-  }, 300)
-})
-onUnmounted(() => clearTimeout(timer))
-
-// A new query always restarts pagination from the first page. Driving the page
-// reset off `query` (rather than the debounce timer) keeps a programmatic reset —
-// e.g. clearing the box on set navigation below — from arming a stray timer that
-// could later snap the page back to 1.
-watch(query, () => {
-  page.value = 1
-})
-
 // Navigating to a different set starts fresh (search + page).
-watch(code, () => {
-  clearTimeout(timer)
-  searchInput.value = ''
-  query.value = ''
-  page.value = 1
-})
+const { page, searchInput, query } = useCardSearch(code)
 
 const setQuery = useQuery({
   queryKey: ['set', game, code],
@@ -64,6 +39,8 @@ const cardsQuery = useQuery({
 const set = computed(() => setQuery.data.value)
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
+// A malformed search query comes back as 422; surface its message inline.
+const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
 </script>
 
 <template>
@@ -94,11 +71,18 @@ const total = computed(() => cardsQuery.data.value?.total ?? 0)
             <template v-else-if="total"> · {{ total.toLocaleString() }} printings</template>
           </p>
         </div>
-        <div class="relative w-full sm:w-72">
-          <Search
-            class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-          />
-          <Input v-model="searchInput" placeholder="Search this set…" class="pl-9" />
+        <div class="w-full sm:w-80">
+          <div class="relative">
+            <Search
+              class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            />
+            <Input
+              v-model="searchInput"
+              placeholder="Search this set — c:r, t:land…"
+              class="pl-9"
+            />
+          </div>
+          <SearchSyntaxHint class="mt-1.5" />
         </div>
       </header>
 
@@ -110,7 +94,7 @@ const total = computed(() => cardsQuery.data.value?.total ?? 0)
         Loading cards…
       </div>
       <p v-else-if="cardsQuery.isError.value" class="text-destructive py-12">
-        Couldn't load cards. Please retry.
+        {{ searchError ?? "Couldn't load cards. Please retry." }}
       </p>
       <p v-else-if="!cards.length && query" class="text-muted-foreground py-12">
         No cards match “{{ query }}”.

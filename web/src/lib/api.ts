@@ -129,6 +129,10 @@ export interface CardFace {
   name: string | null
   mana_cost: string | null
   type_line: string | null
+  oracle_text: string | null
+  power: string | null
+  toughness: string | null
+  loyalty: string | null
 }
 
 export interface CardPrices {
@@ -151,6 +155,10 @@ export interface Card {
   mana_cost: string | null
   cmc: number | null
   type_line: string | null
+  oracle_text: string | null
+  power: string | null
+  toughness: string | null
+  loyalty: string | null
   color_identity: string[]
   colors: string[]
   layout: string | null
