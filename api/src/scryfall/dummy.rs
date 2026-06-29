@@ -39,17 +39,47 @@ struct Color {
 }
 
 const COLORS: &[Color] = &[
-    Color { code: "W", name: "White", mana: "{W}" },
-    Color { code: "U", name: "Blue", mana: "{U}" },
-    Color { code: "B", name: "Black", mana: "{B}" },
-    Color { code: "R", name: "Red", mana: "{R}" },
-    Color { code: "G", name: "Green", mana: "{G}" },
+    Color {
+        code: "W",
+        name: "White",
+        mana: "{W}",
+    },
+    Color {
+        code: "U",
+        name: "Blue",
+        mana: "{U}",
+    },
+    Color {
+        code: "B",
+        name: "Black",
+        mana: "{B}",
+    },
+    Color {
+        code: "R",
+        name: "Red",
+        mana: "{R}",
+    },
+    Color {
+        code: "G",
+        name: "Green",
+        mana: "{G}",
+    },
 ];
 
 const RARITIES: &[&str] = &["common", "uncommon", "rare", "mythic"];
 const NOUNS: &[&str] = &[
-    "Sentinel", "Drake", "Golem", "Wraith", "Phoenix", "Elemental", "Knight", "Serpent", "Beast",
-    "Sprite", "Warden", "Hydra",
+    "Sentinel",
+    "Drake",
+    "Golem",
+    "Wraith",
+    "Phoenix",
+    "Elemental",
+    "Knight",
+    "Serpent",
+    "Beast",
+    "Sprite",
+    "Warden",
+    "Hydra",
 ];
 const TYPES: &[&str] = &[
     "Creature — Construct",
@@ -134,7 +164,11 @@ struct SeedCard {
 
 impl SeedCard {
     fn into_scryfall(self) -> ScryfallCard {
-        let colors = if self.colors.is_empty() { None } else { Some(self.colors) };
+        let colors = if self.colors.is_empty() {
+            None
+        } else {
+            Some(self.colors)
+        };
         ScryfallCard {
             id: self.external_id,
             oracle_id: None,
@@ -264,7 +298,12 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
         cmc: Some(0.0),
         type_line: Some(format!("Token Creature — {noun}")),
         colors: vec![color.code.to_string()],
-        prices: Prices { usd: None, usd_foil: None, eur: None, tix: None },
+        prices: Prices {
+            usd: None,
+            usd_foil: None,
+            eur: None,
+            tix: None,
+        },
         card_faces: None,
     }
     .into_scryfall()
@@ -280,8 +319,18 @@ fn dummy_cards() -> Vec<ScryfallCard> {
         cards.push(numbered_card(&BASE_SET, n));
     }
     cards.push(transform_card(&BASE_SET, BASE_NUMBERED + 1));
-    cards.push(special_card(&BASE_SET, BASE_NUMBERED + 2, "★", "Dummy Starlit Promo"));
-    cards.push(special_card(&BASE_SET, BASE_NUMBERED + 3, "P1", "Dummy Prerelease Promo"));
+    cards.push(special_card(
+        &BASE_SET,
+        BASE_NUMBERED + 2,
+        "★",
+        "Dummy Starlit Promo",
+    ));
+    cards.push(special_card(
+        &BASE_SET,
+        BASE_NUMBERED + 3,
+        "P1",
+        "Dummy Prerelease Promo",
+    ));
 
     // A second standalone set (a single page).
     for n in 1..=12 {
@@ -344,14 +393,21 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     let started = Utc::now();
     let cards = dummy_cards();
     let sets = dummy_sets(&cards);
-    tracing::info!(sets = sets.len(), cards = cards.len(), "seeding dummy {GAME} catalog");
+    tracing::info!(
+        sets = sets.len(),
+        cards = cards.len(),
+        "seeding dummy {GAME} catalog"
+    );
 
     // Reuse the real set/card mapping + upsert path so dummy rows are shaped exactly
     // like imported ones (and no on_conflict column list is duplicated here).
     let sets_imported = ingest::import_sets(db, &sets).await?;
 
     let now = Utc::now();
-    let models: Vec<card::ActiveModel> = cards.into_iter().map(|c| ingest::map_card(c, now)).collect();
+    let models: Vec<card::ActiveModel> = cards
+        .into_iter()
+        .map(|c| ingest::map_card(c, now))
+        .collect();
     let cards_imported = models.len() as i32;
     let mut iter = models.into_iter();
     loop {
@@ -379,7 +435,11 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         Some(Utc::now()),
     )
     .await?;
-    tracing::info!(sets = sets_imported, cards = cards_imported, "dummy catalog seed complete");
+    tracing::info!(
+        sets = sets_imported,
+        cards = cards_imported,
+        "dummy catalog seed complete"
+    );
     Ok(())
 }
 
@@ -389,14 +449,20 @@ mod tests {
     use std::collections::HashSet;
 
     fn set_codes() -> HashSet<String> {
-        dummy_sets(&dummy_cards()).into_iter().map(|s| s.code).collect()
+        dummy_sets(&dummy_cards())
+            .into_iter()
+            .map(|s| s.code)
+            .collect()
     }
 
     #[test]
     fn generators_are_deterministic() {
         let a: Vec<String> = dummy_cards().into_iter().map(|c| c.id).collect();
         let b: Vec<String> = dummy_cards().into_iter().map(|c| c.id).collect();
-        assert_eq!(a, b, "card ids must be stable across calls so reseed is idempotent");
+        assert_eq!(
+            a, b,
+            "card ids must be stable across calls so reseed is idempotent"
+        );
         // Pin concrete values so a change to the id/name scheme is caught, not just
         // within-process equality (which is tautological with no randomness).
         assert_eq!(card_id("dmb", 7), "dummy-dmb-0007");
@@ -410,14 +476,23 @@ mod tests {
     fn external_ids_are_unique() {
         let ids: Vec<String> = dummy_cards().into_iter().map(|c| c.id).collect();
         let unique: HashSet<&String> = ids.iter().collect();
-        assert_eq!(ids.len(), unique.len(), "every dummy card needs a unique external id");
+        assert_eq!(
+            ids.len(),
+            unique.len(),
+            "every dummy card needs a unique external id"
+        );
     }
 
     #[test]
     fn every_card_belongs_to_a_seeded_set() {
         let codes = set_codes();
         for card in dummy_cards() {
-            assert!(codes.contains(&card.set), "card {} references unseeded set {}", card.id, card.set);
+            assert!(
+                codes.contains(&card.set),
+                "card {} references unseeded set {}",
+                card.id,
+                card.set
+            );
         }
     }
 
@@ -440,20 +515,30 @@ mod tests {
         let cards = dummy_cards();
         for set in dummy_sets(&cards) {
             let n = cards.iter().filter(|c| c.set == set.code).count() as i64;
-            assert_eq!(set.card_count, Some(n), "card_count for {} must match seeded cards", set.code);
+            assert_eq!(
+                set.card_count,
+                Some(n),
+                "card_count for {} must match seeded cards",
+                set.code
+            );
         }
     }
 
     #[test]
     fn base_set_exceeds_one_page() {
         let base = dummy_cards().into_iter().filter(|c| c.set == "dmb").count();
-        assert!(base > 60, "base set ({base}) should exceed one page to exercise pagination");
+        assert!(
+            base > 60,
+            "base set ({base}) should exceed one page to exercise pagination"
+        );
     }
 
     #[test]
     fn has_a_multifaced_card() {
         assert!(
-            dummy_cards().iter().any(|c| c.card_faces.as_ref().is_some_and(|f| f.len() >= 2)),
+            dummy_cards()
+                .iter()
+                .any(|c| c.card_faces.as_ref().is_some_and(|f| f.len() >= 2)),
             "expected at least one multi-faced card to exercise the faces path",
         );
     }
@@ -462,9 +547,16 @@ mod tests {
     fn a_child_set_points_at_its_parent() {
         let sets = dummy_sets(&dummy_cards());
         let codes: HashSet<String> = sets.iter().map(|s| s.code.clone()).collect();
-        let child = sets.iter().find(|s| s.parent_set_code.is_some()).expect("a child set exists");
+        let child = sets
+            .iter()
+            .find(|s| s.parent_set_code.is_some())
+            .expect("a child set exists");
         let parent = child.parent_set_code.as_ref().unwrap();
-        assert!(codes.contains(parent), "child {}'s parent {parent} must also be seeded", child.code);
+        assert!(
+            codes.contains(parent),
+            "child {}'s parent {parent} must also be seeded",
+            child.code
+        );
     }
 
     #[test]
@@ -472,10 +564,18 @@ mod tests {
         // The offline guarantee: no image URLs anywhere, so `has_image` is false and
         // the image proxy is never reached.
         for card in dummy_cards() {
-            assert!(card.image_uris.is_none(), "{} must not have a top-level image", card.id);
+            assert!(
+                card.image_uris.is_none(),
+                "{} must not have a top-level image",
+                card.id
+            );
             if let Some(faces) = &card.card_faces {
                 for face in faces {
-                    assert!(face.image_uris.is_none(), "{} face must not have an image", card.id);
+                    assert!(
+                        face.image_uris.is_none(),
+                        "{} face must not have an image",
+                        card.id
+                    );
                 }
             }
         }
@@ -485,9 +585,11 @@ mod tests {
     fn some_card_has_a_non_numeric_collector_number() {
         // At least one non-numeric collector number exercises the NULLS-LAST sort.
         assert!(
-            dummy_cards()
-                .iter()
-                .any(|c| c.collector_number.chars().next().is_some_and(|ch| !ch.is_ascii_digit())),
+            dummy_cards().iter().any(|c| c
+                .collector_number
+                .chars()
+                .next()
+                .is_some_and(|ch| !ch.is_ascii_digit())),
             "expected a non-numeric collector number",
         );
     }
@@ -499,15 +601,27 @@ mod tests {
         use sea_orm::{ColumnTrait, Database, EntityTrait, PaginatorTrait, QueryFilter};
         use sea_orm_migration::MigratorTrait;
 
-        let db = Database::connect("sqlite::memory:").await.expect("connect to in-memory sqlite");
-        crate::migrator::Migrator::up(&db, None).await.expect("run migrations");
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect to in-memory sqlite");
+        crate::migrator::Migrator::up(&db, None)
+            .await
+            .expect("run migrations");
 
         seed(&db).await.expect("seed succeeds");
 
         let expected_cards = dummy_cards().len() as u64;
         let expected_sets = dummy_sets(&dummy_cards()).len() as u64;
-        let cards = Card::find().filter(card::Column::Game.eq(GAME)).count(&db).await.unwrap();
-        let sets = CardSet::find().filter(card_set::Column::Game.eq(GAME)).count(&db).await.unwrap();
+        let cards = Card::find()
+            .filter(card::Column::Game.eq(GAME))
+            .count(&db)
+            .await
+            .unwrap();
+        let sets = CardSet::find()
+            .filter(card_set::Column::Game.eq(GAME))
+            .count(&db)
+            .await
+            .unwrap();
         assert_eq!(cards, expected_cards);
         assert_eq!(sets, expected_sets);
 
@@ -546,8 +660,16 @@ mod tests {
         // Re-seeding upserts the same rows rather than inserting duplicates, and keeps
         // exactly one ingest_state row per game (the status route's `.one()` needs it).
         seed(&db).await.expect("reseed succeeds");
-        let cards_again = Card::find().filter(card::Column::Game.eq(GAME)).count(&db).await.unwrap();
-        let sets_again = CardSet::find().filter(card_set::Column::Game.eq(GAME)).count(&db).await.unwrap();
+        let cards_again = Card::find()
+            .filter(card::Column::Game.eq(GAME))
+            .count(&db)
+            .await
+            .unwrap();
+        let sets_again = CardSet::find()
+            .filter(card_set::Column::Game.eq(GAME))
+            .count(&db)
+            .await
+            .unwrap();
         assert_eq!(cards_again, expected_cards, "reseed must be idempotent");
         assert_eq!(sets_again, expected_sets, "reseed must not add sets");
         let state_rows = IngestState::find()
@@ -555,6 +677,10 @@ mod tests {
             .all(&db)
             .await
             .unwrap();
-        assert_eq!(state_rows.len(), 1, "reseed must upsert the single status row");
+        assert_eq!(
+            state_rows.len(),
+            1,
+            "reseed must upsert the single status row"
+        );
     }
 }

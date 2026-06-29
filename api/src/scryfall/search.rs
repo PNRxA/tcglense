@@ -21,9 +21,9 @@
 //! 3. **Bounded work.** Token count and parenthesis depth are capped so the
 //!    public, unauthenticated search route can't be driven into pathological work.
 
+use sea_orm::Condition;
 use sea_orm::Value;
 use sea_orm::sea_query::{Expr, SimpleExpr};
-use sea_orm::Condition;
 
 use crate::error::AppError;
 
@@ -71,7 +71,11 @@ pub enum SearchError {
     #[error("filter '{key}' does not support the '{op}' operator")]
     UnsupportedOperator { key: String, op: Op },
     #[error("invalid value '{value}' for '{key}': {reason}")]
-    InvalidValue { key: String, value: String, reason: String },
+    InvalidValue {
+        key: String,
+        value: String,
+        reason: String,
+    },
     #[error("search query is too complex")]
     TooComplex,
 }
@@ -83,11 +87,18 @@ impl From<SearchError> for AppError {
 }
 
 fn invalid(key: &str, value: &str, reason: &str) -> SearchError {
-    SearchError::InvalidValue { key: key.to_string(), value: value.to_string(), reason: reason.to_string() }
+    SearchError::InvalidValue {
+        key: key.to_string(),
+        value: value.to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 fn unsupported_op(key: &str, op: Op) -> SearchError {
-    SearchError::UnsupportedOperator { key: key.to_string(), op }
+    SearchError::UnsupportedOperator {
+        key: key.to_string(),
+        op,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +353,11 @@ struct Parser {
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0, depth: 0 }
+        Parser {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -360,7 +375,9 @@ impl Parser {
     fn parse_query(&mut self) -> Result<Node, SearchError> {
         let node = self.or_expr()?;
         if self.pos < self.tokens.len() {
-            return Err(SearchError::UnexpectedToken(describe(&self.tokens[self.pos])));
+            return Err(SearchError::UnexpectedToken(describe(
+                &self.tokens[self.pos],
+            )));
         }
         Ok(node)
     }
@@ -371,7 +388,11 @@ impl Parser {
             self.bump();
             parts.push(self.and_expr()?);
         }
-        Ok(if parts.len() == 1 { parts.pop().unwrap() } else { Node::Or(parts) })
+        Ok(if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            Node::Or(parts)
+        })
     }
 
     fn and_expr(&mut self) -> Result<Node, SearchError> {
@@ -386,7 +407,11 @@ impl Parser {
                 _ => break,
             }
         }
-        Ok(if parts.len() == 1 { parts.pop().unwrap() } else { Node::And(parts) })
+        Ok(if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            Node::And(parts)
+        })
     }
 
     fn unary(&mut self) -> Result<Node, SearchError> {
@@ -396,7 +421,11 @@ impl Parser {
             negate = !negate;
         }
         let node = self.primary()?;
-        Ok(if negate { Node::Not(Box::new(node)) } else { node })
+        Ok(if negate {
+            Node::Not(Box::new(node))
+        } else {
+            node
+        })
     }
 
     fn primary(&mut self) -> Result<Node, SearchError> {
@@ -419,19 +448,27 @@ impl Parser {
                 Ok(inner)
             }
             Some(Token::Filter { .. }) => {
-                let Some(Token::Filter { key, op, value }) = self.bump() else { unreachable!() };
+                let Some(Token::Filter { key, op, value }) = self.bump() else {
+                    unreachable!()
+                };
                 Ok(Node::Leaf(Leaf::Filter { key, op, value }))
             }
             Some(Token::Word(_)) => {
-                let Some(Token::Word(s)) = self.bump() else { unreachable!() };
+                let Some(Token::Word(s)) = self.bump() else {
+                    unreachable!()
+                };
                 Ok(Node::Leaf(Leaf::Name(s)))
             }
             Some(Token::Phrase(_)) => {
-                let Some(Token::Phrase(s)) = self.bump() else { unreachable!() };
+                let Some(Token::Phrase(s)) = self.bump() else {
+                    unreachable!()
+                };
                 Ok(Node::Leaf(Leaf::Name(s)))
             }
             Some(Token::Exact(_)) => {
-                let Some(Token::Exact(s)) = self.bump() else { unreachable!() };
+                let Some(Token::Exact(s)) = self.bump() else {
+                    unreachable!()
+                };
                 Ok(Node::Leaf(Leaf::ExactName(s)))
             }
             Some(other) => Err(SearchError::UnexpectedToken(describe(other))),
@@ -605,7 +642,9 @@ fn cmc(op: Op, value: &str) -> Result<Condition, SearchError> {
         );
         return Ok(cond_one(Expr::cust(sql)));
     }
-    let n: f64 = value.parse().map_err(|_| invalid("cmc", value, "expected a number"))?;
+    let n: f64 = value
+        .parse()
+        .map_err(|_| invalid("cmc", value, "expected a number"))?;
     let sql = format!("(cmc IS NOT NULL AND cmc {} ?)", cmp_sql(op));
     Ok(cond_one(Expr::cust_with_values(sql, [n])))
 }
@@ -638,16 +677,23 @@ fn ptl(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
         return Ok(cond_one(Expr::cust(sql)));
     }
     match op {
-        Op::Colon | Op::Eq => {
-            Ok(cond_one(Expr::cust_with_values(format!("IFNULL({col}, '') = ?"), [value.to_string()])))
-        }
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            format!("IFNULL({col}, '') = ?"),
+            [value.to_string()],
+        ))),
         Op::Ne => Ok(cond_one(Expr::cust_with_values(
             format!("({col} IS NULL OR {col} <> ?)"),
             [value.to_string()],
         ))),
         Op::Gt | Op::Ge | Op::Lt | Op::Le => {
-            let n: f64 = value.parse().map_err(|_| invalid(key, value, "expected a number"))?;
-            let sql = format!("(({}) AND CAST({col} AS REAL) {} ?)", numeric_guard(col), cmp_sql(op));
+            let n: f64 = value
+                .parse()
+                .map_err(|_| invalid(key, value, "expected a number"))?;
+            let sql = format!(
+                "(({}) AND CAST({col} AS REAL) {} ?)",
+                numeric_guard(col),
+                cmp_sql(op)
+            );
             Ok(cond_one(Expr::cust_with_values(sql, [n])))
         }
     }
@@ -656,8 +702,13 @@ fn ptl(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
 // ----- prices (text decimal columns) -----
 
 fn price(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchError> {
-    let n: f64 = value.parse().map_err(|_| invalid(key, value, "expected a number"))?;
-    let sql = format!("({col} IS NOT NULL AND {col} <> '' AND CAST({col} AS REAL) {} ?)", cmp_sql(op));
+    let n: f64 = value
+        .parse()
+        .map_err(|_| invalid(key, value, "expected a number"))?;
+    let sql = format!(
+        "({col} IS NOT NULL AND {col} <> '' AND CAST({col} AS REAL) {} ?)",
+        cmp_sql(op)
+    );
     Ok(cond_one(Expr::cust_with_values(sql, [n])))
 }
 
@@ -668,8 +719,10 @@ fn year(op: Op, value: &str) -> Result<Condition, SearchError> {
         return Err(invalid("year", value, "expected a 4-digit year"));
     }
     let y: i32 = value.parse().unwrap();
-    let sql =
-        format!("(released_at IS NOT NULL AND CAST(substr(released_at, 1, 4) AS INTEGER) {} ?)", cmp_sql(op));
+    let sql = format!(
+        "(released_at IS NOT NULL AND CAST(substr(released_at, 1, 4) AS INTEGER) {} ?)",
+        cmp_sql(op)
+    );
     Ok(cond_one(Expr::cust_with_values(sql, [y])))
 }
 
@@ -678,12 +731,16 @@ fn is_iso_date(v: &str) -> bool {
     v.len() == 10
         && b[4] == b'-'
         && b[7] == b'-'
-        && v.char_indices().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+        && v.char_indices()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 fn date(op: Op, value: &str) -> Result<Condition, SearchError> {
     if is_iso_date(value) {
-        let sql = format!("(released_at IS NOT NULL AND released_at {} ?)", cmp_sql(op));
+        let sql = format!(
+            "(released_at IS NOT NULL AND released_at {} ?)",
+            cmp_sql(op)
+        );
         return Ok(cond_one(Expr::cust_with_values(sql, [value.to_string()])));
     }
     if value.len() == 4 && value.chars().all(|c| c.is_ascii_digit()) {
@@ -709,7 +766,11 @@ fn date(op: Op, value: &str) -> Result<Condition, SearchError> {
         };
         return Ok(cond);
     }
-    Err(invalid("date", value, "expected a date (YYYY-MM-DD) or a year"))
+    Err(invalid(
+        "date",
+        value,
+        "expected a date (YYYY-MM-DD) or a year",
+    ))
 }
 
 // ----- rarity -----
@@ -729,9 +790,10 @@ fn normalize_rarity(v: &str) -> Option<&'static str> {
 fn rarity(op: Op, value: &str) -> Result<Condition, SearchError> {
     let name = normalize_rarity(value).ok_or_else(|| invalid("rarity", value, "unknown rarity"))?;
     match op {
-        Op::Colon | Op::Eq => {
-            Ok(cond_one(Expr::cust_with_values("IFNULL(rarity, '') = ?".to_string(), [name.to_string()])))
-        }
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            "IFNULL(rarity, '') = ?".to_string(),
+            [name.to_string()],
+        ))),
         Op::Ne => Ok(cond_one(Expr::cust_with_values(
             "(rarity IS NULL OR rarity <> ?)".to_string(),
             [name.to_string()],
@@ -748,7 +810,10 @@ fn rarity(op: Op, value: &str) -> Result<Condition, SearchError> {
                 return Ok(cond_one(Expr::cust("1 = 0")));
             }
             let placeholders = vec!["?"; names.len()].join(", ");
-            Ok(cond_one(Expr::cust_with_values(format!("IFNULL(rarity, '') IN ({placeholders})"), names)))
+            Ok(cond_one(Expr::cust_with_values(
+                format!("IFNULL(rarity, '') IN ({placeholders})"),
+                names,
+            )))
         }
     }
 }
@@ -767,10 +832,14 @@ fn cmp_rank(rank: usize, op: Op, target: usize) -> bool {
 
 fn set(op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => {
-            Ok(cond_one(Expr::cust_with_values("set_code = ?".to_string(), [value.to_lowercase()])))
-        }
-        Op::Ne => Ok(cond_one(Expr::cust_with_values("set_code <> ?".to_string(), [value.to_lowercase()]))),
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            "set_code = ?".to_string(),
+            [value.to_lowercase()],
+        ))),
+        Op::Ne => Ok(cond_one(Expr::cust_with_values(
+            "set_code <> ?".to_string(),
+            [value.to_lowercase()],
+        ))),
         _ => Err(unsupported_op("set", op)),
     }
 }
@@ -789,8 +858,10 @@ fn collector_number(op: Op, value: &str) -> Result<Condition, SearchError> {
             let n: i32 = value
                 .parse()
                 .map_err(|_| invalid("cn", value, "range requires a numeric collector number"))?;
-            let sql =
-                format!("(collector_number_int IS NOT NULL AND collector_number_int {} ?)", cmp_sql(op));
+            let sql = format!(
+                "(collector_number_int IS NOT NULL AND collector_number_int {} ?)",
+                cmp_sql(op)
+            );
             Ok(cond_one(Expr::cust_with_values(sql, [n])))
         }
     }
@@ -821,7 +892,10 @@ fn lang(op: Op, value: &str) -> Result<Condition, SearchError> {
             if lower == "any" || lower == "*" {
                 return Ok(Condition::all());
             }
-            Ok(cond_one(Expr::cust_with_values("lang = ?".to_string(), [lang_code(&lower)])))
+            Ok(cond_one(Expr::cust_with_values(
+                "lang = ?".to_string(),
+                [lang_code(&lower)],
+            )))
         }
         _ => Err(unsupported_op("lang", op)),
     }
@@ -829,9 +903,10 @@ fn lang(op: Op, value: &str) -> Result<Condition, SearchError> {
 
 fn layout(op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => {
-            Ok(cond_one(Expr::cust_with_values("IFNULL(layout, '') = ?".to_string(), [value.to_lowercase()])))
-        }
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            "IFNULL(layout, '') = ?".to_string(),
+            [value.to_lowercase()],
+        ))),
         _ => Err(unsupported_op("layout", op)),
     }
 }
@@ -843,14 +918,19 @@ fn is_predicate(value: &str, negated: bool) -> Result<Condition, SearchError> {
     let positive: Condition = match v.as_str() {
         "split" | "flip" | "transform" | "meld" | "saga" | "leveler" | "adventure" | "emblem"
         | "class" | "case" | "battle" | "planar" | "scheme" | "vanguard" | "mutate"
-        | "prototype" | "augment" | "host" | "normal" => {
-            cond_one(Expr::cust_with_values("IFNULL(layout, '') = ?".to_string(), [v.clone()]))
+        | "prototype" | "augment" | "host" | "normal" => cond_one(Expr::cust_with_values(
+            "IFNULL(layout, '') = ?".to_string(),
+            [v.clone()],
+        )),
+        "mdfc" | "modaldfc" | "modal_dfc" => {
+            cond_one(Expr::cust("IFNULL(layout, '') = 'modal_dfc'"))
         }
-        "mdfc" | "modaldfc" | "modal_dfc" => cond_one(Expr::cust("IFNULL(layout, '') = 'modal_dfc'")),
-        "dfc" | "doublefaced" | "double_faced" => {
-            cond_one(Expr::cust("IFNULL(layout, '') IN ('transform', 'modal_dfc', 'meld', 'reversible_card')"))
-        }
-        "token" => cond_one(Expr::cust("IFNULL(layout, '') IN ('token', 'double_faced_token')")),
+        "dfc" | "doublefaced" | "double_faced" => cond_one(Expr::cust(
+            "IFNULL(layout, '') IN ('transform', 'modal_dfc', 'meld', 'reversible_card')",
+        )),
+        "token" => cond_one(Expr::cust(
+            "IFNULL(layout, '') IN ('token', 'double_faced_token')",
+        )),
         "colorless" => cond_one(Expr::cust("colors IS NULL")),
         "multicolored" | "multicolor" => {
             cond_one(Expr::cust("colors IS NOT NULL AND colors LIKE '%,%'"))
@@ -859,9 +939,9 @@ fn is_predicate(value: &str, negated: bool) -> Result<Condition, SearchError> {
             cond_one(Expr::cust("colors IS NOT NULL AND colors NOT LIKE '%,%'"))
         }
         "phyrexian" => cond_one(Expr::cust("IFNULL(mana_cost, '') LIKE '%/P}%'")),
-        "hybrid" => {
-            cond_one(Expr::cust("IFNULL(mana_cost, '') LIKE '%/%' AND IFNULL(mana_cost, '') NOT LIKE '%/P}%'"))
-        }
+        "hybrid" => cond_one(Expr::cust(
+            "IFNULL(mana_cost, '') LIKE '%/%' AND IFNULL(mana_cost, '') NOT LIKE '%/P}%'",
+        )),
         "digital" => cond_one(Expr::cust("1 = 0")),
         _ => {
             let prefix = if negated { "not" } else { "is" };
@@ -884,9 +964,10 @@ fn game(op: Op, value: &str) -> Result<Condition, SearchError> {
 
 fn oracleid(op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => {
-            Ok(cond_one(Expr::cust_with_values("IFNULL(oracle_id, '') = ?".to_string(), [value.to_string()])))
-        }
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            "IFNULL(oracle_id, '') = ?".to_string(),
+            [value.to_string()],
+        ))),
         Op::Ne => Ok(cond_one(Expr::cust_with_values(
             "(oracle_id IS NULL OR oracle_id <> ?)".to_string(),
             [value.to_string()],
@@ -953,7 +1034,9 @@ fn complement(q: &[char]) -> Vec<char> {
 fn parse_color_operand(key: &str, value: &str) -> Result<ColorOperand, SearchError> {
     let lower = value.to_lowercase();
     if !lower.is_empty() && lower.chars().all(|c| c.is_ascii_digit()) {
-        let n: i64 = lower.parse().map_err(|_| invalid(key, value, "expected a number"))?;
+        let n: i64 = lower
+            .parse()
+            .map_err(|_| invalid(key, value, "expected a number"))?;
         return Ok(ColorOperand::Count(n));
     }
     match lower.as_str() {
@@ -997,7 +1080,8 @@ fn lacks(col: &str, letter: char) -> SimpleExpr {
 }
 
 fn all_has(col: &str, q: &[char]) -> Condition {
-    q.iter().fold(Condition::all(), |cond, &x| cond.add(has(col, x)))
+    q.iter()
+        .fold(Condition::all(), |cond, &x| cond.add(has(col, x)))
 }
 
 /// The exact-set condition: has every colour in Q and lacks every other.
@@ -1018,9 +1102,9 @@ fn color(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchE
             Op::Lt => cond_one(Expr::cust("1 = 0")),
         }),
         ColorOperand::Multicolor => match op {
-            Op::Colon | Op::Ge | Op::Eq => {
-                Ok(cond_one(Expr::cust(format!("IFNULL({col}, '') LIKE '%,%'"))))
-            }
+            Op::Colon | Op::Ge | Op::Eq => Ok(cond_one(Expr::cust(format!(
+                "IFNULL({col}, '') LIKE '%,%'"
+            )))),
             _ => Err(unsupported_op(key, op)),
         },
         ColorOperand::Count(n) => {
@@ -1046,14 +1130,20 @@ fn color_letters(col: &str, op: Op, q: &[char]) -> Condition {
             if comp.is_empty() {
                 cond = cond.add(Expr::cust("1 = 0"));
             } else {
-                let extra = comp.iter().fold(Condition::any(), |c, &x| c.add(has(col, x)));
+                let extra = comp
+                    .iter()
+                    .fold(Condition::any(), |c, &x| c.add(has(col, x)));
                 cond = cond.add(extra);
             }
             cond
         }
-        Op::Le => comp.iter().fold(Condition::all(), |c, &x| c.add(lacks(col, x))),
+        Op::Le => comp
+            .iter()
+            .fold(Condition::all(), |c, &x| c.add(lacks(col, x))),
         Op::Lt => {
-            let subset = comp.iter().fold(Condition::all(), |c, &x| c.add(lacks(col, x)));
+            let subset = comp
+                .iter()
+                .fold(Condition::all(), |c, &x| c.add(lacks(col, x)));
             subset.add(all_has(col, q).not())
         }
     }
@@ -1113,7 +1203,11 @@ fn mana_tokens(value: &str) -> Result<Vec<String>, SearchError> {
             out.push(format!("{{{}}}", c.to_ascii_uppercase()));
             i += 1;
         } else {
-            return Err(invalid("mana", value, &format!("unexpected '{c}' in mana cost")));
+            return Err(invalid(
+                "mana",
+                value,
+                &format!("unexpected '{c}' in mana cost"),
+            ));
         }
     }
     Ok(out)
@@ -1383,13 +1477,22 @@ mod tests {
         assert!(matches!(err("kw:flying"), SearchError::UnsupportedKey(_)));
         assert!(matches!(err("f:modern"), SearchError::UnsupportedKey(_)));
         assert!(matches!(err("is:reprint"), SearchError::UnsupportedKey(_)));
-        assert!(matches!(err("set>dom"), SearchError::UnsupportedOperator { .. }));
-        assert!(matches!(err("mana<=2"), SearchError::UnsupportedOperator { .. }));
+        assert!(matches!(
+            err("set>dom"),
+            SearchError::UnsupportedOperator { .. }
+        ));
+        assert!(matches!(
+            err("mana<=2"),
+            SearchError::UnsupportedOperator { .. }
+        ));
         assert!(matches!(err("t:"), SearchError::MissingValue { .. }));
         assert!(matches!(err("cmc>=x"), SearchError::InvalidValue { .. }));
         assert!(matches!(err("c:x"), SearchError::InvalidValue { .. }));
         assert!(matches!(err("cn>=12a"), SearchError::InvalidValue { .. }));
-        assert!(matches!(err("r:legendary"), SearchError::InvalidValue { .. }));
+        assert!(matches!(
+            err("r:legendary"),
+            SearchError::InvalidValue { .. }
+        ));
         assert!(matches!(err(">=3"), SearchError::MissingKey));
         assert!(matches!(err("()"), SearchError::EmptyGroup));
         assert!(matches!(err("(c:r or c:u"), SearchError::UnbalancedParen));
@@ -1430,7 +1533,10 @@ mod tests {
 
     #[test]
     fn cmc_parity_rejects_relational_operator() {
-        assert!(matches!(parse("mv>even"), Err(SearchError::UnsupportedOperator { .. })));
+        assert!(matches!(
+            parse("mv>even"),
+            Err(SearchError::UnsupportedOperator { .. })
+        ));
         assert!(sql("mv:even").contains("% 2 = 0"));
     }
 

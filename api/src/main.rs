@@ -208,7 +208,5 @@ async fn main() {
 
     tracing::info!("TCGLense API listening on http://{host}:{port}");
 
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await.expect("server error");
 }

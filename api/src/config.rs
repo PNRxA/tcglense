@@ -39,7 +39,10 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("database_url", &self.database_url)
             .field("jwt_secret", &"[redacted]")
-            .field("access_token_expiry_minutes", &self.access_token_expiry_minutes)
+            .field(
+                "access_token_expiry_minutes",
+                &self.access_token_expiry_minutes,
+            )
             .field("refresh_token_expiry_days", &self.refresh_token_expiry_days)
             .field("cookie_secure", &self.cookie_secure)
             .field("host", &self.host)
@@ -160,9 +163,7 @@ impl Config {
         let scryfall_user_agent = env::var("SCRYFALL_USER_AGENT")
             .ok()
             .filter(|u| !u.trim().is_empty())
-            .unwrap_or_else(|| {
-                "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string()
-            });
+            .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
 
         // Importing card data is the default; tests and offline runs disable it.
         let sync_on_startup = env::var("SYNC_ON_STARTUP")

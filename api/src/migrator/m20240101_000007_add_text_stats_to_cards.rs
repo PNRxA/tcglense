@@ -18,16 +18,31 @@ impl MigrationTrait for Migration {
             ColumnDef::new(Cards::Loyalty).string().null().to_owned(),
         ] {
             manager
-                .alter_table(Table::alter().table(Cards::Table).add_column(column).to_owned())
+                .alter_table(
+                    Table::alter()
+                        .table(Cards::Table)
+                        .add_column(column)
+                        .to_owned(),
+                )
                 .await?;
         }
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        for column in [Cards::OracleText, Cards::Power, Cards::Toughness, Cards::Loyalty] {
+        for column in [
+            Cards::OracleText,
+            Cards::Power,
+            Cards::Toughness,
+            Cards::Loyalty,
+        ] {
             manager
-                .alter_table(Table::alter().table(Cards::Table).drop_column(column).to_owned())
+                .alter_table(
+                    Table::alter()
+                        .table(Cards::Table)
+                        .drop_column(column)
+                        .to_owned(),
+                )
                 .await?;
         }
         Ok(())

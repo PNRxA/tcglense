@@ -197,7 +197,10 @@ pub struct ListParams {
 impl ListParams {
     fn page_and_size(&self) -> (u64, u64) {
         let page = self.page.unwrap_or(1).max(1);
-        let page_size = self.page_size.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
+        let page_size = self
+            .page_size
+            .unwrap_or(DEFAULT_PAGE_SIZE)
+            .clamp(1, MAX_PAGE_SIZE);
         (page, page_size)
     }
 
@@ -332,7 +335,11 @@ pub async fn list_set_cards(
     }
     let paginator = query
         // Numeric collector order; cards without a leading digit (NULL int) sort last.
-        .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last)
+        .order_by_with_nulls(
+            card::Column::CollectorNumberInt,
+            Order::Asc,
+            NullOrdering::Last,
+        )
         .order_by_asc(card::Column::CollectorNumber)
         .paginate(&state.db, page_size);
 
@@ -586,7 +593,9 @@ mod tests {
 
     #[test]
     fn image_url_allowlist() {
-        assert!(is_allowed_image_url("https://cards.scryfall.io/normal/front/0/0/x.jpg"));
+        assert!(is_allowed_image_url(
+            "https://cards.scryfall.io/normal/front/0/0/x.jpg"
+        ));
         assert!(is_allowed_image_url("https://scryfall.io/x.png"));
         assert!(!is_allowed_image_url("http://cards.scryfall.io/x.jpg")); // not https
         assert!(!is_allowed_image_url("https://evil.example.com/x.jpg")); // wrong host
@@ -596,9 +605,17 @@ mod tests {
 
     #[test]
     fn list_params_clamps_page_size() {
-        let p = ListParams { page: Some(0), page_size: Some(9999), q: None };
+        let p = ListParams {
+            page: Some(0),
+            page_size: Some(9999),
+            q: None,
+        };
         assert_eq!(p.page_and_size(), (1, MAX_PAGE_SIZE));
-        let d = ListParams { page: None, page_size: None, q: Some("  ".into()) };
+        let d = ListParams {
+            page: None,
+            page_size: None,
+            q: Some("  ".into()),
+        };
         assert_eq!(d.page_and_size(), (1, DEFAULT_PAGE_SIZE));
         assert_eq!(d.search(), None);
     }

@@ -14,7 +14,8 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, prelude::DateTimeUtc,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -75,7 +76,9 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         .await?
         .into_iter()
         .find(|b| b.kind == DATASET)
-        .ok_or_else(|| IngestError::Other(format!("scryfall bulk dataset '{DATASET}' not found")))?;
+        .ok_or_else(|| {
+            IngestError::Other(format!("scryfall bulk dataset '{DATASET}' not found"))
+        })?;
 
     // Skip if we already imported this exact version.
     let existing = IngestState::find()
@@ -97,7 +100,17 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         size_mb = entry.size.unwrap_or(0) / 1_000_000,
         "importing scryfall {DATASET}"
     );
-    put_state(db, Some(entry.updated_at.clone()), "running", Some("importing sets".into()), 0, 0, Some(started), None).await?;
+    put_state(
+        db,
+        Some(entry.updated_at.clone()),
+        "running",
+        Some("importing sets".into()),
+        0,
+        0,
+        Some(started),
+        None,
+    )
+    .await?;
 
     // Sets first, so cards can reference stored sets.
     let sets = client::all_sets(client).await?;
@@ -151,7 +164,11 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         Some(Utc::now()),
     )
     .await?;
-    tracing::info!(sets = sets_imported, cards = cards_imported, "scryfall import complete");
+    tracing::info!(
+        sets = sets_imported,
+        cards = cards_imported,
+        "scryfall import complete"
+    );
     Ok(())
 }
 
@@ -373,7 +390,12 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
     };
 
     let (price_usd, price_usd_foil, price_eur, price_tix) = match &card.prices {
-        Some(p) => (p.usd.clone(), p.usd_foil.clone(), p.eur.clone(), p.tix.clone()),
+        Some(p) => (
+            p.usd.clone(),
+            p.usd_foil.clone(),
+            p.eur.clone(),
+            p.tix.clone(),
+        ),
         None => (None, None, None, None),
     };
 
@@ -396,9 +418,18 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
             (!joined.is_empty()).then_some(joined)
         })
     });
-    let power = card.power.clone().or_else(|| face_stat(&card.card_faces, |f| &f.power));
-    let toughness = card.toughness.clone().or_else(|| face_stat(&card.card_faces, |f| &f.toughness));
-    let loyalty = card.loyalty.clone().or_else(|| face_stat(&card.card_faces, |f| &f.loyalty));
+    let power = card
+        .power
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.power));
+    let toughness = card
+        .toughness
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.toughness));
+    let loyalty = card
+        .loyalty
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.loyalty));
 
     card::ActiveModel {
         id: NotSet,
@@ -534,7 +565,10 @@ mod tests {
         // Set code is lowercased so it matches stored sets.
         assert_eq!(model.set_code.as_ref(), "m19");
         assert_eq!(model.color_identity.as_ref().as_deref(), Some("G"));
-        assert_eq!(model.image_normal.as_ref().as_deref(), Some("https://img/normal.jpg"));
+        assert_eq!(
+            model.image_normal.as_ref().as_deref(),
+            Some("https://img/normal.jpg")
+        );
         assert_eq!(model.price_usd.as_ref().as_deref(), Some("0.25"));
         assert_eq!(model.oracle_text.as_ref().as_deref(), Some("{T}: Add {G}."));
         assert_eq!(model.power.as_ref().as_deref(), Some("1"));
@@ -549,7 +583,10 @@ mod tests {
         let scry: ScryfallCard = serde_json::from_str(dfc).unwrap();
         let model = map_card(scry, Utc::now());
         // Falls back to the front face for the listing thumbnail.
-        assert_eq!(model.image_normal.as_ref().as_deref(), Some("https://img/front.jpg"));
+        assert_eq!(
+            model.image_normal.as_ref().as_deref(),
+            Some("https://img/front.jpg")
+        );
         // Both faces are persisted as JSON.
         let faces = model.card_faces.as_ref().clone().unwrap();
         assert!(faces.contains("Insectile Aberration"));
@@ -566,7 +603,10 @@ mod tests {
     fn join_colors_handles_empty_and_present() {
         assert_eq!(join_colors(&None), None);
         assert_eq!(join_colors(&Some(vec![])), None);
-        assert_eq!(join_colors(&Some(vec!["W".into(), "U".into()])), Some("W,U".to_string()));
+        assert_eq!(
+            join_colors(&Some(vec!["W".into(), "U".into()])),
+            Some("W,U".to_string())
+        );
     }
 
     #[test]

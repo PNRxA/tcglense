@@ -32,9 +32,7 @@ impl FromRequestParts<AppState> for AuthUser {
             .strip_prefix("Bearer ")
             .map(str::trim)
             .filter(|t| !t.is_empty())
-            .ok_or_else(|| {
-                AppError::Unauthorized("malformed authorization header".to_string())
-            })?;
+            .ok_or_else(|| AppError::Unauthorized("malformed authorization header".to_string()))?;
 
         let claims = decode_token(token, &state.config)?;
 

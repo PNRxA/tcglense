@@ -251,12 +251,7 @@ async fn issue_rotated_access_token(
     state: &AppState,
     presented: &str,
 ) -> Result<(String, String), AppError> {
-    let rotated = rotate(
-        &state.db,
-        presented,
-        state.config.refresh_token_expiry_days,
-    )
-    .await?;
+    let rotated = rotate(&state.db, presented, state.config.refresh_token_expiry_days).await?;
 
     let user = User::find_by_id(rotated.user_id)
         .one(&state.db)
@@ -285,10 +280,5 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoR
 
 /// `GET /api/auth/me`
 pub async fn me(AuthUser(user): AuthUser) -> Result<impl IntoResponse, AppError> {
-    Ok((
-        StatusCode::OK,
-        Json(MeResponse {
-            user: user.into(),
-        }),
-    ))
+    Ok((StatusCode::OK, Json(MeResponse { user: user.into() })))
 }
