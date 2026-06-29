@@ -26,6 +26,11 @@ pub struct Config {
     /// Defaults to 24 (daily); `0` disables the periodic refresh (startup only).
     /// Only takes effect when `sync_on_startup` is enabled.
     pub sync_interval_hours: u64,
+    /// Seed a small dummy offline catalog instead of importing real card data.
+    /// When true this takes precedence over `sync_on_startup`/`sync_interval_hours`:
+    /// the server inserts deterministic fake sets/cards on boot and performs NO
+    /// network sync. For offline dev, CI, and tests; never enable in production.
+    pub seed_dummy_data: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -43,6 +48,7 @@ impl std::fmt::Debug for Config {
             .field("scryfall_user_agent", &self.scryfall_user_agent)
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
+            .field("seed_dummy_data", &self.seed_dummy_data)
             .finish()
     }
 }
@@ -177,6 +183,18 @@ impl Config {
             .and_then(|v| v.trim().parse::<u64>().ok())
             .unwrap_or(24);
 
+        // Seed a dummy offline catalog instead of syncing real data. Parsed like the
+        // other boolean flags; main.rs gives it precedence over the sync settings.
+        let seed_dummy_data = env::var("SEED_DUMMY_DATA")
+            .ok()
+            .map(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+
         Config {
             database_url,
             jwt_secret,
@@ -189,6 +207,7 @@ impl Config {
             scryfall_user_agent,
             sync_on_startup,
             sync_interval_hours,
+            seed_dummy_data,
         }
     }
 }
@@ -211,6 +230,7 @@ mod tests {
             scryfall_user_agent: "TCGLense/test".to_string(),
             sync_on_startup: false,
             sync_interval_hours: 24,
+            seed_dummy_data: false,
         };
 
         let rendered = format!("{config:?}");

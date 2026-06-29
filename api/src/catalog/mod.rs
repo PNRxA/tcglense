@@ -1,9 +1,10 @@
 //! Game-agnostic card catalog.
 //!
-//! Holds the registry of supported trading-card games and the entry point for
-//! refreshing their card data. Adding a TCG is two steps: add a [`Game`] entry
-//! here and route it to a provider in [`refresh_all`]. Everything downstream
-//! (entities, handlers, routes, the SPA) is already generic over `game`.
+//! Holds the registry of supported trading-card games and the entry points for
+//! refreshing their card data ([`refresh_all`]) or seeding a dummy offline catalog
+//! ([`seed_all`]). Adding a TCG is two steps: add a [`Game`] entry here and route it
+//! to a provider in those dispatchers. Everything downstream (entities, handlers,
+//! routes, the SPA) is already generic over `game`.
 
 pub mod images;
 
@@ -48,6 +49,25 @@ pub async fn refresh_all(db: &DatabaseConnection, client: &Client) {
         };
         if let Err(err) = result {
             tracing::error!(game = game.id, error = %err, "card data refresh failed");
+        }
+    }
+}
+
+/// Seed a dummy offline catalog for every supported game. Mirrors [`refresh_all`]
+/// but takes no HTTP client — seeding never touches the network — and dispatches per
+/// game to its provider's offline seeder. A failure for one game is logged and does
+/// not abort the others.
+pub async fn seed_all(db: &DatabaseConnection) {
+    for game in GAMES {
+        let result = match game.id {
+            crate::scryfall::GAME => crate::scryfall::seed(db).await,
+            other => {
+                tracing::warn!(game = other, "no dummy seeder wired for game; skipping");
+                continue;
+            }
+        };
+        if let Err(err) = result {
+            tracing::error!(game = game.id, error = %err, "dummy catalog seed failed");
         }
     }
 }

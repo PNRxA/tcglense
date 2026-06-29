@@ -77,6 +77,7 @@ mod tests {
             scryfall_user_agent: "TCGLense/test".to_string(),
             sync_on_startup: false,
             sync_interval_hours: 24,
+            seed_dummy_data: false,
         }
     }
 
