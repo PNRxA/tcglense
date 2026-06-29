@@ -2,13 +2,15 @@
 import { computed, toRef } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { ArrowLeft, Loader2 } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import CardImage from '@/components/cards/CardImage.vue'
 import { getCard } from '@/lib/api'
 
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
+
+const router = useRouter()
 
 const cardQuery = useQuery({
   queryKey: ['card', game, id],
@@ -17,6 +19,37 @@ const cardQuery = useQuery({
 })
 
 const card = computed(() => cardQuery.data.value)
+
+// The in-app location we arrived from, captured once as this view mounts. vue-router
+// records the previous entry's path in history state (null on a direct load or a
+// freshly-opened tab). We resolve it to a route so the back link can mirror the
+// user's actual path — the all-cards list, a search, or a set page — rather than
+// always pointing at the set (issue #18). Falls back to the card's set otherwise.
+const cameFrom = router.options.history.state.back
+const cameFromRoute = typeof cameFrom === 'string' ? router.resolve(cameFrom) : null
+
+// Labels for the catalog list routes a card is reachable from, keyed by route name.
+const FROM_LABELS: Record<string, string> = {
+  'game-cards': 'All cards',
+  game: 'All sets',
+}
+
+const backLink = computed(() => {
+  // Honour the previous page only when it's an in-app catalog list for this game;
+  // a deep link or an unrelated referrer falls through to the set page below.
+  if (cameFromRoute && cameFromRoute.params.game === game.value) {
+    if (cameFromRoute.name === 'set') {
+      // Came from a set page: every card there is in that set, so the set name fits.
+      return { to: cameFromRoute.fullPath, label: card.value?.set_name ?? 'Set' }
+    }
+    const label = FROM_LABELS[cameFromRoute.name as string]
+    if (label) return { to: cameFromRoute.fullPath, label }
+  }
+  return {
+    to: card.value ? `/cards/${game.value}/sets/${card.value.set_code}` : `/cards/${game.value}`,
+    label: card.value?.set_name ?? 'Back',
+  }
+})
 
 // Layouts whose faces carry their OWN images (so we render one image per face).
 // Split / flip / adventure / aftermath also have two faces, but only a single
@@ -61,11 +94,11 @@ const priceRows = computed(() => {
 
     <template v-else-if="card">
       <RouterLink
-        :to="`/cards/${game}/sets/${card.set_code}`"
+        :to="backLink.to"
         class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
       >
         <ArrowLeft class="size-4" />
-        {{ card.set_name }}
+        {{ backLink.label }}
       </RouterLink>
 
       <div class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
