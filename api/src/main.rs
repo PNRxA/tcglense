@@ -54,6 +54,7 @@ async fn main() {
     let port = config.port;
     let database_url = config.database_url.clone();
     let sync_on_startup = config.sync_on_startup;
+    let sync_interval_hours = config.sync_interval_hours;
     let image_dir = config.data_dir.join("images");
 
     // Connect to the database and run migrations.
@@ -118,12 +119,34 @@ async fn main() {
     }
 
     // Import card data from each provider in the background so the server is
-    // available immediately; the SPA shows import progress via the status route.
+    // available immediately (the SPA shows import progress via the status route),
+    // then re-import on a fixed interval to pick up Scryfall's newer prices/sets.
+    // The import is idempotent and version-gated, so a tick with no upstream change
+    // is cheap (a small bulk-data catalog check, no ~500 MB download).
     if sync_on_startup {
         let db = state.db.clone();
         let http = http.clone();
         tokio::spawn(async move {
-            catalog::refresh_all(&db, &http).await;
+            if sync_interval_hours == 0 {
+                // Periodic refresh disabled: import once on startup only.
+                catalog::refresh_all(&db, &http).await;
+                return;
+            }
+            // saturating_mul so an absurd SYNC_INTERVAL_HOURS can't overflow the
+            // u64: an overflow panics in debug and, worse, can wrap to a zero period
+            // in release — which tokio::time::interval itself panics on, slipping
+            // past the `== 0` guard above.
+            let period = Duration::from_secs(sync_interval_hours.saturating_mul(60 * 60));
+            let mut ticker = tokio::time::interval(period);
+            // If a refresh ever runs long, skip the ticks it overran rather than
+            // firing them back-to-back (the default Burst behaviour would).
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                // The first tick fires immediately (the startup import), then every
+                // `sync_interval_hours` thereafter.
+                ticker.tick().await;
+                catalog::refresh_all(&db, &http).await;
+            }
         });
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");

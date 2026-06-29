@@ -165,8 +165,8 @@ catalogue — images are cached lazily, on view. Set icons are cached the same w
 ## Backend structure (`api/src/`)
 
 ```
-main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → spawn card-data import → router → serve
-config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP); Debug redacts the secret
+main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → spawn periodic card-data import (daily) → router → serve
+config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS); Debug redacts the secret
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
@@ -194,9 +194,11 @@ handlers/
 discriminator column; the catalog layer + routes are generic. Adding a TCG = add a
 `Game` to `catalog::GAMES`, a provider module (like `scryfall/`), and one arm in
 `catalog::refresh_all`. On startup `main.rs` spawns `catalog::refresh_all` in the
-background (gated by `SYNC_ON_STARTUP`) so the server is up immediately; the import
-streams the bulk file with bounded memory and **skips re-import when the provider's
-`updated_at` is unchanged** (`ingest_state.source_updated_at`).
+background (gated by `SYNC_ON_STARTUP`) so the server is up immediately, then
+re-runs it on a fixed interval (`SYNC_INTERVAL_HOURS`, default 24 = daily) to pick
+up newer prices/sets; the import streams the bulk file with bounded memory and
+**skips re-import when the provider's `updated_at` is unchanged**
+(`ingest_state.source_updated_at`), so a tick with no upstream change is cheap.
 
 ### Adding a backend feature (e.g. collection, prices)
 
@@ -285,7 +287,9 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `RUST_LOG` (`info`), `DATA_DIR` (`./data`; holds cached card images under
   `images/`), `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
   `SYNC_ON_STARTUP` (`true`; import card data on boot — set `false` for offline
-  dev/tests). See `api/.env.example`.
+  dev/tests), `SYNC_INTERVAL_HOURS` (`24`; re-import cadence after the startup
+  import — `0` disables the periodic refresh; only applies when `SYNC_ON_STARTUP`
+  is on). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
 
 ## Known trade-offs / future work
@@ -316,9 +320,12 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `default_cards` bulk file (~550 MB gz) line-by-line and upserting paper cards in
   batches (~100k rows, ~30s, bounded memory). It's idempotent and version-gated
   (`ingest_state.source_updated_at`), so reboots are cheap; a run that imports zero
-  cards is recorded as `error` (not version-locked) so it retries next boot. No
-  periodic refresh yet — re-importing newer prices/sets needs a restart (or a future
-  scheduled task). `default_cards` is English-or-sole-language and **paper-only**
+  cards is recorded as `error` (not version-locked) so it retries next boot. A
+  background task re-runs the import every `SYNC_INTERVAL_HOURS` (default 24 = daily)
+  to pick up newer prices/sets without a restart; because it's version-gated, a tick
+  with no upstream change costs just the small bulk-data catalog fetch. Set
+  `SYNC_INTERVAL_HOURS=0` to keep the old startup-only behaviour. `default_cards` is
+  English-or-sole-language and **paper-only**
   (digital Arena/MTGO printings filtered out); switch datasets/filters in `scryfall/`.
   The parser assumes Scryfall's one-object-per-line bulk format; per-line length
   isn't capped, so a format change to a single-line array would not be parsed safely
