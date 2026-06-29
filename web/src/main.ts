@@ -2,13 +2,18 @@ import './assets/main.css'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { VueQueryPlugin } from '@tanstack/vue-query'
 
 import App from './App.vue'
 import router from './router'
+import { createQueryClient } from './lib/queryClient'
 
 const app = createApp(App)
 
 app.use(createPinia())
 app.use(router)
+// vue-query owns server state (prices, collection, set-completion); Pinia keeps
+// owning auth/session and other client state.
+app.use(VueQueryPlugin, { queryClient: createQueryClient() })
 
 app.mount('#app')

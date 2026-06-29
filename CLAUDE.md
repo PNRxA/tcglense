@@ -22,7 +22,7 @@ A monorepo with two independent apps:
 | Dir    | App           | Stack |
 |--------|---------------|-------|
 | `api/` | Backend (HTTP JSON API) | Rust 2024 · axum 0.8 · SeaORM 1.1 over SQLite · JWT (HS256) · Argon2 |
-| `web/` | Frontend (SPA) | Vue 3.5 · Vite 8 · Pinia · vue-router · Tailwind 4 · shadcn-vue (new-york) · TypeScript |
+| `web/` | Frontend (SPA) | Vue 3.5 · Vite 8 · Pinia · TanStack Query (vue-query) · vue-router · Tailwind 4 · shadcn-vue (new-york) · TypeScript |
 
 The two talk over HTTP. In dev the API runs on `:8080` and the web app on
 `:5173`, and the **web dev server proxies `/api` to the API** (`web/vite.config.ts`)
@@ -164,10 +164,12 @@ handlers/
 ## Frontend structure (`web/src/`)
 
 ```
-main.ts            createApp + pinia + router
+main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
 App.vue            shell: top bar (brand, user, sign-out) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
 lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types
+lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
+lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 views/             LoginView, RegisterView, DashboardView
 components/ui/      shadcn-vue primitives (button, input, label, card)
@@ -182,10 +184,23 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 
 ### Adding a frontend feature
 
-- **State that talks to the API:** add functions + types to `lib/api.ts`, then a
-  Pinia setup store under `stores/`. For authenticated calls use the `auth` store's
-  exported `authFetch((token) => api.xxx(token))` so access-token expiry refreshes
-  transparently.
+- **Server state (anything fetched from the API):** add typed functions + types to
+  `lib/api.ts`, then read/write it through **vue-query** so caching, dedup,
+  background refresh, and invalidation come for free. Use the `lib/queries.ts`
+  wrappers — `useAuthedQuery({ queryKey, queryFn })` for reads and
+  `useAuthedMutation({ mutationFn, onSettled })` for writes — which run the call
+  through the `auth` store's `authFetch` so access-token expiry refreshes
+  transparently (don't call `authFetch` yourself for server reads). After a mutation,
+  `queryClient.invalidateQueries({ queryKey: [...] })` (via `useQueryClient()`) to
+  refresh dependent views (e.g. a collection write → set-completion %, valuation).
+  Footgun: put reactive params **inside** `queryKey` as refs/computed
+  (`['prices', productId, range]`), never `productId.value`, or refetch-on-change
+  breaks. Set a per-query `staleTime` (`Infinity` for static set definitions).
+- **Client state (auth/session, UI toggles, filters):** stays in **Pinia** setup
+  stores under `stores/`. Auth in particular (`stores/auth.ts`) stays on Pinia — its
+  single-flight refresh of the rotating cookie is hand-tuned; do **not** wrap it in
+  vue-query. Rule of thumb: server state → vue-query, client state → Pinia, never
+  duplicate the same datum in both.
 - **Pages:** add a view under `views/` and a route in `router/index.ts`. Mark
   authenticated pages with `meta: { requiresAuth: true }`.
 - **UI primitives:** prefer adding shadcn-vue components
