@@ -2,7 +2,7 @@
 import { computed, toRef, watch } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { ArrowLeft, Check, ChevronDown, Layers, Loader2, Search } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -31,8 +31,13 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE_SIZE = 60
-// Navigating to a different set starts fresh (search + sort + page).
-const { page, searchInput, query, sort } = useCardSearch(code, SET_DEFAULT_SORT)
+// Page, search and sort live in the URL query (alongside the related/from scope), so
+// they survive opening a card and pressing Back. Routing to a different set lands on
+// a fresh URL, so it starts clean.
+const { page, searchInput, query, sort } = useCardSearch(
+  SET_DEFAULT_SORT,
+  SET_SORT_OPTIONS.map((option) => option.value),
+)
 
 // The full set list (shared, cached with GameView) tells us whether this set has
 // related sub-sets to fold in.
@@ -85,39 +90,46 @@ const originName = computed(
   () => members.value.find((m) => m.code === originCode.value)?.name ?? '',
 )
 
+// Keep the search + sort controls when only the view scope toggles; paging always
+// restarts (page is intentionally dropped, so it reads back as 1 — switching scope
+// must never strand us on an out-of-range page).
+function listState(): LocationQueryRaw {
+  const next: LocationQueryRaw = {}
+  if (typeof route.query.q === 'string' && route.query.q) next.q = route.query.q
+  if (typeof route.query.sort === 'string' && route.query.sort) next.sort = route.query.sort
+  return next
+}
+
 function setIncludeRelated(on: boolean) {
   if (on) {
     // Root the grouped view at the main set so the URL, heading and counts all
     // agree (matching SetGroup's "View all" link). Entering from a sub-set
     // navigates up to the main set, remembering where we came from (?from=…) so
-    // "View just this set" can return there rather than stranding us on the parent.
+    // "View just this set" can return there rather than stranding us on the parent;
+    // a different set is a fresh scope, so the search/sort don't carry over.
     if (group.value && !isMainSet.value) {
       router.replace({
         path: `/cards/${game.value}/sets/${group.value.main.code}`,
         query: { related: '1', from: code.value },
       })
     } else {
-      router.replace({ query: { related: '1' } })
+      router.replace({ query: { ...listState(), related: '1' } })
     }
   } else {
     viewSingleSet(originCode.value)
   }
 }
 
-// Leave the grouped view for a single set's own page. Clearing the query
-// (related/from) is enough when it's the set already in the route; otherwise
-// route to the chosen set.
+// Leave the grouped view for a single set's own page. Staying on the set already in
+// the route just sheds the related/from scope (search + sort carry over); otherwise
+// route to the chosen set fresh.
 function viewSingleSet(target: string) {
   if (target === code.value) {
-    router.replace({ query: {} })
+    router.replace({ query: listState() })
   } else {
     router.replace({ path: `/cards/${game.value}/sets/${target}`, query: {} })
   }
 }
-// Switching scope restarts pagination so we never land on an out-of-range page.
-watch(includeRelated, () => {
-  page.value = 1
-})
 
 const setQuery = useQuery({
   queryKey: ['set', game, code],
@@ -146,6 +158,19 @@ const cardsQuery = useQuery({
 const set = computed(() => setQuery.data.value)
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
+
+// A shared or stale link can point past the last page (a bookmarked search whose
+// results later shrank, or a hand-edited ?page). Once the real total is known, clamp
+// back so we never strand the user on an empty page with no pager to escape it.
+watch(
+  () => [cardsQuery.isSuccess.value, total.value] as const,
+  ([ok, count]) => {
+    if (!ok) return
+    const lastPage = Math.max(1, Math.ceil(count / PAGE_SIZE))
+    if (page.value > lastPage) page.value = lastPage
+  },
+  { immediate: true },
+)
 
 // When folding in related sets, the page is rooted at the group's main set.
 const heading = computed(() =>
