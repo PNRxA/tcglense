@@ -1,5 +1,22 @@
 import type { CardSet } from './api'
 
+/**
+ * Narrow a flat set list to those whose **name or code** contains `query`
+ * (case-insensitive substring; an empty/whitespace query matches everything).
+ *
+ * Filtering the flat list *before* {@link groupSets} keeps the result honest:
+ * every surviving tile actually matches, and a matching sub-set whose parent was
+ * filtered out simply surfaces as its own top-level tile (an orphan becomes its
+ * own root in {@link groupSets}).
+ */
+export function filterSets(sets: CardSet[], query: string): CardSet[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return sets
+  return sets.filter(
+    (set) => set.name.toLowerCase().includes(q) || set.code.toLowerCase().includes(q),
+  )
+}
+
 /** A main (top-level) set together with the sub-sets that hang off it. */
 export interface SetGroup {
   main: CardSet

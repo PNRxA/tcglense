@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { findGroup, groupByYear, groupSets } from '../setGroups'
+import { filterSets, findGroup, groupByYear, groupSets } from '../setGroups'
 import type { CardSet } from '../api'
 
 function set(code: string, over: Partial<CardSet> = {}): CardSet {
@@ -113,6 +113,45 @@ describe('findGroup', () => {
 
   it('returns undefined for a code not in the list', () => {
     expect(findGroup(sets, 'zzz')).toBeUndefined()
+  })
+})
+
+describe('filterSets', () => {
+  const sets = [
+    set('blb', { name: 'Bloomburrow' }),
+    set('blc', { name: 'Bloomburrow Commander', parent_set_code: 'blb' }),
+    set('neo', { name: 'Kamigawa: Neon Dynasty' }),
+  ]
+
+  it('returns the original list for an empty or whitespace query', () => {
+    expect(filterSets(sets, '')).toBe(sets)
+    expect(filterSets(sets, '   ')).toBe(sets)
+  })
+
+  it('matches set names case-insensitively, as a substring', () => {
+    expect(filterSets(sets, 'bloom').map((s) => s.code)).toEqual(['blb', 'blc'])
+    expect(filterSets(sets, 'NEON').map((s) => s.code)).toEqual(['neo'])
+  })
+
+  it('matches the set code, case-insensitively', () => {
+    expect(filterSets(sets, 'NEO').map((s) => s.code)).toEqual(['neo'])
+    expect(filterSets(sets, 'blc').map((s) => s.code)).toEqual(['blc'])
+  })
+
+  it('trims surrounding whitespace from the query', () => {
+    expect(filterSets(sets, '  neon  ').map((s) => s.code)).toEqual(['neo'])
+  })
+
+  it('returns an empty list when nothing matches', () => {
+    expect(filterSets(sets, 'zzz')).toEqual([])
+  })
+
+  it('feeds groupSets so an orphaned matching child becomes its own top-level tile', () => {
+    // 'commander' matches only the child; its parent is filtered out, so the
+    // child surfaces as a top-level group rather than vanishing.
+    const groups = groupSets(filterSets(sets, 'commander'))
+    expect(groups.map((g) => g.main.code)).toEqual(['blc'])
+    expect(groups.flatMap((g) => g.children)).toEqual([])
   })
 })
 
