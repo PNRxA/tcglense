@@ -151,9 +151,7 @@ const set = computed(() => setQuery.data.value)
 const hasDrops = computed(
   () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.has_drops ?? false,
 )
-const byDrop = computed(
-  () => hasDrops.value && route.query.view !== 'all' && !includeRelated.value,
-)
+const byDrop = computed(() => hasDrops.value && route.query.view !== 'all' && !includeRelated.value)
 
 const cardsQuery = useQuery({
   queryKey: ['set-cards', game, code, query, sort, page, includeRelated],

@@ -12,7 +12,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, Select,
+    ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Select,
     prelude::DateTimeUtc,
     sea_query::{Expr, LikeExpr, NullOrdering, SimpleExpr},
 };
@@ -637,6 +638,32 @@ pub async fn card_prices(
     Ok(Json(json!({ "data": data })))
 }
 
+/// `GET /api/games/{game}/cards/{id}/prints` -> this card's **other** printings:
+/// every card sharing its gameplay identity (Scryfall `oracle_id`) in the same
+/// game, excluding the card itself, newest printing first (capped at `MAX_PAGE_SIZE`).
+/// `404` if the game or card id is unknown; an empty `{ "data": [] }` when the card
+/// has no other printings (or carries no `oracle_id`, so its siblings can't be
+/// identified — e.g. reversible cards, whose `oracle_id` lives only per-face).
+pub async fn card_prints(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_game(&game)?;
+    let card = load_card(&state, &game, &id).await?;
+    // Without an oracle_id there's no key to find sibling printings by, so the
+    // card has no listable other printings.
+    let data: Vec<CardResponse> = match card.oracle_id.as_deref().filter(|s| !s.is_empty()) {
+        None => Vec::new(),
+        Some(oracle_id) => prints_query(&game, oracle_id, card.id)
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(CardResponse::from)
+            .collect(),
+    };
+    Ok(Json(json!({ "data": data })))
+}
+
 /// `GET /api/games/{game}/cards/{id}/image?size=normal&face=0`
 ///
 /// Streams the cached image, downloading + persisting it on first request.
@@ -762,6 +789,29 @@ async fn load_card(state: &AppState, game: &str, id: &str) -> Result<card::Model
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("card '{id}' not found")))
+}
+
+/// Query a card's **other** printings: same game and `oracle_id`, excluding the
+/// card itself (`exclude_id`). Ordered newest printing first (released date desc,
+/// nulls last), then set code and collector number, with a stable `id` tiebreaker
+/// so the order is deterministic. `oracle_id` is the gameplay-identity key shared
+/// across all printings of a card.
+///
+/// Capped at `MAX_PAGE_SIZE` results: a handful of cards (e.g. basic lands) share
+/// one `oracle_id` across hundreds-to-thousands of printings, and this is a "see
+/// also" aid rather than an exhaustive listing, so it returns at most the newest
+/// `MAX_PAGE_SIZE` rather than an unbounded response.
+fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::Entity> {
+    Card::find()
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::OracleId.eq(oracle_id))
+        .filter(card::Column::Id.ne(exclude_id))
+        .order_by_with_nulls(card::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
+        .order_by_asc(card::Column::SetCode)
+        .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last)
+        .order_by_asc(card::Column::CollectorNumber)
+        .order_by_asc(card::Column::Id)
+        .limit(MAX_PAGE_SIZE)
 }
 
 /// A drop's cards, before pagination/serialization (so off-page drops never get
@@ -1227,6 +1277,58 @@ mod tests {
             .await
             .expect("query asc");
         assert_eq!(ids(asc), vec![3, 1, 5, 2, 4]);
+    }
+
+    /// A card row whose printing-identity fields (oracle id, set, release date)
+    /// are what `prints_query` filters and orders on; everything else reuses the
+    /// minimal `test_card` shape.
+    fn print_card(id: i32, oracle_id: Option<&str>, set_code: &str, released: Option<&str>) -> card::Model {
+        card::Model {
+            oracle_id: oracle_id.map(str::to_string),
+            set_code: set_code.into(),
+            set_name: set_code.to_uppercase(),
+            released_at: released.map(str::to_string),
+            ..test_card(id, None, None)
+        }
+    }
+
+    /// `prints_query` returns every other printing sharing the card's oracle id,
+    /// newest released first, and excludes the card itself, other oracle ids, and
+    /// cards with no oracle id.
+    #[tokio::test]
+    async fn prints_query_returns_other_printings_newest_first() {
+        use sea_orm::{ActiveModelTrait, Database, IntoActiveModel};
+        use sea_orm_migration::MigratorTrait;
+
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        crate::migrator::Migrator::up(&db, None)
+            .await
+            .expect("run migrations");
+
+        // Three printings of oracle "o-1" across three sets/dates, one unrelated
+        // oracle, and one card with no oracle id at all.
+        for c in [
+            print_card(1, Some("o-1"), "aaa", Some("2020-01-01")),
+            print_card(2, Some("o-1"), "bbb", Some("2022-01-01")),
+            print_card(3, Some("o-1"), "ccc", Some("2024-01-01")),
+            print_card(4, Some("o-2"), "ddd", Some("2024-06-01")),
+            print_card(5, None, "eee", Some("2024-06-01")),
+        ] {
+            c.into_active_model().insert(&db).await.expect("insert card");
+        }
+
+        let ids = |rows: Vec<card::Model>| rows.iter().map(|r| r.id).collect::<Vec<_>>();
+
+        // Other "o-1" printings of card 2, newest first: ccc(2024) then aaa(2020).
+        // The unrelated oracle (4) and the null-oracle card (5) are excluded.
+        let rows = prints_query("mtg", "o-1", 2).all(&db).await.expect("query");
+        assert_eq!(ids(rows), vec![3, 1]);
+
+        // An oracle with only the one printing (itself) has no other printings.
+        let none = prints_query("mtg", "o-2", 4).all(&db).await.expect("query");
+        assert!(none.is_empty());
     }
 
     fn test_set(code: &str, parent: Option<&str>) -> card_set::Model {
