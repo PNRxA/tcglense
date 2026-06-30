@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { filterSets, groupByYear, groupSets } from '../setGroups'
+import { filterSets, findGroup, groupByYear, groupSets } from '../setGroups'
 import type { CardSet } from '../api'
 
 function set(code: string, over: Partial<CardSet> = {}): CardSet {
@@ -83,6 +83,36 @@ describe('groupSets', () => {
     ])
     // Degenerate data: both resolve to themselves rather than hanging.
     expect(groups).toHaveLength(2)
+  })
+})
+
+describe('findGroup', () => {
+  const sets = [
+    set('blb'),
+    set('blc', { parent_set_code: 'blb', set_type: 'commander' }),
+    set('tblc', { parent_set_code: 'blc', set_type: 'token' }),
+    set('dft'),
+  ]
+
+  it('finds the group from the main set code', () => {
+    const group = findGroup(sets, 'blb')
+    expect(group?.main.code).toBe('blb')
+    expect(group?.children.map((c) => c.code).sort()).toEqual(['blc', 'tblc'])
+  })
+
+  it('finds the same group from a sub-set code (root + all descendants)', () => {
+    expect(findGroup(sets, 'blc')?.main.code).toBe('blb')
+    expect(findGroup(sets, 'tblc')?.main.code).toBe('blb')
+  })
+
+  it('returns a standalone set as its own childless group', () => {
+    const group = findGroup(sets, 'dft')
+    expect(group?.main.code).toBe('dft')
+    expect(group?.children).toEqual([])
+  })
+
+  it('returns undefined for a code not in the list', () => {
+    expect(findGroup(sets, 'zzz')).toBeUndefined()
   })
 })
 
