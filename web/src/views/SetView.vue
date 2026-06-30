@@ -15,8 +15,10 @@ import {
 import { Input } from '@/components/ui/input'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
+import { SET_DEFAULT_SORT, SET_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
 import { getSet, listSetCards, listSets } from '@/lib/api'
 import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
 import { cn } from '@/lib/utils'
@@ -29,8 +31,8 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE_SIZE = 60
-// Navigating to a different set starts fresh (search + page).
-const { page, searchInput, query } = useCardSearch(code)
+// Navigating to a different set starts fresh (search + sort + page).
+const { page, searchInput, query, sort } = useCardSearch(code, SET_DEFAULT_SORT)
 
 // The full set list (shared, cached with GameView) tells us whether this set has
 // related sub-sets to fold in.
@@ -124,13 +126,14 @@ const setQuery = useQuery({
 })
 
 const cardsQuery = useQuery({
-  queryKey: ['set-cards', game, code, query, page, includeRelated],
+  queryKey: ['set-cards', game, code, query, sort, page, includeRelated],
   queryFn: () =>
     listSetCards(game.value, code.value, {
       q: query.value || undefined,
       page: page.value,
       pageSize: PAGE_SIZE,
       includeRelated: includeRelated.value || undefined,
+      ...toSortParam(sort.value, SET_DEFAULT_SORT),
     }),
   // When the URL requests the related view, wait for the set list to settle before
   // fetching, so a cold-loaded (bookmarked/reloaded) link doesn't fire a throwaway
@@ -304,6 +307,9 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
       </p>
 
       <template v-else>
+        <div class="mb-4 flex justify-end">
+          <CardSortMenu v-model="sort" :options="SET_SORT_OPTIONS" />
+        </div>
         <CardGrid :game="game" :cards="cards" />
         <div class="mt-10">
           <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />

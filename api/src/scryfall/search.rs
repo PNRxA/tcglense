@@ -40,8 +40,10 @@ const MAX_MANA_SYMBOLS: usize = 64;
 
 /// The five MTG colours, in canonical WUBRG order.
 const WUBRG: [char; 5] = ['W', 'U', 'B', 'R', 'G'];
-/// Rarities low→high; index is the ordinal used by `r>=`/`r<` comparisons.
-const RARITIES: [&str; 6] = ["common", "uncommon", "rare", "special", "mythic", "bonus"];
+/// Rarities low→high; index is the ordinal used by `r>=`/`r<` comparisons and by
+/// the catalog's rarity sort ([`crate::handlers::catalog`]), so both rank rarity
+/// identically.
+pub(crate) const RARITIES: [&str; 6] = ["common", "uncommon", "rare", "special", "mythic", "bonus"];
 
 // ---------------------------------------------------------------------------
 // Errors
