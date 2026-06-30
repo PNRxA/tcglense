@@ -83,11 +83,12 @@ const released = computed(() => {
       </div>
     </div>
     <!-- A standalone tile (no collapsible sub-sets) reserves the height of the
-         "Show related" toggle that SetGroup renders, so a childless tile lines
-         up with the collapsible tiles sharing its row instead of looking
-         stunted (1.5rem = the text-xs toggle line + its pb-2). Only needed once
-         the grid is multi-column (sm+); in the single-column layout there is no
-         row neighbour to match, so the tile stays compact. -->
-    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-6 sm:block"></div>
+         footer row that SetGroup renders below its header, so a childless tile
+         lines up with the collapsible tiles sharing its row instead of looking
+         stunted (2.25rem = the h-7 "View all" button that drives the row height
+         + its pb-2). Only needed once the grid is multi-column (sm+); in the
+         single-column layout there is no row neighbour to match, so the tile
+         stays compact. -->
+    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-9 sm:block"></div>
   </RouterLink>
 </template>
