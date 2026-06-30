@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, toRef, watch } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
-import { LayoutGrid, Loader2 } from '@lucide/vue'
+import { LayoutGrid, Loader2, Search } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import SetTile from '@/components/cards/SetTile.vue'
 import SetGroup from '@/components/cards/SetGroup.vue'
 import { gameStatus, listGames, listSets } from '@/lib/api'
-import { groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
+import { filterSets, groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
@@ -53,10 +54,22 @@ const importing = computed(() => {
   return status !== undefined && status !== 'complete' && status !== 'error'
 })
 const sets = computed(() => setsQuery.data.value?.data ?? [])
+
+// Client-side filter box: the whole set list is already in memory, so narrowing
+// by name/code is instant — no extra request. Clears when switching games (the
+// route reuses this component across :game).
+const filter = ref('')
+watch(game, () => {
+  filter.value = ''
+})
+const trimmedFilter = computed(() => filter.value.trim())
+const filtering = computed(() => trimmedFilter.value.length > 0)
+const filteredSets = computed(() => filterSets(sets.value, filter.value))
+
 // Nest sub-sets (tokens, promos, Commander decks, art series, …) under the main
 // set they belong to instead of scattering them across the date-sorted list.
-const groups = computed(() => groupSets(sets.value))
-const relatedCount = computed(() => sets.value.length - groups.value.length)
+const groups = computed(() => groupSets(filteredSets.value))
+const relatedCount = computed(() => filteredSets.value.length - groups.value.length)
 // Pull pinned sets (e.g. Secret Lair) out so they lead the listing regardless of
 // their release date; the rest stay date-sorted.
 const partitioned = computed(() => partitionPinned(groups.value))
@@ -93,14 +106,32 @@ const sections = computed(() => {
       <div>
         <h1 class="text-3xl font-semibold tracking-tight">{{ gameName }}</h1>
         <p class="text-muted-foreground mt-1">
-          {{ groups.length }} sets
+          {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
           <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+          <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
         </p>
       </div>
-      <RouterLink :to="`/cards/${game}/cards`" :class="buttonVariants({ variant: 'default' })">
-        <LayoutGrid />
-        View all cards
-      </RouterLink>
+      <div class="flex w-full items-center gap-3 sm:w-auto">
+        <div v-if="sets.length" class="relative w-full sm:w-64">
+          <Search
+            class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+          />
+          <Input
+            v-model="filter"
+            aria-label="Filter sets by name or code"
+            placeholder="Filter sets…"
+            class="pl-9"
+          />
+        </div>
+        <RouterLink
+          :to="`/cards/${game}/cards`"
+          :class="buttonVariants({ variant: 'default' })"
+          class="shrink-0"
+        >
+          <LayoutGrid />
+          View all cards
+        </RouterLink>
+      </div>
     </header>
 
     <!-- First-boot import progress. -->
@@ -130,6 +161,9 @@ const sections = computed(() => {
     </p>
     <p v-else-if="!sets.length && !importing" class="text-muted-foreground py-12">
       No sets available yet.
+    </p>
+    <p v-else-if="filtering && !groups.length" class="text-muted-foreground py-12">
+      No sets match “{{ trimmedFilter }}”.
     </p>
 
     <div v-else class="space-y-10">

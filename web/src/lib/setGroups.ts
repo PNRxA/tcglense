@@ -1,5 +1,22 @@
 import type { CardSet } from './api'
 
+/**
+ * Narrow a flat set list to those whose **name or code** contains `query`
+ * (case-insensitive substring; an empty/whitespace query matches everything).
+ *
+ * Filtering the flat list *before* {@link groupSets} keeps the result honest:
+ * every surviving tile actually matches, and a matching sub-set whose parent was
+ * filtered out simply surfaces as its own top-level tile (an orphan becomes its
+ * own root in {@link groupSets}).
+ */
+export function filterSets(sets: CardSet[], query: string): CardSet[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return sets
+  return sets.filter(
+    (set) => set.name.toLowerCase().includes(q) || set.code.toLowerCase().includes(q),
+  )
+}
+
 /** A main (top-level) set together with the sub-sets that hang off it. */
 export interface SetGroup {
   main: CardSet
@@ -103,6 +120,17 @@ export function groupSets(sets: CardSet[]): SetGroup[] {
   // parent in the list.
   return [...groups.values()].sort(
     (a, b) => (position.get(a.main.code) ?? 0) - (position.get(b.main.code) ?? 0),
+  )
+}
+
+/**
+ * Find the group a given set code belongs to — whether `code` is the main set or
+ * one of its sub-sets. Returns `undefined` if the code isn't in `sets`. Used by
+ * the set page to offer an "include related sets" view rooted at the main set.
+ */
+export function findGroup(sets: CardSet[], code: string): SetGroup | undefined {
+  return groupSets(sets).find(
+    (group) => group.main.code === code || group.children.some((c) => c.code === code),
   )
 }
 

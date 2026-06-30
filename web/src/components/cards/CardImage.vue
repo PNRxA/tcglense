@@ -44,12 +44,16 @@ watch(
 <template>
   <div class="bg-muted relative aspect-[5/7] overflow-hidden rounded-xl">
     <template v-if="hasImage && !failed">
+      <!-- `object-contain`, not `object-cover`: Scryfall renders cards slightly
+        wider than the 5:7 frame, so `cover` would slice off the card's left/right
+        borders. Contain shows the whole card; any sub-pixel letterbox blends into
+        the bg-muted backdrop. -->
       <img
         ref="imgEl"
         :src="cardImageUrl(game, id, size, face)"
         :alt="name"
         loading="lazy"
-        class="h-full w-full object-cover transition-opacity duration-500 ease-out motion-reduce:transition-none"
+        class="h-full w-full object-contain transition-opacity duration-500 ease-out motion-reduce:transition-none"
         :class="loaded ? 'opacity-100' : 'opacity-0'"
         @load="loaded = true"
         @error="failed = true"
