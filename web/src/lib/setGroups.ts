@@ -129,9 +129,36 @@ export function groupSets(sets: CardSet[]): SetGroup[] {
  * the set page to offer an "include related sets" view rooted at the main set.
  */
 export function findGroup(sets: CardSet[], code: string): SetGroup | undefined {
-  return groupSets(sets).find(
-    (group) => group.main.code === code || group.children.some((c) => c.code === code),
-  )
+  return groupSets(sets).find((group) => groupHasCode(group, code))
+}
+
+/** Whether `code` is the main set or one of the sub-sets of `group`. */
+export function groupHasCode(group: SetGroup, code: string): boolean {
+  return group.main.code === code || group.children.some((c) => c.code === code)
+}
+
+/**
+ * A sub-set's display label with its parent's redundant name prefix stripped
+ * (e.g. "Bloomburrow Commander" → "Commander" under the "Bloomburrow" group).
+ * Falls back to the full `name` when there's no shared prefix or nothing would be
+ * left, so the label is never empty or misleading.
+ */
+export function subSetLabel(mainName: string, name: string): string {
+  if (name.length > mainName.length && name.startsWith(mainName)) {
+    const rest = name.slice(mainName.length).replace(/^[\s:–-]+/, '')
+    if (rest) return rest
+  }
+  return name
+}
+
+/**
+ * Which single set "View just this set" should drop back to when leaving the
+ * grouped view: the set the grouped view was entered from (`from`) when it's
+ * still a member of `group`, otherwise the group's main set. Validating
+ * membership guards against a stale or hand-edited `from` in the URL.
+ */
+export function originSetCode(group: SetGroup, from: string | null | undefined): string {
+  return from && groupHasCode(group, from) ? from : group.main.code
 }
 
 /**

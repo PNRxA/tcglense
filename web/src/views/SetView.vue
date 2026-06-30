@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { computed, toRef, watch } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { ArrowLeft, Layers, Loader2, Search } from '@lucide/vue'
+import { ArrowLeft, ChevronDown, Layers, Loader2, Search } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { getSet, listSetCards, listSets } from '@/lib/api'
-import { findGroup } from '@/lib/setGroups'
+import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
+import { cn } from '@/lib/utils'
 
 const props = defineProps<{ game: string; code: string }>()
 const game = toRef(props, 'game')
@@ -41,17 +50,62 @@ const hasRelated = computed(() => relatedCount.value > 0)
 // The "view related" state lives in the URL (?related=1) so it's shareable and
 // survives a reload, but only takes effect when there actually are related sets.
 const includeRelated = computed(() => route.query.related === '1' && hasRelated.value)
+
+// Every set in the group — the main set first, then its sub-sets — offered in
+// the "view just one set" menu so you can drop into any specific one.
+const members = computed(() => (group.value ? [group.value.main, ...group.value.children] : []))
+const memberOptions = computed(() =>
+  members.value.map((member) => ({
+    code: member.code,
+    name: member.name,
+    // The main set keeps its full name for context; sub-sets drop the redundant
+    // parent prefix ("Bloomburrow Commander" → "Commander").
+    label:
+      member.code === group.value?.main.code
+        ? member.name
+        : subSetLabel(group.value?.main.name ?? '', member.name),
+  })),
+)
+
+// The set "View just this set" drops back to: the one the grouped view was
+// entered from (?from=…), else the group's main set. This is what fixes landing
+// on the parent set after a sub-set → "view all together" → "view just this set"
+// round-trip — the original set is remembered, not discarded.
+const fromCode = computed(() => (typeof route.query.from === 'string' ? route.query.from : null))
+const originCode = computed(() =>
+  group.value ? originSetCode(group.value, fromCode.value) : code.value,
+)
+const originName = computed(
+  () => members.value.find((m) => m.code === originCode.value)?.name ?? '',
+)
+
 function setIncludeRelated(on: boolean) {
-  // Root the grouped view at the main set so the URL, heading and counts all
-  // agree (matching SetGroup's "View all" link). Entering from a sub-set
-  // navigates up to the main set; turning it off stays on the current set.
-  if (on && group.value && !isMainSet.value) {
-    router.replace({
-      path: `/cards/${game.value}/sets/${group.value.main.code}`,
-      query: { related: '1' },
-    })
+  if (on) {
+    // Root the grouped view at the main set so the URL, heading and counts all
+    // agree (matching SetGroup's "View all" link). Entering from a sub-set
+    // navigates up to the main set, remembering where we came from (?from=…) so
+    // "View just this set" can return there rather than stranding us on the parent.
+    if (group.value && !isMainSet.value) {
+      router.replace({
+        path: `/cards/${game.value}/sets/${group.value.main.code}`,
+        query: { related: '1', from: code.value },
+      })
+    } else {
+      router.replace({ query: { related: '1' } })
+    }
   } else {
-    router.replace({ query: on ? { related: '1' } : {} })
+    viewSingleSet(originCode.value)
+  }
+}
+
+// Leave the grouped view for a single set's own page. Clearing the query
+// (related/from) is enough when it's the set already in the route; otherwise
+// route to the chosen set.
+function viewSingleSet(target: string) {
+  if (target === code.value) {
+    router.replace({ query: {} })
+  } else {
+    router.replace({ path: `/cards/${game.value}/sets/${target}`, query: {} })
   }
 }
 // Switching scope restarts pagination so we never land on an out-of-range page.
@@ -164,14 +218,58 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
             group.
           </template>
         </p>
+        <!-- Single set: one button to fold the related sub-sets in. -->
         <button
+          v-if="!includeRelated"
           type="button"
-          :class="buttonVariants({ variant: includeRelated ? 'outline' : 'default', size: 'sm' })"
-          @click="setIncludeRelated(!includeRelated)"
+          :class="buttonVariants({ variant: 'default', size: 'sm' })"
+          @click="setIncludeRelated(true)"
         >
           <Layers />
-          {{ includeRelated ? 'View just this set' : 'View all together' }}
+          View all together
         </button>
+
+        <!-- Grouped: a split button. The main action returns to the set you came
+             from; the caret opens a menu to drop into any one set in the group. -->
+        <div v-else class="flex">
+          <button
+            type="button"
+            :class="cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'rounded-r-none')"
+            :title="originName ? `View just ${originName}` : undefined"
+            @click="setIncludeRelated(false)"
+          >
+            <Layers />
+            View just this set
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <button
+                type="button"
+                :class="
+                  cn(
+                    buttonVariants({ variant: 'outline', size: 'icon-sm' }),
+                    '-ml-px rounded-l-none',
+                  )
+                "
+                aria-label="View just one set in this group"
+              >
+                <ChevronDown />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="max-w-64">
+              <DropdownMenuLabel>View just one set</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                v-for="option in memberOptions"
+                :key="option.code"
+                :title="option.name"
+                @select="viewSingleSet(option.code)"
+              >
+                <span class="truncate">{{ option.label }}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       <div
