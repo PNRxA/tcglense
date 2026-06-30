@@ -47,8 +47,12 @@ watch(
     both as percentages (resolved against this frame's own 5:7 border-box) keeps the
     radius proportional at every card size and, because 3.4% × 7/5 = 4.76%, keeps the
     corner a true circle rather than an ellipse. `shadow-sm` lifts the card off the
-    page; CardTile deepens it to `shadow-md` on hover. -->
-  <div class="relative aspect-[5/7] overflow-hidden rounded-[4.76%_/_3.4%] shadow-sm">
+    page; CardTile deepens it (and scales the card up) on hover. In dark mode a black
+    shadow is invisible against the near-black background, so we swap in a larger,
+    higher-opacity shadow so the lift still reads. -->
+  <div
+    class="relative aspect-[5/7] overflow-hidden rounded-[4.76%_/_3.4%] shadow-sm dark:shadow-[0_2px_8px_rgba(0,0,0,0.6)]"
+  >
     <template v-if="hasImage && !failed">
       <!-- `object-contain`, not `object-cover`: Scryfall renders most cards slightly
         wider than the 5:7 frame, so `cover` would slice off the card's left/right
