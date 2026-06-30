@@ -1,12 +1,17 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Card } from '@/lib/api'
+import { displayUsdPrice } from '@/lib/cardPrice'
 import CardImage from '@/components/cards/CardImage.vue'
 
-defineProps<{
+const props = defineProps<{
   game: string
   card: Card
 }>()
+
+// Show the regular USD price, falling back to the foil price for foil-only cards.
+const price = computed(() => displayUsdPrice(props.card.prices))
 </script>
 
 <template>
@@ -27,7 +32,15 @@ defineProps<{
         <span class="truncate"
           >{{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}</span
         >
-        <span v-if="card.prices.usd" class="shrink-0 tabular-nums">${{ card.prices.usd }}</span>
+        <span v-if="price" class="shrink-0 tabular-nums"
+          >${{ price.amount
+          }}<span
+            v-if="price.foil"
+            class="ml-1 text-[0.65rem] tracking-wide uppercase opacity-70"
+            title="Foil price (no regular printing)"
+            >foil</span
+          ></span
+        >
       </p>
     </div>
   </RouterLink>
