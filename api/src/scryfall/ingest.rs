@@ -23,7 +23,8 @@ use tokio_util::io::StreamReader;
 
 use super::client;
 use super::model::{CardFace, ScryfallCard, ScryfallSet, StoredFace};
-use super::{DATASET, GAME};
+use super::progress::ImportProgress;
+use super::{DATASET, GAME, GAME_NAME};
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
@@ -33,6 +34,10 @@ pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.
 const PROGRESS_EVERY: u32 = 25;
+/// Push accumulated stream bytes to the progress bar in chunks this large, so it
+/// stays smooth even across long runs of filtered lines (which never flush a
+/// card batch) without locking the bar on every single line.
+const BYTES_PER_TICK: u64 = 1_000_000;
 
 /// Error type for the background import. Logged, never surfaced to a request.
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +100,10 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
     }
 
     let started = Utc::now();
+    // Live terminal progress: a spinner while set metadata is fetched, then a
+    // determinate byte bar for the long card stream (see `super::progress`).
+    // Dropping it (incl. on any `?` below) closes the span and clears the bar.
+    let progress = ImportProgress::start(GAME_NAME);
     tracing::info!(
         updated_at = %entry.updated_at,
         size_mb = entry.size.unwrap_or(0) / 1_000_000,
@@ -132,6 +141,8 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
     )
     .await?;
 
+    // Switch the bar to its determinate phase now that the byte length is known.
+    progress.begin_cards(entry.size);
     let cards_imported = import_cards(
         db,
         client,
@@ -140,6 +151,7 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         &entry.updated_at,
         sets_imported,
         started,
+        &progress,
     )
     .await?;
 
@@ -153,6 +165,8 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         )));
     }
 
+    // Clear the progress bar before the completion line so it prints cleanly.
+    drop(progress);
     put_state(
         db,
         Some(entry.updated_at.clone()),
@@ -224,6 +238,7 @@ async fn import_cards(
     updated_at: &str,
     sets_imported: i32,
     started: DateTimeUtc,
+    progress: &ImportProgress,
 ) -> Result<i32, IngestError> {
     let stream = client::download_stream(client, url).await?;
     let mut lines = BufReader::with_capacity(64 * 1024, StreamReader::new(stream)).lines();
@@ -233,8 +248,19 @@ async fn import_cards(
     let mut total: i32 = 0;
     let mut batches_since_progress: u32 = 0;
     let mut skipped_parse: u64 = 0;
+    let mut bytes_since_tick: u64 = 0;
 
     while let Some(raw) = lines.next_line().await? {
+        // Account every byte read (incl. the stripped newline) toward the byte
+        // bar, pushing in ~1 MB ticks. Doing it here — before the paper filter —
+        // keeps the bar moving across long runs of filtered lines that never
+        // flush a card batch.
+        bytes_since_tick += raw.len() as u64 + 1;
+        if bytes_since_tick >= BYTES_PER_TICK {
+            progress.add_bytes(bytes_since_tick);
+            bytes_since_tick = 0;
+        }
+
         // Each element sits on its own line, terminated by a comma except the
         // last; the array brackets get their own lines.
         let line = raw.trim();
@@ -265,6 +291,7 @@ async fn import_cards(
             flush_cards(db, std::mem::take(&mut batch)).await?;
             total += n;
             batch.reserve(CARD_BATCH);
+            progress.set_cards(total as u64);
             batches_since_progress += 1;
             if batches_since_progress >= PROGRESS_EVERY {
                 batches_since_progress = 0;
@@ -287,6 +314,11 @@ async fn import_cards(
         let n = batch.len() as i32;
         flush_cards(db, batch).await?;
         total += n;
+        progress.set_cards(total as u64);
+    }
+    // Push any bytes counted since the last tick so the bar reaches its end.
+    if bytes_since_tick > 0 {
+        progress.add_bytes(bytes_since_tick);
     }
     if skipped_parse > 0 {
         tracing::warn!(count = skipped_parse, "skipped unparseable card lines");

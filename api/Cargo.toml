@@ -12,6 +12,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 futures-util = "0.3.32"
 hex = "0.4.3"
+indicatif = "0.18"
 jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto"] }
 rand = "0.10.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "gzip", "stream", "json"] }
@@ -27,4 +28,5 @@ tokio-util = { version = "0.7.18", features = ["io"] }
 tower = "0.5.3"
 tower-http = { version = "0.7.0", features = ["cors", "trace"] }
 tracing = "0.1.44"
+tracing-indicatif = "0.3"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
