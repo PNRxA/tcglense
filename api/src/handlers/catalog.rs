@@ -12,7 +12,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, Select,
     prelude::DateTimeUtc,
     sea_query::{Expr, LikeExpr, NullOrdering, SimpleExpr},
 };
@@ -221,6 +221,14 @@ pub struct ListParams {
     /// the all-cards endpoint.
     #[serde(default)]
     pub include_related: Option<bool>,
+    /// Sort key (`number`/`name`/`rarity`/`released`/`cmc`/`price`). Absent =
+    /// the endpoint's natural default. Unknown values are a 422.
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Sort direction (`asc`/`desc`). Absent = the sort field's natural
+    /// direction. Unknown values are a 422.
+    #[serde(default)]
+    pub dir: Option<String>,
 }
 
 impl ListParams {
@@ -235,6 +243,88 @@ impl ListParams {
 
     fn search(&self) -> Option<&str> {
         self.q.as_deref().map(str::trim).filter(|q| !q.is_empty())
+    }
+
+    /// Resolve the `sort`/`dir` params into a validated `(field, direction)`,
+    /// falling back to `default` (and the field's natural direction) when a value
+    /// is absent. An unrecognised value is a 422 — consistent with a malformed `q`
+    /// — rather than being silently ignored.
+    fn sort_spec(&self, default: SortField) -> Result<(SortField, SortDir), AppError> {
+        let field = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => default,
+            Some(value) => SortField::parse(value)?,
+        };
+        let dir = match self.dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => field.default_dir(),
+            Some(value) => SortDir::parse(value)?,
+        };
+        Ok((field, dir))
+    }
+}
+
+/// A user-facing card-list sort key. Maps to one or more `card` columns; fields
+/// that aren't lexically ordered (rarity, price) sort on a derived expression so
+/// the order is meaningful rather than alphabetical/string-wise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortField {
+    /// Collector number (numeric run first, then the raw string) — a set
+    /// listing's natural order.
+    Number,
+    Name,
+    Rarity,
+    Released,
+    /// Mana value (converted mana cost).
+    Cmc,
+    /// USD market price.
+    Price,
+}
+
+impl SortField {
+    fn parse(value: &str) -> Result<Self, AppError> {
+        Ok(match value {
+            "number" | "collector" => SortField::Number,
+            "name" => SortField::Name,
+            "rarity" => SortField::Rarity,
+            "released" | "date" => SortField::Released,
+            "cmc" | "mv" => SortField::Cmc,
+            "price" | "usd" => SortField::Price,
+            other => return Err(AppError::Validation(format!("unknown sort '{other}'"))),
+        })
+    }
+
+    /// The direction to use when a caller names a field but no `dir`. Newest,
+    /// priciest and rarest first read more usefully than the lexical-ascending
+    /// default for those fields.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortField::Number | SortField::Name | SortField::Cmc => SortDir::Asc,
+            SortField::Rarity | SortField::Released | SortField::Price => SortDir::Desc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortDir {
+    Asc,
+    Desc,
+}
+
+impl SortDir {
+    fn parse(value: &str) -> Result<Self, AppError> {
+        match value {
+            "asc" => Ok(SortDir::Asc),
+            "desc" => Ok(SortDir::Desc),
+            other => Err(AppError::Validation(format!(
+                "unknown sort direction '{other}'"
+            ))),
+        }
+    }
+
+    fn order(self) -> Order {
+        match self {
+            SortDir::Asc => Order::Asc,
+            SortDir::Desc => Order::Desc,
+        }
     }
 }
 
@@ -380,23 +470,13 @@ pub async fn list_set_cards(
         query = query.filter(search_condition(game_meta, search)?);
     }
 
-    // Single set: plain collector order. Group: keep each set's cards contiguous
-    // (primary sort on set code, which spans whole sets unlike the per-card
-    // released_at), each set in collector order. Cards without a leading digit
-    // (NULL int) sort last either way.
-    let query = if include_related {
-        query.order_by_asc(card::Column::SetCode)
-    } else {
-        query
-    };
-    let paginator = query
-        .order_by_with_nulls(
-            card::Column::CollectorNumberInt,
-            Order::Asc,
-            NullOrdering::Last,
-        )
-        .order_by_asc(card::Column::CollectorNumber)
-        .paginate(&state.db, page_size);
+    let (sort, dir) = params.sort_spec(SortField::Number)?;
+    // For the default collector-number order, the related-sets view keeps each
+    // set's cards contiguous (set code first, which spans whole sets unlike the
+    // per-card released_at). Any other sort spans the whole group by the chosen
+    // field instead — grouping by set there would fight the sort.
+    let group_by_set = include_related && sort == SortField::Number;
+    let paginator = apply_card_sort(query, sort, dir, group_by_set).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -416,11 +496,8 @@ pub async fn list_cards(
     if let Some(search) = params.search() {
         query = query.filter(search_condition(game_meta, search)?);
     }
-    let paginator = query
-        .order_by_asc(card::Column::Name)
-        .order_by_asc(card::Column::SetCode)
-        .order_by_asc(card::Column::CollectorNumberInt)
-        .paginate(&state.db, page_size);
+    let (sort, dir) = params.sort_spec(SortField::Name)?;
+    let paginator = apply_card_sort(query, sort, dir, false).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -594,6 +671,74 @@ fn build_page(rows: Vec<card::Model>, page: u64, page_size: u64, total: u64) -> 
     }
 }
 
+/// Apply the requested ordering to a card query, ending with a stable `id`
+/// tiebreaker so pagination is deterministic across pages even when the chosen
+/// field has ties. `group_by_set` keeps each set's cards contiguous (used by the
+/// related-sets view in collector-number order); it only makes sense alongside
+/// the `Number` field, where a per-set grouping is wanted instead of a single
+/// flat run. Rarity and price sort on a derived expression with unknown/missing
+/// values pushed last regardless of direction.
+fn apply_card_sort(
+    query: Select<card::Entity>,
+    field: SortField,
+    dir: SortDir,
+    group_by_set: bool,
+) -> Select<card::Entity> {
+    let mut query = if group_by_set {
+        query.order_by_asc(card::Column::SetCode)
+    } else {
+        query
+    };
+    query = match field {
+        SortField::Number => query
+            .order_by_with_nulls(card::Column::CollectorNumberInt, dir.order(), NullOrdering::Last)
+            .order_by(card::Column::CollectorNumber, dir.order()),
+        // Preserve the previous all-cards tiebreak (set, then collector number)
+        // so the default listing order is unchanged.
+        SortField::Name => query
+            .order_by(card::Column::Name, dir.order())
+            .order_by_asc(card::Column::SetCode)
+            .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last),
+        SortField::Rarity => query
+            .order_by_with_nulls(rarity_rank_expr(), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Released => query
+            .order_by_with_nulls(card::Column::ReleasedAt, dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Cmc => query
+            .order_by_with_nulls(card::Column::Cmc, dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Price => query
+            .order_by_with_nulls(price_real_expr("price_usd"), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+    };
+    query.order_by_asc(card::Column::Id)
+}
+
+/// SQL expression mapping `rarity` to its canonical low→high ordinal, reusing the
+/// search grammar's rarity ranking (`scryfall::search::RARITIES`) so the sort and
+/// the `r>=`/`r<` filters stay in lockstep. Unknown/missing rarities map to NULL
+/// so `NULLS LAST` parks them at the end in either direction. The interpolated
+/// values are fixed lowercase rarity names and integer ranks — never user input.
+fn rarity_rank_expr() -> SimpleExpr {
+    let arms: String = crate::scryfall::search::RARITIES
+        .iter()
+        .enumerate()
+        .map(|(rank, name)| format!("WHEN '{name}' THEN {rank}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Expr::cust(format!("CASE IFNULL(rarity, '') {arms} ELSE NULL END"))
+}
+
+/// SQL expression casting a text price column to a real number, with NULL/empty
+/// mapped to NULL so `NULLS LAST` keeps unpriced cards at the end rather than
+/// treating `''` as `0`. `col` is a fixed column name, never user input.
+fn price_real_expr(col: &str) -> SimpleExpr {
+    Expr::cust(format!(
+        "CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END"
+    ))
+}
+
 fn stored_faces(card: &card::Model) -> Vec<StoredFace> {
     card.card_faces
         .as_deref()
@@ -738,6 +883,17 @@ mod tests {
         assert!(!is_allowed_image_url("not a url"));
     }
 
+    fn params(sort: Option<&str>, dir: Option<&str>) -> ListParams {
+        ListParams {
+            page: None,
+            page_size: None,
+            q: None,
+            include_related: None,
+            sort: sort.map(str::to_string),
+            dir: dir.map(str::to_string),
+        }
+    }
+
     #[test]
     fn list_params_clamps_page_size() {
         let p = ListParams {
@@ -745,6 +901,8 @@ mod tests {
             page_size: Some(9999),
             q: None,
             include_related: None,
+            sort: None,
+            dir: None,
         };
         assert_eq!(p.page_and_size(), (1, MAX_PAGE_SIZE));
         let d = ListParams {
@@ -752,9 +910,66 @@ mod tests {
             page_size: None,
             q: Some("  ".into()),
             include_related: None,
+            sort: None,
+            dir: None,
         };
         assert_eq!(d.page_and_size(), (1, DEFAULT_PAGE_SIZE));
         assert_eq!(d.search(), None);
+    }
+
+    #[test]
+    fn sort_spec_uses_endpoint_default_when_absent() {
+        assert_eq!(
+            params(None, None).sort_spec(SortField::Number).unwrap(),
+            (SortField::Number, SortDir::Asc),
+        );
+        assert_eq!(
+            params(None, None).sort_spec(SortField::Name).unwrap(),
+            (SortField::Name, SortDir::Asc),
+        );
+        // Blank values are treated as absent (fall back to the default).
+        assert_eq!(
+            params(Some("  "), Some("")).sort_spec(SortField::Name).unwrap(),
+            (SortField::Name, SortDir::Asc),
+        );
+    }
+
+    #[test]
+    fn sort_spec_field_picks_natural_direction() {
+        // A field with no explicit dir defaults to its natural direction.
+        assert_eq!(
+            params(Some("price"), None).sort_spec(SortField::Name).unwrap(),
+            (SortField::Price, SortDir::Desc),
+        );
+        assert_eq!(
+            params(Some("released"), None).sort_spec(SortField::Name).unwrap(),
+            (SortField::Released, SortDir::Desc),
+        );
+        assert_eq!(
+            params(Some("cmc"), None).sort_spec(SortField::Name).unwrap(),
+            (SortField::Cmc, SortDir::Asc),
+        );
+        // An explicit dir overrides the natural one; aliases resolve.
+        assert_eq!(
+            params(Some("collector"), Some("desc")).sort_spec(SortField::Name).unwrap(),
+            (SortField::Number, SortDir::Desc),
+        );
+        assert_eq!(
+            params(Some("mv"), Some("asc")).sort_spec(SortField::Name).unwrap(),
+            (SortField::Cmc, SortDir::Asc),
+        );
+    }
+
+    #[test]
+    fn sort_spec_rejects_unknown_values() {
+        assert!(matches!(
+            params(Some("color"), None).sort_spec(SortField::Name),
+            Err(AppError::Validation(_)),
+        ));
+        assert!(matches!(
+            params(None, Some("sideways")).sort_spec(SortField::Name),
+            Err(AppError::Validation(_)),
+        ));
     }
 
     fn test_set(code: &str, parent: Option<&str>) -> card_set::Model {

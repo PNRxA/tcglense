@@ -6,8 +6,10 @@ import { RouterLink } from 'vue-router'
 import { Input } from '@/components/ui/input'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
+import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
 import { listCards, listGames } from '@/lib/api'
 
 const props = defineProps<{ game: string }>()
@@ -15,7 +17,7 @@ const game = toRef(props, 'game')
 
 const PAGE_SIZE = 60
 // Switching games (same route component, different :game) starts fresh.
-const { page, searchInput, query } = useCardSearch(game)
+const { page, searchInput, query, sort } = useCardSearch(game, ALL_CARDS_DEFAULT_SORT)
 
 const gamesQuery = useQuery({
   queryKey: ['games'],
@@ -28,12 +30,13 @@ const gameName = computed(
 )
 
 const cardsQuery = useQuery({
-  queryKey: ['cards', game, query, page],
+  queryKey: ['cards', game, query, sort, page],
   queryFn: () =>
     listCards(game.value, {
       q: query.value || undefined,
       page: page.value,
       pageSize: PAGE_SIZE,
+      ...toSortParam(sort.value, ALL_CARDS_DEFAULT_SORT),
     }),
   placeholderData: keepPreviousData,
   staleTime: 5 * 60 * 1000,
@@ -87,6 +90,9 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
     <p v-else-if="!cards.length" class="text-muted-foreground py-12">No cards found.</p>
 
     <template v-else>
+      <div class="mb-4 flex justify-end">
+        <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
+      </div>
       <CardGrid :game="game" :cards="cards" />
       <div class="mt-10">
         <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
