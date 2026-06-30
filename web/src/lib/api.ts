@@ -300,11 +300,31 @@ export interface PricePoint {
   tix: string | null
 }
 
-/** Price history for a card, oldest first (empty array if no rows recorded yet). */
-export function getPriceHistory(game: string, id: string): Promise<{ data: PricePoint[] }> {
+/**
+ * Window + resolution for the price-history chart. Longer ranges are downsampled
+ * server-side to a coarser resolution; omitting it returns the full daily series.
+ */
+export type PriceRange = '7d' | '30d' | '1y' | '2y' | '3y' | 'all'
+
+/**
+ * Relative `/api/...` path for a card's price history, with an optional `range`.
+ * Returns a path (not an absolute URL) — `request()` prepends the API origin, so
+ * this must not include it (unlike `cardImageUrl`, which is used as a bare `src`).
+ */
+export function priceHistoryPath(game: string, id: string, range?: PriceRange): string {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
-  return request<{ data: PricePoint[] }>(`/api/games/${g}/cards/${i}/prices`)
+  const qs = range ? `?range=${encodeURIComponent(range)}` : ''
+  return `/api/games/${g}/cards/${i}/prices${qs}`
+}
+
+/** Price history for a card, oldest first (empty array if no rows recorded yet). */
+export function getPriceHistory(
+  game: string,
+  id: string,
+  range?: PriceRange,
+): Promise<{ data: PricePoint[] }> {
+  return request<{ data: PricePoint[] }>(priceHistoryPath(game, id, range))
 }
 
 /** URL of the caching proxy for a set's SVG icon, for `<img src>`. */

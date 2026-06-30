@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
+import { computed, ref, toRef } from 'vue'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { VisAxis, VisLine, VisScatter, VisXYContainer } from '@unovis/vue'
 import {
   type ChartConfig,
@@ -10,19 +10,38 @@ import {
   ChartTooltipContent,
   componentToString,
 } from '@/components/ui/chart'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getPriceHistory } from '@/lib/api'
+import { getPriceHistory, type PriceRange } from '@/lib/api'
 
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
+// Selectable time window; longer ranges come back downsampled from the API. The
+// issue asks the chart to default to one year.
+const range = ref<PriceRange>('1y')
+const RANGE_OPTIONS: { value: PriceRange; label: string }[] = [
+  { value: '7d', label: '7D' },
+  { value: '30d', label: '30D' },
+  { value: '1y', label: '1Y' },
+  { value: '2y', label: '2Y' },
+  { value: '3y', label: '3Y' },
+  { value: 'all', label: 'All' },
+]
+function selectRange(value: PriceRange) {
+  range.value = value
+}
+
 // Public price-history endpoint, so a plain useQuery (no auth wrapper). Refs go
-// straight into the queryKey so a card-to-card navigation refetches.
+// straight into the queryKey so a card-to-card navigation (or a range change)
+// refetches; keepPreviousData holds the current chart on screen while the next
+// range loads instead of flashing the loading skeleton.
 const query = useQuery({
-  queryKey: ['card-prices', game, id],
-  queryFn: () => getPriceHistory(game.value, id.value),
+  queryKey: ['card-prices', game, id, range],
+  queryFn: () => getPriceHistory(game.value, id.value, range.value),
   staleTime: 5 * 60 * 1000,
+  placeholderData: keepPreviousData,
 })
 
 // One plotted day. Dates become epoch ms for a continuous x-scale; price strings
@@ -52,6 +71,11 @@ const isEmpty = computed(
   () => !query.isPending.value && !query.isError.value && points.value.length === 0,
 )
 
+// Sparse series read better with point markers; the longer, downsampled ranges
+// are cleaner as plain lines. (Also keeps a single-point series visible, since a
+// one-datum line has no stroke.)
+const showDots = computed(() => points.value.length <= 35)
+
 // Series legend/tooltip metadata. Colours are the theme's chart tokens, which the
 // CSS variables resolve differently in light vs dark, so the chart follows the theme.
 const chartConfig = {
@@ -63,6 +87,7 @@ const x = (d: PricePlot) => d.date
 const usdY = (d: PricePlot) => d.usd
 const foilY = (d: PricePlot) => d.usdFoil
 
+// Full date for the tooltip (built once below, so it must stay stable).
 const dateFmt = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
@@ -70,6 +95,16 @@ const dateFmt = new Intl.DateTimeFormat(undefined, {
 })
 const formatDate = (tick: number | Date) =>
   dateFmt.format(typeof tick === 'number' ? new Date(tick) : tick)
+
+// Axis ticks: short windows read better as "Jul 1", multi-month/-year windows as
+// "Jul 2026". A computed-returning-function so the axis re-renders on range change.
+const axisDateShort = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+const axisDateLong = new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' })
+const formatAxisDate = computed(() => {
+  const fmt = range.value === '7d' || range.value === '30d' ? axisDateShort : axisDateLong
+  return (tick: number | Date) => fmt.format(typeof tick === 'number' ? new Date(tick) : tick)
+})
+
 const formatPrice = (tick: number | Date) =>
   `$${Number(tick).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
@@ -83,7 +118,27 @@ const tooltipTemplate = componentToString(chartConfig, ChartTooltipContent, {
 <template>
   <Card class="mt-6">
     <CardHeader>
-      <CardTitle class="text-sm font-semibold">Price history</CardTitle>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle class="text-sm font-semibold">Price history</CardTitle>
+        <div
+          class="bg-muted/50 inline-flex items-center gap-0.5 rounded-lg p-0.5"
+          role="group"
+          aria-label="Price history range"
+        >
+          <Button
+            v-for="opt in RANGE_OPTIONS"
+            :key="opt.value"
+            type="button"
+            :variant="range === opt.value ? 'secondary' : 'ghost'"
+            size="sm"
+            class="h-7 px-2.5 text-xs font-medium"
+            :aria-pressed="range === opt.value"
+            @click="selectRange(opt.value)"
+          >
+            {{ opt.label }}
+          </Button>
+        </div>
+      </div>
     </CardHeader>
     <CardContent>
       <div
@@ -94,18 +149,20 @@ const tooltipTemplate = componentToString(chartConfig, ChartTooltipContent, {
       <p v-else-if="query.isError.value" class="text-muted-foreground py-12 text-sm">
         Couldn't load price history.
       </p>
-      <p v-else-if="isEmpty" class="text-muted-foreground py-12 text-sm">No price history yet.</p>
+      <p v-else-if="isEmpty" class="text-muted-foreground py-12 text-sm">
+        No price history for this range.
+      </p>
 
       <ChartContainer v-else :config="chartConfig" class="aspect-auto h-64 w-full" :cursor="true">
         <VisXYContainer :data="points" :margin="{ left: 8, right: 8 }">
           <VisLine :x="x" :y="usdY" color="var(--chart-1)" :line-width="2" />
           <VisLine :x="x" :y="foilY" color="var(--chart-2)" :line-width="2" />
-          <VisScatter :x="x" :y="usdY" color="var(--chart-1)" :size="36" />
-          <VisScatter :x="x" :y="foilY" color="var(--chart-2)" :size="36" />
+          <VisScatter v-if="showDots" :x="x" :y="usdY" color="var(--chart-1)" :size="36" />
+          <VisScatter v-if="showDots" :x="x" :y="foilY" color="var(--chart-2)" :size="36" />
           <VisAxis
             type="x"
             :x="x"
-            :tick-format="formatDate"
+            :tick-format="formatAxisDate"
             :num-ticks="5"
             :grid-line="false"
             :tick-line="false"

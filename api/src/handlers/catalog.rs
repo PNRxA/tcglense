@@ -11,6 +11,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
+use chrono::{Datelike, Duration, NaiveDate, Utc};
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect, Select,
@@ -100,6 +101,117 @@ impl From<card_price_history::Model> for PricePoint {
             tix: m.price_tix,
         }
     }
+}
+
+/// Time window + sampling resolution for a card's price history, selected by the
+/// detail-page chart via `?range`. Longer windows are **downsampled** to a coarser
+/// resolution so the wire payload (and the plotted line) stays light however much
+/// history accrues — the more duration, the lower the resolution. When no `range`
+/// is given the endpoint returns the full, un-sampled daily series (the original
+/// contract), so this is backward-compatible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriceRange {
+    /// Last 7 days, daily.
+    D7,
+    /// Last 30 days, daily.
+    D30,
+    /// Last year, weekly.
+    Y1,
+    /// Last 2 years, fortnightly.
+    Y2,
+    /// Last 3 years, monthly.
+    Y3,
+    /// All of history, every ~2 months.
+    All,
+}
+
+impl PriceRange {
+    /// An unrecognised value is a 422 — consistent with a bad `sort`/`q` — rather
+    /// than being silently ignored. Blank/absent is handled by the caller (it means
+    /// "full series"), so this is only ever called with a non-empty value.
+    fn parse(value: &str) -> Result<Self, AppError> {
+        Ok(match value {
+            "7d" => PriceRange::D7,
+            "30d" => PriceRange::D30,
+            "1y" => PriceRange::Y1,
+            "2y" => PriceRange::Y2,
+            "3y" => PriceRange::Y3,
+            "all" => PriceRange::All,
+            other => return Err(AppError::Validation(format!("unknown range '{other}'"))),
+        })
+    }
+
+    /// How many days back the window reaches, or `None` for all of history.
+    fn window_days(self) -> Option<i64> {
+        match self {
+            PriceRange::D7 => Some(7),
+            PriceRange::D30 => Some(30),
+            PriceRange::Y1 => Some(365),
+            PriceRange::Y2 => Some(730),
+            PriceRange::Y3 => Some(1095),
+            PriceRange::All => None,
+        }
+    }
+
+    /// Width of one downsample bucket in days; one representative day (the most
+    /// recent in the bucket) is kept per bucket, so a larger value = coarser chart.
+    fn bucket_days(self) -> i64 {
+        match self {
+            PriceRange::D7 | PriceRange::D30 => 1,
+            PriceRange::Y1 => 7,
+            PriceRange::Y2 => 14,
+            PriceRange::Y3 => 30,
+            PriceRange::All => 60,
+        }
+    }
+}
+
+/// Query params for the price-history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct PriceParams {
+    /// Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`). Absent/blank = the
+    /// full daily series; an unknown value is a 422.
+    #[serde(default)]
+    pub range: Option<String>,
+}
+
+/// The inclusive lower bound (`"YYYY-MM-DD"`) for a range's window relative to
+/// `today`, or `None` for [`PriceRange::All`] (no lower bound). Pure so the date
+/// arithmetic stays unit-testable; the handler passes `Utc::now().date_naive()`.
+fn cutoff_date(today: NaiveDate, range: PriceRange) -> Option<String> {
+    range
+        .window_days()
+        .map(|days| crate::scryfall::ingest::format_date(today - Duration::days(days)))
+}
+
+/// Downsample an **ascending** run of price-history rows to one representative day
+/// per `bucket_days`-wide bucket, keeping the *last* (most recent) row in each
+/// bucket — so the newest day is always retained. `bucket_days <= 1` is a
+/// passthrough (full resolution). Prices are kept as the exact stored decimal
+/// strings — never averaged — so every returned point stays a real, internally
+/// consistent day (its `usd`/`foil`/`eur`/`tix` all come from the same snapshot).
+fn downsample(rows: Vec<card_price_history::Model>, bucket_days: i64) -> Vec<PricePoint> {
+    if bucket_days <= 1 {
+        return rows.into_iter().map(PricePoint::from).collect();
+    }
+    let mut out: Vec<PricePoint> = Vec::new();
+    let mut last_key: Option<i64> = None;
+    for row in rows {
+        // Bucket on (days-since-CE / width). For our zero-padded `YYYY-MM-DD` rows
+        // the keys are monotonic in an ascending series, so equal keys are
+        // contiguous. An unparseable date (shouldn't happen) gets a sentinel key
+        // that never coalesces, keeping the row rather than dropping it.
+        let key = NaiveDate::parse_from_str(&row.as_of_date, "%Y-%m-%d")
+            .map(|d| i64::from(d.num_days_from_ce()) / bucket_days)
+            .unwrap_or(i64::MIN);
+        if last_key == Some(key) && key != i64::MIN {
+            *out.last_mut().expect("out is non-empty once last_key is set") = PricePoint::from(row);
+        } else {
+            out.push(PricePoint::from(row));
+            last_key = Some(key);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -619,22 +731,39 @@ pub async fn get_card(
     Ok(Json(CardResponse::from(card)))
 }
 
-/// `GET /api/games/{game}/cards/{id}/prices` -> a card's daily price history,
-/// oldest first, for charting. `404` if the game or card id is unknown; an empty
-/// `{ "data": [] }` when the card exists but has no captured history yet.
+/// `GET /api/games/{game}/cards/{id}/prices?range=` -> a card's price history,
+/// oldest first, for charting. With no `range` the full daily series is returned;
+/// an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows the series and
+/// **downsamples** it to a coarser resolution the longer the window. `404` if the
+/// game or card id is unknown; `422` for an unknown `range`; an empty
+/// `{ "data": [] }` when the card has no captured history in the window.
 pub async fn card_prices(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
+    Query(params): Query<PriceParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_game(&game)?;
     let card = load_card(&state, &game, &id).await?;
-    let rows = CardPriceHistory::find()
+
+    // Blank/absent range -> the full daily series (original contract); an explicit
+    // range windows + downsamples. Unknown values 422, like a bad `sort`.
+    let range = match params.range.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => None,
+        Some(value) => Some(PriceRange::parse(value)?),
+    };
+
+    let mut query = CardPriceHistory::find()
         .filter(card_price_history::Column::Game.eq(game.as_str()))
-        .filter(card_price_history::Column::CardId.eq(card.id))
+        .filter(card_price_history::Column::CardId.eq(card.id));
+    if let Some(cutoff) = range.and_then(|r| cutoff_date(Utc::now().date_naive(), r)) {
+        query = query.filter(card_price_history::Column::AsOfDate.gte(cutoff));
+    }
+    let rows = query
         .order_by_asc(card_price_history::Column::AsOfDate)
         .all(&state.db)
         .await?;
-    let data: Vec<PricePoint> = rows.into_iter().map(PricePoint::from).collect();
+
+    let data = downsample(rows, range.map_or(1, PriceRange::bucket_days));
     Ok(Json(json!({ "data": data })))
 }
 
@@ -1069,6 +1198,84 @@ mod tests {
         assert_eq!(p.usd_foil, None);
         assert_eq!(p.eur.as_deref(), Some("1.00"));
         assert_eq!(p.tix, None);
+    }
+
+    /// Build a history row for the downsample tests (only the id/date/usd matter).
+    fn hist(date: &str, usd: &str) -> card_price_history::Model {
+        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        card_price_history::Model {
+            id: 0,
+            game: "mtg".into(),
+            card_id: 1,
+            as_of_date: date.into(),
+            price_usd: Some(usd.into()),
+            price_usd_foil: None,
+            price_eur: None,
+            price_tix: None,
+            created_at: ts,
+        }
+    }
+
+    #[test]
+    fn price_range_parse_accepts_known_and_rejects_unknown() {
+        assert_eq!(PriceRange::parse("7d").unwrap(), PriceRange::D7);
+        assert_eq!(PriceRange::parse("30d").unwrap(), PriceRange::D30);
+        assert_eq!(PriceRange::parse("1y").unwrap(), PriceRange::Y1);
+        assert_eq!(PriceRange::parse("2y").unwrap(), PriceRange::Y2);
+        assert_eq!(PriceRange::parse("3y").unwrap(), PriceRange::Y3);
+        assert_eq!(PriceRange::parse("all").unwrap(), PriceRange::All);
+        // Unknown / mis-cased / empty values are a 422, not a silent fallback.
+        assert!(matches!(PriceRange::parse("7D"), Err(AppError::Validation(_))));
+        assert!(matches!(PriceRange::parse("week"), Err(AppError::Validation(_))));
+        assert!(matches!(PriceRange::parse(""), Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn cutoff_date_windows_relative_to_today() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+        // Inclusive cutoff = today - window days (so `>= cutoff` keeps window+1 days).
+        // Multi-year cutoffs account for the 2024 leap day (hence the -07-02 edges).
+        assert_eq!(cutoff_date(today, PriceRange::D7).as_deref(), Some("2026-06-24"));
+        assert_eq!(cutoff_date(today, PriceRange::D30).as_deref(), Some("2026-06-01"));
+        assert_eq!(cutoff_date(today, PriceRange::Y1).as_deref(), Some("2025-07-01"));
+        assert_eq!(cutoff_date(today, PriceRange::Y2).as_deref(), Some("2024-07-01"));
+        assert_eq!(cutoff_date(today, PriceRange::Y3).as_deref(), Some("2023-07-02"));
+        // "all" has no lower bound.
+        assert_eq!(cutoff_date(today, PriceRange::All), None);
+    }
+
+    #[test]
+    fn downsample_daily_is_passthrough() {
+        let rows = vec![hist("2026-06-01", "1"), hist("2026-06-02", "2"), hist("2026-06-03", "3")];
+        let out = downsample(rows, 1);
+        let dates: Vec<_> = out.iter().map(|p| p.date.clone()).collect();
+        assert_eq!(dates, vec!["2026-06-01", "2026-06-02", "2026-06-03"]);
+    }
+
+    #[test]
+    fn downsample_empty_input_is_empty() {
+        assert!(downsample(Vec::new(), 7).is_empty());
+    }
+
+    #[test]
+    fn downsample_keeps_last_real_row_per_bucket() {
+        // 15 consecutive days, weekly (7-day) buckets.
+        let rows: Vec<_> =
+            (1..=15).map(|d| hist(&format!("2026-06-{d:02}"), &d.to_string())).collect();
+        let out = downsample(rows, 7);
+        let dates: Vec<_> = out.iter().map(|p| p.date.clone()).collect();
+
+        // Genuinely coarser than the 15 daily rows, but more than one bucket.
+        assert!(out.len() > 1 && out.len() < 15, "got {} points", out.len());
+        // The newest day is always retained, with its real (un-averaged) price.
+        assert_eq!(dates.last().unwrap(), "2026-06-15");
+        assert_eq!(out.last().unwrap().usd.as_deref(), Some("15"));
+        // One representative per bucket -> strictly increasing real input dates.
+        for w in dates.windows(2) {
+            assert!(w[0] < w[1], "dates must be strictly increasing: {dates:?}");
+        }
+        let inputs: Vec<String> = (1..=15).map(|d| format!("2026-06-{d:02}")).collect();
+        assert!(dates.iter().all(|d| inputs.contains(d)), "no synthesized dates");
     }
 
     #[test]
