@@ -60,7 +60,8 @@ impl ImageCache {
             "png" => ("png", "image/png"),
             _ => ("jpg", "image/jpeg"),
         };
-        self.get_cached(game, size, key, ext, content_type, source_url).await
+        self.get_cached(game, size, key, ext, content_type, source_url)
+            .await
     }
 
     /// Return a cached SVG (e.g. a set icon) under `<base>/<game>/<category>/`,
@@ -93,7 +94,10 @@ impl ImageCache {
         let path = dir.join(format!("{}.{ext}", sanitize(key)));
 
         if let Ok(bytes) = tokio::fs::read(&path).await {
-            return Ok(CachedImage { bytes, content_type });
+            return Ok(CachedImage {
+                bytes,
+                content_type,
+            });
         }
 
         // Bound concurrent upstream fetches. A closed semaphore (never expected)
@@ -102,7 +106,10 @@ impl ImageCache {
 
         // Re-check: another task may have populated the cache while we waited.
         if let Ok(bytes) = tokio::fs::read(&path).await {
-            return Ok(CachedImage { bytes, content_type });
+            return Ok(CachedImage {
+                bytes,
+                content_type,
+            });
         }
 
         let bytes = self
@@ -130,7 +137,10 @@ impl ImageCache {
             }
             return Err(err.into());
         }
-        Ok(CachedImage { bytes, content_type })
+        Ok(CachedImage {
+            bytes,
+            content_type,
+        })
     }
 }
 

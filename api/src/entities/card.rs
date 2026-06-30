@@ -39,6 +39,15 @@ pub struct Model {
     /// Comma-joined colour letters of the card itself.
     pub colors: Option<String>,
     pub layout: Option<String>,
+    /// Oracle rules text. For multi-faced cards this is the faces' text joined
+    /// with `\n//\n`, so the `o:` filter still matches text on either face.
+    pub oracle_text: Option<String>,
+    /// Power / toughness / loyalty kept as strings because they can be non-numeric
+    /// (`"*"`, `"1+*"`, `"X"`); numeric filters CAST them. For multi-faced cards
+    /// these come from the first face that has them.
+    pub power: Option<String>,
+    pub toughness: Option<String>,
+    pub loyalty: Option<String>,
     pub image_small: Option<String>,
     pub image_normal: Option<String>,
     pub image_large: Option<String>,

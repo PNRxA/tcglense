@@ -14,21 +14,22 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, prelude::DateTimeUtc,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::io::StreamReader;
 
 use super::client;
-use super::model::{ScryfallCard, ScryfallSet, StoredFace};
+use super::model::{CardFace, ScryfallCard, ScryfallSet, StoredFace};
 use super::{DATASET, GAME};
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
-/// Rows per upsert. ~31 card columns × 400 ≈ 12.4k bound parameters, comfortably
+/// Rows per upsert. ~34 card columns × 400 ≈ 13.6k bound parameters, comfortably
 /// under SQLite's default 32 766 parameter limit.
-const CARD_BATCH: usize = 400;
+pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.
 const PROGRESS_EVERY: u32 = 25;
@@ -75,7 +76,9 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         .await?
         .into_iter()
         .find(|b| b.kind == DATASET)
-        .ok_or_else(|| IngestError::Other(format!("scryfall bulk dataset '{DATASET}' not found")))?;
+        .ok_or_else(|| {
+            IngestError::Other(format!("scryfall bulk dataset '{DATASET}' not found"))
+        })?;
 
     // Skip if we already imported this exact version.
     let existing = IngestState::find()
@@ -97,7 +100,17 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         size_mb = entry.size.unwrap_or(0) / 1_000_000,
         "importing scryfall {DATASET}"
     );
-    put_state(db, Some(entry.updated_at.clone()), "running", Some("importing sets".into()), 0, 0, Some(started), None).await?;
+    put_state(
+        db,
+        Some(entry.updated_at.clone()),
+        "running",
+        Some("importing sets".into()),
+        0,
+        0,
+        Some(started),
+        None,
+    )
+    .await?;
 
     // Sets first, so cards can reference stored sets.
     let sets = client::all_sets(client).await?;
@@ -151,12 +164,19 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         Some(Utc::now()),
     )
     .await?;
-    tracing::info!(sets = sets_imported, cards = cards_imported, "scryfall import complete");
+    tracing::info!(
+        sets = sets_imported,
+        cards = cards_imported,
+        "scryfall import complete"
+    );
     Ok(())
 }
 
 /// Upsert all non-digital (paper) sets. Returns the number stored.
-async fn import_sets(db: &DatabaseConnection, sets: &[ScryfallSet]) -> Result<i32, IngestError> {
+pub(super) async fn import_sets(
+    db: &DatabaseConnection,
+    sets: &[ScryfallSet],
+) -> Result<i32, IngestError> {
     let now = Utc::now();
     let models: Vec<card_set::ActiveModel> = sets
         .iter()
@@ -274,7 +294,10 @@ async fn import_cards(
     Ok(total)
 }
 
-async fn flush_cards(db: &DatabaseConnection, batch: Vec<card::ActiveModel>) -> Result<(), IngestError> {
+pub(super) async fn flush_cards(
+    db: &DatabaseConnection,
+    batch: Vec<card::ActiveModel>,
+) -> Result<(), IngestError> {
     if batch.is_empty() {
         return Ok(());
     }
@@ -297,6 +320,10 @@ async fn flush_cards(db: &DatabaseConnection, batch: Vec<card::ActiveModel>) -> 
                     card::Column::ColorIdentity,
                     card::Column::Colors,
                     card::Column::Layout,
+                    card::Column::OracleText,
+                    card::Column::Power,
+                    card::Column::Toughness,
+                    card::Column::Loyalty,
                     card::Column::ImageSmall,
                     card::Column::ImageNormal,
                     card::Column::ImageLarge,
@@ -335,7 +362,7 @@ fn map_set(set: &ScryfallSet, now: DateTimeUtc) -> card_set::ActiveModel {
     }
 }
 
-fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveModel {
+pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveModel {
     // Resolve display images from the top-level `image_uris`, falling back to the
     // first face for multi-faced cards (which have no top-level images).
     let (image_small, image_normal, image_large, image_art_crop, image_png) = {
@@ -363,13 +390,46 @@ fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveModel {
     };
 
     let (price_usd, price_usd_foil, price_eur, price_tix) = match &card.prices {
-        Some(p) => (p.usd.clone(), p.usd_foil.clone(), p.eur.clone(), p.tix.clone()),
+        Some(p) => (
+            p.usd.clone(),
+            p.usd_foil.clone(),
+            p.eur.clone(),
+            p.tix.clone(),
+        ),
         None => (None, None, None, None),
     };
 
     let color_identity = join_colors(&card.color_identity);
     let colors = join_colors(&card.colors);
     let collector_number_int = leading_int(&card.collector_number);
+
+    // Searchable gameplay text and creature stats. Single-faced cards carry these
+    // at the top level; multi-faced cards carry them per face. For `oracle_text`
+    // we join the faces' text (so an `o:` search matches text on either face);
+    // for power/toughness/loyalty we take the first face that has a value.
+    let oracle_text = card.oracle_text.clone().or_else(|| {
+        card.card_faces.as_ref().and_then(|faces| {
+            let joined = faces
+                .iter()
+                .filter_map(|f| f.oracle_text.as_deref())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n//\n");
+            (!joined.is_empty()).then_some(joined)
+        })
+    });
+    let power = card
+        .power
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.power));
+    let toughness = card
+        .toughness
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.toughness));
+    let loyalty = card
+        .loyalty
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.loyalty));
 
     card::ActiveModel {
         id: NotSet,
@@ -390,6 +450,10 @@ fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveModel {
         color_identity: Set(color_identity),
         colors: Set(colors),
         layout: Set(card.layout),
+        oracle_text: Set(oracle_text),
+        power: Set(power),
+        toughness: Set(toughness),
+        loyalty: Set(loyalty),
         image_small: Set(image_small),
         image_normal: Set(image_normal),
         image_large: Set(image_large),
@@ -413,6 +477,17 @@ fn join_colors(value: &Option<Vec<String>>) -> Option<String> {
     }
 }
 
+/// First face that carries a value for the given stat accessor (power/toughness/
+/// loyalty live per-face on multi-faced cards rather than at the top level).
+fn face_stat(
+    faces: &Option<Vec<CardFace>>,
+    get: impl Fn(&CardFace) -> &Option<String>,
+) -> Option<String> {
+    faces
+        .as_ref()
+        .and_then(|fs| fs.iter().find_map(|f| get(f).clone()))
+}
+
 /// Parse the leading run of ASCII digits of a collector number (`"12a"` -> 12).
 fn leading_int(collector_number: &str) -> Option<i32> {
     let digits: String = collector_number
@@ -422,7 +497,7 @@ fn leading_int(collector_number: &str) -> Option<i32> {
     digits.parse().ok()
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(super) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
@@ -433,7 +508,7 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// Upsert the single `ingest_state` row for `(GAME, DATASET)`.
 #[allow(clippy::too_many_arguments)]
-async fn put_state(
+pub(super) async fn put_state(
     db: &DatabaseConnection,
     source_updated_at: Option<String>,
     status: &str,
@@ -478,7 +553,7 @@ async fn put_state(
 mod tests {
     use super::*;
 
-    const SAMPLE_CARD: &str = r#"{"object":"card","id":"abc-123","oracle_id":"ora-1","name":"Llanowar Elves","lang":"en","released_at":"2018-07-13","set":"M19","set_name":"Core Set 2019","collector_number":"314","rarity":"common","layout":"normal","mana_cost":"{G}","cmc":1.0,"type_line":"Creature — Elf Druid","color_identity":["G"],"colors":["G"],"digital":false,"games":["paper","mtgo"],"image_uris":{"small":"https://img/small.jpg","normal":"https://img/normal.jpg","large":"https://img/large.jpg","png":"https://img/card.png","art_crop":"https://img/art.jpg"},"prices":{"usd":"0.25","usd_foil":"1.50","eur":"0.10","tix":"0.03"}}"#;
+    const SAMPLE_CARD: &str = r#"{"object":"card","id":"abc-123","oracle_id":"ora-1","name":"Llanowar Elves","lang":"en","released_at":"2018-07-13","set":"M19","set_name":"Core Set 2019","collector_number":"314","rarity":"common","layout":"normal","mana_cost":"{G}","cmc":1.0,"type_line":"Creature — Elf Druid","oracle_text":"{T}: Add {G}.","power":"1","toughness":"1","color_identity":["G"],"colors":["G"],"digital":false,"games":["paper","mtgo"],"image_uris":{"small":"https://img/small.jpg","normal":"https://img/normal.jpg","large":"https://img/large.jpg","png":"https://img/card.png","art_crop":"https://img/art.jpg"},"prices":{"usd":"0.25","usd_foil":"1.50","eur":"0.10","tix":"0.03"}}"#;
 
     #[test]
     fn maps_a_simple_card() {
@@ -490,29 +565,48 @@ mod tests {
         // Set code is lowercased so it matches stored sets.
         assert_eq!(model.set_code.as_ref(), "m19");
         assert_eq!(model.color_identity.as_ref().as_deref(), Some("G"));
-        assert_eq!(model.image_normal.as_ref().as_deref(), Some("https://img/normal.jpg"));
+        assert_eq!(
+            model.image_normal.as_ref().as_deref(),
+            Some("https://img/normal.jpg")
+        );
         assert_eq!(model.price_usd.as_ref().as_deref(), Some("0.25"));
+        assert_eq!(model.oracle_text.as_ref().as_deref(), Some("{T}: Add {G}."));
+        assert_eq!(model.power.as_ref().as_deref(), Some("1"));
+        assert_eq!(model.toughness.as_ref().as_deref(), Some("1"));
+        assert!(model.loyalty.as_ref().is_none());
         assert!(model.card_faces.as_ref().is_none());
     }
 
     #[test]
     fn double_faced_card_uses_front_face_images_and_stores_faces() {
-        let dfc = r#"{"object":"card","id":"dfc-1","name":"Delver of Secrets // Insectile Aberration","lang":"en","set":"isd","set_name":"Innistrad","collector_number":"51","games":["paper"],"layout":"transform","card_faces":[{"name":"Delver of Secrets","mana_cost":"{U}","type_line":"Creature — Human Wizard","image_uris":{"small":"https://img/front-small.jpg","normal":"https://img/front.jpg"}},{"name":"Insectile Aberration","mana_cost":"","type_line":"Creature — Human Insect","image_uris":{"small":"https://img/back-small.jpg","normal":"https://img/back.jpg"}}]}"#;
+        let dfc = r#"{"object":"card","id":"dfc-1","name":"Delver of Secrets // Insectile Aberration","lang":"en","set":"isd","set_name":"Innistrad","collector_number":"51","games":["paper"],"layout":"transform","card_faces":[{"name":"Delver of Secrets","mana_cost":"{U}","type_line":"Creature — Human Wizard","oracle_text":"At the beginning of your upkeep, look at the top card.","power":"1","toughness":"1","image_uris":{"small":"https://img/front-small.jpg","normal":"https://img/front.jpg"}},{"name":"Insectile Aberration","mana_cost":"","type_line":"Creature — Human Insect","oracle_text":"Flying","power":"3","toughness":"2","image_uris":{"small":"https://img/back-small.jpg","normal":"https://img/back.jpg"}}]}"#;
         let scry: ScryfallCard = serde_json::from_str(dfc).unwrap();
         let model = map_card(scry, Utc::now());
         // Falls back to the front face for the listing thumbnail.
-        assert_eq!(model.image_normal.as_ref().as_deref(), Some("https://img/front.jpg"));
+        assert_eq!(
+            model.image_normal.as_ref().as_deref(),
+            Some("https://img/front.jpg")
+        );
         // Both faces are persisted as JSON.
         let faces = model.card_faces.as_ref().clone().unwrap();
         assert!(faces.contains("Insectile Aberration"));
         assert!(faces.contains("https://img/back.jpg"));
+        // Oracle text joins both faces; P/T come from the first face that has them.
+        let oracle = model.oracle_text.as_ref().clone().unwrap();
+        assert!(oracle.contains("top card"));
+        assert!(oracle.contains("Flying"));
+        assert_eq!(model.power.as_ref().as_deref(), Some("1"));
+        assert_eq!(model.toughness.as_ref().as_deref(), Some("1"));
     }
 
     #[test]
     fn join_colors_handles_empty_and_present() {
         assert_eq!(join_colors(&None), None);
         assert_eq!(join_colors(&Some(vec![])), None);
-        assert_eq!(join_colors(&Some(vec!["W".into(), "U".into()])), Some("W,U".to_string()));
+        assert_eq!(
+            join_colors(&Some(vec!["W".into(), "U".into()])),
+            Some("W,U".to_string())
+        );
     }
 
     #[test]

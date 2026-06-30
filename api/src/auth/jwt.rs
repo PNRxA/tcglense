@@ -1,7 +1,5 @@
 use chrono::{Duration, Utc};
-use jsonwebtoken::{
-    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode,
-};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 use crate::{config::Config, entities::user, error::AppError};
@@ -77,6 +75,7 @@ mod tests {
             scryfall_user_agent: "TCGLense/test".to_string(),
             sync_on_startup: false,
             sync_interval_hours: 24,
+            seed_dummy_data: false,
         }
     }
 

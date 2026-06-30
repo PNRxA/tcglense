@@ -116,3 +116,44 @@ export function findGroup(sets: CardSet[], code: string): SetGroup | undefined {
     (group) => group.main.code === code || group.children.some((c) => c.code === code),
   )
 }
+
+/** A run of top-level set groups that share a release year. */
+export interface SetYear {
+  /** Release year, or `null` for sets with no/unparseable release date. */
+  year: number | null
+  groups: SetGroup[]
+}
+
+/**
+ * Partition pre-built {@link SetGroup}s into release-year sections, newest year
+ * first, with undated sets last. A group's year comes from its **main** set's
+ * `released_at` (the sub-sets follow their parent into the same section), so the
+ * within-year order produced by {@link groupSets} is preserved inside a section.
+ */
+export function groupByYear(groups: SetGroup[]): SetYear[] {
+  const sections = new Map<number | null, SetGroup[]>()
+  for (const group of groups) {
+    const year = releaseYear(group.main)
+    const bucket = sections.get(year)
+    if (bucket) bucket.push(group)
+    else sections.set(year, [group])
+  }
+
+  return [...sections.entries()]
+    .map(([year, groups]) => ({ year, groups }))
+    .sort((a, b) => {
+      // Newest year first; undated (null) sinks to the bottom.
+      if (a.year === b.year) return 0
+      if (a.year === null) return 1
+      if (b.year === null) return -1
+      return b.year - a.year
+    })
+}
+
+// Pull the year out of Scryfall's ISO `YYYY-MM-DD` date by slicing the leading
+// four digits — parsing to a Date would risk a timezone shift across New Year.
+function releaseYear(set: CardSet): number | null {
+  if (!set.released_at) return null
+  const year = Number.parseInt(set.released_at.slice(0, 4), 10)
+  return Number.isNaN(year) ? null : year
+}

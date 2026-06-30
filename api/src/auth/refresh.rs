@@ -314,7 +314,9 @@ mod tests {
 
         // Rotate t1 -> t3, then t3 -> t4, so t1's successor (t3) is itself revoked.
         let r3 = rotate(&db, &t1, 30).await.expect("rotate t1 -> t3");
-        let r4 = rotate(&db, &r3.plaintext, 30).await.expect("rotate t3 -> t4");
+        let r4 = rotate(&db, &r3.plaintext, 30)
+            .await
+            .expect("rotate t3 -> t4");
 
         // Replaying the long-superseded t1 is now unambiguous reuse/theft.
         let err = rotate(&db, &t1, 30).await.unwrap_err();
@@ -354,7 +356,9 @@ mod tests {
         let user_id = insert_user(&db, "prune@example.com").await;
 
         let live = issue_refresh_token(&db, user_id, 30).await.expect("live");
-        let expired = issue_refresh_token(&db, user_id, -1).await.expect("expired");
+        let expired = issue_refresh_token(&db, user_id, -1)
+            .await
+            .expect("expired");
 
         let pruned = prune_expired(&db).await.expect("prune");
         assert_eq!(pruned, 1);
@@ -382,8 +386,12 @@ mod tests {
         let token = issue_refresh_token(&db, user_id, 30).await.expect("issue");
 
         revoke_one(&db, &token).await.expect("first revoke");
-        revoke_one(&db, &token).await.expect("second revoke is a no-op");
-        revoke_one(&db, "unknown-token").await.expect("unknown is a no-op");
+        revoke_one(&db, &token)
+            .await
+            .expect("second revoke is a no-op");
+        revoke_one(&db, "unknown-token")
+            .await
+            .expect("unknown is a no-op");
 
         assert!(find_by_hash(&db, &token).await.revoked_at.is_some());
     }

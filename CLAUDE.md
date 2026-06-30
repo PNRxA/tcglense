@@ -148,14 +148,30 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code }` |
 | `GET /api/games/{game}/sets/{code}` | one `Set` |
 | `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
-| `GET /api/games/{game}/sets/{code}/cards?q&page&page_size&include_related` | page of `Card` (optional `q` name search), by collector number. `include_related=true` spans the set's whole **group** — its top-level root plus every related sub-set (tokens/promos/decks) — grouped by set (set-code order), each set in collector order |
-| `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` name search), by name |
+| `GET /api/games/{game}/sets/{code}/cards?q&page&page_size&include_related` | page of `Card` (optional `q` Scryfall-style search), by collector number. `include_related=true` spans the set's whole **group** — its top-level root plus every related sub-set (tokens/promos/decks) — grouped by set (set-code order), each set in collector order |
+| `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` Scryfall-style search), by name |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
-mana_cost, cmc, type_line, color_identity: string[], colors: string[], layout,
-prices: { usd, usd_foil, eur, tix }, has_image, faces: { name, mana_cost, type_line }[] }`.
+mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
+color_identity: string[], colors: string[], layout,
+prices: { usd, usd_foil, eur, tix }, has_image,
+faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
+
+**Search syntax (`q`):** the MTG card-list endpoints parse `q` as a subset of
+[Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search.rs`).
+Bare words / `"quoted phrases"` are card-name substrings (ANDed); `!"exact name"`
+is an exact match. Supported filters: `name`/`n`, `t`/`type`, `o`/`oracle`,
+`m`/`mana`, `c`/`color` and `id`/`identity` (set comparison, `:` means `>=`),
+`cmc`/`mv` (incl. `:even`/`:odd`), `pow`/`tou`/`loy` (numeric, incl. cross-column
+like `pow>tou`), `usd`/`usdfoil`/`eur`/`tix`, `year`, `date`, `r`/`rarity`
+(ordered), `s`/`set`/`e`, `cn`/`number`, `lang`, `layout`, `is:`/`not:`
+(layout/colour/mana-derived), `game`, `oracleid` — with comparison operators
+`: = != > >= < <=`, boolean `and`/`or`, `-` negation, and parentheses. Filters we
+don't ingest (`f:` legality, `kw:`, `a:` artist, `ft:` flavour, …) and malformed
+queries return **422** `{ error }` (surfaced in the UI under the search box). All
+user values bind as SeaORM parameters — never interpolated into SQL.
 
 **Image proxy:** `size` ∈ `small|normal|large|png|art_crop` (default `normal`),
 `face` is a 0-based face index for double-faced cards. On first request the image
@@ -168,8 +184,8 @@ catalogue — images are cached lazily, on view. Set icons are cached the same w
 ## Backend structure (`api/src/`)
 
 ```
-main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → spawn periodic card-data import (daily) → router → serve
-config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS); Debug redacts the secret
+main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → seed dummy catalog (SEED_DUMMY_DATA) or spawn periodic card-data import (daily) → router → serve
+config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secret
 db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000), applied to every pooled connection
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
@@ -182,12 +198,14 @@ auth/
   refresh.rs       opaque refresh-token service: issue / rotate (single-use, successor-linked reuse detection) / revoke_one / revoke_all / prune_expired
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
-catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all() (dispatch per game to its provider)
+catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all()/seed_all() (dispatch per game to its provider / offline dummy seeder)
   images.rs        ImageCache: lazy on-disk image cache/downloader (<DATA_DIR>/images/<game>/<size>/<key>.<ext>), path-sanitised, fetch-concurrency-limited
 scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
   client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
   ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping
+  search.rs        Scryfall-style query parser: lexer + recursive-descent (and/or/-/parens/quotes) → sea_orm::Condition; SearchError → 422; values always parameterised
+  dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path
 handlers/
   auth.rs          register / login / refresh / logout / me
   catalog.rs       games / status / sets / set cards / all cards (search+paginate) / card detail / image proxy
@@ -196,13 +214,17 @@ handlers/
 
 **Multi-TCG by design:** `cards`/`card_sets`/`ingest_state` carry a `game`
 discriminator column; the catalog layer + routes are generic. Adding a TCG = add a
-`Game` to `catalog::GAMES`, a provider module (like `scryfall/`), and one arm in
-`catalog::refresh_all`. On startup `main.rs` spawns `catalog::refresh_all` in the
+`Game` to `catalog::GAMES`, a provider module (like `scryfall/`), and one arm each
+in `catalog::refresh_all` (live import) and `catalog::seed_all` (offline dummy seed).
+On startup `main.rs` spawns `catalog::refresh_all` in the
 background (gated by `SYNC_ON_STARTUP`) so the server is up immediately, then
 re-runs it on a fixed interval (`SYNC_INTERVAL_HOURS`, default 24 = daily) to pick
 up newer prices/sets; the import streams the bulk file with bounded memory and
 **skips re-import when the provider's `updated_at` is unchanged**
-(`ingest_state.source_updated_at`), so a tick with no upstream change is cheap.
+(`ingest_state.source_updated_at`), so a tick with no upstream change is cheap. When
+`SEED_DUMMY_DATA` is set, `main.rs` instead **awaits** `catalog::seed_all` (no
+network, no images) to populate a small deterministic offline catalog and skips all
+syncing — see the env-var notes below.
 
 ### Adding a backend feature (e.g. collection, prices)
 
@@ -298,7 +320,10 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `SYNC_ON_STARTUP` (`true`; import card data on boot — set `false` for offline
   dev/tests), `SYNC_INTERVAL_HOURS` (`24`; re-import cadence after the startup
   import — `0` disables the periodic refresh; only applies when `SYNC_ON_STARTUP`
-  is on). See `api/.env.example`.
+  is on), `SEED_DUMMY_DATA` (`false`; seed a deterministic offline dummy catalog
+  instead of importing real data — **takes precedence** over `SYNC_ON_STARTUP`/
+  `SYNC_INTERVAL_HOURS`, does no network sync, upsert-only so point it at a
+  fresh/dedicated DB). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
 
 ## Known trade-offs / future work
@@ -339,6 +364,20 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   The parser assumes Scryfall's one-object-per-line bulk format; per-line length
   isn't capped, so a format change to a single-line array would not be parsed safely
   (it'd hit the zero-card guard but only after buffering).
+- **Dummy catalog seed:** `SEED_DUMMY_DATA=true` makes `main.rs` **await**
+  `catalog::seed_all` (no network, no images) before serving, populating a small
+  deterministic fake catalog (a few MTG-flavoured sets — including a parent/child
+  pair — and ~95 cards with a double-faced card and non-numeric collector numbers).
+  For offline dev, CI, and `npm run test:e2e`. It reuses the real
+  `ingest::map_card`/`import_sets`/`flush_cards`/`put_state` path (so seeded rows are
+  shaped exactly like imported ones) and reuses the same `(game, "default_cards")`
+  `ingest_state` row, marking it `complete` with a synthetic `source_updated_at`
+  (`dummy-seed-v1`) — a later real sync's version gate sees the mismatch and
+  re-imports, so dummy mode never locks out real data. It is **upsert-only** (never
+  deletes), so toggling it on a DB that already holds real cards leaves a real+dummy
+  mix; point it at a fresh/dedicated DB (or `:memory:` in tests). Tests call
+  `scryfall::dummy::seed` directly against an in-memory DB rather than booting the
+  binary.
 - **Image caching:** card images download lazily on first view to `<DATA_DIR>/images`
   and are served from disk after — deliberately *not* a bulk image download (that
   would be hundreds of GB and against Scryfall's guidelines). Fetches go through a
