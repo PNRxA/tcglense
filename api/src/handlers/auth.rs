@@ -188,6 +188,17 @@ pub async fn login(
 ) -> Result<impl IntoResponse, AppError> {
     let email = payload.email.trim().to_lowercase();
 
+    // Cap the password length here too (register enforces it, but login must as
+    // well): an unbounded password is fed straight to Argon2 verify below, so an
+    // oversized one is a cheap-to-send, expensive-to-hash DoS. This is a pure
+    // length check, so the generic 401 is preserved for any plausible password —
+    // no value over the cap could match a stored account anyway.
+    if payload.password.len() > MAX_PASSWORD_LEN {
+        return Err(AppError::Validation(format!(
+            "password must be at most {MAX_PASSWORD_LEN} characters"
+        )));
+    }
+
     let user = User::find()
         .filter(user::Column::Email.eq(&email))
         .one(&state.db)
