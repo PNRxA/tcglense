@@ -166,8 +166,10 @@ is an exact match. Supported filters: `name`/`n`, `t`/`type`, `o`/`oracle`,
 `m`/`mana`, `c`/`color` and `id`/`identity` (set comparison, `:` means `>=`),
 `cmc`/`mv` (incl. `:even`/`:odd`), `pow`/`tou`/`loy` (numeric, incl. cross-column
 like `pow>tou`), `usd`/`usdfoil`/`eur`/`tix`, `year`, `date`, `r`/`rarity`
-(ordered), `s`/`set`/`e`, `cn`/`number`, `lang`, `layout`, `is:`/`not:`
-(layout/colour/mana-derived), `game`, `oracleid` — with comparison operators
+(ordered), `s`/`set`/`e`, `st`/`settype` (the set's Scryfall `set_type`, resolved
+via a game-scoped subquery on `card_sets`), `cn`/`number`, `lang`, `layout`,
+`is:`/`not:` (layout/colour/mana/type-derived — incl. `permanent`/`spell`/`vanilla`),
+`game`, `oracleid` — with comparison operators
 `: = != > >= < <=`, boolean `and`/`or`, `-` negation, and parentheses. Filters we
 don't ingest (`f:` legality, `kw:`, `a:` artist, `ft:` flavour, …) and malformed
 queries return **422** `{ error }` (surfaced in the UI under the search box). All
