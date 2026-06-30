@@ -5,6 +5,7 @@
 //! which provider to invoke per game.
 
 pub mod client;
+pub mod drops;
 mod dummy;
 pub mod ingest;
 pub mod model;

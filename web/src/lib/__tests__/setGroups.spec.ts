@@ -22,6 +22,7 @@ function set(code: string, over: Partial<CardSet> = {}): CardSet {
     card_count: 100,
     icon_svg_uri: null,
     parent_set_code: null,
+    has_drops: false,
     ...over,
   }
 }

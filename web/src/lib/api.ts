@@ -123,6 +123,9 @@ export interface CardSet {
   card_count: number
   icon_svg_uri: string | null
   parent_set_code: string | null
+  /** Whether this set can be browsed broken down into Secret Lair-style "drops"
+   * (the `listSetDrops` endpoint). */
+  has_drops: boolean
 }
 
 export interface CardFace {
@@ -164,12 +167,34 @@ export interface Card {
   layout: string | null
   prices: CardPrices
   has_image: boolean
+  /** Secret Lair drop title this card belongs to (for drop-grouped sets); null otherwise. */
+  drop_name: string | null
+  /** Slug of the drop above, paired with `drop_name`. */
+  drop_slug: string | null
   faces: CardFace[]
 }
 
 /** A page of cards plus pagination cursors. */
 export interface CardPage {
   data: Card[]
+  page: number
+  page_size: number
+  total: number
+  has_more: boolean
+}
+
+/** A Secret Lair drop: a named group of cards (e.g. "Wild in Bloom"). */
+export interface DropGroup {
+  /** Stable slug for anchors; null for the catch-all "Other" group. */
+  slug: string | null
+  title: string
+  card_count: number
+  cards: Card[]
+}
+
+/** A page of drop groups — `total`/pagination count *drops*, not cards. */
+export interface DropGroupPage {
+  data: DropGroup[]
   page: number
   page_size: number
   total: number
@@ -242,8 +267,28 @@ export function listCards(game: string, params?: CardListParams): Promise<CardPa
   return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`)
 }
 
+/** Browse a drop-grouped set (e.g. Secret Lair) broken into named drops,
+ * paginated by drop. Only valid for sets where `CardSet.has_drops` is true. */
+export function listSetDrops(
+  game: string,
+  code: string,
+  params?: Pick<CardListParams, 'page' | 'pageSize' | 'q'>,
+): Promise<DropGroupPage> {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return request<DropGroupPage>(`/api/games/${g}/sets/${c}/drops${cardQuery(params)}`)
+}
+
 export function getCard(game: string, id: string): Promise<Card> {
   return request<Card>(`/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`)
+}
+
+/** A card's other printings (every card sharing its gameplay identity/oracle id),
+ * newest printing first. Empty when the card has no other printings. */
+export function getCardPrints(game: string, id: string): Promise<{ data: Card[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: Card[] }>(`/api/games/${g}/cards/${i}/prints`)
 }
 
 /** A single day's recorded prices for a card (decimal strings, exactly as stored). */
