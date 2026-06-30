@@ -34,7 +34,7 @@ export default defineConfigWithVueTs(
 
   {
     name: 'app/ui-components',
-    files: ['src/components/ui/**/*.vue'],
+    files: ['src/components/ui/**/*.{vue,ts}'],
     rules: {
       // shadcn-vue primitives are intentionally single-word (Button, Card, Input, ...).
       'vue/multi-word-component-names': 'off',
@@ -42,6 +42,9 @@ export default defineConfigWithVueTs(
       // before forwarding the rest to the underlying reka-ui component — the discarded
       // siblings are deliberate, not dead code.
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
+      // The shadcn-vue chart primitives (Unovis crosshair render bridge) ship `any`
+      // in their generated payload/accessor plumbing — vendored code we keep verbatim.
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 

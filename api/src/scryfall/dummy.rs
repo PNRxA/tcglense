@@ -14,13 +14,17 @@
 //! same rows rather than growing the catalog. Cards carry no image URLs, so the image
 //! proxy is never hit and `has_image` resolves to false everywhere.
 
-use chrono::Utc;
-use sea_orm::DatabaseConnection;
+use chrono::{Duration, Utc};
+use sea_orm::{
+    ActiveValue::{NotSet, Set},
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect,
+};
 
 use super::GAME;
-use super::ingest::{self, IngestError};
+use super::ingest::{self, IngestError, PriceColumns};
 use super::model::{CardFace, Prices, ScryfallCard, ScryfallSet};
-use crate::entities::card;
+use crate::entities::prelude::Card;
+use crate::entities::{card, card_price_history};
 
 /// Synthetic `ingest_state.source_updated_at` recorded for a dummy seed. It never
 /// equals a real Scryfall RFC3339 timestamp, so a later real sync's version gate
@@ -29,6 +33,10 @@ use crate::entities::card;
 /// so changing the generated data takes effect on the next restart with no version
 /// bump needed; this value only needs to stay distinct from a real Scryfall timestamp.
 const DUMMY_SOURCE_VERSION: &str = "dummy-seed-v1";
+
+/// Days of fabricated price history seeded per card, so the chart shows a trend
+/// rather than a single flat point.
+const PRICE_HISTORY_DAYS: i64 = 30;
 
 /// Colour the generated cards cycle through (Scryfall single-letter code, a display
 /// word for the card name, and the mana symbol).
@@ -378,6 +386,69 @@ fn dummy_sets(cards: &[ScryfallCard]) -> Vec<ScryfallSet> {
         .collect()
 }
 
+/// Deterministically vary a base price for a day offset, so the seeded history shows
+/// a trend (older days a touch cheaper) with a little day-to-day wiggle. `None` base
+/// prices (e.g. tokens) stay `None`. Values are clamped to a positive minimum and
+/// formatted as 2-decimal strings, matching how real prices are stored.
+fn vary_price(base: &Option<String>, day_offset: i64) -> Option<String> {
+    let value: f64 = base.as_deref()?.parse().ok()?;
+    let trend = 1.0 - 0.01 * day_offset as f64; // older days slightly cheaper
+    let wiggle = 0.02 * ((day_offset % 5) as f64 - 2.0); // deterministic ±
+    let varied = (value * (trend + wiggle)).max(0.01);
+    Some(format!("{varied:.2}"))
+}
+
+/// Seed `PRICE_HISTORY_DAYS` of fabricated daily price history per seeded card,
+/// reusing the real `(game, card_id, as_of_date)` unique key and upsert helper so it
+/// stays idempotent across reseeds. Reads the just-seeded `cards` rows for their ids
+/// and base prices (the same shape the live `snapshot_prices` reads), then writes one
+/// varied row per card per day ending today. Returns the number of rows written.
+async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    let cards: Vec<PriceColumns> = Card::find()
+        .select_only()
+        .column(card::Column::Id)
+        .column(card::Column::PriceUsd)
+        .column(card::Column::PriceUsdFoil)
+        .column(card::Column::PriceEur)
+        .column(card::Column::PriceTix)
+        .filter(card::Column::Game.eq(GAME))
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    let today = Utc::now().date_naive();
+    let now = Utc::now();
+    let mut models: Vec<card_price_history::ActiveModel> = Vec::new();
+    for (card_id, usd, usd_foil, eur, tix) in &cards {
+        for d in 0..PRICE_HISTORY_DAYS {
+            let as_of = ingest::format_date(today - Duration::days(d));
+            models.push(card_price_history::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                card_id: Set(*card_id),
+                as_of_date: Set(as_of),
+                price_usd: Set(vary_price(usd, d)),
+                price_usd_foil: Set(vary_price(usd_foil, d)),
+                price_eur: Set(vary_price(eur, d)),
+                price_tix: Set(vary_price(tix, d)),
+                created_at: Set(now),
+            });
+        }
+    }
+
+    let total = models.len() as u64;
+    let mut iter = models.into_iter();
+    loop {
+        let chunk: Vec<card_price_history::ActiveModel> =
+            iter.by_ref().take(ingest::PRICE_HISTORY_BATCH).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        ingest::upsert_price_history(db, chunk).await?;
+    }
+    Ok(total)
+}
+
 /// Seed the dummy MTG catalog, recording status in `ingest_state`. On failure the
 /// state row is best-effort marked `"error"` (mirroring `super::ingest::refresh`) so
 /// `GET /status` stays honest, and the error is returned for the caller to log.
@@ -429,6 +500,10 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         }
         ingest::flush_cards(db, chunk).await?;
     }
+
+    // Seed multiple days of price history so the chart has a real trend offline.
+    let history_rows = seed_price_history(db).await?;
+    tracing::info!(rows = history_rows, "seeded dummy price history");
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not
@@ -604,6 +679,69 @@ mod tests {
                 .is_some_and(|ch| !ch.is_ascii_digit())),
             "expected a non-numeric collector number",
         );
+    }
+
+    #[test]
+    fn vary_price_is_deterministic_and_handles_none() {
+        // None base (e.g. a token) stays None.
+        assert_eq!(vary_price(&None, 3), None);
+        // Same inputs always produce the same output (no clock/rand).
+        assert_eq!(vary_price(&Some("10.00".into()), 5), vary_price(&Some("10.00".into()), 5));
+        // Output is a well-formed 2-decimal string.
+        let v = vary_price(&Some("10.00".into()), 0).unwrap();
+        assert!(v.parse::<f64>().is_ok());
+        assert_eq!(v.split('.').nth(1).map(str::len), Some(2));
+    }
+
+    #[tokio::test]
+    async fn seeds_multi_day_price_history_and_reseed_is_idempotent() {
+        use crate::entities::prelude::CardPriceHistory;
+        use crate::entities::card_price_history;
+        use sea_orm::{
+            ColumnTrait, Database, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
+        };
+        use sea_orm_migration::MigratorTrait;
+
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect to in-memory sqlite");
+        crate::migrator::Migrator::up(&db, None)
+            .await
+            .expect("run migrations");
+
+        seed(&db).await.expect("seed succeeds");
+
+        let card_count = dummy_cards().len() as u64;
+        let expected_rows = card_count * PRICE_HISTORY_DAYS as u64;
+
+        // One history row per (card, day).
+        let rows = CardPriceHistory::find()
+            .filter(card_price_history::Column::Game.eq(GAME))
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(rows, expected_rows, "expected {PRICE_HISTORY_DAYS} days per card");
+
+        // The series spans exactly `PRICE_HISTORY_DAYS` distinct dates.
+        let dates: Vec<String> = CardPriceHistory::find()
+            .select_only()
+            .column(card_price_history::Column::AsOfDate)
+            .filter(card_price_history::Column::Game.eq(GAME))
+            .distinct()
+            .into_tuple()
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(dates.len(), PRICE_HISTORY_DAYS as usize);
+
+        // Reseeding upserts on the unique key rather than duplicating rows.
+        seed(&db).await.expect("reseed succeeds");
+        let rows_again = CardPriceHistory::find()
+            .filter(card_price_history::Column::Game.eq(GAME))
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(rows_again, expected_rows, "reseed must not duplicate price history");
     }
 
     #[tokio::test]

@@ -240,6 +240,22 @@ export function getCard(game: string, id: string): Promise<Card> {
   return request<Card>(`/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`)
 }
 
+/** A single day's recorded prices for a card (decimal strings, exactly as stored). */
+export interface PricePoint {
+  date: string
+  usd: string | null
+  usd_foil: string | null
+  eur: string | null
+  tix: string | null
+}
+
+/** Price history for a card, oldest first (empty array if no rows recorded yet). */
+export function getPriceHistory(game: string, id: string): Promise<{ data: PricePoint[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: PricePoint[] }>(`/api/games/${g}/cards/${i}/prices`)
+}
+
 /** URL of the caching proxy for a set's SVG icon, for `<img src>`. */
 export function setIconUrl(game: string, code: string): string {
   const g = encodeURIComponent(game)
