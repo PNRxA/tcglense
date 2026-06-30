@@ -15,11 +15,12 @@ import {
 import { Input } from '@/components/ui/input'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { SET_DEFAULT_SORT, SET_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
-import { getSet, listSetCards, listSets } from '@/lib/api'
+import { getSet, listSetCards, listSetDrops, listSets } from '@/lib/api'
 import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +32,9 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE_SIZE = 60
+// The by-drop view paginates over *drops* (each a handful of cards), so it uses
+// a smaller page size than the flat card grid.
+const DROP_PAGE_SIZE = 20
 // Page, search and sort live in the URL query (alongside the related/from scope), so
 // they survive opening a card and pressing Back. Routing to a different set lands on
 // a fresh URL, so it starts clean.
@@ -137,6 +141,18 @@ const setQuery = useQuery({
   staleTime: 5 * 60 * 1000,
 })
 
+const set = computed(() => setQuery.data.value)
+// Whether this set is browsable broken down into Secret Lair-style "drops".
+// Sourced from the (game-keyed, usually-warm) set list rather than the per-set
+// metadata, so it's known up front and stays stable across set→set navigation —
+// no flat-grid flash, no throwaway flat fetch. By-drop is the default for such
+// sets; ?view=all opts back into the flat grid, and the related-sets view
+// (?related=1) is itself a flat listing, so it suppresses by-drop too.
+const hasDrops = computed(
+  () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.has_drops ?? false,
+)
+const byDrop = computed(() => hasDrops.value && route.query.view !== 'all' && !includeRelated.value)
+
 const cardsQuery = useQuery({
   queryKey: ['set-cards', game, code, query, sort, page, includeRelated],
   queryFn: () =>
@@ -147,26 +163,70 @@ const cardsQuery = useQuery({
       includeRelated: includeRelated.value || undefined,
       ...toSortParam(sort.value, SET_DEFAULT_SORT),
     }),
-  // When the URL requests the related view, wait for the set list to settle before
-  // fetching, so a cold-loaded (bookmarked/reloaded) link doesn't fire a throwaway
-  // single-set request and flash the wrong heading before the group resolves.
-  enabled: computed(() => route.query.related !== '1' || !setsQuery.isPending.value),
+  // Skip the flat list while the by-drop view is active, and wait for the set
+  // list to settle first — it's what tells us whether this is a drop set (and
+  // resolves the related grouping), so we never fire a throwaway flat request
+  // that a cold-loaded by-drop / related link would immediately discard.
+  enabled: computed(() => !byDrop.value && !setsQuery.isPending.value),
   placeholderData: keepPreviousData,
   staleTime: 5 * 60 * 1000,
 })
 
-const set = computed(() => setQuery.data.value)
+const dropsQuery = useQuery({
+  queryKey: ['set-drops', game, code, query, page],
+  queryFn: () =>
+    listSetDrops(game.value, code.value, {
+      q: query.value || undefined,
+      page: page.value,
+      pageSize: DROP_PAGE_SIZE,
+    }),
+  enabled: byDrop,
+  placeholderData: keepPreviousData,
+  staleTime: 5 * 60 * 1000,
+})
+
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
+const dropGroups = computed(() => dropsQuery.data.value?.data ?? [])
+const dropTotal = computed(() => dropsQuery.data.value?.total ?? 0)
+
+// The list's loading / error / empty state reads from whichever query drives the
+// current view. cardsQuery waits on the set list, so an as-yet-undecided drop set
+// shows the active query's own pending state (no flat-grid flash), while
+// keepPreviousData still carries the prior set's cards smoothly across navigation.
+const listPending = computed(() =>
+  byDrop.value ? dropsQuery.isPending.value : cardsQuery.isPending.value,
+)
+const listError = computed(() => (byDrop.value ? dropsQuery.error.value : cardsQuery.error.value))
+const listIsError = computed(() =>
+  byDrop.value ? dropsQuery.isError.value : cardsQuery.isError.value,
+)
+const isEmpty = computed(() =>
+  byDrop.value ? dropGroups.value.length === 0 : cards.value.length === 0,
+)
+
+// Toggle the by-drop vs flat view of this set. Preserves the search + sort (like the
+// related-scope controls) but sheds the related/from scope and restarts paging (page
+// is dropped by listState) — the two views paginate over different units. ?view=all
+// marks the flat mode; by-drop is the bare default.
+function setView(mode: 'drops' | 'all') {
+  const next = listState()
+  if (mode === 'all') next.view = 'all'
+  router.replace({ query: next })
+}
 
 // A shared or stale link can point past the last page (a bookmarked search whose
 // results later shrank, or a hand-edited ?page). Once the real total is known, clamp
-// back so we never strand the user on an empty page with no pager to escape it.
+// back so we never strand the user on an empty page with no pager to escape it. The
+// active view sets the unit: drops (by-drop) or printings (flat).
 watch(
-  () => [cardsQuery.isSuccess.value, total.value] as const,
-  ([ok, count]) => {
+  () =>
+    byDrop.value
+      ? ([dropsQuery.isSuccess.value, dropTotal.value, DROP_PAGE_SIZE] as const)
+      : ([cardsQuery.isSuccess.value, total.value, PAGE_SIZE] as const),
+  ([ok, count, size]) => {
     if (!ok) return
-    const lastPage = Math.max(1, Math.ceil(count / PAGE_SIZE))
+    const lastPage = Math.max(1, Math.ceil(count / size))
     if (page.value > lastPage) page.value = lastPage
   },
   { immediate: true },
@@ -179,13 +239,15 @@ const heading = computed(() =>
     : (set.value?.name ?? code.value.toUpperCase()),
 )
 const setsWord = computed(() => (relatedCount.value === 1 ? 'set' : 'sets'))
-const printingsLabel = computed(() => {
-  if (!total.value && !query.value) return ''
-  const printings = `${total.value.toLocaleString()} ${total.value === 1 ? 'printing' : 'printings'}`
-  return query.value ? `${printings} matching “${query.value}”` : printings
+const countLabel = computed(() => {
+  // By-drop mode counts drops; the flat view counts card printings.
+  const [n, singular] = byDrop.value ? [dropTotal.value, 'drop'] : [total.value, 'printing']
+  if (!n && !query.value) return ''
+  const label = `${n.toLocaleString()} ${n === 1 ? singular : `${singular}s`}`
+  return query.value ? `${label} matching “${query.value}”` : label
 })
 // A malformed search query comes back as 422; surface its message inline.
-const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
+const searchError = computed(() => searchErrorMessage(listError.value))
 </script>
 
 <template>
@@ -210,7 +272,7 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
               <span class="uppercase">{{ code }}</span>
               <template v-if="set?.set_type"> · {{ set?.set_type?.replace('_', ' ') }}</template>
             </template>
-            <template v-if="printingsLabel"> · {{ printingsLabel }}</template>
+            <template v-if="countLabel"> · {{ countLabel }}</template>
           </p>
         </div>
         <div class="w-full sm:w-80">
@@ -233,9 +295,10 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
       </header>
 
       <!-- Offer folding the set's related sub-sets (tokens, promos, decks, …) into
-           one listing instead of visiting each individually. -->
+           one listing instead of visiting each individually. Hidden in the by-drop
+           view, which groups the set's own cards rather than spanning sub-sets. -->
       <div
-        v-if="hasRelated"
+        v-if="hasRelated && !byDrop"
         class="bg-muted/40 mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
       >
         <p class="text-muted-foreground text-sm">
@@ -314,31 +377,90 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
         </div>
       </div>
 
-      <div
-        v-if="cardsQuery.isPending.value"
-        class="text-muted-foreground flex items-center gap-2 py-12"
-      >
+      <div v-if="listPending" class="text-muted-foreground flex items-center gap-2 py-12">
         <Loader2 class="size-4 animate-spin" />
         Loading cards…
       </div>
-      <p v-else-if="cardsQuery.isError.value" class="text-destructive py-12">
+      <p v-else-if="listIsError" class="text-destructive py-12">
         {{ searchError ?? "Couldn't load cards. Please retry." }}
       </p>
-      <p v-else-if="!cards.length && query" class="text-muted-foreground py-12">
+      <p v-else-if="isEmpty && query" class="text-muted-foreground py-12">
         No cards match “{{ query }}”.
       </p>
-      <p v-else-if="!cards.length" class="text-muted-foreground py-12">
+      <p v-else-if="isEmpty" class="text-muted-foreground py-12">
         No cards in {{ includeRelated ? 'these sets' : 'this set' }} yet.
       </p>
 
       <template v-else>
-        <div class="mb-4 flex justify-end">
-          <CardSortMenu v-model="sort" :options="SET_SORT_OPTIONS" />
+        <!-- Controls: a By-drop / All-cards toggle for drop sets, a card-size
+             menu, and the sort menu (flat view only — the by-drop view has a
+             fixed drop order). The size menu shows in both views since the
+             by-drop sections are grids too. -->
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div
+            v-if="hasDrops"
+            class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-sm"
+          >
+            <button
+              type="button"
+              :class="
+                cn(
+                  'rounded px-3 py-1 font-medium transition-colors',
+                  byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+                )
+              "
+              @click="setView('drops')"
+            >
+              By drop
+            </button>
+            <button
+              type="button"
+              :class="
+                cn(
+                  'rounded px-3 py-1 font-medium transition-colors',
+                  !byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+                )
+              "
+              @click="setView('all')"
+            >
+              All cards
+            </button>
+          </div>
+          <span v-else />
+          <div class="flex gap-2">
+            <CardSizeMenu />
+            <CardSortMenu v-if="!byDrop" v-model="sort" :options="SET_SORT_OPTIONS" />
+          </div>
         </div>
-        <CardGrid :game="game" :cards="cards" />
-        <div class="mt-10">
-          <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
-        </div>
+
+        <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
+        <template v-if="byDrop">
+          <section
+            v-for="drop in dropGroups"
+            :id="drop.slug ?? undefined"
+            :key="drop.slug ?? drop.title"
+            class="mb-10 scroll-mt-20"
+          >
+            <div class="mb-4 flex items-baseline gap-2 border-b pb-2">
+              <h2 class="text-lg font-semibold tracking-tight">{{ drop.title }}</h2>
+              <span class="text-muted-foreground text-sm tabular-nums">
+                {{ drop.card_count }} {{ drop.card_count === 1 ? 'card' : 'cards' }}
+              </span>
+            </div>
+            <CardGrid :game="game" :cards="drop.cards" />
+          </section>
+          <div class="mt-10">
+            <CardPagination v-model:page="page" :page-size="DROP_PAGE_SIZE" :total="dropTotal" />
+          </div>
+        </template>
+
+        <!-- Flat: the whole set as one collector-ordered grid. -->
+        <template v-else>
+          <CardGrid :game="game" :cards="cards" />
+          <div class="mt-10">
+            <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
+          </div>
+        </template>
       </template>
     </template>
   </div>

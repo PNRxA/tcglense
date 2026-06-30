@@ -168,4 +168,23 @@ mod tests {
         assert_eq!(sanitize("AbC-123_x"), "abc-123_x");
         assert_eq!(sanitize("a/b"), "a_b");
     }
+
+    #[test]
+    fn sanitize_neutralizes_more_traversal_vectors() {
+        // Windows separators, drive letters, leading slashes and NUL bytes all
+        // collapse to '_', so a crafted game/size/key can never escape the cache
+        // directory regardless of host OS path semantics.
+        assert_eq!(sanitize("/etc/shadow"), "_etc_shadow");
+        assert_eq!(sanitize("..\\..\\windows"), "______windows");
+        assert_eq!(sanitize("C:\\Win"), "c__win");
+        assert_eq!(sanitize("a\0b"), "a_b");
+        // The output alphabet is strictly [a-z0-9_-]; no separator survives.
+        let cleaned = sanitize("../foo/./bar%2e%2e");
+        assert!(
+            cleaned
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
+            "unexpected char in {cleaned}"
+        );
+    }
 }

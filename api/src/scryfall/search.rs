@@ -1382,6 +1382,68 @@ mod tests {
     }
 
     #[test]
+    fn sql_injection_in_name_search_is_escaped_not_interpolated() {
+        // A quoted phrase keeps the whole injection payload as one name-substring
+        // value. The renderer must double the single quote *inside* the bound
+        // literal, so the inlined SQL contains the escaped pattern and never the
+        // raw one that would close the string and start a second statement. We
+        // assert the exact literal (not just the presence of `''`, which the
+        // `IFNULL(col, '')` wrappers emit anyway) so the test actually fails if the
+        // value were interpolated unescaped.
+        let s = sql(r#""'; DROP TABLE cards;--""#);
+        assert!(
+            s.contains("'%''; DROP TABLE cards;--%'"),
+            "the value's quote must be doubled inside the literal: {s}"
+        );
+        assert!(
+            !s.contains("'%'; DROP TABLE cards;--%'"),
+            "the raw, unescaped payload must never reach the SQL: {s}"
+        );
+    }
+
+    #[test]
+    fn sql_injection_in_oracle_filter_is_escaped() {
+        // Same guarantee for a quoted value inside a typed filter (oracle text).
+        let s = sql(r#"o:"'; DROP TABLE cards;--""#);
+        assert!(s.contains("IFNULL(oracle_text, '') LIKE"), "{s}");
+        assert!(
+            s.contains("'%''; DROP TABLE cards;--%'"),
+            "the value's quote must be doubled inside the literal: {s}"
+        );
+        assert!(
+            !s.contains("'%'; DROP TABLE cards;--%'"),
+            "the raw, unescaped payload must never reach the SQL: {s}"
+        );
+    }
+
+    #[test]
+    fn deeply_nested_parentheses_are_rejected() {
+        // The parenthesis-depth cap guards the public, unauthenticated search route
+        // against stack exhaustion. It fires before the token cap (MAX_DEPTH*2 + 1
+        // tokens < MAX_TOKENS), so this is a distinct DoS bound that
+        // `too_many_tokens_is_rejected` would not catch if it regressed.
+        let q = format!("{}a{}", "(".repeat(MAX_DEPTH + 2), ")".repeat(MAX_DEPTH + 2));
+        assert!(
+            matches!(parse(&q), Err(SearchError::TooComplex)),
+            "deep nesting must be rejected as too complex: {:?}",
+            parse(&q)
+        );
+    }
+
+    #[test]
+    fn search_error_maps_to_422_validation() {
+        // Unparseable / unsupported queries surface as 422, never a 500.
+        let err: AppError = SearchError::UnknownKey("foo".to_string()).into();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn malformed_and_unknown_filters_are_rejected() {
+        assert!(parse("(t:creature").is_err(), "unbalanced parenthesis");
+        assert!(parse("boguskey:value").is_err(), "unknown filter key");
+    }
+
+    #[test]
     fn exact_name_has_no_surrounding_wildcards() {
         let s = sql("!\"Lightning Bolt\"");
         assert!(s.contains("LIKE 'Lightning Bolt'"));

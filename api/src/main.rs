@@ -10,6 +10,9 @@ mod migrator;
 mod scryfall;
 mod state;
 
+#[cfg(test)]
+mod security_tests;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -33,7 +36,7 @@ use crate::{
         auth::{login, logout, me, refresh, register},
         catalog::{
             card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
-            list_games, list_set_cards, list_sets, set_icon,
+            list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         health::health,
     },
@@ -193,11 +196,23 @@ async fn main() {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
     }
 
-    // CORS: allow the Vite dev origin with the required methods and headers.
-    // allow_credentials is required because the browser sends the refresh cookie
-    // (credentials: 'include') on cross-origin refresh/logout; it is valid here
-    // because the origin is an explicit value, never a wildcard.
-    let cors = CorsLayer::new()
+    let app = build_router(state);
+
+    let listener = TcpListener::bind((host.as_str(), port))
+        .await
+        .expect("failed to bind TCP listener");
+
+    tracing::info!("TCGLense API listening on http://{host}:{port}");
+
+    axum::serve(listener, app).await.expect("server error");
+}
+
+/// CORS layer: allow the Vite dev origin with the required methods and headers.
+/// `allow_credentials` is required because the browser sends the refresh cookie
+/// (`credentials: 'include'`) on cross-origin refresh/logout; it is valid here
+/// because the origin is an explicit value, never a wildcard.
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
         .allow_origin(
             "http://localhost:5173"
                 .parse::<HeaderValue>()
@@ -205,9 +220,14 @@ async fn main() {
         )
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
-        .allow_credentials(true);
+        .allow_credentials(true)
+}
 
-    let app = Router::new()
+/// Build the application router: all routes plus the shared middleware stack and
+/// state. Split out of `main` so integration tests can drive the exact same
+/// router (CORS, error mapping, auth) in-process via `tower`'s `oneshot`.
+fn build_router(state: AppState) -> Router {
+    Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
@@ -221,20 +241,13 @@ async fn main() {
         .route("/api/games/{game}/sets/{code}", get(get_set))
         .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
         .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
+        .route("/api/games/{game}/sets/{code}/drops", get(list_set_drops))
         .route("/api/games/{game}/cards", get(list_cards))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
         .route("/api/games/{game}/cards/{id}/prints", get(card_prints))
-        .layer(cors)
+        .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-    let listener = TcpListener::bind((host.as_str(), port))
-        .await
-        .expect("failed to bind TCP listener");
-
-    tracing::info!("TCGLense API listening on http://{host}:{port}");
-
-    axum::serve(listener, app).await.expect("server error");
+        .with_state(state)
 }

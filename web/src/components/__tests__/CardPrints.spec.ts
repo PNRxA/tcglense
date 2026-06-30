@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import { mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Card } from '@/lib/api'
 import CardPrints from '../cards/CardPrints.vue'
@@ -28,6 +29,8 @@ function makeCard(id: string, setCode: string): Card {
     layout: 'normal',
     prices: { usd: '1.00', usd_foil: null, eur: null, tix: null },
     has_image: false,
+    drop_name: null,
+    drop_slug: null,
     faces: [],
   }
 }
@@ -42,9 +45,11 @@ async function mountPrints(id: string, prints: Card[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   // Seed the cache so the prints are available synchronously (no network in tests).
   queryClient.setQueryData(['card-prints', 'mtg', id], { data: prints })
+  // CardGrid (rendered for each printing) reads the persisted card-size preference
+  // from a Pinia store, so the mounted tree needs an active Pinia.
   return mount(CardPrints, {
     props: { game: 'mtg', id },
-    global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
+    global: { plugins: [router, createPinia(), [VueQueryPlugin, { queryClient }]] },
   })
 }
 
