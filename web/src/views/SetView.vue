@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
@@ -393,8 +394,10 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       </p>
 
       <template v-else>
-        <!-- Controls: a By-drop / All-cards toggle for drop sets, and the sort
-             menu (flat view only — the by-drop view has a fixed drop order). -->
+        <!-- Controls: a By-drop / All-cards toggle for drop sets, a card-size
+             menu, and the sort menu (flat view only — the by-drop view has a
+             fixed drop order). The size menu shows in both views since the
+             by-drop sections are grids too. -->
         <div class="mb-4 flex items-center justify-between gap-3">
           <div
             v-if="hasDrops"
@@ -426,7 +429,10 @@ const searchError = computed(() => searchErrorMessage(listError.value))
             </button>
           </div>
           <span v-else />
-          <CardSortMenu v-if="!byDrop" v-model="sort" :options="SET_SORT_OPTIONS" />
+          <div class="flex gap-2">
+            <CardSizeMenu />
+            <CardSortMenu v-if="!byDrop" v-model="sort" :options="SET_SORT_OPTIONS" />
+          </div>
         </div>
 
         <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
