@@ -9,12 +9,16 @@
 //! comma-joined colours, faces JSON) and no upsert column list is duplicated.
 //!
 //! Everything is **deterministic**: ids, set codes, and collector numbers are fixed
-//! (no randomness, no clock-derived identities). The upserts key on
+//! (no clock-derived identities), and the fabricated year of daily price history is a
+//! per-card *seeded* random walk (the RNG is seeded from the card id), so it looks
+//! random yet reseeds to byte-identical values. The upserts key on
 //! `(game, external_id)` / `(game, code)`, so re-seeding on every boot overwrites the
 //! same rows rather than growing the catalog. Cards carry no image URLs, so the image
 //! proxy is never hit and `has_image` resolves to false everywhere.
 
 use chrono::{Duration, Utc};
+use rand::rngs::StdRng;
+use rand::{RngExt, SeedableRng};
 use sea_orm::{
     ActiveValue::{NotSet, Set},
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect,
@@ -34,9 +38,16 @@ use crate::entities::{card, card_price_history};
 /// bump needed; this value only needs to stay distinct from a real Scryfall timestamp.
 const DUMMY_SOURCE_VERSION: &str = "dummy-seed-v1";
 
-/// Days of fabricated price history seeded per card, so the chart shows a trend
-/// rather than a single flat point.
-const PRICE_HISTORY_DAYS: i64 = 30;
+/// A year of fabricated price history seeded per card (one row per day, ending today),
+/// so the chart shows a year of movement rather than a single flat point.
+const PRICE_HISTORY_DAYS: i64 = 365;
+
+/// Per-step volatility of the fabricated price random walk: each day back in time
+/// multiplies the running factor by `1 ±` up to this fraction.
+const PRICE_STEP: f64 = 0.04;
+/// Per-step mean reversion pulling the walk back toward the card's current price, so a
+/// year of daily steps wanders realistically without drifting far from day 0's price.
+const PRICE_REVERSION: f64 = 0.02;
 
 /// Colour the generated cards cycle through (Scryfall single-letter code, a display
 /// word for the card name, and the mana symbol).
@@ -417,23 +428,46 @@ fn dummy_sets(cards: &[ScryfallCard]) -> Vec<ScryfallSet> {
         .collect()
 }
 
-/// Deterministically vary a base price for a day offset, so the seeded history shows
-/// a trend (older days a touch cheaper) with a little day-to-day wiggle. `None` base
-/// prices (e.g. tokens) stay `None`. Values are clamped to a positive minimum and
+/// Build a deterministic "random" price series for one currency, indexed by day offset
+/// (`series[0]` = today, `series[days - 1]` = a year ago). Day 0 is anchored to the
+/// card's current `base` price so the chart's newest point matches the price shown
+/// elsewhere; each older day applies a seeded random-walk step (a small shock plus mild
+/// mean reversion back toward today's price, so a year of steps wanders without running
+/// away). A `None` base (tokens, or a foil-only card's missing regular price) yields an
+/// all-`None` series. The walk draws from `rng`, so a reseed with the same per-card seed
+/// reproduces byte-identical values; values are clamped to a positive minimum and
 /// formatted as 2-decimal strings, matching how real prices are stored.
-fn vary_price(base: &Option<String>, day_offset: i64) -> Option<String> {
-    let value: f64 = base.as_deref()?.parse().ok()?;
-    let trend = 1.0 - 0.01 * day_offset as f64; // older days slightly cheaper
-    let wiggle = 0.02 * ((day_offset % 5) as f64 - 2.0); // deterministic ±
-    let varied = (value * (trend + wiggle)).max(0.01);
-    Some(format!("{varied:.2}"))
+fn price_walk(base: &Option<String>, rng: &mut StdRng, days: usize) -> Vec<Option<String>> {
+    let Some(base_val) = base.as_deref().and_then(|s| s.parse::<f64>().ok()) else {
+        return vec![None; days];
+    };
+    let mut series = Vec::with_capacity(days);
+    let mut factor = 1.0_f64;
+    for d in 0..days {
+        if d > 0 {
+            let shock: f64 = rng.random_range(-PRICE_STEP..PRICE_STEP);
+            factor *= 1.0 + shock;
+            factor += PRICE_REVERSION * (1.0 - factor);
+        }
+        let price = (base_val * factor).max(0.01);
+        series.push(Some(format!("{price:.2}")));
+    }
+    series
 }
 
 /// Seed `PRICE_HISTORY_DAYS` of fabricated daily price history per seeded card,
-/// reusing the real `(game, card_id, as_of_date)` unique key and upsert helper so it
-/// stays idempotent across reseeds. Reads the just-seeded `cards` rows for their ids
-/// and base prices (the same shape the live `snapshot_prices` reads), then writes one
-/// varied row per card per day ending today. Returns the number of rows written.
+/// reusing the real `(game, card_id, as_of_date)` unique key and upsert helper. Reads
+/// the just-seeded `cards` rows for their ids and base prices (the same shape the live
+/// `snapshot_prices` reads), then writes one walked row per card per day ending today.
+/// Returns the number of rows written.
+///
+/// A reseed on the **same day** is byte-identical: the same dates and per-card seed
+/// reproduce the same values, and the upsert preserves `created_at`. Like the dummy
+/// seed generally, this is upsert-only (never deletes), and the window ends at "today",
+/// so a long-lived on-disk dummy DB rebooted on a *later* calendar day re-stamps the
+/// shifted older dates with fresh walk values and leaves rows past the year mark in
+/// place — harmless drift on fabricated offline data; point `SEED_DUMMY_DATA` at a
+/// fresh/dedicated DB as the module already advises.
 async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError> {
     let cards: Vec<PriceColumns> = Card::find()
         .select_only()
@@ -449,19 +483,27 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
 
     let today = Utc::now().date_naive();
     let now = Utc::now();
-    let mut models: Vec<card_price_history::ActiveModel> = Vec::new();
+    let days = PRICE_HISTORY_DAYS as usize;
+    let mut models: Vec<card_price_history::ActiveModel> = Vec::with_capacity(cards.len() * days);
     for (card_id, usd, usd_foil, eur, tix) in &cards {
-        for d in 0..PRICE_HISTORY_DAYS {
-            let as_of = ingest::format_date(today - Duration::days(d));
+        // Seed the walk from the card id so every card has its own reproducible series
+        // (independent of iteration order) and a reseed upserts identical values.
+        let mut rng = StdRng::seed_from_u64(*card_id as u64);
+        let usd_series = price_walk(usd, &mut rng, days);
+        let foil_series = price_walk(usd_foil, &mut rng, days);
+        let eur_series = price_walk(eur, &mut rng, days);
+        let tix_series = price_walk(tix, &mut rng, days);
+        for d in 0..days {
+            let as_of = ingest::format_date(today - Duration::days(d as i64));
             models.push(card_price_history::ActiveModel {
                 id: NotSet,
                 game: Set(GAME.to_string()),
                 card_id: Set(*card_id),
                 as_of_date: Set(as_of),
-                price_usd: Set(vary_price(usd, d)),
-                price_usd_foil: Set(vary_price(usd_foil, d)),
-                price_eur: Set(vary_price(eur, d)),
-                price_tix: Set(vary_price(tix, d)),
+                price_usd: Set(usd_series[d].clone()),
+                price_usd_foil: Set(foil_series[d].clone()),
+                price_eur: Set(eur_series[d].clone()),
+                price_tix: Set(tix_series[d].clone()),
                 created_at: Set(now),
             });
         }
@@ -532,7 +574,7 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         ingest::flush_cards(db, chunk).await?;
     }
 
-    // Seed multiple days of price history so the chart has a real trend offline.
+    // Seed a year of price history so the chart shows a real trend offline.
     let history_rows = seed_price_history(db).await?;
     tracing::info!(rows = history_rows, "seeded dummy price history");
 
@@ -726,15 +768,35 @@ mod tests {
     }
 
     #[test]
-    fn vary_price_is_deterministic_and_handles_none() {
-        // None base (e.g. a token) stays None.
-        assert_eq!(vary_price(&None, 3), None);
-        // Same inputs always produce the same output (no clock/rand).
-        assert_eq!(vary_price(&Some("10.00".into()), 5), vary_price(&Some("10.00".into()), 5));
-        // Output is a well-formed 2-decimal string.
-        let v = vary_price(&Some("10.00".into()), 0).unwrap();
-        assert!(v.parse::<f64>().is_ok());
-        assert_eq!(v.split('.').nth(1).map(str::len), Some(2));
+    fn price_walk_is_seeded_anchored_and_handles_none() {
+        let days = PRICE_HISTORY_DAYS as usize;
+
+        // A `None` base (e.g. a token) yields an all-`None` series of the right length.
+        let none = price_walk(&None, &mut StdRng::seed_from_u64(1), days);
+        assert_eq!(none.len(), days);
+        assert!(none.iter().all(Option::is_none));
+
+        // Day 0 (today) is anchored exactly to the card's current price.
+        let series = price_walk(&Some("10.00".into()), &mut StdRng::seed_from_u64(42), days);
+        assert_eq!(series.len(), days);
+        assert_eq!(series[0].as_deref(), Some("10.00"));
+
+        // Same seed → byte-identical series, so a reseed upserts the same values.
+        let a = price_walk(&Some("10.00".into()), &mut StdRng::seed_from_u64(7), days);
+        let b = price_walk(&Some("10.00".into()), &mut StdRng::seed_from_u64(7), days);
+        assert_eq!(a, b, "same seed must reproduce the same walk");
+
+        // The walk actually moves (not a flat line) and every value is a positive,
+        // well-formed 2-decimal string.
+        assert!(
+            series.iter().flatten().any(|v| v != "10.00"),
+            "a year of steps should move off the anchor price"
+        );
+        for v in series.iter().flatten() {
+            let n: f64 = v.parse().expect("price parses as f64");
+            assert!(n >= 0.01, "prices stay positive");
+            assert_eq!(v.split('.').nth(1).map(str::len), Some(2));
+        }
     }
 
     #[tokio::test]
@@ -777,6 +839,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dates.len(), PRICE_HISTORY_DAYS as usize);
+
+        // End-to-end anchoring: the newest (today) history point equals the card's
+        // current price, confirming day offset 0 maps to the series' first value.
+        let today = ingest::format_date(Utc::now().date_naive());
+        let sample = Card::find()
+            .filter(card::Column::Game.eq(GAME))
+            .filter(card::Column::PriceUsd.is_not_null())
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("a card with a usd price");
+        let today_row = CardPriceHistory::find()
+            .filter(card_price_history::Column::Game.eq(GAME))
+            .filter(card_price_history::Column::CardId.eq(sample.id))
+            .filter(card_price_history::Column::AsOfDate.eq(today))
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("a price row dated today");
+        assert_eq!(
+            today_row.price_usd, sample.price_usd,
+            "today's history must equal the card's current price"
+        );
 
         // Reseeding upserts on the unique key rather than duplicating rows.
         seed(&db).await.expect("reseed succeeds");
