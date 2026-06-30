@@ -300,6 +300,34 @@ fn special_card(set: &SetDef, n: i32, collector_number: &str, name: &str) -> Scr
     .into_scryfall()
 }
 
+/// A foil-only printing: no regular `usd` price, only a `usd_foil` one. Some real
+/// cards are sold only as foils, so the browse views surface (and price-sort on)
+/// the foil price as a fallback — this card exercises that path offline.
+fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
+    SeedCard {
+        external_id: card_id(set.code, n),
+        name: "Dummy Foil-Only Showcase".to_string(),
+        set_code: set.code,
+        set_name: set.name,
+        released: set.released,
+        collector_number: n.to_string(),
+        rarity: "rare",
+        layout: "normal",
+        mana_cost: Some("{2}{R}".to_string()),
+        cmc: Some(3.0),
+        type_line: Some("Creature — Dragon".to_string()),
+        colors: vec!["R".to_string()],
+        prices: Prices {
+            usd: None,
+            usd_foil: Some("19.99".to_string()),
+            eur: None,
+            tix: None,
+        },
+        card_faces: None,
+    }
+    .into_scryfall()
+}
+
 /// A token printing (no mana cost, no market price) for the token child set.
 fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
     let idx = (n - 1) as usize;
@@ -351,6 +379,9 @@ fn dummy_cards() -> Vec<ScryfallCard> {
         "P1",
         "Dummy Prerelease Promo",
     ));
+    // A foil-only card (no regular USD price) to exercise the foil-price fallback
+    // in the browse views' display and price sort.
+    cards.push(foil_only_card(&BASE_SET, BASE_NUMBERED + 4));
 
     // A second standalone set (a single page).
     for n in 1..=12 {
@@ -678,6 +709,19 @@ mod tests {
                 .next()
                 .is_some_and(|ch| !ch.is_ascii_digit())),
             "expected a non-numeric collector number",
+        );
+    }
+
+    #[test]
+    fn has_a_foil_only_card() {
+        // A card priced only in foil (no regular USD) exercises the browse views'
+        // foil-price fallback for both display and the price sort.
+        assert!(
+            dummy_cards().iter().any(|c| c
+                .prices
+                .as_ref()
+                .is_some_and(|p| p.usd.is_none() && p.usd_foil.is_some())),
+            "expected a foil-only card (no usd, has usd_foil)",
         );
     }
 
