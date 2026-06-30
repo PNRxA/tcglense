@@ -29,6 +29,10 @@ use crate::state::AppState;
 
 const DEFAULT_PAGE_SIZE: u64 = 60;
 const MAX_PAGE_SIZE: u64 = 200;
+/// The drops endpoint paginates by *drop* (each drop is a handful of cards), so
+/// it uses its own smaller default than the per-card lists.
+const DEFAULT_DROP_PAGE_SIZE: u64 = 20;
+const MAX_DROP_PAGE_SIZE: u64 = 100;
 /// Card art for a given id is immutable, so it is safe to cache aggressively.
 const IMAGE_CACHE_CONTROL: &str = "public, max-age=2592000, immutable";
 
@@ -43,10 +47,15 @@ pub struct SetResponse {
     pub card_count: i32,
     pub icon_svg_uri: Option<String>,
     pub parent_set_code: Option<String>,
+    /// Whether this set is browsable broken down by Secret Lair-style "drops"
+    /// (the `.../drops` endpoint). Lets the SPA offer a by-drop view only where
+    /// there's drop data to show.
+    pub has_drops: bool,
 }
 
 impl From<card_set::Model> for SetResponse {
     fn from(m: card_set::Model) -> Self {
+        let has_drops = crate::scryfall::drops::has_drops(&m.game, &m.code);
         SetResponse {
             code: m.code,
             name: m.name,
@@ -55,6 +64,7 @@ impl From<card_set::Model> for SetResponse {
             card_count: m.card_count,
             icon_svg_uri: m.icon_svg_uri,
             parent_set_code: m.parent_set_code,
+            has_drops,
         }
     }
 }
@@ -125,12 +135,21 @@ pub struct CardResponse {
     pub prices: PricesResponse,
     /// Whether an image is available through the image proxy for this card.
     pub has_image: bool,
+    /// The Secret Lair drop this card belongs to (its curated title), for sets
+    /// broken into drops; `None` for everything else.
+    pub drop_name: Option<String>,
+    /// Stable slug of the drop above (anchors/links), paired with `drop_name`.
+    pub drop_slug: Option<String>,
     /// Present for multi-faced cards; request face images via `?face=N`.
     pub faces: Vec<CardFaceResponse>,
 }
 
 impl From<card::Model> for CardResponse {
     fn from(m: card::Model) -> Self {
+        let drop = crate::scryfall::drops::drop_for(&m.game, &m.set_code, &m.collector_number);
+        let drop_name = drop.map(|d| d.title.clone());
+        let drop_slug = drop.map(|d| d.slug.clone());
+
         let stored_faces: Vec<StoredFace> = m
             .card_faces
             .as_deref()
@@ -183,6 +202,8 @@ impl From<card::Model> for CardResponse {
                 tix: m.price_tix,
             },
             has_image,
+            drop_name,
+            drop_slug,
             faces,
         }
     }
@@ -206,6 +227,19 @@ pub struct Page<T> {
     pub page_size: u64,
     pub total: u64,
     pub has_more: bool,
+}
+
+/// One Secret Lair drop with its cards, as returned by the drops endpoint. The
+/// enclosing [`Page`] paginates over these (so `total` is a drop count, not a
+/// card count).
+#[derive(Debug, Serialize)]
+pub struct DropGroupResponse {
+    /// Stable slug for anchors/links; `None` for the catch-all "Other" group of
+    /// cards the snapshot doesn't place in a drop.
+    pub slug: Option<String>,
+    pub title: String,
+    pub card_count: usize,
+    pub cards: Vec<CardResponse>,
 }
 
 // ---------- Query params ----------
@@ -238,6 +272,17 @@ impl ListParams {
             .page_size
             .unwrap_or(DEFAULT_PAGE_SIZE)
             .clamp(1, MAX_PAGE_SIZE);
+        (page, page_size)
+    }
+
+    /// Page + page size for the by-drop listing, which paginates over drops
+    /// (not cards) and so has its own smaller bounds.
+    fn drop_page_and_size(&self) -> (u64, u64) {
+        let page = self.page.unwrap_or(1).max(1);
+        let page_size = self
+            .page_size
+            .unwrap_or(DEFAULT_DROP_PAGE_SIZE)
+            .clamp(1, MAX_DROP_PAGE_SIZE);
         (page, page_size)
     }
 
@@ -483,6 +528,65 @@ pub async fn list_set_cards(
     Ok(Json(build_page(rows, page, page_size, total)))
 }
 
+/// `GET /api/games/{game}/sets/{code}/drops` -> a set's cards grouped by Secret
+/// Lair drop (Scryfall's curated drop titles), **paginated by drop**.
+///
+/// Only sets that have a drop snapshot (`has_drops`) are grouped this way — any
+/// other set is a `404` here (browse it via `.../cards` instead). Drops keep
+/// Scryfall's display order; within a drop, cards are in collector-number order.
+/// Cards whose collector number isn't in the snapshot (e.g. a drop newer than the
+/// snapshot) collect into a trailing "Other" group so nothing is dropped. An
+/// optional `q` narrows the cards first; drops with no remaining matches are
+/// omitted.
+pub async fn list_set_drops(
+    State(state): State<AppState>,
+    Path((game, code)): Path<(String, String)>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<Page<DropGroupResponse>>, AppError> {
+    let game_meta = require_game(&game)?;
+    let set = load_set(&state, &game, &code).await?;
+    let table = crate::scryfall::drops::table(&game, &set.code)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::NotFound(format!("set '{}' has no drops", set.code)))?;
+
+    // One set's cards are bounded, so we pull the whole (optionally searched) set
+    // and group + paginate by drop in memory — that keeps every drop complete
+    // regardless of where the page boundary falls.
+    let mut query = Card::find()
+        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    if let Some(search) = params.search() {
+        query = query.filter(search_condition(game_meta, search)?);
+    }
+    let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false)
+        .all(&state.db)
+        .await?;
+
+    let buckets = group_into_drops(table, rows);
+
+    let (page, page_size) = params.drop_page_and_size();
+    let total = buckets.len() as u64;
+    let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
+    let data: Vec<DropGroupResponse> = buckets
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .map(|b| DropGroupResponse {
+            slug: b.slug,
+            title: b.title,
+            card_count: b.cards.len(),
+            cards: b.cards.into_iter().map(CardResponse::from).collect(),
+        })
+        .collect();
+    Ok(Json(Page {
+        data,
+        page,
+        page_size,
+        total,
+        has_more: page.saturating_mul(page_size) < total,
+    }))
+}
+
 /// `GET /api/games/{game}/cards` -> all cards (optional `q` search), by name.
 pub async fn list_cards(
     State(state): State<AppState>,
@@ -658,6 +762,46 @@ async fn load_card(state: &AppState, game: &str, id: &str) -> Result<card::Model
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("card '{id}' not found")))
+}
+
+/// A drop's cards, before pagination/serialization (so off-page drops never get
+/// turned into `CardResponse`s).
+struct DropBucket {
+    slug: Option<String>,
+    title: String,
+    cards: Vec<card::Model>,
+}
+
+/// Group a set's cards — already in collector-number order — into Secret Lair
+/// drops, preserving Scryfall's drop order. Cards the snapshot doesn't place in
+/// a drop collect into a trailing "Other" bucket. Empty drops never appear: a
+/// bucket exists only once a card lands in it (so a search that matches a subset
+/// yields only the drops with matches).
+fn group_into_drops(
+    table: &crate::scryfall::drops::DropTable,
+    rows: Vec<card::Model>,
+) -> Vec<DropBucket> {
+    use std::collections::BTreeMap;
+    // Sentinel order for the "Other" bucket: `BTreeMap` ordering parks it last.
+    const OTHER: usize = usize::MAX;
+
+    let mut buckets: BTreeMap<usize, DropBucket> = BTreeMap::new();
+    for row in rows {
+        let (order, slug, title) = match table.drop_for(&row.collector_number) {
+            Some(drop) => (drop.order, Some(drop.slug.clone()), drop.title.clone()),
+            None => (OTHER, None, "Other".to_string()),
+        };
+        buckets
+            .entry(order)
+            .or_insert_with(|| DropBucket {
+                slug,
+                title,
+                cards: Vec::new(),
+            })
+            .cards
+            .push(row);
+    }
+    buckets.into_values().collect()
 }
 
 fn build_page(rows: Vec<card::Model>, page: u64, page_size: u64, total: u64) -> Page<CardResponse> {
@@ -1172,5 +1316,109 @@ mod tests {
         let sets = vec![test_set("a", Some("b")), test_set("b", Some("a"))];
         assert_eq!(group_set_codes(&sets, "a"), vec!["a".to_string()]);
         assert_eq!(group_set_codes(&sets, "b"), vec!["b".to_string()]);
+    }
+
+    fn sld_test_card(
+        set_code: &str,
+        collector_number: &str,
+        number_int: Option<i32>,
+    ) -> card::Model {
+        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        card::Model {
+            id: 0,
+            game: "mtg".into(),
+            external_id: format!("ext-{set_code}-{collector_number}"),
+            oracle_id: None,
+            name: format!("Card {collector_number}"),
+            set_code: set_code.into(),
+            set_name: set_code.to_uppercase(),
+            collector_number: collector_number.into(),
+            collector_number_int: number_int,
+            rarity: None,
+            lang: "en".into(),
+            released_at: None,
+            mana_cost: None,
+            cmc: None,
+            type_line: None,
+            color_identity: None,
+            colors: None,
+            layout: None,
+            oracle_text: None,
+            power: None,
+            toughness: None,
+            loyalty: None,
+            image_small: None,
+            image_normal: None,
+            image_large: None,
+            image_art_crop: None,
+            image_png: None,
+            card_faces: None,
+            price_usd: None,
+            price_usd_foil: None,
+            price_eur: None,
+            price_tix: None,
+            digital: false,
+            created_at: ts,
+            updated_at: ts,
+        }
+    }
+
+    #[test]
+    fn drop_page_and_size_clamps() {
+        let p = ListParams {
+            page: Some(0),
+            page_size: Some(9999),
+            q: None,
+            include_related: None,
+            sort: None,
+            dir: None,
+        };
+        assert_eq!(p.drop_page_and_size(), (1, MAX_DROP_PAGE_SIZE));
+        let d = ListParams {
+            page: None,
+            page_size: None,
+            q: None,
+            include_related: None,
+            sort: None,
+            dir: None,
+        };
+        assert_eq!(d.drop_page_and_size(), (1, DEFAULT_DROP_PAGE_SIZE));
+    }
+
+    #[test]
+    fn group_into_drops_orders_named_drops_then_other() {
+        let table = crate::scryfall::drops::table("mtg", "sld").unwrap();
+        // 2658 -> "Wild in Bloom" (drop order 0); 168 -> "Inked"; an unknown
+        // collector number falls into the trailing "Other" bucket.
+        let rows = vec![
+            sld_test_card("sld", "168", Some(168)),
+            sld_test_card("sld", "no-such-number", None),
+            sld_test_card("sld", "2658", Some(2658)),
+        ];
+        let buckets = group_into_drops(table, rows);
+        let titles: Vec<&str> = buckets.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, vec!["Wild in Bloom", "Inked", "Other"]);
+        assert_eq!(buckets[0].slug.as_deref(), Some("wild-in-bloom"));
+        assert!(buckets.last().unwrap().slug.is_none());
+        assert!(buckets.iter().all(|b| b.cards.len() == 1));
+    }
+
+    #[test]
+    fn group_into_drops_preserves_card_order_within_a_drop() {
+        let table = crate::scryfall::drops::table("mtg", "sld").unwrap();
+        // Two cards from the same drop (Wild in Bloom spans 2658..2662) stay in
+        // the order they were fetched (the query's collector-number order).
+        let rows = vec![
+            sld_test_card("sld", "2659", Some(2659)),
+            sld_test_card("sld", "2658", Some(2658)),
+        ];
+        let buckets = group_into_drops(table, rows);
+        assert_eq!(buckets.len(), 1);
+        let cns: Vec<&str> = buckets[0]
+            .cards
+            .iter()
+            .map(|c| c.collector_number.as_str())
+            .collect();
+        assert_eq!(cns, vec!["2659", "2658"]);
     }
 }

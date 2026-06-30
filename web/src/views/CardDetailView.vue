@@ -140,6 +140,11 @@ const priceRows = computed(() => {
               </RouterLink>
             </dd>
 
+            <template v-if="card.drop_name">
+              <dt class="text-muted-foreground">Drop</dt>
+              <dd>{{ card.drop_name }}</dd>
+            </template>
+
             <dt class="text-muted-foreground">Number</dt>
             <dd>#{{ card.collector_number }}</dd>
 
