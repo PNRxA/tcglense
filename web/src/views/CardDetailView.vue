@@ -3,7 +3,7 @@ import { computed, toRef } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { ArrowLeft, Loader2 } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
-import CardImage from '@/components/cards/CardImage.vue'
+import CardImageZoom from '@/components/cards/CardImageZoom.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { getCard } from '@/lib/api'
 
@@ -103,27 +103,26 @@ const priceRows = computed(() => {
       </RouterLink>
 
       <div class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
-        <!-- Image(s): one per face only for layouts with separate face images. -->
+        <!-- Image(s): one per face only for layouts with separate face images.
+          Each is clickable to enlarge it in a lightbox (issue #53). -->
         <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
           <template v-if="hasSeparateFaceImages">
-            <CardImage
+            <CardImageZoom
               v-for="(face, index) in card.faces"
               :key="index"
               :game="game"
               :id="card.id"
               :name="face.name ?? card.name"
               :face="index"
-              size="large"
               class="w-full"
             />
           </template>
-          <CardImage
+          <CardImageZoom
             v-else
             :game="game"
             :id="card.id"
             :name="card.name"
             :has-image="card.has_image"
-            size="large"
             class="w-full"
           />
         </div>
