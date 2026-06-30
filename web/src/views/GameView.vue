@@ -7,7 +7,7 @@ import { buttonVariants } from '@/components/ui/button'
 import SetTile from '@/components/cards/SetTile.vue'
 import SetGroup from '@/components/cards/SetGroup.vue'
 import { gameStatus, listGames, listSets } from '@/lib/api'
-import { groupByYear, groupSets } from '@/lib/setGroups'
+import { groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
@@ -57,11 +57,28 @@ const sets = computed(() => setsQuery.data.value?.data ?? [])
 // set they belong to instead of scattering them across the date-sorted list.
 const groups = computed(() => groupSets(sets.value))
 const relatedCount = computed(() => sets.value.length - groups.value.length)
-// Break the (newest-first) groups into release-year sections so a long catalog
-// is scannable; undated sets fall into a trailing "Unknown" section.
-const years = computed(() => groupByYear(groups.value))
+// Pull pinned sets (e.g. Secret Lair) out so they lead the listing regardless of
+// their release date; the rest stay date-sorted.
+const partitioned = computed(() => partitionPinned(groups.value))
+// Break the (newest-first) remaining groups into release-year sections so a long
+// catalog is scannable; undated sets fall into a trailing "Unknown" section.
+const years = computed(() => groupByYear(partitioned.value.rest))
 
 const yearLabel = (year: number | null) => (year === null ? 'Unknown year' : String(year))
+
+// One flat list of sections to render: the pinned "Featured" section first (when
+// present), then the date-sorted year sections.
+const sections = computed(() => {
+  const featured = partitioned.value.pinned
+  const yearSections = years.value.map((section) => ({
+    key: section.year === null ? 'unknown' : String(section.year),
+    label: yearLabel(section.year),
+    groups: section.groups,
+  }))
+  return featured.length
+    ? [{ key: 'featured', label: 'Featured', groups: featured }, ...yearSections]
+    : yearSections
+})
 </script>
 
 <template>
@@ -116,17 +133,17 @@ const yearLabel = (year: number | null) => (year === null ? 'Unknown year' : Str
     </p>
 
     <div v-else class="space-y-10">
-      <section v-for="section in years" :key="section.year ?? 'unknown'">
+      <section v-for="section in sections" :key="section.key">
         <div
           class="bg-background/85 sticky top-0 z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur"
         >
-          <h2 class="text-xl font-semibold tracking-tight">{{ yearLabel(section.year) }}</h2>
+          <h2 class="text-xl font-semibold tracking-tight">{{ section.label }}</h2>
           <span class="text-muted-foreground text-sm">
             {{ section.groups.length }} {{ section.groups.length === 1 ? 'set' : 'sets' }}
           </span>
         </div>
         <!-- scroll-mt on the focusable tiles keeps a Tab-focused set clear of
-             the sticky year heading above (WCAG 2.4.11 Focus Not Obscured). -->
+             the sticky section heading above (WCAG 2.4.11 Focus Not Obscured). -->
         <div
           class="grid items-start gap-3 [&_a]:scroll-mt-14 [&_button]:scroll-mt-14 sm:grid-cols-2 lg:grid-cols-3"
         >

@@ -106,6 +106,31 @@ export function groupSets(sets: CardSet[]): SetGroup[] {
   )
 }
 
+/**
+ * Set codes pinned to the very top of the listing, ahead of the date-sorted
+ * sections, in this order. Secret Lair Drop (`sld`) is an ongoing,
+ * continuously-restocked product whose fixed 2019 release date would otherwise
+ * bury it deep in the catalog, so we surface it first — it's a special case, not
+ * a normal dated set.
+ */
+export const PINNED_SET_CODES = ['sld']
+
+/**
+ * Split pre-built {@link SetGroup}s into the pinned groups (in
+ * {@link PINNED_SET_CODES} order) and the rest (incoming order preserved). A
+ * pinned code with no matching group is omitted, so this is a no-op for a game
+ * that has none of the pinned sets.
+ */
+export function partitionPinned(groups: SetGroup[]): { pinned: SetGroup[]; rest: SetGroup[] } {
+  const pinnedCodes = new Set(PINNED_SET_CODES)
+  const byCode = new Map(groups.map((group) => [group.main.code, group]))
+  const pinned = PINNED_SET_CODES.map((code) => byCode.get(code)).filter(
+    (group): group is SetGroup => group !== undefined,
+  )
+  const rest = groups.filter((group) => !pinnedCodes.has(group.main.code))
+  return { pinned, rest }
+}
+
 /** A run of top-level set groups that share a release year. */
 export interface SetYear {
   /** Release year, or `null` for sets with no/unparseable release date. */

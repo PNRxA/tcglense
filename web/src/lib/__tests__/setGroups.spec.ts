@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { groupByYear, groupSets } from '../setGroups'
+import { groupByYear, groupSets, partitionPinned, PINNED_SET_CODES } from '../setGroups'
 import type { CardSet } from '../api'
 
 function set(code: string, over: Partial<CardSet> = {}): CardSet {
@@ -143,5 +143,38 @@ describe('groupByYear', () => {
       { year: 2024, codes: ['a'] },
       { year: null, codes: ['b', 'c'] },
     ])
+  })
+})
+
+describe('partitionPinned', () => {
+  it('pulls a pinned set to the front and keeps the rest in order', () => {
+    const { pinned, rest } = partitionPinned(groupSets([set('a'), set('sld'), set('b')]))
+    expect(pinned.map((g) => g.main.code)).toEqual(['sld'])
+    expect(rest.map((g) => g.main.code)).toEqual(['a', 'b'])
+  })
+
+  it('keeps a pinned set together with its nested children', () => {
+    const { pinned, rest } = partitionPinned(
+      groupSets([set('sld'), set('slp', { parent_set_code: 'sld', set_type: 'promo' }), set('a')]),
+    )
+    expect(pinned.map((g) => g.main.code)).toEqual(['sld'])
+    expect(pinned[0]?.children.map((c) => c.code)).toEqual(['slp'])
+    expect(rest.map((g) => g.main.code)).toEqual(['a'])
+  })
+
+  it('is a no-op when no pinned set is present', () => {
+    const { pinned, rest } = partitionPinned(groupSets([set('a'), set('b')]))
+    expect(pinned).toEqual([])
+    expect(rest.map((g) => g.main.code)).toEqual(['a', 'b'])
+  })
+
+  // Regression guard for the "pinned follow PINNED_SET_CODES order, not input
+  // order" contract. With a single pinned code today it can't yet distinguish the
+  // two orderings, but it strengthens automatically once a second code is pinned
+  // (the reversed input would then differ from PINNED_SET_CODES order).
+  it('orders pinned groups by PINNED_SET_CODES regardless of input order', () => {
+    const codes = [...PINNED_SET_CODES]
+    const { pinned } = partitionPinned(groupSets(codes.map((c) => set(c)).reverse()))
+    expect(pinned.map((g) => g.main.code)).toEqual(codes)
   })
 })
