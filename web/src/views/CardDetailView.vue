@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { ArrowLeft, Loader2 } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import CardImage from '@/components/cards/CardImage.vue'
+import PriceChart from '@/components/cards/PriceChart.vue'
 import { getCard } from '@/lib/api'
 
 const props = defineProps<{ game: string; id: string }>()
@@ -223,6 +224,9 @@ const priceRows = computed(() => {
           </div>
         </div>
       </div>
+
+      <!-- Price history over time (full width, below the card details). -->
+      <PriceChart :game="game" :id="card.id" />
     </template>
   </div>
 </template>

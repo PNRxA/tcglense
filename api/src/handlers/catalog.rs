@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::catalog::{self, Game};
-use crate::entities::prelude::{Card, CardSet, IngestState};
-use crate::entities::{card, card_set, ingest_state};
+use crate::entities::prelude::{Card, CardPriceHistory, CardSet, IngestState};
+use crate::entities::{card, card_price_history, card_set, ingest_state};
 use crate::error::AppError;
 use crate::scryfall::model::StoredFace;
 use crate::scryfall::search::escape_like;
@@ -65,6 +65,30 @@ pub struct PricesResponse {
     pub usd_foil: Option<String>,
     pub eur: Option<String>,
     pub tix: Option<String>,
+}
+
+/// One day's price snapshot in a card's price-over-time series. Prices are the
+/// decimal strings exactly as stored (mirroring [`PricesResponse`]); `date` is a
+/// `"YYYY-MM-DD"` string.
+#[derive(Debug, Serialize)]
+pub struct PricePoint {
+    pub date: String,
+    pub usd: Option<String>,
+    pub usd_foil: Option<String>,
+    pub eur: Option<String>,
+    pub tix: Option<String>,
+}
+
+impl From<card_price_history::Model> for PricePoint {
+    fn from(m: card_price_history::Model) -> Self {
+        PricePoint {
+            date: m.as_of_date,
+            usd: m.price_usd,
+            usd_foil: m.price_usd_foil,
+            eur: m.price_eur,
+            tix: m.price_tix,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -413,6 +437,25 @@ pub async fn get_card(
     Ok(Json(CardResponse::from(card)))
 }
 
+/// `GET /api/games/{game}/cards/{id}/prices` -> a card's daily price history,
+/// oldest first, for charting. `404` if the game or card id is unknown; an empty
+/// `{ "data": [] }` when the card exists but has no captured history yet.
+pub async fn card_prices(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_game(&game)?;
+    let card = load_card(&state, &game, &id).await?;
+    let rows = CardPriceHistory::find()
+        .filter(card_price_history::Column::Game.eq(game.as_str()))
+        .filter(card_price_history::Column::CardId.eq(card.id))
+        .order_by_asc(card_price_history::Column::AsOfDate)
+        .all(&state.db)
+        .await?;
+    let data: Vec<PricePoint> = rows.into_iter().map(PricePoint::from).collect();
+    Ok(Json(json!({ "data": data })))
+}
+
 /// `GET /api/games/{game}/cards/{id}/image?size=normal&face=0`
 ///
 /// Streams the cached image, downloading + persisting it on first request.
@@ -644,6 +687,28 @@ mod tests {
         assert_eq!(normalize_size(Some("art_crop")), "art_crop");
         assert_eq!(normalize_size(Some("../secret")), "normal");
         assert_eq!(normalize_size(None), "normal");
+    }
+
+    #[test]
+    fn price_point_maps_history_row() {
+        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        let m = card_price_history::Model {
+            id: 1,
+            game: "mtg".into(),
+            card_id: 5,
+            as_of_date: "2026-06-30".into(),
+            price_usd: Some("1.23".into()),
+            price_usd_foil: None,
+            price_eur: Some("1.00".into()),
+            price_tix: None,
+            created_at: ts,
+        };
+        let p = PricePoint::from(m);
+        assert_eq!(p.date, "2026-06-30");
+        assert_eq!(p.usd.as_deref(), Some("1.23"));
+        assert_eq!(p.usd_foil, None);
+        assert_eq!(p.eur.as_deref(), Some("1.00"));
+        assert_eq!(p.tix, None);
     }
 
     #[test]

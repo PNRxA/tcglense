@@ -53,6 +53,39 @@ pub async fn refresh_all(db: &DatabaseConnection, client: &Client) {
     }
 }
 
+/// Capture today's daily price snapshot for every supported game.
+///
+/// Runs on every sync tick **after** [`refresh_all`], reading the already-committed
+/// `cards` rows rather than the streaming import — so the daily series stays
+/// continuous even when [`refresh_all`] is version-gated and skips the import (it
+/// just records today's date with the last-known prices). A failure for one game is
+/// logged and does not abort the others.
+pub async fn snapshot_all(db: &DatabaseConnection) {
+    let as_of_date = crate::scryfall::ingest::format_date(chrono::Utc::now().date_naive());
+    for game in GAMES {
+        let result = match game.id {
+            crate::scryfall::GAME => {
+                crate::scryfall::ingest::snapshot_prices(db, game.id, &as_of_date).await
+            }
+            other => {
+                tracing::warn!(game = other, "no price snapshot wired for game; skipping");
+                continue;
+            }
+        };
+        match result {
+            Ok(rows) => tracing::info!(
+                game = game.id,
+                rows,
+                as_of = %as_of_date,
+                "captured daily price snapshot"
+            ),
+            Err(err) => {
+                tracing::error!(game = game.id, error = %err, "price snapshot failed")
+            }
+        }
+    }
+}
+
 /// Seed a dummy offline catalog for every supported game. Mirrors [`refresh_all`]
 /// but takes no HTTP client — seeding never touches the network — and dispatches per
 /// game to its provider's offline seeder. A failure for one game is logged and does

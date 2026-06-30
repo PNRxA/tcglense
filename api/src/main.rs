@@ -32,8 +32,8 @@ use crate::{
     handlers::{
         auth::{login, logout, me, refresh, register},
         catalog::{
-            card_image, get_card, get_set, ingest_status, list_cards, list_games, list_set_cards,
-            list_sets, set_icon,
+            card_image, card_prices, get_card, get_set, ingest_status, list_cards, list_games,
+            list_set_cards, list_sets, set_icon,
         },
         health::health,
     },
@@ -166,6 +166,8 @@ async fn main() {
             if sync_interval_hours == 0 {
                 // Periodic refresh disabled: import once on startup only.
                 catalog::refresh_all(&db, &http).await;
+                // Capture today's snapshot from the freshly-imported cards.
+                catalog::snapshot_all(&db).await;
                 return;
             }
             // saturating_mul so an absurd SYNC_INTERVAL_HOURS can't overflow the
@@ -182,6 +184,9 @@ async fn main() {
                 // `sync_interval_hours` thereafter.
                 ticker.tick().await;
                 catalog::refresh_all(&db, &http).await;
+                // Always capture a daily snapshot, even when the import above was
+                // version-gated and skipped — keeps the price series continuous.
+                catalog::snapshot_all(&db).await;
             }
         });
     } else {
@@ -219,6 +224,7 @@ async fn main() {
         .route("/api/games/{game}/cards", get(list_cards))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
+        .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
