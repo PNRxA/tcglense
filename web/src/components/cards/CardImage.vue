@@ -15,9 +15,18 @@ const props = withDefaults(
   { size: 'normal', hasImage: true },
 )
 
+// `error` lets a parent (e.g. CardImageZoom) react when an image that claimed to
+// exist fails to load at runtime, so it can stop offering to enlarge a placeholder.
+const emit = defineEmits<{ error: [] }>()
+
 const failed = ref(false)
 const loaded = ref(false)
 const imgEl = useTemplateRef<HTMLImageElement>('imgEl')
+
+function handleError() {
+  failed.value = true
+  emit('error')
+}
 
 // A cached image can finish loading before the `load` listener is attached, so
 // its event never fires. Reflect the already-complete state so the card never
@@ -68,7 +77,7 @@ watch(
         class="h-full w-full object-contain transition-opacity duration-500 ease-out motion-reduce:transition-none"
         :class="loaded ? 'opacity-100' : 'opacity-0'"
         @load="loaded = true"
-        @error="failed = true"
+        @error="handleError"
       />
       <!-- Pulsing skeleton fills the frame until the image bytes arrive and fade
         in; it's removed on load so it never shows behind an off-ratio card. -->
