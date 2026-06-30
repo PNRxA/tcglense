@@ -66,6 +66,54 @@ const DEV_ONLY_JWT_SECRET: &str = "dev-only-insecure-jwt-secret-do-not-use-in-pr
 /// shorter than this are brute-forceable offline.
 const MIN_JWT_SECRET_LEN: usize = 32;
 
+/// Resolve and validate the JWT signing secret from the (already-read) env value.
+///
+/// Returns the secret the server should sign with, or an `Err(message)` the
+/// caller turns into a startup panic. Kept as a pure function (no env access, no
+/// panics) so the boot-closed security policy — reject a missing, blank, public,
+/// or too-short secret unless `ALLOW_INSECURE_DEV_SECRET` opts in — is directly
+/// unit-testable without mutating process-global environment state.
+///
+/// A blank/whitespace value is treated as "absent" so an empty `JWT_SECRET=` in a
+/// stray `.env` can't silently sign tokens with the public dev key.
+fn resolve_jwt_secret(
+    provided: Option<&str>,
+    allow_insecure_dev_secret: bool,
+) -> Result<String, String> {
+    match provided {
+        Some(secret) if !secret.trim().is_empty() => {
+            if secret == DEV_ONLY_JWT_SECRET {
+                return Err("JWT_SECRET is set to the public dev-only fallback value. Generate a \
+                            unique secret, e.g. `openssl rand -hex 32`."
+                    .to_string());
+            }
+            if secret.len() < MIN_JWT_SECRET_LEN {
+                return Err(format!(
+                    "JWT_SECRET is too short ({} bytes); use at least {MIN_JWT_SECRET_LEN} bytes \
+                     of high-entropy randomness, e.g. `openssl rand -hex 32`.",
+                    secret.len()
+                ));
+            }
+            Ok(secret.to_string())
+        }
+        _ => {
+            if !allow_insecure_dev_secret {
+                return Err("JWT_SECRET must be set. Refusing to start with the public, \
+                            compiled-in dev-only signing secret. Set JWT_SECRET to a unique \
+                            high-entropy value, or set ALLOW_INSECURE_DEV_SECRET=true for local \
+                            development only."
+                    .to_string());
+            }
+            tracing::warn!(
+                "JWT_SECRET is not set; using the INSECURE, publicly-known dev-only secret \
+                 because ALLOW_INSECURE_DEV_SECRET is enabled. NEVER enable this outside \
+                 local development."
+            );
+            Ok(DEV_ONLY_JWT_SECRET.to_string())
+        }
+    }
+}
+
 impl Config {
     /// Build a [`Config`] from the process environment, applying sane defaults.
     pub fn from_env() -> Self {
@@ -96,39 +144,12 @@ impl Config {
             })
             .unwrap_or(false);
 
-        let jwt_secret = match env::var("JWT_SECRET") {
-            Ok(secret) if !secret.trim().is_empty() => {
-                if secret == DEV_ONLY_JWT_SECRET {
-                    panic!(
-                        "JWT_SECRET is set to the public dev-only fallback value. Generate a \
-                         unique secret, e.g. `openssl rand -hex 32`."
-                    );
-                }
-                if secret.len() < MIN_JWT_SECRET_LEN {
-                    panic!(
-                        "JWT_SECRET is too short ({} bytes); use at least {MIN_JWT_SECRET_LEN} \
-                         bytes of high-entropy randomness, e.g. `openssl rand -hex 32`.",
-                        secret.len()
-                    );
-                }
-                secret
-            }
-            _ => {
-                if !allow_insecure_dev_secret {
-                    panic!(
-                        "JWT_SECRET must be set. Refusing to start with the public, compiled-in \
-                         dev-only signing secret. Set JWT_SECRET to a unique high-entropy value, \
-                         or set ALLOW_INSECURE_DEV_SECRET=true for local development only."
-                    );
-                }
-                tracing::warn!(
-                    "JWT_SECRET is not set; using the INSECURE, publicly-known dev-only secret \
-                     because ALLOW_INSECURE_DEV_SECRET is enabled. NEVER enable this outside \
-                     local development."
-                );
-                DEV_ONLY_JWT_SECRET.to_string()
-            }
-        };
+        let provided_secret = env::var("JWT_SECRET").ok();
+        let jwt_secret =
+            match resolve_jwt_secret(provided_secret.as_deref(), allow_insecure_dev_secret) {
+                Ok(secret) => secret,
+                Err(message) => panic!("{message}"),
+            };
 
         let access_token_expiry_minutes = env::var("ACCESS_TOKEN_EXPIRY_MINUTES")
             .ok()
@@ -237,5 +258,53 @@ mod tests {
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[redacted]"));
         assert!(!rendered.contains("super-secret-signing-key-value"));
+    }
+
+    // ----- JWT secret policy (boot-closed) -----
+
+    #[test]
+    fn jwt_secret_accepts_a_real_high_entropy_value() {
+        let good = "0123456789abcdef0123456789abcdef"; // 32 bytes
+        assert_eq!(good.len(), MIN_JWT_SECRET_LEN);
+        assert_eq!(resolve_jwt_secret(Some(good), false).as_deref(), Ok(good));
+    }
+
+    #[test]
+    fn jwt_secret_rejects_the_public_dev_constant_even_when_long() {
+        // The dev constant is longer than the minimum, so it must be rejected on
+        // identity, not length — otherwise the public key would pass the gate.
+        assert!(DEV_ONLY_JWT_SECRET.len() >= MIN_JWT_SECRET_LEN);
+        assert!(resolve_jwt_secret(Some(DEV_ONLY_JWT_SECRET), false).is_err());
+        // Even with the insecure opt-in, an *explicitly* configured public secret
+        // is still rejected (the opt-in only covers an absent secret).
+        assert!(resolve_jwt_secret(Some(DEV_ONLY_JWT_SECRET), true).is_err());
+    }
+
+    #[test]
+    fn jwt_secret_rejects_a_too_short_value() {
+        let short = "a".repeat(MIN_JWT_SECRET_LEN - 1);
+        assert!(resolve_jwt_secret(Some(&short), false).is_err());
+        assert!(resolve_jwt_secret(Some(&short), true).is_err());
+    }
+
+    #[test]
+    fn jwt_secret_treats_absent_or_blank_as_unset() {
+        // Absent / blank / whitespace-only all fail closed without the opt-in.
+        assert!(resolve_jwt_secret(None, false).is_err());
+        assert!(resolve_jwt_secret(Some(""), false).is_err());
+        assert!(resolve_jwt_secret(Some("   "), false).is_err());
+    }
+
+    #[test]
+    fn jwt_secret_insecure_opt_in_falls_back_only_when_unset() {
+        // With the explicit opt-in, an unset secret degrades to the dev constant.
+        assert_eq!(
+            resolve_jwt_secret(None, true).as_deref(),
+            Ok(DEV_ONLY_JWT_SECRET)
+        );
+        assert_eq!(
+            resolve_jwt_secret(Some("   "), true).as_deref(),
+            Ok(DEV_ONLY_JWT_SECRET)
+        );
     }
 }
