@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRef, watch } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { ArrowLeft, ChevronDown, Layers, Loader2, Search } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Layers, Loader2, Search } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import {
@@ -66,6 +66,10 @@ const memberOptions = computed(() =>
         : subSetLabel(group.value?.main.name ?? '', member.name),
   })),
 )
+// The single set currently on screen, flagged as "current" in the picker (so
+// re-selecting it reads as a no-op rather than a dead click). Null in the grouped
+// view, where no single set is on screen and every option is a real destination.
+const activeSetCode = computed(() => (includeRelated.value ? null : code.value))
 
 // The set "View just this set" drops back to: the one the grouped view was
 // entered from (?from=…), else the group's main set. This is what fixes landing
@@ -218,21 +222,22 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
             group.
           </template>
         </p>
-        <!-- Single set: one button to fold the related sub-sets in. -->
-        <button
-          v-if="!includeRelated"
-          type="button"
-          :class="buttonVariants({ variant: 'default', size: 'sm' })"
-          @click="setIncludeRelated(true)"
-        >
-          <Layers />
-          View all together
-        </button>
-
-        <!-- Grouped: a split button. The main action returns to the set you came
-             from; the caret opens a menu to drop into any one set in the group. -->
-        <div v-else class="flex">
+        <!-- A split button in both modes. The main action toggles the grouped
+             view — fold the related sub-sets in, or (when grouped) return to the
+             set you came from — while the caret always opens a menu to drop
+             straight into any single set in the group. -->
+        <div class="flex">
           <button
+            v-if="!includeRelated"
+            type="button"
+            :class="cn(buttonVariants({ variant: 'default', size: 'sm' }), 'rounded-r-none')"
+            @click="setIncludeRelated(true)"
+          >
+            <Layers />
+            View all together
+          </button>
+          <button
+            v-else
             type="button"
             :class="cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'rounded-r-none')"
             :title="originName ? `View just ${originName}` : undefined"
@@ -247,17 +252,25 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
                 type="button"
                 :class="
                   cn(
-                    buttonVariants({ variant: 'outline', size: 'icon-sm' }),
+                    buttonVariants({
+                      variant: includeRelated ? 'outline' : 'default',
+                      size: 'icon-sm',
+                    }),
                     '-ml-px rounded-l-none',
+                    // The outline variant's border already divides the two halves;
+                    // the filled variant has none, so add a faint seam ourselves
+                    // (else the chevron reads as part of one solid block — no hover
+                    // on touch to reveal it).
+                    !includeRelated && 'border-l border-l-primary-foreground/20',
                   )
                 "
-                aria-label="View just one set in this group"
+                aria-label="Jump to a set in this group"
               >
                 <ChevronDown />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="max-w-64">
-              <DropdownMenuLabel>View just one set</DropdownMenuLabel>
+              <DropdownMenuLabel>Jump to a set</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 v-for="option in memberOptions"
@@ -265,7 +278,8 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
                 :title="option.name"
                 @select="viewSingleSet(option.code)"
               >
-                <span class="truncate">{{ option.label }}</span>
+                <span class="min-w-0 truncate">{{ option.label }}</span>
+                <Check v-if="option.code === activeSetCode" class="ml-auto shrink-0" />
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
