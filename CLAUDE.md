@@ -156,6 +156,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices` | `{ data: PricePoint[] }` — the card's daily price history, **oldest first** (`[]` if none captured yet) |
+| `GET /api/games/{game}/cards/{id}/prints` | `{ data: Card[] }` — the card's **other** printings (same `oracle_id`), **newest printing first**, capped at 200 (`[]` if none, or the card has no `oracle_id`) |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
@@ -219,7 +220,7 @@ scryfall/          MTG provider (the first game)
   dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path, plus a year of per-card seeded random-walk price history
 handlers/
   auth.rs          register / login / refresh / logout / me
-  catalog.rs       games / status / sets / set cards / all cards (search+paginate) / card detail / image proxy / price history
+  catalog.rs       games / status / sets / set cards / all cards (search+paginate) / card detail / image proxy / price history / other printings
   health.rs        health
 ```
 
@@ -378,7 +379,9 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 - **Dummy catalog seed:** `SEED_DUMMY_DATA=true` makes `main.rs` **await**
   `catalog::seed_all` (no network, no images) before serving, populating a small
   deterministic fake catalog (a few MTG-flavoured sets — including a parent/child
-  pair — and ~95 cards with a double-faced card and non-numeric collector numbers),
+  pair — and ~95 cards with a double-faced card, non-numeric collector numbers, and a
+  card reprinted across two sets sharing one `oracle_id` so the card-detail "other
+  printings" view has something to show),
   plus **a year** of daily price history per card so the card-detail chart has real
   movement without a network. For offline dev, CI, and `npm run test:e2e`. It reuses the real
   `ingest::map_card`/`import_sets`/`flush_cards`/`put_state` path (so seeded rows are

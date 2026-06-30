@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { ArrowLeft, Loader2 } from '@lucide/vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, onBeforeRouteUpdate, useRouter } from 'vue-router'
 import CardImageZoom from '@/components/cards/CardImageZoom.vue'
+import CardPrints from '@/components/cards/CardPrints.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { getCard } from '@/lib/api'
 
@@ -21,13 +22,21 @@ const cardQuery = useQuery({
 
 const card = computed(() => cardQuery.data.value)
 
-// The in-app location we arrived from, captured once as this view mounts. vue-router
-// records the previous entry's path in history state (null on a direct load or a
-// freshly-opened tab). We resolve it to a route so the back link can mirror the
-// user's actual path — the all-cards list, a search, or a set page — rather than
-// always pointing at the set (issue #18). Falls back to the card's set otherwise.
-const cameFrom = router.options.history.state.back
-const cameFromRoute = typeof cameFrom === 'string' ? router.resolve(cameFrom) : null
+// The in-app location we arrived from. vue-router records the previous entry's path
+// in history state (null on a direct load or a freshly-opened tab); we resolve it to
+// a route so the back link can mirror the user's actual path — the all-cards list, a
+// search, or a set page — rather than always pointing at the set (issue #18). Held in
+// a ref and refreshed on each card→card navigation (e.g. clicking another printing in
+// "Other printings"), since this view is reused across those routes and so setup()
+// won't re-run — captured once, the link would stay frozen on the first card's
+// referrer (issue #63). Falls back to the card's set otherwise.
+const cameFrom = ref(router.options.history.state.back)
+onBeforeRouteUpdate((_to, from) => {
+  cameFrom.value = from.fullPath
+})
+const cameFromRoute = computed(() =>
+  typeof cameFrom.value === 'string' ? router.resolve(cameFrom.value) : null,
+)
 
 // Labels for the catalog list routes a card is reachable from, keyed by route name.
 const FROM_LABELS: Record<string, string> = {
@@ -36,15 +45,16 @@ const FROM_LABELS: Record<string, string> = {
 }
 
 const backLink = computed(() => {
+  const from = cameFromRoute.value
   // Honour the previous page only when it's an in-app catalog list for this game;
   // a deep link or an unrelated referrer falls through to the set page below.
-  if (cameFromRoute && cameFromRoute.params.game === game.value) {
-    if (cameFromRoute.name === 'set') {
+  if (from && from.params.game === game.value) {
+    if (from.name === 'set') {
       // Came from a set page: every card there is in that set, so the set name fits.
-      return { to: cameFromRoute.fullPath, label: card.value?.set_name ?? 'Set' }
+      return { to: from.fullPath, label: card.value?.set_name ?? 'Set' }
     }
-    const label = FROM_LABELS[cameFromRoute.name as string]
-    if (label) return { to: cameFromRoute.fullPath, label }
+    const label = FROM_LABELS[from.name as string]
+    if (label) return { to: from.fullPath, label }
   }
   return {
     to: card.value ? `/cards/${game.value}/sets/${card.value.set_code}` : `/cards/${game.value}`,
@@ -226,6 +236,10 @@ const priceRows = computed(() => {
 
       <!-- Price history over time (full width, below the card details). -->
       <PriceChart :game="game" :id="card.id" />
+
+      <!-- This card's other printings (same gameplay object, issue #63). Renders
+        nothing when there are none. -->
+      <CardPrints :game="game" :id="card.id" />
     </template>
   </div>
 </template>

@@ -32,8 +32,8 @@ use crate::{
     handlers::{
         auth::{login, logout, me, refresh, register},
         catalog::{
-            card_image, card_prices, get_card, get_set, ingest_status, list_cards, list_games,
-            list_set_cards, list_sets, set_icon,
+            card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
+            list_games, list_set_cards, list_sets, set_icon,
         },
         health::health,
     },
@@ -225,6 +225,7 @@ async fn main() {
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
+        .route("/api/games/{game}/cards/{id}/prints", get(card_prints))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);

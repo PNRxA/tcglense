@@ -166,6 +166,9 @@ fn dummy_prices(n: i32) -> Prices {
 /// non-digital, no images) are filled in by [`SeedCard::into_scryfall`].
 struct SeedCard {
     external_id: String,
+    /// Gameplay identity shared across a card's printings. `None` for cards with a
+    /// single printing; reprints share one id so the "other printings" list groups them.
+    oracle_id: Option<String>,
     name: String,
     set_code: &'static str,
     set_name: &'static str,
@@ -190,7 +193,7 @@ impl SeedCard {
         };
         ScryfallCard {
             id: self.external_id,
-            oracle_id: None,
+            oracle_id: self.oracle_id,
             name: self.name,
             lang: "en".to_string(),
             released_at: Some(self.released.to_string()),
@@ -228,6 +231,7 @@ fn numbered_card(set: &SetDef, n: i32) -> ScryfallCard {
     let generic = (idx % 4) as i64 + 1;
     SeedCard {
         external_id: card_id(set.code, n),
+        oracle_id: None,
         name: format!("Dummy {} {}", color.name, noun),
         set_code: set.code,
         set_name: set.name,
@@ -250,6 +254,7 @@ fn numbered_card(set: &SetDef, n: i32) -> ScryfallCard {
 fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
     SeedCard {
         external_id: card_id(set.code, n),
+        oracle_id: None,
         name: "Dummy Daybound Werewolf // Dummy Nightbound Wolf".to_string(),
         set_code: set.code,
         set_name: set.name,
@@ -294,6 +299,7 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
 fn special_card(set: &SetDef, n: i32, collector_number: &str, name: &str) -> ScryfallCard {
     SeedCard {
         external_id: card_id(set.code, n),
+        oracle_id: None,
         name: name.to_string(),
         set_code: set.code,
         set_name: set.name,
@@ -317,6 +323,7 @@ fn special_card(set: &SetDef, n: i32, collector_number: &str, name: &str) -> Scr
 fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
     SeedCard {
         external_id: card_id(set.code, n),
+        oracle_id: None,
         name: "Dummy Foil-Only Showcase".to_string(),
         set_code: set.code,
         set_name: set.name,
@@ -346,6 +353,7 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
     let noun = NOUNS[idx % NOUNS.len()];
     SeedCard {
         external_id: card_id(set.code, n),
+        oracle_id: None,
         name: format!("Dummy {} {} Token", color.name, noun),
         set_code: set.code,
         set_name: set.name,
@@ -363,6 +371,35 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
             eur: None,
             tix: None,
         },
+        card_faces: None,
+    }
+    .into_scryfall()
+}
+
+/// Shared gameplay identity for the reprinted card, so its printings group as one
+/// (mirrors a real Scryfall `oracle_id`; only needs to be stable and distinct).
+const REPRINT_ORACLE_ID: &str = "dummy-oracle-reprint-0001";
+
+/// One printing of a card reprinted across sets: every printing shares the same
+/// name and `oracle_id` but lives in its own set with its own collector number and
+/// price. Seeding two of these gives the card-detail "other printings" list (issue
+/// #63) something to show offline.
+fn reprint_card(set: &SetDef, n: i32) -> ScryfallCard {
+    SeedCard {
+        external_id: card_id(set.code, n),
+        oracle_id: Some(REPRINT_ORACLE_ID.to_string()),
+        name: "Dummy Reprinted Relic".to_string(),
+        set_code: set.code,
+        set_name: set.name,
+        released: set.released,
+        collector_number: n.to_string(),
+        rarity: "rare",
+        layout: "normal",
+        mana_cost: Some("{2}".to_string()),
+        cmc: Some(2.0),
+        type_line: Some("Artifact".to_string()),
+        colors: vec![],
+        prices: dummy_prices(n),
         card_faces: None,
     }
     .into_scryfall()
@@ -393,11 +430,17 @@ fn dummy_cards() -> Vec<ScryfallCard> {
     // A foil-only card (no regular USD price) to exercise the foil-price fallback
     // in the browse views' display and price sort.
     cards.push(foil_only_card(&BASE_SET, BASE_NUMBERED + 4));
+    // First printing of a reprinted card (its sibling is in the Universe set below),
+    // so the card-detail "other printings" list has something to show offline.
+    cards.push(reprint_card(&BASE_SET, BASE_NUMBERED + 5));
 
     // A second standalone set (a single page).
     for n in 1..=12 {
         cards.push(numbered_card(&UNIVERSE_SET, n));
     }
+    // Second printing of the reprinted card, in a different set with a later
+    // release date — the newest printing, so it sorts first under the other.
+    cards.push(reprint_card(&UNIVERSE_SET, 13));
 
     // A token child set hanging off the base set (exercises set grouping).
     for n in 1..=5 {
@@ -764,6 +807,33 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.usd.is_none() && p.usd_foil.is_some())),
             "expected a foil-only card (no usd, has usd_foil)",
+        );
+    }
+
+    #[test]
+    fn has_a_reprinted_card_across_sets() {
+        // A card printed in more than one set, sharing its name and oracle id, so the
+        // card-detail "other printings" list (issue #63) has something to show offline.
+        let cards = dummy_cards();
+        let printings: Vec<&ScryfallCard> = cards
+            .iter()
+            .filter(|c| c.oracle_id.as_deref() == Some(REPRINT_ORACLE_ID))
+            .collect();
+        assert!(
+            printings.len() >= 2,
+            "expected the reprinted card to have multiple printings"
+        );
+        // Same gameplay object: every printing shares the name...
+        let name = &printings[0].name;
+        assert!(
+            printings.iter().all(|c| &c.name == name),
+            "reprint printings must share a name"
+        );
+        // ...but lives in a distinct set (so they're genuinely "other" printings).
+        let sets: HashSet<&str> = printings.iter().map(|c| c.set.as_str()).collect();
+        assert!(
+            sets.len() >= 2,
+            "reprint printings must span at least two sets"
         );
     }
 

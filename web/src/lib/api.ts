@@ -246,6 +246,14 @@ export function getCard(game: string, id: string): Promise<Card> {
   return request<Card>(`/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`)
 }
 
+/** A card's other printings (every card sharing its gameplay identity/oracle id),
+ * newest printing first. Empty when the card has no other printings. */
+export function getCardPrints(game: string, id: string): Promise<{ data: Card[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: Card[] }>(`/api/games/${g}/cards/${i}/prints`)
+}
+
 /** A single day's recorded prices for a card (decimal strings, exactly as stored). */
 export interface PricePoint {
   date: string
