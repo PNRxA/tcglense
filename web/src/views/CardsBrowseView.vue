@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, toRef, watch } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { Loader2, Search } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
@@ -16,8 +16,12 @@ const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 
 const PAGE_SIZE = 60
-// Switching games (same route component, different :game) starts fresh.
-const { page, searchInput, query, sort } = useCardSearch(game, ALL_CARDS_DEFAULT_SORT)
+// Page, search and sort live in the URL query, so they survive opening a card and
+// pressing Back. Switching games routes to a fresh URL, so it starts clean.
+const { page, searchInput, query, sort } = useCardSearch(
+  ALL_CARDS_DEFAULT_SORT,
+  ALL_CARDS_SORT_OPTIONS.map((option) => option.value),
+)
 
 const gamesQuery = useQuery({
   queryKey: ['games'],
@@ -46,6 +50,19 @@ const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
+
+// A shared or stale link can point past the last page (a bookmarked search whose
+// results later shrank, or a hand-edited ?page). Once the real total is known, clamp
+// back so we never strand the user on an empty page with no pager to escape it.
+watch(
+  () => [cardsQuery.isSuccess.value, total.value] as const,
+  ([ok, count]) => {
+    if (!ok) return
+    const lastPage = Math.max(1, Math.ceil(count / PAGE_SIZE))
+    if (page.value > lastPage) page.value = lastPage
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
