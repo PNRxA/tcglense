@@ -852,8 +852,15 @@ fn apply_card_sort(
         SortField::Cmc => query
             .order_by_with_nulls(card::Column::Cmc, dir.order(), NullOrdering::Last)
             .order_by_asc(card::Column::Name),
+        // Fall back to the foil price when there's no regular USD price, so
+        // foil-only printings sort by what they actually cost instead of being
+        // parked as unpriced (matches the browse tiles' displayed price).
         SortField::Price => query
-            .order_by_with_nulls(price_real_expr("price_usd"), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(
+                price_real_expr(&["price_usd", "price_usd_foil"]),
+                dir.order(),
+                NullOrdering::Last,
+            )
             .order_by_asc(card::Column::Name),
     };
     query.order_by_asc(card::Column::Id)
@@ -874,13 +881,27 @@ fn rarity_rank_expr() -> SimpleExpr {
     Expr::cust(format!("CASE IFNULL(rarity, '') {arms} ELSE NULL END"))
 }
 
-/// SQL expression casting a text price column to a real number, with NULL/empty
-/// mapped to NULL so `NULLS LAST` keeps unpriced cards at the end rather than
-/// treating `''` as `0`. `col` is a fixed column name, never user input.
-fn price_real_expr(col: &str) -> SimpleExpr {
-    Expr::cust(format!(
-        "CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END"
-    ))
+/// SQL expression giving a card's sort price: the first non-empty value among
+/// `cols` (in order), cast to a real number. Each column is NULL/empty-guarded
+/// (so `''` isn't treated as `0`) and the guarded values are `COALESCE`d, so a
+/// card priced only in a later column — e.g. a foil-only printing with no regular
+/// `price_usd` — still sorts by that price rather than being treated as unpriced.
+/// When every column is NULL/empty the result is NULL, so `NULLS LAST` keeps
+/// truly-unpriced cards at the end in either direction. `cols` are fixed column
+/// names, never user input.
+fn price_real_expr(cols: &[&str]) -> SimpleExpr {
+    let arms: Vec<String> = cols
+        .iter()
+        .map(|col| {
+            format!("CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END")
+        })
+        .collect();
+    // SQLite's COALESCE needs ≥2 arguments; a single column is emitted bare.
+    let expr = match arms.as_slice() {
+        [single] => single.clone(),
+        _ => format!("COALESCE({})", arms.join(", ")),
+    };
+    Expr::cust(expr)
 }
 
 fn stored_faces(card: &card::Model) -> Vec<StoredFace> {
@@ -1116,6 +1137,98 @@ mod tests {
         ));
     }
 
+    /// A minimal, insertable card row whose only meaningful fields for the sort
+    /// tests are its id and the two USD price columns.
+    fn test_card(id: i32, usd: Option<&str>, usd_foil: Option<&str>) -> card::Model {
+        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        card::Model {
+            id,
+            game: "mtg".into(),
+            external_id: format!("ext-{id}"),
+            oracle_id: None,
+            name: format!("Card {id}"),
+            set_code: "tst".into(),
+            set_name: "TST".into(),
+            collector_number: id.to_string(),
+            collector_number_int: Some(id),
+            rarity: None,
+            lang: "en".into(),
+            released_at: None,
+            mana_cost: None,
+            cmc: None,
+            type_line: None,
+            color_identity: None,
+            colors: None,
+            layout: None,
+            oracle_text: None,
+            power: None,
+            toughness: None,
+            loyalty: None,
+            image_small: None,
+            image_normal: None,
+            image_large: None,
+            image_art_crop: None,
+            image_png: None,
+            card_faces: None,
+            price_usd: usd.map(str::to_string),
+            price_usd_foil: usd_foil.map(str::to_string),
+            price_eur: None,
+            price_tix: None,
+            digital: false,
+            created_at: ts,
+            updated_at: ts,
+        }
+    }
+
+    /// The price sort falls back to the foil price when a card has no regular USD
+    /// price (some printings are foil-only) but still prefers the regular price
+    /// when present, with unpriced cards parked last in either direction.
+    #[tokio::test]
+    async fn price_sort_falls_back_to_foil_when_no_regular_usd() {
+        use sea_orm::{ActiveModelTrait, Database, IntoActiveModel};
+        use sea_orm_migration::MigratorTrait;
+
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        crate::migrator::Migrator::up(&db, None)
+            .await
+            .expect("run migrations");
+
+        // 1: regular $5 (also a $50 foil — the regular price must win over it).
+        // 2: foil-only $20.  3: foil-only $1.  4: fully unpriced.
+        // 5: empty-string regular price + $8 foil — the `= ''` guard must treat the
+        //    empty regular price as absent and fall through to the foil price.
+        for c in [
+            test_card(1, Some("5.00"), Some("50.00")),
+            test_card(2, None, Some("20.00")),
+            test_card(3, None, Some("1.00")),
+            test_card(4, None, None),
+            test_card(5, Some(""), Some("8.00")),
+        ] {
+            c.into_active_model().insert(&db).await.expect("insert card");
+        }
+
+        let ids = |rows: Vec<card::Model>| rows.iter().map(|r| r.id).collect::<Vec<_>>();
+
+        // Effective price = regular USD (when non-empty), else foil. Desc: 2($20),
+        // 5($8 via foil), 1($5), 3($1), then the unpriced 4 last. Card 1 sorts on
+        // its $5 regular price, not its $50 foil — the fallback only applies when
+        // the regular price is missing or empty.
+        let desc = apply_card_sort(card::Entity::find(), SortField::Price, SortDir::Desc, false)
+            .all(&db)
+            .await
+            .expect("query desc");
+        assert_eq!(ids(desc), vec![2, 5, 1, 3, 4]);
+
+        // Asc mirrors it, with the unpriced card still parked last (NULLS LAST).
+        let asc = apply_card_sort(card::Entity::find(), SortField::Price, SortDir::Asc, false)
+            .all(&db)
+            .await
+            .expect("query asc");
+        assert_eq!(ids(asc), vec![3, 1, 5, 2, 4]);
+    }
+
     fn test_set(code: &str, parent: Option<&str>) -> card_set::Model {
         let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
         card_set::Model {
@@ -1205,7 +1318,11 @@ mod tests {
         assert_eq!(group_set_codes(&sets, "b"), vec!["b".to_string()]);
     }
 
-    fn test_card(set_code: &str, collector_number: &str, number_int: Option<i32>) -> card::Model {
+    fn sld_test_card(
+        set_code: &str,
+        collector_number: &str,
+        number_int: Option<i32>,
+    ) -> card::Model {
         let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
         card::Model {
             id: 0,
@@ -1274,9 +1391,9 @@ mod tests {
         // 2658 -> "Wild in Bloom" (drop order 0); 168 -> "Inked"; an unknown
         // collector number falls into the trailing "Other" bucket.
         let rows = vec![
-            test_card("sld", "168", Some(168)),
-            test_card("sld", "no-such-number", None),
-            test_card("sld", "2658", Some(2658)),
+            sld_test_card("sld", "168", Some(168)),
+            sld_test_card("sld", "no-such-number", None),
+            sld_test_card("sld", "2658", Some(2658)),
         ];
         let buckets = group_into_drops(table, rows);
         let titles: Vec<&str> = buckets.iter().map(|b| b.title.as_str()).collect();
@@ -1292,8 +1409,8 @@ mod tests {
         // Two cards from the same drop (Wild in Bloom spans 2658..2662) stay in
         // the order they were fetched (the query's collector-number order).
         let rows = vec![
-            test_card("sld", "2659", Some(2659)),
-            test_card("sld", "2658", Some(2658)),
+            sld_test_card("sld", "2659", Some(2659)),
+            sld_test_card("sld", "2658", Some(2658)),
         ];
         let buckets = group_into_drops(table, rows);
         assert_eq!(buckets.len(), 1);

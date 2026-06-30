@@ -13,10 +13,13 @@ Guidance for working in this repository.
 
 The **auth foundation** (register / login / session) is built, plus a **card
 catalog**: browse trading-card games → sets → cards, with search. Magic: The
-Gathering is the first game, sourced from [Scryfall](https://scryfall.com). The
-price-history, collection, and set-completion features are not yet implemented —
-they are the next things to build on top of this scaffold (the catalog gives them
-the card/set data to hang off).
+Gathering is the first game, sourced from [Scryfall](https://scryfall.com).
+**Singles price history** is also built: every sync captures each card's daily prices
+into `card_price_history`, served as a per-card time series (`.../cards/{id}/prices`)
+and charted on the card detail page. The collection, set-completion, and
+sealed-product price-tracking features are not yet implemented — they are the next
+things to build on top of this scaffold (the catalog gives them the card/set data to
+hang off).
 
 ## Layout
 
@@ -153,6 +156,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` Scryfall-style search), by name |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
+| `GET /api/games/{game}/cards/{id}/prices` | `{ data: PricePoint[] }` — the card's daily price history, **oldest first** (`[]` if none captured yet) |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
@@ -162,6 +166,11 @@ drop_name: string | null, drop_slug: string | null,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
 `null` elsewhere) — see the `/sets/{code}/drops` endpoint above.
+
+`PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
+strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
+every sync tick from the already-committed `cards` rows (`scryfall::ingest::snapshot_prices`),
+so the series stays continuous even on a tick where the version-gated import is skipped.
 
 **Search syntax (`q`):** the MTG card-list endpoints parse `q` as a subset of
 [Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search.rs`).
@@ -196,7 +205,7 @@ db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal 
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
-entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`)
+entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`)
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -209,14 +218,14 @@ catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all(
 scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
   client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
-  ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping
+  ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping; snapshot_prices(): daily per-card price-history capture from the committed cards rows
   search.rs        Scryfall-style query parser: lexer + recursive-descent (and/or/-/parens/quotes) → sea_orm::Condition; SearchError → 422; values always parameterised
   drops.rs         Secret Lair drop grouping: loads sld_drops.json once → (game,set)→{ordered drops, collector#→drop}; table()/has_drops()/drop_for()
   sld_drops.json   committed snapshot of Scryfall's curated Secret Lair drop titles + collector numbers (regenerate via scripts/gen-sld-drops.mjs)
-  dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path
+  dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path, plus a year of per-card seeded random-walk price history
 handlers/
   auth.rs          register / login / refresh / logout / me
-  catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy
+  catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history
   health.rs        health
 ```
 
@@ -259,9 +268,9 @@ lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that r
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
 components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), CardsNav (top-bar "Cards" link → /cards + game dropdown shortcut)
-components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile, CardGrid, SetTile, CardPagination
+components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile, CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery)
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView
-components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu)
+components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, chart — unovis-backed)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```
 
@@ -375,15 +384,22 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 - **Dummy catalog seed:** `SEED_DUMMY_DATA=true` makes `main.rs` **await**
   `catalog::seed_all` (no network, no images) before serving, populating a small
   deterministic fake catalog (a few MTG-flavoured sets — including a parent/child
-  pair — and ~95 cards with a double-faced card and non-numeric collector numbers).
-  For offline dev, CI, and `npm run test:e2e`. It reuses the real
+  pair — and ~95 cards with a double-faced card and non-numeric collector numbers),
+  plus **a year** of daily price history per card so the card-detail chart has real
+  movement without a network. For offline dev, CI, and `npm run test:e2e`. It reuses the real
   `ingest::map_card`/`import_sets`/`flush_cards`/`put_state` path (so seeded rows are
   shaped exactly like imported ones) and reuses the same `(game, "default_cards")`
   `ingest_state` row, marking it `complete` with a synthetic `source_updated_at`
   (`dummy-seed-v1`) — a later real sync's version gate sees the mismatch and
   re-imports, so dummy mode never locks out real data. It is **upsert-only** (never
   deletes), so toggling it on a DB that already holds real cards leaves a real+dummy
-  mix; point it at a fresh/dedicated DB (or `:memory:` in tests). Tests call
+  mix; point it at a fresh/dedicated DB (or `:memory:` in tests). The seeded price
+  history is a per-card **seeded random walk** (`StdRng` seeded from the card id,
+  anchored so day 0 equals the card's current price): random-looking yet byte-identical
+  on a same-day reseed, but because the window ends at "today" and nothing is deleted,
+  an on-disk dummy DB rebooted on a *later* calendar day re-stamps the shifted older
+  dates and leaves rows past the year mark in place (harmless drift on fabricated data —
+  another reason to keep dummy mode on a fresh/dedicated DB). Tests call
   `scryfall::dummy::seed` directly against an in-memory DB rather than booting the
   binary.
 - **Secret Lair drop snapshot:** Scryfall breaks the Secret Lair Drop set (`sld`)

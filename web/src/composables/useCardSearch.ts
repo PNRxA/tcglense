@@ -1,4 +1,5 @@
-import { onUnmounted, ref, watch, type Ref } from 'vue'
+import { onUnmounted, computed, ref, watch } from 'vue'
+import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
 import { ApiError } from '@/lib/api'
 
 /** Map a failed card query to its 422 (bad Scryfall query) message, else null. */
@@ -6,43 +7,104 @@ export function searchErrorMessage(error: unknown): string | null {
   return error instanceof ApiError && error.status === 422 ? error.message : null
 }
 
-/**
- * Shared list controls for the catalog card views: a 300ms-debounced `query`, a
- * `sort` (a `field:dir` value, see lib/cardSort), and a `page` that resets to 1
- * whenever the query or sort changes. Navigating to another game/set (`resetOn`
- * changes) resets everything — search, sort and page — back to a clean slate.
- */
-export function useCardSearch(resetOn: Ref<unknown>, defaultSort = '') {
-  const page = ref(1)
-  const searchInput = ref('')
-  const query = ref('')
-  const sort = ref(defaultSort)
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
 
-  // Debounce typing into the committed query.
+/** A `?page=` value is honoured only when it's an integer past the first page. */
+function readPage(value: unknown): number {
+  const n = Number(value)
+  return Number.isInteger(n) && n > 1 ? n : 1
+}
+
+/** Compare a candidate query against the live route query, treating absent,
+ * empty and null the same, so we never `replace` to an identical URL. */
+function queriesEqual(a: LocationQueryRaw, b: LocationQuery): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  for (const key of keys) {
+    if (String(a[key] ?? '') !== String(b[key] ?? '')) return false
+  }
+  return true
+}
+
+/**
+ * Shared list controls for the catalog card views — backed by the URL query so the
+ * page, search and sort survive navigating away and back (open a card, press Back —
+ * issue #58) and are shareable/bookmarkable/reload-safe, matching how the set view
+ * already keeps `related`/`from` in the URL.
+ *
+ * `searchInput` is the live text box, debounced 300ms into the committed `?q`.
+ * `page`, `query` and `sort` read from the route and write back via `router.replace`
+ * (so paging/searching doesn't pile up history entries between the list and a card
+ * opened from it). Committing a new search or sort restarts paging. Writes merge
+ * into the existing query, so unrelated keys (a set view's `related`/`from`) are
+ * preserved. `validSorts`, when given, clamps an unknown `?sort=` (e.g. a
+ * hand-edited URL) back to the default rather than letting the API reject it.
+ */
+export function useCardSearch(defaultSort = '', validSorts?: readonly string[]) {
+  const route = useRoute()
+  const router = useRouter()
+
+  // Merge changes into the URL query: an undefined/empty value drops its key, every
+  // other (e.g. `related`/`from`) is left untouched. Replace, never push.
+  function patch(changes: Record<string, string | undefined>) {
+    const next: LocationQueryRaw = { ...route.query }
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === undefined || value === '') delete next[key]
+      else next[key] = value
+    }
+    if (!queriesEqual(next, route.query)) router.replace({ query: next })
+  }
+
+  const query = computed(() => readString(route.query.q).trim())
+
+  const page = computed({
+    get: () => readPage(route.query.page),
+    set: (value) => patch({ page: value > 1 ? String(value) : undefined }),
+  })
+
+  const sort = computed({
+    get: () => {
+      const raw = readString(route.query.sort)
+      return raw && (!validSorts || validSorts.includes(raw)) ? raw : defaultSort
+    },
+    // A new sort restarts paging — page 3 of the old order is meaningless in the new.
+    set: (value) =>
+      patch({ sort: value && value !== defaultSort ? value : undefined, page: undefined }),
+  })
+
+  // The text box mirrors the committed query, debounced so we don't rewrite the URL
+  // on every keystroke. Seed it from the current URL (a shared/reloaded link).
+  const searchInput = ref(query.value)
   let timer: ReturnType<typeof setTimeout> | undefined
   watch(searchInput, (value) => {
     clearTimeout(timer)
     timer = setTimeout(() => {
-      query.value = value.trim()
+      const trimmed = value.trim()
+      // A new search restarts paging. Guard against re-committing an unchanged value
+      // (e.g. the box was just synced from the URL below) to avoid a stray replace.
+      if (trimmed !== query.value) patch({ q: trimmed || undefined, page: undefined })
     }, 300)
   })
   onUnmounted(() => clearTimeout(timer))
 
-  // A new query or sort always restarts pagination. Driving the query reset off
-  // `query` (rather than the debounce timer) keeps a programmatic reset — e.g.
-  // clearing the box on navigation below — from arming a stray timer that could
-  // later snap page to 1.
-  watch([query, sort], () => {
-    page.value = 1
-  })
+  // Navigating to a different list (a different set/game — the path changes) must not
+  // carry a half-typed, not-yet-committed search onto the destination: cancel any
+  // pending debounce and resync the box to wherever we landed. A query-only change
+  // (paging, sorting, a set view's scope toggle) keeps the same path, so the in-list
+  // search keeps debouncing normally.
+  watch(
+    () => route.path,
+    () => {
+      clearTimeout(timer)
+      searchInput.value = query.value
+    },
+  )
 
-  // Navigating to a different game/set starts fresh (search + sort + page).
-  watch(resetOn, () => {
-    clearTimeout(timer)
-    searchInput.value = ''
-    query.value = ''
-    sort.value = defaultSort
-    page.value = 1
+  // The committed query can also change under us without a path change — landing back
+  // on the same list via Back/forward, or a programmatic update. Mirror it into the box.
+  watch(query, (value) => {
+    if (value !== searchInput.value.trim()) searchInput.value = value
   })
 
   return { page, searchInput, query, sort }

@@ -12,6 +12,8 @@ test('shows the public welcome page to everyone', async ({ page }) => {
 
 test('redirects unauthenticated visitors away from protected pages', async ({ page }) => {
   await page.goto('/dashboard')
-  await expect(page).toHaveURL(/\/login$/)
+  // The guard sends them to /login, carrying a ?redirect= back to where they
+  // were headed, so match the login path with or without that query string.
+  await expect(page).toHaveURL(/\/login(\?|$)/)
   await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
 })
