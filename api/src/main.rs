@@ -21,7 +21,10 @@ use sea_orm::Database;
 use sea_orm_migration::MigratorTrait;
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing_subscriber::EnvFilter;
+use tracing_indicatif::IndicatifLayer;
+use tracing_subscriber::{
+    EnvFilter, Layer, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 use crate::{
     catalog::images::ImageCache,
@@ -44,10 +47,28 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     // Initialise tracing before reading config so config warnings are captured.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    // Log output is routed through `tracing-indicatif` so the card-import
+    // progress bar (see `scryfall::progress`) never clobbers concurrent log
+    // lines. Logs go to stdout (matching the prior `fmt()` default) while the bar
+    // draws on stderr; `get_stdout_writer` keeps the two from colliding. The env
+    // filter is attached to the fmt layer only — not globally — so a quieter
+    // `RUST_LOG` (e.g. `warn`) still shows the one-shot import bar while
+    // suppressing routine log lines. The indicatif layer is scoped to the import
+    // span so unrelated spans (e.g. the per-request HTTP spans at debug level)
+    // don't each sprout a bar; when stderr is not a TTY the bar renders nothing,
+    // leaving logs untouched.
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let indicatif_layer = IndicatifLayer::new();
+    let log_writer = indicatif_layer.get_stdout_writer();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(log_writer)
+                .with_filter(env_filter),
         )
+        .with(indicatif_layer.with_filter(filter_fn(|meta| {
+            meta.name() == crate::scryfall::PROGRESS_SPAN_NAME
+        })))
         .init();
 
     let config = Config::from_env();
