@@ -5,9 +5,9 @@ import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SetTile from '@/components/cards/SetTile.vue'
-import type { SetGroup } from '@/lib/setGroups'
+import { subSetLabel, type SetGroup } from '@/lib/setGroups'
 
-const props = defineProps<{
+defineProps<{
   game: string
   group: SetGroup
 }>()
@@ -15,18 +15,6 @@ const props = defineProps<{
 // Collapsed by default to keep the set listing scannable; the sub-sets reveal on
 // demand. Each group manages its own toggle state.
 const expanded = ref(false)
-
-// Sub-set names usually repeat the parent's (e.g. "Bloomburrow Commander").
-// Drop that redundant prefix for the nested rows, keeping the full name as the
-// tooltip and falling back to it when there's no shared prefix.
-function childLabel(name: string): string {
-  const prefix = props.group.main.name
-  if (name.length > prefix.length && name.startsWith(prefix)) {
-    const rest = name.slice(prefix.length).replace(/^[\s:–-]+/, '')
-    if (rest) return rest
-  }
-  return name
-}
 </script>
 
 <template>
@@ -62,7 +50,12 @@ function childLabel(name: string): string {
       :aria-label="`Sets related to ${group.main.name}`"
     >
       <li v-for="child in group.children" :key="child.code">
-        <SetTile :game="game" :set="child" :label="childLabel(child.name)" variant="nested" />
+        <SetTile
+          :game="game"
+          :set="child"
+          :label="subSetLabel(group.main.name, child.name)"
+          variant="nested"
+        />
       </li>
     </ul>
   </div>

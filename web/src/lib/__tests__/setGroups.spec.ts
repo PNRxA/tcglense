@@ -4,9 +4,12 @@ import {
   filterSets,
   findGroup,
   groupByYear,
+  groupHasCode,
   groupSets,
+  originSetCode,
   partitionPinned,
   PINNED_SET_CODES,
+  subSetLabel,
 } from '../setGroups'
 import type { CardSet } from '../api'
 
@@ -120,6 +123,70 @@ describe('findGroup', () => {
 
   it('returns undefined for a code not in the list', () => {
     expect(findGroup(sets, 'zzz')).toBeUndefined()
+  })
+})
+
+describe('groupHasCode', () => {
+  const group = {
+    main: set('blb'),
+    children: [set('blc', { parent_set_code: 'blb' }), set('tblb', { parent_set_code: 'blb' })],
+  }
+
+  it('matches the main set code', () => {
+    expect(groupHasCode(group, 'blb')).toBe(true)
+  })
+
+  it('matches a sub-set code', () => {
+    expect(groupHasCode(group, 'tblb')).toBe(true)
+  })
+
+  it('rejects a code outside the group', () => {
+    expect(groupHasCode(group, 'neo')).toBe(false)
+  })
+})
+
+describe('subSetLabel', () => {
+  it('strips the redundant parent prefix from a sub-set name', () => {
+    expect(subSetLabel('Bloomburrow', 'Bloomburrow Commander')).toBe('Commander')
+  })
+
+  it('trims separators left after the prefix', () => {
+    expect(subSetLabel('Bloomburrow', 'Bloomburrow: Tokens')).toBe('Tokens')
+    expect(subSetLabel('Bloomburrow', 'Bloomburrow – Promos')).toBe('Promos')
+  })
+
+  it('falls back to the full name when there is no shared prefix', () => {
+    expect(subSetLabel('Bloomburrow', 'Wilds of Eldraine')).toBe('Wilds of Eldraine')
+  })
+
+  it('falls back to the full name when nothing would be left after the prefix', () => {
+    expect(subSetLabel('Bloomburrow', 'Bloomburrow')).toBe('Bloomburrow')
+  })
+})
+
+describe('originSetCode', () => {
+  const group = {
+    main: set('blb'),
+    children: [set('blc', { parent_set_code: 'blb' }), set('tblb', { parent_set_code: 'blb' })],
+  }
+
+  it('returns the entered-from sub-set when it is a member of the group', () => {
+    // The bug fix: a sub-set → "view all together" → "view just this set" lands
+    // back on the original sub-set, not the parent.
+    expect(originSetCode(group, 'blc')).toBe('blc')
+  })
+
+  it('returns the main set when entered from the main set', () => {
+    expect(originSetCode(group, 'blb')).toBe('blb')
+  })
+
+  it('falls back to the main set when there is no from', () => {
+    expect(originSetCode(group, null)).toBe('blb')
+    expect(originSetCode(group, undefined)).toBe('blb')
+  })
+
+  it('ignores a stale or bogus from that is not in the group', () => {
+    expect(originSetCode(group, 'neo')).toBe('blb')
   })
 })
 
