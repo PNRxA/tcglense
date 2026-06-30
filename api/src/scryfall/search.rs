@@ -4,9 +4,10 @@
 //! [`sea_orm::Condition`] over the `cards` table, supporting the subset of
 //! [Scryfall syntax](https://scryfall.com/docs/syntax) our columns can back:
 //! name / type / oracle text, colours & colour identity, mana cost, mana value,
-//! power / toughness / loyalty, prices, rarity, set, collector number, language,
-//! layout, release date, plus boolean `and`/`or`, `-` negation, parentheses, and
-//! quoted phrases. Filters we cannot back (oracle keywords, format legality,
+//! power / toughness / loyalty, prices, rarity, set, set type, collector number,
+//! language, layout, release date, plus boolean `and`/`or`, `-` negation,
+//! parentheses, and quoted phrases. Filters we cannot back (oracle keywords,
+//! format legality,
 //! artist, …) return a [`SearchError`] that the handler maps to HTTP 422.
 //!
 //! Pipeline: [`lex`] → [`Parser::parse_query`] (recursive descent → [`Node`]) →
@@ -558,6 +559,7 @@ fn compile_filter(key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
         "date" | "released_at" => date(op, value),
         "r" | "rarity" => rarity(op, value),
         "s" | "set" | "e" | "edition" => set(op, value),
+        "st" | "settype" => set_type(op, value),
         "cn" | "number" => collector_number(op, value),
         "lang" | "language" => lang(op, value),
         "layout" => layout(op, value),
@@ -568,10 +570,10 @@ fn compile_filter(key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
         // Recognised Scryfall filters we deliberately cannot back.
         "f" | "format" | "legal" | "banned" | "restricted" | "kw" | "keyword" | "a" | "artist"
         | "artists" | "ft" | "flavor" | "flavour" | "flavortext" | "wm" | "watermark" | "frame"
-        | "border" | "stamp" | "st" | "settype" | "block" | "b" | "in" | "prints" | "sets"
-        | "papersets" | "cube" | "function" | "oracletag" | "otag" | "art" | "arttag" | "atag"
-        | "order" | "direction" | "unique" | "display" | "prefer" | "produces" | "devotion"
-        | "cheapest" | "has" | "new" | "old" => Err(SearchError::UnsupportedKey(key.to_string())),
+        | "border" | "stamp" | "block" | "b" | "in" | "prints" | "sets" | "papersets" | "cube"
+        | "function" | "oracletag" | "otag" | "art" | "arttag" | "atag" | "order" | "direction"
+        | "unique" | "display" | "prefer" | "produces" | "devotion" | "cheapest" | "has"
+        | "new" | "old" => Err(SearchError::UnsupportedKey(key.to_string())),
         _ => Err(SearchError::UnknownKey(key.to_string())),
     }
 }
@@ -844,6 +846,45 @@ fn set(op: Op, value: &str) -> Result<Condition, SearchError> {
     }
 }
 
+/// Map a Scryfall `st:` value to the provider's stored `set_type`. Most pass
+/// through unchanged; a couple of Scryfall aliases differ from the stored name.
+fn normalize_set_type(v: &str) -> String {
+    match v.to_lowercase().as_str() {
+        "boxset" => "box",
+        "unset" => "funny",
+        other => other,
+    }
+    .to_string()
+}
+
+/// `st:` / `settype:` — match a printing whose *set* has the given Scryfall
+/// `set_type` (e.g. `expansion`, `commander`, `funny`). `set_type` lives on
+/// `card_sets`, not `cards`, so we resolve it with a game-scoped subquery on the
+/// set code. `set_code` is non-null, so `IN` / `NOT IN` stay total (0/1) and the
+/// leaf negates cleanly. An unrecognised set type simply matches no rows (mirrors
+/// Scryfall, and lets new provider set types work without a code change).
+fn set_type(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let st = normalize_set_type(value);
+    let select = "SELECT code FROM card_sets WHERE game = ? AND LOWER(IFNULL(set_type, '')) = ?";
+    let bind = || {
+        [
+            Value::from(crate::scryfall::GAME.to_string()),
+            Value::from(st.clone()),
+        ]
+    };
+    match op {
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            format!("set_code IN ({select})"),
+            bind(),
+        ))),
+        Op::Ne => Ok(cond_one(Expr::cust_with_values(
+            format!("set_code NOT IN ({select})"),
+            bind(),
+        ))),
+        _ => Err(unsupported_op("settype", op)),
+    }
+}
+
 fn collector_number(op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
         Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
@@ -943,6 +984,32 @@ fn is_predicate(value: &str, negated: bool) -> Result<Condition, SearchError> {
             "IFNULL(mana_cost, '') LIKE '%/%' AND IFNULL(mana_cost, '') NOT LIKE '%/P}%'",
         )),
         "digital" => cond_one(Expr::cust("1 = 0")),
+        // Card-type-derived predicates. type_line is title-case from Scryfall but
+        // SQLite LIKE folds ASCII case, so lower-case patterns match. Each arm is
+        // total (0/1, NULL-safe) so `not:` negation stays exact.
+        "permanent" => cond_one(Expr::cust(
+            "type_line IS NOT NULL \
+             AND (type_line LIKE '%artifact%' OR type_line LIKE '%creature%' \
+                  OR type_line LIKE '%enchantment%' OR type_line LIKE '%land%' \
+                  OR type_line LIKE '%planeswalker%' OR type_line LIKE '%battle%') \
+             AND type_line NOT LIKE '%instant%' AND type_line NOT LIKE '%sorcery%'",
+        )),
+        // "Spell" is decided by the FRONT face you cast: a card's stored type_line
+        // joins faces as "front // back", so test only the part before " // " for
+        // land-ness — otherwise spell//land modal DFCs (Kazandu Mammoth and the rest
+        // of the Zendikar Rising cycle) would be wrongly excluded by their land back.
+        "spell" => cond_one(Expr::cust(
+            "type_line IS NOT NULL \
+             AND (CASE WHEN INSTR(type_line, ' // ') > 0 \
+                       THEN SUBSTR(type_line, 1, INSTR(type_line, ' // ') - 1) \
+                       ELSE type_line END) NOT LIKE '%land%' \
+             AND IFNULL(layout, '') NOT IN \
+                 ('token', 'double_faced_token', 'emblem', 'art_series')",
+        )),
+        "vanilla" => cond_one(Expr::cust(
+            "type_line IS NOT NULL AND type_line LIKE '%creature%' \
+             AND (oracle_text IS NULL OR oracle_text = '')",
+        )),
         _ => {
             let prefix = if negated { "not" } else { "is" };
             return Err(SearchError::UnsupportedKey(format!("{prefix}:{v}")));
@@ -1428,6 +1495,151 @@ mod tests {
     }
 
     #[test]
+    fn set_type_filter() {
+        let s = sql("st:expansion");
+        // Resolved via a game-scoped subquery on the set code, not a cards column.
+        assert!(s.contains("set_code IN (SELECT code FROM card_sets"), "{s}");
+        assert!(s.contains("game = 'mtg'"), "{s}");
+        assert!(
+            s.contains("LOWER(IFNULL(set_type, '')) = 'expansion'"),
+            "{s}"
+        );
+        // != negates the membership test.
+        assert!(sql("st!=promo").contains("set_code NOT IN (SELECT code FROM card_sets"));
+        // settype is an alias; Scryfall's st: aliases map to the stored set_type.
+        assert!(sql("settype:unset").contains("= 'funny'"));
+        assert!(sql("st:boxset").contains("= 'box'"));
+    }
+
+    #[test]
+    fn set_type_rejects_range_operators() {
+        assert!(matches!(
+            parse("st>core"),
+            Err(SearchError::UnsupportedOperator { .. })
+        ));
+    }
+
+    /// Execute the compiled conditions against a real in-memory SQLite so the
+    /// cross-table `st:` subquery and the front-face `is:spell` logic are proven
+    /// on rows, not just asserted against rendered SQL.
+    #[tokio::test]
+    async fn set_type_and_spell_run_over_sqlite() {
+        use crate::entities::prelude::Card;
+        use crate::entities::{card, card_set};
+        use sea_orm::{
+            ActiveModelTrait, Database, DatabaseConnection, EntityTrait, QueryFilter, Set,
+        };
+        use sea_orm_migration::MigratorTrait;
+
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect to in-memory sqlite");
+        crate::migrator::Migrator::up(&db, None)
+            .await
+            .expect("run migrations");
+        let ts: sea_orm::prelude::DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+
+        for (code, st) in [("eaa", "expansion"), ("cmm", "commander")] {
+            card_set::ActiveModel {
+                game: Set("mtg".to_owned()),
+                code: Set(code.to_owned()),
+                name: Set(format!("Set {code}")),
+                set_type: Set(Some(st.to_owned())),
+                card_count: Set(0),
+                digital: Set(false),
+                created_at: Set(ts),
+                updated_at: Set(ts),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        // (set_code, name, type_line, layout). Kazandu Mammoth is a spell//land
+        // modal DFC: castable front, Land back — the case the fix protects.
+        let cards = [
+            ("eaa", "Grizzly Bears", "Creature — Bear", "normal"),
+            (
+                "eaa",
+                "Kazandu Mammoth",
+                "Creature — Elephant // Land",
+                "modal_dfc",
+            ),
+            ("eaa", "Forest", "Basic Land — Forest", "normal"),
+            ("eaa", "Bear Token", "Creature — Bear", "token"),
+            ("eaa", "Lightning Bolt", "Instant", "normal"),
+            ("cmm", "Command Tower", "Land", "normal"),
+        ];
+        for (i, (sc, name, tl, layout)) in cards.iter().enumerate() {
+            card::ActiveModel {
+                game: Set("mtg".to_owned()),
+                external_id: Set(format!("ext-{i}")),
+                name: Set((*name).to_owned()),
+                set_code: Set((*sc).to_owned()),
+                set_name: Set(format!("Set {sc}")),
+                collector_number: Set(i.to_string()),
+                lang: Set("en".to_owned()),
+                type_line: Set(Some((*tl).to_owned())),
+                layout: Set(Some((*layout).to_owned())),
+                digital: Set(false),
+                created_at: Set(ts),
+                updated_at: Set(ts),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        async fn names(db: &DatabaseConnection, q: &str) -> Vec<String> {
+            let mut v = Card::find()
+                .filter(parse(q).expect("parses"))
+                .all(db)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.name)
+                .collect::<Vec<_>>();
+            v.sort();
+            v
+        }
+
+        let eaa = vec![
+            "Bear Token",
+            "Forest",
+            "Grizzly Bears",
+            "Kazandu Mammoth",
+            "Lightning Bolt",
+        ];
+        // st: resolves the set's set_type via the card_sets subquery; negation via
+        // NOT IN stays exact (set_code is non-null).
+        assert_eq!(names(&db, "st:expansion").await, eaa);
+        assert_eq!(names(&db, "-st:commander").await, eaa);
+        assert_eq!(names(&db, "st:commander").await, vec!["Command Tower"]);
+        assert!(names(&db, "st:funny").await.is_empty()); // unknown type -> no rows
+
+        // is:spell keeps the spell//land DFC (front is a creature) and the plain
+        // creature/instant; drops the basic land, the Command Tower land, and the
+        // token printing.
+        assert_eq!(
+            names(&db, "is:spell").await,
+            vec!["Grizzly Bears", "Kazandu Mammoth", "Lightning Bolt"]
+        );
+        // is:permanent: everything except the instant.
+        assert_eq!(
+            names(&db, "is:permanent").await,
+            vec![
+                "Bear Token",
+                "Command Tower",
+                "Forest",
+                "Grizzly Bears",
+                "Kazandu Mammoth",
+            ]
+        );
+    }
+
+    #[test]
     fn lang_any_is_no_filter() {
         assert!(!sql("lang:any").contains("lang ="));
         assert!(sql("lang:japanese").contains("lang = 'ja'"));
@@ -1439,6 +1651,27 @@ mod tests {
         assert!(sql("is:dfc").contains("IN ('transform', 'modal_dfc', 'meld', 'reversible_card')"));
         assert!(sql("is:colorless").contains("colors IS NULL"));
         assert!(sql("is:phyrexian").contains("LIKE '%/P}%'"));
+    }
+
+    #[test]
+    fn type_derived_is_predicates() {
+        let perm = sql("is:permanent");
+        assert!(perm.contains("type_line LIKE '%creature%'"), "{perm}");
+        assert!(perm.contains("NOT LIKE '%instant%'"), "{perm}");
+        assert!(perm.contains("NOT LIKE '%sorcery%'"), "{perm}");
+        // is:spell tests only the FRONT face's type for land-ness, so a spell//land
+        // modal DFC (e.g. "Creature — Elephant // Land") is kept, not dropped.
+        let spell = sql("is:spell");
+        assert!(spell.contains("INSTR(type_line, ' // ')"), "{spell}");
+        assert!(spell.contains("NOT LIKE '%land%'"), "{spell}");
+        assert!(sql("is:vanilla").contains("oracle_text IS NULL OR oracle_text = ''"));
+        // Predicates are total, so not: negates them.
+        assert!(sql("not:permanent").contains("NOT"));
+        // Still rejects unknown is: values.
+        assert!(matches!(
+            parse("is:bear"),
+            Err(SearchError::UnsupportedKey(_))
+        ));
     }
 
     #[test]
