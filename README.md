@@ -5,8 +5,10 @@ your personal collection, and set-completion progress.
 
 > Status: early scaffold. Auth (register / login / refresh / logout) is built, plus
 > **MTG card browsing** — sets and cards sourced from [Scryfall](https://scryfall.com)
-> (a "Cards" menu in the top bar → games → sets → cards, with search). Price-tracking,
-> collection, and set-completion features are next.
+> (a "Cards" menu in the top bar → games → sets → cards, with search) — and **singles
+> price history**: each card's daily prices are captured on every sync and charted over
+> time on its detail page. Collection tracking, set-completion, and sealed-product
+> price tracking are next.
 
 ## Stack
 
