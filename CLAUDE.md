@@ -155,7 +155,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` Scryfall-style search), by name |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
-| `GET /api/games/{game}/cards/{id}/prices` | `{ data: PricePoint[] }` — the card's daily price history, **oldest first** (`[]` if none captured yet) |
+| `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
@@ -166,7 +166,11 @@ faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] 
 `PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
 strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
 every sync tick from the already-committed `cards` rows (`scryfall::ingest::snapshot_prices`),
-so the series stays continuous even on a tick where the version-gated import is skipped.
+so the *stored* series stays continuous even on a tick where the version-gated import is
+skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
+keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
+grows), so every returned point is a genuine, internally-consistent snapshot and the newest
+day is always included; the underlying `card_price_history` rows are untouched.
 
 **Search syntax (`q`):** the MTG card-list endpoints parse `q` as a subset of
 [Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search.rs`).
