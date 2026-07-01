@@ -13,7 +13,6 @@ function makeRouter() {
       { path: '/', component: { template: '<div />' } },
       { path: '/login', component: { template: '<div />' } },
       { path: '/profile', component: { template: '<div />' } },
-      { path: '/dashboard', component: { template: '<div />' } },
     ],
   })
 }
@@ -31,7 +30,8 @@ async function mountMenu() {
 describe('UserMenu', () => {
   it('shows a login link when signed out', async () => {
     const { wrapper } = await mountMenu()
-    const link = wrapper.find('a[href="/login"]')
+    // The link carries a ?redirect= back to the current route (here, "/").
+    const link = wrapper.find('a[href^="/login"]')
     expect(link.exists()).toBe(true)
     expect(wrapper.text()).toContain('Sign in')
   })
@@ -47,7 +47,7 @@ describe('UserMenu', () => {
     }
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.find('a[href="/login"]').exists()).toBe(false)
+    expect(wrapper.find('a[href^="/login"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Ash')
   })
 })

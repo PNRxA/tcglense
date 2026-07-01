@@ -5,7 +5,7 @@ import { safeInternalPath } from '../utils'
 describe('safeInternalPath', () => {
   it('accepts same-origin paths', () => {
     expect(safeInternalPath('/profile')).toBe('/profile')
-    expect(safeInternalPath('/dashboard?tab=1')).toBe('/dashboard?tab=1')
+    expect(safeInternalPath('/collection?tab=1')).toBe('/collection?tab=1')
   })
 
   it('rejects open-redirect attempts and non-paths', () => {
