@@ -16,6 +16,12 @@ pub struct Config {
     /// Network interface to bind. Defaults to 127.0.0.1; set 0.0.0.0 in dev/containers.
     pub host: String,
     pub port: u16,
+    /// Public origin where the SPA is served (e.g. `https://tcglense.app`), used to
+    /// build the absolute `<loc>` URLs in the DB-backed sitemaps (see
+    /// [`crate::handlers::sitemap`]). Defaults to the Vite dev origin; set it to the
+    /// real site origin in production. Trailing slashes are trimmed so URL joins
+    /// never double up.
+    pub public_site_url: String,
     /// Base directory for downloaded assets; card images live under `images/`.
     pub data_dir: PathBuf,
     /// `User-Agent` sent to Scryfall (their API guidelines require a descriptive one).
@@ -47,6 +53,7 @@ impl std::fmt::Debug for Config {
             .field("cookie_secure", &self.cookie_secure)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("public_site_url", &self.public_site_url)
             .field("data_dir", &self.data_dir)
             .field("scryfall_user_agent", &self.scryfall_user_agent)
             .field("sync_on_startup", &self.sync_on_startup)
@@ -175,6 +182,15 @@ impl Config {
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(8080);
 
+        // Public origin of the SPA, used for the absolute <loc>s in the sitemaps.
+        // Defaults to the Vite dev origin so dev/e2e produce valid URLs. Trailing
+        // slashes are trimmed so `base + "/cards/..."` never yields a doubled slash.
+        let public_site_url = env::var("PUBLIC_SITE_URL")
+            .ok()
+            .map(|v| v.trim().trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "http://localhost:5173".to_string());
+
         let data_dir = env::var("DATA_DIR")
             .ok()
             .filter(|d| !d.trim().is_empty())
@@ -225,6 +241,7 @@ impl Config {
             cookie_secure,
             host,
             port,
+            public_site_url,
             data_dir,
             scryfall_user_agent,
             sync_on_startup,
@@ -248,6 +265,7 @@ mod tests {
             cookie_secure: true,
             host: "127.0.0.1".to_string(),
             port: 8080,
+            public_site_url: "https://tcglense.example".to_string(),
             data_dir: std::path::PathBuf::from("./data"),
             scryfall_user_agent: "TCGLense/test".to_string(),
             sync_on_startup: false,
