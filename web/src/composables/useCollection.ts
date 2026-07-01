@@ -82,14 +82,20 @@ export function useCollectionSummaryQuery(game: Ref<string>) {
 /**
  * How many copies of one card the signed-in user owns — for the card-detail
  * controls. Disabled while signed out (the route is public), so a logged-out
- * visitor never triggers an auth call.
+ * visitor never triggers an auth call. An optional `enabled` gate lets a caller
+ * defer the fetch further (e.g. the grid quick-add control only wants the
+ * authoritative holding once its popover opens, not for every visible tile).
  */
-export function useCollectionEntryQuery(game: Ref<string>, id: Ref<string>) {
+export function useCollectionEntryQuery(
+  game: Ref<string>,
+  id: Ref<string>,
+  enabled?: Ref<boolean>,
+) {
   const auth = useAuthStore()
   const options = {
     queryKey: ['collection-entry', game, id],
     queryFn: (token: string) => getCollectionEntry(token, game.value, id.value),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: computed(() => auth.isAuthenticated && (enabled?.value ?? true)),
   }
   return useAuthedQuery<CollectionQuantities>(options)
 }
