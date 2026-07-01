@@ -19,6 +19,7 @@ import {
   useSyncCollectionSourceMutation,
 } from '@/composables/useCollection'
 import { ApiError } from '@/lib/api'
+import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { groupSets } from '@/lib/setGroups'
 import { useAuthStore } from '@/stores/auth'
@@ -57,18 +58,19 @@ const ownedCountByCode = computed<Record<string, number>>(() => {
   for (const set of ownedSets.value) map[set.code] = set.owned_cards
   return map
 })
+// Preformatted owned value per set code, so each tile can show what your cards from that
+// set are worth alongside the owned count (issue #119). Null-valued (unpriced) sets are
+// left out of the map, so their tiles simply omit the value.
+const ownedValueByCode = computed<Record<string, string | null>>(() => {
+  const map: Record<string, string | null> = {}
+  for (const set of ownedSets.value) map[set.code] = formatUsd(set.owned_value_usd)
+  return map
+})
 // Sub-sets folded into their parent group (owned sets minus the top-level groups) —
 // shown next to the group count so "N sets · M related" reads like the catalog.
 const relatedCount = computed(() => ownedSets.value.length - ownedGroups.value.length)
 
-const totalValue = computed(() => {
-  const raw = summary.value?.total_value_usd
-  if (!raw) return null
-  const n = Number(raw)
-  return Number.isFinite(n)
-    ? n.toLocaleString(undefined, { style: 'currency', currency: 'USD' })
-    : `$${raw}`
-})
+const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
 
 // Stats are worth showing only once something is owned.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
@@ -274,6 +276,7 @@ watch(
               :set="group.main"
               :to="`/collection/${game}/sets/${group.main.code}`"
               :owned-count="ownedCountByCode[group.main.code]"
+              :owned-value="ownedValueByCode[group.main.code]"
             />
             <SetGroup
               v-else
@@ -281,6 +284,7 @@ watch(
               :group="group"
               base-path="/collection"
               :owned-counts="ownedCountByCode"
+              :owned-values="ownedValueByCode"
             />
           </template>
         </div>

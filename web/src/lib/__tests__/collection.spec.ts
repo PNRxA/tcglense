@@ -131,6 +131,22 @@ describe('getCollectionSets / getCollectionSummary', () => {
     expect(url).toContain('/api/collection/mtg/summary')
     expect(url).not.toContain('set=')
   })
+
+  it('spans the set group with include_related', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', 'blb', true)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('set=blb')
+    expect(url).toContain('include_related=true')
+  })
+
+  it('ignores include_related without a set scope', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', undefined, true)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).not.toContain('include_related')
+    expect(url).not.toContain('set=')
+  })
 })
 
 describe('collectionEntryPath', () => {

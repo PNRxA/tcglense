@@ -36,6 +36,7 @@ import {
   toSortParam,
 } from '@/lib/cardSort'
 import { getSet, listCards, listSetCards, listSetDrops, type Card } from '@/lib/api'
+import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
@@ -246,11 +247,20 @@ const ghostVisibleCards = computed<Card[]>(() =>
 )
 const { ownership, ready: ownershipReady } = useOwnedCounts(game, ghostVisibleCards)
 
-// How many distinct cards in scope the user actually owns — for the "X of Y owned"
-// completion hint in the ghost flat view. Fetched only in show-ghosts mode; the summary is
-// single-set (no group span), so the hint is suppressed under include-related.
-const summaryQuery = useCollectionSummaryQuery(game, setCode, { enabled: showGhosts })
+// The owned stats for the current scope (all cards / a set / a set + its related group,
+// tracking `includeRelated`), unfiltered by the search box. Fetched in every mode: it
+// drives the scoped collection **value** shown next to the count (issue #119) and, in the
+// ghost flat view, the "X of Y owned" completion hint. Because it now spans the group under
+// include-related, both read correctly there too. (Reuses the landing's cache key, so
+// arriving from `/collection/:game` is a cache hit for the all-cards scope.)
+const summaryQuery = useCollectionSummaryQuery(game, setCode, { includeRelated })
 const ownedUnique = computed(() => summaryQuery.data.value?.unique_cards ?? 0)
+// The scope's owned value, formatted (null while loading or when nothing in scope is
+// priced). Shown only when there's no active search — the value is the whole scope's,
+// so pairing it with a search-filtered count would misread.
+const scopeValueLabel = computed(() =>
+  query.value ? null : formatUsd(summaryQuery.data.value?.total_value_usd),
+)
 
 // ---- Active-mode selectors, so the template doesn't branch on mode for state. ----
 const total = computed(() => {
@@ -330,17 +340,11 @@ const countLabel = computed(() => {
   const word = n === 1 ? 'card' : 'cards'
   if (query.value) return `${n.toLocaleString()} ${word} matching “${query.value}”`
   // Show-ghosts (flat) leads with completion (owned ⊆ scope). Only once both the
-  // (unfiltered, single-set) summary and the ghost list have genuinely settled, and there's
-  // something in scope — otherwise a mid-load `total` of 0 (or a stale filtered total) would
-  // misread. Suppressed under include-related, where the list spans the group but the
-  // summary is only the one set. Clamp so it can never read "N+1 of N".
-  if (
-    showGhosts.value &&
-    !includeRelated.value &&
-    summaryQuery.isSuccess.value &&
-    ghostSettled.value &&
-    n > 0
-  ) {
+  // (unfiltered) summary and the ghost list have genuinely settled, and there's something
+  // in scope — otherwise a mid-load `total` of 0 (or a stale filtered total) would misread.
+  // The summary now spans the same set/group the ghost list does (it tracks include-related),
+  // so this reads correctly under include-related too. Clamp so it can never read "N+1 of N".
+  if (showGhosts.value && summaryQuery.isSuccess.value && ghostSettled.value && n > 0) {
     const owned = Math.min(ownedUnique.value, n)
     return `${owned.toLocaleString()} of ${n.toLocaleString()} owned`
   }
@@ -389,6 +393,9 @@ const errorMessage = computed(() =>
             <span class="uppercase">{{ code }}</span> ·
           </template>
           {{ countLabel }}
+          <!-- The scope's owned value (issue #119): what your cards in this set / group /
+               whole collection are worth. Hidden while searching or when nothing is priced. -->
+          <template v-if="scopeValueLabel"> · {{ scopeValueLabel }}</template>
         </p>
       </header>
 
@@ -554,7 +561,11 @@ const errorMessage = computed(() =>
             </section>
           </template>
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="COLLECTION_DROP_PAGE_SIZE" :total="total" />
+            <CardPagination
+              v-model:page="page"
+              :page-size="COLLECTION_DROP_PAGE_SIZE"
+              :total="total"
+            />
           </div>
         </template>
 

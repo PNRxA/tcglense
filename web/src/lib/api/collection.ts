@@ -53,6 +53,9 @@ export interface CollectionSet extends CardSet {
   owned_cards: number
   /** Total copies owned (regular + foil) in this set. */
   owned_copies: number
+  /** Estimated USD value of the owned cards in this set as a decimal string, or null
+   * when nothing owned in the set is priced. Same semantics as the summary value. */
+  owned_value_usd: string | null
 }
 
 export interface CollectionListParams {
@@ -99,16 +102,24 @@ export function getCollection(
 }
 
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
- * optionally scoped to a single set (the per-set collection view). */
+ * optionally scoped to a single set (the per-set collection view). With a `set` and
+ * `includeRelated`, the stats span the set's whole group (root + related sub-sets) — the
+ * mirror of the catalog's include-related scope, so the value matches that browse view. */
 export function getCollectionSummary(
   token: string,
   game: string,
   set?: string,
+  includeRelated?: boolean,
 ): Promise<CollectionSummary> {
-  const qs = set ? `?set=${encodeURIComponent(set)}` : ''
-  return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary${qs}`, {
-    token,
-  })
+  const search = new URLSearchParams()
+  if (set) search.set('set', set)
+  // include_related only means anything alongside a set scope (matches the backend).
+  if (set && includeRelated) search.set('include_related', 'true')
+  const qs = search.toString()
+  return request<CollectionSummary>(
+    `/api/collection/${encodeURIComponent(game)}/summary${qs ? `?${qs}` : ''}`,
+    { token },
+  )
 }
 
 /** The sets the user owns cards in, newest set first — the per-set collection landing. */
