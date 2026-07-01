@@ -7,19 +7,37 @@ import { cn } from '@/lib/utils'
 import SetTile from '@/components/cards/SetTile.vue'
 import { subSetLabel, type SetGroup } from '@/lib/setGroups'
 
-defineProps<{
-  game: string
-  group: SetGroup
-}>()
+const props = withDefaults(
+  defineProps<{
+    game: string
+    group: SetGroup
+    // Route prefix the tiles + "View all" link point under (default the catalog
+    // set pages); the collection landing passes `/collection` for its own pages.
+    basePath?: string
+    // Owned-card count per set code. When set, each tile shows "N owned" (the
+    // collection landing) instead of the set's total card count.
+    ownedCounts?: Record<string, number>
+  }>(),
+  { basePath: '/cards', ownedCounts: undefined },
+)
 
 // Collapsed by default to keep the set listing scannable; the sub-sets reveal on
 // demand. Each group manages its own toggle state.
 const expanded = ref(false)
+
+const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
+const ownedCount = (code: string) => props.ownedCounts?.[code]
 </script>
 
 <template>
   <div class="bg-card rounded-xl border" :class="expanded ? 'border-ring/40' : ''">
-    <SetTile :game="game" :set="group.main" variant="plain" />
+    <SetTile
+      :game="game"
+      :set="group.main"
+      variant="plain"
+      :to="setLink(group.main.code)"
+      :owned-count="ownedCount(group.main.code)"
+    />
 
     <div class="flex items-center justify-between gap-2 px-3 pb-2">
       <button
@@ -35,7 +53,7 @@ const expanded = ref(false)
 
       <!-- One-click jump straight to every card across the whole group. -->
       <RouterLink
-        :to="{ path: `/cards/${game}/sets/${group.main.code}`, query: { related: '1' } }"
+        :to="{ path: setLink(group.main.code), query: { related: '1' } }"
         :class="cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-7 px-2 text-xs')"
         :aria-label="`View all cards in ${group.main.name} and its related sets`"
       >
@@ -55,6 +73,8 @@ const expanded = ref(false)
           :set="child"
           :label="subSetLabel(group.main.name, child.name)"
           variant="nested"
+          :to="setLink(child.code)"
+          :owned-count="ownedCount(child.code)"
         />
       </li>
     </ul>

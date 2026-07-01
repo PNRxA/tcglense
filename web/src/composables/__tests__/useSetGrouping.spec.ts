@@ -33,6 +33,12 @@ function makeRouter() {
     routes: [
       { path: '/', component: { template: '<div />' } },
       { path: '/cards/:game/sets/:code', name: 'set', component: { template: '<div />' } },
+      // The collection reuses the composable under its own route prefix (via basePath).
+      {
+        path: '/collection/:game/sets/:code',
+        name: 'collection-set',
+        component: { template: '<div />' },
+      },
     ],
   })
 }
@@ -40,7 +46,11 @@ function makeRouter() {
 // Mount a throwaway component that just runs the composable. `code` is a ref the test
 // drives to mirror the set-view prop updating after a navigation (the real view
 // re-reads the route param; here we set it by hand to keep the composable instance).
-function mountGrouping(router: Router, initialCode: string) {
+function mountGrouping(
+  router: Router,
+  initialCode: string,
+  options: { basePath?: string; preserveQuery?: string[] } = {},
+) {
   const game = ref('mtg')
   const code: Ref<string> = ref(initialCode)
   const queryClient = new QueryClient({
@@ -52,7 +62,7 @@ function mountGrouping(router: Router, initialCode: string) {
   const harness = mount(
     defineComponent({
       setup() {
-        api = useSetGrouping(game, code)
+        api = useSetGrouping(game, code, options)
         return () => h('div')
       },
     }),
@@ -61,11 +71,15 @@ function mountGrouping(router: Router, initialCode: string) {
   return { api, code, harness }
 }
 
-async function start(at: string, code: string) {
+async function start(
+  at: string,
+  code: string,
+  options: { basePath?: string; preserveQuery?: string[] } = {},
+) {
   const router = makeRouter()
   await router.push(at)
   await router.isReady()
-  const { api, code: codeRef, harness } = mountGrouping(router, code)
+  const { api, code: codeRef, harness } = mountGrouping(router, code, options)
   await nextTick()
   return { router, api, code: codeRef, harness }
 }
@@ -133,5 +147,58 @@ describe('useSetGrouping', () => {
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/cards/mtg/sets/blc')
     expect(query(router).related).toBeUndefined()
+  })
+
+  it('navigates under a custom basePath (the collection reuse)', async () => {
+    // The collection set view passes basePath '/collection', so the scope nav must route
+    // to the collection's own set pages, not the catalog's.
+    const { router, api } = await start('/collection/mtg/sets/blc', 'blc', {
+      basePath: '/collection',
+    })
+    api.setIncludeRelated(true)
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/collection/mtg/sets/blb')
+    expect(query(router).related).toBe('1')
+    expect(query(router).from).toBe('blc')
+
+    api.viewSingleSet('blb')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/collection/mtg/sets/blb')
+  })
+
+  it('carries a preserved query key (ghosts) across every scope-nav', async () => {
+    // The collection's show-ghosts mode is orthogonal to the include-related scope, so it
+    // must survive toggling it — from a sub-set (fresh nav to the main set), back to a
+    // single set, and jumping to a different member.
+    const { router, api, code } = await start('/collection/mtg/sets/blc?ghosts=1', 'blc', {
+      basePath: '/collection',
+      preserveQuery: ['ghosts'],
+    })
+
+    // Sub-set → "view all together": fresh nav to the main set keeps ghosts.
+    api.setIncludeRelated(true)
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/collection/mtg/sets/blb')
+    expect(query(router).related).toBe('1')
+    expect(query(router).ghosts).toBe('1')
+
+    code.value = 'blb'
+    await nextTick()
+
+    // "View just this set" (toggle off) back to the origin sub-set keeps ghosts.
+    api.setIncludeRelated(false)
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/collection/mtg/sets/blc')
+    expect(query(router).related).toBeUndefined()
+    expect(query(router).ghosts).toBe('1')
+
+    // Mirror the view re-rendering on the origin set after that navigation, then jump to a
+    // different member set: it keeps ghosts (a view preference) while shedding the scope.
+    code.value = 'blc'
+    await nextTick()
+    api.viewSingleSet('blb')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/collection/mtg/sets/blb')
+    expect(query(router).ghosts).toBe('1')
   })
 })

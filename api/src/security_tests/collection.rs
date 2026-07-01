@@ -22,6 +22,32 @@ fn card_path(id: &str) -> String {
     format!("/api/collection/mtg/cards/{id}")
 }
 
+/// The first card external id in a given seeded set (by collector number).
+async fn first_set_card_id(app: &Router, set_code: &str) -> String {
+    let (status, _, body) = send(
+        app,
+        get(&format!("/api/games/mtg/sets/{set_code}/cards?page_size=1")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "listing set {set_code} failed: {body:?}");
+    body["data"][0]["id"].as_str().expect("card id").to_string()
+}
+
+/// Own one card, absolute counts, for the token's user.
+async fn own_card(app: &Router, token: &str, id: &str, quantity: i64) {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            token,
+            json!({ "quantity": quantity, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+}
+
 #[tokio::test]
 async fn collection_requires_authentication() {
     let app = test_app_with_catalog().await;
@@ -196,6 +222,90 @@ async fn unknown_game_or_card_is_404() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown card is 404");
+}
+
+#[tokio::test]
+async fn include_related_spans_the_set_group() {
+    // The seeded dummy catalog has a token child set (`tdmb`) hanging off the base set
+    // (`dmb`), so `include_related` should fold both into one owned listing — the
+    // collection mirror of the catalog's include-related view.
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "grouped@example.com", "password123").await;
+
+    let base_id = first_set_card_id(&app, "dmb").await;
+    let token_id = first_set_card_id(&app, "tdmb").await;
+    own_card(&app, &token, &base_id, 1).await;
+    own_card(&app, &token, &token_id, 1).await;
+
+    // A single-set scope sees only that set's owned card.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg?set=dmb", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 1, "plain set scope stays a single set");
+    assert_eq!(body["data"][0]["card"]["set_code"], "dmb");
+
+    // Folding in related sets spans the whole group (base + its token sub-set).
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg?set=dmb&include_related=true", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 2, "include_related spans the group");
+    let codes: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["card"]["set_code"].as_str().unwrap())
+        .collect();
+    assert!(codes.contains(&"dmb") && codes.contains(&"tdmb"), "got {codes:?}");
+
+    // Entering from the sub-set resolves the same group (rooted at `dmb`).
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg?set=tdmb&include_related=true", &token),
+    )
+    .await;
+    assert_eq!(body["total"], 2, "grouped view is the same from a sub-set");
+}
+
+#[tokio::test]
+async fn collection_drops_route_gates_and_404s() {
+    let app = test_app_with_catalog().await;
+
+    // Per-user, so unauthenticated -> 401 and never shared-cached.
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/sets/dmb/drops")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let (token, _) = register(&app, "drops@example.com", "password123").await;
+
+    // A set with no Secret Lair drop snapshot is a 404 (browse it flat instead), and an
+    // error response is no-store.
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/sets/dmb/drops", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "non-drop set: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // Unknown game/set are 404 too.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/pokemon/sets/dmb/drops", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown game");
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/sets/zzz-nope/drops", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown set");
 }
 
 #[tokio::test]

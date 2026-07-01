@@ -15,10 +15,25 @@ import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
  * is the underlying set-list query's pending flag, which the view gates its flat
  * card fetch on so a cold-loaded by-drop/related link doesn't fire a throwaway
  * request.
+ *
+ * `options.basePath` is the route prefix the scope-nav helpers navigate under
+ * (default `/cards`); the collection's set view passes `/collection` so the same
+ * grouping derivations drive its own `/collection/:game/sets/:code` pages.
+ *
+ * `options.preserveQuery` names extra URL query keys the scope-nav must carry across
+ * (beyond `q`/`sort`) — e.g. the collection's `ghosts` view mode, which is orthogonal
+ * to the include-related scope and must survive toggling it. Empty (the catalog's
+ * default) leaves the nav behaviour unchanged.
  */
-export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
+export function useSetGrouping(
+  game: Ref<string>,
+  code: Ref<string>,
+  options: { basePath?: string; preserveQuery?: string[] } = {},
+) {
   const route = useRoute()
   const router = useRouter()
+  const basePath = options.basePath ?? '/cards'
+  const preserveQuery = options.preserveQuery ?? []
 
   // The full set list (shared, cached with GameView) tells us whether this set has
   // related sub-sets to fold in.
@@ -74,11 +89,22 @@ export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
     () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.has_drops ?? false,
   )
 
-  // Keep the search + sort controls when only the view scope toggles; paging always
-  // restarts (page is intentionally dropped, so it reads back as 1 — switching scope
-  // must never strand us on an out-of-range page).
+  // The passthrough query keys (e.g. the collection's `ghosts` view mode) that ride
+  // along every scope-nav so a view preference orthogonal to the scope survives it.
+  function preserved(): LocationQueryRaw {
+    const out: LocationQueryRaw = {}
+    for (const key of preserveQuery) {
+      const value = route.query[key]
+      if (typeof value === 'string' && value) out[key] = value
+    }
+    return out
+  }
+
+  // Keep the search + sort controls (and any preserved view mode) when only the view
+  // scope toggles; paging always restarts (page is intentionally dropped, so it reads
+  // back as 1 — switching scope must never strand us on an out-of-range page).
   function listState(): LocationQueryRaw {
-    const next: LocationQueryRaw = {}
+    const next: LocationQueryRaw = { ...preserved() }
     if (typeof route.query.q === 'string' && route.query.q) next.q = route.query.q
     if (typeof route.query.sort === 'string' && route.query.sort) next.sort = route.query.sort
     return next
@@ -90,11 +116,12 @@ export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
       // agree (matching SetGroup's "View all" link). Entering from a sub-set
       // navigates up to the main set, remembering where we came from (?from=…) so
       // "View just this set" can return there rather than stranding us on the parent;
-      // a different set is a fresh scope, so the search/sort don't carry over.
+      // a different set is a fresh scope, so the search/sort don't carry over (but a
+      // preserved view mode still does).
       if (group.value && !isMainSet.value) {
         router.replace({
-          path: `/cards/${game.value}/sets/${group.value.main.code}`,
-          query: { related: '1', from: code.value },
+          path: `${basePath}/${game.value}/sets/${group.value.main.code}`,
+          query: { ...preserved(), related: '1', from: code.value },
         })
       } else {
         router.replace({ query: { ...listState(), related: '1' } })
@@ -106,12 +133,12 @@ export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
 
   // Leave the grouped view for a single set's own page. Staying on the set already in
   // the route just sheds the related/from scope (search + sort carry over); otherwise
-  // route to the chosen set fresh.
+  // route to the chosen set fresh (keeping only a preserved view mode).
   function viewSingleSet(target: string) {
     if (target === code.value) {
       router.replace({ query: listState() })
     } else {
-      router.replace({ path: `/cards/${game.value}/sets/${target}`, query: {} })
+      router.replace({ path: `${basePath}/${game.value}/sets/${target}`, query: { ...preserved() } })
     }
   }
 

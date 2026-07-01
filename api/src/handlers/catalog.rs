@@ -684,7 +684,7 @@ pub async fn list_set_drops(
         .all(&state.db)
         .await?;
 
-    let buckets = group_into_drops(table, rows);
+    let buckets = group_into_drops(table, rows, |card| card.collector_number.as_str());
 
     let (page, page_size) = params.drop_page_and_size();
     let total = buckets.len() as u64;
@@ -863,7 +863,15 @@ fn require_game(game: &str) -> Result<&'static Game, AppError> {
     catalog::find(game).ok_or_else(|| AppError::NotFound(format!("unknown game '{game}'")))
 }
 
-async fn load_set(state: &AppState, game: &str, code: &str) -> Result<card_set::Model, AppError> {
+/// Load a set by its (case-insensitive) code within a game, 404 if unknown.
+///
+/// `pub(crate)` so the authenticated collection handlers can resolve + canonicalise
+/// a set the same way (e.g. the collection's by-drop view), instead of re-deriving it.
+pub(crate) async fn load_set(
+    state: &AppState,
+    game: &str,
+    code: &str,
+) -> Result<card_set::Model, AppError> {
     let code = code.to_lowercase();
     CardSet::find()
         .filter(card_set::Column::Game.eq(game))
@@ -878,7 +886,10 @@ async fn load_set(state: &AppState, game: &str, code: &str) -> Result<card_set::
 /// up to a root, guarding missing parents and — defensively — cycles) so the
 /// "include related sets" view spans exactly the sets nested under one main set.
 /// Falls back to `[code]` if the set somehow isn't in the list.
-fn group_set_codes(all_sets: &[card_set::Model], code: &str) -> Vec<String> {
+///
+/// `pub(crate)` so the collection list can span the same group for its own
+/// include-related scope (identical grouping semantics to the catalog).
+pub(crate) fn group_set_codes(all_sets: &[card_set::Model], code: &str) -> Vec<String> {
     use std::collections::{HashMap, HashSet};
     let by_code: HashMap<&str, &card_set::Model> =
         all_sets.iter().map(|s| (s.code.as_str(), s)).collect();
@@ -944,30 +955,38 @@ fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::En
         .limit(MAX_PAGE_SIZE)
 }
 
-/// A drop's cards, before pagination/serialization (so off-page drops never get
-/// turned into `CardResponse`s).
-struct DropBucket {
-    slug: Option<String>,
-    title: String,
-    cards: Vec<card::Model>,
+/// A drop's items, before pagination/serialization (so off-page drops never get
+/// turned into response DTOs). Generic over the item type `T`: the public catalog
+/// groups bare `card::Model`s, while the per-user collection groups owned
+/// `(collection_item, card)` pairs — both share this one grouping pass.
+///
+/// `pub(crate)` (with `pub(crate)` fields) so the collection handler can build its
+/// own by-drop response from the buckets.
+pub(crate) struct DropBucket<T> {
+    pub(crate) slug: Option<String>,
+    pub(crate) title: String,
+    pub(crate) cards: Vec<T>,
 }
 
-/// Group a set's cards — already in collector-number order — into Secret Lair
-/// drops, preserving Scryfall's drop order. Cards the snapshot doesn't place in
-/// a drop collect into a trailing "Other" bucket. Empty drops never appear: a
-/// bucket exists only once a card lands in it (so a search that matches a subset
-/// yields only the drops with matches).
-fn group_into_drops(
+/// Group a set's items — already in collector-number order — into Secret Lair
+/// drops, preserving Scryfall's drop order. `collector_number` extracts each item's
+/// collector number (the drop-table key), so the same grouping works for bare cards
+/// and for owned holdings. Items the snapshot doesn't place in a drop collect into a
+/// trailing "Other" bucket. Empty drops never appear: a bucket exists only once an
+/// item lands in it (so a search that matches a subset yields only the drops with
+/// matches).
+pub(crate) fn group_into_drops<T>(
     table: &crate::scryfall::drops::DropTable,
-    rows: Vec<card::Model>,
-) -> Vec<DropBucket> {
+    rows: Vec<T>,
+    collector_number: impl Fn(&T) -> &str,
+) -> Vec<DropBucket<T>> {
     use std::collections::BTreeMap;
     // Sentinel order for the "Other" bucket: `BTreeMap` ordering parks it last.
     const OTHER: usize = usize::MAX;
 
-    let mut buckets: BTreeMap<usize, DropBucket> = BTreeMap::new();
+    let mut buckets: BTreeMap<usize, DropBucket<T>> = BTreeMap::new();
     for row in rows {
-        let (order, slug, title) = match table.drop_for(&row.collector_number) {
+        let (order, slug, title) = match table.drop_for(collector_number(&row)) {
             Some(drop) => (drop.order, Some(drop.slug.clone()), drop.title.clone()),
             None => (OTHER, None, "Other".to_string()),
         };
@@ -1676,7 +1695,7 @@ mod tests {
             sld_test_card("sld", "no-such-number", None),
             sld_test_card("sld", "2658", Some(2658)),
         ];
-        let buckets = group_into_drops(table, rows);
+        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
         let titles: Vec<&str> = buckets.iter().map(|b| b.title.as_str()).collect();
         assert_eq!(titles, vec!["Wild in Bloom", "Inked", "Other"]);
         assert_eq!(buckets[0].slug.as_deref(), Some("wild-in-bloom"));
@@ -1693,7 +1712,7 @@ mod tests {
             sld_test_card("sld", "2659", Some(2659)),
             sld_test_card("sld", "2658", Some(2658)),
         ];
-        let buckets = group_into_drops(table, rows);
+        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
         assert_eq!(buckets.len(), 1);
         let cns: Vec<&str> = buckets[0]
             .cards

@@ -35,11 +35,19 @@ use crate::entities::prelude::{Card, CardSet, CollectionItem, CollectionSource};
 use crate::entities::{card, card_set, collection_item, collection_source};
 use crate::error::AppError;
 use crate::extract::JsonBody;
-use crate::handlers::catalog::{CardResponse, SortDir, SortField, apply_card_sort, search_condition};
+use crate::handlers::catalog::{
+    CardResponse, SortDir, SortField, apply_card_sort, group_into_drops, group_set_codes, load_set,
+    search_condition,
+};
 use crate::state::AppState;
 
 const DEFAULT_PAGE_SIZE: u64 = 60;
 const MAX_PAGE_SIZE: u64 = 200;
+/// The by-drop collection view paginates over *drops* (each a handful of owned cards),
+/// so it uses its own smaller bounds than the per-card lists — matching the catalog's
+/// by-drop endpoint (`handlers::catalog`).
+const DEFAULT_DROP_PAGE_SIZE: u64 = 20;
+const MAX_DROP_PAGE_SIZE: u64 = 100;
 /// A generous per-card holding cap: far above any real collection, but bounded so a
 /// single count can't overflow the valuation arithmetic or be abused to store a
 /// pathological value.
@@ -69,6 +77,19 @@ pub struct CollectionEntry {
     pub card: CardResponse,
     pub quantity: i32,
     pub foil_quantity: i32,
+}
+
+/// One Secret Lair drop with the signed-in user's owned cards in it — the collection
+/// mirror of the catalog's `DropGroupResponse`, but each card carries its owned counts.
+/// The enclosing [`Page`] paginates over these (so `total` is a drop count, not cards).
+#[derive(Debug, Serialize)]
+pub struct CollectionDropGroup {
+    /// Stable slug for anchors/links; `None` for the catch-all "Other" group of owned
+    /// cards the snapshot doesn't place in a drop.
+    pub slug: Option<String>,
+    pub title: String,
+    pub card_count: usize,
+    pub cards: Vec<CollectionEntry>,
 }
 
 /// Just the owned counts for one card — what the card-detail controls read and write.
@@ -164,6 +185,11 @@ pub struct ListParams {
     /// ANDed with any `q`. Powers the per-set collection view. Absent/blank = every set.
     #[serde(default)]
     pub set: Option<String>,
+    /// When `true` *and* a `set` scope is present, span the set's whole **group** (its
+    /// top-level root plus every related sub-set) instead of just the one set — the
+    /// collection mirror of the catalog's `include_related`. Ignored without a `set`.
+    #[serde(default)]
+    pub include_related: Option<bool>,
 }
 
 /// Query params for the (optionally set-scoped) collection summary.
@@ -215,6 +241,23 @@ impl ListParams {
         self.set.as_deref().map(str::trim).filter(|s| !s.is_empty())
     }
 
+    /// Whether to span the scoped set's whole group (the include-related view). Only
+    /// meaningful alongside a `set` scope; the handler ignores it otherwise.
+    fn include_related(&self) -> bool {
+        self.include_related.unwrap_or(false)
+    }
+
+    /// Resolve the requested 1-based page and clamp the page size for the by-drop
+    /// view, which paginates over drops (not cards) and so has its own smaller bounds.
+    fn drop_page_and_size(&self) -> (u64, u64) {
+        let page = self.page.unwrap_or(1).max(1);
+        let page_size = self
+            .page_size
+            .unwrap_or(DEFAULT_DROP_PAGE_SIZE)
+            .clamp(1, MAX_DROP_PAGE_SIZE);
+        (page, page_size)
+    }
+
     /// Resolve the `sort`/`dir` params into a validated `(sort, direction)`,
     /// defaulting to most-recently-updated. An unrecognised key/direction is a 422 —
     /// consistent with a malformed `q` — rather than being silently ignored.
@@ -257,7 +300,13 @@ pub async fn list_collection(
         .map(|s| search_condition(game_meta, s))
         .transpose()?;
 
-    let paginator = collection_query(user.id, &game, params.set(), search, sort, dir)
+    // Resolve the (optional) set scope: a single set, or — with `include_related` — the
+    // set's whole group (root + related sub-sets), spanning exactly the sets the catalog
+    // does. `None` means the whole collection.
+    let set_codes =
+        resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
+
+    let paginator = collection_query(user.id, &game, set_codes.as_deref(), search, sort, dir)
         .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -288,10 +337,13 @@ pub async fn list_collection(
 /// the `user_id` and `game` filters and the recency sort stay entity-qualified to
 /// `collection_items`, so nothing is ambiguous across the join (both tables carry a
 /// `game` column).
+///
+/// `set_codes` scopes to the joined card's `set_code`: `None` = the whole collection,
+/// a single code = the per-set view, several codes = the include-related group view.
 fn collection_query(
     user_id: i32,
     game: &str,
-    set: Option<&str>,
+    set_codes: Option<&[String]>,
     search: Option<Condition>,
     sort: CollectionSort,
     dir: SortDir,
@@ -300,9 +352,11 @@ fn collection_query(
         .find_also_related(Card)
         .filter(collection_item::Column::UserId.eq(user_id))
         .filter(collection_item::Column::Game.eq(game));
-    // Scope to a single set (its `set_code` on the joined card row) when requested.
-    if let Some(set_code) = set {
-        query = query.filter(card::Column::SetCode.eq(set_code));
+    // Scope to one set (per-set view) or several (the include-related group) by the
+    // joined card row's `set_code`. An empty slice would match nothing, but the scope
+    // resolver never produces one (a group always contains at least the set itself).
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
     }
     if let Some(condition) = search {
         query = query.filter(condition);
@@ -315,6 +369,28 @@ fn collection_query(
             .order_by(collection_item::Column::Id, dir.order()),
         CollectionSort::Card(field) => apply_card_sort(query, field, dir, false),
     }
+}
+
+/// Resolve the set-code scope for a collection list: `None` (no scope, the whole
+/// collection), a single-code slice (the per-set view), or — with `include_related` —
+/// the scoped set's whole group (root + related sub-sets), resolved from the same flat
+/// set list the catalog uses ([`group_set_codes`]) so both span identical sets. Only
+/// fetches the set list when a group actually needs resolving.
+async fn resolve_set_scope(
+    state: &AppState,
+    game: &str,
+    set: Option<&str>,
+    include_related: bool,
+) -> Result<Option<Vec<String>>, AppError> {
+    let Some(code) = set else { return Ok(None) };
+    if !include_related {
+        return Ok(Some(vec![code.to_string()]));
+    }
+    let all_sets = CardSet::find()
+        .filter(card_set::Column::Game.eq(game))
+        .all(&state.db)
+        .await?;
+    Ok(Some(group_set_codes(&all_sets, code)))
 }
 
 /// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
@@ -464,6 +540,85 @@ pub async fn collection_sets(
     Ok(Json(CollectionSetsResponse {
         data: build_collection_sets(&game, rows, sets),
     }))
+}
+
+/// `GET /api/collection/{game}/sets/{code}/drops` -> the signed-in user's owned cards
+/// in a drop-grouped set (e.g. Secret Lair), grouped by Secret Lair drop and
+/// **paginated by drop** — the collection mirror of the catalog's set-drops endpoint,
+/// but scoped to (and carrying the owned counts of) what the user owns.
+///
+/// Only owned cards appear, so a drop the user owns nothing in is simply absent; cards
+/// whose collector number isn't in the snapshot fall into a trailing "Other" group.
+/// `404` if the set isn't drop-grouped (check `has_drops` first). An optional `q`
+/// narrows the owned cards, dropping now-empty drops.
+pub async fn collection_set_drops(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, code)): Path<(String, String)>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<Page<CollectionDropGroup>>, AppError> {
+    let game_meta = require_game(&game)?;
+    // Canonicalise the set (and 404 an unknown one) exactly as the catalog does.
+    let set = load_set(&state, &game, &code).await?;
+    let table = crate::scryfall::drops::table(&game, &set.code)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::NotFound(format!("set '{}' has no drops", set.code)))?;
+
+    // Parse the optional Scryfall-syntax query up front so a malformed one 422s before
+    // we touch the DB (mirrors the list handler).
+    let search = params
+        .search()
+        .map(|s| search_condition(game_meta, s))
+        .transpose()?;
+
+    // The user's owned cards in this set, in collector-number order (with their
+    // holdings) — bounded by one set, so we group + paginate by drop in memory, keeping
+    // every drop complete regardless of where the page boundary falls.
+    let scope = [set.code.clone()];
+    let rows = collection_query(
+        user.id,
+        &game,
+        Some(&scope),
+        search,
+        CollectionSort::Card(SortField::Number),
+        SortDir::Asc,
+    )
+    .all(&state.db)
+    .await?;
+
+    // A holding whose card row is gone (a catalog re-import) left-joins to `None` — skip
+    // it, exactly as the list/summary reads do.
+    let pairs: Vec<(collection_item::Model, card::Model)> = rows
+        .into_iter()
+        .filter_map(|(item, card)| card.map(|c| (item, c)))
+        .collect();
+
+    let buckets = group_into_drops(table, pairs, |(_, card)| card.collector_number.as_str());
+
+    let (page, page_size) = params.drop_page_and_size();
+    let total = buckets.len() as u64;
+    let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
+    let data: Vec<CollectionDropGroup> = buckets
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .map(|bucket| CollectionDropGroup {
+            slug: bucket.slug,
+            title: bucket.title,
+            card_count: bucket.cards.len(),
+            cards: bucket
+                .cards
+                .into_iter()
+                .map(|(item, card)| CollectionEntry {
+                    card: CardResponse::from(card),
+                    quantity: item.quantity,
+                    foil_quantity: item.foil_quantity,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(Json(build_page(data, page, page_size, total)))
 }
 
 /// Aggregate owned holdings into per-set tiles: count distinct owned cards + total
@@ -1171,6 +1326,7 @@ mod tests {
             sort: None,
             dir: None,
             set: None,
+            include_related: None,
         }
     }
 
@@ -1457,12 +1613,12 @@ mod tests {
 
         async fn names(
             db: &sea_orm::DatabaseConnection,
-            set: Option<&str>,
+            set_codes: Option<&[String]>,
             search: Option<Condition>,
             sort: CollectionSort,
             dir: SortDir,
         ) -> Vec<String> {
-            collection_query(1, "mtg", set, search, sort, dir)
+            collection_query(1, "mtg", set_codes, search, sort, dir)
                 .all(db)
                 .await
                 .expect("run collection query")
@@ -1515,7 +1671,9 @@ mod tests {
         .await
         .expect("insert user");
 
-        // Two sets: "aaa" holds a Goblin + a Land; "bbb" holds another Goblin.
+        // Three sets: "aaa" holds a Goblin + a Land; "bbb" and "ccc" each hold a Goblin.
+        // The third set lets the multi-code (group-span) scope prove it *excludes* the
+        // sets outside its list, not just that it returns what it's given.
         let card = |id: i32, name: &str, set_code: &str, type_line: &str| {
             let mut c = seed_card(id, name, type_line, Some("1.00"));
             c.set_code = set_code.into();
@@ -1526,6 +1684,7 @@ mod tests {
             card(1, "Goblin Guide", "aaa", "Creature — Goblin"),
             card(2, "Forest", "aaa", "Basic Land — Forest"),
             card(3, "Goblin King", "bbb", "Creature — Goblin"),
+            card(4, "Goblin Piker", "ccc", "Creature — Goblin"),
         ] {
             c.into_active_model().insert(&db).await.expect("insert card");
         }
@@ -1539,19 +1698,19 @@ mod tests {
             created_at: Set(at("2024-01-01T00:00:00Z")),
             updated_at: Set(at("2024-01-01T00:00:00Z")),
         };
-        for h in [hold(1, 1), hold(2, 2), hold(3, 3)] {
+        for h in [hold(1, 1), hold(2, 2), hold(3, 3), hold(4, 4)] {
             h.insert(&db).await.expect("insert holding");
         }
 
         async fn names(
             db: &sea_orm::DatabaseConnection,
-            set: Option<&str>,
+            set_codes: Option<&[String]>,
             search: Option<Condition>,
         ) -> Vec<String> {
             let mut out: Vec<String> = collection_query(
                 1,
                 "mtg",
-                set,
+                set_codes,
                 search,
                 CollectionSort::Card(SortField::Name),
                 SortDir::Asc,
@@ -1566,19 +1725,110 @@ mod tests {
             out
         }
 
-        // Scoped to set "aaa": only its two cards, not set "bbb"'s Goblin King.
-        assert_eq!(
-            names(&db, Some("aaa"), None).await,
-            ["Forest", "Goblin Guide"]
-        );
+        let aaa = ["aaa".to_string()];
+        // Scoped to set "aaa": only its two cards, not the other sets' Goblins.
+        assert_eq!(names(&db, Some(&aaa), None).await, ["Forest", "Goblin Guide"]);
         // Set scope ANDs with the search: goblins in "aaa" only.
         let goblins = search_condition(mtg, "t:goblin").unwrap();
-        assert_eq!(names(&db, Some("aaa"), Some(goblins)).await, ["Goblin Guide"]);
-        // No scope: every set's holdings.
+        assert_eq!(names(&db, Some(&aaa), Some(goblins)).await, ["Goblin Guide"]);
+        // A multi-code scope (the include-related group view) spans exactly its sets —
+        // "aaa" + "bbb", excluding "ccc"'s Goblin Piker.
+        let group = ["aaa".to_string(), "bbb".to_string()];
         assert_eq!(
-            names(&db, None, None).await,
+            names(&db, Some(&group), None).await,
             ["Forest", "Goblin Guide", "Goblin King"]
         );
+        // No scope: every set's holdings, including "ccc".
+        assert_eq!(
+            names(&db, None, None).await,
+            ["Forest", "Goblin Guide", "Goblin King", "Goblin Piker"]
+        );
+    }
+
+    /// The drops handler's core: owned cards in a drop-grouped set, joined + ordered by
+    /// `collection_query`, group into their Secret Lair drops with their owned counts
+    /// intact — and a drop the user owns nothing in never appears.
+    #[tokio::test]
+    async fn owned_cards_group_into_drops_with_counts() {
+        use sea_orm::{IntoActiveModel, prelude::DateTimeUtc};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+        crate::entities::user::ActiveModel {
+            id: Set(1),
+            email: Set("d@example.test".into()),
+            password_hash: Set("x".into()),
+            display_name: Set(None),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at("2024-01-01T00:00:00Z")),
+        }
+        .insert(&db)
+        .await
+        .expect("insert user");
+
+        // sld cards at known Secret Lair collector numbers: 2658 -> "Wild in Bloom",
+        // 168 -> "Inked", and one number not in the snapshot (which would fall into the
+        // trailing "Other" group — but only if owned).
+        let sld_card = |id: i32, cn: &str, cn_int: Option<i32>| {
+            let mut c = seed_card(id, &format!("SLD {cn}"), "Creature", Some("1.00"));
+            c.set_code = "sld".into();
+            c.set_name = "Secret Lair Drop".into();
+            c.collector_number = cn.into();
+            c.collector_number_int = cn_int;
+            c
+        };
+        for c in [
+            sld_card(1, "2658", Some(2658)),
+            sld_card(2, "168", Some(168)),
+            sld_card(3, "999999", Some(999999)),
+        ] {
+            c.into_active_model().insert(&db).await.expect("insert card");
+        }
+        // Own the first two (2 + 1 foil of #2658; 3 of #168); leave #999999 unowned.
+        let hold = |id: i32, card_id: i32, q: i32, f: i32| collection_item::ActiveModel {
+            id: Set(id),
+            user_id: Set(1),
+            game: Set("mtg".into()),
+            card_id: Set(card_id),
+            quantity: Set(q),
+            foil_quantity: Set(f),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at("2024-01-01T00:00:00Z")),
+        };
+        for h in [hold(1, 1, 2, 1), hold(2, 2, 3, 0)] {
+            h.insert(&db).await.expect("insert holding");
+        }
+
+        // The same query + grouping pass the drops handler runs.
+        let scope = ["sld".to_string()];
+        let rows = collection_query(
+            1,
+            "mtg",
+            Some(&scope),
+            None,
+            CollectionSort::Card(SortField::Number),
+            SortDir::Asc,
+        )
+        .all(&db)
+        .await
+        .expect("run query");
+        let pairs: Vec<(collection_item::Model, card::Model)> = rows
+            .into_iter()
+            .filter_map(|(item, card)| card.map(|c| (item, c)))
+            .collect();
+        let table = crate::scryfall::drops::table("mtg", "sld").expect("sld drop table");
+        let buckets = group_into_drops(table, pairs, |(_, card)| card.collector_number.as_str());
+
+        // Only the two owned drops appear (the unowned #999999 yields no "Other" group),
+        // in Scryfall's drop order (Wild in Bloom before Inked), each carrying its owned
+        // holding.
+        let titles: Vec<&str> = buckets.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, vec!["Wild in Bloom", "Inked"]);
+        assert_eq!(buckets[0].cards.len(), 1);
+        assert_eq!(buckets[0].cards[0].0.quantity, 2);
+        assert_eq!(buckets[0].cards[0].0.foil_quantity, 1);
+        assert_eq!(buckets[1].cards[0].0.quantity, 3);
     }
 
     /// `build_collection_sets` counts distinct owned cards + total copies per set,
