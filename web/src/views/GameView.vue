@@ -11,7 +11,7 @@ import SetGroup from '@/components/cards/SetGroup.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { gameStatus } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
-import { filterSets, groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
+import { filterGroups, groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
@@ -62,12 +62,18 @@ watch(game, () => {
 })
 const trimmedFilter = computed(() => filter.value.trim())
 const filtering = computed(() => trimmedFilter.value.length > 0)
-const filteredSets = computed(() => filterSets(sets.value, filter.value))
 
 // Nest sub-sets (tokens, promos, Commander decks, art series, …) under the main
 // set they belong to instead of scattering them across the date-sorted list.
-const groups = computed(() => groupSets(filteredSets.value))
-const relatedCount = computed(() => filteredSets.value.length - groups.value.length)
+// Group the *whole* list first, then filter at the group level — keeping a group
+// whole when the main set OR any related sub-set matches — so searching a related
+// set (e.g. "Jurassic World", a related set of Ixalan) surfaces the entire Ixalan
+// group, not just the matching sub-set tile (issue #128).
+const allGroups = computed(() => groupSets(sets.value))
+const groups = computed(() => filterGroups(allGroups.value, filter.value))
+const relatedCount = computed(() =>
+  groups.value.reduce((sum, group) => sum + group.children.length, 0),
+)
 // Pull pinned sets (e.g. Secret Lair) out so they lead the listing regardless of
 // their release date; the rest stay date-sorted.
 const partitioned = computed(() => partitionPinned(groups.value))
