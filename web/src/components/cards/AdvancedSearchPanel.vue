@@ -2,8 +2,14 @@
 import { computed, useId } from 'vue'
 import { Eraser, SlidersHorizontal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  NumberField,
+  NumberFieldContent,
+  NumberFieldDecrement,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from '@/components/ui/number-field'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
@@ -106,30 +112,38 @@ function toggleOrHigher() {
 }
 
 // --- Mana value / price ranges ---
-type NumberInput = string | number | undefined
+// The NumberField models a `number` (empty = undefined/NaN); the builder stores each
+// bound as a string ('' = unset), so map between them at the boundary.
+type NumberModel = number | undefined
+const strToNum = (s: string): NumberModel => {
+  if (s === '') return undefined
+  const n = Number(s)
+  return Number.isNaN(n) ? undefined : n
+}
+const numToStr = (n: NumberModel): string => (n == null || Number.isNaN(n) ? '' : String(n))
 
 const mv = computed(() => getManaValue(query.value))
 const mvMin = computed({
-  get: () => mv.value.min,
-  set: (value: NumberInput) =>
-    (query.value = setManaValue(query.value, { ...mv.value, min: String(value ?? '').trim() })),
+  get: () => strToNum(mv.value.min),
+  set: (value: NumberModel) =>
+    (query.value = setManaValue(query.value, { ...mv.value, min: numToStr(value) })),
 })
 const mvMax = computed({
-  get: () => mv.value.max,
-  set: (value: NumberInput) =>
-    (query.value = setManaValue(query.value, { ...mv.value, max: String(value ?? '').trim() })),
+  get: () => strToNum(mv.value.max),
+  set: (value: NumberModel) =>
+    (query.value = setManaValue(query.value, { ...mv.value, max: numToStr(value) })),
 })
 
 const usd = computed(() => getUsd(query.value))
 const usdMin = computed({
-  get: () => usd.value.min,
-  set: (value: NumberInput) =>
-    (query.value = setUsd(query.value, { ...usd.value, min: String(value ?? '').trim() })),
+  get: () => strToNum(usd.value.min),
+  set: (value: NumberModel) =>
+    (query.value = setUsd(query.value, { ...usd.value, min: numToStr(value) })),
 })
 const usdMax = computed({
-  get: () => usd.value.max,
-  set: (value: NumberInput) =>
-    (query.value = setUsd(query.value, { ...usd.value, max: String(value ?? '').trim() })),
+  get: () => strToNum(usd.value.max),
+  set: (value: NumberModel) =>
+    (query.value = setUsd(query.value, { ...usd.value, max: numToStr(value) })),
 })
 
 function clearAll() {
@@ -305,21 +319,33 @@ const pipClass =
       <div class="space-y-2">
         <span :id="mvLabelId" class="text-sm font-medium leading-none">Mana value</span>
         <div class="flex items-center gap-2" role="group" :aria-labelledby="mvLabelId">
-          <Input
+          <NumberField
             v-model="mvMin"
-            type="number"
-            min="0"
-            placeholder="Min"
-            aria-label="Minimum mana value"
-          />
+            :min="0"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 0 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Min" aria-label="Minimum mana value" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
           <span class="text-muted-foreground text-sm">–</span>
-          <Input
+          <NumberField
             v-model="mvMax"
-            type="number"
-            min="0"
-            placeholder="Max"
-            aria-label="Maximum mana value"
-          />
+            :min="0"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 0 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Max" aria-label="Maximum mana value" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
         </div>
       </div>
 
@@ -346,23 +372,33 @@ const pipClass =
       <div class="space-y-2">
         <span :id="usdLabelId" class="text-sm font-medium leading-none">Price (USD)</span>
         <div class="flex items-center gap-2" role="group" :aria-labelledby="usdLabelId">
-          <Input
+          <NumberField
             v-model="usdMin"
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="Min"
-            aria-label="Minimum USD price"
-          />
+            :min="0"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 2 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Min" aria-label="Minimum USD price" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
           <span class="text-muted-foreground text-sm">–</span>
-          <Input
+          <NumberField
             v-model="usdMax"
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="Max"
-            aria-label="Maximum USD price"
-          />
+            :min="0"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 2 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Max" aria-label="Maximum USD price" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
         </div>
       </div>
     </PopoverContent>
