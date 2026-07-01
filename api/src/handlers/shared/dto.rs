@@ -1,6 +1,12 @@
 //! Shared card response DTOs: the public card payload (`CardResponse` + its faces
 //! and prices) reused by both the catalog and collection endpoints, plus the two
 //! small `card::Model` accessors it's built from.
+//!
+//! The wire DTOs here (and in the other handler modules) carry a test-only
+//! `ts_rs::TS` derive: `cargo test` exports each one as a TypeScript type into
+//! `web/src/lib/api/generated/` (committed; CI checks for drift), so the SPA's
+//! API types are generated from these structs rather than hand-mirrored. The
+//! `ts(rename)`s pin the names the web code already uses.
 
 use serde::Serialize;
 
@@ -8,6 +14,7 @@ use crate::entities::card;
 use crate::scryfall::model::StoredFace;
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardPrices"))]
 pub(crate) struct PricesResponse {
     pub usd: Option<String>,
     pub usd_foil: Option<String>,
@@ -16,6 +23,7 @@ pub(crate) struct PricesResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardFace"))]
 pub(crate) struct CardFaceResponse {
     pub name: Option<String>,
     pub mana_cost: Option<String>,
@@ -26,7 +34,9 @@ pub(crate) struct CardFaceResponse {
     pub loyalty: Option<String>,
 }
 
+/// A single printing of a card, as the SPA sees it.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Card"))]
 pub(crate) struct CardResponse {
     pub id: String,
     pub name: String,

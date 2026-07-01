@@ -67,6 +67,7 @@ pub const MAX_CSV_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 /// One owned card: the full public card payload plus how many copies are owned.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionEntry {
     pub card: CardResponse,
     pub quantity: i32,
@@ -78,6 +79,7 @@ pub struct CollectionEntry {
 /// The enclosing [`Page`](crate::handlers::shared::Page) paginates over these (so `total`
 /// is a drop count, not cards).
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionDropGroup {
     /// Stable slug for anchors/links; `None` for the catch-all "Other" group of owned
     /// cards the snapshot doesn't place in a drop.
@@ -89,6 +91,7 @@ pub struct CollectionDropGroup {
 
 /// Just the owned counts for one card — what the card-detail controls read and write.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionQuantities {
     pub quantity: i32,
     pub foil_quantity: i32,
@@ -101,6 +104,7 @@ pub type OwnedCountsResponse = DataBody<HashMap<String, CollectionQuantities>>;
 
 /// Aggregate stats for a user's per-game collection (the collection landing header).
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionSummary {
     /// Distinct cards owned (one per collection row).
     pub unique_cards: i64,
@@ -115,6 +119,7 @@ pub struct CollectionSummary {
 /// same catalog set metadata a set tile needs (so the SPA can reuse `SetTile`) plus how
 /// much of it the user owns.
 #[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionSet {
     pub code: String,
     pub name: String,
@@ -140,6 +145,7 @@ pub type CollectionSetsResponse = DataBody<Vec<CollectionSet>>;
 /// Body of `PUT .../cards/{id}`: the desired absolute counts (not a delta). Setting
 /// both to zero removes the card from the collection.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SetQuantitiesRequest {
     pub quantity: i32,
     pub foil_quantity: i32,
@@ -203,6 +209,7 @@ pub(crate) enum CollectionSort {
 /// as a POST body rather than a GET query so a browse page's (potentially few-hundred)
 /// id list can't blow the request-line length behind a proxy.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct OwnedCountsRequest {
     pub ids: Vec<String>,
 }
@@ -264,7 +271,10 @@ impl ListParams {
 // ---------- Import / sync request + response DTOs ----------
 
 /// Body of `POST .../import`: which provider, the source URL/id, and how to reconcile.
+/// `provider` is any string on the wire (validated against the known providers by the
+/// handler), so the generated TS type is wider than the client's own body type.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ImportRequest {
     pub provider: String,
     pub source: String,
@@ -275,6 +285,7 @@ pub struct ImportRequest {
 /// plus whether saved re-syncs should use smart (incremental) sync. `smart` defaults to
 /// `false` (full mirror) when omitted.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SaveSourceRequest {
     pub provider: String,
     pub source: String,
@@ -284,6 +295,7 @@ pub struct SaveSourceRequest {
 
 /// A saved external collection link for a game.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CollectionSource"))]
 pub struct CollectionSourceResponse {
     pub provider: &'static str,
     pub external_id: String,
@@ -299,15 +311,21 @@ pub struct CollectionSourceResponse {
 /// time the client polls. Imports run asynchronously (throttled by the provider rate
 /// limit), so the client kicks one off and polls this until `complete`/`error`.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ImportJob"))]
 pub struct ImportJobResponse {
     pub job_id: u64,
     /// `queued` | `running` | `complete` | `error`.
+    // The `ts(type)` override preserves the literal union (the strings come from
+    // `from_status` below, which the TS derive can't see through).
+    #[cfg_attr(test, ts(type = "\"queued\" | \"running\" | \"complete\" | \"error\""))]
     pub status: &'static str,
     /// The import summary, present only when `status == "complete"`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub summary: Option<ImportSummary>,
     /// A user-facing message, present only when `status == "error"`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
 }
 

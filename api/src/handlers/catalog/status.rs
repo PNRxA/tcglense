@@ -15,7 +15,9 @@ use crate::error::AppError;
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
 
+/// Background card-data import status for a game.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "IngestStatus"))]
 pub struct StatusResponse {
     pub status: String,
     pub detail: Option<String>,

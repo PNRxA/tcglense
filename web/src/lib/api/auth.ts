@@ -1,20 +1,9 @@
 import { request } from './client'
+import type { AuthResponse, RefreshResponse, User } from './generated'
 
-export interface User {
-  id: number
-  email: string
-  display_name: string | null
-  created_at: string
-}
-
-export interface AuthResponse {
-  access_token: string
-  user: User
-}
-
-export interface RefreshResponse {
-  access_token: string
-}
+// The response types are generated from the API's Rust DTOs into `./generated` and
+// re-exported here; the request payloads stay hand-written client types.
+export type { AuthResponse, RefreshResponse, User } from './generated'
 
 export interface RegisterPayload {
   email: string

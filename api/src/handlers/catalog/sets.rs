@@ -22,7 +22,9 @@ use crate::state::AppState;
 use super::image::is_allowed_image_url;
 use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search};
 
+/// A set/expansion within a game.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardSet"))]
 pub struct SetResponse {
     pub code: String,
     pub name: String,
@@ -57,6 +59,7 @@ impl From<card_set::Model> for SetResponse {
 /// enclosing [`Page`] paginates over these (so `total` is a drop count, not a
 /// card count).
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DropGroup"))]
 pub struct DropGroupResponse {
     /// Stable slug for anchors/links; `None` for the catch-all "Other" group of
     /// cards the snapshot doesn't place in a drop.

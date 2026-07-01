@@ -35,6 +35,19 @@ jobs:
       - name: Run tests
         run: cargo test --locked
 
+      # `cargo test` above regenerated web/src/lib/api/generated from the Rust DTOs
+      # (ts-rs); if the committed files no longer match, the API contract drifted.
+      - name: Check generated web API types are in sync
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain -- web/src/lib/api/generated)" ]; then
+            echo "web/src/lib/api/generated is out of sync with the API's Rust DTOs." >&2
+            echo "Run 'cargo test' in api/ and commit the regenerated files." >&2
+            git status --porcelain -- web/src/lib/api/generated >&2
+            git diff -- web/src/lib/api/generated >&2
+            exit 1
+          fi
+
   web-unit-tests:
     name: Frontend unit tests (vitest)
     runs-on: ubuntu-latest

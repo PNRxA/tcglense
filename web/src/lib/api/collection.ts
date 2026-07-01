@@ -1,56 +1,35 @@
-import type { Card, CardSet, Page } from './catalog'
 import { listQuery, request } from './client'
+import type {
+  CollectionDropGroup,
+  CollectionEntry,
+  CollectionQuantities,
+  CollectionSet,
+  CollectionSummary,
+  Page,
+} from './generated'
 
 // ---------- Collections (per-user, authenticated) ----------
 //
 // Every call takes an access `token` (obtained via the auth store's `authFetch`,
 // which the `useAuthed*` composables wire up). Card ids are the same external ids
 // the public catalog exposes. Paths are built here so they can be unit-tested; the
-// heavy lifting (auth header, credentials, JSON) lives in `request`.
+// heavy lifting (auth header, credentials, JSON) lives in `request`. The wire types
+// are generated from the API's Rust DTOs into `./generated` and re-exported here.
 
-/** How many copies of a card a user owns. */
-export interface CollectionQuantities {
-  quantity: number
-  foil_quantity: number
-}
+export type {
+  CollectionDropGroup,
+  CollectionEntry,
+  CollectionQuantities,
+  CollectionSet,
+  CollectionSummary,
+} from './generated'
 
-/** One owned card: the full public card payload plus the owned counts. */
-export interface CollectionEntry {
-  card: Card
-  quantity: number
-  foil_quantity: number
-}
-
-/** Owned counts for a batch of cards, keyed by external card id (owned cards only). */
+/** Owned counts for a batch of cards, keyed by external card id (owned cards only) —
+ * the `data` payload of the wire `DataBody<HashMap<..>>` response. */
 export type OwnedCountsMap = Record<string, CollectionQuantities>
 
 /** A page of collection entries plus pagination cursors. */
 export type CollectionPage = Page<CollectionEntry>
-
-/** Aggregate stats for a user's per-game collection. */
-export interface CollectionSummary {
-  /** Distinct cards owned. */
-  unique_cards: number
-  /** Total copies owned (regular + foil). */
-  total_cards: number
-  /** Estimated USD value as a decimal string, or null when nothing is priced. */
-  total_value_usd: string | null
-}
-
-/**
- * One set a user owns cards in, for the collection's per-set landing. Carries the same
- * catalog set metadata a `SetTile` needs (so the tile can be reused) plus how much of
- * the set the user owns.
- */
-export interface CollectionSet extends CardSet {
-  /** Distinct cards owned in this set. */
-  owned_cards: number
-  /** Total copies owned (regular + foil) in this set. */
-  owned_copies: number
-  /** Estimated USD value of the owned cards in this set as a decimal string, or null
-   * when nothing owned in the set is priced. Same semantics as the summary value. */
-  owned_value_usd: string | null
-}
 
 export interface CollectionListParams {
   page?: number
@@ -108,16 +87,6 @@ export function getCollectionSets(token: string, game: string): Promise<{ data: 
   return request<{ data: CollectionSet[] }>(`/api/collection/${encodeURIComponent(game)}/sets`, {
     token,
   })
-}
-
-/** One Secret Lair drop with the user's owned cards in it — the collection mirror of the
- * catalog `DropGroup`, but each card carries the owned counts. */
-export interface CollectionDropGroup {
-  /** Stable slug for anchors; null for the catch-all "Other" group. */
-  slug: string | null
-  title: string
-  card_count: number
-  cards: CollectionEntry[]
 }
 
 /** A page of collection drop groups — `total`/pagination count *drops*, not cards. */

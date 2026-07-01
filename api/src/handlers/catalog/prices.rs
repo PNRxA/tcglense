@@ -22,6 +22,7 @@ use super::PriceParams;
 /// [`PricesResponse`](crate::handlers::shared::dto::PricesResponse)); `date` is a
 /// `"YYYY-MM-DD"` string.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PricePoint {
     pub date: String,
     pub usd: Option<String>,
