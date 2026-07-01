@@ -15,6 +15,8 @@ pub enum SearchError {
     UnbalancedParen,
     #[error("unterminated quoted text in search query")]
     UnterminatedString,
+    #[error("unterminated regular expression in search query")]
+    UnterminatedRegex,
     #[error("empty parentheses in search query")]
     EmptyGroup,
     #[error("a search operator is missing its field name")]

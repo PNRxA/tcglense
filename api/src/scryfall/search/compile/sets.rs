@@ -3,8 +3,8 @@
 use sea_orm::Condition;
 use sea_orm::Value;
 
-use super::common::raw_vals;
-use super::super::error::{SearchError, unsupported_op};
+use super::common::{cmp_sql, raw_vals};
+use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
 
 pub(super) fn set(op: Op, value: &str) -> Result<Condition, SearchError> {
@@ -46,4 +46,40 @@ pub(super) fn set_type(op: Op, value: &str) -> Result<Condition, SearchError> {
         Op::Ne => Ok(raw_vals(format!("set_code NOT IN ({select})"), bind())),
         _ => Err(unsupported_op("settype", op)),
     }
+}
+
+/// `prints <op> N` — number of printings of this card (its `oracle_id` siblings).
+pub(super) fn prints_filter(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: i64 = value
+        .parse()
+        .map_err(|_| invalid("prints", value, "expected a number"))?;
+    Ok(sibling_count("COUNT(*)", op, n))
+}
+
+/// `sets`/`papersets <op> N` — number of distinct sets this card appears in
+/// (equal here since the catalogue is paper-only).
+pub(super) fn sets_filter(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: i64 = value
+        .parse()
+        .map_err(|_| invalid("sets", value, "expected a number"))?;
+    Ok(sibling_count("COUNT(DISTINCT c2.set_code)", op, n))
+}
+
+/// A `GAME`-scoped correlated subquery over a card's `oracle_id` siblings (a card
+/// with no `oracle_id` is its own sole sibling, so the count is always ≥ 1 and the
+/// leaf stays total for `-`/`not:`). `agg` is a fixed aggregate; user input binds.
+fn sibling_count(agg: &str, op: Op, n: i64) -> Condition {
+    let sql = format!(
+        "(SELECT {agg} FROM cards c2 WHERE c2.game = ? AND \
+         ((cards.oracle_id IS NOT NULL AND c2.oracle_id = cards.oracle_id) \
+          OR (cards.oracle_id IS NULL AND c2.id = cards.id))) {} ?",
+        cmp_sql(op)
+    );
+    raw_vals(
+        sql,
+        [
+            Value::from(crate::scryfall::GAME.to_string()),
+            Value::from(n),
+        ],
+    )
 }

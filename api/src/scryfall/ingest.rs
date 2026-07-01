@@ -29,8 +29,8 @@ use super::{DATASET, GAME, GAME_NAME};
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
-/// Rows per upsert. ~34 card columns × 400 ≈ 13.6k bound parameters, comfortably
-/// under SQLite's default 32 766 parameter limit.
+/// Rows per upsert. ~65 card columns × 400 ≈ 26k bound parameters, under SQLite's
+/// default 32 766 parameter limit (drop this toward 350 if the column count grows).
 pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.

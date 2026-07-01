@@ -142,6 +142,7 @@ fn params(sort: Option<&str>, dir: Option<&str>) -> ListParams {
         include_related: None,
         sort: sort.map(str::to_string),
         dir: dir.map(str::to_string),
+        name: None,
     }
 }
 
@@ -154,6 +155,7 @@ fn list_params_clamps_page_size() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(p.page_and_size(), (1, MAX_PAGE_SIZE));
     let d = ListParams {
@@ -163,6 +165,7 @@ fn list_params_clamps_page_size() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(d.page_and_size(), (1, DEFAULT_PAGE_SIZE));
     assert_eq!(d.search(), None);
@@ -171,16 +174,16 @@ fn list_params_clamps_page_size() {
 #[test]
 fn sort_spec_uses_endpoint_default_when_absent() {
     assert_eq!(
-        params(None, None).sort_spec(SortField::Number).unwrap(),
+        params(None, None).sort_spec_with(SortField::Number, None, None).unwrap(),
         (SortField::Number, SortDir::Asc),
     );
     assert_eq!(
-        params(None, None).sort_spec(SortField::Name).unwrap(),
+        params(None, None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Name, SortDir::Asc),
     );
     // Blank values are treated as absent (fall back to the default).
     assert_eq!(
-        params(Some("  "), Some("")).sort_spec(SortField::Name).unwrap(),
+        params(Some("  "), Some("")).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Name, SortDir::Asc),
     );
 }
@@ -189,24 +192,24 @@ fn sort_spec_uses_endpoint_default_when_absent() {
 fn sort_spec_field_picks_natural_direction() {
     // A field with no explicit dir defaults to its natural direction.
     assert_eq!(
-        params(Some("price"), None).sort_spec(SortField::Name).unwrap(),
+        params(Some("price"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Price, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("released"), None).sort_spec(SortField::Name).unwrap(),
+        params(Some("released"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Released, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("cmc"), None).sort_spec(SortField::Name).unwrap(),
+        params(Some("cmc"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Cmc, SortDir::Asc),
     );
     // An explicit dir overrides the natural one; aliases resolve.
     assert_eq!(
-        params(Some("collector"), Some("desc")).sort_spec(SortField::Name).unwrap(),
+        params(Some("collector"), Some("desc")).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Number, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("mv"), Some("asc")).sort_spec(SortField::Name).unwrap(),
+        params(Some("mv"), Some("asc")).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Cmc, SortDir::Asc),
     );
 }
@@ -214,13 +217,81 @@ fn sort_spec_field_picks_natural_direction() {
 #[test]
 fn sort_spec_rejects_unknown_values() {
     assert!(matches!(
-        params(Some("color"), None).sort_spec(SortField::Name),
+        params(Some("nonsense"), None).sort_spec_with(SortField::Name, None, None),
         Err(AppError::Validation(_)),
     ));
     assert!(matches!(
-        params(None, Some("sideways")).sort_spec(SortField::Name),
+        params(None, Some("sideways")).sort_spec_with(SortField::Name, None, None),
         Err(AppError::Validation(_)),
     ));
+}
+
+#[test]
+fn sort_spec_precedence_url_over_directive_over_default() {
+    // An in-query order:/direction: directive fills the gap when the URL params
+    // are absent.
+    assert_eq!(
+        params(None, None)
+            .sort_spec_with(SortField::Name, Some(SortField::Edhrec), Some(SortDir::Desc))
+            .unwrap(),
+        (SortField::Edhrec, SortDir::Desc),
+    );
+    // An explicit URL sort wins over the in-query directive.
+    assert_eq!(
+        params(Some("cmc"), None)
+            .sort_spec_with(SortField::Name, Some(SortField::Edhrec), None)
+            .unwrap(),
+        (SortField::Cmc, SortDir::Asc),
+    );
+}
+
+/// `unique:cards` groups by `oracle_id`, so the paginator counts distinct cards
+/// (not printings) and a page holds one row per group — proving SeaORM's
+/// `num_items()` counts groups over a grouped query.
+#[tokio::test]
+async fn unique_cards_groups_by_oracle_id() {
+    use crate::handlers::shared::apply_card_sort;
+    use sea_orm::{ActiveModelTrait, PaginatorTrait, Set};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+    // Two printings share oracle o1; one is o2; one has no oracle id.
+    for (i, (name, oracle)) in [
+        ("A1", Some("o1")),
+        ("A2", Some("o1")),
+        ("B", Some("o2")),
+        ("C", None),
+    ]
+    .iter()
+    .enumerate()
+    {
+        card::ActiveModel {
+            game: Set("mtg".into()),
+            external_id: Set(format!("ext-{i}")),
+            name: Set((*name).into()),
+            set_code: Set("tst".into()),
+            set_name: Set("TST".into()),
+            collector_number: Set(i.to_string()),
+            lang: Set("en".into()),
+            oracle_id: Set(oracle.map(str::to_owned)),
+            digital: Set(false),
+            created_at: Set(ts),
+            updated_at: Set(ts),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    let base = || Card::find().filter(card::Column::Game.eq("mtg"));
+    assert_eq!(base().all(&db).await.unwrap().len(), 4, "4 printings total");
+    // unique:cards collapses the two o1 printings; the null-oracle card stays
+    // distinct (grouped on '#'||id). So o1 + o2 + C = 3.
+    let grouped = apply_unique(base(), Some(crate::scryfall::search::UniqueMode::Cards));
+    let paginator = apply_card_sort(grouped, SortField::Name, SortDir::Asc, false).paginate(&db, 60);
+    assert_eq!(paginator.num_items().await.unwrap(), 3, "distinct cards");
+    assert_eq!(paginator.fetch_page(0).await.unwrap().len(), 3, "one row per group");
 }
 
 /// A minimal, insertable card row whose only meaningful fields for these tests
@@ -280,6 +351,92 @@ async fn prints_query_returns_other_printings_newest_first() {
 }
 
 #[test]
+fn exact_name_trims_and_blank_is_none() {
+    let p = ListParams {
+        name: Some("  Lightning Bolt ".into()),
+        ..params(None, None)
+    };
+    assert_eq!(p.exact_name(), Some("Lightning Bolt"));
+    let blank = ListParams {
+        name: Some("   ".into()),
+        ..params(None, None)
+    };
+    assert_eq!(blank.exact_name(), None);
+    assert_eq!(params(None, None).exact_name(), None);
+}
+
+/// A card row with a specific name/set, reusing the minimal `test_card` shape for
+/// every other column.
+fn named_card(id: i32, name: &str, set_code: &str) -> card::Model {
+    card::Model {
+        name: name.to_string(),
+        set_code: set_code.into(),
+        set_name: set_code.to_uppercase(),
+        ..test_card(id, None, None)
+    }
+}
+
+/// `name_suggestions_query` returns distinct names containing the term (a reprint's
+/// two printings collapse to one suggestion), surfaces prefix matches first, is
+/// case-insensitive, and honours the limit.
+#[tokio::test]
+async fn name_suggestions_are_distinct_prefix_first_and_capped() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    for c in [
+        named_card(1, "Lightning Bolt", "aaa"),
+        named_card(2, "Lightning Bolt", "bbb"), // reprint: same name, second printing
+        named_card(3, "Bolt", "aaa"),
+        named_card(4, "Bolt Catcher", "aaa"),
+        named_card(5, "Sol Ring", "aaa"), // no "bolt" -> never suggested
+    ] {
+        c.into_active_model().insert(&db).await.expect("insert card");
+    }
+
+    // Substring match, deduplicated ("Lightning Bolt" once despite two printings),
+    // prefix matches ("Bolt", "Bolt Catcher") ahead of the mid-string one, each
+    // group alphabetical.
+    let got = name_suggestions_query("mtg", "bolt", 10)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert_eq!(
+        got,
+        vec![
+            "Bolt".to_string(),
+            "Bolt Catcher".to_string(),
+            "Lightning Bolt".to_string(),
+        ],
+    );
+
+    // Case-insensitive (SQLite's ASCII LIKE), same three distinct names.
+    let upper = name_suggestions_query("mtg", "BOLT", 10)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert_eq!(upper.len(), 3);
+
+    // The limit caps the suggestion count, keeping the prefix-first pair.
+    let capped = name_suggestions_query("mtg", "bolt", 2)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert_eq!(capped, vec!["Bolt".to_string(), "Bolt Catcher".to_string()]);
+
+    // A term nothing matches yields no suggestions.
+    let none = name_suggestions_query("mtg", "zzz", 10)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert!(none.is_empty());
+}
+
+#[test]
 fn drop_page_and_size_clamps() {
     let p = ListParams {
         page: Some(0),
@@ -288,6 +445,7 @@ fn drop_page_and_size_clamps() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(p.drop_page_and_size(), (1, MAX_DROP_PAGE_SIZE));
     let d = ListParams {
@@ -297,6 +455,7 @@ fn drop_page_and_size_clamps() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(d.drop_page_and_size(), (1, DEFAULT_DROP_PAGE_SIZE));
 }

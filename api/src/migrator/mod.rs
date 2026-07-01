@@ -12,6 +12,7 @@ mod m20240101_000009_add_cards_oracle_id_index;
 mod m20240101_000010_create_collection_items_table;
 mod m20240101_000011_create_collection_sources_table;
 mod m20240101_000012_add_collection_source_smart;
+mod m20240101_000013_add_scryfall_fields_to_cards;
 
 pub struct Migrator;
 
@@ -31,6 +32,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000010_create_collection_items_table::Migration),
             Box::new(m20240101_000011_create_collection_sources_table::Migration),
             Box::new(m20240101_000012_add_collection_source_smart::Migration),
+            Box::new(m20240101_000013_add_scryfall_fields_to_cards::Migration),
         ]
     }
 }

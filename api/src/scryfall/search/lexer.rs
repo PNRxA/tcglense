@@ -117,6 +117,12 @@ pub(super) fn lex(input: &str) -> Result<Vec<Token>, SearchError> {
                     i = end;
                 }
             }
+            '/' => {
+                // A top-level `/regex/` is a name-field regular expression.
+                let (s, end) = read_regex(&chars, i)?;
+                tokens.push(Token::Word(s));
+                i = end;
+            }
             ':' | '=' | '<' | '>' => return Err(SearchError::MissingKey),
             _ => {
                 // A filter is `letters <op> value`; otherwise a bare word / and / or.
@@ -192,13 +198,36 @@ fn read_bareword(chars: &[char], start: usize) -> (String, usize) {
     (s, i)
 }
 
-/// A value following an operator: a quoted phrase (spaces preserved) or a bareword.
+/// A value following an operator: a quoted phrase (spaces preserved), a
+/// `/`-delimited regular expression, or a bareword.
 fn read_value(chars: &[char], start: usize) -> Result<(String, usize), SearchError> {
-    if start < chars.len() && chars[start] == '"' {
-        read_quoted(chars, start)
-    } else {
-        Ok(read_bareword(chars, start))
+    match chars.get(start) {
+        Some('"') => read_quoted(chars, start),
+        Some('/') => read_regex(chars, start),
+        _ => Ok(read_bareword(chars, start)),
     }
+}
+
+/// Read a `/`-delimited regular expression starting at the opening `/`, honoring
+/// `\/` so a slash can appear in the pattern. Returns the verbatim span *including*
+/// both slashes so the compiler recognises it as a regex literal (spaces allowed).
+fn read_regex(chars: &[char], start: usize) -> Result<(String, usize), SearchError> {
+    let n = chars.len();
+    let mut i = start + 1;
+    let mut escaped = false;
+    while i < n {
+        let c = chars[i];
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '/' {
+            let span: String = chars[start..=i].iter().collect();
+            return Ok((span, i + 1));
+        }
+        i += 1;
+    }
+    Err(SearchError::UnterminatedRegex)
 }
 
 /// Read a `"`-delimited string starting at the opening quote. `\"`→`"`, `\\`→`\`.

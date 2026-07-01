@@ -9,6 +9,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
+import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
@@ -110,6 +111,16 @@ const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasSta
           </div>
         </dl>
 
+        <!-- Quick add: type a name, pick a printing, add regular/foil — without leaving
+             this page. Useful both to seed an empty collection and to top up an
+             existing one, so it's shown regardless of what's owned. -->
+        <div class="mt-5 max-w-md">
+          <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
+            Quick add a card
+          </p>
+          <QuickAddBox :game="game" />
+        </div>
+
         <CollectionSyncControls :game="game" />
       </header>
 
@@ -122,7 +133,7 @@ const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasSta
       <div v-else-if="collectionIsEmpty" class="py-16 text-center">
         <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
         <RouterLink
-          :to="`/cards/${game}/cards`"
+          :to="`/cards/${game}`"
           :class="buttonVariants({ variant: 'default' })"
           class="mt-4 inline-flex"
         >

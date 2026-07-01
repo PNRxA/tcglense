@@ -36,6 +36,7 @@ fn stat_column(s: &str) -> Option<&'static str> {
         "pow" | "power" => Some("power"),
         "tou" | "toughness" => Some("toughness"),
         "loy" | "loyalty" => Some("loyalty"),
+        "def" | "defense" => Some("defense"),
         _ => None,
     }
 }
@@ -66,6 +67,20 @@ pub(super) fn ptl(col: &str, key: &str, op: Op, value: &str) -> Result<Condition
             Ok(raw_vals(sql, [n]))
         }
     }
+}
+
+/// `pt:`/`powtou:` — compare power + toughness (both numeric-guarded).
+pub(super) fn pt(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: f64 = value
+        .parse()
+        .map_err(|_| invalid("pt", value, "expected a number"))?;
+    let sql = format!(
+        "(({}) AND ({}) AND CAST(power AS REAL) + CAST(toughness AS REAL) {} ?)",
+        numeric_guard("power"),
+        numeric_guard("toughness"),
+        cmp_sql(op)
+    );
+    Ok(raw_vals(sql, [n]))
 }
 
 // ----- prices (text decimal columns) -----

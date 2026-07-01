@@ -12,10 +12,17 @@ use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::handlers::shared::{
     CardResponse, DataBody, Page, SortField, apply_card_sort, build_page, load_card, require_game,
+    trim_query,
 };
 use crate::state::AppState;
 
-use super::{ListParams, apply_search, prints_query};
+use super::{
+    ListParams, NameSuggestParams, apply_search, apply_unique, name_suggestions_query, prints_query,
+};
+
+/// Default / max number of name suggestions the autocomplete endpoint returns.
+const DEFAULT_NAME_SUGGESTIONS: u64 = 10;
+const MAX_NAME_SUGGESTIONS: u64 = 25;
 
 /// `GET /api/games/{game}/cards` -> all cards (optional `q` search), by name.
 pub async fn list_cards(
@@ -26,15 +33,49 @@ pub async fn list_cards(
     let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
-    query = apply_search(query, game_meta, &params)?;
-    let (sort, dir) = params.sort_spec(SortField::Name)?;
+    let query = Card::find().filter(card::Column::Game.eq(game.as_str()));
+    let (mut query, shape) = apply_search(query, game_meta, &params)?;
+    // Optional exact-name scope (the quick-add "printings of this name" step): an
+    // equality bind, so a name full of punctuation/quotes matches literally and
+    // there's no injection surface. ANDed with any `q`.
+    if let Some(name) = params.exact_name() {
+        query = query.filter(card::Column::Name.eq(name));
+    }
+    let (sort, dir) = params.sort_spec_with(SortField::Name, shape.order, shape.direction)?;
+    let query = apply_unique(query, shape.unique);
     let paginator = apply_card_sort(query, sort, dir, false).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
     let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();
     Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// `GET /api/games/{game}/card-names?q=&limit=` -> up to `limit` **distinct** card
+/// names in the game whose name contains `q` (case-insensitively), with names that
+/// *start* with `q` surfaced first, then alphabetically. Powers the collection
+/// quick-add autocomplete (one hint per unique name). A blank/absent `q` returns an
+/// empty list — there's nothing to suggest yet.
+pub async fn card_names(
+    State(state): State<AppState>,
+    Path(game): Path<String>,
+    Query(params): Query<NameSuggestParams>,
+) -> Result<Json<DataBody<Vec<String>>>, AppError> {
+    require_game(&game)?;
+    let Some(term) = trim_query(params.q.as_deref()) else {
+        return Ok(Json(DataBody { data: Vec::new() }));
+    };
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_NAME_SUGGESTIONS)
+        .clamp(1, MAX_NAME_SUGGESTIONS);
+
+    let names: Vec<String> = name_suggestions_query(&game, term, limit)
+        .into_tuple::<String>()
+        .all(&state.db)
+        .await?;
+
+    Ok(Json(DataBody { data: names }))
 }
 
 /// `GET /api/games/{game}/cards/{id}` -> one card's full detail.

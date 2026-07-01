@@ -6,8 +6,8 @@
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait,
-    QueryFilter, Set, prelude::DateTimeUtc,
+    ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    prelude::DateTimeUtc,
 };
 use sea_orm_migration::MigratorTrait;
 
@@ -43,7 +43,9 @@ pub(crate) fn test_config() -> Config {
 /// hand a caller an unmigrated DB; one connection keeps the migrated schema + data
 /// consistent across every query (and any future concurrent one).
 pub(crate) async fn migrated_memory_db() -> DatabaseConnection {
-    let mut opts = ConnectOptions::new("sqlite::memory:");
+    // Reuse the app's connect options so tests get the same pragmas and the
+    // registered REGEXP function; pin to one connection (see below).
+    let mut opts = crate::db::connect_options("sqlite::memory:");
     opts.max_connections(1).min_connections(1);
     let db = Database::connect(opts)
         .await
@@ -88,8 +90,39 @@ pub(crate) fn card_model(id: i32) -> card::Model {
         card_faces: None,
         price_usd: None,
         price_usd_foil: None,
+        price_usd_etched: None,
         price_eur: None,
         price_tix: None,
+        keywords: None,
+        produced_mana: None,
+        color_indicator: None,
+        watermark: None,
+        flavor_text: None,
+        illustration_id: None,
+        artist: None,
+        artist_ids: None,
+        border_color: None,
+        frame: None,
+        frame_effects: None,
+        security_stamp: None,
+        promo_types: None,
+        finishes: None,
+        defense: None,
+        legalities: None,
+        full_art: None,
+        textless: None,
+        oversized: None,
+        promo: None,
+        reprint: None,
+        variation: None,
+        booster: None,
+        story_spotlight: None,
+        content_warning: None,
+        highres_image: None,
+        reserved: None,
+        game_changer: None,
+        edhrec_rank: None,
+        penny_rank: None,
         digital: false,
         created_at: ts,
         updated_at: ts,

@@ -52,7 +52,10 @@ pub struct ScryfallSet {
 }
 
 /// A Scryfall card object (only the fields we store).
-#[derive(Debug, Deserialize)]
+///
+/// `Default` is derived so the dummy seeder can fill new fields via
+/// `..Default::default()` without listing every one.
+#[derive(Debug, Default, Deserialize)]
 pub struct ScryfallCard {
     pub id: String,
     #[serde(default)]
@@ -97,6 +100,79 @@ pub struct ScryfallCard {
     pub card_faces: Option<Vec<CardFace>>,
     #[serde(default)]
     pub prices: Option<Prices>,
+    // --- Additional fields ingested for Scryfall search parity. ---
+    /// Keyword abilities (Flying, Trample, …). Comma-joined on storage.
+    #[serde(default)]
+    pub keywords: Option<Vec<String>>,
+    /// Colours of mana this card can produce.
+    #[serde(default)]
+    pub produced_mana: Option<Vec<String>>,
+    /// Colour-indicator pips; also present per-face on some DFCs.
+    #[serde(default)]
+    pub color_indicator: Option<Vec<String>>,
+    /// Printed watermark/affiliation; per-face on some cards.
+    #[serde(default)]
+    pub watermark: Option<String>,
+    /// Printed flavour text; per-face on multi-faced cards.
+    #[serde(default)]
+    pub flavor_text: Option<String>,
+    /// Illustration id (distinct artwork); per-face on some cards.
+    #[serde(default)]
+    pub illustration_id: Option<String>,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub artist_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub border_color: Option<String>,
+    /// Frame edition ("1993"/"2015"/"future"/…).
+    #[serde(default)]
+    pub frame: Option<String>,
+    /// Frame effects (showcase, extendedart, …). Comma-joined on storage.
+    #[serde(default)]
+    pub frame_effects: Option<Vec<String>>,
+    #[serde(default)]
+    pub security_stamp: Option<String>,
+    /// Promo categories (buyabox, prerelease, …). Comma-joined on storage.
+    #[serde(default)]
+    pub promo_types: Option<Vec<String>>,
+    /// Available finishes (nonfoil/foil/etched). Comma-joined on storage.
+    #[serde(default)]
+    pub finishes: Option<Vec<String>>,
+    /// Battle starting defence (string like power/toughness); per-face on some cards.
+    #[serde(default)]
+    pub defense: Option<String>,
+    /// Per-format legality object, stored verbatim as a JSON string.
+    #[serde(default)]
+    pub legalities: Option<serde_json::Value>,
+    #[serde(default)]
+    pub full_art: Option<bool>,
+    #[serde(default)]
+    pub textless: Option<bool>,
+    #[serde(default)]
+    pub oversized: Option<bool>,
+    #[serde(default)]
+    pub promo: Option<bool>,
+    #[serde(default)]
+    pub reprint: Option<bool>,
+    #[serde(default)]
+    pub variation: Option<bool>,
+    #[serde(default)]
+    pub booster: Option<bool>,
+    #[serde(default)]
+    pub story_spotlight: Option<bool>,
+    #[serde(default)]
+    pub content_warning: Option<bool>,
+    #[serde(default)]
+    pub highres_image: Option<bool>,
+    #[serde(default)]
+    pub reserved: Option<bool>,
+    #[serde(default)]
+    pub game_changer: Option<bool>,
+    #[serde(default)]
+    pub edhrec_rank: Option<i32>,
+    #[serde(default)]
+    pub penny_rank: Option<i32>,
 }
 
 /// The image URLs Scryfall offers for a card (or a single face).
@@ -116,7 +192,7 @@ pub struct ImageUris {
 
 /// One face of a multi-faced card (transform / modal DFC). Such cards usually
 /// have no top-level `image_uris`; the per-face images live here.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct CardFace {
     #[serde(default)]
     pub name: Option<String>,
@@ -134,6 +210,18 @@ pub struct CardFace {
     pub loyalty: Option<String>,
     #[serde(default)]
     pub image_uris: Option<ImageUris>,
+    /// Per-face fields folded into the top-level card columns when the top level
+    /// lacks them (see `map::map_card`).
+    #[serde(default)]
+    pub watermark: Option<String>,
+    #[serde(default)]
+    pub flavor_text: Option<String>,
+    #[serde(default)]
+    pub illustration_id: Option<String>,
+    #[serde(default)]
+    pub defense: Option<String>,
+    #[serde(default)]
+    pub color_indicator: Option<Vec<String>>,
 }
 
 /// Current price snapshot for a card.
@@ -143,6 +231,8 @@ pub struct Prices {
     pub usd: Option<String>,
     #[serde(default)]
     pub usd_foil: Option<String>,
+    #[serde(default)]
+    pub usd_etched: Option<String>,
     #[serde(default)]
     pub eur: Option<String>,
     #[serde(default)]
