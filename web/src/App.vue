@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
-import CardsNav from '@/components/CardsNav.vue'
-import CollectionsNav from '@/components/CollectionsNav.vue'
+import MainNav from '@/components/MainNav.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 
@@ -14,13 +13,12 @@ import UserMenu from '@/components/UserMenu.vue'
       <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
         <div class="flex items-center gap-1">
           <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
-          <!-- CardsNav renders its own <nav> landmark (reka NavigationMenu), so this is a div. -->
+          <!-- MainNav renders its own <nav> landmark (reka NavigationMenu), so this is a div.
+               Both dropdowns live under one NavigationMenu so the swipe/fade motion plays
+               when moving between them. -->
           <div class="ml-3">
-            <CardsNav />
+            <MainNav />
           </div>
-          <!-- Shown to everyone; a signed-out visitor who opens a collection is
-               prompted to sign in / sign up there. -->
-          <CollectionsNav />
         </div>
         <div class="flex items-center gap-1">
           <ThemeToggle />
