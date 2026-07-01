@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { setIconUrl, type CardSet } from '@/lib/api'
+import { formatCompletion, formatCopies } from '@/lib/ownership'
 import { useImageLoad } from '@/composables/useImageLoad'
 
 const props = withDefaults(
@@ -89,8 +90,8 @@ const released = computed(() => {
 const ownedLabel = computed(() => {
   if (props.ownedCount == null) return null
   const total = props.set.card_count
-  if (total > 0) return `${Math.min(props.ownedCount, total)}/${total} owned`
-  return `${props.ownedCount} owned`
+  if (total > 0) return formatCompletion(props.ownedCount, total)
+  return `${props.ownedCount.toLocaleString()} owned`
 })
 
 // The total copies (with duplicates) as "N copies", shown next to the completion count
@@ -98,7 +99,7 @@ const ownedLabel = computed(() => {
 // owned count (issue #125).
 const copiesLabel = computed(() =>
   props.ownedCount != null && props.ownedCopies != null && props.ownedCopies > props.ownedCount
-    ? `${props.ownedCopies} copies`
+    ? formatCopies(props.ownedCopies)
     : null,
 )
 </script>

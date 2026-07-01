@@ -70,10 +70,10 @@ const isEmpty = computed(
   () => !query.isPending.value && !query.isError.value && points.value.length === 0,
 )
 
-// Sparse series read better with point markers; the longer, downsampled ranges
-// are cleaner as plain lines. (Also keeps a single-point series visible, since a
-// one-datum line has no stroke.)
-const showDots = computed(() => points.value.length <= 35)
+// No point markers: the crosshair snaps to the nearest datum on hover, so the dots
+// are redundant. The one exception is a single-datum series, which has no line
+// stroke to draw — without a dot it'd render nothing at all.
+const showDots = computed(() => points.value.length === 1)
 
 // Series legend/tooltip metadata. Colours are the theme's chart tokens, which the
 // CSS variables resolve differently in light vs dark, so the chart follows the theme.

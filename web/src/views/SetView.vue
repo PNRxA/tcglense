@@ -8,9 +8,12 @@ import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
+import DropSection from '@/components/cards/DropSection.vue'
+import DropViewToggle from '@/components/cards/DropViewToggle.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
+import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { useClampPage } from '@/composables/useClampPage'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -18,7 +21,6 @@ import { useSetGrouping } from '@/composables/useSetGrouping'
 import { SET_DEFAULT_SORT, SET_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
 import { getSet, listSetCards, listSetDrops, type Card } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
-import { cn } from '@/lib/utils'
 
 const props = defineProps<{ game: string; code: string }>()
 const game = toRef(props, 'game')
@@ -200,14 +202,14 @@ const searchError = computed(() => searchErrorMessage(listError.value))
 
       <!-- The search bar sticks to the top of the viewport so it stays reachable
            while scrolling a long set. -->
-      <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
+      <StickySearchBar>
         <CardSearchBox
           v-model="searchInput"
           :placeholder="
             includeRelated ? 'Search these sets — c:r, t:land…' : 'Search this set — c:r, t:land…'
           "
         />
-      </div>
+      </StickySearchBar>
       <SearchSyntaxHint class="mt-2 mb-6" />
 
       <!-- Offer folding the set's related sub-sets (tokens, promos, decks, …) into
@@ -247,35 +249,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
              fixed drop order). The size menu shows in both views since the
              by-drop sections are grids too. -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div
-            v-if="hasDrops"
-            class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-sm"
-          >
-            <button
-              type="button"
-              :class="
-                cn(
-                  'rounded px-3 py-1.5 font-medium transition-colors',
-                  byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-                )
-              "
-              @click="setView('drops')"
-            >
-              By drop
-            </button>
-            <button
-              type="button"
-              :class="
-                cn(
-                  'rounded px-3 py-1.5 font-medium transition-colors',
-                  !byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-                )
-              "
-              @click="setView('all')"
-            >
-              All cards
-            </button>
-          </div>
+          <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setView" />
           <span v-else />
           <div class="flex gap-2">
             <CardSizeMenu />
@@ -285,20 +259,9 @@ const searchError = computed(() => searchErrorMessage(listError.value))
 
         <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
         <template v-if="byDrop">
-          <section
-            v-for="drop in dropGroups"
-            :id="drop.slug ?? undefined"
-            :key="drop.slug ?? drop.title"
-            class="mb-10 scroll-mt-20"
-          >
-            <div class="mb-4 flex items-baseline gap-2 border-b pb-2">
-              <h2 class="text-lg font-semibold tracking-tight">{{ drop.title }}</h2>
-              <span class="text-muted-foreground text-sm tabular-nums">
-                {{ drop.card_count }} {{ drop.card_count === 1 ? 'card' : 'cards' }}
-              </span>
-            </div>
+          <DropSection v-for="drop in dropGroups" :key="drop.slug ?? drop.title" :drop="drop">
             <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
-          </section>
+          </DropSection>
           <div class="mt-10">
             <CardPagination v-model:page="page" :page-size="DROP_PAGE_SIZE" :total="dropTotal" />
           </div>

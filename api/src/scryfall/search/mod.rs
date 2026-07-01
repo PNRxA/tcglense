@@ -108,8 +108,8 @@ const MAX_MANA_SYMBOLS: usize = 64;
 /// The five MTG colours, in canonical WUBRG order.
 const WUBRG: [char; 5] = ['W', 'U', 'B', 'R', 'G'];
 /// Rarities low→high; index is the ordinal used by `r>=`/`r<` comparisons and by
-/// the catalog's rarity sort ([`crate::handlers::catalog`]), so both rank rarity
-/// identically.
+/// the shared card-list rarity sort ([`crate::handlers::shared::sort`]), so both
+/// rank rarity identically.
 pub(crate) const RARITIES: [&str; 6] = ["common", "uncommon", "rare", "special", "mythic", "bonus"];
 
 /// Parse a Scryfall-style query into just its row `Condition`, discarding any
@@ -139,9 +139,6 @@ pub fn parse_query(input: &str) -> Result<ParsedQuery, SearchError> {
     })
 }
 
-/// Pull the global `order:` / `direction:` / `unique:` directive tokens out of the
-/// stream (last-one-wins), returning the remaining tokens for the boolean parser.
-/// A directive may not be negated (`-order:…`).
 /// The result-shaping directives extracted from a query.
 #[derive(Default)]
 struct Directives {
@@ -150,6 +147,9 @@ struct Directives {
     unique: Option<UniqueMode>,
 }
 
+/// Pull the global `order:` / `direction:` / `unique:` directive tokens out of the
+/// stream (last-one-wins), returning the remaining tokens for the boolean parser.
+/// A directive may not be negated (`-order:…`).
 fn extract_directives(tokens: Vec<Token>) -> Result<(Vec<Token>, Directives), SearchError> {
     let mut d = Directives::default();
     let mut kept = Vec::with_capacity(tokens.len());

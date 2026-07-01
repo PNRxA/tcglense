@@ -1,0 +1,213 @@
+//! Public, game-agnostic card-catalog endpoints.
+//!
+//! All routes are unauthenticated reads of card data, namespaced by `game`
+//! (`/api/games/{game}/...`) so every supported TCG shares one URL shape and one
+//! set of handlers. The image route is a lazy caching proxy (see
+//! [`crate::catalog::images`]).
+//!
+//! The handlers are split across submodules by concern — [`status`] (game list +
+//! import status), [`sets`] (sets, set cards, by-drop), [`cards`] (card lists +
+//! detail + other printings), [`prices`] (price history), and [`image`] (the image
+//! proxy) — with the shared query params and card helpers kept here.
+
+use sea_orm::{
+    ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Select,
+    sea_query::{Expr, NullOrdering},
+};
+use serde::Deserialize;
+
+use crate::catalog::Game;
+use crate::entities::card;
+use crate::entities::prelude::Card;
+use crate::error::AppError;
+use crate::handlers::shared::{
+    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField,
+    resolve_page, search_condition, trim_query,
+};
+
+mod cards;
+mod image;
+mod prices;
+mod sets;
+mod status;
+
+#[cfg(test)]
+mod tests;
+
+pub use cards::{card_prints, get_card, list_cards};
+pub use image::card_image;
+pub use prices::card_prices;
+pub use sets::{get_set, list_set_cards, list_set_drops, list_sets, set_icon};
+pub use status::{ingest_status, list_games};
+
+/// Card art for a given id is immutable, so it is safe to cache aggressively.
+const IMAGE_CACHE_CONTROL: &str = "public, max-age=2592000, immutable";
+
+// ---------- Query params ----------
+
+#[derive(Debug, Deserialize)]
+pub struct ListParams {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Set-cards only: when `true`, span the set's whole group (its top-level
+    /// root plus every related sub-set) instead of just the one set. Ignored by
+    /// the all-cards endpoint.
+    #[serde(default)]
+    pub include_related: Option<bool>,
+    /// Sort key (`number`/`name`/`rarity`/`released`/`cmc`/`price`). Absent =
+    /// the endpoint's natural default. Unknown values are a 422.
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Sort direction (`asc`/`desc`). Absent = the sort field's natural
+    /// direction. Unknown values are a 422.
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+impl ListParams {
+    fn page_and_size(&self) -> (u64, u64) {
+        resolve_page(self.page, self.page_size, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+    }
+
+    /// Page + page size for the by-drop listing, which paginates over drops
+    /// (not cards) and so has its own smaller bounds.
+    fn drop_page_and_size(&self) -> (u64, u64) {
+        resolve_page(
+            self.page,
+            self.page_size,
+            DEFAULT_DROP_PAGE_SIZE,
+            MAX_DROP_PAGE_SIZE,
+        )
+    }
+
+    fn search(&self) -> Option<&str> {
+        trim_query(self.q.as_deref())
+    }
+
+    /// Resolve the `(field, direction)` sort from the URL `sort`/`dir` params, an
+    /// in-query `order:`/`direction:` directive, and the endpoint default, in that
+    /// precedence order (URL param > in-query directive > default). An unrecognised
+    /// value is a 422, consistent with a malformed `q` rather than silently ignored.
+    fn sort_spec_with(
+        &self,
+        default: SortField,
+        q_order: Option<SortField>,
+        q_dir: Option<SortDir>,
+    ) -> Result<(SortField, SortDir), AppError> {
+        let field = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(value) => SortField::parse(value)?,
+            None => q_order.unwrap_or(default),
+        };
+        let dir = match self.dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(value) => SortDir::parse(value)?,
+            None => q_dir.unwrap_or(field.default_dir()),
+        };
+        Ok((field, dir))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImageParams {
+    pub size: Option<String>,
+    pub face: Option<usize>,
+}
+
+/// Query params for the price-history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct PriceParams {
+    /// Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`). Absent/blank = the
+    /// full daily series; an unknown value is a 422.
+    #[serde(default)]
+    pub range: Option<String>,
+}
+
+// ---------- Shared card helpers ----------
+
+/// Query a card's **other** printings: same game and `oracle_id`, excluding the
+/// card itself (`exclude_id`). Ordered newest printing first (released date desc,
+/// nulls last), then set code and collector number, with a stable `id` tiebreaker
+/// so the order is deterministic. `oracle_id` is the gameplay-identity key shared
+/// across all printings of a card.
+///
+/// Capped at `MAX_PAGE_SIZE` results: a handful of cards (e.g. basic lands) share
+/// one `oracle_id` across hundreds-to-thousands of printings, and this is a "see
+/// also" aid rather than an exhaustive listing, so it returns at most the newest
+/// `MAX_PAGE_SIZE` rather than an unbounded response.
+fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::Entity> {
+    Card::find()
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::OracleId.eq(oracle_id))
+        .filter(card::Column::Id.ne(exclude_id))
+        .order_by_with_nulls(card::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
+        .order_by_asc(card::Column::SetCode)
+        .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last)
+        .order_by_asc(card::Column::CollectorNumber)
+        .order_by_asc(card::Column::Id)
+        .limit(MAX_PAGE_SIZE)
+}
+
+/// The result-shaping directives a `q` may carry (`order:`/`direction:`/`unique:`),
+/// resolved into the catalog's own sort/unique types.
+#[derive(Default)]
+struct SearchShape {
+    order: Option<SortField>,
+    direction: Option<SortDir>,
+    unique: Option<crate::scryfall::search::UniqueMode>,
+}
+
+/// Apply the optional `q` search filter and return the filtered query plus any
+/// result-shaping directives the query carried. A blank/absent `q` leaves the query
+/// unchanged; a malformed query surfaces as a 422.
+fn apply_search(
+    query: Select<card::Entity>,
+    game: &Game,
+    params: &ListParams,
+) -> Result<(Select<card::Entity>, SearchShape), AppError> {
+    match params.search() {
+        Some(search) => {
+            let (condition, shape) = parse_search(game, search)?;
+            Ok((query.filter(condition), shape))
+        }
+        None => Ok((query, SearchShape::default())),
+    }
+}
+
+/// Parse an MTG `q` into its row condition plus result-shaping directives; other
+/// games fall back to a plain name substring with no directives.
+fn parse_search(game: &Game, search: &str) -> Result<(Condition, SearchShape), AppError> {
+    match game.id {
+        crate::scryfall::GAME => {
+            let q = crate::scryfall::search::parse_query(search)?;
+            Ok((
+                q.condition,
+                SearchShape {
+                    order: q.order.map(SortField::from),
+                    direction: q.direction.map(SortDir::from),
+                    unique: q.unique,
+                },
+            ))
+        }
+        _ => Ok((search_condition(game, search)?, SearchShape::default())),
+    }
+}
+
+/// Apply a `unique:` de-duplication mode by grouping on a null-safe key (`'#'||id`
+/// keeps NULL-key rows distinct so they don't collapse together). `prints`/absent
+/// leaves the per-printing rows untouched.
+fn apply_unique(
+    query: Select<card::Entity>,
+    unique: Option<crate::scryfall::search::UniqueMode>,
+) -> Select<card::Entity> {
+    use crate::scryfall::search::UniqueMode;
+    match unique {
+        Some(UniqueMode::Cards) => {
+            query.group_by(Expr::cust("COALESCE(cards.oracle_id, '#' || cards.id)"))
+        }
+        Some(UniqueMode::Art) => {
+            query.group_by(Expr::cust("COALESCE(cards.illustration_id, '#' || cards.id)"))
+        }
+        _ => query,
+    }
+}

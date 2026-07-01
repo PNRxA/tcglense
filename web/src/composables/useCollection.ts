@@ -1,33 +1,21 @@
 import { computed, ref, type Ref } from 'vue'
 import { keepPreviousData, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import {
-  deleteCollectionSource,
   getCollection,
   getCollectionEntry,
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
-  getCollectionSource,
   getCollectionSummary,
-  getImportJob,
-  importCollection,
-  importCollectionCsv,
-  saveCollectionSource,
   setCollectionEntry,
-  syncCollectionSource,
   type ApiError,
   type Card,
   type CollectionDropGroupPage,
   type CollectionPage,
-  type CollectionProvider,
   type CollectionQuantities,
   type CollectionSet,
-  type CollectionSource,
   type CollectionSummary,
-  type ImportJob,
-  type ImportSummary,
   type OwnedCountsMap,
-  type ReconcileMode,
 } from '@/lib/api'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
@@ -271,140 +259,4 @@ export function useSetCollectionEntryMutation() {
     },
   }
   return useAuthedMutation<CollectionQuantities, SetCollectionVars>(options)
-}
-
-// ---------- Import / sync from an external collection provider ----------
-
-/**
- * The user's saved external collection link for a game (or null). Drives the
- * "Re-sync" affordance and prefills the import dialog. Disabled while signed out.
- */
-export function useCollectionSourceQuery(game: Ref<string>) {
-  const auth = useAuthStore()
-  const options = {
-    queryKey: ['collection-source', game],
-    queryFn: (token: string) => getCollectionSource(token, game.value),
-    enabled: computed(() => auth.isAuthenticated),
-  }
-  return useAuthedQuery<CollectionSource | null>(options)
-}
-
-/** Variables for a one-off import. */
-export interface ImportCollectionVars {
-  game: string
-  provider: CollectionProvider
-  source: string
-  mode: ReconcileMode
-}
-
-/**
- * Enqueue a one-off import from a provider. Resolves to a job to poll (via
- * {@link useImportJobQuery}); the collection caches are invalidated only once that job
- * completes, so nothing is invalidated here.
- */
-export function useImportCollectionMutation() {
-  const options = {
-    mutationFn: (token: string, vars: ImportCollectionVars) =>
-      importCollection(token, vars.game, {
-        provider: vars.provider,
-        source: vars.source,
-        mode: vars.mode,
-      }),
-  }
-  return useAuthedMutation<ImportJob, ImportCollectionVars>(options)
-}
-
-/** Variables for a CSV upload import: the file and how to reconcile it. */
-export interface ImportCsvVars {
-  game: string
-  file: File
-  mode: ReconcileMode
-}
-
-/**
- * Import a collection from an uploaded Archidekt CSV export. Resolves **synchronously**
- * to an {@link ImportSummary} (the CSV needs no upstream fetch, so there's no job to
- * poll); the caller invalidates the collection caches on success.
- */
-export function useImportCollectionCsvMutation() {
-  const options = {
-    mutationFn: (token: string, vars: ImportCsvVars) =>
-      importCollectionCsv(token, vars.game, vars.file, vars.mode),
-  }
-  return useAuthedMutation<ImportSummary, ImportCsvVars>(options)
-}
-
-/**
- * Poll a background import/sync job until it reaches a terminal status. Enabled only
- * while `jobId` is set; refetches every 2s while `queued`/`running`, then stops.
- */
-export function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) {
-  const auth = useAuthStore()
-  const options = {
-    queryKey: ['import-job', game, jobId],
-    queryFn: (token: string) => getImportJob(token, game.value, jobId.value as number),
-    enabled: computed(() => auth.isAuthenticated && jobId.value != null),
-    refetchInterval: (query: { state: { data?: ImportJob } }) => {
-      const status = query.state.data?.status
-      return status === 'queued' || status === 'running' ? 2000 : false
-    },
-    // A job's status is inherently fresh; don't serve a stale cached terminal state.
-    staleTime: 0,
-    gcTime: 0,
-  }
-  return useAuthedQuery<ImportJob>(options)
-}
-
-/** Variables for saving a collection link. */
-export interface SaveSourceVars {
-  game: string
-  provider: CollectionProvider
-  source: string
-  /** Whether saved re-syncs should use smart (incremental) sync. */
-  smart?: boolean
-}
-
-/** Save (upsert) the collection link; invalidates the saved-source query. */
-export function useSaveCollectionSourceMutation() {
-  const qc = useQueryClient()
-  const options = {
-    mutationFn: (token: string, vars: SaveSourceVars) =>
-      saveCollectionSource(token, vars.game, {
-        provider: vars.provider,
-        source: vars.source,
-        smart: vars.smart,
-      }),
-    onSettled: (
-      _data: CollectionSource | undefined,
-      _error: ApiError | null,
-      vars: SaveSourceVars,
-    ) => {
-      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
-    },
-  }
-  return useAuthedMutation<CollectionSource, SaveSourceVars>(options)
-}
-
-/** Forget the saved collection link; invalidates the saved-source query. */
-export function useDeleteCollectionSourceMutation() {
-  const qc = useQueryClient()
-  const options = {
-    mutationFn: (token: string, vars: { game: string }) => deleteCollectionSource(token, vars.game),
-    onSettled: (_data: void | undefined, _error: ApiError | null, vars: { game: string }) => {
-      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
-    },
-  }
-  return useAuthedMutation<void, { game: string }>(options)
-}
-
-/**
- * Enqueue a re-sync from the saved link (mirror/replace). Resolves to a job to poll; the
- * collection + saved-source caches are invalidated once that job completes (the caller
- * does this on completion, via {@link invalidateCollectionData} + the source query).
- */
-export function useSyncCollectionSourceMutation() {
-  const options = {
-    mutationFn: (token: string, vars: { game: string }) => syncCollectionSource(token, vars.game),
-  }
-  return useAuthedMutation<ImportJob, { game: string }>(options)
 }
