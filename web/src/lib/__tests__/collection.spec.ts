@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import {
   collectionEntryPath,
+  collectionImportJobPath,
   collectionImportPath,
   collectionPath,
   collectionSourcePath,
@@ -45,9 +46,14 @@ describe('import / sync paths', () => {
     expect(collectionSyncPath('mtg')).toBe('/api/collection/mtg/sync')
   })
 
+  it('builds the import-job status path', () => {
+    expect(collectionImportJobPath('mtg', 42)).toBe('/api/collection/mtg/import/jobs/42')
+  })
+
   it('encodes the game segment', () => {
     expect(collectionImportPath('a/b')).toContain('a%2Fb')
     expect(collectionSourcePath('a/b')).toContain('a%2Fb')
     expect(collectionSyncPath('a/b')).toContain('a%2Fb')
+    expect(collectionImportJobPath('a/b', 1)).toContain('a%2Fb')
   })
 })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Download, Trash2, TriangleAlert } from '@lucide/vue'
+import { computed, ref, toRef, watch } from 'vue'
+import { Download, LoaderCircle, Trash2, TriangleAlert } from '@lucide/vue'
+import { useQueryClient } from '@tanstack/vue-query'
 import {
   Dialog,
   DialogClose,
@@ -13,8 +14,10 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  invalidateCollectionData,
   useDeleteCollectionSourceMutation,
   useImportCollectionMutation,
+  useImportJobQuery,
   useSaveCollectionSourceMutation,
 } from '@/composables/useCollection'
 import { ApiError } from '@/lib/api'
@@ -56,13 +59,20 @@ const sourceInput = ref(props.source?.url ?? '')
 const mode = ref<ReconcileMode>('overwrite')
 const saveLink = ref(props.source != null)
 
+const gameRef = toRef(props, 'game')
+const qc = useQueryClient()
 const importMutation = useImportCollectionMutation()
 const saveMutation = useSaveCollectionSourceMutation()
 const deleteMutation = useDeleteCollectionSourceMutation()
 
-const submitting = ref(false)
+const enqueuing = ref(false)
 const errorMessage = ref<string | null>(null)
 const result = ref<ImportSummary | null>(null)
+
+// The in-flight import job we're polling (null when none). The import runs in the
+// background (throttled by the provider rate limit); we poll it to completion.
+const jobId = ref<number | null>(null)
+const jobQuery = useImportJobQuery(gameRef, jobId)
 
 // Reset the form each time the dialog opens: seed the URL/checkbox from the current
 // saved link and clear any leftover status from a previous session (the component
@@ -75,30 +85,61 @@ watch(open, (isOpen) => {
   saveLink.value = props.source != null
   errorMessage.value = null
   result.value = null
-  submitting.value = false
+  jobId.value = null
+  enqueuing.value = false
 })
+
+// React to the polled job reaching a terminal status.
+watch(
+  () => jobQuery.data.value,
+  (job) => {
+    if (!job) return
+    if (job.status === 'complete') {
+      result.value = job.summary ?? null
+      // The collection contents changed — refresh the grid, header, and card steppers.
+      invalidateCollectionData(qc, props.game)
+    } else if (job.status === 'error') {
+      errorMessage.value = job.error ?? 'Import failed. Please try again.'
+    }
+  },
+)
 
 const providerLabel = computed(
   () => PROVIDERS.find((p) => p.value === provider.value)?.label ?? provider.value,
 )
-const canSubmit = computed(() => sourceInput.value.trim().length > 0 && !submitting.value)
+const jobStatus = computed(() => jobQuery.data.value?.status ?? null)
+const processing = computed(() => jobStatus.value === 'queued' || jobStatus.value === 'running')
+const busy = computed(() => enqueuing.value || processing.value)
+const canSubmit = computed(() => sourceInput.value.trim().length > 0 && !busy.value)
+const statusMessage = computed(() => {
+  switch (jobStatus.value) {
+    case 'queued':
+      return 'Queued — waiting for a free slot…'
+    case 'running':
+      return 'Importing from Archidekt… this can take a couple of minutes (we throttle requests to respect their rate limit).'
+    default:
+      return null
+  }
+})
 
 async function runImport() {
   if (!canSubmit.value) return
-  submitting.value = true
+  enqueuing.value = true
   errorMessage.value = null
   result.value = null
+  jobId.value = null
   const trimmed = sourceInput.value.trim()
   try {
-    const summary = await importMutation.mutateAsync({
+    const job = await importMutation.mutateAsync({
       game: props.game,
       provider: provider.value,
       source: trimmed,
       mode: mode.value,
     })
-    // The import succeeded — show it before attempting the (optional) link save, so a
-    // failing save can't hide a collection change that already happened.
-    result.value = summary
+    // Start polling this job; the summary/error arrive via the watcher above.
+    jobId.value = job.job_id
+    // Saving the link doesn't touch the provider, so do it now (optional). A save
+    // failure is a non-blocking warning — the import still runs.
     if (saveLink.value) {
       try {
         await saveMutation.mutateAsync({
@@ -109,14 +150,14 @@ async function runImport() {
       } catch (err) {
         errorMessage.value =
           err instanceof ApiError
-            ? `Imported, but couldn't save the link: ${err.message}`
-            : "Imported, but couldn't save the link for re-syncing."
+            ? `Couldn't save the link: ${err.message}`
+            : "Couldn't save the link for re-syncing."
       }
     }
   } catch (err) {
     errorMessage.value = err instanceof ApiError ? err.message : 'Import failed. Please try again.'
   } finally {
-    submitting.value = false
+    enqueuing.value = false
   }
 }
 
@@ -224,6 +265,16 @@ const selectClass =
           </p>
         </div>
 
+        <!-- In-progress status (queued / running) -->
+        <p
+          v-if="statusMessage"
+          class="text-muted-foreground flex items-start gap-2 text-sm"
+          aria-live="polite"
+        >
+          <LoaderCircle class="mt-0.5 size-4 shrink-0 animate-spin" />
+          <span>{{ statusMessage }}</span>
+        </p>
+
         <!-- Error -->
         <p
           v-if="errorMessage"
@@ -261,7 +312,7 @@ const selectClass =
         <div class="flex gap-2">
           <DialogClose :class="buttonVariants({ variant: 'outline' })">Close</DialogClose>
           <Button :disabled="!canSubmit" @click="runImport">
-            {{ submitting ? 'Importing…' : 'Import' }}
+            {{ busy ? 'Working…' : 'Import' }}
           </Button>
         </div>
       </div>

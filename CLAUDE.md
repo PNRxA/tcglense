@@ -254,11 +254,12 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `GET /api/collection/{game}/summary` | — | `{ unique_cards, total_cards, total_value_usd }` — distinct cards, total copies (regular + foil), and an estimated USD value (regular copies at `usd`, foil at `usd_foil`) as a 2-dp string (`null` if nothing owned is priced) |
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
-| `POST /api/collection/{game}/import` | `{ provider, source, mode }` | one-off import from a provider — `ImportSummary`. `provider` is `"archidekt"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge`. Does not save a link. `422` for an unknown provider / unparseable source / too-large or empty collection; `404` if the provider has no public collection there; `502` if the provider is unreachable |
+| `POST /api/collection/{game}/import` | `{ provider, source, mode }` | **`202`** `ImportJob` `{ job_id, status: "queued" }` — enqueues a one-off import (runs async; poll the job below). Validated synchronously: `422` for an unknown provider / unparseable source; `503` if too many imports are queued. `provider` is `"archidekt"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge`. Does not save a link |
+| `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, summary?, error? }` — poll an import/sync job. `status` ∈ `queued`/`running`/`complete`/`error`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/source` | — | `CollectionSource` or `null` — the saved collection link for this game |
 | `PUT /api/collection/{game}/source` | `{ provider, source }` | `CollectionSource` — save/upsert the link (one per user+game; validates the source resolves; does not sync) |
 | `DELETE /api/collection/{game}/source` | — | `204` — forget the saved link (idempotent) |
-| `POST /api/collection/{game}/sync` | — | re-sync from the saved link using **mirror/replace**, stamp `last_synced_at`, return `ImportSummary`. `404` if no link is saved |
+| `POST /api/collection/{game}/sync` | — | **`202`** `ImportJob` — enqueues a re-sync from the saved link using **mirror/replace** (the worker stamps `last_synced_at` on success). `404` if no link is saved |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
 the full catalog `Card` shape (reusing the catalog's `CardResponse`). The `PUT` needs
@@ -268,15 +269,23 @@ exercised, but a direct cross-origin write needs it.
 
 **Import/sync** (`handlers::collection` + the `collection_import` module) pulls a
 collection from an external provider **server-side** (via the shared `AppState.http`
-client) and reconciles it into `collection_items`. Providers are dispatched by a
-`Provider` enum (Archidekt today, one module per service — Moxfield planned), each
-fetching + parsing to normalized `(external_card_id, foil, quantity)` holdings; the
-provider-independent engine aggregates by card (`(uid, foil)` — the same printing can
-span several provider rows), resolves each `external_card_id` to `cards.external_id`
-(for Archidekt the `card.uid` is the Scryfall id), skips unmatched cards, then applies
-the chosen `ReconcileMode` in one transaction. `ImportSummary = { provider, mode,
+client) and reconciles it into `collection_items`. Because the provider enforces a strict
+request cap (Archidekt ≈20 req/min), an import of a large collection takes minutes, so it
+runs **asynchronously**: the handler validates synchronously, enqueues a background job
+(`collection_import::jobs`), and returns `202` + a `job_id`; the SPA polls the job-status
+route until `complete`/`error`. Imports run **one at a time** (a job waiting for the slot
+reports `queued`), and a process-wide `RateLimiter` (`collection_import::rate_limit`,
+20/min ⇒ one request every 3s) throttles **every** provider request across all imports.
+Providers are dispatched by a `Provider` enum (Archidekt today, one module per service —
+Moxfield planned), each fetching + parsing to normalized `(external_card_id, foil,
+quantity)` holdings; the provider-independent engine aggregates by card (`(uid, foil)` —
+the same printing can span several provider rows), resolves each `external_card_id` to
+`cards.external_id` (for Archidekt the `card.uid` is the Scryfall id) in chunked `IN`
+lookups, skips unmatched cards, then applies the chosen `ReconcileMode` in one transaction
+(atomic `ON CONFLICT` upserts + keyed deletes). `ImportSummary = { provider, mode,
 total_rows, distinct_cards, matched_cards, unmatched_cards, unmatched_sample,
-regular_copies, foil_copies, removed_cards }`. A saved link is
+regular_copies, foil_copies, removed_cards }`. Import jobs live in-memory in `AppState.imports`
+(lost on restart; the client just re-imports). A saved link is
 `entities/collection_source.rs` (`collection_sources`, unique on `(user_id, game)`,
 `user_id` FK → `users` `ON DELETE CASCADE`, stores `provider` + `external_id` +
 `last_synced_at`). Archidekt is MTG-only and its API is fetched at
@@ -290,11 +299,11 @@ there's no SSRF surface.
 main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → seed dummy catalog (SEED_DUMMY_DATA) or spawn periodic card-data import (daily) → router → serve
 config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secret
 db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000), applied to every pooled connection
-state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client } (cloned into handlers; `http` is the request-path provider client, e.g. Archidekt import)
+state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + provider rate limiter)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
 entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`)
-collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + fetch dispatch + aggregate/plan_reconcile/apply engine + ImportError→AppError) and archidekt.rs (parse collection id from URL/id, paginated fetch → normalized holdings). Moxfield = add a Provider variant + a module
+collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + execute_import/aggregate/plan_reconcile/apply engine + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch → normalized holdings), rate_limit.rs (global RateLimiter, 20 req/min to the provider), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -466,17 +475,22 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   web + API same-origin (or configure cross-origin CORS credentials).
 - **No rate limiting / brute-force protection** on login yet.
 - **Collection import (Archidekt):** the import/sync endpoints fetch a public
-  collection **server-side** and reconcile it. Archidekt's API pages 25 rows at a time
-  with no page-size override, so a large collection is many sequential requests
-  (fetched in-request, bounded by `MAX_IMPORT_ROWS`); there's no per-user rate limit on
-  the import routes yet (same posture as login). It relies on Archidekt's unofficial,
-  undocumented API (may break on their side) and its committed-snapshot-free live fetch;
-  a private/missing collection is a `404`, an empty one a `422` (so a mirror can't
-  silently wipe a collection against a misresolved source). A saved re-sync always
-  mirrors (replace) and stamps `last_synced_at`, but there's **no automatic background
-  sync** — re-sync is user-triggered. Cards not in our catalog are skipped (surfaced in
-  the summary's `unmatched_*`). Moxfield is planned; the `collection_import` layer is
-  already provider-generic so adding it is a new `Provider` variant + module.
+  collection **server-side** and reconcile it. Archidekt caps requests (≈20/min) and
+  pages 25 rows at a time with no page-size override, so a large collection takes minutes.
+  Imports therefore run **asynchronously**: the endpoint returns `202` + a job id and the
+  client polls; a process-wide `RateLimiter` (20/min ⇒ one request every 3s) throttles
+  every provider request across all imports, and a single-slot queue runs one import at a
+  time (others report `queued`). Jobs are **in-memory** (`AppState.imports`) — lost on
+  restart (the client just re-imports) and not shared across instances, so a multi-instance
+  deploy would need a shared job store + a distributed rate limiter (or a dedicated worker).
+  It relies on Archidekt's unofficial, undocumented API (may break on their side); a
+  private/missing collection is a `404`, an empty one a `422`, and a mirror/replace that
+  matches **zero** catalog cards is refused (so it can't wipe a collection against a
+  misresolved/unsynced source). A saved re-sync always mirrors (replace) and stamps
+  `last_synced_at`, but there's **no automatic background sync** — re-sync is
+  user-triggered. Cards not in our catalog are skipped (surfaced in the summary's
+  `unmatched_*`). Moxfield is planned; the `collection_import` layer is already
+  provider-generic so adding it is a new `Provider` variant + module.
 - **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
   gated on `rows_affected`, so it's race-safe across connections. The
   revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation

@@ -58,6 +58,7 @@ pub(super) async fn test_state() -> AppState {
         http: reqwest::Client::builder()
             .build()
             .expect("build http client"),
+        imports: std::sync::Arc::new(crate::collection_import::jobs::ImportQueue::default()),
     }
 }
 

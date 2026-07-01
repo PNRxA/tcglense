@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
+import { useQueryClient } from '@tanstack/vue-query'
 import { LayoutGrid, Library, RefreshCw } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -12,9 +13,11 @@ import { useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import {
   COLLECTION_PAGE_SIZE,
+  invalidateCollectionData,
   useCollectionQuery,
   useCollectionSourceQuery,
   useCollectionSummaryQuery,
+  useImportJobQuery,
   useSyncCollectionSourceMutation,
 } from '@/composables/useCollection'
 import { ApiError } from '@/lib/api'
@@ -72,10 +75,20 @@ const totalValue = computed(() => {
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 
 // Import / sync from an external collection provider (Archidekt today).
+const qc = useQueryClient()
 const sourceQuery = useCollectionSourceQuery(game)
 const source = computed(() => sourceQuery.data.value ?? null)
 const syncMutation = useSyncCollectionSourceMutation()
 const syncMessage = ref<string | null>(null)
+
+// Re-sync runs in the background (throttled by the provider rate limit); poll its job.
+const syncJobId = ref<number | null>(null)
+const syncJobQuery = useImportJobQuery(game, syncJobId)
+const syncStatus = computed(() => syncJobQuery.data.value?.status ?? null)
+const syncing = computed(
+  () =>
+    syncMutation.isPending.value || syncStatus.value === 'queued' || syncStatus.value === 'running',
+)
 
 const providerLabel = computed(() =>
   source.value?.provider === 'archidekt' ? 'Archidekt' : (source.value?.provider ?? 'Archidekt'),
@@ -89,22 +102,42 @@ const lastSyncedText = computed(() => {
 
 // A saved re-sync mirrors (replace), so it can remove cards — confirm before running.
 async function resync() {
-  if (!source.value || syncMutation.isPending.value) return
+  if (!source.value || syncing.value) return
   const ok = window.confirm(
     `Re-syncing replaces your ${gameName.value} collection with your ${providerLabel.value} ` +
       'collection, removing cards that are no longer in it. Continue?',
   )
   if (!ok) return
-  syncMessage.value = null
+  syncMessage.value = 'Re-sync queued…'
+  syncJobId.value = null
   try {
-    const summary = await syncMutation.mutateAsync({ game: game.value })
-    syncMessage.value =
-      `Synced ${summary.matched_cards.toLocaleString()} cards` +
-      (summary.removed_cards ? `, removed ${summary.removed_cards.toLocaleString()}.` : '.')
+    const job = await syncMutation.mutateAsync({ game: game.value })
+    syncJobId.value = job.job_id
   } catch (err) {
     syncMessage.value = err instanceof ApiError ? err.message : 'Re-sync failed. Please try again.'
   }
 }
+
+// React to the polled re-sync job finishing.
+watch(
+  () => syncJobQuery.data.value,
+  (job) => {
+    if (!job) return
+    if (job.status === 'running') {
+      syncMessage.value = 'Re-syncing from Archidekt… this can take a couple of minutes.'
+    } else if (job.status === 'complete') {
+      const s = job.summary
+      syncMessage.value = s
+        ? `Synced ${s.matched_cards.toLocaleString()} cards` +
+          (s.removed_cards ? `, removed ${s.removed_cards.toLocaleString()}.` : '.')
+        : 'Re-sync complete.'
+      invalidateCollectionData(qc, game.value)
+      qc.invalidateQueries({ queryKey: ['collection-source', game.value] })
+    } else if (job.status === 'error') {
+      syncMessage.value = job.error ?? 'Re-sync failed. Please try again.'
+    }
+  },
+)
 </script>
 
 <template>
@@ -164,13 +197,8 @@ async function resync() {
         <div class="mt-5 flex flex-wrap items-center gap-3">
           <ImportCollectionDialog :game="game" :source="source" />
           <template v-if="source">
-            <Button
-              variant="secondary"
-              size="sm"
-              :disabled="syncMutation.isPending.value"
-              @click="resync"
-            >
-              <RefreshCw :class="{ 'animate-spin': syncMutation.isPending.value }" />
+            <Button variant="secondary" size="sm" :disabled="syncing" @click="resync">
+              <RefreshCw :class="{ 'animate-spin': syncing }" />
               Re-sync from {{ providerLabel }}
             </Button>
             <span class="text-muted-foreground text-sm">{{ lastSyncedText }}</span>

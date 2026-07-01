@@ -187,3 +187,22 @@ async fn unknown_game_is_404_for_source_routes() {
     let (status, _, _) = send(&app, get_with_bearer("/api/collection/pokemon/source", &token)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn import_job_status_requires_auth_and_unknown_job_is_404() {
+    let app = test_app_with_catalog().await;
+
+    // No token -> 401 (and no-store).
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/import/jobs/1")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // Authenticated but no such job -> 404 (job ids don't leak across users either).
+    let (token, _) = register(&app, "poller@example.com", "password123").await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/import/jobs/123456", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

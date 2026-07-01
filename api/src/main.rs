@@ -113,6 +113,7 @@ async fn main() {
         dummy_password_hash,
         images: Arc::new(ImageCache::new(image_dir, image_http)),
         http: http.clone(),
+        imports: Arc::new(collection_import::jobs::ImportQueue::default()),
     };
 
     // Spawn background maintenance (refresh-token pruning) and either the offline

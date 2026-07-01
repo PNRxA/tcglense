@@ -20,8 +20,8 @@ use crate::{
         },
         collection::{
             collection_summary, delete_collection_source, get_collection_entry,
-            get_collection_source, import_collection, list_collection, save_collection_source,
-            set_collection_entry, sync_collection_source,
+            get_collection_source, get_import_job, import_collection, list_collection,
+            save_collection_source, set_collection_entry, sync_collection_source,
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
@@ -70,6 +70,10 @@ pub fn build_router(state: AppState) -> Router {
         // Import / sync a collection from an external provider (Archidekt; Moxfield
         // planned): a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))
+        .route(
+            "/api/collection/{game}/import/jobs/{job_id}",
+            get(get_import_job),
+        )
         .route(
             "/api/collection/{game}/source",
             get(get_collection_source)

@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::extractor::AuthUser;
 use crate::catalog::{self, Game};
+use crate::collection_import::jobs::{self, JobStatus};
 use crate::collection_import::{self, ImportSummary, Provider, ReconcileMode};
 use crate::entities::prelude::{Card, CollectionItem, CollectionSource};
 use crate::entities::{card, collection_item, collection_source};
@@ -359,28 +360,96 @@ pub struct CollectionSourceResponse {
     pub last_synced_at: Option<String>,
 }
 
-/// `POST /api/collection/{game}/import` -> one-off import from a collection provider
-/// using the chosen reconcile mode. Does not save the link. Returns an import summary
-/// (matched / unmatched counts, copies applied, cards removed).
+/// The status of a background import/sync job — returned when one is enqueued and each
+/// time the client polls. Imports run asynchronously (throttled by the provider rate
+/// limit), so the client kicks one off and polls this until `complete`/`error`.
+#[derive(Debug, Serialize)]
+pub struct ImportJobResponse {
+    pub job_id: u64,
+    /// `queued` | `running` | `complete` | `error`.
+    pub status: &'static str,
+    /// The import summary, present only when `status == "complete"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ImportSummary>,
+    /// A user-facing message, present only when `status == "error"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl ImportJobResponse {
+    fn from_status(job_id: u64, status: JobStatus) -> Self {
+        let (status, summary, error) = match status {
+            JobStatus::Queued => ("queued", None, None),
+            JobStatus::Running => ("running", None, None),
+            JobStatus::Complete(summary) => ("complete", Some(summary), None),
+            JobStatus::Failed(message) => ("error", None, Some(message)),
+        };
+        Self {
+            job_id,
+            status,
+            summary,
+            error,
+        }
+    }
+}
+
+/// `POST /api/collection/{game}/import` -> enqueue a one-off import from a collection
+/// provider using the chosen reconcile mode (does not save the link). Validates the
+/// request synchronously, then returns `202` with a job id to poll; the fetch +
+/// reconcile run in the background, throttled by the provider rate limit.
 pub async fn import_collection(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
     JsonBody(payload): JsonBody<ImportRequest>,
-) -> Result<Json<ImportSummary>, AppError> {
+) -> Result<(StatusCode, Json<ImportJobResponse>), AppError> {
     require_game(&game)?;
     let provider = parse_provider(&payload.provider)?;
-    let summary = collection_import::run_import(
-        &state.db,
-        &state.http,
-        user.id,
-        &game,
-        provider,
-        &payload.source,
-        payload.mode,
-    )
-    .await?;
-    Ok(Json(summary))
+    if !provider.supports_game(&game) {
+        return Err(AppError::Validation(format!(
+            "{} import is not available for '{}'",
+            provider.label(),
+            game
+        )));
+    }
+    // Resolve the source id up front so a bad URL/id is an immediate 422, not a job that
+    // fails later.
+    let collection_id = collection_import::parse_source(provider, &payload.source)?;
+
+    let job_id = jobs::spawn_import_job(
+        state.db.clone(),
+        state.http.clone(),
+        state.imports.clone(),
+        jobs::ImportRequest {
+            user_id: user.id,
+            game,
+            provider,
+            collection_id,
+            mode: payload.mode,
+            stamp_source_synced: false,
+        },
+    )?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ImportJobResponse::from_status(job_id, JobStatus::Queued)),
+    ))
+}
+
+/// `GET /api/collection/{game}/import/jobs/{job_id}` -> the status of a background
+/// import/sync job (queued / running / complete / error). `404` for an unknown job or
+/// one that isn't the caller's.
+pub async fn get_import_job(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, job_id)): Path<(String, u64)>,
+) -> Result<Json<ImportJobResponse>, AppError> {
+    require_game(&game)?;
+    let status = state
+        .imports
+        .status(job_id, user.id, &game)
+        .ok_or_else(|| AppError::NotFound("import job not found".to_string()))?;
+    Ok(Json(ImportJobResponse::from_status(job_id, status)))
 }
 
 /// `GET /api/collection/{game}/source` -> the saved collection link for this game, or
@@ -480,13 +549,14 @@ pub async fn delete_collection_source(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `POST /api/collection/{game}/sync` -> re-sync from the saved collection link using
-/// mirror/replace semantics, then stamp `last_synced_at`. `404` when no link is saved.
+/// `POST /api/collection/{game}/sync` -> enqueue a re-sync from the saved collection
+/// link using mirror/replace semantics; the worker stamps `last_synced_at` on success.
+/// Returns `202` with a job id to poll. `404` when no link is saved.
 pub async fn sync_collection_source(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
-) -> Result<Json<ImportSummary>, AppError> {
+) -> Result<(StatusCode, Json<ImportJobResponse>), AppError> {
     require_game(&game)?;
     let source = find_source(&state, user.id, &game)
         .await?
@@ -498,27 +568,27 @@ pub async fn sync_collection_source(
         ))
     })?;
 
-    let summary = collection_import::run_import(
-        &state.db,
-        &state.http,
-        user.id,
-        &game,
-        provider,
-        &source.external_id,
-        // A saved re-sync always mirrors the source (the user opted into this when
-        // saving the link; the UI warns that it replaces the collection).
-        ReconcileMode::Replace,
-    )
-    .await?;
+    let job_id = jobs::spawn_import_job(
+        state.db.clone(),
+        state.http.clone(),
+        state.imports.clone(),
+        jobs::ImportRequest {
+            user_id: user.id,
+            game,
+            provider,
+            collection_id: source.external_id,
+            // A saved re-sync always mirrors the source (the user opted into this when
+            // saving the link; the UI warns that it replaces the collection).
+            mode: ReconcileMode::Replace,
+            // Stamp `last_synced_at` on success (this is a re-sync of the saved link).
+            stamp_source_synced: true,
+        },
+    )?;
 
-    // Record the successful sync time.
-    let now = Utc::now();
-    let mut active: collection_source::ActiveModel = source.into();
-    active.last_synced_at = Set(Some(now));
-    active.updated_at = Set(now);
-    active.update(&state.db).await?;
-
-    Ok(Json(summary))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ImportJobResponse::from_status(job_id, JobStatus::Queued)),
+    ))
 }
 
 // ---------- Helpers ----------

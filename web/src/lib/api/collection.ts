@@ -115,6 +115,17 @@ export type CollectionProvider = 'archidekt'
  */
 export type ReconcileMode = 'overwrite' | 'replace' | 'merge'
 
+/** A background import/sync job's status (imports run async, throttled by the provider
+ * rate limit, so the client polls this until a terminal status). */
+export interface ImportJob {
+  job_id: number
+  status: 'queued' | 'running' | 'complete' | 'error'
+  /** Present only when `status === 'complete'`. */
+  summary?: ImportSummary
+  /** Present only when `status === 'error'`. */
+  error?: string
+}
+
 /** The outcome of an import, for user feedback. */
 export interface ImportSummary {
   provider: string
@@ -165,13 +176,25 @@ export function collectionSyncPath(game: string): string {
   return `/api/collection/${encodeURIComponent(game)}/sync`
 }
 
-/** Import a collection from a provider, one-off, using the given reconcile mode. */
+/** `/api/collection/{game}/import/jobs/{jobId}` path. */
+export function collectionImportJobPath(game: string, jobId: number): string {
+  return `/api/collection/${encodeURIComponent(game)}/import/jobs/${jobId}`
+}
+
+/** Enqueue a one-off import from a provider (chosen reconcile mode). Returns a job to
+ * poll — the fetch + reconcile run in the background, throttled by the provider rate
+ * limit. */
 export function importCollection(
   token: string,
   game: string,
   body: ImportCollectionBody,
-): Promise<ImportSummary> {
-  return request<ImportSummary>(collectionImportPath(game), { method: 'POST', body, token })
+): Promise<ImportJob> {
+  return request<ImportJob>(collectionImportPath(game), { method: 'POST', body, token })
+}
+
+/** Poll a background import/sync job's status. */
+export function getImportJob(token: string, game: string, jobId: number): Promise<ImportJob> {
+  return request<ImportJob>(collectionImportJobPath(game, jobId), { token })
 }
 
 /** The saved collection link for a game, or null when none is saved. */
@@ -197,7 +220,8 @@ export function deleteCollectionSource(token: string, game: string): Promise<voi
   return request<void>(collectionSourcePath(game), { method: 'DELETE', token })
 }
 
-/** Re-sync from the saved collection link (mirror/replace). */
-export function syncCollectionSource(token: string, game: string): Promise<ImportSummary> {
-  return request<ImportSummary>(collectionSyncPath(game), { method: 'POST', token })
+/** Enqueue a re-sync from the saved collection link (mirror/replace). Returns a job to
+ * poll (runs in the background, throttled by the provider rate limit). */
+export function syncCollectionSource(token: string, game: string): Promise<ImportJob> {
+  return request<ImportJob>(collectionSyncPath(game), { method: 'POST', token })
 }

@@ -15,6 +15,7 @@
 use reqwest::{StatusCode, header};
 use serde::Deserialize;
 
+use super::rate_limit::RateLimiter;
 use super::{FetchedHolding, ImportError, MAX_IMPORT_ROWS};
 
 const API_BASE: &str = "https://archidekt.com/api/collection";
@@ -85,6 +86,7 @@ pub fn parse_collection_id(input: &str) -> Option<String> {
 /// collection can't make us fan out an unbounded number of upstream requests.
 pub async fn fetch(
     http: &reqwest::Client,
+    limiter: &RateLimiter,
     collection_id: &str,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
     // A hard page ceiling bounds the worst case even if the provider keeps handing us a
@@ -95,6 +97,9 @@ pub async fn fetch(
     let mut checked_size = false;
 
     for page in 1..=max_pages {
+        // Respect the provider's request cap across all imports before every request.
+        limiter.acquire().await;
+
         let url = format!("{API_BASE}/{collection_id}/?page={page}");
         let response = http
             .get(&url)

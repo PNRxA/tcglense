@@ -1,11 +1,12 @@
 import { computed, type Ref } from 'vue'
-import { keepPreviousData, useQueryClient } from '@tanstack/vue-query'
+import { keepPreviousData, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import {
   deleteCollectionSource,
   getCollection,
   getCollectionEntry,
   getCollectionSource,
   getCollectionSummary,
+  getImportJob,
   importCollection,
   saveCollectionSource,
   setCollectionEntry,
@@ -16,11 +17,19 @@ import {
   type CollectionQuantities,
   type CollectionSource,
   type CollectionSummary,
-  type ImportSummary,
+  type ImportJob,
   type ReconcileMode,
 } from '@/lib/api'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
+
+/** Refresh every view that depends on the collection contents (grid, summary header, and
+ * the per-card owned-count steppers). Call after an import/sync job completes. */
+export function invalidateCollectionData(qc: QueryClient, game: string) {
+  qc.invalidateQueries({ queryKey: ['collection', game] })
+  qc.invalidateQueries({ queryKey: ['collection-summary', game] })
+  qc.invalidateQueries({ queryKey: ['collection-entry', game] })
+}
 
 /**
  * Server state for the signed-in user's card collection. Reads go through
@@ -142,11 +151,11 @@ export interface ImportCollectionVars {
 }
 
 /**
- * One-off import from a provider. On settle the collection list + summary are
- * invalidated so the grid and header refresh with the imported cards.
+ * Enqueue a one-off import from a provider. Resolves to a job to poll (via
+ * {@link useImportJobQuery}); the collection caches are invalidated only once that job
+ * completes, so nothing is invalidated here.
  */
 export function useImportCollectionMutation() {
-  const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: ImportCollectionVars) =>
       importCollection(token, vars.game, {
@@ -154,19 +163,29 @@ export function useImportCollectionMutation() {
         source: vars.source,
         mode: vars.mode,
       }),
-    onSettled: (
-      _data: ImportSummary | undefined,
-      _error: ApiError | null,
-      vars: ImportCollectionVars,
-    ) => {
-      qc.invalidateQueries({ queryKey: ['collection', vars.game] })
-      qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
-      // A bulk import can change any card's counts, so refresh the per-card entries
-      // (card-detail steppers) too — prefix-invalidates every ['collection-entry', game, *].
-      qc.invalidateQueries({ queryKey: ['collection-entry', vars.game] })
-    },
   }
-  return useAuthedMutation<ImportSummary, ImportCollectionVars>(options)
+  return useAuthedMutation<ImportJob, ImportCollectionVars>(options)
+}
+
+/**
+ * Poll a background import/sync job until it reaches a terminal status. Enabled only
+ * while `jobId` is set; refetches every 2s while `queued`/`running`, then stops.
+ */
+export function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) {
+  const auth = useAuthStore()
+  const options = {
+    queryKey: ['import-job', game, jobId],
+    queryFn: (token: string) => getImportJob(token, game.value, jobId.value as number),
+    enabled: computed(() => auth.isAuthenticated && jobId.value != null),
+    refetchInterval: (query: { state: { data?: ImportJob } }) => {
+      const status = query.state.data?.status
+      return status === 'queued' || status === 'running' ? 2000 : false
+    },
+    // A job's status is inherently fresh; don't serve a stale cached terminal state.
+    staleTime: 0,
+    gcTime: 0,
+  }
+  return useAuthedQuery<ImportJob>(options)
 }
 
 /** Variables for saving a collection link. */
@@ -206,23 +225,13 @@ export function useDeleteCollectionSourceMutation() {
 }
 
 /**
- * Re-sync from the saved link (mirror/replace). Invalidates the collection list,
- * summary, and saved-source query (the sync stamps `last_synced_at`).
+ * Enqueue a re-sync from the saved link (mirror/replace). Resolves to a job to poll; the
+ * collection + saved-source caches are invalidated once that job completes (the caller
+ * does this on completion, via {@link invalidateCollectionData} + the source query).
  */
 export function useSyncCollectionSourceMutation() {
-  const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: { game: string }) => syncCollectionSource(token, vars.game),
-    onSettled: (
-      _data: ImportSummary | undefined,
-      _error: ApiError | null,
-      vars: { game: string },
-    ) => {
-      qc.invalidateQueries({ queryKey: ['collection', vars.game] })
-      qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
-      qc.invalidateQueries({ queryKey: ['collection-entry', vars.game] })
-      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
-    },
   }
-  return useAuthedMutation<ImportSummary, { game: string }>(options)
+  return useAuthedMutation<ImportJob, { game: string }>(options)
 }

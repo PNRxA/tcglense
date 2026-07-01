@@ -46,6 +46,11 @@ pub enum AppError {
     #[error("{0}")]
     BadGateway(String),
 
+    /// The server is temporarily overloaded and declines the request -> 503 Service
+    /// Unavailable (e.g. too many collection imports queued).
+    #[error("{0}")]
+    ServiceUnavailable(String),
+
     /// Unexpected internal failure -> 500. The detail is logged but never sent
     /// to the client.
     #[error("internal server error")]
@@ -68,6 +73,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
+            AppError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             AppError::Internal(detail) => {
                 // Log the real detail server-side, return a generic message.
                 tracing::error!(error = %detail, "internal server error");

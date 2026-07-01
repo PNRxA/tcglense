@@ -13,6 +13,8 @@
 //! match in our catalog are reported as "unmatched" and skipped.
 
 mod archidekt;
+pub mod jobs;
+pub mod rate_limit;
 
 use std::collections::HashMap;
 
@@ -153,8 +155,6 @@ pub struct ImportSummary {
 pub enum ImportError {
     /// The source string couldn't be parsed into a collection id -> 422.
     InvalidSource(String),
-    /// The provider doesn't serve this game -> 422.
-    UnsupportedGame { provider: Provider, game: String },
     /// The provider has no public collection at that id -> 404.
     CollectionNotFound(String),
     /// The provider collection has no cards to import -> 422 (guards a `Replace` from
@@ -176,11 +176,6 @@ impl From<ImportError> for AppError {
     fn from(err: ImportError) -> Self {
         match err {
             ImportError::InvalidSource(msg) => AppError::Validation(msg),
-            ImportError::UnsupportedGame { provider, game } => AppError::Validation(format!(
-                "{} import is not available for '{}'",
-                provider.label(),
-                game
-            )),
             ImportError::CollectionNotFound(id) => {
                 AppError::NotFound(format!("no public collection found for '{id}'"))
             }
@@ -220,36 +215,35 @@ pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportErr
     })
 }
 
-/// Fetch every holding for a provider collection id.
+/// Fetch every holding for a provider collection id, throttled by the shared provider
+/// rate limiter.
 async fn fetch_holdings(
     provider: Provider,
     http: &reqwest::Client,
+    limiter: &rate_limit::RateLimiter,
     collection_id: &str,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
     match provider {
-        Provider::Archidekt => archidekt::fetch(http, collection_id).await,
+        Provider::Archidekt => archidekt::fetch(http, limiter, collection_id).await,
     }
 }
 
-/// Run a full import: fetch the provider collection, aggregate, resolve to local cards,
-/// reconcile per `mode`, and apply in one transaction. Returns a summary.
-pub async fn run_import(
+/// Execute an import against an already-parsed provider collection id: fetch (throttled),
+/// aggregate, resolve to local cards, reconcile per `mode`, and apply in one transaction.
+/// Runs in the background worker (see [`jobs`]); the handler does the synchronous
+/// validation (provider/game/source) before enqueuing, so this trusts its inputs.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_import(
     db: &DatabaseConnection,
     http: &reqwest::Client,
+    limiter: &rate_limit::RateLimiter,
     user_id: i32,
     game: &str,
     provider: Provider,
-    source: &str,
+    collection_id: &str,
     mode: ReconcileMode,
 ) -> Result<ImportSummary, ImportError> {
-    if !provider.supports_game(game) {
-        return Err(ImportError::UnsupportedGame {
-            provider,
-            game: game.to_string(),
-        });
-    }
-    let collection_id = parse_source(provider, source)?;
-    let holdings = fetch_holdings(provider, http, &collection_id).await?;
+    let holdings = fetch_holdings(provider, http, limiter, collection_id).await?;
     if holdings.is_empty() {
         return Err(ImportError::EmptyCollection);
     }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 
 use crate::catalog::images::ImageCache;
+use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
 
 /// Shared, cheaply-clonable application state passed to every handler.
@@ -21,4 +22,7 @@ pub struct AppState {
     /// collection from Archidekt). Follows redirects and carries the app User-Agent;
     /// `reqwest::Client` is internally reference-counted, so cloning it is cheap.
     pub http: reqwest::Client,
+    /// Background queue + global rate limiter for collection imports/syncs (they run
+    /// asynchronously because the provider rate limit makes them slow).
+    pub imports: Arc<ImportQueue>,
 }
