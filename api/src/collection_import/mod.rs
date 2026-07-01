@@ -337,8 +337,8 @@ fn plan_reconcile(
 }
 
 /// Resolve the aggregated holdings to local cards, reconcile against the user's current
-/// collection, and apply. Split from [`run_import`] so it can be unit-tested against an
-/// in-memory DB without any provider network calls.
+/// collection, and apply. Split from [`execute_import`] so it can be unit-tested against
+/// an in-memory DB without any provider network calls.
 async fn reconcile_holdings(
     db: &DatabaseConnection,
     user_id: i32,
