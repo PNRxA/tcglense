@@ -370,10 +370,11 @@ lib/api/           typed fetch client (relative URLs, credentials:'include') + A
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
 lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 lib/seo.ts         usePageMeta(): reactive per-route <head> — title, description, canonical, Open Graph / Twitter, JSON-LD
+lib/mana.ts        parseManaText(): split card text into plain-text runs + recognised {…} mana/cost symbols (→ mana-font `ms-*` classes, unknown tokens kept literal); colorLettersToText() for color_identity pips
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
 components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards and Collection → /collection dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them; both game-dropdowns from the cached registry, Collection prompts signed-out visitors to sign in on the per-game view)
-components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save)
+components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save); ManaSymbols (renders card text with `{…}` mana/cost symbols as mana-font icons — mana cost, colour identity, oracle text)
 components/collection/  ImportCollectionDialog (reka dialog: paste an Archidekt URL/id, pick a reconcile mode, optionally save the link; shows an import summary) — mounted on GameCollectionView alongside a "Re-sync" button
 composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useCardSearch, …
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)
@@ -574,3 +575,15 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on
   the client (the bulk download streams for a while); a `read_timeout` guards stalls.
+- **Mana symbols (`mana-font`):** card `{…}` symbols render via the bundled `mana-font`
+  icon font (`ManaSymbols.vue` + `lib/mana.ts`), so they work offline and aren't
+  hotlinked from Scryfall. Two trade-offs: (1) the package's shipped `@font-face` lists
+  only woff/ttf/eot/svg, so `web/src/assets/mana-font.css` adds a woff2 source loaded
+  *after* the package CSS to win the cascade (browsers fetch only the ~187 KB woff2) —
+  but importing the whole package CSS still makes Vite emit the shadowed legacy Mana
+  formats **and** the entirely-unused MPlantin family (~3.5 MB) into `dist`; those are
+  never downloaded by any browser (deploy-size only). Trimming to a generated
+  symbol-only CSS (à la `sld_drops.json`) is possible future work. (2) `{HW}`/`{HR}`
+  half-coloured mana (a couple of Un-set joke cards) has no single mana-font class —
+  mana-font renders it via a wrapper `<span class="ms-half">`, which our one-`<i>`-per-
+  symbol component doesn't emit, so those tokens fall back to literal `{HW}` text.
