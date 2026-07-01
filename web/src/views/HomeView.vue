@@ -109,8 +109,8 @@ const ghostPoints = [
 
       <div class="mt-8 flex flex-col items-center gap-3 sm:flex-row">
         <template v-if="auth.isAuthenticated">
-          <RouterLink to="/dashboard" :class="buttonVariants({ size: 'lg' })">
-            Go to your dashboard
+          <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
+            Open your collection
             <ArrowRight aria-hidden="true" />
           </RouterLink>
           <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
@@ -279,15 +279,12 @@ const ghostPoints = [
         </p>
         <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <template v-if="auth.isAuthenticated">
-            <RouterLink to="/dashboard" :class="buttonVariants({ size: 'lg' })">
-              Go to your dashboard
+            <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
+              Open your collection
               <ArrowRight aria-hidden="true" />
             </RouterLink>
-            <RouterLink
-              to="/collection"
-              :class="buttonVariants({ variant: 'outline', size: 'lg' })"
-            >
-              Open your collection
+            <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
+              Browse cards
             </RouterLink>
           </template>
           <template v-else>

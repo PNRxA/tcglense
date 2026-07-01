@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
-import DashboardView from '@/views/DashboardView.vue'
 import HomeView from '@/views/HomeView.vue'
 import LoginView from '@/views/LoginView.vue'
 import ProfileView from '@/views/ProfileView.vue'
@@ -83,12 +83,6 @@ const router = createRouter({
       props: true,
     },
     {
-      path: '/dashboard',
-      name: 'dashboard',
-      component: DashboardView,
-      meta: { requiresAuth: true },
-    },
-    {
       path: '/profile',
       name: 'profile',
       component: ProfileView,
@@ -128,7 +122,8 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.requiresGuest && auth.isAuthenticated) {
-    return { name: 'dashboard' }
+    // Already signed in: honour a ?redirect= back to where they came from, else home.
+    return safeInternalPath(to.query.redirect) ?? '/'
   }
 
   return true

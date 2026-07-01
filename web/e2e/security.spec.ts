@@ -147,7 +147,8 @@ test.describe('security: browser session', () => {
     await page.locator('#email').fill(email)
     await page.locator('#password').fill(PASSWORD)
     await page.getByRole('button', { name: /create account/i }).click()
-    await expect(page).toHaveURL(/\/dashboard/)
+    // Registering straight from /register (no ?redirect=) lands on the homepage.
+    await expect(page).toHaveURL(/\/$/)
   }
 
   test('session lives in an httpOnly cookie, not JS storage, and logout protects routes', async ({
@@ -165,10 +166,11 @@ test.describe('security: browser session', () => {
     )
     expect(storageDump).not.toContain('eyJ')
 
-    // A reload restores the session from the cookie alone.
+    // A reload restores the session from the cookie alone (the signed-in account
+    // menu proves the session survived).
     await page.reload()
-    await expect(page).toHaveURL(/\/dashboard/)
-    await expect(page.getByRole('heading', { name: /welcome/i })).toBeVisible()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('button', { name: /account menu/i })).toBeVisible()
 
     // Sign out, then a protected route bounces to login.
     await page.getByRole('button', { name: /account menu/i }).click()
@@ -177,7 +179,7 @@ test.describe('security: browser session', () => {
     await signOut.click()
     await expect(page).toHaveURL(/\/$/)
 
-    await page.goto('/dashboard')
+    await page.goto('/profile')
     await expect(page).toHaveURL(/\/login(\?|$)/)
   })
 

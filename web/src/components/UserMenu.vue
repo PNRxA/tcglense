@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronDown, LayoutDashboard, LogIn, LogOut, User } from '@lucide/vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { ChevronDown, LogIn, LogOut, User } from '@lucide/vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -14,9 +14,18 @@ import {
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 
 const displayLabel = computed(() => auth.user?.display_name ?? auth.user?.email ?? 'Account')
+
+// Sign-in returns the user to wherever they were (via ?redirect=). On an auth page
+// itself, link plainly so the redirect never loops back to the login/register form —
+// a direct visit to /login then just lands on the homepage after signing in.
+const loginTo = computed(() => {
+  if (route.name === 'login' || route.name === 'register') return '/login'
+  return { path: '/login', query: { redirect: route.fullPath } }
+})
 
 async function onSignOut() {
   await auth.logout()
@@ -28,7 +37,7 @@ async function onSignOut() {
   <!-- Signed out: the profile selector collapses to a single sign-in action. -->
   <RouterLink
     v-if="!auth.isAuthenticated"
-    to="/login"
+    :to="loginTo"
     :class="buttonVariants({ variant: 'outline', size: 'sm' })"
   >
     <LogIn />
@@ -56,10 +65,6 @@ async function onSignOut() {
       <DropdownMenuItem @select="() => router.push('/profile')">
         <User />
         Profile
-      </DropdownMenuItem>
-      <DropdownMenuItem @select="() => router.push('/dashboard')">
-        <LayoutDashboard />
-        Dashboard
       </DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem variant="destructive" @select="onSignOut">

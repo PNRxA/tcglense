@@ -39,7 +39,6 @@ function robotsTxt(): string {
     // at runtime, but declared here for non-JS crawlers).
     'Disallow: /login',
     'Disallow: /register',
-    'Disallow: /dashboard',
     'Disallow: /profile',
     'Disallow: /collection',
     '',
