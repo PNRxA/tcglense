@@ -1,5 +1,5 @@
 import type { Card, CardSet, Page } from './catalog'
-import { request } from './client'
+import { listQuery, request } from './client'
 
 // ---------- Collections (per-user, authenticated) ----------
 //
@@ -69,16 +69,7 @@ export interface CollectionListParams {
 
 /** Relative `/api/collection/...` path for a user's collection in a game. */
 export function collectionPath(game: string, params: CollectionListParams = {}): string {
-  const search = new URLSearchParams()
-  if (params.page) search.set('page', String(params.page))
-  if (params.pageSize) search.set('page_size', String(params.pageSize))
-  if (params.q) search.set('q', params.q)
-  if (params.sort) search.set('sort', params.sort)
-  if (params.dir) search.set('dir', params.dir)
-  if (params.set) search.set('set', params.set)
-  if (params.includeRelated) search.set('include_related', 'true')
-  const qs = search.toString()
-  return `/api/collection/${encodeURIComponent(game)}${qs ? `?${qs}` : ''}`
+  return `/api/collection/${encodeURIComponent(game)}${listQuery(params)}`
 }
 
 /** Relative `/api/collection/{game}/cards/{id}` path for one card's holding. */
@@ -105,15 +96,11 @@ export function getCollectionSummary(
   set?: string,
   includeRelated?: boolean,
 ): Promise<CollectionSummary> {
-  const search = new URLSearchParams()
-  if (set) search.set('set', set)
   // include_related only means anything alongside a set scope (matches the backend).
-  if (set && includeRelated) search.set('include_related', 'true')
-  const qs = search.toString()
-  return request<CollectionSummary>(
-    `/api/collection/${encodeURIComponent(game)}/summary${qs ? `?${qs}` : ''}`,
-    { token },
-  )
+  const qs = listQuery({ set, includeRelated: set ? includeRelated : undefined })
+  return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary${qs}`, {
+    token,
+  })
 }
 
 /** The sets the user owns cards in, newest set first — the per-set collection landing. */
@@ -150,14 +137,9 @@ export function collectionSetDropsPath(
   code: string,
   params: CollectionDropsParams = {},
 ): string {
-  const search = new URLSearchParams()
-  if (params.page) search.set('page', String(params.page))
-  if (params.pageSize) search.set('page_size', String(params.pageSize))
-  if (params.q) search.set('q', params.q)
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  const qs = search.toString()
-  return `/api/collection/${g}/sets/${c}/drops${qs ? `?${qs}` : ''}`
+  return `/api/collection/${g}/sets/${c}/drops${listQuery(params)}`
 }
 
 /** The signed-in user's owned cards in a drop-grouped set (e.g. Secret Lair), grouped by

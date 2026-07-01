@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import CardImageZoom from '../cards/CardImageZoom.vue'
+import CardImageZoom from '../CardImageZoom.vue'
 
 const baseProps = { game: 'mtg', id: 'abc-123', name: 'Black Lotus' }
 

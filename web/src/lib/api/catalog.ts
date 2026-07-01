@@ -1,4 +1,4 @@
-import { API_URL, request } from './client'
+import { API_URL, listQuery, request } from './client'
 
 // ---------- Card catalog (public, game-agnostic) ----------
 
@@ -120,15 +120,7 @@ export interface CardListParams {
 }
 
 function cardQuery(params: CardListParams = {}): string {
-  const search = new URLSearchParams()
-  if (params.page) search.set('page', String(params.page))
-  if (params.pageSize) search.set('page_size', String(params.pageSize))
-  if (params.q) search.set('q', params.q)
-  if (params.includeRelated) search.set('include_related', 'true')
-  if (params.sort) search.set('sort', params.sort)
-  if (params.dir) search.set('dir', params.dir)
-  const qs = search.toString()
-  return qs ? `?${qs}` : ''
+  return listQuery(params)
 }
 
 export function listGames(): Promise<{ data: Game[] }> {

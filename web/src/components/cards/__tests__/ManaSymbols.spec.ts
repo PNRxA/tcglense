@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { mount } from '@vue/test-utils'
-import ManaSymbols from '../cards/ManaSymbols.vue'
+import ManaSymbols from '../ManaSymbols.vue'
 
 describe('ManaSymbols', () => {
   it('renders each symbol as a mana-font icon with an accessible label', () => {

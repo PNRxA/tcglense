@@ -17,21 +17,31 @@ import {
   type CollectionSummary,
   type OwnedCountsMap,
 } from '@/lib/api'
+import { CARD_PAGE_SIZE, DROP_PAGE_SIZE } from '@/composables/useCatalog'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 
-/** Refresh every view that depends on the collection contents (grid, summary header, and
- * the per-card owned-count steppers). Call after an import/sync job completes. */
-export function invalidateCollectionData(qc: QueryClient, game: string) {
+/**
+ * Refresh every view that depends on the collection contents after any collection write
+ * — a per-card edit or a completed import/sync. Covers the grid, the summary header, the
+ * per-card owned-count steppers, the by-drop owned-cards view, the per-set landing tiles
+ * (ownership per set can change broadly), and the browse-grid owned-count badges (which an
+ * import can change broadly too). Pass `entryId` to scope the per-card entry invalidation
+ * to the edited card; an import touches many cards, so it invalidates the whole game.
+ */
+export function invalidateCollectionData(
+  qc: QueryClient,
+  game: string,
+  opts?: { entryId?: string },
+) {
   qc.invalidateQueries({ queryKey: ['collection', game] })
   qc.invalidateQueries({ queryKey: ['collection-summary', game] })
-  qc.invalidateQueries({ queryKey: ['collection-entry', game] })
-  // Refresh the by-drop owned-cards view too.
+  qc.invalidateQueries({
+    queryKey: opts?.entryId ? ['collection-entry', game, opts.entryId] : ['collection-entry', game],
+  })
   qc.invalidateQueries({ queryKey: ['collection-drops', game] })
-  // Refresh the per-set landing tiles (ownership per set can change broadly).
   qc.invalidateQueries({ queryKey: ['collection-sets', game] })
-  // Refresh the browse-grid owned-count badges too (an import can change ownership broadly).
   qc.invalidateQueries({ queryKey: ['collection-owned', game] })
 }
 
@@ -47,21 +57,11 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
  * a plain variable (with explicit callback param types) is the clean way to pass them.
  */
 
-/** Cards per page in the collection grid (matches the catalog default). */
-export const COLLECTION_PAGE_SIZE = 60
-
-/** Drops per page in the by-drop collection view — it paginates over drops (each a
- * handful of owned cards), so it uses a smaller page size than the flat grid (matches
- * the catalog's by-drop view). */
-export const COLLECTION_DROP_PAGE_SIZE = 20
-
 /** A page of the user's owned cards for a game. `page`, `query` and `sort` are
  * reactive: `query` is a Scryfall-style search (same syntax as the catalog) and
  * `sort` is a `field:dir` value (see `lib/cardSort`), all carried in the query key
  * so a change refetches. An optional `set` ref scopes the list to one set (the per-set
- * collection view), ANDed with the search. Disabled while signed out — the collection
- * routes are public, so a signed-out visitor lands here (and is prompted to sign in)
- * without triggering an auth call. */
+ * collection view), ANDed with the search. `useAuthedQuery` disables it while signed out. */
 export function useCollectionQuery(
   game: Ref<string>,
   page: Ref<number>,
@@ -70,7 +70,6 @@ export function useCollectionQuery(
   set?: Ref<string | undefined>,
   opts: { includeRelated?: Ref<boolean>; enabled?: Ref<boolean> } = {},
 ) {
-  const auth = useAuthStore()
   // Fall back to stable "no scope" / "not grouped" refs so the query key is well-formed
   // either way.
   const setCode = set ?? ref<string | undefined>(undefined)
@@ -80,7 +79,8 @@ export function useCollectionQuery(
     queryFn: (token: string) =>
       getCollection(token, game.value, {
         page: page.value,
-        pageSize: COLLECTION_PAGE_SIZE,
+        // The catalog grids' page size, so the collection grid matches them.
+        pageSize: CARD_PAGE_SIZE,
         q: query.value || undefined,
         set: setCode.value || undefined,
         includeRelated: includeRelated.value || undefined,
@@ -88,10 +88,10 @@ export function useCollectionQuery(
       }),
     // Keep the current grid visible while the next page loads (smoother paging).
     placeholderData: keepPreviousData,
-    // Signed-in only, and off when a caller opts out — the show-ghosts view fetches the
-    // full catalog instead, and the by-drop view fetches drops, so the owned-only flat
-    // query stays idle in both (no throwaway fetch a drop-set/ghost link would discard).
-    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    // Off when a caller opts out — the show-ghosts view fetches the full catalog instead,
+    // and the by-drop view fetches drops, so the owned-only flat query stays idle in both
+    // (no throwaway fetch a drop-set/ghost link would discard).
+    enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionPage>(options)
 }
@@ -107,73 +107,66 @@ export function useCollectionDropsQuery(
   query: Ref<string>,
   opts: { enabled?: Ref<boolean> } = {},
 ) {
-  const auth = useAuthStore()
   const options = {
     queryKey: ['collection-drops', game, code, query, page],
     queryFn: (token: string) =>
       getCollectionSetDrops(token, game.value, code.value, {
         page: page.value,
-        pageSize: COLLECTION_DROP_PAGE_SIZE,
+        pageSize: DROP_PAGE_SIZE,
         q: query.value || undefined,
       }),
     placeholderData: keepPreviousData,
-    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionDropGroupPage>(options)
 }
 
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
  * optionally scoped to one set — and, with `includeRelated`, that set's whole group (so
- * the value matches the include-related browse view). Disabled while signed out (see
- * `useCollectionQuery`). */
+ * the value matches the include-related browse view). */
 export function useCollectionSummaryQuery(
   game: Ref<string>,
   set?: Ref<string | undefined>,
   opts: { enabled?: Ref<boolean>; includeRelated?: Ref<boolean> } = {},
 ) {
-  const auth = useAuthStore()
   const setCode = set ?? ref<string | undefined>(undefined)
   const includeRelated = opts.includeRelated ?? ref(false)
   const options = {
     queryKey: ['collection-summary', game, setCode, includeRelated],
     queryFn: (token: string) =>
       getCollectionSummary(token, game.value, setCode.value || undefined, includeRelated.value),
-    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionSummary>(options)
 }
 
 /** The sets the signed-in user owns cards in (newest set first) — the per-set
- * collection landing. Disabled while signed out (see `useCollectionQuery`). */
+ * collection landing. */
 export function useCollectionSetsQuery(game: Ref<string>) {
-  const auth = useAuthStore()
   const options = {
     queryKey: ['collection-sets', game],
     queryFn: (token: string) => getCollectionSets(token, game.value),
-    enabled: computed(() => auth.isAuthenticated),
   }
   return useAuthedQuery<{ data: CollectionSet[] }>(options)
 }
 
 /**
  * How many copies of one card the signed-in user owns — for the card-detail
- * controls. Disabled while signed out (the route is public), so a logged-out
- * visitor never triggers an auth call. Options let a caller defer and refresh the
- * fetch: `enabled` gates it (e.g. the grid quick-add control only wants the
- * authoritative holding once its popover opens, not for every visible tile), and
- * `staleTime` (e.g. `0`) forces a re-fetch each time the query re-enables so the
- * control never seeds an absolute-count edit off a stale cached holding.
+ * controls. Options let a caller defer and refresh the fetch: `enabled` gates it (e.g.
+ * the grid quick-add control only wants the authoritative holding once its popover opens,
+ * not for every visible tile), and `staleTime` (e.g. `0`) forces a re-fetch each time the
+ * query re-enables so the control never seeds an absolute-count edit off a stale cached
+ * holding.
  */
 export function useCollectionEntryQuery(
   game: Ref<string>,
   id: Ref<string>,
   opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
 ) {
-  const auth = useAuthStore()
   const options = {
     queryKey: ['collection-entry', game, id],
     queryFn: (token: string) => getCollectionEntry(token, game.value, id.value),
-    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    enabled: opts.enabled,
     staleTime: opts.staleTime,
   }
   return useAuthedQuery<CollectionQuantities>(options)
@@ -201,7 +194,7 @@ export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
   const options = {
     queryKey: ['collection-owned', game, idsKey],
     queryFn: (token: string) => getCollectionOwned(token, game.value, cardIds.value),
-    enabled: computed(() => auth.isAuthenticated && cardIds.value.length > 0),
+    enabled: computed(() => cardIds.value.length > 0),
     // Keep the previous page's badges up while the next page's counts load.
     placeholderData: keepPreviousData,
   }
@@ -247,15 +240,7 @@ export function useSetCollectionEntryMutation() {
       _error: ApiError | null,
       vars: SetCollectionVars,
     ) => {
-      qc.invalidateQueries({ queryKey: ['collection', vars.game] })
-      qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
-      qc.invalidateQueries({ queryKey: ['collection-entry', vars.game, vars.id] })
-      // Refresh the by-drop owned-cards view so an edit shows there too.
-      qc.invalidateQueries({ queryKey: ['collection-drops', vars.game] })
-      // Refresh the per-set landing tiles (owned counts per set change on an edit).
-      qc.invalidateQueries({ queryKey: ['collection-sets', vars.game] })
-      // Refresh the browse-grid badges so an edit shows next time a grid is viewed.
-      qc.invalidateQueries({ queryKey: ['collection-owned', vars.game] })
+      invalidateCollectionData(qc, vars.game, { entryId: vars.id })
     },
   }
   return useAuthedMutation<CollectionQuantities, SetCollectionVars>(options)
