@@ -22,6 +22,10 @@ const props = withDefaults(
     // "N/M owned" count (M = the set's total card count) in place of the set's total
     // card count — the collection's per-set landing (issue #125).
     ownedCount?: number
+    // Optional total owned copies (regular + foil, i.e. counting duplicates). Shown as
+    // "· N copies" after the completion count, but only when it exceeds the distinct owned
+    // count — with no duplicates the completion count already conveys the total (issue #125).
+    ownedCopies?: number
     // Optional preformatted owned value (e.g. "$123.45"). When set, it's appended to
     // the meta line after the owned count — the collection landing's per-set value.
     ownedValue?: string | null
@@ -31,6 +35,7 @@ const props = withDefaults(
     label: undefined,
     to: undefined,
     ownedCount: undefined,
+    ownedCopies: undefined,
     ownedValue: undefined,
   },
 )
@@ -87,6 +92,15 @@ const ownedLabel = computed(() => {
   if (total > 0) return `${Math.min(props.ownedCount, total)}/${total} owned`
   return `${props.ownedCount} owned`
 })
+
+// The total copies (with duplicates) as "N copies", shown next to the completion count
+// only when you own more copies than distinct cards — otherwise it just restates the
+// owned count (issue #125).
+const copiesLabel = computed(() =>
+  props.ownedCount != null && props.ownedCopies != null && props.ownedCopies > props.ownedCount
+    ? `${props.ownedCopies} copies`
+    : null,
+)
 </script>
 
 <template>
@@ -120,6 +134,7 @@ const ownedLabel = computed(() => {
           <template v-if="released"> · {{ released }}</template>
           <template v-if="ownedLabel != null"> · {{ ownedLabel }}</template>
           <template v-else-if="set.card_count"> · {{ set.card_count }} cards</template>
+          <template v-if="copiesLabel"> · {{ copiesLabel }}</template>
           <template v-if="ownedValue"> · {{ ownedValue }}</template>
         </p>
       </div>

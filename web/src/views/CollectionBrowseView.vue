@@ -277,6 +277,14 @@ const scopeTotal = computed<number | null>(() => {
 const scopeValueLabel = computed(() =>
   query.value ? null : formatUsd(summaryQuery.data.value?.total_value_usd),
 )
+// The scope's total owned copies (with duplicates) as "N copies", shown next to the count
+// when you own more copies than distinct cards (issue #125). Like the value, it's the whole
+// scope's figure, so it's hidden while a search filters the list.
+const scopeCopiesLabel = computed(() => {
+  if (query.value) return null
+  const s = summaryQuery.data.value
+  return s && s.total_cards > s.unique_cards ? `${s.total_cards.toLocaleString()} copies` : null
+})
 
 // ---- Active-mode selectors, so the template doesn't branch on mode for state. ----
 const total = computed(() => {
@@ -425,6 +433,9 @@ const errorMessage = computed(() =>
             <span class="uppercase">{{ code }}</span> ·
           </template>
           {{ countLabel }}
+          <!-- The scope's total copies (with duplicates), shown when you own more copies
+               than distinct cards (issue #125). Hidden while searching. -->
+          <template v-if="scopeCopiesLabel"> · {{ scopeCopiesLabel }}</template>
           <!-- The scope's owned value (issue #119): what your cards in this set / group /
                whole collection are worth. Hidden while searching or when nothing is priced. -->
           <template v-if="scopeValueLabel"> · {{ scopeValueLabel }}</template>
