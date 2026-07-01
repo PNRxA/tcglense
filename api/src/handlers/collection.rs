@@ -11,7 +11,7 @@
 //! `card_price_history`. Ownership is always scoped by `user.id` from the token, so
 //! one user can never read or mutate another's collection.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -39,6 +39,11 @@ const MAX_PAGE_SIZE: u64 = 200;
 /// single count can't overflow the valuation arithmetic or be abused to store a
 /// pathological value.
 const MAX_QUANTITY: i32 = 1_000_000;
+/// Cap on how many card ids one batch owned-counts lookup may request. A browse page
+/// shows at most a few hundred cards, so this bounds the two `IN (...)` queries well
+/// above any real page while staying under SQLite's bound-variable limit and refusing
+/// an abusive request.
+const MAX_OWNED_IDS: usize = 500;
 
 // ---------- Response / request DTOs ----------
 
@@ -55,6 +60,14 @@ pub struct CollectionEntry {
 pub struct CollectionQuantities {
     pub quantity: i32,
     pub foil_quantity: i32,
+}
+
+/// Batch owned-counts response: external card id -> owned counts, for owned cards
+/// only. Cards the user doesn't own are simply absent (never a zero entry), so a page
+/// with nothing owned serialises to `{ "data": {} }`.
+#[derive(Debug, Serialize)]
+pub struct OwnedCountsResponse {
+    pub data: HashMap<String, CollectionQuantities>,
 }
 
 /// Aggregate stats for a user's per-game collection (the collection landing header).
@@ -92,6 +105,14 @@ pub struct SetQuantitiesRequest {
 pub struct ListParams {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
+}
+
+/// Body of `POST .../owned`: the external card ids to look up owned counts for. Sent
+/// as a POST body rather than a GET query so a browse page's (potentially few-hundred)
+/// id list can't blow the request-line length behind a proxy.
+#[derive(Debug, Deserialize)]
+pub struct OwnedCountsRequest {
+    pub ids: Vec<String>,
 }
 
 impl ListParams {
@@ -244,6 +265,77 @@ pub async fn get_collection_entry(
     }))
 }
 
+/// `POST /api/collection/{game}/owned` -> the owned counts for the subset of the
+/// given external card ids that the signed-in user actually owns, keyed by external
+/// id. Cards the user doesn't own are absent from the map (so an all-unowned page
+/// returns `{ "data": {} }`). This backs the owned-count badges overlaid on the
+/// public browse grids without an N+1 of per-card lookups. `422` if more than
+/// [`MAX_OWNED_IDS`] ids are requested at once.
+pub async fn owned_counts(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    JsonBody(payload): JsonBody<OwnedCountsRequest>,
+) -> Result<Json<OwnedCountsResponse>, AppError> {
+    require_game(&game)?;
+
+    let external_ids = dedupe_ids(payload.ids);
+    if external_ids.is_empty() {
+        return Ok(Json(OwnedCountsResponse {
+            data: HashMap::new(),
+        }));
+    }
+    if external_ids.len() > MAX_OWNED_IDS {
+        return Err(AppError::Validation(format!(
+            "at most {MAX_OWNED_IDS} card ids may be looked up at once"
+        )));
+    }
+
+    // Resolve external -> internal ids for this game, keeping the reverse map so the
+    // response can be keyed by the external id the client sent. Unknown ids just don't
+    // appear here (and so never in the result).
+    let external_by_internal: HashMap<i32, String> = Card::find()
+        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::ExternalId.is_in(external_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|c| (c.id, c.external_id))
+        .collect();
+    if external_by_internal.is_empty() {
+        return Ok(Json(OwnedCountsResponse {
+            data: HashMap::new(),
+        }));
+    }
+
+    // One query for the user's holdings among those cards; a card with no row is
+    // simply not owned and contributes nothing to the map.
+    let internal_ids: Vec<i32> = external_by_internal.keys().copied().collect();
+    let rows = CollectionItem::find()
+        .filter(collection_item::Column::UserId.eq(user.id))
+        .filter(collection_item::Column::Game.eq(game.as_str()))
+        .filter(collection_item::Column::CardId.is_in(internal_ids))
+        .all(&state.db)
+        .await?;
+
+    let data: HashMap<String, CollectionQuantities> = rows
+        .into_iter()
+        .filter_map(|r| {
+            external_by_internal.get(&r.card_id).map(|external_id| {
+                (
+                    external_id.clone(),
+                    CollectionQuantities {
+                        quantity: r.quantity,
+                        foil_quantity: r.foil_quantity,
+                    },
+                )
+            })
+        })
+        .collect();
+
+    Ok(Json(OwnedCountsResponse { data }))
+}
+
 /// `PUT /api/collection/{game}/cards/{id}` -> set the owned counts for one card
 /// (absolute values, not a delta). Both zero removes the card from the collection.
 /// Returns the resulting counts. `404` for an unknown game/card, `422` for a
@@ -350,6 +442,18 @@ async fn find_row(
         .await?)
 }
 
+/// Trim, drop blanks, and de-duplicate a batch of requested external card ids,
+/// preserving first-seen order (so the `IN (...)` bind list has no repeats and a
+/// sloppy client list is tolerated).
+fn dedupe_ids(ids: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    ids.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .filter(|s| seen.insert(s.clone()))
+        .collect()
+}
+
 fn build_page<T>(data: Vec<T>, page: u64, page_size: u64, total: u64) -> Page<T> {
     Page {
         data,
@@ -425,6 +529,21 @@ mod tests {
         assert!(!page.has_more, "page 4 of 10 rows is the last");
         let page = build_page(Vec::<i32>::new(), 1, 60, 0);
         assert!(!page.has_more);
+    }
+
+    #[test]
+    fn dedupe_ids_trims_dedupes_and_drops_blanks() {
+        let out = dedupe_ids(vec![
+            "  a ".into(),
+            "b".into(),
+            "a".into(),
+            "".into(),
+            "   ".into(),
+            "b".into(),
+            "c".into(),
+        ]);
+        // First-seen order preserved, blanks gone, no repeats.
+        assert_eq!(out, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
     }
 
     #[test]

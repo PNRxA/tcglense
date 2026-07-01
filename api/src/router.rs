@@ -19,7 +19,8 @@ use crate::{
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         collection::{
-            collection_summary, get_collection_entry, list_collection, set_collection_entry,
+            collection_summary, get_collection_entry, list_collection, owned_counts,
+            set_collection_entry,
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
@@ -59,6 +60,9 @@ pub fn build_router(state: AppState) -> Router {
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))
         .route("/api/collection/{game}/summary", get(collection_summary))
+        // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
+        // counts out). POST so a big page's id list can't blow the URL length.
+        .route("/api/collection/{game}/owned", post(owned_counts))
         .route(
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),
