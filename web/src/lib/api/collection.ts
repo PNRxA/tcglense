@@ -149,8 +149,10 @@ export type CollectionProvider = 'archidekt'
  * - `overwrite` — set matched cards to the imported counts; leave other cards alone.
  * - `replace` — mirror the import exactly (also removes owned cards not in the import).
  * - `merge` — add the imported counts on top of what's owned.
+ * - `smart` — an incremental mirror: fetch most-recently-updated first and stop once a
+ *   page already matches; updates recently-changed cards only and never removes cards.
  */
-export type ReconcileMode = 'overwrite' | 'replace' | 'merge'
+export type ReconcileMode = 'overwrite' | 'replace' | 'merge' | 'smart'
 
 /** A background import/sync job's status (imports run async, throttled by the provider
  * rate limit, so the client polls this until a terminal status). */
@@ -175,6 +177,8 @@ export interface ImportSummary {
   regular_copies: number
   foil_copies: number
   removed_cards: number
+  /** `smart` mode only: whether the fetch stopped early on reaching already-synced cards. */
+  stopped_early: boolean
 }
 
 /** A saved external collection link for a game. */
@@ -185,6 +189,8 @@ export interface CollectionSource {
   url: string
   /** RFC3339 timestamp of the last successful sync, or null if never synced. */
   last_synced_at: string | null
+  /** Whether a saved re-sync uses smart (incremental) sync rather than a full mirror. */
+  smart: boolean
 }
 
 export interface ImportCollectionBody {
@@ -196,6 +202,8 @@ export interface ImportCollectionBody {
 export interface SaveSourceBody {
   provider: CollectionProvider
   source: string
+  /** Whether saved re-syncs should use smart (incremental) sync. Defaults false server-side. */
+  smart?: boolean
 }
 
 /** `/api/collection/{game}/import` path. */

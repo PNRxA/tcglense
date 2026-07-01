@@ -51,6 +51,11 @@ const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
     label: 'Replace my collection',
     hint: 'Mirror the list exactly — this removes owned cards that aren’t in it.',
   },
+  {
+    value: 'smart',
+    label: 'Smart sync',
+    hint: 'Only update recently-changed cards (fast). Won’t remove cards deleted on the provider.',
+  },
 ]
 
 const open = ref(false)
@@ -58,6 +63,9 @@ const provider = ref<CollectionProvider>('archidekt')
 const sourceInput = ref(props.source?.url ?? '')
 const mode = ref<ReconcileMode>('overwrite')
 const saveLink = ref(props.source != null)
+// Whether a saved link re-syncs with smart sync. Kept separate from the one-off `mode`
+// so re-importing a smart-saved link with a different mode doesn't silently downgrade it.
+const smartResync = ref(props.source?.smart ?? false)
 
 const gameRef = toRef(props, 'game')
 const qc = useQueryClient()
@@ -83,10 +91,18 @@ watch(open, (isOpen) => {
   sourceInput.value = props.source?.url ?? ''
   mode.value = 'overwrite'
   saveLink.value = props.source != null
+  // Seed the saved-link re-sync preference from the existing link (defaults off).
+  smartResync.value = props.source?.smart ?? false
   errorMessage.value = null
   result.value = null
   jobId.value = null
   enqueuing.value = false
+})
+
+// Choosing the smart one-off mode implies wanting smart re-syncs too; picking another
+// mode never forces it off (it stays whatever the saved link had / the user set).
+watch(mode, (m) => {
+  if (m === 'smart') smartResync.value = true
 })
 
 // React to the polled job reaching a terminal status.
@@ -146,6 +162,8 @@ async function runImport() {
           game: props.game,
           provider: provider.value,
           source: trimmed,
+          // Remember whether future re-syncs should be smart (its own control, below).
+          smart: smartResync.value,
         })
       } catch (err) {
         errorMessage.value =
@@ -177,10 +195,18 @@ const resultLines = computed(() => {
   if (!s) return []
   const lines: string[] = []
   const copies = s.regular_copies + s.foil_copies
+  const verb = s.mode === 'smart' ? 'Updated' : 'Imported'
   lines.push(
-    `Imported ${s.matched_cards.toLocaleString()} card${s.matched_cards === 1 ? '' : 's'} ` +
+    `${verb} ${s.matched_cards.toLocaleString()} card${s.matched_cards === 1 ? '' : 's'} ` +
       `(${copies.toLocaleString()} cop${copies === 1 ? 'y' : 'ies'}).`,
   )
+  if (s.mode === 'smart') {
+    lines.push(
+      s.stopped_early
+        ? 'Smart sync stopped once it reached cards already in sync.'
+        : 'Smart sync scanned your whole collection.',
+    )
+  }
   if (s.unmatched_cards > 0) {
     lines.push(
       `${s.unmatched_cards.toLocaleString()} card${s.unmatched_cards === 1 ? '' : 's'} ` +
@@ -195,6 +221,13 @@ const resultLines = computed(() => {
   }
   return lines
 })
+
+// The re-sync behaviour the saved link will use, tailored to the smart-resync toggle.
+const savedResyncHint = computed(() =>
+  smartResync.value
+    ? 'Re-syncs update recently-changed cards only (won’t remove deleted cards).'
+    : 'Re-syncs mirror the list exactly (removes cards no longer in it).',
+)
 
 const selectClass =
   'border-input dark:bg-input/30 flex h-9 w-full rounded-md border bg-transparent px-3 text-sm ' +
@@ -255,14 +288,18 @@ const selectClass =
         </fieldset>
 
         <!-- Save the link -->
-        <div>
+        <div class="space-y-2">
           <label class="flex cursor-pointer items-center gap-2 text-sm">
             <input v-model="saveLink" type="checkbox" />
             Remember this link for one-click re-syncing
           </label>
-          <p v-if="saveLink" class="text-muted-foreground mt-1 text-xs">
-            Saved links re-sync by mirroring (replace).
-          </p>
+          <template v-if="saveLink">
+            <label class="flex cursor-pointer items-center gap-2 pl-6 text-sm">
+              <input v-model="smartResync" type="checkbox" />
+              Re-sync with smart sync
+            </label>
+            <p class="text-muted-foreground pl-6 text-xs">{{ savedResyncHint }}</p>
+          </template>
         </div>
 
         <!-- In-progress status (queued / running) -->
