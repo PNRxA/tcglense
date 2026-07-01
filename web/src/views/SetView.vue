@@ -263,36 +263,35 @@ const searchError = computed(() => searchErrorMessage(listError.value))
     <p v-if="setQuery.isError.value" class="text-destructive py-12">Set not found.</p>
 
     <template v-else>
-      <header class="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 class="text-3xl font-semibold tracking-tight">{{ heading }}</h1>
-          <p class="text-muted-foreground mt-1 text-sm">
-            <template v-if="includeRelated">{{ relatedCount }} related {{ setsWord }}</template>
-            <template v-else>
-              <span class="uppercase">{{ code }}</span>
-              <template v-if="set?.set_type"> · {{ set?.set_type?.replace('_', ' ') }}</template>
-            </template>
-            <template v-if="countLabel"> · {{ countLabel }}</template>
-          </p>
-        </div>
-        <div class="w-full sm:w-80">
-          <div class="relative">
-            <Search
-              class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-            />
-            <Input
-              v-model="searchInput"
-              :placeholder="
-                includeRelated
-                  ? 'Search these sets — c:r, t:land…'
-                  : 'Search this set — c:r, t:land…'
-              "
-              class="pl-9"
-            />
-          </div>
-          <SearchSyntaxHint class="mt-1.5" />
-        </div>
+      <header class="mb-4">
+        <h1 class="text-3xl font-semibold tracking-tight">{{ heading }}</h1>
+        <p class="text-muted-foreground mt-1 text-sm">
+          <template v-if="includeRelated">{{ relatedCount }} related {{ setsWord }}</template>
+          <template v-else>
+            <span class="uppercase">{{ code }}</span>
+            <template v-if="set?.set_type"> · {{ set?.set_type?.replace('_', ' ') }}</template>
+          </template>
+          <template v-if="countLabel"> · {{ countLabel }}</template>
+        </p>
       </header>
+
+      <!-- The search bar sticks to the top of the viewport so it stays reachable
+           while scrolling a long set. -->
+      <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
+        <div class="relative">
+          <Search
+            class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+          />
+          <Input
+            v-model="searchInput"
+            :placeholder="
+              includeRelated ? 'Search these sets — c:r, t:land…' : 'Search this set — c:r, t:land…'
+            "
+            class="pl-9"
+          />
+        </div>
+      </div>
+      <SearchSyntaxHint class="mt-2 mb-6" />
 
       <!-- Offer folding the set's related sub-sets (tokens, promos, decks, …) into
            one listing instead of visiting each individually. Hidden in the by-drop

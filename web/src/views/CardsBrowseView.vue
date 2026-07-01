@@ -76,20 +76,21 @@ watch(
       <span class="text-foreground">All cards</span>
     </nav>
 
-    <header class="mb-6 flex flex-wrap items-center justify-between gap-4">
-      <h1 class="text-3xl font-semibold tracking-tight">All cards</h1>
-      <div class="w-full sm:w-80">
-        <div class="relative">
-          <Search
-            class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-          />
-          <Input v-model="searchInput" placeholder="Search — name, c:r, t:goblin…" class="pl-9" />
-        </div>
-        <SearchSyntaxHint class="mt-1.5" />
-      </div>
-    </header>
+    <h1 class="mb-4 text-3xl font-semibold tracking-tight">All cards</h1>
 
-    <p class="text-muted-foreground mb-6 text-sm">
+    <!-- The search bar sticks to the top of the viewport so it stays reachable
+         while scrolling a long results grid. -->
+    <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
+      <div class="relative">
+        <Search
+          class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+        />
+        <Input v-model="searchInput" placeholder="Search — name, c:r, t:goblin…" class="pl-9" />
+      </div>
+    </div>
+    <SearchSyntaxHint class="mt-2" />
+
+    <p class="text-muted-foreground mt-4 mb-6 text-sm">
       <template v-if="cardsQuery.isFetching.value && !cards.length">Searching…</template>
       <template v-else>{{ total.toLocaleString() }} {{ total === 1 ? 'card' : 'cards' }}</template>
       <template v-if="query"> matching “{{ query }}”</template>
