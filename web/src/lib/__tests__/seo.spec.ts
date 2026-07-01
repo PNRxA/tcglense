@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { effectScope, nextTick, ref } from 'vue'
-import { absoluteUrl, SITE_DESCRIPTION, SITE_NAME, usePageMeta } from '../seo'
+import { absoluteUrl, DEFAULT_OG_IMAGE, SITE_DESCRIPTION, SITE_NAME, usePageMeta } from '../seo'
 
 // Read the current value of a managed head tag, or null if absent.
 function meta(attr: 'name' | 'property', key: string): string | null {
@@ -51,9 +51,10 @@ describe('usePageMeta', () => {
     expect(meta('property', 'og:type')).toBe('website')
     expect(meta('property', 'og:url')).toBe(`${window.location.origin}/cards/mtg`)
     expect(meta('property', 'og:site_name')).toBe(SITE_NAME)
-    // No image → the small summary card, and no image tags.
-    expect(meta('name', 'twitter:card')).toBe('summary')
-    expect(meta('property', 'og:image')).toBeNull()
+    // No page-specific image → the branded default banner on a large summary card.
+    expect(meta('name', 'twitter:card')).toBe('summary_large_image')
+    expect(meta('property', 'og:image')).toBe(absoluteUrl(DEFAULT_OG_IMAGE))
+    expect(meta('name', 'twitter:image')).toBe(absoluteUrl(DEFAULT_OG_IMAGE))
   })
 
   it('falls back to the site name and description when omitted', () => {
@@ -94,18 +95,21 @@ describe('usePageMeta', () => {
     expect(meta('property', 'og:title')).toBe('Second')
   })
 
-  it('clears the per-page image and structured data when the view unmounts', () => {
+  it('resets to the default banner and clears structured data when the view unmounts', () => {
     const scope = run({
       title: 'Sol Ring',
       image: 'https://cdn.example.com/sol-ring.png',
       jsonLd: { '@type': 'Product', name: 'Sol Ring' },
     })
-    expect(meta('property', 'og:image')).not.toBeNull()
+    // The card art overrides the default banner while the card view is mounted.
+    expect(meta('property', 'og:image')).toBe('https://cdn.example.com/sol-ring.png')
     expect(jsonLd()).not.toBeNull()
 
     scope.stop()
-    expect(meta('property', 'og:image')).toBeNull()
-    expect(meta('name', 'twitter:image')).toBeNull()
+    // On unmount the preview falls back to the site-wide banner (not the stale art),
+    // and the page-specific structured data is dropped.
+    expect(meta('property', 'og:image')).toBe(absoluteUrl(DEFAULT_OG_IMAGE))
+    expect(meta('name', 'twitter:image')).toBe(absoluteUrl(DEFAULT_OG_IMAGE))
     expect(jsonLd()).toBeNull()
   })
 })
