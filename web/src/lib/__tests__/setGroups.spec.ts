@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import {
-  filterSets,
+  filterGroups,
   findGroup,
   groupByYear,
   groupHasCode,
@@ -191,42 +191,58 @@ describe('originSetCode', () => {
   })
 })
 
-describe('filterSets', () => {
-  const sets = [
-    set('blb', { name: 'Bloomburrow' }),
-    set('blc', { name: 'Bloomburrow Commander', parent_set_code: 'blb' }),
+describe('filterGroups', () => {
+  // Ixalan with "Jurassic World" (a related Universes Beyond set) nested under it,
+  // plus that set's own tokens two levels deep — the shape from issue #128.
+  const groups = groupSets([
+    set('xln', { name: 'Ixalan' }),
+    set('rex', {
+      name: 'Jurassic World Collection',
+      parent_set_code: 'xln',
+      set_type: 'commander',
+    }),
+    set('trex', { name: 'Jurassic World Tokens', parent_set_code: 'rex', set_type: 'token' }),
     set('neo', { name: 'Kamigawa: Neon Dynasty' }),
-  ]
+  ])
 
-  it('returns the original list for an empty or whitespace query', () => {
-    expect(filterSets(sets, '')).toBe(sets)
-    expect(filterSets(sets, '   ')).toBe(sets)
+  it('returns the original groups for an empty or whitespace query', () => {
+    expect(filterGroups(groups, '')).toBe(groups)
+    expect(filterGroups(groups, '   ')).toBe(groups)
   })
 
-  it('matches set names case-insensitively, as a substring', () => {
-    expect(filterSets(sets, 'bloom').map((s) => s.code)).toEqual(['blb', 'blc'])
-    expect(filterSets(sets, 'NEON').map((s) => s.code)).toEqual(['neo'])
+  it('keeps a whole group when a related sub-set matches (issue #128)', () => {
+    // "Jurassic" matches only the related sub-sets, not Ixalan itself — but the
+    // entire Ixalan group (main + every related sub-set) must surface, not just
+    // the matching tiles.
+    const result = filterGroups(groups, 'jurassic')
+    expect(result.map((g) => g.main.code)).toEqual(['xln'])
+    expect(result[0]?.children.map((c) => c.code)).toEqual(['rex', 'trex'])
   })
 
-  it('matches the set code, case-insensitively', () => {
-    expect(filterSets(sets, 'NEO').map((s) => s.code)).toEqual(['neo'])
-    expect(filterSets(sets, 'blc').map((s) => s.code)).toEqual(['blc'])
+  it('keeps a whole group when the main set matches', () => {
+    const result = filterGroups(groups, 'ixalan')
+    expect(result.map((g) => g.main.code)).toEqual(['xln'])
+    expect(result[0]?.children.map((c) => c.code)).toEqual(['rex', 'trex'])
+  })
+
+  it('matches a set code case-insensitively, including a sub-set code', () => {
+    expect(filterGroups(groups, 'NEO').map((g) => g.main.code)).toEqual(['neo'])
+    // 'trex' is a two-levels-deep sub-set of Ixalan; matching it surfaces xln.
+    expect(filterGroups(groups, 'trex').map((g) => g.main.code)).toEqual(['xln'])
   })
 
   it('trims surrounding whitespace from the query', () => {
-    expect(filterSets(sets, '  neon  ').map((s) => s.code)).toEqual(['neo'])
+    expect(filterGroups(groups, '  neon  ').map((g) => g.main.code)).toEqual(['neo'])
   })
 
   it('returns an empty list when nothing matches', () => {
-    expect(filterSets(sets, 'zzz')).toEqual([])
+    expect(filterGroups(groups, 'zzz')).toEqual([])
   })
 
-  it('feeds groupSets so an orphaned matching child becomes its own top-level tile', () => {
-    // 'commander' matches only the child; its parent is filtered out, so the
-    // child surfaces as a top-level group rather than vanishing.
-    const groups = groupSets(filterSets(sets, 'commander'))
-    expect(groups.map((g) => g.main.code)).toEqual(['blc'])
-    expect(groups.flatMap((g) => g.children)).toEqual([])
+  it('excludes a group when the match belongs only to a different group', () => {
+    const result = filterGroups(groups, 'neon')
+    expect(result.map((g) => g.main.code)).toEqual(['neo'])
+    expect(result[0]?.children).toEqual([])
   })
 })
 

@@ -1,22 +1,5 @@
 import type { CardSet } from './api'
 
-/**
- * Narrow a flat set list to those whose **name or code** contains `query`
- * (case-insensitive substring; an empty/whitespace query matches everything).
- *
- * Filtering the flat list *before* {@link groupSets} keeps the result honest:
- * every surviving tile actually matches, and a matching sub-set whose parent was
- * filtered out simply surfaces as its own top-level tile (an orphan becomes its
- * own root in {@link groupSets}).
- */
-export function filterSets(sets: CardSet[], query: string): CardSet[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return sets
-  return sets.filter(
-    (set) => set.name.toLowerCase().includes(q) || set.code.toLowerCase().includes(q),
-  )
-}
-
 /** A main (top-level) set together with the sub-sets that hang off it. */
 export interface SetGroup {
   main: CardSet
@@ -120,6 +103,32 @@ export function groupSets(sets: CardSet[]): SetGroup[] {
   // parent in the list.
   return [...groups.values()].sort(
     (a, b) => (position.get(a.main.code) ?? 0) - (position.get(b.main.code) ?? 0),
+  )
+}
+
+/** Case-insensitive substring match of `query` against a set's name or code. */
+function setMatchesQuery(set: CardSet, query: string): boolean {
+  return set.name.toLowerCase().includes(query) || set.code.toLowerCase().includes(query)
+}
+
+/**
+ * Narrow pre-built {@link SetGroup}s to those where the main set **or any of its
+ * related sub-sets** matches `query` (case-insensitive substring over name/code;
+ * an empty/whitespace query keeps every group, returning the same array).
+ *
+ * A matched group is kept **whole**: matching only a sub-set (e.g. searching
+ * "Jurassic World", a related set of Ixalan) still surfaces the entire group — the
+ * main set and all its related sub-sets — rather than orphaning the matching tile
+ * (issue #128). Grouping the full list with {@link groupSets} *before* filtering
+ * is what makes this possible: filtering the flat list first would strand a
+ * matched sub-set as a standalone root once its unmatched parent dropped out.
+ */
+export function filterGroups(groups: SetGroup[], query: string): SetGroup[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return groups
+  return groups.filter(
+    (group) =>
+      setMatchesQuery(group.main, q) || group.children.some((child) => setMatchesQuery(child, q)),
   )
 }
 
