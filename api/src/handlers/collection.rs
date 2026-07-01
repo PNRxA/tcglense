@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, Query, State},
     http::StatusCode,
 };
@@ -52,6 +53,13 @@ const MAX_OWNED_IDS: usize = 500;
 /// bind-variable limit (as few as 999 on old builds) — a collection can hold far more
 /// distinct cards than that once imported in bulk.
 const CARD_LOOKUP_CHUNK: usize = 900;
+/// Hard ceiling on an uploaded collection CSV, enforced as a route body limit (see the
+/// router). Sized generously above any real collection *when exported with only the three
+/// columns we ask for* (Scryfall ID, Finish, Quantity ≈ 60 bytes/row, so ~16 MB spans far
+/// more than [`collection_import`]'s row cap) while bounding the memory a single upload
+/// can force us to buffer + parse. A larger, all-columns export can exceed this — the UI
+/// tells the user to export only the three needed columns.
+pub const MAX_CSV_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 // ---------- Response / request DTOs ----------
 
@@ -706,11 +714,15 @@ pub struct ImportRequest {
     pub mode: ReconcileMode,
 }
 
-/// Body of `PUT .../source`: the collection link to remember (provider + source URL/id).
+/// Body of `PUT .../source`: the collection link to remember (provider + source URL/id),
+/// plus whether saved re-syncs should use smart (incremental) sync. `smart` defaults to
+/// `false` (full mirror) when omitted.
 #[derive(Debug, Deserialize)]
 pub struct SaveSourceRequest {
     pub provider: String,
     pub source: String,
+    #[serde(default)]
+    pub smart: bool,
 }
 
 /// A saved external collection link for a game.
@@ -722,6 +734,8 @@ pub struct CollectionSourceResponse {
     pub url: String,
     /// RFC3339 timestamp of the last successful sync, or null if never synced.
     pub last_synced_at: Option<String>,
+    /// Whether a saved re-sync uses smart (incremental) sync rather than a full mirror.
+    pub smart: bool,
 }
 
 /// The status of a background import/sync job — returned when one is enqueued and each
@@ -800,6 +814,49 @@ pub async fn import_collection(
     ))
 }
 
+/// Query params for a CSV upload. The reconcile `mode` rides in the query string so the
+/// request body can be the raw CSV file. Parsed as an optional string (not a typed
+/// `ReconcileMode`) so a missing/invalid mode is our JSON `422`, not axum's default
+/// text/plain query-rejection.
+#[derive(Debug, Deserialize)]
+pub struct CsvImportParams {
+    pub mode: Option<String>,
+}
+
+/// `POST /api/collection/{game}/import/csv?mode=...` -> import a collection from an
+/// uploaded Archidekt CSV export. The request body is the raw CSV file (bounded by the
+/// route's body limit, [`MAX_CSV_UPLOAD_BYTES`]); the reconcile mode is a query param.
+///
+/// Unlike the URL import this needs no upstream fetch, so it reconciles **synchronously**
+/// and returns the [`ImportSummary`] directly (no rate limiter, no background job): a CSV
+/// has no location to re-sync from, so it's inherently one-off. `404` for an unknown game,
+/// `422` for a bad mode / unreadable CSV / one missing a required column / an empty upload.
+pub async fn import_collection_csv(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<CsvImportParams>,
+    body: Bytes,
+) -> Result<Json<ImportSummary>, AppError> {
+    require_game(&game)?;
+    // The CSV shape is Archidekt's, and Archidekt is Magic-only (its card ids are Scryfall
+    // ids); gate on the same provider/game support as the URL import.
+    if !Provider::Archidekt.supports_game(&game) {
+        return Err(AppError::Validation(format!(
+            "CSV collection import is not available for '{game}'"
+        )));
+    }
+    let mode = parse_reconcile_mode(params.mode.as_deref())?;
+    if body.is_empty() {
+        return Err(AppError::Validation("no CSV file was uploaded".to_string()));
+    }
+
+    let summary = collection_import::execute_csv_import(&state.db, user.id, &game, mode, &body)
+        .await
+        .map_err(AppError::from)?;
+    Ok(Json(summary))
+}
+
 /// `GET /api/collection/{game}/import/jobs/{job_id}` -> the status of a background
 /// import/sync job (queued / running / complete / error). `404` for an unknown job or
 /// one that isn't the caller's.
@@ -869,6 +926,7 @@ pub async fn save_collection_source(
         provider: Set(provider.as_str().to_string()),
         external_id: Set(external_id),
         last_synced_at: Set(last_synced_at),
+        smart: Set(payload.smart),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -883,6 +941,7 @@ pub async fn save_collection_source(
                 collection_source::Column::Provider,
                 collection_source::Column::ExternalId,
                 collection_source::Column::LastSyncedAt,
+                collection_source::Column::Smart,
                 collection_source::Column::UpdatedAt,
             ])
             .to_owned(),
@@ -914,8 +973,9 @@ pub async fn delete_collection_source(
 }
 
 /// `POST /api/collection/{game}/sync` -> enqueue a re-sync from the saved collection
-/// link using mirror/replace semantics; the worker stamps `last_synced_at` on success.
-/// Returns `202` with a job id to poll. `404` when no link is saved.
+/// link; the worker stamps `last_synced_at` on success. Uses smart (incremental) sync
+/// when the saved link opted into it, otherwise a full mirror/replace. Returns `202`
+/// with a job id to poll. `404` when no link is saved.
 pub async fn sync_collection_source(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -932,6 +992,15 @@ pub async fn sync_collection_source(
         ))
     })?;
 
+    // The saved link records how it re-syncs: smart (incremental, only recently-changed
+    // cards) or a full mirror (removes cards no longer upstream). Both stamp the source
+    // as synced; the UI tailors its confirmation to which one runs.
+    let mode = if source.smart {
+        ReconcileMode::Smart
+    } else {
+        ReconcileMode::Replace
+    };
+
     let job_id = jobs::spawn_import_job(
         state.db.clone(),
         state.http.clone(),
@@ -941,9 +1010,7 @@ pub async fn sync_collection_source(
             game,
             provider,
             collection_id: source.external_id,
-            // A saved re-sync always mirrors the source (the user opted into this when
-            // saving the link; the UI warns that it replaces the collection).
-            mode: ReconcileMode::Replace,
+            mode,
             // Stamp `last_synced_at` on success (this is a re-sync of the saved link).
             stamp_source_synced: true,
         },
@@ -965,6 +1032,20 @@ fn require_game(game: &str) -> Result<&'static Game, AppError> {
 fn parse_provider(s: &str) -> Result<Provider, AppError> {
     Provider::from_id(s)
         .ok_or_else(|| AppError::Validation(format!("unknown collection provider '{s}'")))
+}
+
+/// Parse a reconcile mode from a query param, 422 when absent or unrecognised. Used by
+/// the CSV upload, where the mode is a query param rather than a typed JSON field (so a
+/// bad value returns our JSON error, not axum's default query rejection).
+fn parse_reconcile_mode(s: Option<&str>) -> Result<ReconcileMode, AppError> {
+    match s.map(str::trim) {
+        Some("overwrite") => Ok(ReconcileMode::Overwrite),
+        Some("replace") => Ok(ReconcileMode::Replace),
+        Some("merge") => Ok(ReconcileMode::Merge),
+        _ => Err(AppError::Validation(
+            "mode must be one of: overwrite, replace, merge".to_string(),
+        )),
+    }
 }
 
 /// The user's saved collection link for a game, if any.
@@ -993,6 +1074,7 @@ fn source_response(row: collection_source::Model) -> CollectionSourceResponse {
         external_id: row.external_id,
         url,
         last_synced_at: row.last_synced_at.map(|t| t.to_rfc3339()),
+        smart: row.smart,
     }
 }
 
@@ -1209,6 +1291,31 @@ mod tests {
         ]);
         // First-seen order preserved, blanks gone, no repeats.
         assert_eq!(out, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn parse_reconcile_mode_accepts_known_modes_and_rejects_others() {
+        assert!(matches!(
+            parse_reconcile_mode(Some("overwrite")),
+            Ok(ReconcileMode::Overwrite)
+        ));
+        assert!(matches!(
+            parse_reconcile_mode(Some(" replace ")),
+            Ok(ReconcileMode::Replace)
+        ));
+        assert!(matches!(
+            parse_reconcile_mode(Some("merge")),
+            Ok(ReconcileMode::Merge)
+        ));
+        // Missing or unrecognised -> our JSON validation error (422), never a silent default.
+        assert!(matches!(
+            parse_reconcile_mode(None),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            parse_reconcile_mode(Some("wipe")),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]

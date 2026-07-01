@@ -228,6 +228,7 @@ mod tests {
             regular_copies: 1,
             foil_copies: 0,
             removed_cards: 0,
+            stopped_early: false,
         }
     }
 

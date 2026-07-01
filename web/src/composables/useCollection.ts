@@ -10,6 +10,7 @@ import {
   getCollectionSummary,
   getImportJob,
   importCollection,
+  importCollectionCsv,
   saveCollectionSource,
   setCollectionEntry,
   syncCollectionSource,
@@ -22,6 +23,7 @@ import {
   type CollectionSource,
   type CollectionSummary,
   type ImportJob,
+  type ImportSummary,
   type OwnedCountsMap,
   type ReconcileMode,
 } from '@/lib/api'
@@ -118,14 +120,23 @@ export function useCollectionSetsQuery(game: Ref<string>) {
 /**
  * How many copies of one card the signed-in user owns — for the card-detail
  * controls. Disabled while signed out (the route is public), so a logged-out
- * visitor never triggers an auth call.
+ * visitor never triggers an auth call. Options let a caller defer and refresh the
+ * fetch: `enabled` gates it (e.g. the grid quick-add control only wants the
+ * authoritative holding once its popover opens, not for every visible tile), and
+ * `staleTime` (e.g. `0`) forces a re-fetch each time the query re-enables so the
+ * control never seeds an absolute-count edit off a stale cached holding.
  */
-export function useCollectionEntryQuery(game: Ref<string>, id: Ref<string>) {
+export function useCollectionEntryQuery(
+  game: Ref<string>,
+  id: Ref<string>,
+  opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
+) {
   const auth = useAuthStore()
   const options = {
     queryKey: ['collection-entry', game, id],
     queryFn: (token: string) => getCollectionEntry(token, game.value, id.value),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    staleTime: opts.staleTime,
   }
   return useAuthedQuery<CollectionQuantities>(options)
 }
@@ -236,6 +247,26 @@ export function useImportCollectionMutation() {
   return useAuthedMutation<ImportJob, ImportCollectionVars>(options)
 }
 
+/** Variables for a CSV upload import: the file and how to reconcile it. */
+export interface ImportCsvVars {
+  game: string
+  file: File
+  mode: ReconcileMode
+}
+
+/**
+ * Import a collection from an uploaded Archidekt CSV export. Resolves **synchronously**
+ * to an {@link ImportSummary} (the CSV needs no upstream fetch, so there's no job to
+ * poll); the caller invalidates the collection caches on success.
+ */
+export function useImportCollectionCsvMutation() {
+  const options = {
+    mutationFn: (token: string, vars: ImportCsvVars) =>
+      importCollectionCsv(token, vars.game, vars.file, vars.mode),
+  }
+  return useAuthedMutation<ImportSummary, ImportCsvVars>(options)
+}
+
 /**
  * Poll a background import/sync job until it reaches a terminal status. Enabled only
  * while `jobId` is set; refetches every 2s while `queued`/`running`, then stops.
@@ -262,6 +293,8 @@ export interface SaveSourceVars {
   game: string
   provider: CollectionProvider
   source: string
+  /** Whether saved re-syncs should use smart (incremental) sync. */
+  smart?: boolean
 }
 
 /** Save (upsert) the collection link; invalidates the saved-source query. */
@@ -269,7 +302,11 @@ export function useSaveCollectionSourceMutation() {
   const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: SaveSourceVars) =>
-      saveCollectionSource(token, vars.game, { provider: vars.provider, source: vars.source }),
+      saveCollectionSource(token, vars.game, {
+        provider: vars.provider,
+        source: vars.source,
+        smart: vars.smart,
+      }),
     onSettled: (
       _data: CollectionSource | undefined,
       _error: ApiError | null,

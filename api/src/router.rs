@@ -4,6 +4,7 @@
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
     middleware::map_response,
     routing::{get, post},
@@ -19,9 +20,10 @@ use crate::{
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         collection::{
-            collection_sets, collection_summary, delete_collection_source, get_collection_entry,
-            get_collection_source, get_import_job, import_collection, list_collection,
-            owned_counts, save_collection_source, set_collection_entry, sync_collection_source,
+            MAX_CSV_UPLOAD_BYTES, collection_sets, collection_summary, delete_collection_source,
+            get_collection_entry, get_collection_source, get_import_job, import_collection,
+            import_collection_csv, list_collection, owned_counts, save_collection_source,
+            set_collection_entry, sync_collection_source,
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
@@ -76,6 +78,13 @@ pub fn build_router(state: AppState) -> Router {
         // Import / sync a collection from an external provider (Archidekt; Moxfield
         // planned): a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))
+        // CSV upload: the raw file is the request body, so this route overrides axum's
+        // default 2 MB body limit with our own (larger, but still bounded) cap. The limit
+        // is layered on just this method-router so no other route's body ceiling changes.
+        .route(
+            "/api/collection/{game}/import/csv",
+            post(import_collection_csv).layer(DefaultBodyLimit::max(MAX_CSV_UPLOAD_BYTES)),
+        )
         .route(
             "/api/collection/{game}/import/jobs/{job_id}",
             get(get_import_job),

@@ -81,6 +81,9 @@ const syncing = computed(
 const providerLabel = computed(() =>
   source.value?.provider === 'archidekt' ? 'Archidekt' : (source.value?.provider ?? 'Archidekt'),
 )
+// A saved link can re-sync by smart (incremental) sync or a full mirror; the label,
+// confirmation, and result copy differ because smart never removes cards.
+const smart = computed(() => source.value?.smart ?? false)
 const lastSyncedText = computed(() => {
   const t = source.value?.last_synced_at
   if (!t) return 'Not synced yet'
@@ -88,13 +91,16 @@ const lastSyncedText = computed(() => {
   return Number.isNaN(d.getTime()) ? '' : `Last synced ${d.toLocaleString()}`
 })
 
-// A saved re-sync mirrors (replace), so it can remove cards — confirm before running.
+// A full re-sync mirrors (replace), so it can remove cards — confirm before running. A
+// smart re-sync only updates recently-changed cards and never removes, so it's gentler.
 async function resync() {
   if (!source.value || syncing.value) return
-  const ok = window.confirm(
-    `Re-syncing replaces your ${gameName.value} collection with your ${providerLabel.value} ` +
-      'collection, removing cards that are no longer in it. Continue?',
-  )
+  const message = smart.value
+    ? `Smart-sync updates recently-changed cards from your ${providerLabel.value} collection ` +
+      "(it won't remove cards). Continue?"
+    : `Re-syncing replaces your ${gameName.value} collection with your ${providerLabel.value} ` +
+      'collection, removing cards that are no longer in it. Continue?'
+  const ok = window.confirm(message)
   if (!ok) return
   syncMessage.value = 'Re-sync queued…'
   syncJobId.value = null
@@ -112,13 +118,22 @@ watch(
   (job) => {
     if (!job) return
     if (job.status === 'running') {
-      syncMessage.value = 'Re-syncing from Archidekt… this can take a couple of minutes.'
+      syncMessage.value = smart.value
+        ? 'Smart-syncing from Archidekt… this can take a couple of minutes.'
+        : 'Re-syncing from Archidekt… this can take a couple of minutes.'
     } else if (job.status === 'complete') {
       const s = job.summary
-      syncMessage.value = s
-        ? `Synced ${s.matched_cards.toLocaleString()} cards` +
+      if (!s) {
+        syncMessage.value = 'Re-sync complete.'
+      } else if (s.mode === 'smart') {
+        syncMessage.value =
+          `Smart-synced ${s.matched_cards.toLocaleString()} cards` +
+          (s.stopped_early ? ' (stopped at already-synced cards).' : '.')
+      } else {
+        syncMessage.value =
+          `Synced ${s.matched_cards.toLocaleString()} cards` +
           (s.removed_cards ? `, removed ${s.removed_cards.toLocaleString()}.` : '.')
-        : 'Re-sync complete.'
+      }
       invalidateCollectionData(qc, game.value)
       qc.invalidateQueries({ queryKey: ['collection-source', game.value] })
     } else if (job.status === 'error') {
@@ -170,7 +185,7 @@ watch(
           <template v-if="source">
             <Button variant="secondary" size="sm" :disabled="syncing" @click="resync">
               <RefreshCw :class="{ 'animate-spin': syncing }" />
-              Re-sync from {{ providerLabel }}
+              {{ smart ? 'Smart re-sync' : 'Re-sync' }} from {{ providerLabel }}
             </Button>
             <span class="text-muted-foreground text-sm">{{ lastSyncedText }}</span>
           </template>
