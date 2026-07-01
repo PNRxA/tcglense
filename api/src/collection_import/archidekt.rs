@@ -3,9 +3,11 @@
 //! Archidekt's public collection API is paginated JSON at
 //! `https://archidekt.com/api/collection/{id}/?page={n}` — 25 rows per page, with no
 //! page-size override. Each row's `card.uid` is the Scryfall id (our
-//! `cards.external_id`) and the row's `foil` boolean is the finish (the sibling
-//! `modifier` field is *not* a reliable finish signal). The same printing can appear
-//! across several rows (differing condition / language / tags), so the caller
+//! `cards.external_id`). The finish comes from the row's `modifier` string
+//! ("Normal" / "Foil" / "Etched") — the sibling `foil` boolean is unreliable (often
+//! left `false` even for a foil), so `modifier` is the primary signal and the boolean
+//! is only a fallback (see [`is_foil_finish`]). The same printing can appear across
+//! several rows (differing condition / language / tags / finish), so the caller
 //! aggregates by `(uid, foil)`.
 //!
 //! We construct every request URL ourselves from the host constant plus a
@@ -48,8 +50,14 @@ struct CollectionPage {
 struct CollectionRow {
     #[serde(default)]
     quantity: i32,
+    /// Legacy finish flag — unreliable (often `false` even for a foil), so only used as
+    /// a fallback when `modifier` is absent. See [`is_foil_finish`].
     #[serde(default)]
     foil: bool,
+    /// The finish label ("Normal" / "Foil" / "Etched"). This, not `foil`, is the real
+    /// finish signal in practice; any non-"Normal" value is a foil finish.
+    #[serde(default)]
+    modifier: Option<String>,
     card: RowCard,
 }
 
@@ -57,6 +65,32 @@ struct CollectionRow {
 struct RowCard {
     /// Scryfall card id — equals our `cards.external_id`.
     uid: String,
+}
+
+/// Decide whether a collection row is a foil finish.
+///
+/// Archidekt records the finish in two places: the `modifier` string
+/// ("Normal" / "Foil" / "Etched") and a legacy `foil` boolean. Real collections leave
+/// the boolean `false` even for foils, so `modifier` is the primary signal — any
+/// non-empty, non-"Normal" modifier (foil, etched, or any other special finish) counts
+/// as a foil in our two-bucket regular/foil model. The boolean is honored too, so a
+/// foil is caught whichever field the provider populates; a card is treated as regular
+/// only when *both* say so (modifier absent or "Normal", and the boolean `false`).
+///
+/// `pub(super)` so the CSV importer ([`super::csv_import`]) can key a CSV row's `Finish`
+/// column off the exact same rule (a CSV has no `foil` boolean, so it passes `false`),
+/// keeping the two Archidekt ingestion formats consistent on what counts as a foil.
+pub(super) fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
+    if foil {
+        return true;
+    }
+    match modifier {
+        Some(m) => {
+            let m = m.trim();
+            !m.is_empty() && !m.eq_ignore_ascii_case("normal")
+        }
+        None => false,
+    }
 }
 
 /// Extract the collection id from a user-supplied source: a full Archidekt URL
@@ -168,9 +202,10 @@ pub async fn fetch(
             break;
         }
         for row in body.results {
+            let foil = is_foil_finish(row.foil, row.modifier.as_deref());
             holdings.push(FetchedHolding {
                 external_card_id: row.card.uid,
-                foil: row.foil,
+                foil,
                 quantity: row.quantity,
             });
         }
@@ -241,13 +276,15 @@ mod tests {
 
     #[test]
     fn deserializes_a_collection_page() {
-        // Trimmed to the fields we consume, in Archidekt's real response shape.
+        // Trimmed to the fields we consume, in Archidekt's real response shape. The
+        // `modifier` carries the finish; a real collection leaves `foil` false even for
+        // a foil (the first row), so `modifier` is what we key off.
         let json = r#"{
             "count": 3,
             "next": "http://archidekt.com/api/collection/1/?page=2",
             "results": [
-                { "quantity": 2, "foil": false, "card": { "uid": "aaa" } },
-                { "quantity": 1, "foil": true,  "card": { "uid": "bbb" } }
+                { "quantity": 2, "foil": false, "modifier": "Foil",   "card": { "uid": "aaa" } },
+                { "quantity": 1, "foil": false, "modifier": "Normal", "card": { "uid": "bbb" } }
             ]
         }"#;
         let page: CollectionPage = serde_json::from_str(json).expect("parse page");
@@ -255,9 +292,42 @@ mod tests {
         assert_eq!(page.next.as_deref(), Some("http://archidekt.com/api/collection/1/?page=2"));
         assert_eq!(page.results.len(), 2);
         assert_eq!(page.results[0].card.uid, "aaa");
-        assert!(!page.results[0].foil);
+        assert_eq!(page.results[0].modifier.as_deref(), Some("Foil"));
+        assert!(!page.results[0].foil, "the boolean is left false even for the foil row");
         assert_eq!(page.results[0].quantity, 2);
-        assert!(page.results[1].foil);
+        assert_eq!(page.results[1].modifier.as_deref(), Some("Normal"));
+    }
+
+    #[test]
+    fn missing_modifier_defaults_to_none() {
+        // An older/renamed payload without `modifier` still parses; the finish then
+        // falls back to the `foil` boolean.
+        let json =
+            r#"{ "count": 1, "next": null, "results": [ { "quantity": 1, "foil": true, "card": { "uid": "aaa" } } ] }"#;
+        let page: CollectionPage = serde_json::from_str(json).expect("parse page");
+        assert!(page.results[0].modifier.is_none());
+        assert!(is_foil_finish(page.results[0].foil, page.results[0].modifier.as_deref()));
+    }
+
+    #[test]
+    fn modifier_is_the_primary_finish_signal() {
+        // The real-world case (issue #98): a foil whose boolean is false but whose
+        // modifier says "Foil" must import as a foil, not a base card.
+        assert!(is_foil_finish(false, Some("Foil")));
+        // Etched (and any other non-"Normal" special finish) is a foil in our model.
+        assert!(is_foil_finish(false, Some("Etched")));
+        assert!(is_foil_finish(false, Some("Gilded")));
+        // Matching is case-insensitive and tolerant of surrounding whitespace.
+        assert!(is_foil_finish(false, Some("  foil ")));
+        assert!(!is_foil_finish(false, Some("normal")));
+        // "Normal" (or a blank/absent modifier) with a false boolean is a regular card.
+        assert!(!is_foil_finish(false, Some("Normal")));
+        assert!(!is_foil_finish(false, Some("")));
+        assert!(!is_foil_finish(false, Some("   ")));
+        assert!(!is_foil_finish(false, None));
+        // The legacy boolean is still honored as a fallback when it's the one set.
+        assert!(is_foil_finish(true, None));
+        assert!(is_foil_finish(true, Some("Normal")));
     }
 
     #[test]

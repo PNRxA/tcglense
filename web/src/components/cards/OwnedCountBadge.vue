@@ -6,11 +6,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 // The owned-count chips shown on a card image: a total-copies chip (stacked-cards icon,
 // regular + foil) and, when any are foil, a separate foil chip (sparkles). Shared by the
 // collection grid and the public browse grids (issue #85), now rendered inside
-// OwnedCountControl's trigger (which owns the corner positioning). Each chip carries a
-// matching `aria-label` so the count is announced to screen readers (issue #94), and —
-// when `tooltip` is on — a shadcn tooltip spelling out what its icon means. `tooltip` is
-// turned off when the badge is itself a popover trigger, so a hover tooltip doesn't fight
-// the click-to-open panel (and TooltipTrigger doesn't nest inside PopoverTrigger).
+// OwnedCountControl's trigger (which owns the corner positioning — bottom-left, per issue
+// #100). Each chip carries a matching `aria-label` so the count is announced to screen
+// readers (issue #94), and — when `tooltip` is on — a shadcn tooltip spelling out what its
+// icon means. `tooltip` is turned off when the badge is itself a popover trigger, so a
+// hover tooltip doesn't fight the click-to-open panel (and TooltipTrigger doesn't nest
+// inside PopoverTrigger).
 const props = withDefaults(
   defineProps<{
     quantity: number

@@ -23,7 +23,9 @@ browsed at `/collection/{game}` with a value/count summary. A collection can als
 **imported/synced from an external provider** (Archidekt first; the layer is
 provider-agnostic, Moxfield planned): a one-off import with a chosen reconcile mode
 (overwrite-matched / mirror-replace / add-merge), or a saved collection link re-synced
-on demand (always mirror/replace). The set-completion and
+on demand (always mirror/replace). The same reconcile engine also backs an **uploaded
+Archidekt CSV export** (one-off, no network fetch, so it reconciles synchronously),
+which needs only the Scryfall ID + Finish + Quantity columns. The set-completion and
 sealed-product price-tracking features are not yet implemented — they are the next
 things to build on top of this scaffold (the collection gives set-completion the
 owned-card data to hang off).
@@ -256,6 +258,7 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
 | `POST /api/collection/{game}/import` | `{ provider, source, mode }` | **`202`** `ImportJob` `{ job_id, status: "queued" }` — enqueues a one-off import (runs async; poll the job below). Validated synchronously: `422` for an unknown provider / unparseable source; `503` if too many imports are queued. `provider` is `"archidekt"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge`. Does not save a link |
+| `POST /api/collection/{game}/import/csv?mode=` | raw CSV body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded Archidekt CSV export. Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses the CSV, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly. A CSV is inherently one-off (no link is saved). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable CSV / one missing a required column (Scryfall ID, Finish, Quantity) / an empty upload |
 | `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, summary?, error? }` — poll an import/sync job. `status` ∈ `queued`/`running`/`complete`/`error`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/source` | — | `CollectionSource` or `null` — the saved collection link for this game |
 | `PUT /api/collection/{game}/source` | `{ provider, source }` | `CollectionSource` — save/upsert the link (one per user+game; validates the source resolves; does not sync) |
@@ -295,7 +298,15 @@ quantity)` holdings; the provider-independent engine aggregates by card (`(uid, 
 the same printing can span several provider rows), resolves each `external_card_id` to
 `cards.external_id` (for Archidekt the `card.uid` is the Scryfall id) in chunked `IN`
 lookups, skips unmatched cards, then applies the chosen `ReconcileMode` in one transaction
-(atomic `ON CONFLICT` upserts + keyed deletes). `ImportSummary = { provider, mode,
+(atomic `ON CONFLICT` upserts + keyed deletes). The **CSV upload** path
+(`collection_import::csv_import` + `execute_csv_import`) is a second *source* of the very
+same holdings: it parses an uploaded Archidekt CSV export (only the Scryfall ID / Finish /
+Quantity columns; the `csv` crate handles quoting/escaping, a leading BOM is stripped, a
+non-UTF-8 body is rejected, rows are capped at `MAX_IMPORT_ROWS`, and the finish is keyed
+off the shared `archidekt::is_foil_finish`) into `Vec<FetchedHolding>`, then runs the exact
+same aggregate/resolve/reconcile/apply engine — but with no upstream fetch, so no rate
+limiter or job, reconciling inline in the request (the handler bounds the body with a
+route-scoped `DefaultBodyLimit`). `ImportSummary = { provider, mode,
 total_rows, distinct_cards, matched_cards, unmatched_cards, unmatched_sample,
 regular_copies, foil_copies, removed_cards }`. Import jobs live in-memory in `AppState.imports`
 (lost on restart; the client just re-imports). A saved link is
@@ -316,7 +327,7 @@ state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, imag
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
 entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`)
-collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + execute_import/aggregate/plan_reconcile/apply engine + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch → normalized holdings), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
+collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + execute_import/execute_csv_import/aggregate/plan_reconcile/apply engine + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch → normalized holdings, shared is_foil_finish), csv_import.rs (parse an uploaded Archidekt CSV export → normalized holdings; bounded + defensive), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -338,7 +349,7 @@ handlers/
   auth.rs          register / login / refresh / logout / me
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store
   catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history / other printings
-  collection.rs    authenticated per-user collection: list (paginate) / summary / get + set (PUT upsert, both-zero deletes) one card's owned counts / batch owned counts (POST .../owned, for browse-grid badges); import (one-off, chosen mode) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
+  collection.rs    authenticated per-user collection: list (paginate) / summary / get + set (PUT upsert, both-zero deletes) one card's owned counts / batch owned counts (POST .../owned, for browse-grid badges); import (one-off URL, chosen mode) + CSV upload (POST .../import/csv, synchronous, body-limited) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
   health.rs        health
 ```
@@ -385,7 +396,7 @@ stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, l
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
 components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards and Collection → /collection dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them; both game-dropdowns from the cached registry, Collection prompts signed-out visitors to sign in on the per-game view)
 components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid (optional owned-count badges via `ownership` map), SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: OwnedCountBadge (shared total/foil chip overlay), CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save); ManaSymbols (renders card text with `{…}` mana/cost symbols as mana-font icons — mana cost, colour identity, oracle text)
-components/collection/  ImportCollectionDialog (reka dialog: paste an Archidekt URL/id, pick a reconcile mode, optionally save the link; shows an import summary) — mounted on GameCollectionView alongside a "Re-sync" button
+components/collection/  ImportCollectionDialog (reka dialog with two tabs: "Paste a link" — an Archidekt URL/id, pick a reconcile mode, optionally save the link — or "Upload a CSV" — an exported Archidekt CSV file, which names the three required columns and reconciles synchronously; both show an import summary) — mounted on GameCollectionView alongside a "Re-sync" button
 composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useOwnedCounts [browse-grid badges] + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useCardSearch, …
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, tooltip, chart — unovis-backed)
@@ -505,6 +516,19 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   user-triggered. Cards not in our catalog are skipped (surfaced in the summary's
   `unmatched_*`). Moxfield is planned; the `collection_import` layer is already
   provider-generic so adding it is a new `Provider` variant + module.
+- **Collection CSV upload:** `POST .../import/csv` reconciles an uploaded Archidekt CSV
+  export with **no network fetch**, so — unlike the URL import — it runs **synchronously**
+  in the request (no job, no rate limiter) and needs no saved link (a CSV has nowhere to
+  re-sync from). The upload is untrusted, so it's defended in depth: a route-scoped
+  `DefaultBodyLimit` (`MAX_CSV_UPLOAD_BYTES`, 16 MB → `413` above it), a row cap
+  (`MAX_IMPORT_ROWS`), UTF-8-only parsing (a binary body is a `422`, not a partial import),
+  a leading-BOM strip, per-field bounds (a Scryfall id is length-capped + non-blank;
+  quantities are parsed + clamped), and ids that only ever bind as SQL parameters (an
+  unknown id is skipped, never trusted). The same zero-match `Replace` guard applies, so an
+  empty/garbage upload can't wipe a collection. The parser is Archidekt-shaped (it keys off
+  the Scryfall ID / Finish / Quantity columns); a Moxfield CSV would be a new parser. The
+  16 MB cap is generous for the three-column export the UI asks for but can reject a huge
+  *all-columns* export — the user is told to export only those three columns.
 - **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
   gated on `rows_affected`, so it's race-safe across connections. The
   revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation
