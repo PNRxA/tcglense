@@ -7,9 +7,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 // icon, regular + foil) and, when any are foil, a separate foil chip (sparkles).
 // Shared by the collection grid and the public browse grids (issue #85). The parent
 // is expected to be `relative` (CardTile's badge slot is), since this positions
-// itself absolutely in the corner. Each chip carries a shadcn tooltip spelling out
-// what its icon means ("N total" / "N foil"), with a matching `aria-label` so the
-// count is announced to screen readers even though the chip isn't focusable (issue #94).
+// itself absolutely in the bottom-left corner. Each chip carries a shadcn tooltip
+// spelling out what its icon means ("N total" / "N foil"), with a matching `aria-label`
+// so the count is announced to screen readers even though the chip isn't focusable (issue #94).
 const props = defineProps<{
   quantity: number
   foilQuantity: number
@@ -22,7 +22,7 @@ const total = computed(() => props.quantity + props.foilQuantity)
   <!-- `z-20` keeps the chips above the card, which lifts to `z-10` on hover (see
     CardTile); without it the enlarged card paints over the badges and they vanish
     while hovered. The tooltip content is portalled to <body>, so it's unaffected. -->
-  <div class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1">
+  <div class="absolute bottom-1.5 left-1.5 z-20 flex items-center gap-1">
     <Tooltip v-if="total > 0">
       <TooltipTrigger as-child>
         <span
