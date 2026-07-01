@@ -428,9 +428,10 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
     #[test]
     fn error_cases() {
         assert!(matches!(err("foo:bar"), SearchError::UnknownKey(_)));
-        assert!(matches!(err("kw:flying"), SearchError::UnsupportedKey(_)));
-        assert!(matches!(err("f:modern"), SearchError::UnsupportedKey(_)));
-        assert!(matches!(err("is:reprint"), SearchError::UnsupportedKey(_)));
+        // Deferred filters (Tagger tags #140, cube #141, Phase-5 aggregates) still 422.
+        assert!(matches!(err("cube:vintage"), SearchError::UnsupportedKey(_)));
+        assert!(matches!(err("otag:removal"), SearchError::UnsupportedKey(_)));
+        assert!(matches!(err("prints>2"), SearchError::UnsupportedKey(_)));
         assert!(matches!(
             err("set>dom"),
             SearchError::UnsupportedOperator { .. }
@@ -504,4 +505,160 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
     fn too_many_mana_symbols_rejected() {
         let q = format!("m:{}", "{W}".repeat(MAX_MANA_SYMBOLS + 1));
         assert!(matches!(parse(&q), Err(SearchError::InvalidValue { .. })));
+    }
+
+    // ----- Column-backed filters (search parity, Phase 2) -----
+
+    #[test]
+    fn keyword_filter_is_comma_delimited_membership() {
+        let s = sql("kw:flying");
+        assert!(s.contains("keywords"), "{s}");
+        assert!(s.contains("'%,flying,%'"), "{s}");
+    }
+
+    #[test]
+    fn legality_uses_json_extract() {
+        let s = sql("f:modern");
+        assert!(s.contains("json_extract"), "{s}");
+        assert!(s.contains("'$.modern'"), "{s}");
+        assert!(s.contains("'legal'") && s.contains("'restricted'"), "{s}");
+        assert!(sql("banned:legacy").contains("'banned'"));
+        assert!(sql("restricted:vintage").contains("'restricted'"));
+    }
+
+    #[test]
+    fn finish_and_flag_is_subjects_compile() {
+        // foil must not match nonfoil (comma-delimited membership).
+        assert!(sql("is:foil").contains("finishes"));
+        assert!(sql("is:foil").contains("'%,foil,%'"));
+        assert!(sql("is:reprint").contains("IFNULL(reprint, 0) = 1"));
+        assert!(sql("-is:reprint").contains("NOT"));
+        assert!(sql("is:promo").contains("IFNULL(promo, 0) = 1"));
+        assert!(sql("is:buyabox").contains("promo_types"));
+    }
+
+    #[test]
+    fn print_detail_filters_compile() {
+        assert!(sql("border:borderless").contains("border_color"));
+        assert!(sql("stamp:acorn").contains("security_stamp"));
+        assert!(sql("wm:izzet").contains("watermark"));
+        assert!(sql("a:\"rebecca guay\"").contains("artist"));
+        assert!(sql("ft:draw").contains("flavor_text"));
+        assert!(sql("has:flavor").contains("flavor_text IS NOT NULL"));
+        // frame matches the frame edition OR a frame effect.
+        let f = sql("frame:showcase");
+        assert!(f.contains("frame_effects"), "{f}");
+        assert!(sql("produces:wu").contains("produced_mana"));
+        assert!(sql("artists>1").contains("artist_ids"));
+    }
+
+    #[test]
+    fn deferred_filters_still_422() {
+        for q in ["cube:vintage", "otag:removal", "atag:squirrel", "prints>3", "order:cmc"] {
+            assert!(
+                matches!(parse(q), Err(SearchError::UnsupportedKey(_))),
+                "{q} should still be unsupported"
+            );
+        }
+    }
+
+    /// Run the new column-backed filters against a real in-memory SQLite so
+    /// `json_extract` (legalities) and comma-membership (keywords / finishes /
+    /// promo_types) are proven on rows, not just asserted against rendered SQL.
+    #[tokio::test]
+    async fn column_backed_filters_run_over_sqlite() {
+        use crate::entities::card;
+        use crate::entities::prelude::Card;
+        use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let ts: sea_orm::prelude::DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+
+        // name, keywords, finishes, promo_types, legalities json, reprint, border, artist
+        let rows = [
+            (
+                "Flyer",
+                Some("Flying"),
+                Some("nonfoil,foil"),
+                None,
+                Some(r#"{"modern":"legal","legacy":"banned"}"#),
+                Some(true),
+                Some("black"),
+                Some("Rebecca Guay"),
+            ),
+            (
+                "Grounder",
+                Some("Trample"),
+                Some("nonfoil"),
+                None,
+                Some(r#"{"modern":"legal","legacy":"legal"}"#),
+                Some(false),
+                Some("borderless"),
+                Some("Someone Else"),
+            ),
+            (
+                "Promoish",
+                None,
+                Some("foil,etched"),
+                Some("buyabox"),
+                Some(r#"{"modern":"banned"}"#),
+                Some(false),
+                Some("black"),
+                None,
+            ),
+        ];
+        for (i, &(name, kw, fin, promo, leg, reprint, border, artist)) in rows.iter().enumerate() {
+            card::ActiveModel {
+                game: Set("mtg".to_owned()),
+                external_id: Set(format!("ext-{i}")),
+                name: Set(name.to_owned()),
+                set_code: Set("tst".to_owned()),
+                set_name: Set("TST".to_owned()),
+                collector_number: Set(i.to_string()),
+                lang: Set("en".to_owned()),
+                keywords: Set(kw.map(str::to_owned)),
+                finishes: Set(fin.map(str::to_owned)),
+                promo_types: Set(promo.map(str::to_owned)),
+                legalities: Set(leg.map(str::to_owned)),
+                reprint: Set(reprint),
+                border_color: Set(border.map(str::to_owned)),
+                artist: Set(artist.map(str::to_owned)),
+                digital: Set(false),
+                created_at: Set(ts),
+                updated_at: Set(ts),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        async fn names(db: &DatabaseConnection, q: &str) -> Vec<String> {
+            let mut v = Card::find()
+                .filter(parse(q).expect("parses"))
+                .all(db)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.name)
+                .collect::<Vec<_>>();
+            v.sort();
+            v
+        }
+
+        assert_eq!(names(&db, "kw:flying").await, vec!["Flyer"]);
+        assert_eq!(names(&db, "kw:trample").await, vec!["Grounder"]);
+        // Legality via json_extract: banned is excluded from f:, surfaced by banned:.
+        assert_eq!(names(&db, "f:legacy").await, vec!["Grounder"]);
+        assert_eq!(names(&db, "banned:legacy").await, vec!["Flyer"]);
+        assert_eq!(names(&db, "f:modern").await, vec!["Flyer", "Grounder"]);
+        // Finish membership: foil matches Flyer & Promoish, not the nonfoil-only card.
+        assert_eq!(names(&db, "is:foil").await, vec!["Flyer", "Promoish"]);
+        assert_eq!(names(&db, "is:etched").await, vec!["Promoish"]);
+        assert_eq!(names(&db, "is:reprint").await, vec!["Flyer"]);
+        assert_eq!(names(&db, "is:buyabox").await, vec!["Promoish"]);
+        assert_eq!(names(&db, "border:borderless").await, vec!["Grounder"]);
+        assert_eq!(names(&db, "a:rebecca").await, vec!["Flyer"]);
+        // Negation stays exact/total (nonfoil-only card is the only non-foil).
+        assert_eq!(names(&db, "-is:foil").await, vec!["Grounder"]);
     }

@@ -69,13 +69,29 @@ fn compile_filter(key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
         "not" => is_predicate(value, true),
         "game" => game(op, value),
         "oracleid" => oracleid(op, value),
-        // Recognised Scryfall filters we deliberately cannot back.
-        "f" | "format" | "legal" | "banned" | "restricted" | "kw" | "keyword" | "a" | "artist"
-        | "artists" | "ft" | "flavor" | "flavour" | "flavortext" | "wm" | "watermark" | "frame"
-        | "border" | "stamp" | "block" | "b" | "in" | "prints" | "sets" | "papersets" | "cube"
-        | "function" | "oracletag" | "otag" | "art" | "arttag" | "atag" | "order" | "direction"
-        | "unique" | "display" | "prefer" | "produces" | "devotion" | "cheapest" | "has"
-        | "new" | "old" => Err(SearchError::UnsupportedKey(key.to_string())),
+        // Column-backed filters (Scryfall search parity).
+        "f" | "format" | "legal" => legality(op, value, &["legal", "restricted"]),
+        "banned" => legality(op, value, &["banned"]),
+        "restricted" => legality(op, value, &["restricted"]),
+        "kw" | "keyword" => keyword(op, value),
+        "a" | "artist" => text_field("artist", "artist", op, value),
+        "artists" => artists_count(op, value),
+        "ft" | "flavor" | "flavour" | "flavortext" => text_field("flavor_text", "flavor", op, value),
+        "wm" | "watermark" => text_field("watermark", "watermark", op, value),
+        "border" => str_eq("border_color", "border", op, value),
+        "frame" => frame(op, value),
+        "stamp" => str_eq("security_stamp", "stamp", op, value),
+        "produces" => color("produced_mana", "produces", op, value),
+        "has" => has_predicate(value),
+        // Recognised Scryfall filters we can't back yet: sibling-print aggregates
+        // (prints/sets — Phase 5), result-shaping (order/unique/… — handled before
+        // compile), and dataset-derived filters we don't ingest — Tagger tags
+        // (function/otag/atag/… → issue #140) and cube (issue #141).
+        "block" | "b" | "in" | "prints" | "sets" | "papersets" | "cube" | "function"
+        | "oracletag" | "otag" | "art" | "arttag" | "atag" | "order" | "direction" | "unique"
+        | "display" | "prefer" | "devotion" | "cheapest" | "new" | "old" => {
+            Err(SearchError::UnsupportedKey(key.to_string()))
+        }
         _ => Err(SearchError::UnknownKey(key.to_string())),
     }
 }
@@ -104,6 +120,114 @@ fn text_field(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, Se
     match op {
         Op::Colon | Op::Eq => Ok(cond_one(contains(col, value))),
         _ => Err(unsupported_op(key, op)),
+    }
+}
+
+/// Case-insensitive exact match on a short enum-like column (border, stamp, …).
+/// Total/NULL-safe so `-`/`not:` negate cleanly. Supports `:`/`=` and `!=`.
+fn str_eq(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchError> {
+    let v = value.to_lowercase();
+    match op {
+        Op::Colon | Op::Eq => Ok(cond_one(Expr::cust_with_values(
+            format!("LOWER(IFNULL({col}, '')) = ?"),
+            [v],
+        ))),
+        Op::Ne => Ok(cond_one(Expr::cust_with_values(
+            format!("LOWER(IFNULL({col}, '')) <> ?"),
+            [v],
+        ))),
+        _ => Err(unsupported_op(key, op)),
+    }
+}
+
+/// Comma-delimited membership: true iff `value` is one of the comma-joined tokens
+/// in `col` (case-insensitive). Tokens are comma-wrapped so `foil` can't match
+/// inside `nonfoil`.
+fn array_member(col: &str, value: &str) -> SimpleExpr {
+    let needle = format!("%,{},%", escape_like(&value.to_lowercase()));
+    Expr::cust_with_values(
+        format!("(',' || LOWER(IFNULL({col}, '')) || ',') LIKE ? ESCAPE '\\'"),
+        [needle],
+    )
+}
+
+/// `col IS NOT NULL AND col <> ''` — a total presence test.
+fn col_present(col: &str) -> Condition {
+    cond_one(Expr::cust(format!("{col} IS NOT NULL AND {col} <> ''")))
+}
+
+/// `IFNULL(col, 0) = 1` — total boolean-column test (NULL treated as false).
+fn bool_true(col: &str) -> Condition {
+    cond_one(Expr::cust(format!("IFNULL({col}, 0) = 1")))
+}
+
+/// `kw:`/`keyword:` — keyword-ability membership.
+fn keyword(op: Op, value: &str) -> Result<Condition, SearchError> {
+    match op {
+        Op::Colon | Op::Eq => Ok(cond_one(array_member("keywords", value))),
+        _ => Err(unsupported_op("keyword", op)),
+    }
+}
+
+/// `artists:`/`artists>N` — number of credited artists (counted from artist_ids).
+fn artists_count(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: i64 = value
+        .parse()
+        .map_err(|_| invalid("artists", value, "expected a number"))?;
+    let sql = format!(
+        "(CASE WHEN artist_ids IS NULL OR artist_ids = '' THEN 0 \
+         ELSE LENGTH(artist_ids) - LENGTH(REPLACE(artist_ids, ',', '')) + 1 END) {} ?",
+        cmp_sql(op)
+    );
+    Ok(cond_one(Expr::cust_with_values(sql, [n])))
+}
+
+/// `frame:` — matches either the frame edition (`frame` column, e.g. `2015`) or a
+/// frame effect (`frame_effects`, e.g. `showcase`, `extendedart`).
+fn frame(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let v = value.to_lowercase();
+    let leaf = Condition::any()
+        .add(Expr::cust_with_values(
+            "LOWER(IFNULL(frame, '')) = ?".to_string(),
+            [v.clone()],
+        ))
+        .add(array_member("frame_effects", &v));
+    match op {
+        Op::Colon | Op::Eq => Ok(leaf),
+        Op::Ne => Ok(leaf.not()),
+        _ => Err(unsupported_op("frame", op)),
+    }
+}
+
+/// `f:`/`legal:`/`banned:`/`restricted:` — per-format legality from the stored
+/// `legalities` JSON. The format is bound as the json path; an unknown format
+/// simply matches nothing (`json_extract` → NULL), mirroring `settype`.
+fn legality(op: Op, value: &str, statuses: &[&str]) -> Result<Condition, SearchError> {
+    match op {
+        Op::Colon | Op::Eq => {}
+        _ => return Err(unsupported_op("format", op)),
+    }
+    let fmt = value.to_lowercase();
+    if fmt.is_empty() || !fmt.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(invalid("format", value, "unknown format"));
+    }
+    let placeholders = vec!["?"; statuses.len()].join(", ");
+    let sql = format!("IFNULL(json_extract(legalities, ?), '') IN ({placeholders})");
+    let mut vals: Vec<Value> = Vec::with_capacity(statuses.len() + 1);
+    vals.push(Value::from(format!("$.{fmt}")));
+    for s in statuses {
+        vals.push(Value::from((*s).to_string()));
+    }
+    Ok(cond_one(Expr::cust_with_values(sql, vals)))
+}
+
+/// `has:` presence filters over columns that carry optional print detail.
+fn has_predicate(value: &str) -> Result<Condition, SearchError> {
+    match value.to_lowercase().as_str() {
+        "flavor" | "flavour" | "flavortext" => Ok(col_present("flavor_text")),
+        "watermark" => Ok(col_present("watermark")),
+        "indicator" | "colorindicator" => Ok(col_present("color_indicator")),
+        other => Err(SearchError::UnsupportedKey(format!("has:{other}"))),
     }
 }
 
@@ -512,6 +636,34 @@ fn is_predicate(value: &str, negated: bool) -> Result<Condition, SearchError> {
             "type_line IS NOT NULL AND type_line LIKE '%creature%' \
              AND (oracle_text IS NULL OR oracle_text = '')",
         )),
+        // Finish availability (from the finishes array).
+        "foil" => cond_one(array_member("finishes", "foil")),
+        "nonfoil" => cond_one(array_member("finishes", "nonfoil")),
+        "etched" => cond_one(array_member("finishes", "etched")),
+        // Print-detail boolean flags.
+        "fullart" => bool_true("full_art"),
+        "textless" => bool_true("textless"),
+        "oversized" => bool_true("oversized"),
+        "promo" => bool_true("promo"),
+        "reprint" => bool_true("reprint"),
+        "variation" => bool_true("variation"),
+        "booster" => bool_true("booster"),
+        "spotlight" | "storyspotlight" => bool_true("story_spotlight"),
+        "contentwarning" => bool_true("content_warning"),
+        "hires" | "highres" => bool_true("highres_image"),
+        "reserved" => bool_true("reserved"),
+        "gamechanger" => bool_true("game_changer"),
+        // Presence of an optional print attribute.
+        "watermark" => col_present("watermark"),
+        "indicator" | "colorindicator" => col_present("color_indicator"),
+        // Promo / product-origin categories (from promo_types).
+        "buyabox" | "prerelease" | "promopack" | "gameday" | "intropack" | "giftbox" | "bundle"
+        | "release" | "datestamped" | "planeswalkerdeck" | "draftweekend" | "boosterfun"
+        | "textured" | "galaxyfoil" | "surgefoil" | "gilded" | "neonink" | "halofoil"
+        | "confettifoil" | "oilslick" | "stepandcompleat" | "embossed" | "serialized"
+        | "doublerainbow" | "rainbowfoil" | "silverfoil" => {
+            cond_one(array_member("promo_types", &v))
+        }
         _ => {
             let prefix = if negated { "not" } else { "is" };
             return Err(SearchError::UnsupportedKey(format!("{prefix}:{v}")));
