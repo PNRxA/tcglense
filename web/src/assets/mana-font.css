@@ -1,0 +1,11 @@
+/* mana-font's shipped @font-face lists only woff/ttf/eot/svg. We add a woff2 source
+ * (roughly half the woff size) and load this AFTER the package CSS in main.ts so, for
+ * the identical "Mana" family, this declaration wins and modern browsers fetch woff2.
+ * `font-display: block` avoids a flash of wrong fallback glyphs for the icon font. */
+@font-face {
+  font-family: 'Mana';
+  src: url('mana-font/fonts/mana.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}

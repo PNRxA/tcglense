@@ -1,4 +1,8 @@
 import './assets/main.css'
+// MTG mana/cost symbol icon font (used by ManaSymbols.vue to render `{W}`, `{T}`, …).
+// The woff2 override must load AFTER the package CSS to win the "Mana" @font-face.
+import 'mana-font/css/mana.css'
+import './assets/mana-font.css'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'

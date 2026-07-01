@@ -5,6 +5,7 @@ import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import CardImageZoom from '@/components/cards/CardImageZoom.vue'
 import CardMetaList from '@/components/cards/CardMetaList.vue'
+import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/cards/CollectionControls.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
@@ -142,7 +143,7 @@ const hasSeparateFaceImages = computed(
             v-if="!isMultiFace && card.oracle_text"
             class="mt-6 text-sm leading-relaxed whitespace-pre-line"
           >
-            {{ card.oracle_text }}
+            <ManaSymbols :text="card.oracle_text" />
           </p>
 
           <!-- Per-face text breakdown for any multi-faced card (incl. split/flip). -->
@@ -153,10 +154,10 @@ const hasSeparateFaceImages = computed(
                 {{ face.type_line }}
               </p>
               <p v-if="face.mana_cost" class="text-muted-foreground text-sm">
-                {{ face.mana_cost }}
+                <ManaSymbols :text="face.mana_cost" />
               </p>
               <p v-if="face.oracle_text" class="mt-1 text-sm leading-relaxed whitespace-pre-line">
-                {{ face.oracle_text }}
+                <ManaSymbols :text="face.oracle_text" />
               </p>
               <p
                 v-if="face.power && face.toughness"
