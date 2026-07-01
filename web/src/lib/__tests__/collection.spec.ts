@@ -2,12 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import {
   collectionEntryPath,
+  collectionImportCsvPath,
   collectionImportJobPath,
   collectionImportPath,
   collectionPath,
   collectionSourcePath,
   collectionSyncPath,
   getCollectionOwned,
+  importCollectionCsv,
 } from '../api'
 
 describe('collectionPath', () => {
@@ -123,5 +125,43 @@ describe('import / sync paths', () => {
     expect(collectionSourcePath('a/b')).toContain('a%2Fb')
     expect(collectionSyncPath('a/b')).toContain('a%2Fb')
     expect(collectionImportJobPath('a/b', 1)).toContain('a%2Fb')
+  })
+
+  it('builds the CSV import path with the reconcile mode as a query param', () => {
+    expect(collectionImportCsvPath('mtg', 'overwrite')).toBe(
+      '/api/collection/mtg/import/csv?mode=overwrite',
+    )
+    expect(collectionImportCsvPath('a/b', 'replace')).toContain('a%2Fb')
+  })
+})
+
+describe('importCollectionCsv', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('POSTs the raw file body with a text/csv content type and bearer token', async () => {
+    type FetchInit = { method: string; headers: Record<string, string>; body: unknown }
+    const fetchMock = vi.fn<(url: string, init: FetchInit) => Promise<Response>>(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ provider: 'archidekt', matched_cards: 2 }),
+        }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const file = new File(['Scryfall ID,Finish,Quantity\nabc,Normal,1\n'], 'export.csv', {
+      type: 'text/csv',
+    })
+    const summary = await importCollectionCsv('tok', 'mtg', file, 'merge')
+
+    expect(summary).toEqual({ provider: 'archidekt', matched_cards: 2 })
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toContain('/api/collection/mtg/import/csv?mode=merge')
+    expect(init.method).toBe('POST')
+    expect(init.headers['Content-Type']).toBe('text/csv')
+    expect(init.headers.Authorization).toBe('Bearer tok')
+    // The File is sent verbatim (not JSON-stringified), so it stays re-readable on retry.
+    expect(init.body).toBe(file)
   })
 })

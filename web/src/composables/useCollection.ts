@@ -9,6 +9,7 @@ import {
   getCollectionSummary,
   getImportJob,
   importCollection,
+  importCollectionCsv,
   saveCollectionSource,
   setCollectionEntry,
   syncCollectionSource,
@@ -20,6 +21,7 @@ import {
   type CollectionSource,
   type CollectionSummary,
   type ImportJob,
+  type ImportSummary,
   type OwnedCountsMap,
   type ReconcileMode,
 } from '@/lib/api'
@@ -210,6 +212,26 @@ export function useImportCollectionMutation() {
       }),
   }
   return useAuthedMutation<ImportJob, ImportCollectionVars>(options)
+}
+
+/** Variables for a CSV upload import: the file and how to reconcile it. */
+export interface ImportCsvVars {
+  game: string
+  file: File
+  mode: ReconcileMode
+}
+
+/**
+ * Import a collection from an uploaded Archidekt CSV export. Resolves **synchronously**
+ * to an {@link ImportSummary} (the CSV needs no upstream fetch, so there's no job to
+ * poll); the caller invalidates the collection caches on success.
+ */
+export function useImportCollectionCsvMutation() {
+  const options = {
+    mutationFn: (token: string, vars: ImportCsvVars) =>
+      importCollectionCsv(token, vars.game, vars.file, vars.mode),
+  }
+  return useAuthedMutation<ImportSummary, ImportCsvVars>(options)
 }
 
 /**

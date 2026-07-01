@@ -226,6 +226,19 @@ export function collectionImportJobPath(game: string, jobId: number): string {
   return `/api/collection/${encodeURIComponent(game)}/import/jobs/${jobId}`
 }
 
+/**
+ * Largest CSV upload the server accepts (kept in sync with the API's
+ * `MAX_CSV_UPLOAD_BYTES`). Used for a friendly client-side pre-check so an oversized
+ * file is rejected with a clear message rather than a bare `413`.
+ */
+export const MAX_CSV_UPLOAD_BYTES = 16 * 1024 * 1024
+
+/** `/api/collection/{game}/import/csv?mode=...` path. */
+export function collectionImportCsvPath(game: string, mode: ReconcileMode): string {
+  const search = new URLSearchParams({ mode })
+  return `/api/collection/${encodeURIComponent(game)}/import/csv?${search.toString()}`
+}
+
 /** Enqueue a one-off import from a provider (chosen reconcile mode). Returns a job to
  * poll — the fetch + reconcile run in the background, throttled by the provider rate
  * limit. */
@@ -269,4 +282,24 @@ export function deleteCollectionSource(token: string, game: string): Promise<voi
  * poll (runs in the background, throttled by the provider rate limit). */
 export function syncCollectionSource(token: string, game: string): Promise<ImportJob> {
   return request<ImportJob>(collectionSyncPath(game), { method: 'POST', token })
+}
+
+/**
+ * Import a collection from an uploaded Archidekt CSV export. The file is sent as the raw
+ * request body (there's no persistent source to re-sync, so this is always one-off) and
+ * reconciled server-side; unlike the URL import it needs no upstream fetch, so it
+ * resolves **synchronously** to the {@link ImportSummary} (no job to poll).
+ */
+export function importCollectionCsv(
+  token: string,
+  game: string,
+  file: File | Blob,
+  mode: ReconcileMode,
+): Promise<ImportSummary> {
+  return request<ImportSummary>(collectionImportCsvPath(game, mode), {
+    method: 'POST',
+    token,
+    rawBody: file,
+    contentType: 'text/csv',
+  })
 }

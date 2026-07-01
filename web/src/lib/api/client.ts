@@ -17,11 +17,25 @@ interface RequestOptions {
   method?: string
   body?: unknown
   token?: string | null
+  /**
+   * A raw request body (e.g. a `File`/`Blob` for a CSV upload) sent as-is instead of
+   * JSON. When set, `body` is ignored and no JSON `Content-Type` is added — pass
+   * `contentType` to set one. A `Blob`/`File` is re-readable, so it survives the auth
+   * store's single 401-refresh retry.
+   */
+  rawBody?: BodyInit | null
+  /** Content-Type for a `rawBody` upload (e.g. `'text/csv'`). Ignored without `rawBody`. */
+  contentType?: string
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  const isRaw = options.rawBody != null
+  const headers: Record<string, string> = {}
+  // JSON bodies default to a JSON Content-Type; a raw upload sets its own (or none).
+  if (isRaw) {
+    if (options.contentType) headers['Content-Type'] = options.contentType
+  } else {
+    headers['Content-Type'] = 'application/json'
   }
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`
@@ -32,7 +46,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     headers,
     // Always send/receive the httpOnly refresh cookie (tcglense_refresh).
     credentials: 'include',
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: isRaw
+      ? options.rawBody
+      : options.body === undefined
+        ? undefined
+        : JSON.stringify(options.body),
   })
 
   // 204 No Content and other empty bodies have nothing to parse; tolerate
