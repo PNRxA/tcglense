@@ -34,10 +34,22 @@ export const ALL_CARDS_SORT_OPTIONS: SortOption[] = SET_SORT_OPTIONS.filter(
   (o) => !o.value.startsWith('number:'),
 )
 
+/** Options for the collection view: the collection's recency order first (its
+ * natural default — how it has always sorted), then the same card sorts the
+ * all-cards view offers. `updated:*` maps to the backend's collection-only
+ * `updated` sort key. */
+export const COLLECTION_SORT_OPTIONS: SortOption[] = [
+  { value: 'updated:desc', label: 'Recently updated' },
+  { value: 'updated:asc', label: 'Least recently updated' },
+  ...ALL_CARDS_SORT_OPTIONS,
+]
+
 /** Default sort for a single set — its collector-number order. */
 export const SET_DEFAULT_SORT = 'number:asc'
 /** Default sort for the all-cards view — alphabetical by name. */
 export const ALL_CARDS_DEFAULT_SORT = 'name:asc'
+/** Default sort for the collection — most-recently-updated first. */
+export const COLLECTION_DEFAULT_SORT = 'updated:desc'
 
 /** Split a `field:dir` option value into the API's `sort`/`dir` params, falling
  * back to `fallback` for an empty value and defaulting an absent/odd direction

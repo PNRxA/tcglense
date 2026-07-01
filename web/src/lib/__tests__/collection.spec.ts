@@ -25,6 +25,16 @@ describe('collectionPath', () => {
     expect(collectionPath('mtg', { page: 3 })).toBe('/api/collection/mtg?page=3')
   })
 
+  it('appends the search query and sort', () => {
+    expect(collectionPath('mtg', { q: 't:goblin', sort: 'price', dir: 'desc' })).toBe(
+      '/api/collection/mtg?q=t%3Agoblin&sort=price&dir=desc',
+    )
+  })
+
+  it('omits an empty search query', () => {
+    expect(collectionPath('mtg', { q: '', page: 2 })).toBe('/api/collection/mtg?page=2')
+  })
+
   it('encodes the game segment', () => {
     expect(collectionPath('a/b')).toContain('a%2Fb')
   })
