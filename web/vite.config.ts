@@ -24,6 +24,13 @@ const apiProxy = {
 // localhost default keeps dev/e2e valid.
 const SITE_URL = (process.env.VITE_SITE_URL ?? 'http://localhost:5173').replace(/\/$/, '')
 
+// The default social/link-preview banner (web/public/og-image.png). index.html carries
+// it as a root-relative baseline og:image/twitter:image for readability; we rewrite it
+// to an absolute URL below since unfurlers that don't run JS need one (see seo.ts /
+// DEFAULT_OG_IMAGE for the runtime, per-route default).
+const OG_IMAGE_PATH = '/og-image.png'
+const OG_IMAGE_URL = `${SITE_URL}${OG_IMAGE_PATH}`
+
 function robotsTxt(): string {
   return [
     'User-agent: *',
@@ -46,7 +53,9 @@ function robotsTxt(): string {
 // same content in the dev/preview servers so both environments match. It's
 // generated rather than committed to public/ so the URL tracks VITE_SITE_URL and
 // can't go stale. The sitemap itself is served by the API (see src/../api's
-// handlers::sitemap), so it isn't emitted here.
+// handlers::sitemap), so it isn't emitted here. Also rewrites the baseline
+// og:image/twitter:image in index.html to an absolute VITE_SITE_URL for non-JS
+// unfurlers (see transformIndexHtml below).
 function seoDiscoveryFiles(): Plugin {
   const files: Record<string, { body: string; type: string }> = {
     '/robots.txt': { body: robotsTxt(), type: 'text/plain' },
@@ -66,6 +75,11 @@ function seoDiscoveryFiles(): Plugin {
     },
     configurePreviewServer(server) {
       server.middlewares.use(handle)
+    },
+    // Rewrite the baseline og:image/twitter:image to an absolute URL (tracking
+    // VITE_SITE_URL, like the robots.txt Sitemap: line) so non-JS unfurlers get one.
+    transformIndexHtml(html) {
+      return html.replaceAll(`content="${OG_IMAGE_PATH}"`, `content="${OG_IMAGE_URL}"`)
     },
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: 'robots.txt', source: robotsTxt() })

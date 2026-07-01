@@ -13,7 +13,10 @@
       Baseline SEO / social-preview tags. These are what crawlers that DON'T run
       JavaScript see (most social/link-unfurl bots). `usePageMeta` (src/lib/seo.ts)
       overrides them per-route at runtime for JS-capable crawlers (e.g. Googlebot)
-      and the browser tab. Keep the values here in sync with SITE_DESCRIPTION.
+      and the browser tab. Keep the values here in sync with SITE_DESCRIPTION and
+      DEFAULT_OG_IMAGE. The og:image/twitter:image path is rewritten to an absolute
+      URL at build/serve time by the seoDiscoveryFiles plugin (vite.config.ts), since
+      unfurlers that don't run JS need an absolute image URL.
     -->
     <meta
       name="description"
@@ -28,12 +31,14 @@
       property="og:description"
       content="Track trading-card prices over time, catalogue your collection, and follow your set-completion progress across games."
     >
-    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content="/og-image.png">
+    <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="TCGLense">
     <meta
       name="twitter:description"
       content="Track trading-card prices over time, catalogue your collection, and follow your set-completion progress across games."
     >
+    <meta name="twitter:image" content="/og-image.png">
     <!--
       Apply the saved theme before first paint to avoid a flash of the wrong theme.
       Keep this in sync with src/stores/theme.ts (STORAGE_KEY + resolution logic).
