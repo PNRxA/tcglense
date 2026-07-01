@@ -125,18 +125,34 @@ const copiesLabel = computed(() =>
         />
         <Layers v-else class="text-muted-foreground" :class="nested ? 'size-5' : 'size-6'" />
       </div>
-      <div class="min-w-0">
+      <div class="min-w-0 flex-1">
         <p class="truncate font-medium" :class="nested ? 'text-sm' : ''" :title="set.name">
           {{ displayName }}
         </p>
+        <!-- Set identity (code + release). Off the collection landing the set's total card
+             count rides along here; on it, the owned counts move to their own line below so
+             the combined string can't overflow this one (issue #125). -->
         <p class="text-muted-foreground truncate text-xs">
           {{ set.code.toUpperCase() }}
           <template v-if="released"> · {{ released }}</template>
-          <template v-if="ownedLabel != null"> · {{ ownedLabel }}</template>
-          <template v-else-if="set.card_count"> · {{ set.card_count }} cards</template>
-          <template v-if="copiesLabel"> · {{ copiesLabel }}</template>
-          <template v-if="ownedValue"> · {{ ownedValue }}</template>
+          <template v-if="ownedLabel == null && set.card_count">
+            · {{ set.card_count }} cards</template
+          >
         </p>
+        <!-- Collection stats on their own line: the completion count (+ copies) truncates
+             first while the value stays pinned to the right, so the worth is never the bit
+             that gets clipped on a narrow tile. -->
+        <div
+          v-if="ownedLabel != null"
+          class="text-muted-foreground mt-0.5 flex items-baseline justify-between gap-2 text-xs"
+        >
+          <span class="min-w-0 truncate tabular-nums">
+            {{ ownedLabel }}<template v-if="copiesLabel"> · {{ copiesLabel }}</template>
+          </span>
+          <span v-if="ownedValue" class="text-foreground shrink-0 font-medium tabular-nums">
+            {{ ownedValue }}
+          </span>
+        </div>
       </div>
     </div>
     <!-- A standalone tile (no collapsible sub-sets) reserves the height of the
