@@ -5,7 +5,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from '@/lib/utils'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Toggle } from '@/components/ui/toggle'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   activeFilterCount,
   clearBuilderFilters,
@@ -38,6 +46,12 @@ const query = defineModel<string>({ required: true })
 
 const activeCount = computed(() => activeFilterCount(query.value))
 
+// The Select can't use '' as an item value (reka reserves it for "no selection"), so the
+// "Any" option rides a sentinel that maps back to the builder's empty value.
+const ANY = 'any'
+const toSel = (value: string) => value || ANY
+const fromSel = (value: string) => (value === ANY ? '' : value)
+
 // --- Colours: pips + colourless toggle + comparison mode ---
 const colors = computed(() => getColors(query.value))
 
@@ -55,30 +69,33 @@ function toggleColorless() {
   })
 }
 
-function setColorMode(mode: ColorMode) {
-  query.value = setColors(query.value, { ...colors.value, mode })
+function onColorMode(mode: unknown) {
+  // A single ToggleGroup emits '' when the active item is re-clicked; keep the mode set.
+  if (mode) query.value = setColors(query.value, { ...colors.value, mode: mode as ColorMode })
 }
 
 // --- Type / format single-selects ---
-const type = computed({
-  get: () => getType(query.value),
-  set: (value: string) => (query.value = setType(query.value, value)),
+const typeSelect = computed({
+  get: () => toSel(getType(query.value)),
+  set: (value: string) => (query.value = setType(query.value, fromSel(value))),
 })
-const format = computed({
-  get: () => getFormat(query.value),
-  set: (value: string) => (query.value = setFormat(query.value, value)),
+const formatSelect = computed({
+  get: () => toSel(getFormat(query.value)),
+  set: (value: string) => (query.value = setFormat(query.value, fromSel(value))),
 })
 
 // --- Rarity: a value plus an "and higher" toggle ---
 const rarity = computed(() => getRarity(query.value))
 const raritySelect = computed({
-  get: () => rarity.value.value,
+  get: () => toSel(rarity.value.value),
   // Clearing the rarity also clears "and higher" (it's meaningless with no rarity).
-  set: (value: string) =>
-    (query.value = setRarity(query.value, {
-      value,
-      orHigher: value ? rarity.value.orHigher : false,
-    })),
+  set: (value: string) => {
+    const val = fromSel(value)
+    query.value = setRarity(query.value, {
+      value: val,
+      orHigher: val ? rarity.value.orHigher : false,
+    })
+  },
 })
 function toggleOrHigher() {
   if (!rarity.value.value) return
@@ -119,8 +136,19 @@ function clearAll() {
   query.value = clearBuilderFilters(query.value)
 }
 
-// Stable, unique ids so each <select> pairs with its <Label for>, and each control-group
-// (colours, mana value, price) names itself via aria-labelledby.
+// A Select's dropdown is portalled to <body>, so interacting with it reads as "outside"
+// the popover and would dismiss the whole panel. Keep the panel open in that case; a
+// genuine outside click (or Escape) still closes it.
+function keepOpenForSelect(event: {
+  detail?: { originalEvent?: Event }
+  preventDefault: () => void
+}) {
+  const target = event.detail?.originalEvent?.target as HTMLElement | null | undefined
+  if (target?.closest('[data-slot="select-content"]')) event.preventDefault()
+}
+
+// Stable, unique ids so each Select trigger pairs with its <Label for>, and each
+// control-group (colours, mana value, price) names itself via aria-labelledby.
 const typeId = useId()
 const rarityId = useId()
 const formatId = useId()
@@ -128,10 +156,10 @@ const colorsLabelId = useId()
 const mvLabelId = useId()
 const usdLabelId = useId()
 
-// A native <select> styled to match the shadcn Input, so the panel needs no extra
-// primitive for its single-selects.
-const selectClass =
-  'border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:ring-[3px]'
+// Shared styling for the round mana pips — a Toggle whose "on" state is a ring, not the
+// default filled background (which would clash with the coloured mana glyph).
+const pipClass =
+  'size-8 min-w-0 rounded-full p-0 opacity-50 hover:bg-transparent hover:opacity-100 data-[state=on]:bg-transparent data-[state=on]:opacity-100 data-[state=on]:ring-2 data-[state=on]:ring-ring data-[state=on]:ring-offset-1 data-[state=on]:ring-offset-background'
 </script>
 
 <template>
@@ -154,7 +182,12 @@ const selectClass =
       </Button>
     </PopoverTrigger>
 
-    <PopoverContent align="end" class="w-80 space-y-4">
+    <PopoverContent
+      align="end"
+      class="w-80 space-y-4"
+      @pointer-down-outside="keepOpenForSelect"
+      @focus-outside="keepOpenForSelect"
+    >
       <div class="flex items-center justify-between">
         <p class="text-sm font-medium">Filters</p>
         <Button
@@ -177,104 +210,94 @@ const selectClass =
           role="group"
           :aria-labelledby="colorsLabelId"
         >
-          <button
+          <Toggle
             v-for="pip in COLOR_PIPS"
             :key="pip.letter"
-            type="button"
-            :aria-pressed="colors.letters.includes(pip.letter)"
-            :aria-label="pip.label"
+            :model-value="colors.letters.includes(pip.letter)"
             :disabled="colors.colorless"
-            :class="
-              cn(
-                'flex size-8 items-center justify-center rounded-full transition disabled:opacity-40',
-                colors.letters.includes(pip.letter)
-                  ? 'ring-ring ring-2 ring-offset-1 ring-offset-background'
-                  : 'opacity-50 hover:opacity-100',
-              )
-            "
-            @click="togglePip(pip.letter)"
+            :aria-label="pip.label"
+            :class="pipClass"
+            @update:model-value="togglePip(pip.letter)"
           >
             <i :class="['ms', `ms-${pip.letter}`, 'ms-cost']" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            :aria-pressed="colors.colorless"
+          </Toggle>
+          <Toggle
+            :model-value="colors.colorless"
             aria-label="Colorless"
-            :class="
-              cn(
-                'flex size-8 items-center justify-center rounded-full transition',
-                colors.colorless
-                  ? 'ring-ring ring-2 ring-offset-1 ring-offset-background'
-                  : 'opacity-50 hover:opacity-100',
-              )
-            "
-            @click="toggleColorless"
+            :class="pipClass"
+            @update:model-value="toggleColorless"
           >
             <i class="ms ms-c ms-cost" aria-hidden="true" />
-          </button>
+          </Toggle>
         </div>
-        <div
+        <ToggleGroup
           v-if="colors.letters.length"
-          role="group"
+          type="single"
+          variant="outline"
+          size="sm"
+          :model-value="colors.mode"
           aria-label="Colour comparison mode"
-          class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-xs"
+          @update:model-value="onColorMode"
         >
-          <button
+          <ToggleGroupItem
             v-for="option in COLOR_MODES"
             :key="option.value"
-            type="button"
-            :aria-pressed="colors.mode === option.value"
-            :class="
-              cn(
-                'rounded px-2.5 py-1 font-medium transition-colors',
-                colors.mode === option.value
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'hover:text-foreground',
-              )
-            "
-            @click="setColorMode(option.value)"
+            :value="option.value"
+            class="text-xs"
           >
             {{ option.label }}
-          </button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
       <!-- Type -->
       <div class="space-y-2">
         <Label :for="typeId">Type</Label>
-        <select :id="typeId" v-model="type" :class="selectClass">
-          <option v-for="option in TYPE_OPTIONS" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
+        <Select v-model="typeSelect">
+          <SelectTrigger :id="typeId" size="sm" class="w-full" aria-label="Type">
+            <SelectValue placeholder="Any type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem
+              v-for="option in TYPE_OPTIONS"
+              :key="option.value"
+              :value="option.value || ANY"
+            >
+              {{ option.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <!-- Rarity -->
       <div class="space-y-2">
         <Label :for="rarityId">Rarity</Label>
         <div class="flex items-center gap-2">
-          <select :id="rarityId" v-model="raritySelect" :class="selectClass">
-            <option v-for="option in RARITY_OPTIONS" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
-          <button
-            type="button"
-            :aria-pressed="rarity.orHigher"
+          <Select v-model="raritySelect">
+            <SelectTrigger :id="rarityId" size="sm" class="w-full" aria-label="Rarity">
+              <SelectValue placeholder="Any" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="option in RARITY_OPTIONS"
+                :key="option.value"
+                :value="option.value || ANY"
+              >
+                {{ option.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <Toggle
+            :model-value="rarity.orHigher"
             :disabled="!rarity.value"
-            title="This rarity and higher"
-            :class="
-              cn(
-                'h-9 shrink-0 rounded-md border px-2.5 text-sm font-medium transition-colors disabled:opacity-40',
-                rarity.orHigher
-                  ? 'border-ring bg-primary text-primary-foreground'
-                  : 'border-input text-muted-foreground hover:text-foreground',
-              )
-            "
-            @click="toggleOrHigher"
+            variant="outline"
+            size="sm"
+            class="shrink-0"
+            aria-label="This rarity and higher"
+            @update:model-value="toggleOrHigher"
           >
             &amp; up
-          </button>
+          </Toggle>
         </div>
       </div>
 
@@ -303,11 +326,20 @@ const selectClass =
       <!-- Format legality -->
       <div class="space-y-2">
         <Label :for="formatId">Legal in</Label>
-        <select :id="formatId" v-model="format" :class="selectClass">
-          <option v-for="option in FORMAT_OPTIONS" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
+        <Select v-model="formatSelect">
+          <SelectTrigger :id="formatId" size="sm" class="w-full" aria-label="Legal in">
+            <SelectValue placeholder="Any format" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem
+              v-for="option in FORMAT_OPTIONS"
+              :key="option.value"
+              :value="option.value || ANY"
+            >
+              {{ option.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <!-- Price -->
