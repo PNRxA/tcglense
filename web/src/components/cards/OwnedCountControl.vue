@@ -61,15 +61,16 @@ const rows = computed(() => [
       <!-- Sibling of CardTile's stretched nav link (not nested inside it), so clicking it
         opens the popover instead of navigating; `.stop` is belt-and-braces. Anchored
         bottom-left to match the owned-count badge placement (issue #100). On a card you
-        already own the count chip is always shown; on an unowned card the "+" is revealed
-        on hover/focus (and always on touch) to keep a dense grid clean. -->
+        already own the count chip is always shown; on an unowned card the "+" stays
+        visible on small screens (and any touch device) — there's no hover to reveal it —
+        and only hides behind hover/focus from sm up, to keep a dense desktop grid clean. -->
       <button
         type="button"
         class="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
         :class="
           owned
             ? ''
-            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
+            : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
         "
         :aria-label="
           owned ? `Edit copies of ${name} in your collection` : `Add ${name} to your collection`
