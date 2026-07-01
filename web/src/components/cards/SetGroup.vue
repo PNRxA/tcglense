@@ -52,7 +52,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
     <div class="flex items-center justify-between gap-2 px-3 pb-2">
       <button
         type="button"
-        class="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs"
+        class="text-muted-foreground hover:text-foreground -mx-1.5 flex min-h-9 items-center gap-1.5 rounded-md px-1.5 text-xs"
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >

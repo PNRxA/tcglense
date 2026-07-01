@@ -34,7 +34,7 @@ function onSelect(value: string | undefined) {
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" size="icon-sm">
+      <Button variant="ghost" size="icon">
         <component :is="triggerIcon" />
         <span class="sr-only">Toggle theme</span>
       </Button>

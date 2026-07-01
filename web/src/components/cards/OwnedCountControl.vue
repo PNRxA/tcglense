@@ -84,9 +84,9 @@ const rows = computed(() => [
         />
         <span
           v-else
-          class="bg-primary/90 text-primary-foreground inline-flex items-center justify-center rounded-md p-1 shadow"
+          class="bg-primary/90 text-primary-foreground inline-flex items-center justify-center rounded-md p-1.5 shadow"
         >
-          <Plus class="size-3.5" aria-hidden="true" />
+          <Plus class="size-4" aria-hidden="true" />
         </span>
       </button>
     </PopoverTrigger>
@@ -126,7 +126,7 @@ const rows = computed(() => [
               keyboard-focused here doesn't drop focus out of the non-modal popover. -->
             <Button
               variant="outline"
-              size="icon-sm"
+              size="icon"
               :disabled="!ready"
               :aria-disabled="row.value <= 0"
               :class="{ 'pointer-events-none opacity-50': row.value <= 0 }"
@@ -144,7 +144,7 @@ const rows = computed(() => [
             >
             <Button
               variant="outline"
-              size="icon-sm"
+              size="icon"
               :disabled="!ready"
               :aria-label="`Add one ${row.label.toLowerCase()} copy of ${name}`"
               @click="adjust(row.key, 1)"

@@ -75,7 +75,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
         <div class="flex items-center gap-2">
           <Button
             variant="outline"
-            size="icon-sm"
+            size="icon"
             :disabled="loading || row.value <= 0"
             :aria-label="`Remove one ${row.label.toLowerCase()} copy`"
             @click="adjust(row.key, -1)"
@@ -85,7 +85,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
           <span class="w-8 text-center text-sm font-medium tabular-nums">{{ row.value }}</span>
           <Button
             variant="outline"
-            size="icon-sm"
+            size="icon"
             :disabled="loading"
             :aria-label="`Add one ${row.label.toLowerCase()} copy`"
             @click="adjust(row.key, 1)"

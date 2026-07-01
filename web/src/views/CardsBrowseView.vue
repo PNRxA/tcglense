@@ -95,7 +95,7 @@ useClampPage(page, () => ({
     <p v-else-if="!cards.length" class="text-muted-foreground py-12">No cards found.</p>
 
     <template v-else>
-      <div class="mb-4 flex justify-end gap-2">
+      <div class="mb-4 flex flex-wrap justify-end gap-2">
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
       </div>

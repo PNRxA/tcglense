@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
 import MainNav from '@/components/MainNav.vue'
+import MobileNav from '@/components/MobileNav.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 
@@ -8,19 +9,24 @@ import UserMenu from '@/components/UserMenu.vue'
 </script>
 
 <template>
-  <div class="bg-background text-foreground min-h-screen">
+  <div class="bg-background text-foreground min-h-screen overflow-x-hidden">
     <header class="border-b">
-      <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <div class="flex items-center gap-1">
-          <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
+      <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
+        <div class="flex min-w-0 items-center gap-1">
+          <!-- Below sm the two nav dropdowns don't fit alongside the brand + theme +
+               account controls, so they collapse into MobileNav's hamburger. -->
+          <MobileNav class="sm:hidden" />
+          <RouterLink to="/" class="truncate text-lg font-semibold tracking-tight"
+            >TCGLense</RouterLink
+          >
           <!-- MainNav renders its own <nav> landmark (reka NavigationMenu), so this is a div.
                Both dropdowns live under one NavigationMenu so the swipe/fade motion plays
-               when moving between them. -->
-          <div class="ml-3">
+               when moving between them. Hidden below sm in favour of MobileNav. -->
+          <div class="ml-3 hidden sm:block">
             <MainNav />
           </div>
         </div>
-        <div class="flex items-center gap-1">
+        <div class="flex shrink-0 items-center gap-1">
           <ThemeToggle />
           <UserMenu />
         </div>
