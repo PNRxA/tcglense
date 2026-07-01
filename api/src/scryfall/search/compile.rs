@@ -35,7 +35,7 @@ pub(super) fn compile(node: &Node) -> Result<Condition, SearchError> {
 
 fn compile_leaf(leaf: &Leaf) -> Result<Condition, SearchError> {
     match leaf {
-        Leaf::Name(s) => Ok(cond_one(contains("name", s))),
+        Leaf::Name(s) => Ok(cond_one(text_pattern("name", s)?)),
         Leaf::ExactName(s) => Ok(cond_one(exact("name", s))),
         Leaf::Filter { key, op, value } => compile_filter(key, *op, value),
     }
@@ -43,16 +43,20 @@ fn compile_leaf(leaf: &Leaf) -> Result<Condition, SearchError> {
 
 fn compile_filter(key: &str, op: Op, value: &str) -> Result<Condition, SearchError> {
     match key {
-        "name" | "n" => Ok(cond_one(contains("name", value))),
+        "name" | "n" => Ok(cond_one(text_pattern("name", value)?)),
         "t" | "type" => text_field("type_line", "type", op, value),
-        "o" | "oracle" | "fo" => text_field("oracle_text", "oracle", op, value),
+        "o" | "oracle" | "fo" | "fulloracle" => text_field("oracle_text", "oracle", op, value),
         "m" | "mana" => mana(op, value),
         "c" | "color" | "colors" => color("colors", "c", op, value),
-        "id" | "identity" | "ci" => color("color_identity", "id", op, value),
+        "id" | "identity" | "ci" | "commander" | "cmdr" => {
+            color("color_identity", "id", op, value)
+        }
         "cmc" | "mv" | "manavalue" => cmc(op, value),
         "pow" | "power" => ptl("power", "pow", op, value),
         "tou" | "toughness" => ptl("toughness", "tou", op, value),
         "loy" | "loyalty" => ptl("loyalty", "loy", op, value),
+        "pt" | "powtou" => pt(op, value),
+        "def" | "defense" => ptl("defense", "defense", op, value),
         "usd" => price("price_usd", "usd", op, value),
         "usdfoil" => price("price_usd_foil", "usdfoil", op, value),
         "eur" => price("price_eur", "eur", op, value),
@@ -118,9 +122,40 @@ fn exact(col: &str, value: &str) -> SimpleExpr {
 
 fn text_field(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => Ok(cond_one(contains(col, value))),
+        Op::Colon | Op::Eq => Ok(cond_one(text_pattern(col, value)?)),
         _ => Err(unsupported_op(key, op)),
     }
+}
+
+/// A text-column predicate: a Scryfall `/regex/` literal compiles to a `REGEXP`
+/// match, otherwise a case-insensitive substring.
+fn text_pattern(col: &str, value: &str) -> Result<SimpleExpr, SearchError> {
+    match as_regex(value) {
+        Some(pattern) => regex_expr(col, pattern),
+        None => Ok(contains(col, value)),
+    }
+}
+
+/// Recognise a `/pattern/` regex literal, returning the inner pattern.
+fn as_regex(value: &str) -> Option<&str> {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'/' && bytes[bytes.len() - 1] == b'/' {
+        Some(&value[1..value.len() - 1])
+    } else {
+        None
+    }
+}
+
+/// Compile a regex literal to `IFNULL(col, '') REGEXP ?`. The pattern is validated
+/// with the same `regex` crate SQLite uses (a bad pattern is a 422, not a SQL
+/// error) and made case-insensitive to match Scryfall's default.
+fn regex_expr(col: &str, pattern: &str) -> Result<SimpleExpr, SearchError> {
+    let ci = format!("(?i){pattern}");
+    regex::Regex::new(&ci).map_err(|_| invalid("regex", pattern, "invalid regular expression"))?;
+    Ok(Expr::cust_with_values(
+        format!("IFNULL({col}, '') REGEXP ?"),
+        [ci],
+    ))
 }
 
 /// Case-insensitive exact match on a short enum-like column (border, stamp, …).
@@ -284,6 +319,7 @@ fn stat_column(s: &str) -> Option<&'static str> {
         "pow" | "power" => Some("power"),
         "tou" | "toughness" => Some("toughness"),
         "loy" | "loyalty" => Some("loyalty"),
+        "def" | "defense" => Some("defense"),
         _ => None,
     }
 }
@@ -325,6 +361,20 @@ fn ptl(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
             Ok(cond_one(Expr::cust_with_values(sql, [n])))
         }
     }
+}
+
+/// `pt:`/`powtou:` — compare power + toughness (both numeric-guarded).
+fn pt(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: f64 = value
+        .parse()
+        .map_err(|_| invalid("pt", value, "expected a number"))?;
+    let sql = format!(
+        "(({}) AND ({}) AND CAST(power AS REAL) + CAST(toughness AS REAL) {} ?)",
+        numeric_guard("power"),
+        numeric_guard("toughness"),
+        cmp_sql(op)
+    );
+    Ok(cond_one(Expr::cust_with_values(sql, [n])))
 }
 
 // ----- prices (text decimal columns) -----
@@ -763,6 +813,12 @@ fn parse_color_operand(key: &str, value: &str) -> Result<ColorOperand, SearchErr
     match lower.as_str() {
         "c" | "colorless" => return Ok(ColorOperand::Colorless),
         "m" | "multi" | "multicolor" | "multicolored" => return Ok(ColorOperand::Multicolor),
+        // Full colour-name words.
+        "white" => return Ok(ColorOperand::Letters(vec!['W'])),
+        "blue" => return Ok(ColorOperand::Letters(vec!['U'])),
+        "black" => return Ok(ColorOperand::Letters(vec!['B'])),
+        "red" => return Ok(ColorOperand::Letters(vec!['R'])),
+        "green" => return Ok(ColorOperand::Letters(vec!['G'])),
         _ => {}
     }
     if let Some(set) = nickname(&lower) {
@@ -944,21 +1000,29 @@ fn mana(op: Op, value: &str) -> Result<Condition, SearchError> {
     }
     match op {
         Op::Colon | Op::Ge => Ok(mana_contains(&tokens)),
-        // Exact multiset: contains every symbol with its multiplicity AND has no
-        // others (total symbol count equal). Comparing the symbol multiset rather
-        // than a concatenated string makes `=` order-independent, matching Scryfall
-        // (e.g. `m=WW2` and `m=2WW` behave the same against canonical `mana_cost`).
-        Op::Eq => {
-            let total = tokens.len() as i64;
-            let cond = mana_contains(&tokens).add(Expr::cust_with_values(
-                "(LENGTH(IFNULL(mana_cost, '')) - LENGTH(REPLACE(IFNULL(mana_cost, ''), '}', ''))) = ?"
-                    .to_string(),
-                [total],
-            ));
-            Ok(cond)
-        }
+        // Exact multiset: contains every symbol with its multiplicity AND no others
+        // (equal total symbol count). Multiset comparison makes `=` order-independent
+        // (e.g. `m=WW2` == `m=2WW`), matching Scryfall.
+        Op::Eq => Ok(mana_contains(&tokens).add(mana_total_count("=", tokens.len() as i64))),
+        // Strict superset: contains all query symbols AND strictly more in total.
+        Op::Gt => Ok(mana_contains(&tokens).add(mana_total_count(">", tokens.len() as i64))),
+        // Anything but the exact multiset.
+        Op::Ne => Ok(mana_contains(&tokens)
+            .add(mana_total_count("=", tokens.len() as i64))
+            .not()),
+        // Subset (`<`, `<=`) needs the cost's own symbol set — not supported yet.
         _ => Err(unsupported_op("mana", op)),
     }
+}
+
+/// Compare the total mana-symbol count of `mana_cost` (the number of `}`) to `n`.
+fn mana_total_count(op_sql: &str, n: i64) -> SimpleExpr {
+    Expr::cust_with_values(
+        format!(
+            "(LENGTH(IFNULL(mana_cost, '')) - LENGTH(REPLACE(IFNULL(mana_cost, ''), '}}', ''))) {op_sql} ?"
+        ),
+        [n],
+    )
 }
 
 /// Per-symbol multiplicity containment: each distinct symbol must appear at least

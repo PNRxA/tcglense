@@ -662,3 +662,132 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
         // Negation stays exact/total (nonfoil-only card is the only non-foil).
         assert_eq!(names(&db, "-is:foil").await, vec!["Grounder"]);
     }
+
+    /// Confirms the sqlx `regexp` feature registers a REGEXP function on SeaORM's
+    /// SQLite connections (so the o:/…/ regex filters can rely on it) and that the
+    /// bundled SQLite has the JSON1 `json_extract` used by the legality filters.
+    #[tokio::test]
+    async fn sqlite_has_regexp_and_json_functions() {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let db = crate::test_support::migrated_memory_db().await;
+        let row = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT ('abcd' REGEXP 'b.d') AS rx, \
+                 json_extract('{\"modern\":\"legal\"}', '$.modern') AS jx",
+            ))
+            .await
+            .unwrap()
+            .expect("one row");
+        let rx: i32 = row.try_get("", "rx").unwrap();
+        let jx: String = row.try_get("", "jx").unwrap();
+        assert_eq!(rx, 1, "REGEXP function must be registered");
+        assert_eq!(jx, "legal", "json_extract must be available");
+    }
+
+    // ----- Structural features (search parity, Phase 3) -----
+
+    #[test]
+    fn regex_literal_compiles_to_regexp() {
+        assert!(sql("o:/counter target/").contains("REGEXP"));
+        // Case-insensitive prefix is applied to the bound pattern (spaces allowed).
+        assert!(
+            sql("o:/counter target/").contains("(?i)counter target"),
+            "{}",
+            sql("o:/counter target/")
+        );
+        // A bare /…/ is a name-field regex.
+        assert!(sql("/^bolt/").contains("IFNULL(name, '') REGEXP"));
+        // An escaped slash stays inside the pattern.
+        assert!(sql(r"o:/a\/b/").contains(r"(?i)a\/b"));
+    }
+
+    #[test]
+    fn regex_errors() {
+        assert!(matches!(err("o:/foo"), SearchError::UnterminatedRegex));
+        assert!(matches!(err("o:/(/"), SearchError::InvalidValue { .. }));
+    }
+
+    #[test]
+    fn mana_relational_operators() {
+        // Strict superset adds a total-symbol-count comparison.
+        assert!(sql("m>{R}").contains("> 1"), "{}", sql("m>{R}"));
+        assert!(sql("m!={R}").contains("NOT"));
+        // Subset (`<`, `<=`) is still unsupported.
+        assert!(matches!(err("m<=2"), SearchError::UnsupportedOperator { .. }));
+    }
+
+    #[test]
+    fn color_name_words_and_commander_alias() {
+        assert_eq!(sql("c:white"), sql("c:w"));
+        assert_eq!(sql("id:green"), sql("id:g"));
+        // commander:/cmdr: alias the colour-identity column.
+        assert!(sql("commander:wu").contains("color_identity"));
+    }
+
+    #[test]
+    fn pt_defense_and_fulloracle() {
+        let s = sql("pt>=6");
+        assert!(
+            s.contains("power") && s.contains("toughness") && s.contains('+'),
+            "{s}"
+        );
+        assert!(sql("def>3").contains("defense"));
+        assert_eq!(sql("fulloracle:draw"), sql("o:draw"));
+    }
+
+    /// Prove regex actually filters rows through the registered REGEXP function.
+    #[tokio::test]
+    async fn regex_filter_runs_over_sqlite() {
+        use crate::entities::card;
+        use crate::entities::prelude::Card;
+        use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let ts: sea_orm::prelude::DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        for (i, (name, oracle)) in [
+            ("Tapper", "{T}: Add {G}."),
+            ("Drawer", "Draw a card."),
+            ("Bolt", "Deal 3 damage."),
+        ]
+        .iter()
+        .enumerate()
+        {
+            card::ActiveModel {
+                game: Set("mtg".into()),
+                external_id: Set(format!("ext-{i}")),
+                name: Set((*name).into()),
+                set_code: Set("tst".into()),
+                set_name: Set("TST".into()),
+                collector_number: Set(i.to_string()),
+                lang: Set("en".into()),
+                oracle_text: Set(Some((*oracle).into())),
+                digital: Set(false),
+                created_at: Set(ts),
+                updated_at: Set(ts),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        async fn names(db: &DatabaseConnection, q: &str) -> Vec<String> {
+            let mut v = Card::find()
+                .filter(parse(q).expect("parses"))
+                .all(db)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.name)
+                .collect::<Vec<_>>();
+            v.sort();
+            v
+        }
+
+        // Regex over oracle text: anchored + case-insensitive.
+        assert_eq!(names(&db, r"o:/^\{T\}/").await, vec!["Tapper"]);
+        assert_eq!(names(&db, "o:/draw a card/").await, vec!["Drawer"]);
+        // A bare /…/ regexes the name.
+        assert_eq!(names(&db, "/bolt/").await, vec!["Bolt"]);
+    }

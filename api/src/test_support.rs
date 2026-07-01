@@ -3,7 +3,7 @@
 //! unit and integration tests build their state the same way; per-test tweaks use
 //! struct-update syntax (`Config { field: …, ..test_config() }`).
 
-use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use sea_orm::{Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 
 use crate::{config::Config, migrator::Migrator};
@@ -36,7 +36,9 @@ pub(crate) fn test_config() -> Config {
 /// hand a caller an unmigrated DB; one connection keeps the migrated schema + data
 /// consistent across every query (and any future concurrent one).
 pub(crate) async fn migrated_memory_db() -> DatabaseConnection {
-    let mut opts = ConnectOptions::new("sqlite::memory:");
+    // Reuse the app's connect options so tests get the same pragmas and the
+    // registered REGEXP function; pin to one connection (see below).
+    let mut opts = crate::db::connect_options("sqlite::memory:");
     opts.max_connections(1).min_connections(1);
     let db = Database::connect(opts)
         .await
