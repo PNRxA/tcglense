@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, nextTick, ref, useTemplateRef, watch } from 'vue'
-import { ImageOff } from '@lucide/vue'
 import { cardImageUrl, type ImageSize } from '@/lib/api'
+import { ImageOff } from '@lucide/vue'
+import { useImageLoad } from '@/composables/useImageLoad'
 
 const props = withDefaults(
   defineProps<{
@@ -19,35 +19,17 @@ const props = withDefaults(
 // exist fails to load at runtime, so it can stop offering to enlarge a placeholder.
 const emit = defineEmits<{ error: [] }>()
 
-const failed = ref(false)
-const loaded = ref(false)
-const imgEl = useTemplateRef<HTMLImageElement>('imgEl')
+// Reset the load state whenever we point at a different card/face/size.
+const { el, loaded, failed, onLoad, onError } = useImageLoad(() => [
+  props.id,
+  props.face,
+  props.size,
+])
 
 function handleError() {
-  failed.value = true
+  onError()
   emit('error')
 }
-
-// A cached image can finish loading before the `load` listener is attached, so
-// its event never fires. Reflect the already-complete state so the card never
-// stays stuck invisible (at opacity-0) waiting for an event that won't come.
-function syncLoaded() {
-  const el = imgEl.value
-  if (el?.complete && el.naturalWidth > 0) loaded.value = true
-}
-
-onMounted(syncLoaded)
-
-// Reset state when we point at a different card/face/size, then re-check once
-// the new src is in the DOM (it may resolve instantly from cache).
-watch(
-  () => [props.id, props.face, props.size],
-  () => {
-    failed.value = false
-    loaded.value = false
-    nextTick(syncLoaded)
-  },
-)
 </script>
 
 <template>
@@ -70,13 +52,13 @@ watch(
         so the letterbox shows the page background rather than a muted rectangle
         peeking out around the image. -->
       <img
-        ref="imgEl"
+        ref="el"
         :src="cardImageUrl(game, id, size, face)"
         :alt="name"
         loading="lazy"
         class="h-full w-full object-contain transition-opacity duration-500 ease-out motion-reduce:transition-none"
         :class="loaded ? 'opacity-100' : 'opacity-0'"
-        @load="loaded = true"
+        @load="onLoad"
         @error="handleError"
       />
       <!-- Pulsing skeleton fills the frame until the image bytes arrive and fade

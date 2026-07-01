@@ -1,5 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
+import { persistedRef } from '@/lib/persistedRef'
 
 // 'system' follows the OS preference; 'light'/'dark' pin it explicitly.
 export type Theme = 'light' | 'dark' | 'system'
@@ -13,16 +14,6 @@ function isTheme(value: unknown): value is Theme {
   return value === 'light' || value === 'dark' || value === 'system'
 }
 
-function readStored(): Theme {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    return isTheme(stored) ? stored : 'system'
-  } catch {
-    // Storage unavailable (private mode, blocked): fall back to system.
-    return 'system'
-  }
-}
-
 function systemPrefersDark(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -32,8 +23,9 @@ function systemPrefersDark(): boolean {
 }
 
 export const useThemeStore = defineStore('theme', () => {
-  // The user's chosen mode (what we persist).
-  const theme = ref<Theme>(readStored())
+  // The user's chosen mode (what we persist — not the resolved value, so 'system'
+  // stays 'system').
+  const theme = persistedRef<Theme>(STORAGE_KEY, 'system', isTheme)
   // The OS preference, tracked reactively so resolvedTheme recomputes when it flips.
   const systemDark = ref(systemPrefersDark())
 
@@ -45,15 +37,6 @@ export const useThemeStore = defineStore('theme', () => {
   function setTheme(next: Theme) {
     theme.value = next
   }
-
-  // Persist the chosen mode (not the resolved value, so 'system' stays 'system').
-  watch(theme, (value) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, value)
-    } catch {
-      // Storage unavailable: still apply the theme for this session.
-    }
-  })
 
   // Reflect the resolved theme onto <html> via the `.dark` class Tailwind keys off.
   watch(

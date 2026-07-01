@@ -61,11 +61,11 @@ pub async fn refresh_all(db: &DatabaseConnection, client: &Client) {
 /// just records today's date with the last-known prices). A failure for one game is
 /// logged and does not abort the others.
 pub async fn snapshot_all(db: &DatabaseConnection) {
-    let as_of_date = crate::scryfall::ingest::format_date(chrono::Utc::now().date_naive());
+    let as_of_date = crate::scryfall::format_date(chrono::Utc::now().date_naive());
     for game in GAMES {
         let result = match game.id {
             crate::scryfall::GAME => {
-                crate::scryfall::ingest::snapshot_prices(db, game.id, &as_of_date).await
+                crate::scryfall::snapshot_prices(db, game.id, &as_of_date).await
             }
             other => {
                 tracing::warn!(game = other, "no price snapshot wired for game; skipping");

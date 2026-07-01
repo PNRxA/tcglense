@@ -181,7 +181,7 @@ pub struct PriceParams {
 fn cutoff_date(today: NaiveDate, range: PriceRange) -> Option<String> {
     range
         .window_days()
-        .map(|days| crate::scryfall::ingest::format_date(today - Duration::days(days)))
+        .map(|days| crate::scryfall::format_date(today - Duration::days(days)))
 }
 
 /// Downsample an **ascending** run of price-history rows to one representative day
@@ -263,11 +263,7 @@ impl From<card::Model> for CardResponse {
         let drop_name = drop.map(|d| d.title.clone());
         let drop_slug = drop.map(|d| d.slug.clone());
 
-        let stored_faces: Vec<StoredFace> = m
-            .card_faces
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default();
+        let stored_faces = stored_faces(&m);
 
         let has_image = m.image_normal.is_some()
             || m.image_small.is_some()
@@ -342,6 +338,21 @@ pub struct Page<T> {
     pub has_more: bool,
 }
 
+impl<T> Page<T> {
+    /// Build a page, deriving `has_more` from the cursor position: there is a next
+    /// page whenever the rows consumed so far (`page * page_size`) fall short of the
+    /// total. Saturating so a huge `page`/`page_size` can't overflow.
+    fn new(data: Vec<T>, page: u64, page_size: u64, total: u64) -> Self {
+        Page {
+            data,
+            page,
+            page_size,
+            total,
+            has_more: page.saturating_mul(page_size) < total,
+        }
+    }
+}
+
 /// One Secret Lair drop with its cards, as returned by the drops endpoint. The
 /// enclosing [`Page`] paginates over these (so `total` is a drop count, not a
 /// card count).
@@ -379,24 +390,23 @@ pub struct ListParams {
 }
 
 impl ListParams {
-    fn page_and_size(&self) -> (u64, u64) {
+    /// Resolve the requested (1-based) page and clamped page size against the
+    /// caller-supplied `default_size`/`max_size` bounds. The card and by-drop
+    /// listings differ only in those two constants.
+    fn paged(&self, default_size: u64, max_size: u64) -> (u64, u64) {
         let page = self.page.unwrap_or(1).max(1);
-        let page_size = self
-            .page_size
-            .unwrap_or(DEFAULT_PAGE_SIZE)
-            .clamp(1, MAX_PAGE_SIZE);
+        let page_size = self.page_size.unwrap_or(default_size).clamp(1, max_size);
         (page, page_size)
+    }
+
+    fn page_and_size(&self) -> (u64, u64) {
+        self.paged(DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
     }
 
     /// Page + page size for the by-drop listing, which paginates over drops
     /// (not cards) and so has its own smaller bounds.
     fn drop_page_and_size(&self) -> (u64, u64) {
-        let page = self.page.unwrap_or(1).max(1);
-        let page_size = self
-            .page_size
-            .unwrap_or(DEFAULT_DROP_PAGE_SIZE)
-            .clamp(1, MAX_DROP_PAGE_SIZE);
-        (page, page_size)
+        self.paged(DEFAULT_DROP_PAGE_SIZE, MAX_DROP_PAGE_SIZE)
     }
 
     fn search(&self) -> Option<&str> {
@@ -624,9 +634,7 @@ pub async fn list_set_cards(
     } else {
         query.filter(card::Column::SetCode.eq(set.code.as_str()))
     };
-    if let Some(search) = params.search() {
-        query = query.filter(search_condition(game_meta, search)?);
-    }
+    query = apply_search(query, game_meta, &params)?;
 
     let (sort, dir) = params.sort_spec(SortField::Number)?;
     // For the default collector-number order, the related-sets view keeps each
@@ -668,9 +676,7 @@ pub async fn list_set_drops(
     let mut query = Card::find()
         .filter(card::Column::Game.eq(game.as_str()))
         .filter(card::Column::SetCode.eq(set.code.as_str()));
-    if let Some(search) = params.search() {
-        query = query.filter(search_condition(game_meta, search)?);
-    }
+    query = apply_search(query, game_meta, &params)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false)
         .all(&state.db)
         .await?;
@@ -691,13 +697,7 @@ pub async fn list_set_drops(
             cards: b.cards.into_iter().map(CardResponse::from).collect(),
         })
         .collect();
-    Ok(Json(Page {
-        data,
-        page,
-        page_size,
-        total,
-        has_more: page.saturating_mul(page_size) < total,
-    }))
+    Ok(Json(Page::new(data, page, page_size, total)))
 }
 
 /// `GET /api/games/{game}/cards` -> all cards (optional `q` search), by name.
@@ -710,9 +710,7 @@ pub async fn list_cards(
     let (page, page_size) = params.page_and_size();
 
     let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
-    if let Some(search) = params.search() {
-        query = query.filter(search_condition(game_meta, search)?);
-    }
+    query = apply_search(query, game_meta, &params)?;
     let (sort, dir) = params.sort_spec(SortField::Name)?;
     let paginator = apply_card_sort(query, sort, dir, false).paginate(&state.db, page_size);
 
@@ -985,13 +983,7 @@ fn group_into_drops(
 
 fn build_page(rows: Vec<card::Model>, page: u64, page_size: u64, total: u64) -> Page<CardResponse> {
     let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();
-    Page {
-        data,
-        page,
-        page_size,
-        total,
-        has_more: page.saturating_mul(page_size) < total,
-    }
+    Page::new(data, page, page_size, total)
 }
 
 /// Apply the requested ordering to a card query, ending with a stable `id`
@@ -1105,6 +1097,19 @@ fn split_csv(value: Option<String>) -> Vec<String> {
 /// (Scryfall) gets the full Scryfall-style grammar (see [`crate::scryfall::search`]);
 /// any other game falls back to a plain card-name substring match. A malformed
 /// Scryfall query becomes an `AppError::Validation` (HTTP 422).
+/// Apply the optional `q` search filter to a card query. A blank/absent `q` leaves
+/// the query unchanged; a malformed query surfaces as a 422 via [`search_condition`].
+fn apply_search(
+    query: Select<card::Entity>,
+    game: &Game,
+    params: &ListParams,
+) -> Result<Select<card::Entity>, AppError> {
+    match params.search() {
+        Some(search) => Ok(query.filter(search_condition(game, search)?)),
+        None => Ok(query),
+    }
+}
+
 fn search_condition(game: &Game, search: &str) -> Result<Condition, AppError> {
     match game.id {
         crate::scryfall::GAME => Ok(crate::scryfall::search::parse(search)?),
@@ -1442,15 +1447,9 @@ mod tests {
     /// when present, with unpriced cards parked last in either direction.
     #[tokio::test]
     async fn price_sort_falls_back_to_foil_when_no_regular_usd() {
-        use sea_orm::{ActiveModelTrait, Database, IntoActiveModel};
-        use sea_orm_migration::MigratorTrait;
+        use sea_orm::{ActiveModelTrait, IntoActiveModel};
 
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory sqlite");
-        crate::migrator::Migrator::up(&db, None)
-            .await
-            .expect("run migrations");
+        let db = crate::test_support::migrated_memory_db().await;
 
         // 1: regular $5 (also a $50 foil — the regular price must win over it).
         // 2: foil-only $20.  3: foil-only $1.  4: fully unpriced.
@@ -1504,15 +1503,9 @@ mod tests {
     /// cards with no oracle id.
     #[tokio::test]
     async fn prints_query_returns_other_printings_newest_first() {
-        use sea_orm::{ActiveModelTrait, Database, IntoActiveModel};
-        use sea_orm_migration::MigratorTrait;
+        use sea_orm::{ActiveModelTrait, IntoActiveModel};
 
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory sqlite");
-        crate::migrator::Migrator::up(&db, None)
-            .await
-            .expect("run migrations");
+        let db = crate::test_support::migrated_memory_db().await;
 
         // Three printings of oracle "o-1" across three sets/dates, one unrelated
         // oracle, and one card with no oracle id at all.
@@ -1632,43 +1625,14 @@ mod tests {
         collector_number: &str,
         number_int: Option<i32>,
     ) -> card::Model {
-        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
         card::Model {
-            id: 0,
-            game: "mtg".into(),
             external_id: format!("ext-{set_code}-{collector_number}"),
-            oracle_id: None,
             name: format!("Card {collector_number}"),
             set_code: set_code.into(),
             set_name: set_code.to_uppercase(),
             collector_number: collector_number.into(),
             collector_number_int: number_int,
-            rarity: None,
-            lang: "en".into(),
-            released_at: None,
-            mana_cost: None,
-            cmc: None,
-            type_line: None,
-            color_identity: None,
-            colors: None,
-            layout: None,
-            oracle_text: None,
-            power: None,
-            toughness: None,
-            loyalty: None,
-            image_small: None,
-            image_normal: None,
-            image_large: None,
-            image_art_crop: None,
-            image_png: None,
-            card_faces: None,
-            price_usd: None,
-            price_usd_foil: None,
-            price_eur: None,
-            price_tix: None,
-            digital: false,
-            created_at: ts,
-            updated_at: ts,
+            ..test_card(0, None, None)
         }
     }
 

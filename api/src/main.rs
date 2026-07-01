@@ -7,45 +7,32 @@ mod error;
 mod extract;
 mod handlers;
 mod migrator;
+mod router;
 mod scryfall;
 mod state;
+mod tasks;
 
 #[cfg(test)]
 mod security_tests;
+#[cfg(test)]
+mod test_support;
 
 use std::{sync::Arc, time::Duration};
 
-use axum::{
-    Router,
-    http::{HeaderValue, Method, header},
-    middleware::map_response,
-    routing::{get, post},
-};
 use sea_orm::Database;
 use sea_orm_migration::MigratorTrait;
 use tokio::net::TcpListener;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{
     EnvFilter, Layer, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use crate::{
-    catalog::images::ImageCache,
-    config::Config,
-    handlers::{
-        auth::{login, logout, me, refresh, register},
-        cache::{no_store_layer, public_cache_layer},
-        catalog::{
-            card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
-            list_games, list_set_cards, list_set_drops, list_sets, set_icon,
-        },
-        health::health,
-        sitemap::{sitemap_child, sitemap_index},
-    },
-    migrator::Migrator,
-    state::AppState,
+    catalog::images::ImageCache, config::Config, migrator::Migrator, state::AppState,
 };
+
+// Re-export so `crate::build_router` keeps resolving for the integration tests.
+pub use router::build_router;
 
 #[tokio::main]
 async fn main() {
@@ -81,9 +68,6 @@ async fn main() {
     let host = config.host.clone();
     let port = config.port;
     let database_url = config.database_url.clone();
-    let sync_on_startup = config.sync_on_startup;
-    let sync_interval_hours = config.sync_interval_hours;
-    let seed_dummy_data = config.seed_dummy_data;
     let image_dir = config.data_dir.join("images");
 
     // Connect to the database (with SQLite WAL + cache pragmas; see `db`) and run
@@ -129,75 +113,9 @@ async fn main() {
         images: Arc::new(ImageCache::new(image_dir, image_http)),
     };
 
-    // Periodically prune expired refresh tokens so the table can't grow unbounded.
-    // The first tick fires immediately, then every 6 hours.
-    {
-        let db = state.db.clone();
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));
-            loop {
-                ticker.tick().await;
-                match crate::auth::refresh::prune_expired(&db).await {
-                    Ok(n) if n > 0 => tracing::info!("pruned {n} expired refresh tokens"),
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::warn!(error = %err, "failed to prune expired refresh tokens")
-                    }
-                }
-            }
-        });
-    }
-
-    // SEED_DUMMY_DATA takes precedence over SYNC_ON_STARTUP / SYNC_INTERVAL_HOURS:
-    // seed a small offline dummy catalog and perform NO network sync (no startup
-    // import, no periodic refresh). We await it here rather than spawning — unlike
-    // the ~500 MB real import it's a handful of local inserts, so the catalog is
-    // present before the first request (handy for CI/e2e). A seed error is logged but
-    // does not abort startup. Never enable this outside dev/CI/test.
-    if seed_dummy_data {
-        tracing::warn!(
-            "SEED_DUMMY_DATA enabled: seeding a dummy offline catalog and skipping all \
-             network card-data sync. Never enable this in production."
-        );
-        catalog::seed_all(&state.db).await;
-    } else if sync_on_startup {
-        // Import card data from each provider in the background so the server is
-        // available immediately (the SPA shows import progress via the status route),
-        // then re-import on a fixed interval to pick up Scryfall's newer prices/sets.
-        // The import is idempotent and version-gated, so a tick with no upstream change
-        // is cheap (a small bulk-data catalog check, no ~500 MB download).
-        let db = state.db.clone();
-        let http = http.clone();
-        tokio::spawn(async move {
-            if sync_interval_hours == 0 {
-                // Periodic refresh disabled: import once on startup only.
-                catalog::refresh_all(&db, &http).await;
-                // Capture today's snapshot from the freshly-imported cards.
-                catalog::snapshot_all(&db).await;
-                return;
-            }
-            // saturating_mul so an absurd SYNC_INTERVAL_HOURS can't overflow the
-            // u64: an overflow panics in debug and, worse, can wrap to a zero period
-            // in release — which tokio::time::interval itself panics on, slipping
-            // past the `== 0` guard above.
-            let period = Duration::from_secs(sync_interval_hours.saturating_mul(60 * 60));
-            let mut ticker = tokio::time::interval(period);
-            // If a refresh ever runs long, skip the ticks it overran rather than
-            // firing them back-to-back (the default Burst behaviour would).
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                // The first tick fires immediately (the startup import), then every
-                // `sync_interval_hours` thereafter.
-                ticker.tick().await;
-                catalog::refresh_all(&db, &http).await;
-                // Always capture a daily snapshot, even when the import above was
-                // version-gated and skipped — keeps the price series continuous.
-                catalog::snapshot_all(&db).await;
-            }
-        });
-    } else {
-        tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
-    }
+    // Spawn background maintenance (refresh-token pruning) and either the offline
+    // dummy-catalog seed or the periodic card-data sync, per config.
+    tasks::start(&state, &http).await;
 
     let app = build_router(state);
 
@@ -208,71 +126,4 @@ async fn main() {
     tracing::info!("TCGLense API listening on http://{host}:{port}");
 
     axum::serve(listener, app).await.expect("server error");
-}
-
-/// CORS layer: allow the Vite dev origin with the required methods and headers.
-/// `allow_credentials` is required because the browser sends the refresh cookie
-/// (`credentials: 'include'`) on cross-origin refresh/logout; it is valid here
-/// because the origin is an explicit value, never a wildcard.
-fn cors_layer() -> CorsLayer {
-    CorsLayer::new()
-        .allow_origin(
-            "http://localhost:5173"
-                .parse::<HeaderValue>()
-                .expect("valid CORS origin"),
-        )
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
-        .allow_credentials(true)
-}
-
-/// Build the application router: all routes plus the shared middleware stack and
-/// state. Split out of `main` so integration tests can drive the exact same
-/// router (CORS, error mapping, auth) in-process via `tower`'s `oneshot`.
-fn build_router(state: AppState) -> Router {
-    // Per-user, live, and side-effecting routes: auth (access tokens + Set-Cookie)
-    // and the import-status route the SPA polls for live progress. These must never
-    // be stored by the browser or a shared cache, so every response gets
-    // `Cache-Control: no-store` (see `handlers::cache`).
-    let private = Router::new()
-        .route("/api/health", get(health))
-        .route("/api/auth/register", post(register))
-        .route("/api/auth/login", post(login))
-        .route("/api/auth/refresh", post(refresh))
-        .route("/api/auth/logout", post(logout))
-        .route("/api/auth/me", get(me))
-        .route("/api/games/{game}/status", get(ingest_status))
-        .layer(map_response(no_store_layer));
-
-    // Public, game-agnostic card catalog: the same for every visitor and changing
-    // at most daily, so successful reads are browser- + CDN-cacheable
-    // (`public, max-age=…, s-maxage=…, stale-while-revalidate=…`). The image/icon
-    // routes set their own longer `immutable` header, which the layer preserves;
-    // error responses are marked `no-store`.
-    let public = Router::new()
-        .route("/api/games", get(list_games))
-        .route("/api/games/{game}/sets", get(list_sets))
-        .route("/api/games/{game}/sets/{code}", get(get_set))
-        .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
-        .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
-        .route("/api/games/{game}/sets/{code}/drops", get(list_set_drops))
-        .route("/api/games/{game}/cards", get(list_cards))
-        .route("/api/games/{game}/cards/{id}", get(get_card))
-        .route("/api/games/{game}/cards/{id}/image", get(card_image))
-        .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
-        .route("/api/games/{game}/cards/{id}/prints", get(card_prints))
-        // DB-backed sitemaps for crawlers: an index plus its child sitemaps
-        // (pages / sets / chunked cards). Shared-cacheable like the rest of the
-        // catalog; each success sets its own longer `Cache-Control`, which the
-        // layer preserves, and a bad chunk 404s to `no-store`.
-        .route("/api/sitemap.xml", get(sitemap_index))
-        .route("/api/sitemaps/{name}", get(sitemap_child))
-        .layer(map_response(public_cache_layer));
-
-    Router::new()
-        .merge(private)
-        .merge(public)
-        .layer(cors_layer())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }

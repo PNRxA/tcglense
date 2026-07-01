@@ -121,35 +121,43 @@ fn resolve_jwt_secret(
     }
 }
 
+/// Parse a boolean-ish env var, accepting the common truthy spellings
+/// (`1`/`true`/`yes`/`on`, case- and whitespace-insensitive). A set-but-not-truthy
+/// value reads as `false`; only an unset var falls back to `default`.
+fn env_bool(key: &str, default: bool) -> bool {
+    match env::var(key) {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => default,
+    }
+}
+
+/// Read an env var, returning `None` if it is unset or blank/whitespace-only.
+/// The returned string is the raw value (not trimmed).
+fn env_trimmed(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|v| !v.trim().is_empty())
+}
+
+/// Parse an env var into `T`, returning `None` if unset, blank, or unparseable.
+fn env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
+    env_trimmed(key).and_then(|v| v.trim().parse::<T>().ok())
+}
+
 impl Config {
     /// Build a [`Config`] from the process environment, applying sane defaults.
     pub fn from_env() -> Self {
         let database_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://tcglense.db?mode=rwc".to_string());
 
-        let cookie_secure = env::var("COOKIE_SECURE")
-            .ok()
-            .map(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let cookie_secure = env_bool("COOKIE_SECURE", false);
 
         // The insecure compiled-in fallback secret is *opt-in only*. By default an
         // absent JWT_SECRET fails the boot closed, so a misconfigured production
         // deploy can never silently sign tokens with a publicly-known key — even if
         // COOKIE_SECURE was forgotten (e.g. TLS terminated at a reverse proxy).
-        let allow_insecure_dev_secret = env::var("ALLOW_INSECURE_DEV_SECRET")
-            .ok()
-            .map(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let allow_insecure_dev_secret = env_bool("ALLOW_INSECURE_DEV_SECRET", false);
 
         let provided_secret = env::var("JWT_SECRET").ok();
         let jwt_secret =
@@ -158,80 +166,46 @@ impl Config {
                 Err(message) => panic!("{message}"),
             };
 
-        let access_token_expiry_minutes = env::var("ACCESS_TOKEN_EXPIRY_MINUTES")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
+        let access_token_expiry_minutes = env_parse::<i64>("ACCESS_TOKEN_EXPIRY_MINUTES")
             .filter(|m| *m > 0)
             .unwrap_or(15);
 
-        let refresh_token_expiry_days = env::var("REFRESH_TOKEN_EXPIRY_DAYS")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
+        let refresh_token_expiry_days = env_parse::<i64>("REFRESH_TOKEN_EXPIRY_DAYS")
             .filter(|d| *d > 0)
             .unwrap_or(30);
 
         // Default to loopback so an operator who only sets PORT does not expose the
         // API on every interface. Containers/dev set HOST=0.0.0.0 explicitly.
-        let host = env::var("HOST")
-            .ok()
-            .filter(|h| !h.trim().is_empty())
-            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let host = env_trimmed("HOST").unwrap_or_else(|| "127.0.0.1".to_string());
 
-        let port = env::var("PORT")
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(8080);
+        let port = env_parse::<u16>("PORT").unwrap_or(8080);
 
         // Public origin of the SPA, used for the absolute <loc>s in the sitemaps.
         // Defaults to the Vite dev origin so dev/e2e produce valid URLs. Trailing
         // slashes are trimmed so `base + "/cards/..."` never yields a doubled slash.
-        let public_site_url = env::var("PUBLIC_SITE_URL")
-            .ok()
+        let public_site_url = env_trimmed("PUBLIC_SITE_URL")
             .map(|v| v.trim().trim_end_matches('/').to_string())
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "http://localhost:5173".to_string());
 
-        let data_dir = env::var("DATA_DIR")
-            .ok()
-            .filter(|d| !d.trim().is_empty())
+        let data_dir = env_trimmed("DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("./data"));
 
-        let scryfall_user_agent = env::var("SCRYFALL_USER_AGENT")
-            .ok()
-            .filter(|u| !u.trim().is_empty())
+        let scryfall_user_agent = env_trimmed("SCRYFALL_USER_AGENT")
             .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
 
         // Importing card data is the default; tests and offline runs disable it.
-        let sync_on_startup = env::var("SYNC_ON_STARTUP")
-            .ok()
-            .map(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(true);
+        let sync_on_startup = env_bool("SYNC_ON_STARTUP", true);
 
         // Re-import cadence after the startup import. Default daily; `0` means
         // "startup only" (no periodic refresh). An unparseable value falls back to
         // the default rather than disabling refreshes silently.
-        let sync_interval_hours = env::var("SYNC_INTERVAL_HOURS")
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .unwrap_or(24);
+        let sync_interval_hours = env_parse::<u64>("SYNC_INTERVAL_HOURS").unwrap_or(24);
 
         // Seed a dummy offline catalog instead of syncing real data. Parsed like the
         // other boolean flags; main.rs gives it precedence over the sync settings.
-        let seed_dummy_data = env::var("SEED_DUMMY_DATA")
-            .ok()
-            .map(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let seed_dummy_data = env_bool("SEED_DUMMY_DATA", false);
 
         Config {
             database_url,
@@ -258,19 +232,9 @@ mod tests {
     #[test]
     fn debug_redacts_the_jwt_secret() {
         let config = Config {
-            database_url: "sqlite::memory:".to_string(),
             jwt_secret: "super-secret-signing-key-value".to_string(),
-            access_token_expiry_minutes: 15,
-            refresh_token_expiry_days: 30,
             cookie_secure: true,
-            host: "127.0.0.1".to_string(),
-            port: 8080,
-            public_site_url: "https://tcglense.example".to_string(),
-            data_dir: std::path::PathBuf::from("./data"),
-            scryfall_user_agent: "TCGLense/test".to_string(),
-            sync_on_startup: false,
-            sync_interval_hours: 24,
-            seed_dummy_data: false,
+            ..crate::test_support::test_config()
         };
 
         let rendered = format!("{config:?}");
