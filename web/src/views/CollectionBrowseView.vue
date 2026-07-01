@@ -497,7 +497,7 @@ const errorMessage = computed(() =>
               <template v-else>Your {{ gameName }} collection is empty.</template>
             </p>
             <RouterLink
-              :to="scoped ? `/cards/${game}/sets/${code}` : `/cards/${game}/cards`"
+              :to="scoped ? `/cards/${game}/sets/${code}` : `/cards/${game}`"
               :class="buttonVariants({ variant: 'default' })"
               class="mt-4 inline-flex"
             >
