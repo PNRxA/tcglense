@@ -23,7 +23,9 @@ const price = computed(() => displayUsdPrice(props.card.prices))
       near-black background, so dark mode gets a larger, higher-opacity shadow
       instead. Reduced-motion users get neither the grow nor the transition. -->
     <!-- `relative` anchors the optional #badge overlay (e.g. an owned-count chip in
-      the collection grid); browse views pass no slot, so nothing renders there. -->
+      the collection grid); browse views pass no slot, so nothing renders there.
+      The image lifts to `group-hover:z-10` on hover, so badge content must carry a
+      higher `z-20` or the enlarged card paints over it and the badges disappear. -->
     <div class="relative">
       <CardImage
         :game="game"
