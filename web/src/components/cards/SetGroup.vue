@@ -17,8 +17,11 @@ const props = withDefaults(
     // Owned-card count per set code. When set, each tile shows "N owned" (the
     // collection landing) instead of the set's total card count.
     ownedCounts?: Record<string, number>
+    // Preformatted owned value per set code (e.g. "$123.45"), appended to each tile's
+    // meta line alongside the owned count — the collection landing's per-set value.
+    ownedValues?: Record<string, string | null>
   }>(),
-  { basePath: '/cards', ownedCounts: undefined },
+  { basePath: '/cards', ownedCounts: undefined, ownedValues: undefined },
 )
 
 // Collapsed by default to keep the set listing scannable; the sub-sets reveal on
@@ -27,6 +30,7 @@ const expanded = ref(false)
 
 const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
 const ownedCount = (code: string) => props.ownedCounts?.[code]
+const ownedValue = (code: string) => props.ownedValues?.[code]
 </script>
 
 <template>
@@ -37,6 +41,7 @@ const ownedCount = (code: string) => props.ownedCounts?.[code]
       variant="plain"
       :to="setLink(group.main.code)"
       :owned-count="ownedCount(group.main.code)"
+      :owned-value="ownedValue(group.main.code)"
     />
 
     <div class="flex items-center justify-between gap-2 px-3 pb-2">
@@ -75,6 +80,7 @@ const ownedCount = (code: string) => props.ownedCounts?.[code]
           variant="nested"
           :to="setLink(child.code)"
           :owned-count="ownedCount(child.code)"
+          :owned-value="ownedValue(child.code)"
         />
       </li>
     </ul>

@@ -136,6 +136,10 @@ pub struct CollectionSet {
     pub owned_cards: i64,
     /// Total copies owned (regular + foil) in this set.
     pub owned_copies: i64,
+    /// Estimated USD value of the owned cards in this set (regular copies at `usd`,
+    /// foil at `usd_foil`), a 2-dp decimal string. `null` when nothing owned is priced —
+    /// same semantics as the summary's `total_value_usd`, scoped to the one set.
+    pub owned_value_usd: Option<String>,
 }
 
 /// The sets a user owns cards in, newest set first.
@@ -199,6 +203,11 @@ pub struct SummaryParams {
     /// cards. Absent/blank = the whole collection.
     #[serde(default)]
     pub set: Option<String>,
+    /// When `true` *and* a `set` scope is present, span the set's whole **group** (root +
+    /// related sub-sets) instead of just the one set — the collection mirror of the
+    /// catalog's `include_related`, matching the list / ghost views. Ignored without a `set`.
+    #[serde(default)]
+    pub include_related: Option<bool>,
 }
 
 /// How the collection list is ordered: either the collection-specific recency order
@@ -395,7 +404,9 @@ async fn resolve_set_scope(
 
 /// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
 /// copies, estimated USD value) for the signed-in user's collection in a game.
-/// An optional `?set` scopes the stats to a single set (the per-set collection view).
+/// An optional `?set` scopes the stats to a single set (the per-set collection view);
+/// `?include_related=true` with a set spans its whole group (root + related sub-sets),
+/// so the header value matches the set / include-related collection browse view.
 pub async fn collection_summary(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -404,10 +415,15 @@ pub async fn collection_summary(
 ) -> Result<Json<CollectionSummary>, AppError> {
     require_game(&game)?;
 
-    // A set-scoped summary joins the cards up front (bounded by that set's owned cards)
-    // rather than the whole-collection two-step load below.
-    if let Some(set_code) = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        return Ok(Json(scoped_summary(&state, user.id, &game, set_code).await?));
+    // A set-scoped summary joins the cards up front (bounded by the scoped sets' owned
+    // cards) rather than the whole-collection two-step load below. `resolve_set_scope`
+    // returns the one set, or its whole group under include-related, or `None` (no scope)
+    // — the same resolution the collection list uses, so the value spans identical sets.
+    let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(set_codes) =
+        resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?
+    {
+        return Ok(Json(scoped_summary(&state, user.id, &game, &set_codes).await?));
     }
 
     // A collection is bounded by how many distinct cards a user owns, so we load the
@@ -469,21 +485,23 @@ pub async fn collection_summary(
     }))
 }
 
-/// Aggregate stats for one set of the user's collection. Joins the cards up front
-/// (bounded by that set's owned cards) so the price/value pass reads the same rows —
-/// no second chunked load. Holdings whose card row is gone (a catalog re-import) are
-/// left-joined to `None` and skipped, exactly as the whole-collection summary does.
+/// Aggregate stats for one set (or a whole related-set group) of the user's collection.
+/// Joins the cards up front (bounded by the scoped sets' owned cards) so the price/value
+/// pass reads the same rows — no second chunked load. Holdings whose card row is gone (a
+/// catalog re-import) are left-joined to `None` and skipped, exactly as the whole-collection
+/// summary does. `set_codes` is never empty — `resolve_set_scope` always yields at least the
+/// scoped set itself.
 async fn scoped_summary(
     state: &AppState,
     user_id: i32,
     game: &str,
-    set_code: &str,
+    set_codes: &[String],
 ) -> Result<CollectionSummary, AppError> {
     let rows = CollectionItem::find()
         .find_also_related(Card)
         .filter(collection_item::Column::UserId.eq(user_id))
         .filter(collection_item::Column::Game.eq(game))
-        .filter(card::Column::SetCode.eq(set_code))
+        .filter(card::Column::SetCode.is_in(set_codes.iter().map(String::as_str)))
         .all(&state.db)
         .await?;
 
@@ -621,25 +639,53 @@ pub async fn collection_set_drops(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
+/// Per-set running totals while aggregating a user's holdings into set tiles.
+#[derive(Default)]
+struct SetAgg {
+    /// The card's own `set_name`, used only if `card_sets` has no row for the set.
+    fallback_name: String,
+    /// Distinct owned cards (one per holding row).
+    owned_cards: i64,
+    /// Total owned copies (regular + foil).
+    owned_copies: i64,
+    /// Estimated USD value in integer cents (regular at `usd`, foil at `usd_foil`).
+    value_cents: i128,
+    /// Whether any owned card in the set had a usable price, so an all-unpriced set
+    /// reports `null` value rather than `$0.00` (matching the summary).
+    any_priced: bool,
+}
+
 /// Aggregate owned holdings into per-set tiles: count distinct owned cards + total
-/// copies per `set_code`, dress each with the game's set metadata (falling back to the
-/// card's own `set_name` when the set row is missing), and order newest set first
-/// (undated last), tie-broken by code for deterministic output. Pure so it can be
-/// unit-tested without a DB. Holdings whose card row is gone are skipped.
+/// copies + estimated value per `set_code`, dress each with the game's set metadata
+/// (falling back to the card's own `set_name` when the set row is missing), and order
+/// newest set first (undated last), tie-broken by code for deterministic output. Pure so
+/// it can be unit-tested without a DB. Holdings whose card row is gone are skipped.
 fn build_collection_sets(
     game: &str,
     rows: Vec<(collection_item::Model, Option<card::Model>)>,
     sets: Vec<card_set::Model>,
 ) -> Vec<CollectionSet> {
-    // set_code -> (fallback set name, distinct owned cards, total owned copies).
-    let mut agg: HashMap<String, (String, i64, i64)> = HashMap::new();
+    let mut agg: HashMap<String, SetAgg> = HashMap::new();
     for (item, card) in rows {
         let Some(card) = card else { continue };
-        let entry = agg
-            .entry(card.set_code)
-            .or_insert_with(|| (card.set_name, 0, 0));
-        entry.1 += 1;
-        entry.2 += i64::from(item.quantity) + i64::from(item.foil_quantity);
+        // Price each finish before moving the card's set_code/set_name into the map,
+        // so the borrow is clean regardless of aggregation order.
+        let regular_cents = price_cents(card.price_usd.as_deref());
+        let foil_cents = price_cents(card.price_usd_foil.as_deref());
+        let entry = agg.entry(card.set_code).or_insert_with(|| SetAgg {
+            fallback_name: card.set_name,
+            ..SetAgg::default()
+        });
+        entry.owned_cards += 1;
+        entry.owned_copies += i64::from(item.quantity) + i64::from(item.foil_quantity);
+        if let Some(cents) = regular_cents {
+            entry.value_cents += cents * i128::from(item.quantity);
+            entry.any_priced = true;
+        }
+        if let Some(cents) = foil_cents {
+            entry.value_cents += cents * i128::from(item.foil_quantity);
+            entry.any_priced = true;
+        }
     }
 
     let meta: HashMap<String, card_set::Model> =
@@ -647,7 +693,15 @@ fn build_collection_sets(
 
     let mut out: Vec<CollectionSet> = agg
         .into_iter()
-        .map(|(code, (fallback_name, owned_cards, owned_copies))| {
+        .map(|(code, agg)| {
+            let SetAgg {
+                fallback_name,
+                owned_cards,
+                owned_copies,
+                value_cents,
+                any_priced,
+            } = agg;
+            let owned_value_usd = any_priced.then(|| format_cents(value_cents));
             let has_drops = crate::scryfall::drops::has_drops(game, &code);
             match meta.get(&code) {
                 Some(m) => CollectionSet {
@@ -661,6 +715,7 @@ fn build_collection_sets(
                     has_drops,
                     owned_cards,
                     owned_copies,
+                    owned_value_usd,
                 },
                 // A set present in a holding but absent from card_sets (e.g. metadata
                 // not yet synced): degrade to a bare tile using the card's set name.
@@ -675,6 +730,7 @@ fn build_collection_sets(
                     has_drops,
                     owned_cards,
                     owned_copies,
+                    owned_value_usd,
                 },
             }
         })
@@ -1850,10 +1906,11 @@ mod tests {
             created_at: ts,
             updated_at: ts,
         };
-        let carded = |id: i32, set_code: &str, set_name: &str| {
-            let mut c = seed_card(id, "Card", "Creature", None);
+        let carded = |id: i32, set_code: &str, set_name: &str, usd: Option<&str>, foil: Option<&str>| {
+            let mut c = seed_card(id, "Card", "Creature", usd);
             c.set_code = set_code.into();
             c.set_name = set_name.into();
+            c.price_usd_foil = foil.map(str::to_string);
             c
         };
         let set_meta = |code: &str, name: &str, released: &str| card_set::Model {
@@ -1874,10 +1931,21 @@ mod tests {
 
         let rows = vec![
             // Set "aaa": two distinct cards, 3 total copies (2 + 1 foil, then 1 + 0).
-            (hold(1, 1, 2, 1), Some(carded(1, "aaa", "Older Set"))),
-            (hold(2, 2, 1, 0), Some(carded(2, "aaa", "Older Set"))),
-            // Set "bbb": one card, 4 copies — and no card_sets metadata (fallback name).
-            (hold(3, 3, 4, 0), Some(carded(3, "bbb", "Newer Set"))),
+            // Value: 2×$1.00 + 1×$5.00 foil + 1×$2.00 = $9.00.
+            (
+                hold(1, 1, 2, 1),
+                Some(carded(1, "aaa", "Older Set", Some("1.00"), Some("5.00"))),
+            ),
+            (
+                hold(2, 2, 1, 0),
+                Some(carded(2, "aaa", "Older Set", Some("2.00"), None)),
+            ),
+            // Set "bbb": one card, 4 copies — no card_sets metadata (fallback name) and
+            // unpriced, so its value is `None` rather than $0.00.
+            (
+                hold(3, 3, 4, 0),
+                Some(carded(3, "bbb", "Newer Set", None, None)),
+            ),
             // A holding whose card row is gone — skipped entirely.
             (hold(4, 4, 9, 9), None),
         ];
@@ -1893,6 +1961,7 @@ mod tests {
         assert_eq!(out[0].released_at.as_deref(), Some("2000-01-01"));
         assert_eq!(out[0].owned_cards, 2);
         assert_eq!(out[0].owned_copies, 4); // (2+1) + (1+0)
+        assert_eq!(out[0].owned_value_usd.as_deref(), Some("9.00")); // priced holdings summed
 
         assert_eq!(out[1].code, "bbb");
         assert_eq!(out[1].name, "Newer Set"); // fallback to the card's set_name
@@ -1900,5 +1969,6 @@ mod tests {
         assert_eq!(out[1].card_count, 0);
         assert_eq!(out[1].owned_cards, 1);
         assert_eq!(out[1].owned_copies, 4);
+        assert_eq!(out[1].owned_value_usd, None); // nothing priced -> null, not $0.00
     }
 }

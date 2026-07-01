@@ -138,7 +138,10 @@ export function useSetGrouping(
     if (target === code.value) {
       router.replace({ query: listState() })
     } else {
-      router.replace({ path: `${basePath}/${game.value}/sets/${target}`, query: { ...preserved() } })
+      router.replace({
+        path: `${basePath}/${game.value}/sets/${target}`,
+        query: { ...preserved() },
+      })
     }
   }
 

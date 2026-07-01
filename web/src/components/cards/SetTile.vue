@@ -21,8 +21,17 @@ const props = withDefaults(
     // Optional owned-card count. When set, the meta line shows "N owned" in place
     // of the set's total card count (used on the collection's per-set landing).
     ownedCount?: number
+    // Optional preformatted owned value (e.g. "$123.45"). When set, it's appended to
+    // the meta line after the owned count — the collection landing's per-set value.
+    ownedValue?: string | null
   }>(),
-  { variant: 'default', label: undefined, to: undefined, ownedCount: undefined },
+  {
+    variant: 'default',
+    label: undefined,
+    to: undefined,
+    ownedCount: undefined,
+    ownedValue: undefined,
+  },
 )
 
 const nested = computed(() => props.variant === 'nested')
@@ -98,6 +107,7 @@ const released = computed(() => {
           <template v-if="released"> · {{ released }}</template>
           <template v-if="ownedCount != null"> · {{ ownedCount }} owned</template>
           <template v-else-if="set.card_count"> · {{ set.card_count }} cards</template>
+          <template v-if="ownedValue"> · {{ ownedValue }}</template>
         </p>
       </div>
     </div>

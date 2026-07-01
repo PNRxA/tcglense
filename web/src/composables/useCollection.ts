@@ -135,17 +135,21 @@ export function useCollectionDropsQuery(
 }
 
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
- * optionally scoped to one set. Disabled while signed out (see `useCollectionQuery`). */
+ * optionally scoped to one set — and, with `includeRelated`, that set's whole group (so
+ * the value matches the include-related browse view). Disabled while signed out (see
+ * `useCollectionQuery`). */
 export function useCollectionSummaryQuery(
   game: Ref<string>,
   set?: Ref<string | undefined>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; includeRelated?: Ref<boolean> } = {},
 ) {
   const auth = useAuthStore()
   const setCode = set ?? ref<string | undefined>(undefined)
+  const includeRelated = opts.includeRelated ?? ref(false)
   const options = {
-    queryKey: ['collection-summary', game, setCode],
-    queryFn: (token: string) => getCollectionSummary(token, game.value, setCode.value || undefined),
+    queryKey: ['collection-summary', game, setCode, includeRelated],
+    queryFn: (token: string) =>
+      getCollectionSummary(token, game.value, setCode.value || undefined, includeRelated.value),
     enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
   }
   return useAuthedQuery<CollectionSummary>(options)
