@@ -77,7 +77,7 @@ async function onSignOut() {
             <li>
               <NavigationMenuLink
                 as-child
-                class="text-destructive hover:text-destructive focus:text-destructive hover:bg-destructive/10 focus:bg-destructive/10 dark:hover:bg-destructive/20 dark:focus:bg-destructive/20 [&_svg:not([class*=text-])]:text-destructive flex-row items-center gap-2 font-medium"
+                class="text-destructive hover:text-destructive focus:text-destructive hover:bg-destructive/10 focus:bg-destructive/10 dark:hover:bg-destructive/20 dark:focus:bg-destructive/20 [&_svg:not([class*=text-])]:text-destructive w-full flex-row items-center gap-2 font-medium"
               >
                 <button type="button" @click="onSignOut">
                   <LogOut aria-hidden="true" />
