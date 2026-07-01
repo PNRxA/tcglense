@@ -8,11 +8,31 @@ import CardImage from '@/components/cards/CardImage.vue'
 const props = defineProps<{
   game: string
   card: Card
+  // "Ghost" a card the viewer doesn't own (the collection view's show-ghosts mode, issue
+  // #112): the image + text are dimmed and desaturated so owned cards stand out and the
+  // gaps in a set read at a glance. Hovering brings the ghost back to full colour (it's
+  // still a live link, and its quick-add "+" — a crisp, un-dimmed sibling — stays usable).
+  ghost?: boolean
 }>()
 
 // Show the regular USD price, falling back to the foil price for foil-only cards.
 const price = computed(() => displayUsdPrice(props.card.prices))
 const to = computed(() => `/cards/${props.game}/cards/${props.card.id}`)
+
+// The image dims + desaturates; the text block dims with opacity only. Crucially the
+// grayscale goes on the IMAGE, never on the RouterLink below: a `filter` other than `none`
+// makes an element the containing block for its abs-positioned descendants, which would
+// collapse the link's stretched `after:inset-0` overlay onto just the text box and stop a
+// click on the artwork from navigating. Opacity creates no containing block, so the text
+// link can dim safely (and the #badge slot is never dimmed — its "+" stays crisp).
+const ghostImageClass = computed(() =>
+  props.ghost
+    ? 'opacity-45 grayscale transition group-hover:opacity-100 group-hover:grayscale-0 motion-reduce:transition-none'
+    : '',
+)
+const ghostTextClass = computed(() =>
+  props.ghost ? 'opacity-60 transition group-hover:opacity-100 motion-reduce:transition-none' : '',
+)
 </script>
 
 <template>
@@ -36,6 +56,7 @@ const to = computed(() => `/cards/${props.game}/cards/${props.card.id}`)
         :has-image="card.has_image"
         size="normal"
         class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.03] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+        :class="ghostImageClass"
       />
       <!-- The image lifts to `group-hover:z-10` on hover, so overlay content must carry a
         higher z-index (the badge/quick-add control uses z-30) or the enlarged card paints
@@ -46,6 +67,7 @@ const to = computed(() => `/cards/${props.game}/cards/${props.card.id}`)
     <RouterLink
       :to="to"
       class="mt-1.5 block px-0.5 after:absolute after:inset-0 after:z-10 after:content-['']"
+      :class="ghostTextClass"
     >
       <p class="truncate text-sm font-medium group-hover:underline" :title="card.name">
         {{ card.name }}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { defineComponent, h, nextTick } from 'vue'
+import { computed, defineComponent, h, nextTick, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
@@ -99,6 +99,39 @@ describe('useCardSearch', () => {
   it('clamps an unknown ?sort to the default instead of forwarding it to the API', async () => {
     const { api } = await start('/cards/mtg/cards?sort=not-a-real-sort')
     expect(api.sort.value).toBe(ALL_CARDS_DEFAULT_SORT)
+  })
+
+  it('re-clamps the committed sort when reactive defaults/valid sets change (mode swap)', async () => {
+    // The collection view swaps its sort set with the show-ghosts toggle: passing getters
+    // lets a URL sort that's valid in one mode fall back to the other mode's default when
+    // the mode flips (so a stale sort is never forwarded to the API).
+    const router = makeRouter()
+    await router.push('/cards/mtg/cards?sort=y:asc')
+    await router.isReady()
+
+    const ghosts = ref(false)
+    const validSorts = computed(() => (ghosts.value ? ['p:asc', 'q:asc'] : ['x:asc', 'y:asc']))
+    const defaultSort = computed(() => (ghosts.value ? 'p:asc' : 'x:asc'))
+
+    let api!: ReturnType<typeof useCardSearch>
+    mount(
+      defineComponent({
+        setup() {
+          api = useCardSearch(defaultSort, validSorts)
+          return () => h('div')
+        },
+      }),
+      { global: { plugins: [router] } },
+    )
+    await nextTick()
+
+    // `y:asc` is valid in the owned mode → honoured.
+    expect(api.sort.value).toBe('y:asc')
+
+    // Flip to ghost mode: `y:asc` is no longer valid → clamps to ghost mode's default.
+    ghosts.value = true
+    await nextTick()
+    expect(api.sort.value).toBe('p:asc')
   })
 
   it('preserves unrelated query keys (a set view scope) when paging', async () => {

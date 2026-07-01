@@ -19,7 +19,7 @@ const query = useQuery({
 
 const prints = computed(() => query.data.value?.data ?? [])
 // Owned-count badges for signed-in users, overlaid on the printings grid.
-const ownership = useOwnedCounts(game, prints)
+const { ownership } = useOwnedCounts(game, prints)
 </script>
 
 <template>

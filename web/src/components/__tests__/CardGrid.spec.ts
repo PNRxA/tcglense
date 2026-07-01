@@ -38,7 +38,12 @@ function makeCard(id: string): Card {
 
 // Signed in unless `authenticated: false`, since the quick-add controls (and thus the
 // owned-count chips they carry) only render for a signed-in user.
-function mountGrid(cards: Card[], ownership?: OwnedCountsMap, authenticated = true) {
+function mountGrid(
+  cards: Card[],
+  ownership?: OwnedCountsMap,
+  authenticated = true,
+  ghostUnowned = false,
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/cards/:game/cards/:id', component: { template: '<div />' } }],
@@ -50,9 +55,15 @@ function mountGrid(cards: Card[], ownership?: OwnedCountsMap, authenticated = tr
   // store, and the quick-add control uses vue-query, so the tree needs all three.
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(CardGrid, {
-    props: { game: 'mtg', cards, ownership },
+    props: { game: 'mtg', cards, ownership, ghostUnowned },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
+}
+
+// The ghost treatment dims a card's text link with `opacity-60` (the desaturation lives on
+// the image, off the link, so the stretched-link overlay keeps covering the whole tile).
+function cardLink(wrapper: ReturnType<typeof mountGrid>, id: string) {
+  return wrapper.find(`a[href="/cards/mtg/cards/${id}"]`)
 }
 
 // The count chips carry a semantic `aria-label` ("3 total" / "1 foil"). Count the "total"
@@ -97,5 +108,39 @@ describe('CardGrid quick-add controls', () => {
     expect(wrapper.findAll('[aria-label^="Add Card"]')).toHaveLength(0)
     // The tiles themselves still render as links to each card page.
     expect(wrapper.find('a[href="/cards/mtg/cards/a"]').exists()).toBe(true)
+  })
+})
+
+describe('CardGrid show-ghosts mode (issue #112)', () => {
+  it('dims only the cards the viewer does not own', () => {
+    const wrapper = mountGrid(
+      [makeCard('a'), makeCard('b')],
+      { a: { quantity: 1, foil_quantity: 0 } },
+      true,
+      true,
+    )
+    // Owned card A renders at full strength; unowned card B is ghosted (dimmed).
+    expect(cardLink(wrapper, 'a').classes()).not.toContain('opacity-60')
+    expect(cardLink(wrapper, 'b').classes()).toContain('opacity-60')
+  })
+
+  it('treats a zero-count ownership entry as unowned', () => {
+    const wrapper = mountGrid([makeCard('a')], { a: { quantity: 0, foil_quantity: 0 } }, true, true)
+    expect(cardLink(wrapper, 'a').classes()).toContain('opacity-60')
+  })
+
+  it('dims nothing when ghost mode is off, even for unowned cards', () => {
+    const wrapper = mountGrid([makeCard('a'), makeCard('b')], {
+      a: { quantity: 1, foil_quantity: 0 },
+    })
+    expect(cardLink(wrapper, 'a').classes()).not.toContain('opacity-60')
+    expect(cardLink(wrapper, 'b').classes()).not.toContain('opacity-60')
+  })
+
+  it('keeps a ghosted card fully clickable (grayscale is on the image, not the link)', () => {
+    const wrapper = mountGrid([makeCard('b')], {}, true, true)
+    // The stretched-link overlay must stay on the link: a `filter` there would collapse it.
+    // Guard that the link itself never carries grayscale (it lives on the image instead).
+    expect(cardLink(wrapper, 'b').classes()).not.toContain('grayscale')
   })
 })

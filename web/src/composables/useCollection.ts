@@ -100,8 +100,9 @@ export function useCollectionQuery(
       }),
     // Keep the current grid visible while the next page loads (smoother paging).
     placeholderData: keepPreviousData,
-    // The caller can gate the flat list off (e.g. while the by-drop view is active) so a
-    // drop-set link doesn't fire a throwaway flat fetch it would immediately discard.
+    // Signed-in only, and off when a caller opts out — the show-ghosts view fetches the
+    // full catalog instead, and the by-drop view fetches drops, so the owned-only flat
+    // query stays idle in both (no throwaway fetch a drop-set/ghost link would discard).
     enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
   }
   return useAuthedQuery<CollectionPage>(options)
@@ -135,13 +136,17 @@ export function useCollectionDropsQuery(
 
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
  * optionally scoped to one set. Disabled while signed out (see `useCollectionQuery`). */
-export function useCollectionSummaryQuery(game: Ref<string>, set?: Ref<string | undefined>) {
+export function useCollectionSummaryQuery(
+  game: Ref<string>,
+  set?: Ref<string | undefined>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
   const auth = useAuthStore()
   const setCode = set ?? ref<string | undefined>(undefined)
   const options = {
     queryKey: ['collection-summary', game, setCode],
     queryFn: (token: string) => getCollectionSummary(token, game.value, setCode.value || undefined),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
   }
   return useAuthedQuery<CollectionSummary>(options)
 }
@@ -189,6 +194,12 @@ export function useCollectionEntryQuery(
  * feature) and when there are no cards to look up; the query key carries the id set so
  * a new page refetches while an identical set dedupes. Returns an empty map while
  * signed out so badges clear immediately on logout regardless of any lingering cache.
+ *
+ * `ready` reports whether the map actually reflects the *current* cards: it's true when
+ * signed out or there's nothing to look up (a `{}` map is authoritative then), or once
+ * the query has settled a non-placeholder result for this id set. The show-ghosts view
+ * (issue #112) gates its dimming on it so owned cards don't flash as ghosts in the window
+ * before their counts load (an empty map would otherwise read as "everything unowned").
  */
 export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
   const auth = useAuthStore()
@@ -203,7 +214,16 @@ export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
     placeholderData: keepPreviousData,
   }
   const query = useAuthedQuery<OwnedCountsMap>(options)
-  return computed<OwnedCountsMap>(() => (auth.isAuthenticated ? (query.data.value ?? {}) : {}))
+  const ownership = computed<OwnedCountsMap>(() =>
+    auth.isAuthenticated ? (query.data.value ?? {}) : {},
+  )
+  const ready = computed(
+    () =>
+      !auth.isAuthenticated ||
+      cardIds.value.length === 0 ||
+      (query.isSuccess.value && !query.isPlaceholderData.value),
+  )
+  return { ownership, ready }
 }
 
 /** Variables for a collection write: which card, and the desired absolute counts. */
