@@ -6,6 +6,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TCGLense</title>
     <!--
+      Baseline SEO / social-preview tags. These are what crawlers that DON'T run
+      JavaScript see (most social/link-unfurl bots). `usePageMeta` (src/lib/seo.ts)
+      overrides them per-route at runtime for JS-capable crawlers (e.g. Googlebot)
+      and the browser tab. Keep the values here in sync with SITE_DESCRIPTION.
+    -->
+    <meta
+      name="description"
+      content="Track trading-card prices over time, catalogue your collection, and follow your set-completion progress across games."
+    >
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
+    <meta property="og:site_name" content="TCGLense">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="TCGLense">
+    <meta
+      property="og:description"
+      content="Track trading-card prices over time, catalogue your collection, and follow your set-completion progress across games."
+    >
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="TCGLense">
+    <meta
+      name="twitter:description"
+      content="Track trading-card prices over time, catalogue your collection, and follow your set-completion progress across games."
+    >
+    <!--
       Apply the saved theme before first paint to avoid a flash of the wrong theme.
       Keep this in sync with src/stores/theme.ts (STORAGE_KEY + resolution logic).
     -->

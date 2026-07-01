@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import SetTile from '@/components/cards/SetTile.vue'
 import SetGroup from '@/components/cards/SetGroup.vue'
 import { gameStatus, listGames, listSets } from '@/lib/api'
+import { usePageMeta } from '@/lib/seo'
 import { filterSets, groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
@@ -22,6 +23,13 @@ const gameName = computed(
   () =>
     gamesQuery.data.value?.data.find((g) => g.id === game.value)?.name ?? game.value.toUpperCase(),
 )
+
+usePageMeta({
+  title: () => gameName.value,
+  description: () =>
+    `Browse ${gameName.value} sets and cards on TCGLense, with singles prices tracked over time.`,
+  canonicalPath: () => `/cards/${game.value}`,
+})
 
 const statusQuery = useQuery({
   queryKey: ['status', game],

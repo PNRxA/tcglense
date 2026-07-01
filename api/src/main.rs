@@ -18,6 +18,7 @@ use std::{sync::Arc, time::Duration};
 use axum::{
     Router,
     http::{HeaderValue, Method, header},
+    middleware::map_response,
     routing::{get, post},
 };
 use sea_orm::Database;
@@ -34,6 +35,7 @@ use crate::{
     config::Config,
     handlers::{
         auth::{login, logout, me, refresh, register},
+        cache::{no_store_layer, public_cache_layer},
         catalog::{
             card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
@@ -227,16 +229,27 @@ fn cors_layer() -> CorsLayer {
 /// state. Split out of `main` so integration tests can drive the exact same
 /// router (CORS, error mapping, auth) in-process via `tower`'s `oneshot`.
 fn build_router(state: AppState) -> Router {
-    Router::new()
+    // Per-user, live, and side-effecting routes: auth (access tokens + Set-Cookie)
+    // and the import-status route the SPA polls for live progress. These must never
+    // be stored by the browser or a shared cache, so every response gets
+    // `Cache-Control: no-store` (see `handlers::cache`).
+    let private = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
-        // Public, game-agnostic card catalog.
-        .route("/api/games", get(list_games))
         .route("/api/games/{game}/status", get(ingest_status))
+        .layer(map_response(no_store_layer));
+
+    // Public, game-agnostic card catalog: the same for every visitor and changing
+    // at most daily, so successful reads are browser- + CDN-cacheable
+    // (`public, max-age=…, s-maxage=…, stale-while-revalidate=…`). The image/icon
+    // routes set their own longer `immutable` header, which the layer preserves;
+    // error responses are marked `no-store`.
+    let public = Router::new()
+        .route("/api/games", get(list_games))
         .route("/api/games/{game}/sets", get(list_sets))
         .route("/api/games/{game}/sets/{code}", get(get_set))
         .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
@@ -247,6 +260,11 @@ fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
         .route("/api/games/{game}/cards/{id}/prints", get(card_prints))
+        .layer(map_response(public_cache_layer));
+
+    Router::new()
+        .merge(private)
+        .merge(public)
         .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
