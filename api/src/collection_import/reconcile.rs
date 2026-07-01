@@ -11,20 +11,20 @@ use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 
 use super::{FetchedHolding, ImportError, ImportSummary, Provider, ReconcileMode};
-use super::{IN_CHUNK, MAX_QUANTITY, UNMATCHED_SAMPLE_CAP};
+use super::{IN_CHUNK, UNMATCHED_SAMPLE_CAP};
 
 /// Regular + foil copies owned of a single card. Held as `i64` during aggregation so a
 /// pathological provider payload can't overflow before the final clamp.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct Counts {
-    pub(super) quantity: i64,
-    pub(super) foil_quantity: i64,
+struct Counts {
+    quantity: i64,
+    foil_quantity: i64,
 }
 
 /// Aggregate raw holdings into per-card regular/foil counts. The same printing can
 /// appear across several provider rows (differing condition/language/tags), so counts
 /// are summed; the row `foil` flag splits regular vs foil.
-pub(super) fn aggregate(holdings: &[FetchedHolding]) -> HashMap<String, Counts> {
+fn aggregate(holdings: &[FetchedHolding]) -> HashMap<String, Counts> {
     let mut map: HashMap<String, Counts> = HashMap::new();
     for h in holdings {
         let entry = map.entry(h.external_card_id.clone()).or_default();
@@ -43,20 +43,20 @@ pub(super) fn aggregate(holdings: &[FetchedHolding]) -> HashMap<String, Counts> 
 
 /// The DB operations a reconcile resolves to, keyed by internal `cards.id`.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct ReconcilePlan {
+struct ReconcilePlan {
     /// `(card_id, quantity, foil_quantity)` to set (both zero is treated as a delete).
-    pub(super) upserts: Vec<(i32, i32, i32)>,
+    upserts: Vec<(i32, i32, i32)>,
     /// Card ids whose holding row should be removed.
-    pub(super) deletes: Vec<i32>,
+    deletes: Vec<i32>,
 }
 
-pub(super) fn clamp_count(value: i64) -> i32 {
-    value.clamp(0, MAX_QUANTITY) as i32
+fn clamp_count(value: i64) -> i32 {
+    value.clamp(0, i64::from(collection_item::MAX_CARD_QUANTITY)) as i32
 }
 
 /// Decide the reconcile operations from the current holdings and the imported ones,
 /// per `mode`. Pure: `existing`/`imported` are `card_id -> counts`, no DB access.
-pub(super) fn plan_reconcile(
+fn plan_reconcile(
     existing: &HashMap<i32, (i32, i32)>,
     imported: &HashMap<i32, Counts>,
     mode: ReconcileMode,
@@ -403,4 +403,263 @@ async fn delete_holding<C: sea_orm::ConnectionTrait>(
         .exec(conn)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{
+        insert_card, insert_holding, insert_user, migrated_memory_db, owned_counts,
+    };
+
+    fn holding(id: &str, foil: bool, quantity: i32) -> FetchedHolding {
+        FetchedHolding {
+            external_card_id: id.to_string(),
+            foil,
+            quantity,
+        }
+    }
+
+    fn counts(quantity: i64, foil_quantity: i64) -> Counts {
+        Counts {
+            quantity,
+            foil_quantity,
+        }
+    }
+
+    #[test]
+    fn aggregate_sums_duplicate_rows_and_splits_foil() {
+        // The same printing across three rows: two regular, one foil; plus another card.
+        let holdings = vec![
+            holding("a", false, 1),
+            holding("a", false, 2),
+            holding("a", true, 1),
+            holding("b", true, 3),
+        ];
+        let agg = aggregate(&holdings);
+        assert_eq!(agg[&"a".to_string()], counts(3, 1));
+        assert_eq!(agg[&"b".to_string()], counts(0, 3));
+        assert_eq!(agg.len(), 2);
+    }
+
+    #[test]
+    fn aggregate_drops_cards_that_net_to_zero_copies() {
+        // A negative/zero-only card contributes no real copies, so it's dropped entirely
+        // (it must not later count as imported or trigger a delete).
+        let agg = aggregate(&[holding("a", false, -5), holding("b", false, 2)]);
+        assert!(!agg.contains_key("a"));
+        assert_eq!(agg[&"b".to_string()], counts(2, 0));
+    }
+
+    #[test]
+    fn overwrite_sets_matched_and_leaves_others() {
+        let existing = HashMap::from([(1, (2, 0)), (9, (1, 1))]);
+        let imported = HashMap::from([(1, counts(1, 0)), (2, counts(4, 0))]);
+        let plan = plan_reconcile(&existing, &imported, ReconcileMode::Overwrite);
+        let mut upserts = plan.upserts.clone();
+        upserts.sort();
+        assert_eq!(upserts, vec![(1, 1, 0), (2, 4, 0)]);
+        assert!(plan.deletes.is_empty(), "overwrite never deletes");
+    }
+
+    #[test]
+    fn merge_adds_onto_existing() {
+        let existing = HashMap::from([(1, (2, 1))]);
+        let imported = HashMap::from([(1, counts(1, 0)), (2, counts(3, 0))]);
+        let plan = plan_reconcile(&existing, &imported, ReconcileMode::Merge);
+        let mut upserts = plan.upserts.clone();
+        upserts.sort();
+        assert_eq!(upserts, vec![(1, 3, 1), (2, 3, 0)]);
+        assert!(plan.deletes.is_empty(), "merge never deletes");
+    }
+
+    #[test]
+    fn replace_sets_matched_and_deletes_unimported() {
+        let existing = HashMap::from([(1, (2, 0)), (9, (1, 1))]);
+        let imported = HashMap::from([(1, counts(1, 0)), (2, counts(4, 0))]);
+        let plan = plan_reconcile(&existing, &imported, ReconcileMode::Replace);
+        let mut upserts = plan.upserts.clone();
+        upserts.sort();
+        assert_eq!(upserts, vec![(1, 1, 0), (2, 4, 0)]);
+        assert_eq!(plan.deletes, vec![9], "card 9 wasn't imported, so it's removed");
+    }
+
+    #[test]
+    fn clamp_count_bounds_to_max() {
+        assert_eq!(clamp_count(-1), 0);
+        assert_eq!(clamp_count(5), 5);
+        assert_eq!(
+            clamp_count(i64::from(collection_item::MAX_CARD_QUANTITY) + 10),
+            collection_item::MAX_CARD_QUANTITY
+        );
+    }
+
+    // ---- DB-backed reconcile tests (in-memory SQLite, no network) ----
+
+    #[tokio::test]
+    async fn replace_mirrors_the_import_over_a_db() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let a = insert_card(&db, "ext-a").await; // owned + imported -> updated
+        let b = insert_card(&db, "ext-b").await; // not owned + imported -> inserted
+        let c = insert_card(&db, "ext-c").await; // owned, not imported -> deleted (mirror)
+        insert_holding(&db, user_id, a, 5, 0).await;
+        insert_holding(&db, user_id, c, 2, 0).await;
+
+        let holdings = vec![holding("ext-a", false, 1), holding("ext-b", true, 3), holding("ext-x", false, 9)];
+        let summary = reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Replace, holdings)
+            .await
+            .expect("reconcile");
+
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((1, 0)), "a overwritten to import");
+        assert_eq!(owned_counts(&db, user_id, b).await, Some((0, 3)), "b inserted as foil");
+        assert_eq!(owned_counts(&db, user_id, c).await, None, "c mirrored away");
+        assert_eq!(summary.matched_cards, 2);
+        assert_eq!(summary.unmatched_cards, 1, "ext-x isn't in the catalog");
+        assert_eq!(summary.unmatched_sample, vec!["ext-x".to_string()]);
+        assert_eq!(summary.removed_cards, 1);
+        assert_eq!(summary.total_rows, 3);
+        assert_eq!(summary.distinct_cards, 3);
+    }
+
+    #[tokio::test]
+    async fn overwrite_leaves_unimported_owned_cards() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let a = insert_card(&db, "ext-a").await;
+        let c = insert_card(&db, "ext-c").await;
+        insert_holding(&db, user_id, a, 5, 0).await;
+        insert_holding(&db, user_id, c, 2, 1).await;
+
+        let holdings = vec![holding("ext-a", false, 1)];
+        let summary = reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Overwrite, holdings)
+            .await
+            .expect("reconcile");
+
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((1, 0)));
+        assert_eq!(owned_counts(&db, user_id, c).await, Some((2, 1)), "untouched by overwrite");
+        assert_eq!(summary.removed_cards, 0);
+    }
+
+    #[tokio::test]
+    async fn replace_with_no_matches_is_refused_and_keeps_collection() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let a = insert_card(&db, "ext-a").await;
+        insert_holding(&db, user_id, a, 3, 0).await;
+
+        // The provider returned cards, but none of them are in our catalog.
+        let holdings = vec![holding("ext-unknown", false, 1)];
+        let err = reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Replace,
+            holdings,
+        )
+        .await
+        .expect_err("replace with no matches must be refused");
+        assert!(matches!(err, ImportError::NoMatchingCards));
+
+        // The existing collection is untouched — nothing was wiped.
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((3, 0)));
+    }
+
+    #[tokio::test]
+    async fn merge_adds_onto_owned_counts_over_a_db() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let a = insert_card(&db, "ext-a").await;
+        insert_holding(&db, user_id, a, 2, 1).await;
+
+        let holdings = vec![holding("ext-a", false, 3), holding("ext-a", true, 1)];
+        reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Merge, holdings)
+            .await
+            .expect("reconcile");
+
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((5, 2)), "2+3 regular, 1+1 foil");
+    }
+
+    // ---- Smart sync ----
+
+    #[tokio::test]
+    async fn smart_preserves_unobserved_foil_and_never_deletes() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let a = insert_card(&db, "ext-a").await; // owned reg+foil; only regular re-fetched
+        let c = insert_card(&db, "ext-c").await; // owned, not fetched -> must remain
+        insert_holding(&db, user_id, a, 2, 3).await;
+        insert_holding(&db, user_id, c, 4, 0).await;
+
+        // The smart fetch only paged a's regular row (its foil sat in the unscanned tail).
+        let holdings = vec![holding("ext-a", false, 5)];
+        let summary = reconcile_smart(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            holdings,
+            true,
+        )
+        .await
+        .expect("reconcile smart");
+
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((5, 3)),
+            "regular overwritten, unobserved foil preserved"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, c).await,
+            Some((4, 0)),
+            "unfetched card kept (smart never deletes)"
+        );
+        assert_eq!(summary.matched_cards, 1);
+        assert_eq!(summary.removed_cards, 0);
+        assert!(summary.stopped_early);
+    }
+
+    #[tokio::test]
+    async fn smart_inserts_a_newly_fetched_card() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let b = insert_card(&db, "ext-b").await; // not owned yet
+
+        let holdings = vec![holding("ext-b", true, 2), holding("ext-b", false, 1)];
+        reconcile_smart(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            holdings,
+            false,
+        )
+        .await
+        .expect("reconcile smart");
+
+        assert_eq!(owned_counts(&db, user_id, b).await, Some((1, 2)));
+    }
+
+    #[tokio::test]
+    async fn smart_preserve_reads_live_counts_not_a_stale_snapshot() {
+        // Models a single-card edit landing while the (slow) smart fetch was running: the
+        // regular count is now 2 in the DB. Smart re-fetched only this card's foil finish,
+        // so it must overwrite foil but preserve the *current* regular (2), not revert it.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let a = insert_card(&db, "ext-a").await;
+        insert_holding(&db, user_id, a, 2, 5).await; // the post-edit live state
+
+        let holdings = vec![holding("ext-a", true, 6)]; // foil observed, regular not
+        reconcile_smart(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, holdings, true)
+            .await
+            .expect("reconcile smart");
+
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((2, 6)),
+            "regular preserved from the live count, foil overwritten"
+        );
+    }
 }

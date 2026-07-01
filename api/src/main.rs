@@ -18,7 +18,7 @@ mod security_tests;
 #[cfg(test)]
 mod test_support;
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use sea_orm::Database;
 use sea_orm_migration::MigratorTrait;
@@ -28,9 +28,7 @@ use tracing_subscriber::{
     EnvFilter, Layer, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
-use crate::{
-    catalog::images::ImageCache, config::Config, migrator::Migrator, state::AppState,
-};
+use crate::{config::Config, migrator::Migrator, state::AppState};
 
 // Re-export so `crate::build_router` keeps resolving for the integration tests.
 pub use router::build_router;
@@ -69,7 +67,6 @@ async fn main() {
     let host = config.host.clone();
     let port = config.port;
     let database_url = config.database_url.clone();
-    let image_dir = config.data_dir.join("images");
 
     // Connect to the database (with SQLite WAL + cache pragmas; see `db`) and run
     // migrations.
@@ -101,20 +98,11 @@ async fn main() {
         .build()
         .expect("failed to build the image HTTP client");
 
-    // Precompute the timing-equalization dummy hash once (panics here at startup
-    // are acceptable; a request-path hash failure must never silently disable it).
-    let dummy_password_hash: Arc<str> = auth::password::hash_password("tcglense-timing-equalizer")
-        .expect("hashing the timing-equalizer constant must succeed")
-        .into();
-
-    let state = AppState {
-        db,
-        config: Arc::new(config),
-        dummy_password_hash,
-        images: Arc::new(ImageCache::new(image_dir, image_http)),
-        http: http.clone(),
-        imports: Arc::new(collection_import::jobs::ImportQueue::default()),
-    };
+    // Precomputing the timing-equalization dummy hash can fail; panicking here at
+    // startup is acceptable (a request-path hash failure must never silently disable
+    // it), so `.expect` stays at this call site per the "expect only in main.rs" rule.
+    let state = AppState::new(config, db, http.clone(), image_http)
+        .expect("failed to assemble application state");
 
     // Spawn background maintenance (refresh-token pruning) and either the offline
     // dummy-catalog seed or the periodic card-data sync, per config.

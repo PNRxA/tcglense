@@ -5,11 +5,9 @@
 //! can reuse them; the HTTP/JSON types are re-exported for the same reason, so a
 //! concern file only needs `use super::harness::*`.
 
-use std::sync::Arc;
-
 use tower::ServiceExt;
 
-use crate::{build_router, catalog::images::ImageCache, config::Config, state::AppState};
+use crate::{build_router, config::Config, state::AppState};
 
 // Re-exported so the concern modules get both the helpers below and the HTTP/JSON
 // types they build requests and assert with from a single `use super::harness::*`.
@@ -40,26 +38,12 @@ pub(super) async fn test_state() -> AppState {
         ..crate::test_support::test_config()
     };
 
-    let dummy_password_hash: Arc<str> = crate::auth::password::hash_password("timing-equalizer")
-        .expect("hash dummy password")
-        .into();
-    let image_dir = config.data_dir.join("images");
-    let image_http = reqwest::Client::builder()
-        .build()
-        .expect("build image client");
+    // Plain clients: the import routes that use them aren't exercised over the
+    // network in these in-process tests.
+    let http = reqwest::Client::builder().build().expect("build http client");
+    let image_http = reqwest::Client::builder().build().expect("build image client");
 
-    AppState {
-        db,
-        config: Arc::new(config),
-        dummy_password_hash,
-        images: Arc::new(ImageCache::new(image_dir, image_http)),
-        // A plain client; the import routes that use it aren't exercised over the
-        // network in these in-process tests.
-        http: reqwest::Client::builder()
-            .build()
-            .expect("build http client"),
-        imports: std::sync::Arc::new(crate::collection_import::jobs::ImportQueue::default()),
-    }
+    AppState::new(config, db, http, image_http).expect("assemble test app state")
 }
 
 /// A router over a fresh, empty (no catalog) state.

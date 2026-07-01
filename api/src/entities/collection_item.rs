@@ -33,6 +33,13 @@ pub struct Model {
     pub updated_at: DateTimeUtc,
 }
 
+/// A generous per-card holding cap: far above any real collection, but bounded so a
+/// single count can't overflow the valuation arithmetic (regular copies at `usd`, foil
+/// at `usd_foil`) or be abused to store a pathological value. The single source of truth
+/// for both the `PUT` endpoint's per-card validation and the import reconcile clamp,
+/// which must agree so an import can't store a count the endpoint would reject.
+pub(crate) const MAX_CARD_QUANTITY: i32 = 1_000_000;
+
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     /// The card this holding is for (`card_id` -> `cards.id`). Lets the collection

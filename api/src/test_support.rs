@@ -1,11 +1,18 @@
 //! Shared fixtures for the crate's `#[cfg(test)]` modules: a canonical validated
-//! [`Config`] and a migrated in-memory SQLite connection. Kept in one place so the
-//! unit and integration tests build their state the same way; per-test tweaks use
-//! struct-update syntax (`Config { field: …, ..test_config() }`).
+//! [`Config`], a migrated in-memory SQLite connection, and canonical entity rows
+//! (card, set, user, holding). Kept in one place so the unit and integration tests
+//! build their state the same way; per-test tweaks use struct-update syntax
+//! (`Config { field: …, ..test_config() }`).
 
-use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait,
+    QueryFilter, Set, prelude::DateTimeUtc,
+};
 use sea_orm_migration::MigratorTrait;
 
+use crate::entities::prelude::CollectionItem;
+use crate::entities::{card, card_set, collection_item, user};
 use crate::{config::Config, migrator::Migrator};
 
 /// A canonical, fully-populated [`Config`] for tests. All thirteen fields carry sane,
@@ -43,4 +50,146 @@ pub(crate) async fn migrated_memory_db() -> DatabaseConnection {
         .expect("connect in-memory sqlite");
     Migrator::up(&db, None).await.expect("run migrations");
     db
+}
+
+/// The canonical all-defaults `mtg` card row (set `tst`, collector number = `id`,
+/// fixed 2024-01-01 timestamps, everything else `None`/false). Tests override just
+/// their meaningful fields via `card::Model { field: …, ..card_model(id) }`.
+pub(crate) fn card_model(id: i32) -> card::Model {
+    let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+    card::Model {
+        id,
+        game: "mtg".into(),
+        external_id: format!("ext-{id}"),
+        oracle_id: None,
+        name: format!("Card {id}"),
+        set_code: "tst".into(),
+        set_name: "TST".into(),
+        collector_number: id.to_string(),
+        collector_number_int: Some(id),
+        rarity: None,
+        lang: "en".into(),
+        released_at: None,
+        mana_cost: None,
+        cmc: None,
+        type_line: None,
+        color_identity: None,
+        colors: None,
+        layout: None,
+        oracle_text: None,
+        power: None,
+        toughness: None,
+        loyalty: None,
+        image_small: None,
+        image_normal: None,
+        image_large: None,
+        image_art_crop: None,
+        image_png: None,
+        card_faces: None,
+        price_usd: None,
+        price_usd_foil: None,
+        price_eur: None,
+        price_tix: None,
+        digital: false,
+        created_at: ts,
+        updated_at: ts,
+    }
+}
+
+/// The canonical all-defaults `mtg` set row for `code` (name = upper-cased code,
+/// fixed 2024-01-01 timestamps, everything else `None`/zero). Tests override just
+/// their meaningful fields via struct-update, like [`card_model`].
+pub(crate) fn card_set_model(code: &str) -> card_set::Model {
+    let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+    card_set::Model {
+        id: 0,
+        game: "mtg".into(),
+        code: code.into(),
+        name: code.to_uppercase(),
+        set_type: None,
+        released_at: None,
+        card_count: 0,
+        digital: false,
+        icon_svg_uri: None,
+        parent_set_code: None,
+        external_id: None,
+        created_at: ts,
+        updated_at: ts,
+    }
+}
+
+/// Insert a user (rows like refresh tokens and collection items FK to `users`) and
+/// return its id.
+pub(crate) async fn insert_user(db: &DatabaseConnection, email: &str) -> i32 {
+    let now = Utc::now();
+    user::ActiveModel {
+        email: Set(email.to_string()),
+        password_hash: Set("x".to_string()),
+        display_name: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert user")
+    .id
+}
+
+/// Insert a minimal card and return its internal id.
+pub(crate) async fn insert_card(db: &DatabaseConnection, external_id: &str) -> i32 {
+    let now = Utc::now();
+    let card = card::ActiveModel {
+        game: Set(crate::scryfall::GAME.to_string()),
+        external_id: Set(external_id.to_string()),
+        name: Set(format!("Card {external_id}")),
+        set_code: Set("tst".to_string()),
+        set_name: Set("Test Set".to_string()),
+        collector_number: Set("1".to_string()),
+        lang: Set("en".to_string()),
+        digital: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    card.insert(db).await.expect("insert card").id
+}
+
+/// Insert an owned-card holding for `(user, card)` with the given counts.
+pub(crate) async fn insert_holding(
+    db: &DatabaseConnection,
+    user_id: i32,
+    card_id: i32,
+    q: i32,
+    f: i32,
+) {
+    let now = Utc::now();
+    collection_item::ActiveModel {
+        user_id: Set(user_id),
+        game: Set(crate::scryfall::GAME.to_string()),
+        card_id: Set(card_id),
+        quantity: Set(q),
+        foil_quantity: Set(f),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert holding");
+}
+
+/// The stored `(quantity, foil_quantity)` for one holding, `None` if unowned.
+pub(crate) async fn owned_counts(
+    db: &DatabaseConnection,
+    user_id: i32,
+    card_id: i32,
+) -> Option<(i32, i32)> {
+    CollectionItem::find()
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::CardId.eq(card_id))
+        .one(db)
+        .await
+        .expect("query holding")
+        .map(|r| (r.quantity, r.foil_quantity))
 }

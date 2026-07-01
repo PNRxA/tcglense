@@ -9,14 +9,13 @@ use axum::{
 };
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
 use serde::Serialize;
-use serde_json::json;
 
 use crate::entities::prelude::{Card, CardSet};
 use crate::entities::{card, card_set};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, Page, SortDir, SortField, apply_card_sort, build_page, group_into_drops,
-    group_set_codes, load_set, paginate_buckets, require_game,
+    CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page, group_into_drops,
+    load_group_set_codes, load_set, paginate_buckets, require_drop_table, require_game,
 };
 use crate::state::AppState;
 
@@ -71,7 +70,7 @@ pub struct DropGroupResponse {
 pub async fn list_sets(
     State(state): State<AppState>,
     Path(game): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<DataBody<Vec<SetResponse>>>, AppError> {
     require_game(&game)?;
     let sets = CardSet::find()
         .filter(card_set::Column::Game.eq(game.as_str()))
@@ -80,7 +79,7 @@ pub async fn list_sets(
         .all(&state.db)
         .await?;
     let data: Vec<SetResponse> = sets.into_iter().map(SetResponse::from).collect();
-    Ok(Json(json!({ "data": data })))
+    Ok(Json(DataBody { data }))
 }
 
 /// `GET /api/games/{game}/sets/{code}` -> one set's metadata.
@@ -151,13 +150,10 @@ pub async fn list_set_cards(
 
     let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
     query = if include_related {
-        // Resolve the group membership from the flat set list (one cheap query),
-        // mirroring the frontend grouping so both span exactly the same sets.
-        let all_sets = CardSet::find()
-            .filter(card_set::Column::Game.eq(game.as_str()))
-            .all(&state.db)
-            .await?;
-        let codes = group_set_codes(&all_sets, &set.code);
+        // Resolve the group membership from the flat set list (one cheap query) via the
+        // shared seam the collection include-related view also uses, so both span the
+        // same sets.
+        let codes = load_group_set_codes(&state, &game, &set.code).await?;
         query.filter(card::Column::SetCode.is_in(codes))
     } else {
         query.filter(card::Column::SetCode.eq(set.code.as_str()))
@@ -195,9 +191,7 @@ pub async fn list_set_drops(
 ) -> Result<Json<Page<DropGroupResponse>>, AppError> {
     let game_meta = require_game(&game)?;
     let set = load_set(&state, &game, &code).await?;
-    let table = crate::scryfall::drops::table(&game, &set.code)
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::NotFound(format!("set '{}' has no drops", set.code)))?;
+    let table = require_drop_table(&game, &set.code)?;
 
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete

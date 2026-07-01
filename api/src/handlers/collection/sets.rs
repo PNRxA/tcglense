@@ -10,16 +10,16 @@ use axum::{
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::auth::extractor::AuthUser;
-use crate::entities::prelude::{Card, CardSet, CollectionItem};
+use crate::entities::prelude::CardSet;
 use crate::entities::{card, card_set, collection_item};
 use crate::error::AppError;
 use crate::handlers::shared::{
     CardResponse, Page, SortDir, SortField, Valuation, group_into_drops, load_set, paginate_buckets,
-    require_game, search_condition,
+    require_drop_table, require_game, search_condition,
 };
 use crate::state::AppState;
 
-use super::read::collection_query;
+use super::read::{collection_query, owned_with_cards};
 use super::{
     CollectionDropGroup, CollectionEntry, CollectionSet, CollectionSetsResponse, CollectionSort,
     ListParams,
@@ -37,12 +37,7 @@ pub async fn collection_sets(
 
     // Every owned card (with its joined card row) for the game — bounded by how many
     // distinct cards the user owns.
-    let rows = CollectionItem::find()
-        .find_also_related(Card)
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
-        .all(&state.db)
-        .await?;
+    let rows = owned_with_cards(user.id, &game, None).all(&state.db).await?;
 
     // The game's set metadata, to dress each owned set as a full catalog tile.
     let sets = CardSet::find()
@@ -73,9 +68,7 @@ pub async fn collection_set_drops(
     let game_meta = require_game(&game)?;
     // Canonicalise the set (and 404 an unknown one) exactly as the catalog does.
     let set = load_set(&state, &game, &code).await?;
-    let table = crate::scryfall::drops::table(&game, &set.code)
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::NotFound(format!("set '{}' has no drops", set.code)))?;
+    let table = require_drop_table(&game, &set.code)?;
 
     // Parse the optional Scryfall-syntax query up front so a malformed one 422s before
     // we touch the DB (mirrors the list handler).

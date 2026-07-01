@@ -25,11 +25,12 @@ use serde::{Deserialize, Serialize};
 use crate::collection_import::jobs::JobStatus;
 use crate::collection_import::{ImportSummary, ReconcileMode};
 use crate::entities::collection_item;
+use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE,
-    SortDir, SortField, resolve_page, trim_query,
+    CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE,
+    MAX_PAGE_SIZE, SortDir, SortField, resolve_page, trim_query,
 };
 use crate::state::AppState;
 
@@ -49,10 +50,6 @@ pub use read::{collection_summary, get_collection_entry, list_collection, owned_
 pub use sets::{collection_set_drops, collection_sets};
 pub use write::set_collection_entry;
 
-/// A generous per-card holding cap: far above any real collection, but bounded so a
-/// single count can't overflow the valuation arithmetic or be abused to store a
-/// pathological value.
-const MAX_QUANTITY: i32 = 1_000_000;
 /// Cap on how many card ids one batch owned-counts lookup may request. A browse page
 /// shows at most a few hundred cards, so this bounds the two `IN (...)` queries well
 /// above any real page while staying under SQLite's bound-variable limit and refusing
@@ -100,10 +97,7 @@ pub struct CollectionQuantities {
 /// Batch owned-counts response: external card id -> owned counts, for owned cards
 /// only. Cards the user doesn't own are simply absent (never a zero entry), so a page
 /// with nothing owned serialises to `{ "data": {} }`.
-#[derive(Debug, Serialize)]
-pub struct OwnedCountsResponse {
-    pub data: HashMap<String, CollectionQuantities>,
-}
+pub type OwnedCountsResponse = DataBody<HashMap<String, CollectionQuantities>>;
 
 /// Aggregate stats for a user's per-game collection (the collection landing header).
 #[derive(Debug, Serialize)]
@@ -141,10 +135,7 @@ pub struct CollectionSet {
 }
 
 /// The sets a user owns cards in, newest set first.
-#[derive(Debug, Serialize)]
-pub struct CollectionSetsResponse {
-    pub data: Vec<CollectionSet>,
-}
+pub type CollectionSetsResponse = DataBody<Vec<CollectionSet>>;
 
 /// Body of `PUT .../cards/{id}`: the desired absolute counts (not a delta). Setting
 /// both to zero removes the card from the collection.

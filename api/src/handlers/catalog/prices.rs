@@ -8,12 +8,11 @@ use axum::{
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::Serialize;
-use serde_json::json;
 
 use crate::entities::card_price_history;
 use crate::entities::prelude::CardPriceHistory;
 use crate::error::AppError;
-use crate::handlers::shared::{load_card, require_game};
+use crate::handlers::shared::{DataBody, load_card, require_game};
 use crate::state::AppState;
 
 use super::PriceParams;
@@ -155,7 +154,7 @@ pub async fn card_prices(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
     Query(params): Query<PriceParams>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<DataBody<Vec<PricePoint>>>, AppError> {
     require_game(&game)?;
     let card = load_card(&state, &game, &id).await?;
 
@@ -178,5 +177,5 @@ pub async fn card_prices(
         .await?;
 
     let data = downsample(rows, range.map_or(1, PriceRange::bucket_days));
-    Ok(Json(json!({ "data": data })))
+    Ok(Json(DataBody { data }))
 }

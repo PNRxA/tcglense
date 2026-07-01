@@ -17,11 +17,11 @@ pub(crate) mod sort;
 pub(crate) mod valuation;
 
 pub(crate) use dto::{CardResponse, stored_faces};
-pub(crate) use grouping::{group_into_drops, paginate_buckets};
-pub(crate) use lookup::{group_set_codes, load_card, load_set, require_game};
+pub(crate) use grouping::{group_into_drops, paginate_buckets, require_drop_table};
+pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};
 pub(crate) use pagination::{
-    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page, build_page,
-    resolve_page, trim_query,
+    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
+    build_page, resolve_page, trim_query,
 };
 pub(crate) use search::search_condition;
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};

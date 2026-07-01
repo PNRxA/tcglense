@@ -223,46 +223,13 @@ fn sort_spec_rejects_unknown_values() {
     ));
 }
 
-/// A minimal, insertable card row whose only meaningful fields for the sort
-/// tests are its id and the two USD price columns.
+/// A minimal, insertable card row whose only meaningful fields for these tests
+/// are its id and the two USD price columns.
 fn test_card(id: i32, usd: Option<&str>, usd_foil: Option<&str>) -> card::Model {
-    let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
     card::Model {
-        id,
-        game: "mtg".into(),
-        external_id: format!("ext-{id}"),
-        oracle_id: None,
-        name: format!("Card {id}"),
-        set_code: "tst".into(),
-        set_name: "TST".into(),
-        collector_number: id.to_string(),
-        collector_number_int: Some(id),
-        rarity: None,
-        lang: "en".into(),
-        released_at: None,
-        mana_cost: None,
-        cmc: None,
-        type_line: None,
-        color_identity: None,
-        colors: None,
-        layout: None,
-        oracle_text: None,
-        power: None,
-        toughness: None,
-        loyalty: None,
-        image_small: None,
-        image_normal: None,
-        image_large: None,
-        image_art_crop: None,
-        image_png: None,
-        card_faces: None,
         price_usd: usd.map(str::to_string),
         price_usd_foil: usd_foil.map(str::to_string),
-        price_eur: None,
-        price_tix: None,
-        digital: false,
-        created_at: ts,
-        updated_at: ts,
+        ..crate::test_support::card_model(id)
     }
 }
 
