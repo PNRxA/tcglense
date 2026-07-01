@@ -67,10 +67,18 @@ const filtering = computed(() => trimmedFilter.value.length > 0)
 // sub-set still surfaces its entire owned group rather than orphaning the matching tile.
 const allOwnedGroups = computed(() => groupSets(ownedSets.value))
 const ownedGroups = computed(() => filterGroups(allOwnedGroups.value, filter.value))
-// Owned-card count per set code, so each nested tile can show "N owned".
+// Owned distinct-card count per set code, so each tile can show its "N/M owned"
+// completion count.
 const ownedCountByCode = computed<Record<string, number>>(() => {
   const map: Record<string, number> = {}
   for (const set of ownedSets.value) map[set.code] = set.owned_cards
+  return map
+})
+// Total owned copies (with duplicates) per set code, so each tile can show "N copies"
+// alongside the completion count when you own duplicates (issue #125).
+const ownedCopiesByCode = computed<Record<string, number>>(() => {
+  const map: Record<string, number> = {}
+  for (const set of ownedSets.value) map[set.code] = set.owned_copies
   return map
 })
 // Preformatted owned value per set code, so each tile can show what your cards from that
@@ -309,6 +317,7 @@ watch(
               :set="group.main"
               :to="`/collection/${game}/sets/${group.main.code}`"
               :owned-count="ownedCountByCode[group.main.code]"
+              :owned-copies="ownedCopiesByCode[group.main.code]"
               :owned-value="ownedValueByCode[group.main.code]"
             />
             <SetGroup
@@ -317,6 +326,7 @@ watch(
               :group="group"
               base-path="/collection"
               :owned-counts="ownedCountByCode"
+              :owned-copies="ownedCopiesByCode"
               :owned-values="ownedValueByCode"
             />
           </template>

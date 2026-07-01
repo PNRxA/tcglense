@@ -14,14 +14,17 @@ const props = withDefaults(
     // Route prefix the tiles + "View all" link point under (default the catalog
     // set pages); the collection landing passes `/collection` for its own pages.
     basePath?: string
-    // Owned-card count per set code. When set, each tile shows "N owned" (the
-    // collection landing) instead of the set's total card count.
+    // Owned distinct-card count per set code. When set, each tile shows an "N/M owned"
+    // completion count (the collection landing) instead of the set's total card count.
     ownedCounts?: Record<string, number>
+    // Total owned copies (with duplicates) per set code, shown as "N copies" on each tile
+    // when it exceeds the distinct owned count — the collection landing.
+    ownedCopies?: Record<string, number>
     // Preformatted owned value per set code (e.g. "$123.45"), appended to each tile's
     // meta line alongside the owned count — the collection landing's per-set value.
     ownedValues?: Record<string, string | null>
   }>(),
-  { basePath: '/cards', ownedCounts: undefined, ownedValues: undefined },
+  { basePath: '/cards', ownedCounts: undefined, ownedCopies: undefined, ownedValues: undefined },
 )
 
 // Collapsed by default to keep the set listing scannable; the sub-sets reveal on
@@ -30,6 +33,7 @@ const expanded = ref(false)
 
 const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
 const ownedCount = (code: string) => props.ownedCounts?.[code]
+const ownedCopiesCount = (code: string) => props.ownedCopies?.[code]
 const ownedValue = (code: string) => props.ownedValues?.[code]
 </script>
 
@@ -41,6 +45,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
       variant="plain"
       :to="setLink(group.main.code)"
       :owned-count="ownedCount(group.main.code)"
+      :owned-copies="ownedCopiesCount(group.main.code)"
       :owned-value="ownedValue(group.main.code)"
     />
 
@@ -80,6 +85,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
           variant="nested"
           :to="setLink(child.code)"
           :owned-count="ownedCount(child.code)"
+          :owned-copies="ownedCopiesCount(child.code)"
           :owned-value="ownedValue(child.code)"
         />
       </li>

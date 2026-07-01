@@ -24,6 +24,7 @@ function makeSet(overrides: Partial<CardSet> = {}): CardSet {
 function mountTile(props: {
   set: CardSet
   ownedCount?: number
+  ownedCopies?: number
   ownedValue?: string | null
 }) {
   const router = createRouter({
@@ -50,6 +51,18 @@ describe('SetTile owned-count line', () => {
     const wrapper = mountTile({ set: makeSet({ card_count: 0 }), ownedCount: 5 })
     expect(wrapper.text()).toContain('5 owned')
     expect(wrapper.text()).not.toContain('5/0')
+  })
+
+  it('appends "N copies" when more copies are owned than distinct cards', () => {
+    const wrapper = mountTile({ set: makeSet(), ownedCount: 142, ownedCopies: 180 })
+    expect(wrapper.text()).toContain('142/281 owned')
+    expect(wrapper.text()).toContain('180 copies')
+  })
+
+  it('omits the copies count when every owned card is a single copy', () => {
+    const wrapper = mountTile({ set: makeSet(), ownedCount: 142, ownedCopies: 142 })
+    expect(wrapper.text()).toContain('142/281 owned')
+    expect(wrapper.text()).not.toContain('copies')
   })
 
   it('appends the owned value after the completion count when one is passed', () => {
