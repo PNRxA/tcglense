@@ -211,10 +211,13 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       <SearchSyntaxHint class="mt-2 mb-6" />
 
       <!-- Offer folding the set's related sub-sets (tokens, promos, decks, …) into
-           one listing instead of visiting each individually. Hidden in the by-drop
-           view, which groups the set's own cards rather than spanning sub-sets. -->
+           one listing instead of visiting each individually. Shown in the by-drop
+           view too (a Secret Lair-style set can still have related sub-sets), sitting
+           above the by-drop/all-cards toggle — the two controls are orthogonal: this
+           scopes across sub-sets, that groups the set's own cards. Folding in related
+           sets is inherently a flat cross-set listing, so acting on it leaves by-drop. -->
       <SetScopeBar
-        v-if="hasRelated && !byDrop"
+        v-if="hasRelated"
         :include-related="includeRelated"
         :is-main-set="isMainSet"
         :main-name="group?.main.name ?? ''"
