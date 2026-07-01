@@ -12,6 +12,8 @@
 //! digits-only collection id, so there is no SSRF surface (the id can carry neither a
 //! host nor a path).
 
+use std::time::Duration;
+
 use reqwest::{StatusCode, header};
 use serde::Deserialize;
 
@@ -22,6 +24,12 @@ const API_BASE: &str = "https://archidekt.com/api/collection";
 const ACCEPT_JSON: &str = "application/json";
 /// Archidekt's fixed collection page size.
 const PAGE_SIZE: usize = 25;
+/// Minimum wait after a `429` before retrying — the provider's rate window (one minute).
+const RATE_LIMIT_BACKOFF_SECS: u64 = 60;
+/// Ceiling on a single backoff, so a huge/hostile `Retry-After` can't stall an import.
+const MAX_BACKOFF_SECS: u64 = 300;
+/// Give up (fail the import) after this many `429`s, bounding the total added wait.
+const MAX_RATE_LIMIT_RETRIES: u32 = 5;
 
 #[derive(Debug, Deserialize)]
 struct CollectionPage {
@@ -95,8 +103,10 @@ pub async fn fetch(
 
     let mut holdings: Vec<FetchedHolding> = Vec::new();
     let mut checked_size = false;
+    let mut rate_limit_retries = 0u32;
+    let mut page = 1usize;
 
-    for page in 1..=max_pages {
+    while page <= max_pages {
         // Respect the provider's request cap across all imports before every request.
         limiter.acquire().await;
 
@@ -108,10 +118,29 @@ pub async fn fetch(
             .await
             .map_err(|e| ImportError::Upstream(format!("request to Archidekt failed: {e}")))?;
 
+        let status = response.status();
+
+        // Rate-limited: back off (globally, so every import waits) and retry the *same*
+        // page. Wait at least the provider's window (honoring a larger `Retry-After`);
+        // give up after a few tries so a persistent 429 doesn't hang the import forever.
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            if rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
+                return Err(ImportError::RateLimited);
+            }
+            rate_limit_retries += 1;
+            let wait = backoff_after(response.headers());
+            tracing::warn!(
+                page,
+                wait_secs = wait.as_secs(),
+                "Archidekt rate-limited us (429); backing off before retrying"
+            );
+            limiter.back_off(wait).await;
+            continue; // retry the same page; the next `acquire()` waits out the backoff
+        }
+
         // Archidekt answers a missing or private collection with `400 ["No public
         // collection found."]`; treat 400/404 alike as not-found. We follow the `next`
         // link and never request past the last page, so this only fires on page 1.
-        let status = response.status();
         if status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND {
             return Err(ImportError::CollectionNotFound(collection_id.to_string()));
         }
@@ -154,9 +183,22 @@ pub async fn fetch(
         if holdings.len() >= MAX_IMPORT_ROWS {
             break;
         }
+        page += 1;
     }
 
     Ok(holdings)
+}
+
+/// How long to back off after a `429`: the `Retry-After` seconds if the provider sent a
+/// (numeric) one, otherwise the default window — always at least the window (per our
+/// "wait a minute" policy) and never longer than [`MAX_BACKOFF_SECS`].
+fn backoff_after(headers: &header::HeaderMap) -> Duration {
+    let requested = headers
+        .get(header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    Duration::from_secs(requested.clamp(RATE_LIMIT_BACKOFF_SECS, MAX_BACKOFF_SECS))
 }
 
 #[cfg(test)]
@@ -216,6 +258,23 @@ mod tests {
         assert!(!page.results[0].foil);
         assert_eq!(page.results[0].quantity, 2);
         assert!(page.results[1].foil);
+    }
+
+    #[test]
+    fn backoff_honors_retry_after_within_bounds() {
+        use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+        let with = |v: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert(RETRY_AFTER, HeaderValue::from_static(v));
+            h
+        };
+        // No / unparseable header -> the one-minute floor.
+        assert_eq!(backoff_after(&HeaderMap::new()), Duration::from_secs(60));
+        assert_eq!(backoff_after(&with("soon")), Duration::from_secs(60));
+        // Below the floor is raised to a minute; within range is honored; huge is capped.
+        assert_eq!(backoff_after(&with("30")), Duration::from_secs(60));
+        assert_eq!(backoff_after(&with("120")), Duration::from_secs(120));
+        assert_eq!(backoff_after(&with("100000")), Duration::from_secs(300));
     }
 
     #[test]

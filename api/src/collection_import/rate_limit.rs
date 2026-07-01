@@ -47,6 +47,15 @@ impl RateLimiter {
         };
         sleep_until(slot).await;
     }
+
+    /// Push the next permitted request out by at least `delay` — e.g. after the provider
+    /// returns `429`, so every caller backs off, not just the one that was throttled.
+    /// Never brings the next slot earlier than already scheduled.
+    pub async fn back_off(&self, delay: Duration) {
+        let target = Instant::now() + delay;
+        let mut next = self.next_slot.lock().await;
+        *next = Some(next.map_or(target, |t| t.max(target)));
+    }
 }
 
 #[cfg(test)]
@@ -71,5 +80,15 @@ mod tests {
         let start = Instant::now();
         rl.acquire().await;
         assert_eq!(start.elapsed(), Duration::from_secs(0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn back_off_delays_the_next_acquire() {
+        let rl = RateLimiter::per_minute(20);
+        rl.acquire().await; // immediate; next slot reserved 3s out
+        rl.back_off(Duration::from_secs(60)).await;
+        let start = Instant::now();
+        rl.acquire().await; // must wait out the 60s backoff, not just the 3s spacing
+        assert_eq!(start.elapsed(), Duration::from_secs(60));
     }
 }

@@ -276,6 +276,9 @@ runs **asynchronously**: the handler validates synchronously, enqueues a backgro
 route until `complete`/`error`. Imports run **one at a time** (a job waiting for the slot
 reports `queued`), and a process-wide `RateLimiter` (`collection_import::rate_limit`,
 20/min ⇒ one request every 3s) throttles **every** provider request across all imports.
+If the provider still returns **`429`**, the fetch **backs off** the shared limiter by at
+least a minute (honoring a larger `Retry-After`, capped at 5 min) so *all* imports pause,
+then retries the same page — giving up (`503`) after a few attempts.
 Providers are dispatched by a `Provider` enum (Archidekt today, one module per service —
 Moxfield planned), each fetching + parsing to normalized `(external_card_id, foil,
 quantity)` holdings; the provider-independent engine aggregates by card (`(uid, foil)` —
@@ -303,7 +306,7 @@ state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, imag
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
 entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`)
-collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + execute_import/aggregate/plan_reconcile/apply engine + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch → normalized holdings), rate_limit.rs (global RateLimiter, 20 req/min to the provider), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
+collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + execute_import/aggregate/plan_reconcile/apply engine + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch → normalized holdings), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
