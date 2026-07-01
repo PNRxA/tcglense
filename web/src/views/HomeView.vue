@@ -186,7 +186,7 @@ const ghostPoints = [
             <div class="flex items-end justify-center gap-3 sm:gap-4">
               <div class="flex flex-col items-center gap-2">
                 <div
-                  class="bg-card ring-primary/30 flex size-20 items-center justify-center rounded-xl border shadow-sm ring-1"
+                  class="bg-card ring-primary/30 flex size-16 items-center justify-center rounded-xl sm:size-20 border shadow-sm ring-1"
                 >
                   <Eye class="text-primary size-9" />
                 </div>
@@ -194,7 +194,7 @@ const ghostPoints = [
               </div>
               <div class="flex flex-col items-center gap-2 opacity-40">
                 <div
-                  class="flex size-20 items-center justify-center rounded-xl border border-dashed"
+                  class="flex size-16 items-center justify-center rounded-xl sm:size-20 border border-dashed"
                 >
                   <Ghost class="text-muted-foreground size-9" />
                 </div>
@@ -202,7 +202,7 @@ const ghostPoints = [
               </div>
               <div class="flex flex-col items-center gap-2 opacity-40">
                 <div
-                  class="flex size-20 items-center justify-center rounded-xl border border-dashed"
+                  class="flex size-16 items-center justify-center rounded-xl sm:size-20 border border-dashed"
                 >
                   <EyeOff class="text-muted-foreground size-9" />
                 </div>

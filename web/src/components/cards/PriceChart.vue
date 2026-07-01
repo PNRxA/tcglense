@@ -120,7 +120,7 @@ const tooltipTemplate = componentToString(chartConfig, ChartTooltipContent, {
       <div class="flex flex-wrap items-center justify-between gap-2">
         <CardTitle class="text-sm font-semibold">Price history</CardTitle>
         <div
-          class="bg-muted/50 inline-flex items-center gap-0.5 rounded-lg p-0.5"
+          class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5"
           role="group"
           aria-label="Price history range"
         >
@@ -130,7 +130,7 @@ const tooltipTemplate = componentToString(chartConfig, ChartTooltipContent, {
             type="button"
             :variant="range === opt.value ? 'secondary' : 'ghost'"
             size="sm"
-            class="h-7 px-2.5 text-xs font-medium"
+            class="h-8 px-2.5 text-xs font-medium"
             :aria-pressed="range === opt.value"
             @click="selectRange(opt.value)"
           >

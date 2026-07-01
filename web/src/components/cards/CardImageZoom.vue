@@ -81,9 +81,11 @@ watch(
         class="group focus-visible:border-ring focus-visible:ring-ring/50 absolute inset-0 cursor-zoom-in rounded-xl outline-none focus-visible:ring-3"
         :aria-label="`Enlarge image of ${name}`"
       >
-        <!-- Hover/focus affordance: a zoom glyph hinting the image opens larger. -->
+        <!-- Hover/focus affordance: a zoom glyph hinting the image opens larger. On a
+          coarse pointer (touch) there's no hover, so keep it faintly visible there so
+          the tap-to-enlarge affordance is discoverable. -->
         <span
-          class="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+          class="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-70"
           aria-hidden="true"
         >
           <span
@@ -115,7 +117,7 @@ watch(
       />
 
       <DialogClose
-        class="bg-background hover:bg-accent focus-visible:border-ring focus-visible:ring-ring/50 absolute -top-3 -right-3 flex size-9 items-center justify-center rounded-full border shadow-lg transition-colors outline-none focus-visible:ring-3"
+        class="bg-background hover:bg-accent focus-visible:border-ring focus-visible:ring-ring/50 absolute -top-3 -right-3 flex size-10 items-center justify-center rounded-full border shadow-lg transition-colors outline-none focus-visible:ring-3"
         aria-label="Close"
       >
         <X class="size-5" />

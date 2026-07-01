@@ -473,7 +473,7 @@ const errorMessage = computed(() =>
       <template v-else>
         <!-- Controls: the by-drop / all-cards toggle (drop sets) + the show-ghosts toggle,
              then the card-size + sort menus (flat views only — by-drop has a fixed order). -->
-        <div class="mb-4 flex items-center justify-between gap-3">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
             <div
               v-if="scoped && hasDrops"
@@ -483,7 +483,7 @@ const errorMessage = computed(() =>
                 type="button"
                 :class="
                   cn(
-                    'rounded px-3 py-1 font-medium transition-colors',
+                    'rounded px-3 py-1.5 font-medium transition-colors',
                     byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
                   )
                 "
@@ -495,7 +495,7 @@ const errorMessage = computed(() =>
                 type="button"
                 :class="
                   cn(
-                    'rounded px-3 py-1 font-medium transition-colors',
+                    'rounded px-3 py-1.5 font-medium transition-colors',
                     !byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
                   )
                 "

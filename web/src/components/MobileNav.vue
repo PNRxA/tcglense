@@ -1,0 +1,60 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { Layers, Library, Menu } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { useGamesQuery } from '@/composables/useCatalog'
+
+// The mobile counterpart to MainNav: the top-bar's Cards/Collection dropdowns don't
+// fit alongside the brand + theme + account controls at phone width, so below `sm`
+// they collapse into this single hamburger. It reuses the DropdownMenu primitives
+// (which open on tap) and folds both nav sections — Cards and Collection — into one
+// flat menu, driven by the same cached games registry as MainNav so a new TCG shows
+// up here automatically. Real <RouterLink> anchors (via as-child) keep the links
+// keyboard- and middle-click-friendly, and reka closes the menu on navigation.
+const { data } = useGamesQuery()
+const games = computed(() => data.value?.data ?? [])
+</script>
+
+<template>
+  <DropdownMenu>
+    <DropdownMenuTrigger as-child>
+      <Button variant="ghost" size="icon" aria-label="Open navigation menu">
+        <Menu />
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="start" class="w-56">
+      <DropdownMenuLabel class="flex items-center gap-2">
+        <Layers class="size-4" aria-hidden="true" />
+        Cards
+      </DropdownMenuLabel>
+      <DropdownMenuItem as-child>
+        <RouterLink to="/cards">Browse all games</RouterLink>
+      </DropdownMenuItem>
+      <DropdownMenuItem v-for="game in games" :key="`cards-${game.id}`" as-child>
+        <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
+      </DropdownMenuItem>
+
+      <DropdownMenuSeparator />
+
+      <DropdownMenuLabel class="flex items-center gap-2">
+        <Library class="size-4" aria-hidden="true" />
+        Collection
+      </DropdownMenuLabel>
+      <DropdownMenuItem as-child>
+        <RouterLink to="/collection">All collections</RouterLink>
+      </DropdownMenuItem>
+      <DropdownMenuItem v-for="game in games" :key="`collection-${game.id}`" as-child>
+        <RouterLink :to="`/collection/${game.id}`">{{ game.name }}</RouterLink>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
+</template>

@@ -475,7 +475,7 @@ const selectClass =
         </div>
       </div>
 
-      <div class="mt-6 flex items-center justify-between gap-3">
+      <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Button
           v-if="props.source"
           variant="ghost"
@@ -487,9 +487,9 @@ const selectClass =
           <Trash2 />
           Remove saved link
         </Button>
-        <span v-else />
+        <span v-else class="hidden sm:block" />
 
-        <div class="flex gap-2">
+        <div class="flex justify-end gap-2">
           <DialogClose :class="buttonVariants({ variant: 'outline' })">Close</DialogClose>
           <Button :disabled="!canSubmit" @click="runImport">
             {{ busy ? 'Working…' : 'Import' }}

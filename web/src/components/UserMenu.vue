@@ -58,7 +58,13 @@ async function onSignOut() {
           <span class="sr-only">Account menu</span>
           <span class="hidden max-w-[12rem] truncate sm:inline">{{ displayLabel }}</span>
         </NavigationMenuTrigger>
-        <NavigationMenuContent class="left-auto end-0">
+        <!-- The shared NavigationMenuContent only becomes `absolute md:w-auto` at the
+             md breakpoint (below it, reka's default renders the panel inline/full-width
+             for a stacked mobile nav). This menu is a floating dropdown at every width,
+             so force `absolute top-full w-auto` here — otherwise on a phone it lays out
+             static at the page top, clipping above the viewport and squashing the header.
+             end-0 keeps it anchored to the trigger's right edge. -->
+        <NavigationMenuContent class="absolute top-full left-auto end-0 w-auto">
           <ul class="grid w-56 gap-1">
             <li class="flex flex-col gap-0.5 px-2 py-1.5">
               <span class="text-sm font-medium">Signed in</span>

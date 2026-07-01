@@ -62,16 +62,17 @@ const rows = computed(() => [
         opens the popover instead of navigating; `.stop` is belt-and-braces. Anchored
         bottom-left to match the owned-count badge placement (issue #100). On a card you
         already own the count chip is always shown (its icons morphing to a "+" on
-        hover/focus to signal you can add more — issue #136, via the `group/add` tag below);
-        on an unowned card the "+" is revealed on hover/focus (and always on touch) to keep
-        a dense grid clean. -->
+        hover/focus to signal you can add more — issue #136, via the `group/add` tag below).
+        On an unowned card the "+" stays visible on small screens (and any touch device) —
+        there's no hover to reveal it — and only hides behind hover/focus from sm up, to
+        keep a dense desktop grid clean. -->
       <button
         type="button"
         class="group/add absolute bottom-1.5 left-1.5 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
         :class="
           owned
             ? ''
-            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
+            : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
         "
         :aria-label="
           owned ? `Edit copies of ${name} in your collection` : `Add ${name} to your collection`
@@ -87,9 +88,9 @@ const rows = computed(() => [
         />
         <span
           v-else
-          class="bg-primary/90 text-primary-foreground inline-flex items-center justify-center rounded-md p-1 shadow"
+          class="bg-primary/90 text-primary-foreground inline-flex items-center justify-center rounded-md p-1.5 shadow"
         >
-          <Plus class="size-3.5" aria-hidden="true" />
+          <Plus class="size-4" aria-hidden="true" />
         </span>
       </button>
     </PopoverTrigger>
@@ -129,7 +130,7 @@ const rows = computed(() => [
               keyboard-focused here doesn't drop focus out of the non-modal popover. -->
             <Button
               variant="outline"
-              size="icon-sm"
+              size="icon"
               :disabled="!ready"
               :aria-disabled="row.value <= 0"
               :class="{ 'pointer-events-none opacity-50': row.value <= 0 }"
@@ -147,7 +148,7 @@ const rows = computed(() => [
             >
             <Button
               variant="outline"
-              size="icon-sm"
+              size="icon"
               :disabled="!ready"
               :aria-label="`Add one ${row.label.toLowerCase()} copy of ${name}`"
               @click="adjust(row.key, 1)"

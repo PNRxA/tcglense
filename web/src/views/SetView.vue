@@ -246,7 +246,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
              menu, and the sort menu (flat view only — the by-drop view has a
              fixed drop order). The size menu shows in both views since the
              by-drop sections are grids too. -->
-        <div class="mb-4 flex items-center justify-between gap-3">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div
             v-if="hasDrops"
             class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-sm"
@@ -255,7 +255,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
               type="button"
               :class="
                 cn(
-                  'rounded px-3 py-1 font-medium transition-colors',
+                  'rounded px-3 py-1.5 font-medium transition-colors',
                   byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
                 )
               "
@@ -267,7 +267,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
               type="button"
               :class="
                 cn(
-                  'rounded px-3 py-1 font-medium transition-colors',
+                  'rounded px-3 py-1.5 font-medium transition-colors',
                   !byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
                 )
               "
