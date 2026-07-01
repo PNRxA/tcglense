@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
@@ -77,9 +78,9 @@ useClampPage(page, () => ({
 
     <!-- The search bar sticks to the top of the viewport so it stays reachable
          while scrolling a long results grid. -->
-    <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
+    <StickySearchBar>
       <CardSearchBox v-model="searchInput" placeholder="Search — name, c:r, t:goblin…" />
-    </div>
+    </StickySearchBar>
     <SearchSyntaxHint class="mt-2" />
 
     <p class="text-muted-foreground mt-4 mb-6 text-sm">

@@ -70,14 +70,18 @@ export interface Card {
   faces: CardFace[]
 }
 
-/** A page of cards plus pagination cursors. */
-export interface CardPage {
-  data: Card[]
+/** A page of items plus pagination cursors — the shape every paginated list endpoint
+ * returns. Reused by the collection API for its own paged responses. */
+export interface Page<T> {
+  data: T[]
   page: number
   page_size: number
   total: number
   has_more: boolean
 }
+
+/** A page of cards plus pagination cursors. */
+export type CardPage = Page<Card>
 
 /** A Secret Lair drop: a named group of cards (e.g. "Wild in Bloom"). */
 export interface DropGroup {
@@ -89,13 +93,7 @@ export interface DropGroup {
 }
 
 /** A page of drop groups — `total`/pagination count *drops*, not cards. */
-export interface DropGroupPage {
-  data: DropGroup[]
-  page: number
-  page_size: number
-  total: number
-  has_more: boolean
-}
+export type DropGroupPage = Page<DropGroup>
 
 /** Background import status for a game's card data. */
 export interface IngestStatus {
