@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, Query, State},
     http::StatusCode,
 };
@@ -52,6 +53,13 @@ const MAX_OWNED_IDS: usize = 500;
 /// bind-variable limit (as few as 999 on old builds) — a collection can hold far more
 /// distinct cards than that once imported in bulk.
 const CARD_LOOKUP_CHUNK: usize = 900;
+/// Hard ceiling on an uploaded collection CSV, enforced as a route body limit (see the
+/// router). Sized generously above any real collection *when exported with only the three
+/// columns we ask for* (Scryfall ID, Finish, Quantity ≈ 60 bytes/row, so ~16 MB spans far
+/// more than [`collection_import`]'s row cap) while bounding the memory a single upload
+/// can force us to buffer + parse. A larger, all-columns export can exceed this — the UI
+/// tells the user to export only the three needed columns.
+pub const MAX_CSV_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 // ---------- Response / request DTOs ----------
 
@@ -528,6 +536,49 @@ pub async fn import_collection(
     ))
 }
 
+/// Query params for a CSV upload. The reconcile `mode` rides in the query string so the
+/// request body can be the raw CSV file. Parsed as an optional string (not a typed
+/// `ReconcileMode`) so a missing/invalid mode is our JSON `422`, not axum's default
+/// text/plain query-rejection.
+#[derive(Debug, Deserialize)]
+pub struct CsvImportParams {
+    pub mode: Option<String>,
+}
+
+/// `POST /api/collection/{game}/import/csv?mode=...` -> import a collection from an
+/// uploaded Archidekt CSV export. The request body is the raw CSV file (bounded by the
+/// route's body limit, [`MAX_CSV_UPLOAD_BYTES`]); the reconcile mode is a query param.
+///
+/// Unlike the URL import this needs no upstream fetch, so it reconciles **synchronously**
+/// and returns the [`ImportSummary`] directly (no rate limiter, no background job): a CSV
+/// has no location to re-sync from, so it's inherently one-off. `404` for an unknown game,
+/// `422` for a bad mode / unreadable CSV / one missing a required column / an empty upload.
+pub async fn import_collection_csv(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<CsvImportParams>,
+    body: Bytes,
+) -> Result<Json<ImportSummary>, AppError> {
+    require_game(&game)?;
+    // The CSV shape is Archidekt's, and Archidekt is Magic-only (its card ids are Scryfall
+    // ids); gate on the same provider/game support as the URL import.
+    if !Provider::Archidekt.supports_game(&game) {
+        return Err(AppError::Validation(format!(
+            "CSV collection import is not available for '{game}'"
+        )));
+    }
+    let mode = parse_reconcile_mode(params.mode.as_deref())?;
+    if body.is_empty() {
+        return Err(AppError::Validation("no CSV file was uploaded".to_string()));
+    }
+
+    let summary = collection_import::execute_csv_import(&state.db, user.id, &game, mode, &body)
+        .await
+        .map_err(AppError::from)?;
+    Ok(Json(summary))
+}
+
 /// `GET /api/collection/{game}/import/jobs/{job_id}` -> the status of a background
 /// import/sync job (queued / running / complete / error). `404` for an unknown job or
 /// one that isn't the caller's.
@@ -695,6 +746,20 @@ fn parse_provider(s: &str) -> Result<Provider, AppError> {
         .ok_or_else(|| AppError::Validation(format!("unknown collection provider '{s}'")))
 }
 
+/// Parse a reconcile mode from a query param, 422 when absent or unrecognised. Used by
+/// the CSV upload, where the mode is a query param rather than a typed JSON field (so a
+/// bad value returns our JSON error, not axum's default query rejection).
+fn parse_reconcile_mode(s: Option<&str>) -> Result<ReconcileMode, AppError> {
+    match s.map(str::trim) {
+        Some("overwrite") => Ok(ReconcileMode::Overwrite),
+        Some("replace") => Ok(ReconcileMode::Replace),
+        Some("merge") => Ok(ReconcileMode::Merge),
+        _ => Err(AppError::Validation(
+            "mode must be one of: overwrite, replace, merge".to_string(),
+        )),
+    }
+}
+
 /// The user's saved collection link for a game, if any.
 async fn find_source(
     state: &AppState,
@@ -851,6 +916,31 @@ mod tests {
         ]);
         // First-seen order preserved, blanks gone, no repeats.
         assert_eq!(out, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn parse_reconcile_mode_accepts_known_modes_and_rejects_others() {
+        assert!(matches!(
+            parse_reconcile_mode(Some("overwrite")),
+            Ok(ReconcileMode::Overwrite)
+        ));
+        assert!(matches!(
+            parse_reconcile_mode(Some(" replace ")),
+            Ok(ReconcileMode::Replace)
+        ));
+        assert!(matches!(
+            parse_reconcile_mode(Some("merge")),
+            Ok(ReconcileMode::Merge)
+        ));
+        // Missing or unrecognised -> our JSON validation error (422), never a silent default.
+        assert!(matches!(
+            parse_reconcile_mode(None),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            parse_reconcile_mode(Some("wipe")),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]
