@@ -23,6 +23,7 @@ import {
   type OwnedCountsMap,
   type ReconcileMode,
 } from '@/lib/api'
+import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 
@@ -51,15 +52,28 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
 /** Cards per page in the collection grid (matches the catalog default). */
 export const COLLECTION_PAGE_SIZE = 60
 
-/** A page of the user's owned cards for a game. `page` is reactive (paginated view).
- * Disabled while signed out — the collection routes are public, so a signed-out
- * visitor lands here (and is prompted to sign in) without triggering an auth call. */
-export function useCollectionQuery(game: Ref<string>, page: Ref<number>) {
+/** A page of the user's owned cards for a game. `page`, `query` and `sort` are
+ * reactive: `query` is a Scryfall-style search (same syntax as the catalog) and
+ * `sort` is a `field:dir` value (see `lib/cardSort`), both carried in the query key
+ * so a change refetches. Disabled while signed out — the collection routes are
+ * public, so a signed-out visitor lands here (and is prompted to sign in) without
+ * triggering an auth call. */
+export function useCollectionQuery(
+  game: Ref<string>,
+  page: Ref<number>,
+  query: Ref<string>,
+  sort: Ref<string>,
+) {
   const auth = useAuthStore()
   const options = {
-    queryKey: ['collection', game, page],
+    queryKey: ['collection', game, query, sort, page],
     queryFn: (token: string) =>
-      getCollection(token, game.value, { page: page.value, pageSize: COLLECTION_PAGE_SIZE }),
+      getCollection(token, game.value, {
+        page: page.value,
+        pageSize: COLLECTION_PAGE_SIZE,
+        q: query.value || undefined,
+        ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
+      }),
     // Keep the current grid visible while the next page loads (smoother paging).
     placeholderData: keepPreviousData,
     enabled: computed(() => auth.isAuthenticated),

@@ -21,8 +21,8 @@ use axum::{
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
-    SqlErr,
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    SelectTwo, Set, SqlErr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,7 @@ use crate::entities::prelude::{Card, CollectionItem, CollectionSource};
 use crate::entities::{card, collection_item, collection_source};
 use crate::error::AppError;
 use crate::extract::JsonBody;
-use crate::handlers::catalog::CardResponse;
+use crate::handlers::catalog::{CardResponse, SortDir, SortField, apply_card_sort, search_condition};
 use crate::state::AppState;
 
 const DEFAULT_PAGE_SIZE: u64 = 60;
@@ -113,6 +113,31 @@ pub struct SetQuantitiesRequest {
 pub struct ListParams {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
+    /// Optional search query — the same Scryfall-style syntax the public catalog
+    /// card lists accept (parsed by [`crate::scryfall::search`]); a malformed query
+    /// is a 422. Absent/blank means no filter.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Sort key. `updated` (the default) orders by most-recently-changed; every other
+    /// key (`name`/`rarity`/`released`/`cmc`/`price`) reuses the catalog card sorts.
+    /// An unknown value is a 422.
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Sort direction (`asc`/`desc`); absent = the sort key's natural direction. An
+    /// unknown value is a 422.
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+/// How the collection list is ordered: either the collection-specific recency order
+/// (the default) or one of the shared catalog card sorts, reused verbatim so the
+/// collection grid can sort identically to the browse grids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectionSort {
+    /// Most-recently added/updated first (by `collection_items.updated_at`).
+    Recent,
+    /// A card-column sort shared with the catalog card lists.
+    Card(SortField),
 }
 
 /// Body of `POST .../owned`: the external card ids to look up owned counts for. Sent
@@ -133,6 +158,31 @@ impl ListParams {
             .clamp(1, MAX_PAGE_SIZE);
         (page, page_size)
     }
+
+    /// The trimmed search query, or `None` when it's absent or blank.
+    fn search(&self) -> Option<&str> {
+        self.q.as_deref().map(str::trim).filter(|q| !q.is_empty())
+    }
+
+    /// Resolve the `sort`/`dir` params into a validated `(sort, direction)`,
+    /// defaulting to most-recently-updated. An unrecognised key/direction is a 422 —
+    /// consistent with a malformed `q` — rather than being silently ignored.
+    fn sort_spec(&self) -> Result<(CollectionSort, SortDir), AppError> {
+        let (sort, default_dir) = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        {
+            // The collection's natural default (and its explicit key) is recency.
+            None | Some("updated" | "recent") => (CollectionSort::Recent, SortDir::Desc),
+            Some(value) => {
+                let field = SortField::parse(value)?;
+                (CollectionSort::Card(field), field.default_dir())
+            }
+        };
+        let dir = match self.dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => default_dir,
+            Some(value) => SortDir::parse(value)?,
+        };
+        Ok((sort, dir))
+    }
 }
 
 // ---------- Handlers ----------
@@ -146,45 +196,69 @@ pub async fn list_collection(
     Path(game): Path<String>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CollectionEntry>>, AppError> {
-    require_game(&game)?;
+    let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
+    let (sort, dir) = params.sort_spec()?;
+    // Parse the optional Scryfall-syntax query up front so a malformed one 422s
+    // before we touch the DB (mirrors the catalog card lists).
+    let search = params
+        .search()
+        .map(|s| search_condition(game_meta, s))
+        .transpose()?;
 
-    let paginator = CollectionItem::find()
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
-        // Newest change first, with a stable id tiebreaker for deterministic paging.
-        .order_by_desc(collection_item::Column::UpdatedAt)
-        .order_by_desc(collection_item::Column::Id)
-        .paginate(&state.db, page_size);
-
+    let paginator =
+        collection_query(user.id, &game, search, sort, dir).paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
-    if rows.is_empty() {
-        return Ok(Json(build_page(Vec::new(), page, page_size, total)));
-    }
 
-    // Load the referenced cards in one query, then assemble entries in row order.
-    let card_ids: Vec<i32> = rows.iter().map(|r| r.card_id).collect();
-    let mut by_id: HashMap<i32, card::Model> = Card::find()
-        .filter(card::Column::Id.is_in(card_ids))
-        .all(&state.db)
-        .await?
-        .into_iter()
-        .map(|c| (c.id, c))
-        .collect();
-
+    // `find_also_related` is a LEFT join, so a holding whose card row is gone (e.g.
+    // removed by a catalog re-import) comes back with `None` — skip it, exactly as
+    // the summary/valuation reads do.
     let data: Vec<CollectionEntry> = rows
         .into_iter()
-        .filter_map(|r| {
-            by_id.remove(&r.card_id).map(|c| CollectionEntry {
+        .filter_map(|(item, card)| {
+            card.map(|c| CollectionEntry {
                 card: CardResponse::from(c),
-                quantity: r.quantity,
-                foil_quantity: r.foil_quantity,
+                quantity: item.quantity,
+                foil_quantity: item.foil_quantity,
             })
         })
         .collect();
 
     Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// Build the collection-list query for a user + game: join `cards` (so it can be
+/// searched and sorted on card columns), apply the optional already-parsed search
+/// condition, and order by the chosen sort. Kept separate from the handler so the
+/// join/filter/sort can be unit-tested against a seeded DB without an `AppState`.
+///
+/// The search condition and the card sort touch only `cards` columns; the `user_id`
+/// and `game` filters and the recency sort stay entity-qualified to
+/// `collection_items`, so nothing is ambiguous across the join (both tables carry a
+/// `game` column).
+fn collection_query(
+    user_id: i32,
+    game: &str,
+    search: Option<Condition>,
+    sort: CollectionSort,
+    dir: SortDir,
+) -> SelectTwo<collection_item::Entity, card::Entity> {
+    let mut query = CollectionItem::find()
+        .find_also_related(Card)
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game));
+    if let Some(condition) = search {
+        query = query.filter(condition);
+    }
+    match sort {
+        // Newest change first (or oldest, if reversed), with a stable id tiebreaker
+        // for deterministic paging.
+        CollectionSort::Recent => query
+            .order_by(collection_item::Column::UpdatedAt, dir.order())
+            .order_by(collection_item::Column::Id, dir.order()),
+        CollectionSort::Card(field) => apply_card_sort(query, field, dir, false),
+    }
 }
 
 /// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
@@ -807,25 +881,110 @@ fn format_cents(cents: i128) -> String {
 mod tests {
     use super::*;
 
+    /// Build a `ListParams` with only paging set — the search/sort tests override
+    /// `q`/`sort`/`dir` via struct-update on top of this.
+    fn params(page: Option<u64>, page_size: Option<u64>) -> ListParams {
+        ListParams {
+            page,
+            page_size,
+            q: None,
+            sort: None,
+            dir: None,
+        }
+    }
+
     #[test]
     fn page_and_size_defaults_and_clamps() {
-        let p = ListParams {
-            page: None,
-            page_size: None,
-        };
-        assert_eq!(p.page_and_size(), (1, DEFAULT_PAGE_SIZE));
+        assert_eq!(params(None, None).page_and_size(), (1, DEFAULT_PAGE_SIZE));
+        assert_eq!(params(Some(0), Some(9999)).page_and_size(), (1, MAX_PAGE_SIZE));
+        assert_eq!(params(Some(3), Some(20)).page_and_size(), (3, 20));
+    }
 
-        let p = ListParams {
-            page: Some(0),
-            page_size: Some(9999),
-        };
-        assert_eq!(p.page_and_size(), (1, MAX_PAGE_SIZE));
+    #[test]
+    fn search_trims_and_blank_filters() {
+        assert_eq!(
+            ListParams {
+                q: Some("  goblin ".into()),
+                ..params(None, None)
+            }
+            .search(),
+            Some("goblin")
+        );
+        assert_eq!(
+            ListParams {
+                q: Some("   ".into()),
+                ..params(None, None)
+            }
+            .search(),
+            None
+        );
+        assert_eq!(params(None, None).search(), None);
+    }
 
-        let p = ListParams {
-            page: Some(3),
-            page_size: Some(20),
-        };
-        assert_eq!(p.page_and_size(), (3, 20));
+    #[test]
+    fn sort_spec_defaults_to_recent_and_reuses_card_sorts() {
+        // Absent, and the explicit recency keys, all resolve to newest-first.
+        for sort in [None, Some("updated"), Some("recent")] {
+            assert_eq!(
+                ListParams {
+                    sort: sort.map(str::to_string),
+                    ..params(None, None)
+                }
+                .sort_spec()
+                .unwrap(),
+                (CollectionSort::Recent, SortDir::Desc)
+            );
+        }
+        // A reversed recency (oldest first).
+        assert_eq!(
+            ListParams {
+                sort: Some("updated".into()),
+                dir: Some("asc".into()),
+                ..params(None, None)
+            }
+            .sort_spec()
+            .unwrap(),
+            (CollectionSort::Recent, SortDir::Asc)
+        );
+        // Card sorts borrow the catalog field + its natural direction.
+        assert_eq!(
+            ListParams {
+                sort: Some("name".into()),
+                ..params(None, None)
+            }
+            .sort_spec()
+            .unwrap(),
+            (CollectionSort::Card(SortField::Name), SortDir::Asc)
+        );
+        assert_eq!(
+            ListParams {
+                sort: Some("price".into()),
+                ..params(None, None)
+            }
+            .sort_spec()
+            .unwrap(),
+            (CollectionSort::Card(SortField::Price), SortDir::Desc)
+        );
+    }
+
+    #[test]
+    fn sort_spec_rejects_unknown_values() {
+        assert!(matches!(
+            ListParams {
+                sort: Some("color".into()),
+                ..params(None, None)
+            }
+            .sort_spec(),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            ListParams {
+                dir: Some("sideways".into()),
+                ..params(None, None)
+            }
+            .sort_spec(),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]
@@ -884,5 +1043,145 @@ mod tests {
         assert_eq!(format_cents(5), "0.05");
         assert_eq!(format_cents(100), "1.00");
         assert_eq!(format_cents(0), "0.00");
+    }
+
+    /// A minimal `mtg` card row: only the fields the collection search/sort tests
+    /// exercise (name, type line, USD price) are meaningful; the rest are defaulted.
+    fn seed_card(id: i32, name: &str, type_line: &str, price_usd: Option<&str>) -> card::Model {
+        let ts = "2024-01-01T00:00:00Z"
+            .parse::<sea_orm::prelude::DateTimeUtc>()
+            .unwrap();
+        card::Model {
+            id,
+            game: "mtg".into(),
+            external_id: format!("ext-{id}"),
+            oracle_id: None,
+            name: name.into(),
+            set_code: "tst".into(),
+            set_name: "TST".into(),
+            collector_number: id.to_string(),
+            collector_number_int: Some(id),
+            rarity: None,
+            lang: "en".into(),
+            released_at: None,
+            mana_cost: None,
+            cmc: None,
+            type_line: Some(type_line.into()),
+            color_identity: None,
+            colors: None,
+            layout: None,
+            oracle_text: None,
+            power: None,
+            toughness: None,
+            loyalty: None,
+            image_small: None,
+            image_normal: None,
+            image_large: None,
+            image_art_crop: None,
+            image_png: None,
+            card_faces: None,
+            price_usd: price_usd.map(str::to_string),
+            price_usd_foil: None,
+            price_eur: None,
+            price_tix: None,
+            digital: false,
+            created_at: ts,
+            updated_at: ts,
+        }
+    }
+
+    /// The joined collection query scopes to the signed-in user, filters with the
+    /// shared Scryfall search over card columns, and orders by the chosen sort —
+    /// exercising the whole `collection_query` path against a real (in-memory) DB.
+    #[tokio::test]
+    async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
+        use sea_orm::{ActiveModelTrait, IntoActiveModel, prelude::DateTimeUtc};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let mtg = catalog::find("mtg").expect("mtg game");
+        let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+        // Two users; user 2 exists only to prove their holdings never leak into
+        // user 1's list (the FK on collection_items.user_id needs the rows present).
+        for uid in [1, 2] {
+            crate::entities::user::ActiveModel {
+                id: Set(uid),
+                email: Set(format!("u{uid}@example.test")),
+                password_hash: Set("x".into()),
+                display_name: Set(None),
+                created_at: Set(at("2024-01-01T00:00:00Z")),
+                updated_at: Set(at("2024-01-01T00:00:00Z")),
+            }
+            .insert(&db)
+            .await
+            .expect("insert user");
+        }
+
+        for c in [
+            seed_card(1, "Goblin Guide", "Creature — Goblin", Some("5.00")),
+            seed_card(2, "Forest", "Basic Land — Forest", Some("0.10")),
+            seed_card(3, "Goblin King", "Creature — Goblin", Some("2.00")),
+            seed_card(4, "Goblin Piker", "Creature — Goblin", Some("1.00")),
+        ] {
+            c.into_active_model().insert(&db).await.expect("insert card");
+        }
+
+        // User 1 owns cards 1..=3 (updated at increasing times so recency order is
+        // 3, 2, 1); user 2 owns card 4.
+        let hold = |id: i32, card_id: i32, user_id: i32, updated: &str| {
+            collection_item::ActiveModel {
+                id: Set(id),
+                user_id: Set(user_id),
+                game: Set("mtg".into()),
+                card_id: Set(card_id),
+                quantity: Set(1),
+                foil_quantity: Set(0),
+                created_at: Set(at("2024-01-01T00:00:00Z")),
+                updated_at: Set(at(updated)),
+            }
+        };
+        for h in [
+            hold(1, 1, 1, "2024-01-01T00:00:00Z"),
+            hold(2, 2, 1, "2024-02-01T00:00:00Z"),
+            hold(3, 3, 1, "2024-03-01T00:00:00Z"),
+            hold(4, 4, 2, "2024-04-01T00:00:00Z"),
+        ] {
+            h.insert(&db).await.expect("insert holding");
+        }
+
+        async fn names(
+            db: &sea_orm::DatabaseConnection,
+            search: Option<Condition>,
+            sort: CollectionSort,
+            dir: SortDir,
+        ) -> Vec<String> {
+            collection_query(1, "mtg", search, sort, dir)
+                .all(db)
+                .await
+                .expect("run collection query")
+                .into_iter()
+                .filter_map(|(_, card)| card.map(|c| c.name))
+                .collect()
+        }
+
+        // Default recency (updated desc): newest holding first, user 2's card absent.
+        assert_eq!(
+            names(&db, None, CollectionSort::Recent, SortDir::Desc).await,
+            ["Goblin King", "Forest", "Goblin Guide"]
+        );
+
+        // The shared Scryfall grammar runs over the joined card columns: `t:goblin`
+        // keeps only user 1's two Goblins (Forest dropped; user 2's Goblin out of scope).
+        let goblins = search_condition(mtg, "t:goblin").unwrap();
+        assert_eq!(
+            names(&db, Some(goblins), CollectionSort::Recent, SortDir::Desc).await,
+            ["Goblin King", "Goblin Guide"]
+        );
+
+        // Price sort borrows the catalog card sort verbatim: 5.00, 2.00, 0.10.
+        assert_eq!(
+            names(&db, None, CollectionSort::Card(SortField::Price), SortDir::Desc).await,
+            ["Goblin Guide", "Goblin King", "Forest"]
+        );
     }
 }

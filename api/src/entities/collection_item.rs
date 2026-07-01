@@ -34,6 +34,22 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    /// The card this holding is for (`card_id` -> `cards.id`). Lets the collection
+    /// list join `cards` (`find_also_related`) so it can be searched and sorted on
+    /// card columns, reusing the catalog's Scryfall-syntax search and card sorts.
+    #[sea_orm(
+        belongs_to = "super::card::Entity",
+        from = "Column::CardId",
+        to = "super::card::Column::Id"
+    )]
+    Card,
+}
+
+impl Related<super::card::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Card.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

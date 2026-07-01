@@ -433,8 +433,11 @@ impl ListParams {
 /// A user-facing card-list sort key. Maps to one or more `card` columns; fields
 /// that aren't lexically ordered (rarity, price) sort on a derived expression so
 /// the order is meaningful rather than alphabetical/string-wise.
+///
+/// `pub(crate)` so the authenticated collection list can reuse the exact same card
+/// sorts (see [`crate::handlers::collection`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SortField {
+pub(crate) enum SortField {
     /// Collector number (numeric run first, then the raw string) — a set
     /// listing's natural order.
     Number,
@@ -448,7 +451,7 @@ enum SortField {
 }
 
 impl SortField {
-    fn parse(value: &str) -> Result<Self, AppError> {
+    pub(crate) fn parse(value: &str) -> Result<Self, AppError> {
         Ok(match value {
             "number" | "collector" => SortField::Number,
             "name" => SortField::Name,
@@ -463,7 +466,7 @@ impl SortField {
     /// The direction to use when a caller names a field but no `dir`. Newest,
     /// priciest and rarest first read more usefully than the lexical-ascending
     /// default for those fields.
-    fn default_dir(self) -> SortDir {
+    pub(crate) fn default_dir(self) -> SortDir {
         match self {
             SortField::Number | SortField::Name | SortField::Cmc => SortDir::Asc,
             SortField::Rarity | SortField::Released | SortField::Price => SortDir::Desc,
@@ -472,13 +475,13 @@ impl SortField {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SortDir {
+pub(crate) enum SortDir {
     Asc,
     Desc,
 }
 
 impl SortDir {
-    fn parse(value: &str) -> Result<Self, AppError> {
+    pub(crate) fn parse(value: &str) -> Result<Self, AppError> {
         match value {
             "asc" => Ok(SortDir::Asc),
             "desc" => Ok(SortDir::Desc),
@@ -488,7 +491,7 @@ impl SortDir {
         }
     }
 
-    fn order(self) -> Order {
+    pub(crate) fn order(self) -> Order {
         match self {
             SortDir::Asc => Order::Asc,
             SortDir::Desc => Order::Desc,
@@ -993,12 +996,17 @@ fn build_page(rows: Vec<card::Model>, page: u64, page_size: u64, total: u64) -> 
 /// the `Number` field, where a per-set grouping is wanted instead of a single
 /// flat run. Rarity and price sort on a derived expression with unknown/missing
 /// values pushed last regardless of direction.
-fn apply_card_sort(
-    query: Select<card::Entity>,
+/// Generic over the query type so it applies to a plain card `Select` (the catalog
+/// lists) or a joined query — e.g. the collection list's `SelectTwo` of holdings +
+/// cards — reusing one card-sort implementation for both. Every ordering column is
+/// entity-qualified (or a `cards`-only bare column in the derived expressions), so
+/// it stays unambiguous under a join.
+pub(crate) fn apply_card_sort<Q: QueryOrder>(
+    query: Q,
     field: SortField,
     dir: SortDir,
     group_by_set: bool,
-) -> Select<card::Entity> {
+) -> Q {
     let mut query = if group_by_set {
         query.order_by_asc(card::Column::SetCode)
     } else {
@@ -1110,7 +1118,7 @@ fn apply_search(
     }
 }
 
-fn search_condition(game: &Game, search: &str) -> Result<Condition, AppError> {
+pub(crate) fn search_condition(game: &Game, search: &str) -> Result<Condition, AppError> {
     match game.id {
         crate::scryfall::GAME => Ok(crate::scryfall::search::parse(search)?),
         _ => Ok(Condition::all().add(name_like(search))),
