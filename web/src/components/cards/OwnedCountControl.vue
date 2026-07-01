@@ -65,7 +65,7 @@ const rows = computed(() => [
         on hover/focus (and always on touch) to keep a dense grid clean. -->
       <button
         type="button"
-        class="absolute bottom-1.5 left-1.5 z-30 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
+        class="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
         :class="
           owned
             ? ''
