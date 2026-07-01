@@ -554,12 +554,35 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
 
     #[test]
     fn deferred_filters_still_422() {
-        for q in ["cube:vintage", "otag:removal", "atag:squirrel", "prints>3", "order:cmc"] {
+        for q in ["cube:vintage", "otag:removal", "atag:squirrel", "prints>3"] {
             assert!(
                 matches!(parse(q), Err(SearchError::UnsupportedKey(_))),
                 "{q} should still be unsupported"
             );
         }
+    }
+
+    #[test]
+    fn result_shaping_directives_are_extracted() {
+        // order:/direction:/unique: are pulled out of the filter and don't 422.
+        let q = parse_query("c:r order:edhrec direction:desc unique:cards").unwrap();
+        assert_eq!(q.order, Some(SortKey::Edhrec));
+        assert_eq!(q.direction, Some(Direction::Desc));
+        assert_eq!(q.unique, Some(UniqueMode::Cards));
+        // The remaining filter still applies.
+        let rendered = Query::select()
+            .expr(Expr::val(1))
+            .from(Alias::new("cards"))
+            .cond_where(q.condition)
+            .to_string(SqliteQueryBuilder);
+        assert!(rendered.contains("colors"), "{rendered}");
+        // Last-one-wins on duplicates.
+        assert_eq!(parse_query("order:name order:cmc").unwrap().order, Some(SortKey::Cmc));
+        // A negated directive is rejected; an unknown value 422s.
+        assert!(matches!(parse_query("-order:cmc"), Err(SearchError::InvalidValue { .. })));
+        assert!(matches!(parse_query("order:bogus"), Err(SearchError::InvalidValue { .. })));
+        // parse() (condition-only) simply drops the directives without erroring.
+        assert!(parse("order:cmc").is_ok());
     }
 
     /// Run the new column-backed filters against a real in-memory SQLite so

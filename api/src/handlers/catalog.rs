@@ -26,7 +26,7 @@ use crate::entities::prelude::{Card, CardPriceHistory, CardSet, IngestState};
 use crate::entities::{card, card_price_history, card_set, ingest_state};
 use crate::error::AppError;
 use crate::scryfall::model::StoredFace;
-use crate::scryfall::search::escape_like;
+use crate::scryfall::search::{UniqueMode, escape_like};
 use crate::state::AppState;
 
 const DEFAULT_PAGE_SIZE: u64 = 60;
@@ -413,18 +413,23 @@ impl ListParams {
         self.q.as_deref().map(str::trim).filter(|q| !q.is_empty())
     }
 
-    /// Resolve the `sort`/`dir` params into a validated `(field, direction)`,
-    /// falling back to `default` (and the field's natural direction) when a value
-    /// is absent. An unrecognised value is a 422 — consistent with a malformed `q`
-    /// — rather than being silently ignored.
-    fn sort_spec(&self, default: SortField) -> Result<(SortField, SortDir), AppError> {
+    /// Resolve the `(field, direction)` sort from the URL `sort`/`dir` params, an
+    /// in-query `order:` / `direction:` directive, and the endpoint default, in that
+    /// precedence order (URL param > in-query directive > default). An unrecognised
+    /// value is a 422, consistent with a malformed `q` rather than silently ignored.
+    fn sort_spec_with(
+        &self,
+        default: SortField,
+        q_order: Option<SortField>,
+        q_dir: Option<SortDir>,
+    ) -> Result<(SortField, SortDir), AppError> {
         let field = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            None => default,
             Some(value) => SortField::parse(value)?,
+            None => q_order.unwrap_or(default),
         };
         let dir = match self.dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            None => field.default_dir(),
             Some(value) => SortDir::parse(value)?,
+            None => q_dir.unwrap_or(field.default_dir()),
         };
         Ok((field, dir))
     }
@@ -448,6 +453,19 @@ pub(crate) enum SortField {
     Cmc,
     /// USD market price.
     Price,
+    /// Set code (then collector number).
+    Set,
+    /// Colour-count rank (colourless, mono, multi).
+    Color,
+    Power,
+    Toughness,
+    /// EDHREC popularity rank (ascending = most popular).
+    Edhrec,
+    /// EUR market price.
+    Eur,
+    /// MTGO ticket price.
+    Tix,
+    Artist,
 }
 
 impl SortField {
@@ -459,6 +477,14 @@ impl SortField {
             "released" | "date" => SortField::Released,
             "cmc" | "mv" => SortField::Cmc,
             "price" | "usd" => SortField::Price,
+            "set" => SortField::Set,
+            "color" | "colors" => SortField::Color,
+            "power" | "pow" => SortField::Power,
+            "toughness" | "tou" => SortField::Toughness,
+            "edhrec" => SortField::Edhrec,
+            "eur" => SortField::Eur,
+            "tix" => SortField::Tix,
+            "artist" => SortField::Artist,
             other => return Err(AppError::Validation(format!("unknown sort '{other}'"))),
         })
     }
@@ -468,8 +494,21 @@ impl SortField {
     /// default for those fields.
     pub(crate) fn default_dir(self) -> SortDir {
         match self {
-            SortField::Number | SortField::Name | SortField::Cmc => SortDir::Asc,
-            SortField::Rarity | SortField::Released | SortField::Price => SortDir::Desc,
+            SortField::Number
+            | SortField::Name
+            | SortField::Cmc
+            | SortField::Set
+            | SortField::Color
+            | SortField::Power
+            | SortField::Toughness
+            | SortField::Artist
+            // Ascending EDHREC rank = most popular first.
+            | SortField::Edhrec => SortDir::Asc,
+            SortField::Rarity
+            | SortField::Released
+            | SortField::Price
+            | SortField::Eur
+            | SortField::Tix => SortDir::Desc,
         }
     }
 }
@@ -495,6 +534,37 @@ impl SortDir {
         match self {
             SortDir::Asc => Order::Asc,
             SortDir::Desc => Order::Desc,
+        }
+    }
+}
+
+impl From<crate::scryfall::search::SortKey> for SortField {
+    fn from(key: crate::scryfall::search::SortKey) -> Self {
+        use crate::scryfall::search::SortKey;
+        match key {
+            SortKey::Name => SortField::Name,
+            SortKey::Set => SortField::Set,
+            SortKey::Released => SortField::Released,
+            SortKey::Rarity => SortField::Rarity,
+            SortKey::Color => SortField::Color,
+            SortKey::Cmc => SortField::Cmc,
+            SortKey::Power => SortField::Power,
+            SortKey::Toughness => SortField::Toughness,
+            SortKey::Usd => SortField::Price,
+            SortKey::Eur => SortField::Eur,
+            SortKey::Tix => SortField::Tix,
+            SortKey::Edhrec => SortField::Edhrec,
+            SortKey::Artist => SortField::Artist,
+            SortKey::Number => SortField::Number,
+        }
+    }
+}
+
+impl From<crate::scryfall::search::Direction> for SortDir {
+    fn from(dir: crate::scryfall::search::Direction) -> Self {
+        match dir {
+            crate::scryfall::search::Direction::Asc => SortDir::Asc,
+            crate::scryfall::search::Direction::Desc => SortDir::Desc,
         }
     }
 }
@@ -637,14 +707,15 @@ pub async fn list_set_cards(
     } else {
         query.filter(card::Column::SetCode.eq(set.code.as_str()))
     };
-    query = apply_search(query, game_meta, &params)?;
+    let (query, shape) = apply_search(query, game_meta, &params)?;
 
-    let (sort, dir) = params.sort_spec(SortField::Number)?;
+    let (sort, dir) = params.sort_spec_with(SortField::Number, shape.order, shape.direction)?;
     // For the default collector-number order, the related-sets view keeps each
     // set's cards contiguous (set code first, which spans whole sets unlike the
     // per-card released_at). Any other sort spans the whole group by the chosen
     // field instead — grouping by set there would fight the sort.
     let group_by_set = include_related && sort == SortField::Number;
+    let query = apply_unique(query, shape.unique);
     let paginator = apply_card_sort(query, sort, dir, group_by_set).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
@@ -676,10 +747,10 @@ pub async fn list_set_drops(
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete
     // regardless of where the page boundary falls.
-    let mut query = Card::find()
+    let query = Card::find()
         .filter(card::Column::Game.eq(game.as_str()))
         .filter(card::Column::SetCode.eq(set.code.as_str()));
-    query = apply_search(query, game_meta, &params)?;
+    let (query, _shape) = apply_search(query, game_meta, &params)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false)
         .all(&state.db)
         .await?;
@@ -712,9 +783,10 @@ pub async fn list_cards(
     let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
-    query = apply_search(query, game_meta, &params)?;
-    let (sort, dir) = params.sort_spec(SortField::Name)?;
+    let query = Card::find().filter(card::Column::Game.eq(game.as_str()));
+    let (query, shape) = apply_search(query, game_meta, &params)?;
+    let (sort, dir) = params.sort_spec_with(SortField::Name, shape.order, shape.direction)?;
+    let query = apply_unique(query, shape.unique);
     let paginator = apply_card_sort(query, sort, dir, false).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
@@ -1060,6 +1132,30 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
                 NullOrdering::Last,
             )
             .order_by_asc(card::Column::Name),
+        SortField::Set => query
+            .order_by(card::Column::SetCode, dir.order())
+            .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last),
+        SortField::Color => query
+            .order_by_with_nulls(color_rank_expr(), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Power => query
+            .order_by_with_nulls(numeric_col_expr("power"), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Toughness => query
+            .order_by_with_nulls(numeric_col_expr("toughness"), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Edhrec => query
+            .order_by_with_nulls(card::Column::EdhrecRank, dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Eur => query
+            .order_by_with_nulls(price_real_expr(&["price_eur"]), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Tix => query
+            .order_by_with_nulls(price_real_expr(&["price_tix"]), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Artist => query
+            .order_by_with_nulls(card::Column::Artist, dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
     };
     query.order_by_asc(card::Column::Id)
 }
@@ -1102,6 +1198,25 @@ fn price_real_expr(cols: &[&str]) -> SimpleExpr {
     Expr::cust(expr)
 }
 
+/// Colour-count rank for `order:color`: colourless (0) first, then mono, then
+/// multicoloured. `colors` is a cards-only column, so it's unambiguous under a join.
+fn color_rank_expr() -> SimpleExpr {
+    Expr::cust(
+        "CASE WHEN colors IS NULL OR colors = '' THEN 0 \
+         ELSE LENGTH(colors) - LENGTH(REPLACE(colors, ',', '')) + 1 END",
+    )
+}
+
+/// Numeric value of a power/toughness-style text column for sorting, or NULL when
+/// non-numeric (so `NULLS LAST` parks `*`/`X`/absent values at the end). `col` is a
+/// fixed, cards-only column name — never user input.
+fn numeric_col_expr(col: &str) -> SimpleExpr {
+    Expr::cust(format!(
+        "CASE WHEN {col} GLOB '[0-9]*' AND {col} NOT GLOB '*[^0-9]*' \
+         THEN CAST({col} AS REAL) ELSE NULL END"
+    ))
+}
+
 fn stored_faces(card: &card::Model) -> Vec<StoredFace> {
     card.card_faces
         .as_deref()
@@ -1126,14 +1241,60 @@ fn split_csv(value: Option<String>) -> Vec<String> {
 /// Scryfall query becomes an `AppError::Validation` (HTTP 422).
 /// Apply the optional `q` search filter to a card query. A blank/absent `q` leaves
 /// the query unchanged; a malformed query surfaces as a 422 via [`search_condition`].
+/// The result-shaping directives a `q` may carry (`order:`/`direction:`/`unique:`),
+/// resolved into the catalog's own sort/unique types.
+#[derive(Default)]
+struct SearchShape {
+    order: Option<SortField>,
+    direction: Option<SortDir>,
+    unique: Option<crate::scryfall::search::UniqueMode>,
+}
+
 fn apply_search(
     query: Select<card::Entity>,
     game: &Game,
     params: &ListParams,
-) -> Result<Select<card::Entity>, AppError> {
+) -> Result<(Select<card::Entity>, SearchShape), AppError> {
     match params.search() {
-        Some(search) => Ok(query.filter(search_condition(game, search)?)),
-        None => Ok(query),
+        Some(search) => {
+            let (condition, shape) = parse_search(game, search)?;
+            Ok((query.filter(condition), shape))
+        }
+        None => Ok((query, SearchShape::default())),
+    }
+}
+
+/// Parse an MTG `q` into its row condition plus result-shaping directives; other
+/// games fall back to a plain name substring with no directives.
+fn parse_search(game: &Game, search: &str) -> Result<(Condition, SearchShape), AppError> {
+    match game.id {
+        crate::scryfall::GAME => {
+            let q = crate::scryfall::search::parse_query(search)?;
+            Ok((
+                q.condition,
+                SearchShape {
+                    order: q.order.map(SortField::from),
+                    direction: q.direction.map(SortDir::from),
+                    unique: q.unique,
+                },
+            ))
+        }
+        _ => Ok((Condition::all().add(name_like(search)), SearchShape::default())),
+    }
+}
+
+/// Apply a `unique:` de-duplication mode by grouping on a null-safe key (`'#'||id`
+/// keeps NULL-key rows distinct so they don't collapse together). `prints`/absent
+/// leaves the per-printing rows untouched.
+fn apply_unique(query: Select<card::Entity>, unique: Option<UniqueMode>) -> Select<card::Entity> {
+    match unique {
+        Some(UniqueMode::Cards) => {
+            query.group_by(Expr::cust("COALESCE(cards.oracle_id, '#' || cards.id)"))
+        }
+        Some(UniqueMode::Art) => {
+            query.group_by(Expr::cust("COALESCE(cards.illustration_id, '#' || cards.id)"))
+        }
+        _ => query,
     }
 }
 
@@ -1374,16 +1535,16 @@ mod tests {
     #[test]
     fn sort_spec_uses_endpoint_default_when_absent() {
         assert_eq!(
-            params(None, None).sort_spec(SortField::Number).unwrap(),
+            params(None, None).sort_spec_with(SortField::Number, None, None).unwrap(),
             (SortField::Number, SortDir::Asc),
         );
         assert_eq!(
-            params(None, None).sort_spec(SortField::Name).unwrap(),
+            params(None, None).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Name, SortDir::Asc),
         );
         // Blank values are treated as absent (fall back to the default).
         assert_eq!(
-            params(Some("  "), Some("")).sort_spec(SortField::Name).unwrap(),
+            params(Some("  "), Some("")).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Name, SortDir::Asc),
         );
     }
@@ -1392,24 +1553,24 @@ mod tests {
     fn sort_spec_field_picks_natural_direction() {
         // A field with no explicit dir defaults to its natural direction.
         assert_eq!(
-            params(Some("price"), None).sort_spec(SortField::Name).unwrap(),
+            params(Some("price"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Price, SortDir::Desc),
         );
         assert_eq!(
-            params(Some("released"), None).sort_spec(SortField::Name).unwrap(),
+            params(Some("released"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Released, SortDir::Desc),
         );
         assert_eq!(
-            params(Some("cmc"), None).sort_spec(SortField::Name).unwrap(),
+            params(Some("cmc"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Cmc, SortDir::Asc),
         );
         // An explicit dir overrides the natural one; aliases resolve.
         assert_eq!(
-            params(Some("collector"), Some("desc")).sort_spec(SortField::Name).unwrap(),
+            params(Some("collector"), Some("desc")).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Number, SortDir::Desc),
         );
         assert_eq!(
-            params(Some("mv"), Some("asc")).sort_spec(SortField::Name).unwrap(),
+            params(Some("mv"), Some("asc")).sort_spec_with(SortField::Name, None, None).unwrap(),
             (SortField::Cmc, SortDir::Asc),
         );
     }
@@ -1417,13 +1578,83 @@ mod tests {
     #[test]
     fn sort_spec_rejects_unknown_values() {
         assert!(matches!(
-            params(Some("color"), None).sort_spec(SortField::Name),
+            params(Some("nonsense"), None).sort_spec_with(SortField::Name, None, None),
             Err(AppError::Validation(_)),
         ));
         assert!(matches!(
-            params(None, Some("sideways")).sort_spec(SortField::Name),
+            params(None, Some("sideways")).sort_spec_with(SortField::Name, None, None),
             Err(AppError::Validation(_)),
         ));
+    }
+
+    #[test]
+    fn sort_spec_precedence_url_over_directive_over_default() {
+        // An in-query order:/direction: directive fills the gap when the URL params
+        // are absent.
+        assert_eq!(
+            params(None, None)
+                .sort_spec_with(SortField::Name, Some(SortField::Edhrec), Some(SortDir::Desc))
+                .unwrap(),
+            (SortField::Edhrec, SortDir::Desc),
+        );
+        // An explicit URL sort wins over the in-query directive.
+        assert_eq!(
+            params(Some("cmc"), None)
+                .sort_spec_with(SortField::Name, Some(SortField::Edhrec), None)
+                .unwrap(),
+            (SortField::Cmc, SortDir::Asc),
+        );
+    }
+
+    /// `unique:cards` groups by `oracle_id`, so the paginator counts distinct cards
+    /// (not printings) and a page holds one row per group — proving SeaORM's
+    /// `num_items()` counts groups over a grouped query.
+    #[tokio::test]
+    async fn unique_cards_groups_by_oracle_id() {
+        use crate::entities::card;
+        use crate::entities::prelude::Card;
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        // Two printings share oracle o1; one is o2; one has no oracle id.
+        for (i, (name, oracle)) in [
+            ("A1", Some("o1")),
+            ("A2", Some("o1")),
+            ("B", Some("o2")),
+            ("C", None),
+        ]
+        .iter()
+        .enumerate()
+        {
+            card::ActiveModel {
+                game: Set("mtg".into()),
+                external_id: Set(format!("ext-{i}")),
+                name: Set((*name).into()),
+                set_code: Set("tst".into()),
+                set_name: Set("TST".into()),
+                collector_number: Set(i.to_string()),
+                lang: Set("en".into()),
+                oracle_id: Set(oracle.map(str::to_owned)),
+                digital: Set(false),
+                created_at: Set(ts),
+                updated_at: Set(ts),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        let base = || Card::find().filter(card::Column::Game.eq("mtg"));
+        assert_eq!(base().all(&db).await.unwrap().len(), 4, "4 printings total");
+        // unique:cards collapses the two o1 printings; the null-oracle card stays
+        // distinct (grouped on '#'||id). So o1 + o2 + C = 3.
+        let grouped = apply_unique(base(), Some(UniqueMode::Cards));
+        let paginator =
+            apply_card_sort(grouped, SortField::Name, SortDir::Asc, false).paginate(&db, 60);
+        assert_eq!(paginator.num_items().await.unwrap(), 3, "distinct cards");
+        assert_eq!(paginator.fetch_page(0).await.unwrap().len(), 3, "one row per group");
     }
 
     /// A minimal, insertable card row whose only meaningful fields for the sort

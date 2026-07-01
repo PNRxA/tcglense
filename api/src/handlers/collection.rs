@@ -1464,7 +1464,7 @@ mod tests {
     fn sort_spec_rejects_unknown_values() {
         assert!(matches!(
             ListParams {
-                sort: Some("color".into()),
+                sort: Some("nonsense".into()),
                 ..params(None, None)
             }
             .sort_spec(),
