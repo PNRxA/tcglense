@@ -59,12 +59,13 @@ const rows = computed(() => [
   <Popover v-model:open="open">
     <PopoverTrigger as-child>
       <!-- Sibling of CardTile's stretched nav link (not nested inside it), so clicking it
-        opens the popover instead of navigating; `.stop` is belt-and-braces. On a card
-        you already own the count chip is always shown; on an unowned card the "+" is
-        revealed on hover/focus (and always on touch) to keep a dense grid clean. -->
+        opens the popover instead of navigating; `.stop` is belt-and-braces. Anchored
+        bottom-left to match the owned-count badge placement (issue #100). On a card you
+        already own the count chip is always shown; on an unowned card the "+" is revealed
+        on hover/focus (and always on touch) to keep a dense grid clean. -->
       <button
         type="button"
-        class="absolute top-1.5 right-1.5 z-30 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
+        class="absolute bottom-1.5 left-1.5 z-30 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
         :class="
           owned
             ? ''
@@ -90,7 +91,9 @@ const rows = computed(() => [
       </button>
     </PopoverTrigger>
 
-    <PopoverContent align="end" :side-offset="6" class="w-56 p-3">
+    <!-- Opens above the bottom-left trigger (over the card art) so it doesn't cover the
+      name/price below; reka flips it if there isn't room above. -->
+    <PopoverContent side="top" align="start" :side-offset="6" class="w-56 p-3">
       <div class="mb-3 flex items-center justify-between gap-2">
         <p class="truncate text-sm font-medium" :title="name">{{ name }}</p>
         <span
