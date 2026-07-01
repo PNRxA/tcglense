@@ -172,9 +172,11 @@ test.describe('security: browser session', () => {
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('button', { name: /account menu/i })).toBeVisible()
 
-    // Sign out, then a protected route bounces to login.
+    // Sign out, then a protected route bounces to login. The account menu is a
+    // reka NavigationMenu (matching the Cards/Collection nav), so "Sign out" is a
+    // plain button inside the popover, not a dropdown `menuitem`.
     await page.getByRole('button', { name: /account menu/i }).click()
-    const signOut = page.getByRole('menuitem', { name: /sign out/i })
+    const signOut = page.getByRole('button', { name: /sign out/i })
     await expect(signOut).toBeVisible()
     await signOut.click()
     await expect(page).toHaveURL(/\/$/)
