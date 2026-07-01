@@ -20,6 +20,13 @@ export const SITE_DESCRIPTION =
   'Track trading-card prices over time, catalogue your collection, and follow your ' +
   'set-completion progress across games.'
 
+/** Site-wide default social/link-preview banner (`web/public/og-image.png`, 1200×630),
+ * used as the `og:image` / `twitter:image` for any page that doesn't set its own — so
+ * every share gets a branded `summary_large_image` card, not the tiny textless one.
+ * Card pages override it with the card art. Regenerate via `web/scripts/gen-og-image.mjs`;
+ * a matching absolute baseline copy lives in `index.html` for non-JS unfurlers. */
+export const DEFAULT_OG_IMAGE = '/og-image.png'
+
 export interface PageMetaOptions {
   /** Page title, without the site suffix (which is appended automatically). */
   title?: MaybeRefOrGetter<string | null | undefined>
@@ -122,7 +129,9 @@ export function usePageMeta(options: PageMetaOptions = {}): void {
     const title = toValue(options.title) || undefined
     const description = toValue(options.description) || SITE_DESCRIPTION
     const canonical = absoluteUrl(toValue(options.canonicalPath))
-    const image = absoluteUrl(toValue(options.image))
+    // Fall back to the branded default banner so every page has a large preview image
+    // (card pages pass their own art, which wins).
+    const image = absoluteUrl(toValue(options.image)) || absoluteUrl(DEFAULT_OG_IMAGE)
     const ogType = toValue(options.type) || 'website'
     const noindex = toValue(options.noindex) ?? false
     const jsonLd = toValue(options.jsonLd) ?? undefined
@@ -148,12 +157,14 @@ export function usePageMeta(options: PageMetaOptions = {}): void {
     upsertJsonLd(jsonLd)
   })
 
-  // On unmount, drop the tags that are page-specific rather than site-wide, so a
-  // subsequent view that doesn't set them can't inherit a stale preview/structured
-  // record. The always-present baseline tags are overwritten by the next view.
+  // On unmount, reset the preview image back to the site-wide default banner (a card
+  // view overrides og:image/twitter:image with its art) and drop the page-specific
+  // JSON-LD, so a subsequent view that doesn't set its own can't inherit a stale card
+  // image. The always-present baseline tags are overwritten by the next view.
   onScopeDispose(() => {
-    upsertMeta('property', 'og:image', undefined)
-    upsertMeta('name', 'twitter:image', undefined)
+    const fallback = absoluteUrl(DEFAULT_OG_IMAGE)
+    upsertMeta('property', 'og:image', fallback)
+    upsertMeta('name', 'twitter:image', fallback)
     upsertJsonLd(null)
   })
 }
