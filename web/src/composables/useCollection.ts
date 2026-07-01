@@ -4,6 +4,7 @@ import {
   deleteCollectionSource,
   getCollection,
   getCollectionEntry,
+  getCollectionOwned,
   getCollectionSource,
   getCollectionSummary,
   getImportJob,
@@ -12,12 +13,14 @@ import {
   setCollectionEntry,
   syncCollectionSource,
   type ApiError,
+  type Card,
   type CollectionPage,
   type CollectionProvider,
   type CollectionQuantities,
   type CollectionSource,
   type CollectionSummary,
   type ImportJob,
+  type OwnedCountsMap,
   type ReconcileMode,
 } from '@/lib/api'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
@@ -29,6 +32,8 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
   qc.invalidateQueries({ queryKey: ['collection', game] })
   qc.invalidateQueries({ queryKey: ['collection-summary', game] })
   qc.invalidateQueries({ queryKey: ['collection-entry', game] })
+  // Refresh the browse-grid owned-count badges too (an import can change ownership broadly).
+  qc.invalidateQueries({ queryKey: ['collection-owned', game] })
 }
 
 /**
@@ -89,6 +94,30 @@ export function useCollectionEntryQuery(game: Ref<string>, id: Ref<string>) {
   return useAuthedQuery<CollectionQuantities>(options)
 }
 
+/**
+ * Owned counts for the cards currently being browsed, keyed by external card id (only
+ * owned cards are present) — the data behind the collection badges overlaid on the
+ * public browse grids (issue #85). Disabled while signed out (badges are a signed-in
+ * feature) and when there are no cards to look up; the query key carries the id set so
+ * a new page refetches while an identical set dedupes. Returns an empty map while
+ * signed out so badges clear immediately on logout regardless of any lingering cache.
+ */
+export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
+  const auth = useAuthStore()
+  const cardIds = computed(() => cards.value.map((card) => card.id))
+  // A stable, order-independent key: two renders of the same page hit the same cache.
+  const idsKey = computed(() => [...cardIds.value].sort().join(','))
+  const options = {
+    queryKey: ['collection-owned', game, idsKey],
+    queryFn: (token: string) => getCollectionOwned(token, game.value, cardIds.value),
+    enabled: computed(() => auth.isAuthenticated && cardIds.value.length > 0),
+    // Keep the previous page's badges up while the next page's counts load.
+    placeholderData: keepPreviousData,
+  }
+  const query = useAuthedQuery<OwnedCountsMap>(options)
+  return computed<OwnedCountsMap>(() => (auth.isAuthenticated ? (query.data.value ?? {}) : {}))
+}
+
 /** Variables for a collection write: which card, and the desired absolute counts. */
 export interface SetCollectionVars {
   game: string
@@ -121,6 +150,8 @@ export function useSetCollectionEntryMutation() {
       qc.invalidateQueries({ queryKey: ['collection', vars.game] })
       qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
       qc.invalidateQueries({ queryKey: ['collection-entry', vars.game, vars.id] })
+      // Refresh the browse-grid badges so an edit shows next time a grid is viewed.
+      qc.invalidateQueries({ queryKey: ['collection-owned', vars.game] })
     },
   }
   return useAuthedMutation<CollectionQuantities, SetCollectionVars>(options)

@@ -12,6 +12,7 @@ import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
+import { useOwnedCounts } from '@/composables/useCollection'
 import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
 import { listCards } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
@@ -50,6 +51,8 @@ const cardsQuery = useQuery({
 
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
+// Owned-count badges for signed-in users, overlaid on the grid below.
+const ownership = useOwnedCounts(game, cards)
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
 
@@ -96,7 +99,7 @@ useClampPage(page, () => ({
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
       </div>
-      <CardGrid :game="game" :cards="cards" />
+      <CardGrid :game="game" :cards="cards" :ownership="ownership" />
       <div class="mt-10">
         <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
       </div>

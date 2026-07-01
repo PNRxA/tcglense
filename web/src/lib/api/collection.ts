@@ -21,6 +21,9 @@ export interface CollectionEntry {
   foil_quantity: number
 }
 
+/** Owned counts for a batch of cards, keyed by external card id (owned cards only). */
+export type OwnedCountsMap = Record<string, CollectionQuantities>
+
 /** A page of collection entries plus pagination cursors. */
 export interface CollectionPage {
   data: CollectionEntry[]
@@ -73,6 +76,40 @@ export function getCollectionSummary(token: string, game: string): Promise<Colle
   return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary`, {
     token,
   })
+}
+
+/**
+ * Max ids per `.../owned` request. Kept safely under the server's 500-id cap so we can
+ * split an arbitrarily large page (e.g. a drop-grouped set whose by-drop page flattens
+ * to a big trailing "Other" group) into batches rather than tripping the cap — which
+ * would 422 and silently drop every badge on the page.
+ */
+const OWNED_BATCH_SIZE = 400
+
+/**
+ * Owned counts for the given card ids that the user owns, keyed by external id (cards
+ * they don't own are simply absent). Sent as a POST rather than a GET query so a big
+ * browse page's id list can't blow the request-line length behind a proxy, and split
+ * into batches under the server's id cap so any page size works; the batch maps are
+ * merged (batches are disjoint slices, so there's nothing to reconcile).
+ */
+export async function getCollectionOwned(
+  token: string,
+  game: string,
+  ids: string[],
+): Promise<OwnedCountsMap> {
+  if (ids.length === 0) return {}
+  const path = `/api/collection/${encodeURIComponent(game)}/owned`
+  const batches: string[][] = []
+  for (let i = 0; i < ids.length; i += OWNED_BATCH_SIZE) {
+    batches.push(ids.slice(i, i + OWNED_BATCH_SIZE))
+  }
+  const responses = await Promise.all(
+    batches.map((batch) =>
+      request<{ data: OwnedCountsMap }>(path, { method: 'POST', body: { ids: batch }, token }),
+    ),
+  )
+  return Object.assign({}, ...responses.map((response) => response.data))
 }
 
 /** How many copies of one card the user owns (zeros when not in the collection). */

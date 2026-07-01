@@ -21,7 +21,7 @@ use crate::{
         collection::{
             collection_summary, delete_collection_source, get_collection_entry,
             get_collection_source, get_import_job, import_collection, list_collection,
-            save_collection_source, set_collection_entry, sync_collection_source,
+            owned_counts, save_collection_source, set_collection_entry, sync_collection_source,
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
@@ -67,6 +67,9 @@ pub fn build_router(state: AppState) -> Router {
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))
         .route("/api/collection/{game}/summary", get(collection_summary))
+        // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
+        // counts out). POST so a big page's id list can't blow the URL length.
+        .route("/api/collection/{game}/owned", post(owned_counts))
         // Import / sync a collection from an external provider (Archidekt; Moxfield
         // planned): a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))

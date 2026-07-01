@@ -13,9 +13,10 @@ import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { useClampPage } from '@/composables/useClampPage'
+import { useOwnedCounts } from '@/composables/useCollection'
 import { useSetGrouping } from '@/composables/useSetGrouping'
 import { SET_DEFAULT_SORT, SET_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
-import { getSet, listSetCards, listSetDrops } from '@/lib/api'
+import { getSet, listSetCards, listSetDrops, type Card } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 
@@ -113,6 +114,14 @@ const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
 const dropGroups = computed(() => dropsQuery.data.value?.data ?? [])
 const dropTotal = computed(() => dropsQuery.data.value?.total ?? 0)
+
+// Every card visible on the current page — the flat grid's cards, or all the drops'
+// cards in the by-drop view — so a single owned-counts lookup drives the collection
+// badges on whichever grid(s) render below.
+const visibleCards = computed<Card[]>(() =>
+  byDrop.value ? dropGroups.value.flatMap((drop) => drop.cards) : cards.value,
+)
+const ownership = useOwnedCounts(game, visibleCards)
 
 // The list's loading / error / empty state reads from whichever query drives the
 // current view. cardsQuery waits on the set list, so an as-yet-undecided drop set
@@ -285,7 +294,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
                 {{ drop.card_count }} {{ drop.card_count === 1 ? 'card' : 'cards' }}
               </span>
             </div>
-            <CardGrid :game="game" :cards="drop.cards" />
+            <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
           </section>
           <div class="mt-10">
             <CardPagination v-model:page="page" :page-size="DROP_PAGE_SIZE" :total="dropTotal" />
@@ -294,7 +303,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
 
         <!-- Flat: the whole set as one collector-ordered grid. -->
         <template v-else>
-          <CardGrid :game="game" :cards="cards" />
+          <CardGrid :game="game" :cards="cards" :ownership="ownership" />
           <div class="mt-10">
             <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
           </div>
