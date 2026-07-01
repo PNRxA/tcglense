@@ -1,4 +1,4 @@
-import type { Card } from './catalog'
+import type { Card, CardSet } from './catalog'
 import { request } from './client'
 
 // ---------- Collections (per-user, authenticated) ----------
@@ -43,6 +43,18 @@ export interface CollectionSummary {
   total_value_usd: string | null
 }
 
+/**
+ * One set a user owns cards in, for the collection's per-set landing. Carries the same
+ * catalog set metadata a `SetTile` needs (so the tile can be reused) plus how much of
+ * the set the user owns.
+ */
+export interface CollectionSet extends CardSet {
+  /** Distinct cards owned in this set. */
+  owned_cards: number
+  /** Total copies owned (regular + foil) in this set. */
+  owned_copies: number
+}
+
 export interface CollectionListParams {
   page?: number
   pageSize?: number
@@ -51,6 +63,8 @@ export interface CollectionListParams {
   /** Sort key (`updated`/`name`/`rarity`/`released`/`cmc`/`price`). */
   sort?: string
   dir?: 'asc' | 'desc'
+  /** Set-code scope: only cards from this set, ANDed with `q`. Absent = every set. */
+  set?: string
 }
 
 /** Relative `/api/collection/...` path for a user's collection in a game. */
@@ -61,6 +75,7 @@ export function collectionPath(game: string, params: CollectionListParams = {}):
   if (params.q) search.set('q', params.q)
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)
+  if (params.set) search.set('set', params.set)
   const qs = search.toString()
   return `/api/collection/${encodeURIComponent(game)}${qs ? `?${qs}` : ''}`
 }
@@ -79,9 +94,22 @@ export function getCollection(
   return request<CollectionPage>(collectionPath(game, params), { token })
 }
 
-/** Aggregate stats (unique cards, total copies, estimated value) for the collection. */
-export function getCollectionSummary(token: string, game: string): Promise<CollectionSummary> {
-  return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary`, {
+/** Aggregate stats (unique cards, total copies, estimated value) for the collection,
+ * optionally scoped to a single set (the per-set collection view). */
+export function getCollectionSummary(
+  token: string,
+  game: string,
+  set?: string,
+): Promise<CollectionSummary> {
+  const qs = set ? `?set=${encodeURIComponent(set)}` : ''
+  return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary${qs}`, {
+    token,
+  })
+}
+
+/** The sets the user owns cards in, newest set first — the per-set collection landing. */
+export function getCollectionSets(token: string, game: string): Promise<{ data: CollectionSet[] }> {
+  return request<{ data: CollectionSet[] }>(`/api/collection/${encodeURIComponent(game)}/sets`, {
     token,
   })
 }

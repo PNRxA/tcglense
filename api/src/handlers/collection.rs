@@ -30,8 +30,8 @@ use crate::auth::extractor::AuthUser;
 use crate::catalog::{self, Game};
 use crate::collection_import::jobs::{self, JobStatus};
 use crate::collection_import::{self, ImportSummary, Provider, ReconcileMode};
-use crate::entities::prelude::{Card, CollectionItem, CollectionSource};
-use crate::entities::{card, collection_item, collection_source};
+use crate::entities::prelude::{Card, CardSet, CollectionItem, CollectionSource};
+use crate::entities::{card, card_set, collection_item, collection_source};
 use crate::error::AppError;
 use crate::extract::JsonBody;
 use crate::handlers::catalog::{CardResponse, SortDir, SortField, apply_card_sort, search_condition};
@@ -90,6 +90,31 @@ pub struct CollectionSummary {
     pub total_value_usd: Option<String>,
 }
 
+/// One set the user owns cards in, for the collection's per-set landing. Carries the
+/// same catalog set metadata a set tile needs (so the SPA can reuse `SetTile`) plus how
+/// much of it the user owns.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct CollectionSet {
+    pub code: String,
+    pub name: String,
+    pub set_type: Option<String>,
+    pub released_at: Option<String>,
+    pub card_count: i32,
+    pub icon_svg_uri: Option<String>,
+    pub parent_set_code: Option<String>,
+    pub has_drops: bool,
+    /// Distinct cards owned in this set.
+    pub owned_cards: i64,
+    /// Total copies owned (regular + foil) in this set.
+    pub owned_copies: i64,
+}
+
+/// The sets a user owns cards in, newest set first.
+#[derive(Debug, Serialize)]
+pub struct CollectionSetsResponse {
+    pub data: Vec<CollectionSet>,
+}
+
 /// A page of results plus the cursor metadata the SPA paginates with (mirrors the
 /// catalog's page shape, kept local so the two modules stay decoupled).
 #[derive(Debug, Serialize)]
@@ -127,6 +152,19 @@ pub struct ListParams {
     /// unknown value is a 422.
     #[serde(default)]
     pub dir: Option<String>,
+    /// Optional set-code scope: when present, only cards from that set are returned,
+    /// ANDed with any `q`. Powers the per-set collection view. Absent/blank = every set.
+    #[serde(default)]
+    pub set: Option<String>,
+}
+
+/// Query params for the (optionally set-scoped) collection summary.
+#[derive(Debug, Deserialize)]
+pub struct SummaryParams {
+    /// Optional set-code scope — the summary is computed over just that set's owned
+    /// cards. Absent/blank = the whole collection.
+    #[serde(default)]
+    pub set: Option<String>,
 }
 
 /// How the collection list is ordered: either the collection-specific recency order
@@ -162,6 +200,11 @@ impl ListParams {
     /// The trimmed search query, or `None` when it's absent or blank.
     fn search(&self) -> Option<&str> {
         self.q.as_deref().map(str::trim).filter(|q| !q.is_empty())
+    }
+
+    /// The trimmed set-code scope, or `None` when it's absent or blank.
+    fn set(&self) -> Option<&str> {
+        self.set.as_deref().map(str::trim).filter(|s| !s.is_empty())
     }
 
     /// Resolve the `sort`/`dir` params into a validated `(sort, direction)`,
@@ -206,8 +249,8 @@ pub async fn list_collection(
         .map(|s| search_condition(game_meta, s))
         .transpose()?;
 
-    let paginator =
-        collection_query(user.id, &game, search, sort, dir).paginate(&state.db, page_size);
+    let paginator = collection_query(user.id, &game, params.set(), search, sort, dir)
+        .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
 
@@ -233,13 +276,14 @@ pub async fn list_collection(
 /// condition, and order by the chosen sort. Kept separate from the handler so the
 /// join/filter/sort can be unit-tested against a seeded DB without an `AppState`.
 ///
-/// The search condition and the card sort touch only `cards` columns; the `user_id`
-/// and `game` filters and the recency sort stay entity-qualified to
+/// The search condition, the set scope, and the card sort touch only `cards` columns;
+/// the `user_id` and `game` filters and the recency sort stay entity-qualified to
 /// `collection_items`, so nothing is ambiguous across the join (both tables carry a
 /// `game` column).
 fn collection_query(
     user_id: i32,
     game: &str,
+    set: Option<&str>,
     search: Option<Condition>,
     sort: CollectionSort,
     dir: SortDir,
@@ -248,6 +292,10 @@ fn collection_query(
         .find_also_related(Card)
         .filter(collection_item::Column::UserId.eq(user_id))
         .filter(collection_item::Column::Game.eq(game));
+    // Scope to a single set (its `set_code` on the joined card row) when requested.
+    if let Some(set_code) = set {
+        query = query.filter(card::Column::SetCode.eq(set_code));
+    }
     if let Some(condition) = search {
         query = query.filter(condition);
     }
@@ -263,12 +311,20 @@ fn collection_query(
 
 /// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
 /// copies, estimated USD value) for the signed-in user's collection in a game.
+/// An optional `?set` scopes the stats to a single set (the per-set collection view).
 pub async fn collection_summary(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
+    Query(params): Query<SummaryParams>,
 ) -> Result<Json<CollectionSummary>, AppError> {
     require_game(&game)?;
+
+    // A set-scoped summary joins the cards up front (bounded by that set's owned cards)
+    // rather than the whole-collection two-step load below.
+    if let Some(set_code) = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(Json(scoped_summary(&state, user.id, &game, set_code).await?));
+    }
 
     // A collection is bounded by how many distinct cards a user owns, so we load the
     // rows and their cards and total copies + value in Rust (never trusting the
@@ -327,6 +383,148 @@ pub async fn collection_summary(
         total_cards,
         total_value_usd: any_priced.then(|| format_cents(total_cents)),
     }))
+}
+
+/// Aggregate stats for one set of the user's collection. Joins the cards up front
+/// (bounded by that set's owned cards) so the price/value pass reads the same rows —
+/// no second chunked load. Holdings whose card row is gone (a catalog re-import) are
+/// left-joined to `None` and skipped, exactly as the whole-collection summary does.
+async fn scoped_summary(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    set_code: &str,
+) -> Result<CollectionSummary, AppError> {
+    let rows = CollectionItem::find()
+        .find_also_related(Card)
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game))
+        .filter(card::Column::SetCode.eq(set_code))
+        .all(&state.db)
+        .await?;
+
+    let mut unique_cards: i64 = 0;
+    let mut total_cards: i64 = 0;
+    let mut total_cents: i128 = 0;
+    let mut any_priced = false;
+    for (item, card) in &rows {
+        let Some(card) = card else { continue };
+        unique_cards += 1;
+        total_cards += i64::from(item.quantity) + i64::from(item.foil_quantity);
+        if let Some(cents) = price_cents(card.price_usd.as_deref()) {
+            total_cents += cents * i128::from(item.quantity);
+            any_priced = true;
+        }
+        if let Some(cents) = price_cents(card.price_usd_foil.as_deref()) {
+            total_cents += cents * i128::from(item.foil_quantity);
+            any_priced = true;
+        }
+    }
+
+    Ok(CollectionSummary {
+        unique_cards,
+        total_cards,
+        total_value_usd: any_priced.then(|| format_cents(total_cents)),
+    })
+}
+
+/// `GET /api/collection/{game}/sets` -> the sets the signed-in user owns cards in,
+/// newest set first, each with the catalog set metadata plus owned counts. Backs the
+/// collection's per-set landing (mirrors the catalog's game -> sets view).
+pub async fn collection_sets(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+) -> Result<Json<CollectionSetsResponse>, AppError> {
+    require_game(&game)?;
+
+    // Every owned card (with its joined card row) for the game — bounded by how many
+    // distinct cards the user owns.
+    let rows = CollectionItem::find()
+        .find_also_related(Card)
+        .filter(collection_item::Column::UserId.eq(user.id))
+        .filter(collection_item::Column::Game.eq(game.as_str()))
+        .all(&state.db)
+        .await?;
+
+    // The game's set metadata, to dress each owned set as a full catalog tile.
+    let sets = CardSet::find()
+        .filter(card_set::Column::Game.eq(game.as_str()))
+        .all(&state.db)
+        .await?;
+
+    Ok(Json(CollectionSetsResponse {
+        data: build_collection_sets(&game, rows, sets),
+    }))
+}
+
+/// Aggregate owned holdings into per-set tiles: count distinct owned cards + total
+/// copies per `set_code`, dress each with the game's set metadata (falling back to the
+/// card's own `set_name` when the set row is missing), and order newest set first
+/// (undated last), tie-broken by code for deterministic output. Pure so it can be
+/// unit-tested without a DB. Holdings whose card row is gone are skipped.
+fn build_collection_sets(
+    game: &str,
+    rows: Vec<(collection_item::Model, Option<card::Model>)>,
+    sets: Vec<card_set::Model>,
+) -> Vec<CollectionSet> {
+    // set_code -> (fallback set name, distinct owned cards, total owned copies).
+    let mut agg: HashMap<String, (String, i64, i64)> = HashMap::new();
+    for (item, card) in rows {
+        let Some(card) = card else { continue };
+        let entry = agg
+            .entry(card.set_code)
+            .or_insert_with(|| (card.set_name, 0, 0));
+        entry.1 += 1;
+        entry.2 += i64::from(item.quantity) + i64::from(item.foil_quantity);
+    }
+
+    let meta: HashMap<String, card_set::Model> =
+        sets.into_iter().map(|s| (s.code.clone(), s)).collect();
+
+    let mut out: Vec<CollectionSet> = agg
+        .into_iter()
+        .map(|(code, (fallback_name, owned_cards, owned_copies))| {
+            let has_drops = crate::scryfall::drops::has_drops(game, &code);
+            match meta.get(&code) {
+                Some(m) => CollectionSet {
+                    code: m.code.clone(),
+                    name: m.name.clone(),
+                    set_type: m.set_type.clone(),
+                    released_at: m.released_at.clone(),
+                    card_count: m.card_count,
+                    icon_svg_uri: m.icon_svg_uri.clone(),
+                    parent_set_code: m.parent_set_code.clone(),
+                    has_drops,
+                    owned_cards,
+                    owned_copies,
+                },
+                // A set present in a holding but absent from card_sets (e.g. metadata
+                // not yet synced): degrade to a bare tile using the card's set name.
+                None => CollectionSet {
+                    code,
+                    name: fallback_name,
+                    set_type: None,
+                    released_at: None,
+                    card_count: 0,
+                    icon_svg_uri: None,
+                    parent_set_code: None,
+                    has_drops,
+                    owned_cards,
+                    owned_copies,
+                },
+            }
+        })
+        .collect();
+
+    // Newest release first; `None` (undated) sorts last since `None < Some`. Ties by
+    // code for a stable, deterministic order.
+    out.sort_by(|a, b| {
+        b.released_at
+            .cmp(&a.released_at)
+            .then_with(|| a.code.cmp(&b.code))
+    });
+    out
 }
 
 /// `GET /api/collection/{game}/cards/{id}` -> how many copies of one card the user
@@ -890,6 +1088,7 @@ mod tests {
             q: None,
             sort: None,
             dir: None,
+            set: None,
         }
     }
 
@@ -1151,11 +1350,12 @@ mod tests {
 
         async fn names(
             db: &sea_orm::DatabaseConnection,
+            set: Option<&str>,
             search: Option<Condition>,
             sort: CollectionSort,
             dir: SortDir,
         ) -> Vec<String> {
-            collection_query(1, "mtg", search, sort, dir)
+            collection_query(1, "mtg", set, search, sort, dir)
                 .all(db)
                 .await
                 .expect("run collection query")
@@ -1166,7 +1366,7 @@ mod tests {
 
         // Default recency (updated desc): newest holding first, user 2's card absent.
         assert_eq!(
-            names(&db, None, CollectionSort::Recent, SortDir::Desc).await,
+            names(&db, None, None, CollectionSort::Recent, SortDir::Desc).await,
             ["Goblin King", "Forest", "Goblin Guide"]
         );
 
@@ -1174,14 +1374,174 @@ mod tests {
         // keeps only user 1's two Goblins (Forest dropped; user 2's Goblin out of scope).
         let goblins = search_condition(mtg, "t:goblin").unwrap();
         assert_eq!(
-            names(&db, Some(goblins), CollectionSort::Recent, SortDir::Desc).await,
+            names(&db, None, Some(goblins), CollectionSort::Recent, SortDir::Desc).await,
             ["Goblin King", "Goblin Guide"]
         );
 
         // Price sort borrows the catalog card sort verbatim: 5.00, 2.00, 0.10.
         assert_eq!(
-            names(&db, None, CollectionSort::Card(SortField::Price), SortDir::Desc).await,
+            names(&db, None, None, CollectionSort::Card(SortField::Price), SortDir::Desc).await,
             ["Goblin Guide", "Goblin King", "Forest"]
         );
+    }
+
+    /// The optional set scope filters the joined card's `set_code`, and it ANDs with a
+    /// search over the same join — so a set-scoped, `t:goblin`-filtered list only keeps
+    /// the goblins in that set.
+    #[tokio::test]
+    async fn collection_query_scopes_to_a_set() {
+        use sea_orm::{IntoActiveModel, prelude::DateTimeUtc};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let mtg = catalog::find("mtg").expect("mtg game");
+        let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+        crate::entities::user::ActiveModel {
+            id: Set(1),
+            email: Set("u1@example.test".into()),
+            password_hash: Set("x".into()),
+            display_name: Set(None),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at("2024-01-01T00:00:00Z")),
+        }
+        .insert(&db)
+        .await
+        .expect("insert user");
+
+        // Two sets: "aaa" holds a Goblin + a Land; "bbb" holds another Goblin.
+        let card = |id: i32, name: &str, set_code: &str, type_line: &str| {
+            let mut c = seed_card(id, name, type_line, Some("1.00"));
+            c.set_code = set_code.into();
+            c.set_name = set_code.to_uppercase();
+            c
+        };
+        for c in [
+            card(1, "Goblin Guide", "aaa", "Creature — Goblin"),
+            card(2, "Forest", "aaa", "Basic Land — Forest"),
+            card(3, "Goblin King", "bbb", "Creature — Goblin"),
+        ] {
+            c.into_active_model().insert(&db).await.expect("insert card");
+        }
+        let hold = |id: i32, card_id: i32| collection_item::ActiveModel {
+            id: Set(id),
+            user_id: Set(1),
+            game: Set("mtg".into()),
+            card_id: Set(card_id),
+            quantity: Set(1),
+            foil_quantity: Set(0),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at("2024-01-01T00:00:00Z")),
+        };
+        for h in [hold(1, 1), hold(2, 2), hold(3, 3)] {
+            h.insert(&db).await.expect("insert holding");
+        }
+
+        async fn names(
+            db: &sea_orm::DatabaseConnection,
+            set: Option<&str>,
+            search: Option<Condition>,
+        ) -> Vec<String> {
+            let mut out: Vec<String> = collection_query(
+                1,
+                "mtg",
+                set,
+                search,
+                CollectionSort::Card(SortField::Name),
+                SortDir::Asc,
+            )
+            .all(db)
+            .await
+            .expect("run query")
+            .into_iter()
+            .filter_map(|(_, c)| c.map(|c| c.name))
+            .collect();
+            out.sort();
+            out
+        }
+
+        // Scoped to set "aaa": only its two cards, not set "bbb"'s Goblin King.
+        assert_eq!(
+            names(&db, Some("aaa"), None).await,
+            ["Forest", "Goblin Guide"]
+        );
+        // Set scope ANDs with the search: goblins in "aaa" only.
+        let goblins = search_condition(mtg, "t:goblin").unwrap();
+        assert_eq!(names(&db, Some("aaa"), Some(goblins)).await, ["Goblin Guide"]);
+        // No scope: every set's holdings.
+        assert_eq!(
+            names(&db, None, None).await,
+            ["Forest", "Goblin Guide", "Goblin King"]
+        );
+    }
+
+    /// `build_collection_sets` counts distinct owned cards + total copies per set,
+    /// dresses each with its `card_sets` metadata (falling back to the card's own set
+    /// name when the row is missing), orders newest set first (undated last), and skips
+    /// holdings whose card row is gone.
+    #[test]
+    fn build_collection_sets_aggregates_dresses_and_orders() {
+        let ts = "2024-01-01T00:00:00Z"
+            .parse::<sea_orm::prelude::DateTimeUtc>()
+            .unwrap();
+        let hold = |id: i32, card_id: i32, quantity: i32, foil_quantity: i32| collection_item::Model {
+            id,
+            user_id: 1,
+            game: "mtg".into(),
+            card_id,
+            quantity,
+            foil_quantity,
+            created_at: ts,
+            updated_at: ts,
+        };
+        let carded = |id: i32, set_code: &str, set_name: &str| {
+            let mut c = seed_card(id, "Card", "Creature", None);
+            c.set_code = set_code.into();
+            c.set_name = set_name.into();
+            c
+        };
+        let set_meta = |code: &str, name: &str, released: &str| card_set::Model {
+            id: 0,
+            game: "mtg".into(),
+            code: code.into(),
+            name: name.into(),
+            set_type: Some("expansion".into()),
+            released_at: Some(released.into()),
+            card_count: 100,
+            digital: false,
+            icon_svg_uri: Some(format!("https://example.test/{code}.svg")),
+            parent_set_code: None,
+            external_id: None,
+            created_at: ts,
+            updated_at: ts,
+        };
+
+        let rows = vec![
+            // Set "aaa": two distinct cards, 3 total copies (2 + 1 foil, then 1 + 0).
+            (hold(1, 1, 2, 1), Some(carded(1, "aaa", "Older Set"))),
+            (hold(2, 2, 1, 0), Some(carded(2, "aaa", "Older Set"))),
+            // Set "bbb": one card, 4 copies — and no card_sets metadata (fallback name).
+            (hold(3, 3, 4, 0), Some(carded(3, "bbb", "Newer Set"))),
+            // A holding whose card row is gone — skipped entirely.
+            (hold(4, 4, 9, 9), None),
+        ];
+        // Only "aaa" has metadata; "bbb" must fall back to the card's set_name.
+        let sets = vec![set_meta("aaa", "Alpha", "2000-01-01")];
+
+        let out = build_collection_sets("mtg", rows, sets);
+        assert_eq!(out.len(), 2);
+
+        // "bbb" (dated? no metadata -> released_at None) sorts after the dated "aaa".
+        assert_eq!(out[0].code, "aaa");
+        assert_eq!(out[0].name, "Alpha"); // dressed from card_sets, not the card
+        assert_eq!(out[0].released_at.as_deref(), Some("2000-01-01"));
+        assert_eq!(out[0].owned_cards, 2);
+        assert_eq!(out[0].owned_copies, 4); // (2+1) + (1+0)
+
+        assert_eq!(out[1].code, "bbb");
+        assert_eq!(out[1].name, "Newer Set"); // fallback to the card's set_name
+        assert_eq!(out[1].released_at, None);
+        assert_eq!(out[1].card_count, 0);
+        assert_eq!(out[1].owned_cards, 1);
+        assert_eq!(out[1].owned_copies, 4);
     }
 }

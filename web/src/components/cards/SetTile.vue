@@ -15,12 +15,20 @@ const props = withDefaults(
     // Optional display-name override (e.g. the parent prefix stripped for
     // nested rows). Falls back to the set's own name.
     label?: string
+    // Optional link-target override. Defaults to the catalog set page; the
+    // collection landing points it at its own per-set view instead.
+    to?: string
+    // Optional owned-card count. When set, the meta line shows "N owned" in place
+    // of the set's total card count (used on the collection's per-set landing).
+    ownedCount?: number
   }>(),
-  { variant: 'default', label: undefined },
+  { variant: 'default', label: undefined, to: undefined, ownedCount: undefined },
 )
 
 const nested = computed(() => props.variant === 'nested')
 const displayName = computed(() => props.label ?? props.set.name)
+// Where the tile links: an explicit override (collection view) or the catalog set page.
+const linkTo = computed(() => props.to ?? `/cards/${props.game}/sets/${props.set.code}`)
 // When the visible label is abbreviated (a stripped sub-set name), keep the full
 // set name as the link's accessible name so it stays unambiguous out of its
 // visual group (WCAG 2.4.4).
@@ -61,7 +69,7 @@ const released = computed(() => {
 
 <template>
   <RouterLink
-    :to="`/cards/${game}/sets/${set.code}`"
+    :to="linkTo"
     class="block transition-colors"
     :class="rootClass"
     :aria-label="linkLabel"
@@ -88,7 +96,8 @@ const released = computed(() => {
         <p class="text-muted-foreground truncate text-xs">
           {{ set.code.toUpperCase() }}
           <template v-if="released"> · {{ released }}</template>
-          <template v-if="set.card_count"> · {{ set.card_count }} cards</template>
+          <template v-if="ownedCount != null"> · {{ ownedCount }} owned</template>
+          <template v-else-if="set.card_count"> · {{ set.card_count }} cards</template>
         </p>
       </div>
     </div>

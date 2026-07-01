@@ -68,6 +68,20 @@ const router = createRouter({
       component: () => import('@/views/GameCollectionView.vue'),
       props: true,
     },
+    // Every owned card in a game, or scoped to one set — the collection's browse grids,
+    // mirroring the catalog's /cards/:game/cards and /cards/:game/sets/:code split.
+    {
+      path: '/collection/:game/cards',
+      name: 'game-collection-cards',
+      component: () => import('@/views/CollectionBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/collection/:game/sets/:code',
+      name: 'game-collection-set',
+      component: () => import('@/views/CollectionBrowseView.vue'),
+      props: true,
+    },
     {
       path: '/dashboard',
       name: 'dashboard',
