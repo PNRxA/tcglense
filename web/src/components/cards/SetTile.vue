@@ -18,8 +18,9 @@ const props = withDefaults(
     // Optional link-target override. Defaults to the catalog set page; the
     // collection landing points it at its own per-set view instead.
     to?: string
-    // Optional owned-card count. When set, the meta line shows "N owned" in place
-    // of the set's total card count (used on the collection's per-set landing).
+    // Optional owned-card count. When set, the meta line shows a set-completion
+    // "N/M owned" count (M = the set's total card count) in place of the set's total
+    // card count — the collection's per-set landing (issue #125).
     ownedCount?: number
     // Optional preformatted owned value (e.g. "$123.45"). When set, it's appended to
     // the meta line after the owned count — the collection landing's per-set value.
@@ -74,6 +75,18 @@ const released = computed(() => {
   if (Number.isNaN(date.getTime())) return props.set.released_at
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short' })
 })
+
+// The owned-count line on the collection landing: a set-completion "N/M owned" count
+// (owned / the set's total card count) so how much of the set you have reads at a glance
+// (issue #125). `ownedCount` is clamped to the total so a paper-only vs. Scryfall
+// card-count skew can never read "N+1 of N"; when the total is unknown (card_count 0) it
+// degrades to a plain "N owned".
+const ownedLabel = computed(() => {
+  if (props.ownedCount == null) return null
+  const total = props.set.card_count
+  if (total > 0) return `${Math.min(props.ownedCount, total)}/${total} owned`
+  return `${props.ownedCount} owned`
+})
 </script>
 
 <template>
@@ -105,7 +118,7 @@ const released = computed(() => {
         <p class="text-muted-foreground truncate text-xs">
           {{ set.code.toUpperCase() }}
           <template v-if="released"> · {{ released }}</template>
-          <template v-if="ownedCount != null"> · {{ ownedCount }} owned</template>
+          <template v-if="ownedLabel != null"> · {{ ownedLabel }}</template>
           <template v-else-if="set.card_count"> · {{ set.card_count }} cards</template>
           <template v-if="ownedValue"> · {{ ownedValue }}</template>
         </p>

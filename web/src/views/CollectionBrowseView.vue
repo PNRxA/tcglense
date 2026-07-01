@@ -249,12 +249,28 @@ const { ownership, ready: ownershipReady } = useOwnedCounts(game, ghostVisibleCa
 
 // The owned stats for the current scope (all cards / a set / a set + its related group,
 // tracking `includeRelated`), unfiltered by the search box. Fetched in every mode: it
-// drives the scoped collection **value** shown next to the count (issue #119) and, in the
-// ghost flat view, the "X of Y owned" completion hint. Because it now spans the group under
-// include-related, both read correctly there too. (Reuses the landing's cache key, so
-// arriving from `/collection/:game` is a cache hit for the all-cards scope.)
+// drives the scoped collection **value** shown next to the count (issue #119) and the
+// scope's "X/Y owned" completion count (issue #125 — the show-ghosts view reads it as
+// owned-of-catalog; the owned-only view reads owned-of-`scopeTotal`). Because it now spans
+// the group under include-related, both read correctly there too. (Reuses the landing's
+// cache key, so arriving from `/collection/:game` is a cache hit for the all-cards scope.)
 const summaryQuery = useCollectionSummaryQuery(game, setCode, { includeRelated })
 const ownedUnique = computed(() => summaryQuery.data.value?.unique_cards ?? 0)
+
+// The catalog total of cards in the current scope — the denominator for the set-scoped
+// owned-only "X/Y owned" completion count (issue #125). A single set uses its own
+// card_count; include-related sums the whole group (root + related sub-sets), mirroring what
+// the ghost list counts. Null off a set scope (the whole-game "all cards" view has no
+// meaningful completion target) or before the set metadata / set list has loaded.
+const scopeTotal = computed<number | null>(() => {
+  if (!scoped.value) return null
+  if (includeRelated.value) {
+    const g = group.value
+    if (!g) return null
+    return [g.main, ...g.children].reduce((sum, s) => sum + s.card_count, 0)
+  }
+  return setQuery.data.value?.card_count ?? null
+})
 // The scope's owned value, formatted (null while loading or when nothing in scope is
 // priced). Shown only when there's no active search — the value is the whole scope's,
 // so pairing it with a search-filtered count would misread.
@@ -330,6 +346,13 @@ function setView(mode: 'drops' | 'all') {
   router.replace({ query: next })
 }
 
+// A slash-form "X/Y owned" set-completion count (issue #125), shared by both flat modes:
+// owned-only reads what you have of the set's total, show-ghosts what you have of the catalog
+// scope. Clamped so a paper-only vs. Scryfall card-count skew can never read "N+1 of N".
+function completionLabel(owned: number, scopeSize: number) {
+  return `${Math.min(owned, scopeSize).toLocaleString()}/${scopeSize.toLocaleString()} owned`
+}
+
 const countLabel = computed(() => {
   const n = total.value
   // By-drop counts drops.
@@ -339,14 +362,23 @@ const countLabel = computed(() => {
   }
   const word = n === 1 ? 'card' : 'cards'
   if (query.value) return `${n.toLocaleString()} ${word} matching “${query.value}”`
-  // Show-ghosts (flat) leads with completion (owned ⊆ scope). Only once both the
-  // (unfiltered) summary and the ghost list have genuinely settled, and there's something
-  // in scope — otherwise a mid-load `total` of 0 (or a stale filtered total) would misread.
-  // The summary now spans the same set/group the ghost list does (it tracks include-related),
-  // so this reads correctly under include-related too. Clamp so it can never read "N+1 of N".
-  if (showGhosts.value && summaryQuery.isSuccess.value && ghostSettled.value && n > 0) {
-    const owned = Math.min(ownedUnique.value, n)
-    return `${owned.toLocaleString()} of ${n.toLocaleString()} owned`
+  // Show-ghosts (flat) leads with completion (owned ⊆ scope): `n` is the catalog total in
+  // scope, `ownedUnique` how many you own. Only once both the (unfiltered) summary and the
+  // ghost list have genuinely settled, and there's something in scope — otherwise a mid-load
+  // `total` of 0 (or a stale filtered total) would misread. The summary spans the same
+  // set/group the ghost list does (it tracks include-related), so this reads right there too.
+  if (showGhosts.value) {
+    if (summaryQuery.isSuccess.value && ghostSettled.value && n > 0) {
+      return completionLabel(ownedUnique.value, n)
+    }
+    return `${n.toLocaleString()} ${word}`
+  }
+  // Owned-only, set-scoped: the same "X/Y owned" completion, but `n` is now the owned count
+  // and `scopeTotal` the set/group's catalog total — so the browse header matches the landing
+  // tiles. Gated on the owned list settling so it doesn't flash "0/Y" while loading; the
+  // whole-game "all cards" view has no scope total, so it keeps the plain "N cards".
+  if (scoped.value && listIsSuccess.value && scopeTotal.value != null && scopeTotal.value > 0) {
+    return completionLabel(n, scopeTotal.value)
   }
   return `${n.toLocaleString()} ${word}`
 })
