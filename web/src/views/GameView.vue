@@ -110,37 +110,41 @@ const sections = computed(() => {
       <span class="text-foreground">{{ gameName }}</span>
     </nav>
 
-    <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="text-3xl font-semibold tracking-tight">{{ gameName }}</h1>
-        <p class="text-muted-foreground mt-1">
-          {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
-          <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
-          <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
-        </p>
-      </div>
-      <div class="flex w-full items-center gap-3 sm:w-auto">
-        <div v-if="sets.length" class="relative w-full sm:w-64">
-          <Search
-            class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-          />
-          <Input
-            v-model="filter"
-            aria-label="Filter sets by name or code"
-            placeholder="Filter sets…"
-            class="pl-9"
-          />
-        </div>
-        <RouterLink
-          :to="`/cards/${game}/cards`"
-          :class="buttonVariants({ variant: 'default' })"
-          class="shrink-0"
-        >
-          <LayoutGrid />
-          View all cards
-        </RouterLink>
-      </div>
+    <header class="mb-4">
+      <h1 class="text-3xl font-semibold tracking-tight">{{ gameName }}</h1>
+      <p class="text-muted-foreground mt-1">
+        {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
+        <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+        <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
+      </p>
     </header>
+
+    <!-- The filter bar sticks to the top of the viewport so it stays reachable
+         while scrolling the set list; its fixed height is what the year headings
+         below offset against (their sticky `top-15`) so the two never overlap. -->
+    <div
+      class="bg-background/85 sticky top-0 z-30 -mx-4 mb-6 flex items-center gap-3 border-b px-4 py-3 backdrop-blur"
+    >
+      <div v-if="sets.length" class="relative w-full sm:w-64">
+        <Search
+          class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+        />
+        <Input
+          v-model="filter"
+          aria-label="Filter sets by name or code"
+          placeholder="Filter sets…"
+          class="pl-9"
+        />
+      </div>
+      <RouterLink
+        :to="`/cards/${game}/cards`"
+        :class="buttonVariants({ variant: 'default' })"
+        class="shrink-0"
+      >
+        <LayoutGrid />
+        View all cards
+      </RouterLink>
+    </div>
 
     <!-- First-boot import progress. -->
     <div
@@ -176,18 +180,21 @@ const sections = computed(() => {
 
     <div v-else class="space-y-10">
       <section v-for="section in sections" :key="section.key">
+        <!-- Stuck below the sticky filter bar above (top-15 = its height) so the
+             two stack rather than overlap at the top of the viewport. -->
         <div
-          class="bg-background/85 sticky top-0 z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur"
+          class="bg-background/85 sticky top-15 z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur"
         >
           <h2 class="text-xl font-semibold tracking-tight">{{ section.label }}</h2>
           <span class="text-muted-foreground text-sm">
             {{ section.groups.length }} {{ section.groups.length === 1 ? 'set' : 'sets' }}
           </span>
         </div>
-        <!-- scroll-mt on the focusable tiles keeps a Tab-focused set clear of
-             the sticky section heading above (WCAG 2.4.11 Focus Not Obscured). -->
+        <!-- scroll-mt on the focusable tiles keeps a Tab-focused set clear of both
+             the sticky filter bar and section heading above it (WCAG 2.4.11 Focus
+             Not Obscured). -->
         <div
-          class="grid items-start gap-3 [&_a]:scroll-mt-14 [&_button]:scroll-mt-14 sm:grid-cols-2 lg:grid-cols-3"
+          class="grid items-start gap-3 [&_a]:scroll-mt-28 [&_button]:scroll-mt-28 sm:grid-cols-2 lg:grid-cols-3"
         >
           <template v-for="group in section.groups" :key="group.main.code">
             <SetTile v-if="!group.children.length" :game="game" :set="group.main" />
