@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, toRef, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { LayoutGrid, Loader2 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import SetTile from '@/components/cards/SetTile.vue'
-import SetGroup from '@/components/cards/SetGroup.vue'
+import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
+import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
+import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import { gameStatus } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
-import { filterGroups, groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
+import { groupByYear, partitionPinned } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
@@ -53,27 +54,12 @@ const importing = computed(() => {
 })
 const sets = computed(() => setsQuery.data.value?.data ?? [])
 
-// Client-side filter box: the whole set list is already in memory, so narrowing
-// by name/code is instant — no extra request. Clears when switching games (the
-// route reuses this component across :game).
-const filter = ref('')
-watch(game, () => {
-  filter.value = ''
-})
-const trimmedFilter = computed(() => filter.value.trim())
-const filtering = computed(() => trimmedFilter.value.length > 0)
+// Client-side filter box + nested sub-set grouping (tokens, promos, Commander decks,
+// art series, … nested under their main set), shared with the collection game view: the
+// whole set list is already in memory, so narrowing by name/code is instant. The group
+// is kept whole when the main set OR any related sub-set matches (issue #128).
+const { filter, trimmedFilter, filtering, groups, relatedCount } = useFilteredSetGroups(game, sets)
 
-// Nest sub-sets (tokens, promos, Commander decks, art series, …) under the main
-// set they belong to instead of scattering them across the date-sorted list.
-// Group the *whole* list first, then filter at the group level — keeping a group
-// whole when the main set OR any related sub-set matches — so searching a related
-// set (e.g. "Jurassic World", a related set of Ixalan) surfaces the entire Ixalan
-// group, not just the matching sub-set tile (issue #128).
-const allGroups = computed(() => groupSets(sets.value))
-const groups = computed(() => filterGroups(allGroups.value, filter.value))
-const relatedCount = computed(() =>
-  groups.value.reduce((sum, group) => sum + group.children.length, 0),
-)
 // Pull pinned sets (e.g. Secret Lair) out so they lead the listing regardless of
 // their release date; the rest stay date-sorted.
 const partitioned = computed(() => partitionPinned(groups.value))
@@ -118,9 +104,7 @@ const sections = computed(() => {
     <!-- The filter bar sticks to the top of the viewport so it stays reachable
          while scrolling the set list; its fixed height is what the year headings
          below offset against (their sticky `top-15`) so the two never overlap. -->
-    <div
-      class="bg-background/85 sticky top-0 z-30 -mx-4 mb-6 flex items-center gap-3 border-b px-4 py-3 backdrop-blur"
-    >
+    <StickySearchBar class="mb-6 flex items-center gap-3">
       <CardSearchBox
         v-if="sets.length"
         v-model="filter"
@@ -136,7 +120,7 @@ const sections = computed(() => {
         <LayoutGrid />
         View all cards
       </RouterLink>
-    </div>
+    </StickySearchBar>
 
     <!-- First-boot import progress. -->
     <div
@@ -176,17 +160,7 @@ const sections = computed(() => {
             {{ section.groups.length }} {{ section.groups.length === 1 ? 'set' : 'sets' }}
           </span>
         </div>
-        <!-- scroll-mt on the focusable tiles keeps a Tab-focused set clear of both
-             the sticky filter bar and section heading above it (WCAG 2.4.11 Focus
-             Not Obscured). -->
-        <div
-          class="grid items-start gap-3 [&_a]:scroll-mt-28 [&_button]:scroll-mt-28 sm:grid-cols-2 lg:grid-cols-3"
-        >
-          <template v-for="group in section.groups" :key="group.main.code">
-            <SetTile v-if="!group.children.length" :game="game" :set="group.main" />
-            <SetGroup v-else :game="game" :group="group" />
-          </template>
-        </div>
+        <SetGroupGrid :game="game" :groups="section.groups" :scroll-mt="28" />
       </section>
     </div>
   </div>

@@ -10,9 +10,12 @@ import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import CollectionGrid from '@/components/cards/CollectionGrid.vue'
+import DropSection from '@/components/cards/DropSection.vue'
+import DropViewToggle from '@/components/cards/DropViewToggle.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
+import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { useGameName } from '@/composables/useCatalog'
@@ -37,6 +40,7 @@ import {
 } from '@/lib/cardSort'
 import { getSet, listCards, listSetCards, listSetDrops, type Card } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
+import { formatCompletion, formatCopies } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
@@ -283,56 +287,31 @@ const scopeValueLabel = computed(() =>
 const scopeCopiesLabel = computed(() => {
   if (query.value) return null
   const s = summaryQuery.data.value
-  return s && s.total_cards > s.unique_cards ? `${s.total_cards.toLocaleString()} copies` : null
+  return s && s.total_cards > s.unique_cards ? formatCopies(s.total_cards) : null
 })
 
-// ---- Active-mode selectors, so the template doesn't branch on mode for state. ----
-const total = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value
-      ? (ghostDropsQuery.data.value?.total ?? 0)
-      : (ghostQuery.data.value?.total ?? 0)
-  }
-  return byDrop.value
-    ? (ownedDropsQuery.data.value?.total ?? 0)
-    : (collectionQuery.data.value?.total ?? 0)
-})
-const listPending = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value ? ghostDropsQuery.isPending.value : ghostQuery.isPending.value
-  }
-  return byDrop.value ? ownedDropsQuery.isPending.value : collectionQuery.isPending.value
-})
-const listIsError = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value ? ghostDropsQuery.isError.value : ghostQuery.isError.value
-  }
-  return byDrop.value ? ownedDropsQuery.isError.value : collectionQuery.isError.value
-})
-const listError = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value ? ghostDropsQuery.error.value : ghostQuery.error.value
-  }
-  return byDrop.value ? ownedDropsQuery.error.value : collectionQuery.error.value
-})
-const listIsFetching = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value ? ghostDropsQuery.isFetching.value : ghostQuery.isFetching.value
-  }
-  return byDrop.value ? ownedDropsQuery.isFetching.value : collectionQuery.isFetching.value
-})
-const listIsSuccess = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value ? ghostDropsQuery.isSuccess.value : ghostQuery.isSuccess.value
-  }
-  return byDrop.value ? ownedDropsQuery.isSuccess.value : collectionQuery.isSuccess.value
-})
-const hasCards = computed(() => {
-  if (showGhosts.value) {
-    return byDrop.value ? ghostDropGroups.value.length > 0 : ghostCards.value.length > 0
-  }
-  return byDrop.value ? ownedDropGroups.value.length > 0 : ownedEntries.value.length > 0
-})
+// ---- Active data source: exactly one of the four {owned,ghost}×{flat,by-drop} queries is
+// enabled at a time. Pick it once — by reference, so its reactive fields stay live — and
+// derive the list state off it, instead of re-branching on the mode in every computed. ----
+const active = computed(() =>
+  showGhosts.value
+    ? byDrop.value
+      ? ghostDropsQuery
+      : ghostQuery
+    : byDrop.value
+      ? ownedDropsQuery
+      : collectionQuery,
+)
+const total = computed(() => active.value.data.value?.total ?? 0)
+const listPending = computed(() => active.value.isPending.value)
+const listIsError = computed(() => active.value.isError.value)
+const listError = computed(() => active.value.error.value)
+const listIsFetching = computed(() => active.value.isFetching.value)
+const listIsSuccess = computed(() => active.value.isSuccess.value)
+// Derive from the active page's own `data` array (every page shape exposes one), not from
+// `total`, so a previous page held by keepPreviousData still reads as "has cards" while the
+// next loads — matching the per-mode behaviour this replaced.
+const hasCards = computed(() => (active.value.data.value?.data?.length ?? 0) > 0)
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(listError.value))
 
@@ -354,13 +333,6 @@ function setView(mode: 'drops' | 'all') {
   router.replace({ query: next })
 }
 
-// A slash-form "X/Y owned" set-completion count (issue #125), shared by both flat modes:
-// owned-only reads what you have of the set's total, show-ghosts what you have of the catalog
-// scope. Clamped so a paper-only vs. Scryfall card-count skew can never read "N+1 of N".
-function completionLabel(owned: number, scopeSize: number) {
-  return `${Math.min(owned, scopeSize).toLocaleString()}/${scopeSize.toLocaleString()} owned`
-}
-
 const countLabel = computed(() => {
   const n = total.value
   // By-drop counts drops.
@@ -377,7 +349,7 @@ const countLabel = computed(() => {
   // set/group the ghost list does (it tracks include-related), so this reads right there too.
   if (showGhosts.value) {
     if (summaryQuery.isSuccess.value && ghostSettled.value && n > 0) {
-      return completionLabel(ownedUnique.value, n)
+      return formatCompletion(ownedUnique.value, n)
     }
     return `${n.toLocaleString()} ${word}`
   }
@@ -386,7 +358,7 @@ const countLabel = computed(() => {
   // tiles. Gated on the owned list settling so it doesn't flash "0/Y" while loading; the
   // whole-game "all cards" view has no scope total, so it keeps the plain "N cards".
   if (scoped.value && listIsSuccess.value && scopeTotal.value != null && scopeTotal.value > 0) {
-    return completionLabel(n, scopeTotal.value)
+    return formatCompletion(n, scopeTotal.value)
   }
   return `${n.toLocaleString()} ${word}`
 })
@@ -443,9 +415,9 @@ const errorMessage = computed(() =>
       </header>
 
       <!-- Search + sort over the (optionally set-scoped) cards. -->
-      <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
+      <StickySearchBar>
         <CardSearchBox v-model="searchInput" :placeholder="searchPlaceholder" />
-      </div>
+      </StickySearchBar>
       <SearchSyntaxHint class="mt-2 mb-6" />
 
       <!-- Fold the set's related sub-sets (tokens, promos, decks, …) into one listing, plus
@@ -475,35 +447,7 @@ const errorMessage = computed(() =>
              then the card-size + sort menus (flat views only — by-drop has a fixed order). -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
-            <div
-              v-if="scoped && hasDrops"
-              class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-sm"
-            >
-              <button
-                type="button"
-                :class="
-                  cn(
-                    'rounded px-3 py-1.5 font-medium transition-colors',
-                    byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-                  )
-                "
-                @click="setView('drops')"
-              >
-                By drop
-              </button>
-              <button
-                type="button"
-                :class="
-                  cn(
-                    'rounded px-3 py-1.5 font-medium transition-colors',
-                    !byDrop ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-                  )
-                "
-                @click="setView('all')"
-              >
-                All cards
-              </button>
-            </div>
+            <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setView" />
             <button
               type="button"
               :class="
@@ -566,42 +510,30 @@ const errorMessage = computed(() =>
              the collection grid (its cards are owned holdings); ghost mode uses the catalog
              grid (every card in the drop) with owned badges + dimmed unowned cards. -->
         <template v-else-if="byDrop">
+          <!-- Two typed loops (not one union v-for): owned drops render the collection
+               grid off owned holdings, ghost drops the catalog grid off every card. -->
           <template v-if="!showGhosts">
-            <section
+            <DropSection
               v-for="drop in ownedDropGroups"
-              :id="drop.slug ?? undefined"
               :key="drop.slug ?? drop.title"
-              class="mb-10 scroll-mt-20"
+              :drop="drop"
             >
-              <div class="mb-4 flex items-baseline gap-2 border-b pb-2">
-                <h2 class="text-lg font-semibold tracking-tight">{{ drop.title }}</h2>
-                <span class="text-muted-foreground text-sm tabular-nums">
-                  {{ drop.card_count }} {{ drop.card_count === 1 ? 'card' : 'cards' }}
-                </span>
-              </div>
               <CollectionGrid :game="game" :entries="drop.cards" />
-            </section>
+            </DropSection>
           </template>
           <template v-else>
-            <section
+            <DropSection
               v-for="drop in ghostDropGroups"
-              :id="drop.slug ?? undefined"
               :key="drop.slug ?? drop.title"
-              class="mb-10 scroll-mt-20"
+              :drop="drop"
             >
-              <div class="mb-4 flex items-baseline gap-2 border-b pb-2">
-                <h2 class="text-lg font-semibold tracking-tight">{{ drop.title }}</h2>
-                <span class="text-muted-foreground text-sm tabular-nums">
-                  {{ drop.card_count }} {{ drop.card_count === 1 ? 'card' : 'cards' }}
-                </span>
-              </div>
               <CardGrid
                 :game="game"
                 :cards="drop.cards"
                 :ownership="ownership"
                 :ghost-unowned="ownershipReady"
               />
-            </section>
+            </DropSection>
           </template>
           <div class="mt-10">
             <CardPagination

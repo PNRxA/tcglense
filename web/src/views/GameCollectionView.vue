@@ -1,28 +1,29 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { LayoutGrid, RefreshCw } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import SetTile from '@/components/cards/SetTile.vue'
-import SetGroup from '@/components/cards/SetGroup.vue'
+import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import { useGameName } from '@/composables/useCatalog'
+import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import {
   invalidateCollectionData,
   useCollectionSetsQuery,
-  useCollectionSourceQuery,
   useCollectionSummaryQuery,
-  useImportJobQuery,
-  useSyncCollectionSourceMutation,
 } from '@/composables/useCollection'
+import {
+  useCollectionSourceQuery,
+  usePolledImportJob,
+  useSyncCollectionSourceMutation,
+} from '@/composables/useCollectionImport'
 import { ApiError } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
-import { filterGroups, groupSets } from '@/lib/setGroups'
 import { useAuthStore } from '@/stores/auth'
 
 // The per-game collection landing: it mirrors the catalog's game view (a grid of set
@@ -49,53 +50,33 @@ const setsQuery = useCollectionSetsQuery(game)
 const summary = computed(() => summaryQuery.data.value)
 const ownedSets = computed(() => setsQuery.data.value?.data ?? [])
 
-// Client-side filter box mirroring the catalog game view (issue #127): the owned-set
-// list is already in memory, so narrowing by name/code is instant — no extra request.
-// Clears when switching games (the route reuses this component across :game).
-const filter = ref('')
-watch(game, () => {
-  filter.value = ''
+// Client-side filter box + nested sub-set grouping mirroring the catalog game view
+// (issues #127/#128), shared via useFilteredSetGroups: the owned-set list is already in
+// memory, so narrowing by name/code is instant, and a sub-set you own nests under its
+// owned parent (or stands alone as an orphan root). Keeps a group whole when the main set
+// OR any related sub-set matches, so filtering a sub-set surfaces its whole owned group.
+const {
+  filter,
+  trimmedFilter,
+  filtering,
+  groups: ownedGroups,
+  relatedCount,
+} = useFilteredSetGroups(game, ownedSets)
+// Per-set-code owned stats each tile shows next to its name: the "N/M owned" completion
+// count, the "N copies" total (when you own duplicates, issue #125), and the preformatted
+// owned value (issue #119; null/unpriced sets carry a null the tile omits). Built in one
+// pass and passed to SetGroupGrid as a single `ownership` object.
+const ownership = computed(() => {
+  const counts: Record<string, number> = {}
+  const copies: Record<string, number> = {}
+  const values: Record<string, string | null> = {}
+  for (const set of ownedSets.value) {
+    counts[set.code] = set.owned_cards
+    copies[set.code] = set.owned_copies
+    values[set.code] = formatUsd(set.owned_value_usd)
+  }
+  return { counts, copies, values }
 })
-const trimmedFilter = computed(() => filter.value.trim())
-const filtering = computed(() => trimmedFilter.value.length > 0)
-
-// Nest owned sub-sets (tokens, promos, Commander decks, …) under the main set they
-// belong to, exactly as the catalog game view does — a sub-set you own but whose parent
-// you don't surfaces as its own top-level tile (groupSets treats it as an orphan root).
-// Group the whole list first, then filter at the group level — keeping a group whole
-// when the main set OR any related sub-set matches (issue #128), so filtering a related
-// sub-set still surfaces its entire owned group rather than orphaning the matching tile.
-const allOwnedGroups = computed(() => groupSets(ownedSets.value))
-const ownedGroups = computed(() => filterGroups(allOwnedGroups.value, filter.value))
-// Owned distinct-card count per set code, so each tile can show its "N/M owned"
-// completion count.
-const ownedCountByCode = computed<Record<string, number>>(() => {
-  const map: Record<string, number> = {}
-  for (const set of ownedSets.value) map[set.code] = set.owned_cards
-  return map
-})
-// Total owned copies (with duplicates) per set code, so each tile can show "N copies"
-// alongside the completion count when you own duplicates (issue #125).
-const ownedCopiesByCode = computed<Record<string, number>>(() => {
-  const map: Record<string, number> = {}
-  for (const set of ownedSets.value) map[set.code] = set.owned_copies
-  return map
-})
-// Preformatted owned value per set code, so each tile can show what your cards from that
-// set are worth alongside the owned count (issue #119). Null-valued (unpriced) sets are
-// left out of the map, so their tiles simply omit the value.
-const ownedValueByCode = computed<Record<string, string | null>>(() => {
-  const map: Record<string, string | null> = {}
-  for (const set of ownedSets.value) map[set.code] = formatUsd(set.owned_value_usd)
-  return map
-})
-// Sub-sets folded into the visible parent groups — shown next to the group count so
-// "N sets · M related" reads like the catalog. Summed over the (filtered) groups so it
-// tracks the filter, mirroring the catalog game view.
-const relatedCount = computed(() =>
-  ownedGroups.value.reduce((sum, group) => sum + group.children.length, 0),
-)
-
 const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
 
 // Stats are worth showing only once something is owned.
@@ -113,15 +94,6 @@ const source = computed(() => sourceQuery.data.value ?? null)
 const syncMutation = useSyncCollectionSourceMutation()
 const syncMessage = ref<string | null>(null)
 
-// Re-sync runs in the background (throttled by the provider rate limit); poll its job.
-const syncJobId = ref<number | null>(null)
-const syncJobQuery = useImportJobQuery(game, syncJobId)
-const syncStatus = computed(() => syncJobQuery.data.value?.status ?? null)
-const syncing = computed(
-  () =>
-    syncMutation.isPending.value || syncStatus.value === 'queued' || syncStatus.value === 'running',
-)
-
 const providerLabel = computed(() =>
   source.value?.provider === 'archidekt' ? 'Archidekt' : (source.value?.provider ?? 'Archidekt'),
 )
@@ -135,6 +107,36 @@ const lastSyncedText = computed(() => {
   return Number.isNaN(d.getTime()) ? '' : `Last synced ${d.toLocaleString()}`
 })
 
+// Re-sync runs in the background (throttled by the provider rate limit); poll its job to a
+// terminal status via the shared poller (usePolledImportJob), tailoring the copy to smart
+// vs. mirror. On completion, refresh the collection views and the saved-link timestamp.
+const syncJob = usePolledImportJob(game, {
+  onRunning: () => {
+    syncMessage.value = smart.value
+      ? 'Smart-syncing from Archidekt… this can take a couple of minutes.'
+      : 'Re-syncing from Archidekt… this can take a couple of minutes.'
+  },
+  onComplete: (summary) => {
+    if (!summary) {
+      syncMessage.value = 'Re-sync complete.'
+    } else if (summary.mode === 'smart') {
+      syncMessage.value =
+        `Smart-synced ${summary.matched_cards.toLocaleString()} cards` +
+        (summary.stopped_early ? ' (stopped at already-synced cards).' : '.')
+    } else {
+      syncMessage.value =
+        `Synced ${summary.matched_cards.toLocaleString()} cards` +
+        (summary.removed_cards ? `, removed ${summary.removed_cards.toLocaleString()}.` : '.')
+    }
+    invalidateCollectionData(qc, game.value)
+    qc.invalidateQueries({ queryKey: ['collection-source', game.value] })
+  },
+  onError: (error) => {
+    syncMessage.value = error ?? 'Re-sync failed. Please try again.'
+  },
+})
+const syncing = computed(() => syncMutation.isPending.value || syncJob.processing.value)
+
 // A full re-sync mirrors (replace), so it can remove cards — confirm before running. A
 // smart re-sync only updates recently-changed cards and never removes, so it's gentler.
 async function resync() {
@@ -147,44 +149,14 @@ async function resync() {
   const ok = window.confirm(message)
   if (!ok) return
   syncMessage.value = 'Re-sync queued…'
-  syncJobId.value = null
+  syncJob.reset()
   try {
     const job = await syncMutation.mutateAsync({ game: game.value })
-    syncJobId.value = job.job_id
+    syncJob.start(job.job_id)
   } catch (err) {
     syncMessage.value = err instanceof ApiError ? err.message : 'Re-sync failed. Please try again.'
   }
 }
-
-// React to the polled re-sync job finishing.
-watch(
-  () => syncJobQuery.data.value,
-  (job) => {
-    if (!job) return
-    if (job.status === 'running') {
-      syncMessage.value = smart.value
-        ? 'Smart-syncing from Archidekt… this can take a couple of minutes.'
-        : 'Re-syncing from Archidekt… this can take a couple of minutes.'
-    } else if (job.status === 'complete') {
-      const s = job.summary
-      if (!s) {
-        syncMessage.value = 'Re-sync complete.'
-      } else if (s.mode === 'smart') {
-        syncMessage.value =
-          `Smart-synced ${s.matched_cards.toLocaleString()} cards` +
-          (s.stopped_early ? ' (stopped at already-synced cards).' : '.')
-      } else {
-        syncMessage.value =
-          `Synced ${s.matched_cards.toLocaleString()} cards` +
-          (s.removed_cards ? `, removed ${s.removed_cards.toLocaleString()}.` : '.')
-      }
-      invalidateCollectionData(qc, game.value)
-      qc.invalidateQueries({ queryKey: ['collection-source', game.value] })
-    } else if (job.status === 'error') {
-      syncMessage.value = job.error ?? 'Re-sync failed. Please try again.'
-    }
-  },
-)
 </script>
 
 <template>
@@ -302,35 +274,17 @@ watch(
         <p v-else-if="filtering && !ownedGroups.length" class="text-muted-foreground py-12">
           No sets match “{{ trimmedFilter }}”.
         </p>
-        <!-- scroll-mt keeps a Tab-focused tile clear of the sticky top bar. Owned sub-sets
-             nest under their parent (SetGroup), matching the catalog game view; a childless
-             owned set stays a plain tile. Both link to the collection's per-set view and
-             show owned counts. -->
-        <div
+        <!-- Owned sub-sets nest under their parent (SetGroup), matching the catalog game
+             view; a childless owned set stays a plain tile. Both link to the collection's
+             per-set view and show owned counts. -->
+        <SetGroupGrid
           v-else
-          class="grid items-start gap-3 [&_a]:scroll-mt-20 [&_button]:scroll-mt-20 sm:grid-cols-2 lg:grid-cols-3"
-        >
-          <template v-for="group in ownedGroups" :key="group.main.code">
-            <SetTile
-              v-if="!group.children.length"
-              :game="game"
-              :set="group.main"
-              :to="`/collection/${game}/sets/${group.main.code}`"
-              :owned-count="ownedCountByCode[group.main.code]"
-              :owned-copies="ownedCopiesByCode[group.main.code]"
-              :owned-value="ownedValueByCode[group.main.code]"
-            />
-            <SetGroup
-              v-else
-              :game="game"
-              :group="group"
-              base-path="/collection"
-              :owned-counts="ownedCountByCode"
-              :owned-copies="ownedCopiesByCode"
-              :owned-values="ownedValueByCode"
-            />
-          </template>
-        </div>
+          :game="game"
+          :groups="ownedGroups"
+          :scroll-mt="20"
+          base-path="/collection"
+          :ownership="ownership"
+        />
       </template>
     </template>
   </div>

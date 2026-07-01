@@ -1,0 +1,302 @@
+//! Collection read endpoints: the owned-card list, the aggregate summary, a single
+//! card's owned counts, and the batch owned-counts lookup that backs the browse-grid
+//! badges.
+
+use std::collections::HashMap;
+
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+};
+use sea_orm::{
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, SelectTwo,
+};
+
+use crate::auth::extractor::AuthUser;
+use crate::entities::prelude::{Card, CardSet, CollectionItem};
+use crate::entities::{card, card_set, collection_item};
+use crate::error::AppError;
+use crate::extract::JsonBody;
+use crate::handlers::shared::{
+    CardResponse, Page, SortDir, Valuation, apply_card_sort, build_page, group_set_codes, load_card,
+    require_game, search_condition,
+};
+use crate::state::AppState;
+
+use super::import::dedupe_ids;
+use super::{
+    CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary, ListParams,
+    MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SummaryParams, find_row,
+};
+
+/// `GET /api/collection/{game}` -> the signed-in user's owned cards for a game,
+/// most-recently-updated first, paginated. Each entry carries the full card payload
+/// plus the owned counts.
+pub async fn list_collection(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<Page<CollectionEntry>>, AppError> {
+    let game_meta = require_game(&game)?;
+    let (page, page_size) = params.page_and_size();
+    let (sort, dir) = params.sort_spec()?;
+    // Parse the optional Scryfall-syntax query up front so a malformed one 422s
+    // before we touch the DB (mirrors the catalog card lists).
+    let search = params
+        .search()
+        .map(|s| search_condition(game_meta, s))
+        .transpose()?;
+
+    // Resolve the (optional) set scope: a single set, or — with `include_related` — the
+    // set's whole group (root + related sub-sets), spanning exactly the sets the catalog
+    // does. `None` means the whole collection.
+    let set_codes =
+        resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
+
+    let paginator = collection_query(user.id, &game, set_codes.as_deref(), search, sort, dir)
+        .paginate(&state.db, page_size);
+    let total = paginator.num_items().await?;
+    let rows = paginator.fetch_page(page - 1).await?;
+
+    // `find_also_related` is a LEFT join, so a holding whose card row is gone (e.g.
+    // removed by a catalog re-import) comes back with `None` — skip it, exactly as
+    // the summary/valuation reads do.
+    let data: Vec<CollectionEntry> = rows
+        .into_iter()
+        .filter_map(|(item, card)| {
+            card.map(|c| CollectionEntry {
+                card: CardResponse::from(c),
+                quantity: item.quantity,
+                foil_quantity: item.foil_quantity,
+            })
+        })
+        .collect();
+
+    Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// Build the collection-list query for a user + game: join `cards` (so it can be
+/// searched and sorted on card columns), apply the optional already-parsed search
+/// condition, and order by the chosen sort. Kept separate from the handler so the
+/// join/filter/sort can be unit-tested against a seeded DB without an `AppState`.
+///
+/// The search condition, the set scope, and the card sort touch only `cards` columns;
+/// the `user_id` and `game` filters and the recency sort stay entity-qualified to
+/// `collection_items`, so nothing is ambiguous across the join (both tables carry a
+/// `game` column).
+///
+/// `set_codes` scopes to the joined card's `set_code`: `None` = the whole collection,
+/// a single code = the per-set view, several codes = the include-related group view.
+pub(super) fn collection_query(
+    user_id: i32,
+    game: &str,
+    set_codes: Option<&[String]>,
+    search: Option<Condition>,
+    sort: CollectionSort,
+    dir: SortDir,
+) -> SelectTwo<collection_item::Entity, card::Entity> {
+    let mut query = CollectionItem::find()
+        .find_also_related(Card)
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game));
+    // Scope to one set (per-set view) or several (the include-related group) by the
+    // joined card row's `set_code`. An empty slice would match nothing, but the scope
+    // resolver never produces one (a group always contains at least the set itself).
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
+    }
+    if let Some(condition) = search {
+        query = query.filter(condition);
+    }
+    match sort {
+        // Newest change first (or oldest, if reversed), with a stable id tiebreaker
+        // for deterministic paging.
+        CollectionSort::Recent => query
+            .order_by(collection_item::Column::UpdatedAt, dir.order())
+            .order_by(collection_item::Column::Id, dir.order()),
+        CollectionSort::Card(field) => apply_card_sort(query, field, dir, false),
+    }
+}
+
+/// Resolve the set-code scope for a collection list: `None` (no scope, the whole
+/// collection), a single-code slice (the per-set view), or — with `include_related` —
+/// the scoped set's whole group (root + related sub-sets), resolved from the same flat
+/// set list the catalog uses ([`group_set_codes`]) so both span identical sets. Only
+/// fetches the set list when a group actually needs resolving.
+async fn resolve_set_scope(
+    state: &AppState,
+    game: &str,
+    set: Option<&str>,
+    include_related: bool,
+) -> Result<Option<Vec<String>>, AppError> {
+    let Some(code) = set else { return Ok(None) };
+    if !include_related {
+        return Ok(Some(vec![code.to_string()]));
+    }
+    let all_sets = CardSet::find()
+        .filter(card_set::Column::Game.eq(game))
+        .all(&state.db)
+        .await?;
+    Ok(Some(group_set_codes(&all_sets, code)))
+}
+
+/// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
+/// copies, estimated USD value) for the signed-in user's collection in a game.
+/// An optional `?set` scopes the stats to a single set (the per-set collection view);
+/// `?include_related=true` with a set spans its whole group (root + related sub-sets),
+/// so the header value matches the set / include-related collection browse view.
+pub async fn collection_summary(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<SummaryParams>,
+) -> Result<Json<CollectionSummary>, AppError> {
+    require_game(&game)?;
+
+    // Resolve the optional scope: one set, or its whole group under include-related, or
+    // `None` for the whole collection — the same resolution the collection list uses, so
+    // the value spans identical sets. Then aggregate over exactly those holdings.
+    let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let set_codes =
+        resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?;
+    Ok(Json(summary(&state.db, user.id, &game, set_codes.as_deref()).await?))
+}
+
+/// Aggregate stats (distinct cards, total copies, estimated USD value) for a user's
+/// collection in a game, optionally scoped. `set_codes = Some(codes)` scopes to those sets
+/// (never empty — `resolve_set_scope` yields at least the scoped set); `None` spans the
+/// whole collection. Each holding is left-joined to its card, so a holding whose card row
+/// is gone (a catalog re-import) is skipped for **all three** stats — matching the
+/// collection list (`list_collection`). Prices are aggregated in Rust, never trusting the
+/// stored decimal strings to SQL arithmetic.
+pub(super) async fn summary(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    game: &str,
+    set_codes: Option<&[String]>,
+) -> Result<CollectionSummary, AppError> {
+    let mut query = CollectionItem::find()
+        .find_also_related(Card)
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game));
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
+    }
+    let rows = query.all(db).await?;
+
+    let mut unique_cards: i64 = 0;
+    let mut total_cards: i64 = 0;
+    let mut valuation = Valuation::default();
+    for (item, card) in &rows {
+        let Some(card) = card else { continue };
+        unique_cards += 1;
+        total_cards += i64::from(item.quantity) + i64::from(item.foil_quantity);
+        valuation.add(
+            card.price_usd.as_deref(),
+            item.quantity,
+            card.price_usd_foil.as_deref(),
+            item.foil_quantity,
+        );
+    }
+
+    Ok(CollectionSummary {
+        unique_cards,
+        total_cards,
+        total_value_usd: valuation.total_usd(),
+    })
+}
+
+/// `GET /api/collection/{game}/cards/{id}` -> how many copies of one card the user
+/// owns (zeros when the card isn't in their collection). `id` is the external card
+/// id; a `404` means the game or card is unknown.
+pub async fn get_collection_entry(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<CollectionQuantities>, AppError> {
+    require_game(&game)?;
+    let card = load_card(&state, &game, &id).await?;
+    let row = find_row(&state, user.id, &game, card.id).await?;
+    Ok(Json(match row {
+        Some(r) => CollectionQuantities {
+            quantity: r.quantity,
+            foil_quantity: r.foil_quantity,
+        },
+        None => CollectionQuantities {
+            quantity: 0,
+            foil_quantity: 0,
+        },
+    }))
+}
+
+/// `POST /api/collection/{game}/owned` -> the owned counts for the subset of the
+/// given external card ids that the signed-in user actually owns, keyed by external
+/// id. Cards the user doesn't own are absent from the map (so an all-unowned page
+/// returns `{ "data": {} }`). This backs the owned-count badges overlaid on the
+/// public browse grids without an N+1 of per-card lookups. `422` if more than
+/// [`MAX_OWNED_IDS`] ids are requested at once.
+pub async fn owned_counts(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    JsonBody(payload): JsonBody<OwnedCountsRequest>,
+) -> Result<Json<OwnedCountsResponse>, AppError> {
+    require_game(&game)?;
+
+    let external_ids = dedupe_ids(payload.ids);
+    if external_ids.is_empty() {
+        return Ok(Json(OwnedCountsResponse {
+            data: HashMap::new(),
+        }));
+    }
+    if external_ids.len() > MAX_OWNED_IDS {
+        return Err(AppError::Validation(format!(
+            "at most {MAX_OWNED_IDS} card ids may be looked up at once"
+        )));
+    }
+
+    // Resolve external -> internal ids for this game, keeping the reverse map so the
+    // response can be keyed by the external id the client sent. Unknown ids just don't
+    // appear here (and so never in the result).
+    let external_by_internal: HashMap<i32, String> = Card::find()
+        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::ExternalId.is_in(external_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|c| (c.id, c.external_id))
+        .collect();
+    if external_by_internal.is_empty() {
+        return Ok(Json(OwnedCountsResponse {
+            data: HashMap::new(),
+        }));
+    }
+
+    // One query for the user's holdings among those cards; a card with no row is
+    // simply not owned and contributes nothing to the map.
+    let internal_ids: Vec<i32> = external_by_internal.keys().copied().collect();
+    let rows = CollectionItem::find()
+        .filter(collection_item::Column::UserId.eq(user.id))
+        .filter(collection_item::Column::Game.eq(game.as_str()))
+        .filter(collection_item::Column::CardId.is_in(internal_ids))
+        .all(&state.db)
+        .await?;
+
+    let data: HashMap<String, CollectionQuantities> = rows
+        .into_iter()
+        .filter_map(|r| {
+            external_by_internal.get(&r.card_id).map(|external_id| {
+                (
+                    external_id.clone(),
+                    CollectionQuantities {
+                        quantity: r.quantity,
+                        foil_quantity: r.foil_quantity,
+                    },
+                )
+            })
+        })
+        .collect();
+
+    Ok(Json(OwnedCountsResponse { data }))
+}

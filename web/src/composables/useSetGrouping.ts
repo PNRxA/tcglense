@@ -1,7 +1,8 @@
-import { computed, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { useSetsQuery } from '@/composables/useCatalog'
-import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
+import type { CardSet } from '@/lib/api'
+import { filterGroups, findGroup, groupSets, originSetCode, subSetLabel } from '@/lib/setGroups'
 
 /**
  * Related-sub-set grouping + URL scope-navigation for the set view. Reads the
@@ -162,4 +163,35 @@ export function useSetGrouping(
     setIncludeRelated,
     viewSingleSet,
   }
+}
+
+/**
+ * The client-side filter + nested-grouping pipeline shared by the two set-*landing*
+ * views — the catalog game view (`GameView`) and its collection mirror
+ * (`GameCollectionView`). Both hold the whole set list in memory, so narrowing by
+ * name/code is instant: this owns the filter box state (cleared when `game` changes,
+ * since the route reuses the component across `:game`), groups the *whole* list first
+ * with {@link groupSets} then filters at the group level with {@link filterGroups} —
+ * keeping a group whole when the main set OR any related sub-set matches (issue #128) —
+ * and reports the folded-in related-set count over the visible groups.
+ *
+ * `sets` is the full set list (a ref/computed); accepts the catalog `CardSet` shape or
+ * any superset of it (e.g. the collection's `CollectionSet`). The landing view layers
+ * its own extras (owned-count maps, pinned/year sectioning) on top of `groups`.
+ */
+export function useFilteredSetGroups(game: Ref<string>, sets: Ref<CardSet[]>) {
+  const filter = ref('')
+  watch(game, () => {
+    filter.value = ''
+  })
+  const trimmedFilter = computed(() => filter.value.trim())
+  const filtering = computed(() => trimmedFilter.value.length > 0)
+
+  const allGroups = computed(() => groupSets(sets.value))
+  const groups = computed(() => filterGroups(allGroups.value, filter.value))
+  const relatedCount = computed(() =>
+    groups.value.reduce((sum, group) => sum + group.children.length, 0),
+  )
+
+  return { filter, trimmedFilter, filtering, groups, relatedCount }
 }
