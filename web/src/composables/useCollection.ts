@@ -5,6 +5,7 @@ import {
   getCollection,
   getCollectionEntry,
   getCollectionOwned,
+  getCollectionSetDrops,
   getCollectionSets,
   getCollectionSource,
   getCollectionSummary,
@@ -16,6 +17,7 @@ import {
   syncCollectionSource,
   type ApiError,
   type Card,
+  type CollectionDropGroupPage,
   type CollectionPage,
   type CollectionProvider,
   type CollectionQuantities,
@@ -37,6 +39,8 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
   qc.invalidateQueries({ queryKey: ['collection', game] })
   qc.invalidateQueries({ queryKey: ['collection-summary', game] })
   qc.invalidateQueries({ queryKey: ['collection-entry', game] })
+  // Refresh the by-drop owned-cards view too.
+  qc.invalidateQueries({ queryKey: ['collection-drops', game] })
   // Refresh the per-set landing tiles (ownership per set can change broadly).
   qc.invalidateQueries({ queryKey: ['collection-sets', game] })
   // Refresh the browse-grid owned-count badges too (an import can change ownership broadly).
@@ -58,6 +62,11 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
 /** Cards per page in the collection grid (matches the catalog default). */
 export const COLLECTION_PAGE_SIZE = 60
 
+/** Drops per page in the by-drop collection view — it paginates over drops (each a
+ * handful of owned cards), so it uses a smaller page size than the flat grid (matches
+ * the catalog's by-drop view). */
+export const COLLECTION_DROP_PAGE_SIZE = 20
+
 /** A page of the user's owned cards for a game. `page`, `query` and `sort` are
  * reactive: `query` is a Scryfall-style search (same syntax as the catalog) and
  * `sort` is a `field:dir` value (see `lib/cardSort`), all carried in the query key
@@ -71,25 +80,57 @@ export function useCollectionQuery(
   query: Ref<string>,
   sort: Ref<string>,
   set?: Ref<string | undefined>,
+  opts: { includeRelated?: Ref<boolean>; enabled?: Ref<boolean> } = {},
 ) {
   const auth = useAuthStore()
-  // Fall back to a stable "no scope" ref so the query key is well-formed either way.
+  // Fall back to stable "no scope" / "not grouped" refs so the query key is well-formed
+  // either way.
   const setCode = set ?? ref<string | undefined>(undefined)
+  const includeRelated = opts.includeRelated ?? ref(false)
   const options = {
-    queryKey: ['collection', game, setCode, query, sort, page],
+    queryKey: ['collection', game, setCode, query, sort, page, includeRelated],
     queryFn: (token: string) =>
       getCollection(token, game.value, {
         page: page.value,
         pageSize: COLLECTION_PAGE_SIZE,
         q: query.value || undefined,
         set: setCode.value || undefined,
+        includeRelated: includeRelated.value || undefined,
         ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
       }),
     // Keep the current grid visible while the next page loads (smoother paging).
     placeholderData: keepPreviousData,
-    enabled: computed(() => auth.isAuthenticated),
+    // The caller can gate the flat list off (e.g. while the by-drop view is active) so a
+    // drop-set link doesn't fire a throwaway flat fetch it would immediately discard.
+    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
   }
   return useAuthedQuery<CollectionPage>(options)
+}
+
+/** A page (by drop) of the signed-in user's owned cards in a drop-grouped set (e.g.
+ * Secret Lair), grouped by Secret Lair drop — the collection mirror of the catalog's
+ * by-drop view. `code` is the set; `page`/`query` are reactive (carried in the key). The
+ * caller gates it on the by-drop view being active (and auth) via `opts.enabled`. */
+export function useCollectionDropsQuery(
+  game: Ref<string>,
+  code: Ref<string>,
+  page: Ref<number>,
+  query: Ref<string>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
+  const auth = useAuthStore()
+  const options = {
+    queryKey: ['collection-drops', game, code, query, page],
+    queryFn: (token: string) =>
+      getCollectionSetDrops(token, game.value, code.value, {
+        page: page.value,
+        pageSize: COLLECTION_DROP_PAGE_SIZE,
+        q: query.value || undefined,
+      }),
+    placeholderData: keepPreviousData,
+    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+  }
+  return useAuthedQuery<CollectionDropGroupPage>(options)
 }
 
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
@@ -197,6 +238,8 @@ export function useSetCollectionEntryMutation() {
       qc.invalidateQueries({ queryKey: ['collection', vars.game] })
       qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
       qc.invalidateQueries({ queryKey: ['collection-entry', vars.game, vars.id] })
+      // Refresh the by-drop owned-cards view so an edit shows there too.
+      qc.invalidateQueries({ queryKey: ['collection-drops', vars.game] })
       // Refresh the per-set landing tiles (owned counts per set change on an edit).
       qc.invalidateQueries({ queryKey: ['collection-sets', vars.game] })
       // Refresh the browse-grid badges so an edit shows next time a grid is viewed.

@@ -6,6 +6,7 @@ import { RouterLink } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetTile from '@/components/cards/SetTile.vue'
+import SetGroup from '@/components/cards/SetGroup.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import { useGameName } from '@/composables/useCatalog'
@@ -19,6 +20,7 @@ import {
 } from '@/composables/useCollection'
 import { ApiError } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { groupSets } from '@/lib/setGroups'
 import { useAuthStore } from '@/stores/auth'
 
 // The per-game collection landing: it mirrors the catalog's game view (a grid of set
@@ -44,6 +46,20 @@ const setsQuery = useCollectionSetsQuery(game)
 
 const summary = computed(() => summaryQuery.data.value)
 const ownedSets = computed(() => setsQuery.data.value?.data ?? [])
+
+// Nest owned sub-sets (tokens, promos, Commander decks, …) under the main set they
+// belong to, exactly as the catalog game view does — a sub-set you own but whose parent
+// you don't surfaces as its own top-level tile (groupSets treats it as an orphan root).
+const ownedGroups = computed(() => groupSets(ownedSets.value))
+// Owned-card count per set code, so each nested tile can show "N owned".
+const ownedCountByCode = computed<Record<string, number>>(() => {
+  const map: Record<string, number> = {}
+  for (const set of ownedSets.value) map[set.code] = set.owned_cards
+  return map
+})
+// Sub-sets folded into their parent group (owned sets minus the top-level groups) —
+// shown next to the group count so "N sets · M related" reads like the catalog.
+const relatedCount = computed(() => ownedSets.value.length - ownedGroups.value.length)
 
 const totalValue = computed(() => {
   const raw = summary.value?.total_value_usd
@@ -219,12 +235,15 @@ watch(
           <h2 class="text-xl font-semibold tracking-tight">
             Sets you own
             <!-- Only once the sets query has resolved, so we never flash "0 sets" next
-                 to the "Loading sets…" row when the summary lands first. -->
+                 to the "Loading sets…" row when the summary lands first. Counts top-level
+                 groups (sub-sets nest under their parent), with the folded-in related
+                 count alongside — mirroring the catalog game view. -->
             <span
               v-if="setsQuery.isSuccess.value"
               class="text-muted-foreground ml-1 text-sm font-normal"
             >
-              {{ ownedSets.length }} {{ ownedSets.length === 1 ? 'set' : 'sets' }}
+              {{ ownedGroups.length }} {{ ownedGroups.length === 1 ? 'set' : 'sets' }}
+              <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
             </span>
           </h2>
           <RouterLink
@@ -240,16 +259,30 @@ watch(
         <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
           Couldn't load your sets. Please retry.
         </p>
-        <!-- scroll-mt keeps a Tab-focused tile clear of the sticky top bar. -->
-        <div v-else class="grid items-start gap-3 [&_a]:scroll-mt-20 sm:grid-cols-2 lg:grid-cols-3">
-          <SetTile
-            v-for="ownedSet in ownedSets"
-            :key="ownedSet.code"
-            :game="game"
-            :set="ownedSet"
-            :to="`/collection/${game}/sets/${ownedSet.code}`"
-            :owned-count="ownedSet.owned_cards"
-          />
+        <!-- scroll-mt keeps a Tab-focused tile clear of the sticky top bar. Owned sub-sets
+             nest under their parent (SetGroup), matching the catalog game view; a childless
+             owned set stays a plain tile. Both link to the collection's per-set view and
+             show owned counts. -->
+        <div
+          v-else
+          class="grid items-start gap-3 [&_a]:scroll-mt-20 [&_button]:scroll-mt-20 sm:grid-cols-2 lg:grid-cols-3"
+        >
+          <template v-for="group in ownedGroups" :key="group.main.code">
+            <SetTile
+              v-if="!group.children.length"
+              :game="game"
+              :set="group.main"
+              :to="`/collection/${game}/sets/${group.main.code}`"
+              :owned-count="ownedCountByCode[group.main.code]"
+            />
+            <SetGroup
+              v-else
+              :game="game"
+              :group="group"
+              base-path="/collection"
+              :owned-counts="ownedCountByCode"
+            />
+          </template>
         </div>
       </template>
     </template>

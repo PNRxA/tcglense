@@ -6,9 +6,11 @@ import {
   collectionImportJobPath,
   collectionImportPath,
   collectionPath,
+  collectionSetDropsPath,
   collectionSourcePath,
   collectionSyncPath,
   getCollectionOwned,
+  getCollectionSetDrops,
   getCollectionSets,
   getCollectionSummary,
   importCollectionCsv,
@@ -46,8 +48,54 @@ describe('collectionPath', () => {
     )
   })
 
+  it('spans the set group with include_related', () => {
+    expect(collectionPath('mtg', { set: 'blb', includeRelated: true })).toBe(
+      '/api/collection/mtg?set=blb&include_related=true',
+    )
+    // Omitted when falsy, so a plain set scope stays a single set.
+    expect(collectionPath('mtg', { set: 'blb', includeRelated: false })).toBe(
+      '/api/collection/mtg?set=blb',
+    )
+  })
+
   it('encodes the game segment', () => {
     expect(collectionPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('collectionSetDropsPath', () => {
+  it('builds the by-drop path with no params', () => {
+    expect(collectionSetDropsPath('mtg', 'sld')).toBe('/api/collection/mtg/sets/sld/drops')
+  })
+
+  it('appends pagination + search params', () => {
+    expect(collectionSetDropsPath('mtg', 'sld', { page: 2, pageSize: 20, q: 't:goblin' })).toBe(
+      '/api/collection/mtg/sets/sld/drops?page=2&page_size=20&q=t%3Agoblin',
+    )
+  })
+
+  it('encodes the game + set segments', () => {
+    expect(collectionSetDropsPath('a/b', 'c/d')).toContain('a%2Fb')
+    expect(collectionSetDropsPath('a/b', 'c/d')).toContain('c%2Fd')
+  })
+})
+
+describe('getCollectionSetDrops', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('requests the by-drop endpoint with the passed params', async () => {
+    const fetchMock = vi.fn<(url: string, init?: unknown) => Promise<Response>>(async () => {
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ data: [], page: 1, page_size: 20, total: 0, has_more: false }),
+      } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await getCollectionSetDrops('tok', 'mtg', 'sld', { page: 3 })
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/sets/sld/drops?page=3')
   })
 })
 

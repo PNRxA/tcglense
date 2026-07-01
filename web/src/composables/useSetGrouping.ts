@@ -15,10 +15,19 @@ import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
  * is the underlying set-list query's pending flag, which the view gates its flat
  * card fetch on so a cold-loaded by-drop/related link doesn't fire a throwaway
  * request.
+ *
+ * `options.basePath` is the route prefix the scope-nav helpers navigate under
+ * (default `/cards`); the collection's set view passes `/collection` so the same
+ * grouping derivations drive its own `/collection/:game/sets/:code` pages.
  */
-export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
+export function useSetGrouping(
+  game: Ref<string>,
+  code: Ref<string>,
+  options: { basePath?: string } = {},
+) {
   const route = useRoute()
   const router = useRouter()
+  const basePath = options.basePath ?? '/cards'
 
   // The full set list (shared, cached with GameView) tells us whether this set has
   // related sub-sets to fold in.
@@ -93,7 +102,7 @@ export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
       // a different set is a fresh scope, so the search/sort don't carry over.
       if (group.value && !isMainSet.value) {
         router.replace({
-          path: `/cards/${game.value}/sets/${group.value.main.code}`,
+          path: `${basePath}/${game.value}/sets/${group.value.main.code}`,
           query: { related: '1', from: code.value },
         })
       } else {
@@ -111,7 +120,7 @@ export function useSetGrouping(game: Ref<string>, code: Ref<string>) {
     if (target === code.value) {
       router.replace({ query: listState() })
     } else {
-      router.replace({ path: `/cards/${game.value}/sets/${target}`, query: {} })
+      router.replace({ path: `${basePath}/${game.value}/sets/${target}`, query: {} })
     }
   }
 

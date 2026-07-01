@@ -20,10 +20,10 @@ use crate::{
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_sets, collection_summary, delete_collection_source,
-            get_collection_entry, get_collection_source, get_import_job, import_collection,
-            import_collection_csv, list_collection, owned_counts, save_collection_source,
-            set_collection_entry, sync_collection_source,
+            MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
+            delete_collection_source, get_collection_entry, get_collection_source, get_import_job,
+            import_collection, import_collection_csv, list_collection, owned_counts,
+            save_collection_source, set_collection_entry, sync_collection_source,
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
@@ -72,6 +72,13 @@ pub fn build_router(state: AppState) -> Router {
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
         .route("/api/collection/{game}/sets", get(collection_sets))
+        // A drop-grouped owned set (e.g. Secret Lair) broken into Secret Lair drops,
+        // paginated by drop — the collection mirror of the catalog's set-drops endpoint,
+        // scoped to what the user owns.
+        .route(
+            "/api/collection/{game}/sets/{code}/drops",
+            get(collection_set_drops),
+        )
         // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
         // counts out). POST so a big page's id list can't blow the URL length.
         .route("/api/collection/{game}/owned", post(owned_counts))

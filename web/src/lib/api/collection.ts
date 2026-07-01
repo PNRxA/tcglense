@@ -65,6 +65,9 @@ export interface CollectionListParams {
   dir?: 'asc' | 'desc'
   /** Set-code scope: only cards from this set, ANDed with `q`. Absent = every set. */
   set?: string
+  /** With a `set` scope, span the set's whole group (root + related sub-sets) instead
+   * of just the one set — the collection mirror of the catalog's `include_related`. */
+  includeRelated?: boolean
 }
 
 /** Relative `/api/collection/...` path for a user's collection in a game. */
@@ -76,6 +79,7 @@ export function collectionPath(game: string, params: CollectionListParams = {}):
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)
   if (params.set) search.set('set', params.set)
+  if (params.includeRelated) search.set('include_related', 'true')
   const qs = search.toString()
   return `/api/collection/${encodeURIComponent(game)}${qs ? `?${qs}` : ''}`
 }
@@ -112,6 +116,60 @@ export function getCollectionSets(token: string, game: string): Promise<{ data: 
   return request<{ data: CollectionSet[] }>(`/api/collection/${encodeURIComponent(game)}/sets`, {
     token,
   })
+}
+
+/** One Secret Lair drop with the user's owned cards in it — the collection mirror of the
+ * catalog `DropGroup`, but each card carries the owned counts. */
+export interface CollectionDropGroup {
+  /** Stable slug for anchors; null for the catch-all "Other" group. */
+  slug: string | null
+  title: string
+  card_count: number
+  cards: CollectionEntry[]
+}
+
+/** A page of collection drop groups — `total`/pagination count *drops*, not cards. */
+export interface CollectionDropGroupPage {
+  data: CollectionDropGroup[]
+  page: number
+  page_size: number
+  total: number
+  has_more: boolean
+}
+
+/** Params for the by-drop owned-cards view (paginated by drop). */
+export interface CollectionDropsParams {
+  page?: number
+  pageSize?: number
+  /** Scryfall-style search query (same syntax as the catalog card lists). */
+  q?: string
+}
+
+/** Relative `/api/collection/{game}/sets/{code}/drops` path (paginated by drop). */
+export function collectionSetDropsPath(
+  game: string,
+  code: string,
+  params: CollectionDropsParams = {},
+): string {
+  const search = new URLSearchParams()
+  if (params.page) search.set('page', String(params.page))
+  if (params.pageSize) search.set('page_size', String(params.pageSize))
+  if (params.q) search.set('q', params.q)
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  const qs = search.toString()
+  return `/api/collection/${g}/sets/${c}/drops${qs ? `?${qs}` : ''}`
+}
+
+/** The signed-in user's owned cards in a drop-grouped set (e.g. Secret Lair), grouped by
+ * Secret Lair drop and paginated by drop. Only valid for sets where `has_drops` is true. */
+export function getCollectionSetDrops(
+  token: string,
+  game: string,
+  code: string,
+  params?: CollectionDropsParams,
+): Promise<CollectionDropGroupPage> {
+  return request<CollectionDropGroupPage>(collectionSetDropsPath(game, code, params), { token })
 }
 
 /**
