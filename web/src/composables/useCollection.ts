@@ -193,7 +193,11 @@ export function useCollectionEntryQuery(
  * (issue #112) gates its dimming on it so owned cards don't flash as ghosts in the window
  * before their counts load (an empty map would otherwise read as "everything unowned").
  */
-export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
+export function useOwnedCounts(
+  game: Ref<string>,
+  cards: Ref<Card[]>,
+  opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
+) {
   const auth = useAuthStore()
   const cardIds = computed(() => cards.value.map((card) => card.id))
   // A stable, order-independent key: two renders of the same page hit the same cache.
@@ -201,9 +205,16 @@ export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
   const options = {
     queryKey: ['collection-owned', game, idsKey],
     queryFn: (token: string) => getCollectionOwned(token, game.value, cardIds.value),
-    enabled: computed(() => auth.isAuthenticated && cardIds.value.length > 0),
+    enabled: computed(
+      () => auth.isAuthenticated && cardIds.value.length > 0 && (opts.enabled?.value ?? true),
+    ),
     // Keep the previous page's badges up while the next page's counts load.
     placeholderData: keepPreviousData,
+    // A caller can force a fresh authoritative fetch (e.g. the quick-add dialog seeds
+    // absolute-count editors from this, so it wants `0` to re-read on each open). Only
+    // set the key when asked: a bare `staleTime: undefined` would override the client's
+    // 5-minute default down to 0, refetching the badge queries far more than needed.
+    ...(opts.staleTime !== undefined ? { staleTime: opts.staleTime } : {}),
   }
   const query = useAuthedQuery<OwnedCountsMap>(options)
   const ownership = computed<OwnedCountsMap>(() =>
@@ -215,7 +226,13 @@ export function useOwnedCounts(game: Ref<string>, cards: Ref<Card[]>) {
       cardIds.value.length === 0 ||
       (query.isSuccess.value && !query.isPlaceholderData.value),
   )
-  return { ownership, ready }
+  // A fetch in flight. A caller seeding *absolute-count* editors must gate on
+  // `ready && !fetching`, not `ready` alone: on a same-key refetch (e.g. the quick-add
+  // dialog reopening the same name with `staleTime: 0`) `ready` stays true off the
+  // retained cache while the fresh data loads, so `ready` by itself would let an edit
+  // save off a stale seed (mirrors OwnedCountControl's `isSuccess && !isFetching`).
+  const fetching = computed(() => query.isFetching.value)
+  return { ownership, ready, fetching }
 }
 
 /** Variables for a collection write: which card, and the desired absolute counts. */

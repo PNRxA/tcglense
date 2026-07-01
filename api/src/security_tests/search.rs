@@ -38,6 +38,62 @@ async fn search_is_injection_safe_and_maps_bad_queries_to_422() {
     );
 }
 
+#[tokio::test]
+async fn card_name_autocomplete_returns_distinct_names() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // The dummy catalog reprints "Dummy Reprinted Relic" across two sets; the
+    // autocomplete lists each unique name once (no per-printing duplicates).
+    let (status, _, body) =
+        send(&app, get(&format!("/api/games/{game}/card-names?q=Reprinted"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let names = body["data"].as_array().expect("data array");
+    assert_eq!(names.len(), 1, "distinct names only: {names:?}");
+    assert_eq!(names[0].as_str(), Some("Dummy Reprinted Relic"));
+
+    // A blank query has nothing to suggest (empty list, not an error).
+    let (blank_status, _, blank_body) =
+        send(&app, get(&format!("/api/games/{game}/card-names?q="))).await;
+    assert_eq!(blank_status, StatusCode::OK);
+    assert!(blank_body["data"].as_array().expect("data").is_empty());
+
+    // The handler validates the game first, so an unknown game is a 404 — not a
+    // collision with the `/cards/{id}` route registered alongside it.
+    let (nf_status, _, _) = send(&app, get("/api/games/nope/card-names?q=Relic")).await;
+    assert_eq!(nf_status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn cards_by_exact_name_returns_every_printing() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // "Dummy Reprinted Relic" has two printings; the exact-name filter returns both.
+    let (status, _, body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?name={}",
+            url_encode("Dummy Reprinted Relic")
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_u64(), Some(2), "both printings: {body:?}");
+
+    // A name nobody prints returns an empty page (200 with total 0), not an error.
+    let (miss_status, _, miss_body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?name={}",
+            url_encode("No Such Card")
+        )),
+    )
+    .await;
+    assert_eq!(miss_status, StatusCode::OK);
+    assert_eq!(miss_body["total"].as_u64(), Some(0));
+}
+
 /// Percent-encode a query value (only what these tests need: the injection chars).
 fn url_encode(input: &str) -> String {
     let mut out = String::new();

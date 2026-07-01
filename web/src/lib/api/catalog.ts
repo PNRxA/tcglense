@@ -117,6 +117,10 @@ export interface CardListParams {
   sort?: string
   /** Sort direction: `asc`/`desc`. */
   dir?: string
+  /** All-cards endpoint only: restrict to printings whose name matches this exactly
+   * (the quick-add "pick a printing of this name" step). Ignored by the set-cards
+   * endpoint. */
+  name?: string
 }
 
 function cardQuery(params: CardListParams = {}): string {
@@ -127,6 +131,7 @@ function cardQuery(params: CardListParams = {}): string {
   if (params.includeRelated) search.set('include_related', 'true')
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)
+  if (params.name) search.set('name', params.name)
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }
@@ -159,6 +164,36 @@ export function listSetCards(
 
 export function listCards(game: string, params?: CardListParams): Promise<CardPage> {
   return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`)
+}
+
+/** How many name hints the quick-add box requests (the server also caps this). */
+export const CARD_NAME_SUGGESTION_LIMIT = 10
+
+/** Relative `/api/games/{game}/card-names` path for the quick-add autocomplete. */
+export function cardNamesPath(game: string, q: string, limit = CARD_NAME_SUGGESTION_LIMIT): string {
+  const search = new URLSearchParams({ q, limit: String(limit) })
+  return `/api/games/${encodeURIComponent(game)}/card-names?${search.toString()}`
+}
+
+/** Distinct card names matching `q` (one hint per unique name) for the collection
+ * quick-add box; empty when `q` is blank. */
+export function getCardNames(
+  game: string,
+  q: string,
+  limit = CARD_NAME_SUGGESTION_LIMIT,
+): Promise<{ data: string[] }> {
+  return request<{ data: string[] }>(cardNamesPath(game, q, limit))
+}
+
+/** Upper bound on printings fetched for one name (the all-cards endpoint caps a
+ * page at 200 — comfortably more than any non-basic card's printing count). */
+export const MAX_PRINTINGS = 200
+
+/** Every printing of an exact card `name` in a game, newest printing first — the
+ * quick-add "pick which printing" step. Reuses the all-cards endpoint's exact-name
+ * filter, so no card-id is needed (the name comes straight from the autocomplete). */
+export function getCardPrintingsByName(game: string, name: string): Promise<CardPage> {
+  return listCards(game, { name, pageSize: MAX_PRINTINGS, sort: 'released', dir: 'desc' })
 }
 
 /** Browse a drop-grouped set (e.g. Secret Lair) broken into named drops,

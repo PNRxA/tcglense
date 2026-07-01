@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { cardImageUrl, priceHistoryPath, setIconUrl } from '../api'
+import { cardImageUrl, cardNamesPath, priceHistoryPath, setIconUrl } from '../api'
 
 describe('cardImageUrl', () => {
   it('builds a proxy URL with the default size', () => {
@@ -21,6 +21,22 @@ describe('cardImageUrl', () => {
 describe('setIconUrl', () => {
   it('builds the set-icon proxy URL', () => {
     expect(setIconUrl('mtg', 'blb')).toBe('/api/games/mtg/sets/blb/icon')
+  })
+})
+
+describe('cardNamesPath', () => {
+  it('builds the autocomplete path with the query and a default limit', () => {
+    expect(cardNamesPath('mtg', 'bolt')).toBe('/api/games/mtg/card-names?q=bolt&limit=10')
+  })
+
+  it('honours an explicit limit and URL-encodes the query', () => {
+    expect(cardNamesPath('mtg', 'sol ring', 5)).toBe('/api/games/mtg/card-names?q=sol+ring&limit=5')
+    // A name full of punctuation binds safely into the query string.
+    expect(cardNamesPath('mtg', 'Ach! Hans, Run!')).toContain('q=Ach%21+Hans%2C+Run%21')
+  })
+
+  it('encodes the game path segment', () => {
+    expect(cardNamesPath('a/b', 'x')).toContain('/api/games/a%2Fb/card-names')
   })
 })
 

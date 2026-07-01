@@ -16,8 +16,8 @@ use crate::{
         auth::{login, logout, me, refresh, register},
         cache::{conditional_request_layer, no_store_layer, public_cache_layer},
         catalog::{
-            card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
-            list_games, list_set_cards, list_set_drops, list_sets, set_icon,
+            card_image, card_names, card_prices, card_prints, get_card, get_set, ingest_status,
+            list_cards, list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
@@ -126,6 +126,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
         .route("/api/games/{game}/sets/{code}/drops", get(list_set_drops))
         .route("/api/games/{game}/cards", get(list_cards))
+        // Distinct card-name autocomplete for the collection quick-add box. A sibling
+        // of `/cards` (not `/cards/{name}`) so it never collides with `/cards/{id}`.
+        .route("/api/games/{game}/card-names", get(card_names))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
