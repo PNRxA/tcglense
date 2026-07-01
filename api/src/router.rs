@@ -19,6 +19,7 @@ use crate::{
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         health::health,
+        sitemap::{sitemap_child, sitemap_index},
     },
     state::AppState,
 };
@@ -70,6 +71,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
         .route("/api/games/{game}/cards/{id}/prints", get(card_prints))
+        // DB-backed sitemaps for crawlers: an index plus its child sitemaps
+        // (pages / sets / chunked cards). Shared-cacheable like the rest of the
+        // catalog; each success sets its own longer `Cache-Control`, which the
+        // layer preserves, and a bad chunk 404s to `no-store`.
+        .route("/api/sitemap.xml", get(sitemap_index))
+        .route("/api/sitemaps/{name}", get(sitemap_child))
         .layer(map_response(public_cache_layer));
 
     Router::new()

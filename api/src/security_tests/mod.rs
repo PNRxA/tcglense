@@ -21,3 +21,4 @@ mod refresh;
 mod registration;
 mod request_body;
 mod search;
+mod sitemap;

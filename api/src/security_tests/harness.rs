@@ -34,6 +34,9 @@ pub(super) async fn test_state() -> AppState {
 
     let config = Config {
         data_dir: std::env::temp_dir().join("tcglense-security-tests"),
+        // A distinctive origin so the sitemap tests can assert the <loc>s are built
+        // against the configured public site URL.
+        public_site_url: "https://sitemap.test".to_string(),
         ..crate::test_support::test_config()
     };
 
@@ -86,6 +89,32 @@ pub(super) async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Heade
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     };
     (status, headers, json)
+}
+
+/// Like [`send`] but returns the raw body as a UTF-8 string, for the XML sitemap
+/// routes whose bodies aren't JSON.
+pub(super) async fn send_text(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
+    let res = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("router is infallible");
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("read response body");
+    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The `Cache-Control` header value as a string, or `None` if absent.
+pub(super) fn cache_control(headers: &HeaderMap) -> Option<&str> {
+    headers.get(CACHE_CONTROL).and_then(|v| v.to_str().ok())
+}
+
+/// The `Content-Type` header value as a string, or `None` if absent.
+pub(super) fn content_type(headers: &HeaderMap) -> Option<&str> {
+    headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok())
 }
 
 pub(super) fn get(uri: &str) -> Request<Body> {

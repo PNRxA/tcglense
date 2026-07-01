@@ -8,7 +8,7 @@ use sea_orm_migration::MigratorTrait;
 
 use crate::{config::Config, migrator::Migrator};
 
-/// A canonical, fully-populated [`Config`] for tests. All twelve fields carry sane,
+/// A canonical, fully-populated [`Config`] for tests. All thirteen fields carry sane,
 /// offline-safe defaults (in-memory DB, no card sync); a test that cares about a
 /// particular field overrides just that one via `Config { field: …, ..test_config() }`.
 pub(crate) fn test_config() -> Config {
@@ -20,6 +20,7 @@ pub(crate) fn test_config() -> Config {
         cookie_secure: false,
         host: "127.0.0.1".to_string(),
         port: 8080,
+        public_site_url: "https://tcglense.example".to_string(),
         data_dir: std::path::PathBuf::from("./data"),
         scryfall_user_agent: "TCGLense/test".to_string(),
         sync_on_startup: false,

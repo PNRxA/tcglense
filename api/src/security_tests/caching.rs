@@ -8,11 +8,6 @@
 
 use super::harness::*;
 
-/// The `Cache-Control` header value as a string, or `None` if absent.
-fn cache_control(headers: &HeaderMap) -> Option<&str> {
-    headers.get(CACHE_CONTROL).and_then(|v| v.to_str().ok())
-}
-
 #[tokio::test]
 async fn public_catalog_reads_are_shared_cacheable() {
     let app = test_app_with_catalog().await;
