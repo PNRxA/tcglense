@@ -431,7 +431,7 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
         // Deferred filters (Tagger tags #140, cube #141, Phase-5 aggregates) still 422.
         assert!(matches!(err("cube:vintage"), SearchError::UnsupportedKey(_)));
         assert!(matches!(err("otag:removal"), SearchError::UnsupportedKey(_)));
-        assert!(matches!(err("prints>2"), SearchError::UnsupportedKey(_)));
+        assert!(matches!(err("block:rtr"), SearchError::UnsupportedKey(_)));
         assert!(matches!(
             err("set>dom"),
             SearchError::UnsupportedOperator { .. }
@@ -554,7 +554,7 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
 
     #[test]
     fn deferred_filters_still_422() {
-        for q in ["cube:vintage", "otag:removal", "atag:squirrel", "prints>3"] {
+        for q in ["cube:vintage", "otag:removal", "atag:squirrel", "devotion:2"] {
             assert!(
                 matches!(parse(q), Err(SearchError::UnsupportedKey(_))),
                 "{q} should still be unsupported"
@@ -813,4 +813,73 @@ use sea_orm::sea_query::{Alias, Expr, Query, SqliteQueryBuilder};
         assert_eq!(names(&db, "o:/draw a card/").await, vec!["Drawer"]);
         // A bare /…/ regexes the name.
         assert_eq!(names(&db, "/bolt/").await, vec!["Bolt"]);
+    }
+
+    // ----- Sibling-print aggregates (search parity, Phase 5) -----
+
+    #[test]
+    fn print_count_filters_compile() {
+        let s = sql("prints>=2");
+        assert!(s.contains("SELECT COUNT(*) FROM cards c2"), "{s}");
+        assert!(s.contains("c2.oracle_id = cards.oracle_id"), "{s}");
+        assert!(sql("sets>1").contains("COUNT(DISTINCT c2.set_code)"));
+    }
+
+    /// prints/sets count a card's printings via the oracle_id-sibling subquery.
+    #[tokio::test]
+    async fn print_count_filters_run_over_sqlite() {
+        use crate::entities::card;
+        use crate::entities::prelude::Card;
+        use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let ts: sea_orm::prelude::DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        // o1 is reprinted across two sets; o2 has a single printing; one card has no
+        // oracle id (its own sole sibling).
+        for (i, (name, set, oracle)) in [
+            ("Rep A", "s1", Some("o1")),
+            ("Rep B", "s2", Some("o1")),
+            ("Solo", "s1", Some("o2")),
+            ("Nul", "s1", None),
+        ]
+        .iter()
+        .enumerate()
+        {
+            card::ActiveModel {
+                game: Set("mtg".into()),
+                external_id: Set(format!("ext-{i}")),
+                name: Set((*name).into()),
+                set_code: Set((*set).into()),
+                set_name: Set("S".into()),
+                collector_number: Set(i.to_string()),
+                lang: Set("en".into()),
+                oracle_id: Set(oracle.map(str::to_owned)),
+                digital: Set(false),
+                created_at: Set(ts),
+                updated_at: Set(ts),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        async fn names(db: &DatabaseConnection, q: &str) -> Vec<String> {
+            let mut v = Card::find()
+                .filter(parse(q).expect("parses"))
+                .all(db)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.name)
+                .collect::<Vec<_>>();
+            v.sort();
+            v
+        }
+
+        assert_eq!(names(&db, "prints>=2").await, vec!["Rep A", "Rep B"]);
+        assert_eq!(names(&db, "prints=1").await, vec!["Nul", "Solo"]);
+        assert_eq!(names(&db, "sets>1").await, vec!["Rep A", "Rep B"]);
+        // Negation stays exact/total.
+        assert_eq!(names(&db, "-prints>1").await, vec!["Nul", "Solo"]);
     }

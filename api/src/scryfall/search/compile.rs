@@ -91,11 +91,12 @@ fn compile_filter(key: &str, op: Op, value: &str) -> Result<Condition, SearchErr
         // (prints/sets — Phase 5), result-shaping (order/unique/… — handled before
         // compile), and dataset-derived filters we don't ingest — Tagger tags
         // (function/otag/atag/… → issue #140) and cube (issue #141).
-        "block" | "b" | "in" | "prints" | "sets" | "papersets" | "cube" | "function"
-        | "oracletag" | "otag" | "art" | "arttag" | "atag" | "order" | "direction" | "unique"
-        | "display" | "prefer" | "devotion" | "cheapest" | "new" | "old" => {
-            Err(SearchError::UnsupportedKey(key.to_string()))
-        }
+        // Sibling-print aggregates (Phase 5): counts over a card's other printings.
+        "prints" => prints_filter(op, value),
+        "sets" | "papersets" => sets_filter(op, value),
+        "block" | "b" | "in" | "cube" | "function" | "oracletag" | "otag" | "art" | "arttag"
+        | "atag" | "order" | "direction" | "unique" | "display" | "prefer" | "devotion"
+        | "cheapest" | "new" | "old" => Err(SearchError::UnsupportedKey(key.to_string())),
         _ => Err(SearchError::UnknownKey(key.to_string())),
     }
 }
@@ -559,6 +560,42 @@ fn set_type(op: Op, value: &str) -> Result<Condition, SearchError> {
         ))),
         _ => Err(unsupported_op("settype", op)),
     }
+}
+
+/// `prints <op> N` — number of printings of this card (its `oracle_id` siblings).
+fn prints_filter(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: i64 = value
+        .parse()
+        .map_err(|_| invalid("prints", value, "expected a number"))?;
+    Ok(cond_one(sibling_count("COUNT(*)", op, n)))
+}
+
+/// `sets`/`papersets <op> N` — number of distinct sets this card appears in.
+/// (Equal here since the catalogue is paper-only.)
+fn sets_filter(op: Op, value: &str) -> Result<Condition, SearchError> {
+    let n: i64 = value
+        .parse()
+        .map_err(|_| invalid("sets", value, "expected a number"))?;
+    Ok(cond_one(sibling_count("COUNT(DISTINCT c2.set_code)", op, n)))
+}
+
+/// A `GAME`-scoped correlated subquery over a card's `oracle_id` siblings (a card
+/// with no `oracle_id` is its own sole sibling, so the count is always ≥ 1 and the
+/// leaf stays total for `-`/`not:`). `agg` is a fixed aggregate; user input binds.
+fn sibling_count(agg: &str, op: Op, n: i64) -> SimpleExpr {
+    let sql = format!(
+        "(SELECT {agg} FROM cards c2 WHERE c2.game = ? AND \
+         ((cards.oracle_id IS NOT NULL AND c2.oracle_id = cards.oracle_id) \
+          OR (cards.oracle_id IS NULL AND c2.id = cards.id))) {} ?",
+        cmp_sql(op)
+    );
+    Expr::cust_with_values(
+        sql,
+        [
+            Value::from(crate::scryfall::GAME.to_string()),
+            Value::from(n),
+        ],
+    )
 }
 
 fn collector_number(op: Op, value: &str) -> Result<Condition, SearchError> {

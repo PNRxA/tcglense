@@ -1,14 +1,18 @@
 //! A Scryfall-style search-query compiler.
 //!
 //! Turns a query string like `c:rg t:creature mv>=3 r:rare -o:flying` into a
-//! [`sea_orm::Condition`] over the `cards` table, supporting the subset of
-//! [Scryfall syntax](https://scryfall.com/docs/syntax) our columns can back:
-//! name / type / oracle text, colours & colour identity, mana cost, mana value,
-//! power / toughness / loyalty, prices, rarity, set, set type, collector number,
-//! language, layout, release date, plus boolean `and`/`or`, `-` negation,
-//! parentheses, and quoted phrases. Filters we cannot back (oracle keywords,
-//! format legality,
-//! artist, …) return a [`SearchError`] that the handler maps to HTTP 422.
+//! [`sea_orm::Condition`] over the `cards` table (plus optional result-shaping
+//! directives), supporting most of [Scryfall syntax](https://scryfall.com/docs/syntax):
+//! name / type / oracle (regex `/…/` too), colours & colour identity (incl. colour
+//! names and guild/shard nicknames), mana cost + relational operators, mana value,
+//! power / toughness / loyalty / pt / defense, prices, rarity, set, set type,
+//! collector number, language, layout, release date, legality (`f:`/`banned:`/…),
+//! keywords, artist, flavour text, watermark, border/frame/stamp, finishes and the
+//! print-flag `is:` subjects, printing counts (`prints`/`sets`), plus boolean
+//! `and`/`or`, `-` negation, parentheses, quoted phrases, and the `order:` /
+//! `direction:` / `unique:` result-shaping directives. Filters backed by datasets we
+//! don't ingest — Tagger tags (`otag:`/`atag:`/`function:`) and `cube:` — return a
+//! [`SearchError`] the handler maps to HTTP 422.
 //!
 //! Pipeline: [`lex`] → [`Parser::parse_query`] (recursive descent → `Node`) →
 //! [`compile`] (→ `Condition`). Three rules keep it safe and predictable:
@@ -24,7 +28,8 @@
 //!
 //! The stages live in their own submodules ([`error`], [`lexer`], [`parser`],
 //! [`compile`]); this module owns the limit/vocabulary constants and the public
-//! [`parse`] entry point, and re-exports the crate-visible symbols.
+//! [`parse`] / [`parse_query`] entry points (the latter also returns the `order:` /
+//! `direction:` / `unique:` directives), and re-exports the crate-visible symbols.
 
 mod compile;
 mod error;
