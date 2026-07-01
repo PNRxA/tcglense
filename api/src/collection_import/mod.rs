@@ -13,6 +13,7 @@
 //! match in our catalog are reported as "unmatched" and skipped.
 
 mod archidekt;
+mod csv_import;
 pub mod jobs;
 pub mod rate_limit;
 
@@ -381,6 +382,30 @@ async fn load_local_by_external(
         }
     }
     Ok(local)
+}
+
+/// Import a collection from an uploaded Archidekt CSV export.
+///
+/// Parses the (untrusted, already size-bounded) CSV bytes into normalized holdings, then
+/// runs the exact same aggregate / resolve / reconcile / apply path as a network import —
+/// but with no upstream fetch, so no rate limiter or background job is involved and this
+/// runs inline in the request. A CSV has no persistent location, so it's always a
+/// one-off; the caller picks the `mode`. An empty parse (no usable rows) is refused so a
+/// `Replace` can't silently wipe the collection against a blank upload.
+pub async fn execute_csv_import(
+    db: &DatabaseConnection,
+    user_id: i32,
+    game: &str,
+    mode: ReconcileMode,
+    csv_bytes: &[u8],
+) -> Result<ImportSummary, ImportError> {
+    let holdings = csv_import::parse_archidekt_csv(csv_bytes)?;
+    if holdings.is_empty() {
+        return Err(ImportError::EmptyCollection);
+    }
+    // A CSV export is Archidekt data, so it reconciles as the Archidekt provider (the
+    // summary's `provider` field, and the finish semantics, match the URL import).
+    reconcile_holdings(db, user_id, game, Provider::Archidekt, mode, holdings).await
 }
 
 /// Aggregate raw holdings into per-card regular/foil counts. The same printing can
@@ -1129,5 +1154,66 @@ mod tests {
             Some((2, 6)),
             "regular preserved from the live count, foil overwritten"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_csv_import_parses_then_reconciles_over_a_db() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = insert_user(&db).await;
+        // Two catalog cards keyed by the Scryfall ids the CSV references, plus one owned
+        // card absent from the CSV (to prove Replace mirrors it away).
+        let uid_a = "f369827d-e4cd-4bc7-8c5e-72882eff0908";
+        let uid_b = "50a22ad6-d2a4-48a6-91c9-147c946a60a5";
+        let a = insert_card(&db, uid_a).await;
+        let b = insert_card(&db, uid_b).await;
+        let stale = insert_card(&db, "not-in-the-csv").await;
+        insert_holding(&db, user_id, stale, 4, 0).await;
+
+        // A real-shaped export: extra columns, a quoted comma in a name, a foil + a regular,
+        // and an unknown Scryfall id that should be reported as unmatched, not applied.
+        let csv = "Quantity,Name,Finish,Scryfall ID\r\n\
+                   2,\"Aang, Air Nomad\",Foil,f369827d-e4cd-4bc7-8c5e-72882eff0908\r\n\
+                   3,Sol Ring,Normal,50a22ad6-d2a4-48a6-91c9-147c946a60a5\r\n\
+                   1,Ghost Card,Normal,ffffffff-ffff-ffff-ffff-ffffffffffff\r\n";
+
+        let summary = execute_csv_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Replace,
+            csv.as_bytes(),
+        )
+        .await
+        .expect("csv import");
+
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((0, 2)), "a imported as foil");
+        assert_eq!(owned_counts(&db, user_id, b).await, Some((3, 0)), "b imported as regular");
+        assert_eq!(owned_counts(&db, user_id, stale).await, None, "stale mirrored away");
+        assert_eq!(summary.provider, "archidekt");
+        assert_eq!(summary.matched_cards, 2);
+        assert_eq!(summary.unmatched_cards, 1, "the ghost card isn't in the catalog");
+        assert_eq!(summary.removed_cards, 1);
+    }
+
+    #[tokio::test]
+    async fn execute_csv_import_refuses_an_empty_upload() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = insert_user(&db).await;
+        let a = insert_card(&db, "ext-a").await;
+        insert_holding(&db, user_id, a, 3, 0).await;
+
+        // A header-only CSV yields no holdings; a Replace against it must be refused so an
+        // empty upload can't wipe the collection.
+        let err = execute_csv_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Replace,
+            b"Scryfall ID,Finish,Quantity\n",
+        )
+        .await
+        .expect_err("empty upload must be refused");
+        assert!(matches!(err, ImportError::EmptyCollection));
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((3, 0)), "collection untouched");
     }
 }

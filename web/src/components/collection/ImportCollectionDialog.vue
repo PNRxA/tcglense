@@ -16,11 +16,12 @@ import { Label } from '@/components/ui/label'
 import {
   invalidateCollectionData,
   useDeleteCollectionSourceMutation,
+  useImportCollectionCsvMutation,
   useImportCollectionMutation,
   useImportJobQuery,
   useSaveCollectionSourceMutation,
 } from '@/composables/useCollection'
-import { ApiError } from '@/lib/api'
+import { ApiError, MAX_CSV_UPLOAD_BYTES } from '@/lib/api'
 import type { CollectionProvider, CollectionSource, ImportSummary, ReconcileMode } from '@/lib/api'
 
 // The single management surface for importing a collection from an external provider:
@@ -58,7 +59,13 @@ const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
   },
 ]
 
+// Two ways in: paste a public collection link (fetched server-side, async) or upload an
+// exported CSV (parsed server-side, synchronous). A CSV is inherently one-off — there's
+// no location to re-sync from — so the "save link" affordance only applies to the link tab.
+type SourceType = 'link' | 'csv'
+
 const open = ref(false)
+const sourceType = ref<SourceType>('link')
 const provider = ref<CollectionProvider>('archidekt')
 const sourceInput = ref(props.source?.url ?? '')
 const mode = ref<ReconcileMode>('overwrite')
@@ -66,10 +73,12 @@ const saveLink = ref(props.source != null)
 // Whether a saved link re-syncs with smart sync. Kept separate from the one-off `mode`
 // so re-importing a smart-saved link with a different mode doesn't silently downgrade it.
 const smartResync = ref(props.source?.smart ?? false)
+const csvFile = ref<File | null>(null)
 
 const gameRef = toRef(props, 'game')
 const qc = useQueryClient()
 const importMutation = useImportCollectionMutation()
+const importCsvMutation = useImportCollectionCsvMutation()
 const saveMutation = useSaveCollectionSourceMutation()
 const deleteMutation = useDeleteCollectionSourceMutation()
 
@@ -87,12 +96,14 @@ const jobQuery = useImportJobQuery(gameRef, jobId)
 // instance persists across opens and across game switches).
 watch(open, (isOpen) => {
   if (!isOpen) return
+  sourceType.value = 'link'
   provider.value = 'archidekt'
   sourceInput.value = props.source?.url ?? ''
   mode.value = 'overwrite'
   saveLink.value = props.source != null
   // Seed the saved-link re-sync preference from the existing link (defaults off).
   smartResync.value = props.source?.smart ?? false
+  csvFile.value = null
   errorMessage.value = null
   result.value = null
   jobId.value = null
@@ -104,6 +115,33 @@ watch(open, (isOpen) => {
 watch(mode, (m) => {
   if (m === 'smart') smartResync.value = true
 })
+
+// Switching tabs clears the previous tab's outcome/error so stale feedback never lingers.
+// Also drop any chosen file: the CSV tab's file input is remounted on the way back (v-if),
+// so it renders empty — clearing csvFile keeps Import's enabled state honest (no silently
+// staged, no-longer-visible upload).
+watch(sourceType, (type) => {
+  errorMessage.value = null
+  result.value = null
+  jobId.value = null
+  csvFile.value = null
+  // Smart isn't offered for a CSV (there's no fetch to order / stop), so drop back to a
+  // valid mode when switching to the CSV tab.
+  if (type === 'csv' && mode.value === 'smart') mode.value = 'overwrite'
+})
+
+function onCsvFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  csvFile.value = input.files?.[0] ?? null
+  errorMessage.value = null
+  result.value = null
+}
+
+// Smart is a link-only mode (it needs the newest-first fetch to stop early); the CSV
+// upload has no fetch, so it's hidden there.
+const visibleModes = computed(() =>
+  sourceType.value === 'csv' ? MODES.filter((m) => m.value !== 'smart') : MODES,
+)
 
 // React to the polled job reaching a terminal status.
 watch(
@@ -125,8 +163,13 @@ const providerLabel = computed(
 )
 const jobStatus = computed(() => jobQuery.data.value?.status ?? null)
 const processing = computed(() => jobStatus.value === 'queued' || jobStatus.value === 'running')
-const busy = computed(() => enqueuing.value || processing.value)
-const canSubmit = computed(() => sourceInput.value.trim().length > 0 && !busy.value)
+const busy = computed(
+  () => enqueuing.value || processing.value || importCsvMutation.isPending.value,
+)
+const canSubmit = computed(() => {
+  if (busy.value) return false
+  return sourceType.value === 'csv' ? csvFile.value != null : sourceInput.value.trim().length > 0
+})
 const statusMessage = computed(() => {
   switch (jobStatus.value) {
     case 'queued':
@@ -138,8 +181,15 @@ const statusMessage = computed(() => {
   }
 })
 
+// Human-readable form of the upload size cap, for the too-large message.
+const maxCsvMb = Math.round(MAX_CSV_UPLOAD_BYTES / (1024 * 1024))
+
 async function runImport() {
   if (!canSubmit.value) return
+  if (sourceType.value === 'csv') {
+    await runCsvImport()
+    return
+  }
   enqueuing.value = true
   errorMessage.value = null
   result.value = null
@@ -176,6 +226,34 @@ async function runImport() {
     errorMessage.value = err instanceof ApiError ? err.message : 'Import failed. Please try again.'
   } finally {
     enqueuing.value = false
+  }
+}
+
+// Upload + reconcile a CSV. Synchronous server-side (no upstream fetch), so the summary
+// comes straight back — no job to poll. The server enforces the real limits; this only
+// pre-checks the size for a friendlier message than a bare 413.
+async function runCsvImport() {
+  const file = csvFile.value
+  if (!file) return
+  if (file.size > MAX_CSV_UPLOAD_BYTES) {
+    errorMessage.value =
+      `That file is larger than ${maxCsvMb} MB. Re-export from Archidekt with only the ` +
+      'Scryfall ID, Finish, and Quantity columns — that keeps it well under the limit.'
+    return
+  }
+  errorMessage.value = null
+  result.value = null
+  try {
+    const summary = await importCsvMutation.mutateAsync({
+      game: props.game,
+      file,
+      mode: mode.value,
+    })
+    result.value = summary
+    // The collection contents changed — refresh the grid, header, and card steppers.
+    invalidateCollectionData(qc, props.game)
+  } catch (err) {
+    errorMessage.value = err instanceof ApiError ? err.message : 'Import failed. Please try again.'
   }
 }
 
@@ -246,35 +324,100 @@ const selectClass =
     >
       <DialogTitle class="text-lg font-semibold">Import from {{ providerLabel }}</DialogTitle>
       <DialogDescription class="text-muted-foreground mt-1 text-sm">
-        Paste a public collection URL (or id) and choose how to reconcile it with your collection.
-        We fetch it server-side — nothing is uploaded from your device.
+        <template v-if="sourceType === 'link'">
+          Paste a public collection URL (or id) and choose how to reconcile it with your collection.
+          We fetch it server-side — nothing is uploaded from your device.
+        </template>
+        <template v-else>
+          Upload your exported {{ providerLabel }} collection CSV and choose how to reconcile it
+          with your collection.
+        </template>
       </DialogDescription>
 
       <div class="mt-5 space-y-5">
-        <!-- Provider -->
-        <div class="space-y-1.5">
-          <Label for="import-provider">Provider</Label>
-          <select id="import-provider" v-model="provider" :class="selectClass">
-            <option v-for="p in PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
-          </select>
-          <p class="text-muted-foreground text-xs">More providers (e.g. Moxfield) are coming.</p>
+        <!-- Source: paste a link vs upload a CSV file. -->
+        <div class="bg-muted grid grid-cols-2 gap-1 rounded-lg p-1" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="sourceType === 'link'"
+            class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="
+              sourceType === 'link'
+                ? 'bg-background shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            "
+            @click="sourceType = 'link'"
+          >
+            Paste a link
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="sourceType === 'csv'"
+            class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="
+              sourceType === 'csv'
+                ? 'bg-background shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            "
+            @click="sourceType = 'csv'"
+          >
+            Upload a CSV
+          </button>
         </div>
 
-        <!-- Source URL / id -->
-        <div class="space-y-1.5">
-          <Label for="import-source">Collection URL or id</Label>
-          <Input
-            id="import-source"
-            v-model="sourceInput"
-            placeholder="https://archidekt.com/collection/v2/1042487"
-          />
-        </div>
+        <!-- Link tab: provider + collection URL/id. -->
+        <template v-if="sourceType === 'link'">
+          <div class="space-y-1.5">
+            <Label for="import-provider">Provider</Label>
+            <select id="import-provider" v-model="provider" :class="selectClass">
+              <option v-for="p in PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
+            </select>
+            <p class="text-muted-foreground text-xs">More providers (e.g. Moxfield) are coming.</p>
+          </div>
+
+          <div class="space-y-1.5">
+            <Label for="import-source">Collection URL or id</Label>
+            <Input
+              id="import-source"
+              v-model="sourceInput"
+              placeholder="https://archidekt.com/collection/v2/1042487"
+            />
+          </div>
+        </template>
+
+        <!-- CSV tab: file picker + which columns to export. -->
+        <template v-else>
+          <div class="space-y-2">
+            <Label for="import-csv">Collection CSV file</Label>
+            <input
+              id="import-csv"
+              type="file"
+              accept=".csv,text/csv"
+              class="border-input dark:bg-input/30 file:bg-muted file:text-foreground block w-full cursor-pointer rounded-md border bg-transparent text-sm file:mr-3 file:cursor-pointer file:border-0 file:px-3 file:py-2 file:text-sm file:font-medium focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] focus-visible:outline-none"
+              @change="onCsvFileChange"
+            />
+            <div class="bg-muted/60 text-muted-foreground rounded-md p-3 text-xs">
+              <p class="text-foreground font-medium">How to export from {{ providerLabel }}</p>
+              <p class="mt-1">
+                In {{ providerLabel }}, open your collection and choose Export → CSV. You only need
+                these three columns — you can leave the rest unchecked:
+              </p>
+              <ul class="mt-1.5 flex flex-wrap gap-1.5">
+                <li class="bg-background rounded border px-1.5 py-0.5 font-medium">Scryfall ID</li>
+                <li class="bg-background rounded border px-1.5 py-0.5 font-medium">Finish</li>
+                <li class="bg-background rounded border px-1.5 py-0.5 font-medium">Quantity</li>
+              </ul>
+            </div>
+          </div>
+        </template>
 
         <!-- Reconcile mode -->
         <fieldset class="space-y-2">
           <legend class="mb-1 text-sm font-medium">How should we reconcile it?</legend>
           <label
-            v-for="m in MODES"
+            v-for="m in visibleModes"
             :key="m.value"
             class="flex cursor-pointer gap-3 rounded-md border p-3 transition-colors"
             :class="mode === m.value ? 'border-ring bg-accent/40' : 'hover:bg-accent/30'"
@@ -287,8 +430,8 @@ const selectClass =
           </label>
         </fieldset>
 
-        <!-- Save the link -->
-        <div class="space-y-2">
+        <!-- Save the link (link tab only — an uploaded CSV has nothing to re-sync from). -->
+        <div v-if="sourceType === 'link'" class="space-y-2">
           <label class="flex cursor-pointer items-center gap-2 text-sm">
             <input v-model="saveLink" type="checkbox" />
             Remember this link for one-click re-syncing

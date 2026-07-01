@@ -3,49 +3,63 @@ import { computed } from 'vue'
 import { Layers, Sparkles } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
-// The owned-count overlay shown on a card image: a total-copies chip (stacked-cards
-// icon, regular + foil) and, when any are foil, a separate foil chip (sparkles).
-// Shared by the collection grid and the public browse grids (issue #85). The parent
-// is expected to be `relative` (CardTile's badge slot is), since this positions
-// itself absolutely in the corner. Each chip carries a shadcn tooltip spelling out
-// what its icon means ("N total" / "N foil"), with a matching `aria-label` so the
-// count is announced to screen readers even though the chip isn't focusable (issue #94).
-const props = defineProps<{
-  quantity: number
-  foilQuantity: number
-}>()
+// The owned-count chips shown on a card image: a total-copies chip (stacked-cards icon,
+// regular + foil) and, when any are foil, a separate foil chip (sparkles). Shared by the
+// collection grid and the public browse grids (issue #85), now rendered inside
+// OwnedCountControl's trigger (which owns the corner positioning — bottom-left, per issue
+// #100). Each chip carries a matching `aria-label` so the count is announced to screen
+// readers (issue #94), and — when `tooltip` is on — a shadcn tooltip spelling out what its
+// icon means. `tooltip` is turned off when the badge is itself a popover trigger, so a
+// hover tooltip doesn't fight the click-to-open panel (and TooltipTrigger doesn't nest
+// inside PopoverTrigger).
+const props = withDefaults(
+  defineProps<{
+    quantity: number
+    foilQuantity: number
+    tooltip?: boolean
+  }>(),
+  { tooltip: true },
+)
 
 const total = computed(() => props.quantity + props.foilQuantity)
+
+// One shared chip style; `tabular-nums` keeps counts from jittering as they change.
+const chipClass =
+  'bg-primary text-primary-foreground inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-semibold shadow tabular-nums'
 </script>
 
 <template>
-  <!-- `z-20` keeps the chips above the card, which lifts to `z-10` on hover (see
-    CardTile); without it the enlarged card paints over the badges and they vanish
-    while hovered. The tooltip content is portalled to <body>, so it's unaffected. -->
-  <div class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1">
-    <Tooltip v-if="total > 0">
-      <TooltipTrigger as-child>
-        <span
-          class="bg-primary text-primary-foreground inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-semibold shadow tabular-nums"
-          :aria-label="`${total} total`"
-        >
-          <Layers class="size-3" aria-hidden="true" />
-          {{ total }}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{{ total }} total</TooltipContent>
-    </Tooltip>
-    <Tooltip v-if="foilQuantity > 0">
-      <TooltipTrigger as-child>
-        <span
-          class="bg-primary text-primary-foreground inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-semibold shadow tabular-nums"
-          :aria-label="`${foilQuantity} foil`"
-        >
-          <Sparkles class="size-3" aria-hidden="true" />
-          {{ foilQuantity }}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{{ foilQuantity }} foil</TooltipContent>
-    </Tooltip>
+  <div class="inline-flex items-center gap-1">
+    <template v-if="total > 0">
+      <Tooltip v-if="tooltip">
+        <TooltipTrigger as-child>
+          <span :class="chipClass" :aria-label="`${total} total`">
+            <Layers class="size-3" aria-hidden="true" />
+            {{ total }}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{{ total }} total</TooltipContent>
+      </Tooltip>
+      <span v-else :class="chipClass" :aria-label="`${total} total`">
+        <Layers class="size-3" aria-hidden="true" />
+        {{ total }}
+      </span>
+    </template>
+
+    <template v-if="foilQuantity > 0">
+      <Tooltip v-if="tooltip">
+        <TooltipTrigger as-child>
+          <span :class="chipClass" :aria-label="`${foilQuantity} foil`">
+            <Sparkles class="size-3" aria-hidden="true" />
+            {{ foilQuantity }}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{{ foilQuantity }} foil</TooltipContent>
+      </Tooltip>
+      <span v-else :class="chipClass" :aria-label="`${foilQuantity} foil`">
+        <Sparkles class="size-3" aria-hidden="true" />
+        {{ foilQuantity }}
+      </span>
+    </template>
   </div>
 </template>

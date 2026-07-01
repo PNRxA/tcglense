@@ -9,6 +9,7 @@ import {
   getCollectionSummary,
   getImportJob,
   importCollection,
+  importCollectionCsv,
   saveCollectionSource,
   setCollectionEntry,
   syncCollectionSource,
@@ -20,9 +21,11 @@ import {
   type CollectionSource,
   type CollectionSummary,
   type ImportJob,
+  type ImportSummary,
   type OwnedCountsMap,
   type ReconcileMode,
 } from '@/lib/api'
+import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 
@@ -51,15 +54,28 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
 /** Cards per page in the collection grid (matches the catalog default). */
 export const COLLECTION_PAGE_SIZE = 60
 
-/** A page of the user's owned cards for a game. `page` is reactive (paginated view).
- * Disabled while signed out — the collection routes are public, so a signed-out
- * visitor lands here (and is prompted to sign in) without triggering an auth call. */
-export function useCollectionQuery(game: Ref<string>, page: Ref<number>) {
+/** A page of the user's owned cards for a game. `page`, `query` and `sort` are
+ * reactive: `query` is a Scryfall-style search (same syntax as the catalog) and
+ * `sort` is a `field:dir` value (see `lib/cardSort`), both carried in the query key
+ * so a change refetches. Disabled while signed out — the collection routes are
+ * public, so a signed-out visitor lands here (and is prompted to sign in) without
+ * triggering an auth call. */
+export function useCollectionQuery(
+  game: Ref<string>,
+  page: Ref<number>,
+  query: Ref<string>,
+  sort: Ref<string>,
+) {
   const auth = useAuthStore()
   const options = {
-    queryKey: ['collection', game, page],
+    queryKey: ['collection', game, query, sort, page],
     queryFn: (token: string) =>
-      getCollection(token, game.value, { page: page.value, pageSize: COLLECTION_PAGE_SIZE }),
+      getCollection(token, game.value, {
+        page: page.value,
+        pageSize: COLLECTION_PAGE_SIZE,
+        q: query.value || undefined,
+        ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
+      }),
     // Keep the current grid visible while the next page loads (smoother paging).
     placeholderData: keepPreviousData,
     enabled: computed(() => auth.isAuthenticated),
@@ -82,14 +98,23 @@ export function useCollectionSummaryQuery(game: Ref<string>) {
 /**
  * How many copies of one card the signed-in user owns — for the card-detail
  * controls. Disabled while signed out (the route is public), so a logged-out
- * visitor never triggers an auth call.
+ * visitor never triggers an auth call. Options let a caller defer and refresh the
+ * fetch: `enabled` gates it (e.g. the grid quick-add control only wants the
+ * authoritative holding once its popover opens, not for every visible tile), and
+ * `staleTime` (e.g. `0`) forces a re-fetch each time the query re-enables so the
+ * control never seeds an absolute-count edit off a stale cached holding.
  */
-export function useCollectionEntryQuery(game: Ref<string>, id: Ref<string>) {
+export function useCollectionEntryQuery(
+  game: Ref<string>,
+  id: Ref<string>,
+  opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
+) {
   const auth = useAuthStore()
   const options = {
     queryKey: ['collection-entry', game, id],
     queryFn: (token: string) => getCollectionEntry(token, game.value, id.value),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    staleTime: opts.staleTime,
   }
   return useAuthedQuery<CollectionQuantities>(options)
 }
@@ -196,6 +221,26 @@ export function useImportCollectionMutation() {
       }),
   }
   return useAuthedMutation<ImportJob, ImportCollectionVars>(options)
+}
+
+/** Variables for a CSV upload import: the file and how to reconcile it. */
+export interface ImportCsvVars {
+  game: string
+  file: File
+  mode: ReconcileMode
+}
+
+/**
+ * Import a collection from an uploaded Archidekt CSV export. Resolves **synchronously**
+ * to an {@link ImportSummary} (the CSV needs no upstream fetch, so there's no job to
+ * poll); the caller invalidates the collection caches on success.
+ */
+export function useImportCollectionCsvMutation() {
+  const options = {
+    mutationFn: (token: string, vars: ImportCsvVars) =>
+      importCollectionCsv(token, vars.game, vars.file, vars.mode),
+  }
+  return useAuthedMutation<ImportSummary, ImportCsvVars>(options)
 }
 
 /**

@@ -81,7 +81,11 @@ struct RowCard {
 /// as a foil in our two-bucket regular/foil model. The boolean is honored too, so a
 /// foil is caught whichever field the provider populates; a card is treated as regular
 /// only when *both* say so (modifier absent or "Normal", and the boolean `false`).
-fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
+///
+/// `pub(super)` so the CSV importer ([`super::csv_import`]) can key a CSV row's `Finish`
+/// column off the exact same rule (a CSV has no `foil` boolean, so it passes `false`),
+/// keeping the two Archidekt ingestion formats consistent on what counts as a foil.
+pub(super) fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
     if foil {
         return true;
     }

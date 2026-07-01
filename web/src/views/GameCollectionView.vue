@@ -5,12 +5,17 @@ import { LayoutGrid, Library, RefreshCw } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import CollectionGrid from '@/components/cards/CollectionGrid.vue'
 import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
+import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
+import { COLLECTION_DEFAULT_SORT, COLLECTION_SORT_OPTIONS } from '@/lib/cardSort'
 import {
   COLLECTION_PAGE_SIZE,
   invalidateCollectionData,
@@ -41,18 +46,22 @@ usePageMeta({
   noindex: true,
 })
 
-const page = ref(1)
-// Switching games (the route reuses this component) starts back at page 1.
-watch(game, () => {
-  page.value = 1
-})
+// Page, search and sort live in the URL query (like the catalog browse views), so
+// they survive opening a card and pressing Back and are shareable/reload-safe.
+// Switching games routes to a fresh path, which resets them.
+const { page, searchInput, query, sort } = useCardSearch(
+  COLLECTION_DEFAULT_SORT,
+  COLLECTION_SORT_OPTIONS.map((option) => option.value),
+)
 
-const collectionQuery = useCollectionQuery(game, page)
+const collectionQuery = useCollectionQuery(game, page, query, sort)
 const summaryQuery = useCollectionSummaryQuery(game)
 
 const entries = computed(() => collectionQuery.data.value?.data ?? [])
 const total = computed(() => collectionQuery.data.value?.total ?? 0)
 const summary = computed(() => summaryQuery.data.value)
+// A malformed search query comes back as 422; surface its message inline.
+const searchError = computed(() => searchErrorMessage(collectionQuery.error.value))
 
 // Keep the requested page within range as the collection shrinks (e.g. after
 // removing the last card on the final page).
@@ -73,6 +82,15 @@ const totalValue = computed(() => {
 
 // Stats are worth showing only once something is owned.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
+
+// Whether the collection is genuinely empty — decided by the whole-collection summary
+// (which no search filters), so a zero-match search or an in-flight refetch never makes
+// a non-empty collection look empty. Wait for the summary to load before deciding.
+const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasStats.value)
+
+// Show the search + sort controls whenever the collection has cards or a search is
+// active; a genuinely empty collection keeps the clean "add some cards" CTA instead.
+const showControls = computed(() => hasStats.value || !!query.value)
 
 // Import / sync from an external collection provider (Archidekt today).
 const qc = useQueryClient()
@@ -224,13 +242,33 @@ watch(
         </p>
       </header>
 
+      <!-- Search + sort over the collection (same Scryfall syntax as the catalog).
+           Shown once the collection has cards, or while a search is active. -->
+      <template v-if="showControls">
+        <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
+          <CardSearchBox
+            v-model="searchInput"
+            placeholder="Search your collection — name, c:r, t:goblin…"
+          />
+        </div>
+        <SearchSyntaxHint class="mt-2" />
+        <p v-if="query" class="text-muted-foreground mt-4 mb-6 text-sm">
+          <template v-if="collectionQuery.isFetching.value && !entries.length">Searching…</template>
+          <template v-else>
+            {{ total.toLocaleString() }} {{ total === 1 ? 'card' : 'cards' }} matching “{{ query }}”
+          </template>
+        </p>
+      </template>
+
       <LoadingRow v-if="collectionQuery.isPending.value" label="Loading your collection…" />
       <p v-else-if="collectionQuery.isError.value" class="text-destructive py-12">
-        Couldn't load your collection. Please retry.
+        {{ searchError ?? "Couldn't load your collection. Please retry." }}
       </p>
 
-      <!-- Empty state: nothing owned yet. -->
-      <div v-else-if="!entries.length" class="py-16 text-center">
+      <!-- Genuinely-empty collection (no search active): prompt to add cards. Gated on
+           the summary, not the filtered list, so an in-flight search-clear never shows
+           this by mistake. -->
+      <div v-else-if="collectionIsEmpty && !query" class="py-16 text-center">
         <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
         <RouterLink
           :to="`/cards/${game}/cards`"
@@ -242,9 +280,19 @@ watch(
         </RouterLink>
       </div>
 
+      <!-- A search that matched nothing in the collection. -->
+      <p v-else-if="!entries.length && query" class="text-muted-foreground py-12">
+        No cards in your collection match “{{ query }}”.
+      </p>
+
+      <!-- No entries yet but the collection isn't empty (e.g. refetching after clearing
+           a search): keep a loading affordance rather than flashing an empty state. -->
+      <LoadingRow v-else-if="!entries.length" label="Loading your collection…" />
+
       <template v-else>
-        <div class="mb-4 flex justify-end">
+        <div class="mb-4 flex justify-end gap-2">
           <CardSizeMenu />
+          <CardSortMenu v-model="sort" :options="COLLECTION_SORT_OPTIONS" />
         </div>
         <CollectionGrid :game="game" :entries="entries" />
         <div class="mt-10">
