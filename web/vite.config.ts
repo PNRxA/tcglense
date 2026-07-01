@@ -34,6 +34,7 @@ function robotsTxt(): string {
     'Disallow: /register',
     'Disallow: /dashboard',
     'Disallow: /profile',
+    'Disallow: /collection',
     '',
     // The DB-backed sitemap lives on the API (index + chunked child sitemaps).
     `Sitemap: ${SITE_URL}/api/sitemap.xml`,

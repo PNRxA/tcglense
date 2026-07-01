@@ -22,14 +22,19 @@ const price = computed(() => displayUsdPrice(props.card.prices))
       siblings painting on top. The light-mode `shadow-md` is invisible on dark's
       near-black background, so dark mode gets a larger, higher-opacity shadow
       instead. Reduced-motion users get neither the grow nor the transition. -->
-    <CardImage
-      :game="game"
-      :id="card.id"
-      :name="card.name"
-      :has-image="card.has_image"
-      size="normal"
-      class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.03] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
-    />
+    <!-- `relative` anchors the optional #badge overlay (e.g. an owned-count chip in
+      the collection grid); browse views pass no slot, so nothing renders there. -->
+    <div class="relative">
+      <CardImage
+        :game="game"
+        :id="card.id"
+        :name="card.name"
+        :has-image="card.has_image"
+        size="normal"
+        class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.03] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+      />
+      <slot name="badge" />
+    </div>
     <div class="mt-1.5 px-0.5">
       <p class="truncate text-sm font-medium group-hover:underline" :title="card.name">
         {{ card.name }}

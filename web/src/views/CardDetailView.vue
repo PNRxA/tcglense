@@ -6,6 +6,7 @@ import { RouterLink } from 'vue-router'
 import CardImageZoom from '@/components/cards/CardImageZoom.vue'
 import CardMetaList from '@/components/cards/CardMetaList.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
+import CollectionControls from '@/components/cards/CollectionControls.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
@@ -171,6 +172,9 @@ const hasSeparateFaceImages = computed(
 
           <!-- Prices -->
           <CardPriceSummary :card="card" />
+
+          <!-- Track how many copies you own (signed-in users). -->
+          <CollectionControls :game="game" :card="card" />
         </div>
       </div>
 

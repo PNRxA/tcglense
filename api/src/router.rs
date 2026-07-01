@@ -18,6 +18,9 @@ use crate::{
             card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
+        collection::{
+            collection_summary, get_collection_entry, list_collection, set_collection_entry,
+        },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
     },
@@ -31,7 +34,7 @@ use crate::{
 fn cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(HeaderValue::from_static("http://localhost:5173"))
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
         .allow_credentials(true)
 }
@@ -52,6 +55,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
         .route("/api/games/{game}/status", get(ingest_status))
+        // Per-user card collections: reads + upserts of how many copies a signed-in
+        // user owns, per game. Authenticated (via AuthUser) and no-store.
+        .route("/api/collection/{game}", get(list_collection))
+        .route("/api/collection/{game}/summary", get(collection_summary))
+        .route(
+            "/api/collection/{game}/cards/{id}",
+            get(get_collection_entry).put(set_collection_entry),
+        )
         .layer(map_response(no_store_layer));
 
     // Public, game-agnostic card catalog: the same for every visitor and changing

@@ -5,3 +5,4 @@
 export { ApiError } from './client'
 export * from './auth'
 export * from './catalog'
+export * from './collection'
