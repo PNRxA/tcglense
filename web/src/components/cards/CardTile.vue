@@ -59,9 +59,11 @@ const ghostTextClass = computed(() =>
         :class="ghostImageClass"
       />
       <!-- The image lifts to `group-hover:z-10` on hover, so overlay content must carry a
-        higher z-index (the badge/quick-add control uses z-30) or the enlarged card paints
+        higher z-index (the badge/quick-add control uses z-20) or the enlarged card paints
         over it. It sits above the stretched-link `after:` (z-10) too, so its buttons take
-        the click instead of navigating. Browse views pass no slot, so nothing renders. -->
+        the click instead of navigating. z-20 stays *below* the sticky search/filter bars
+        (z-30), so a scrolled-under badge can't paint over that persistent chrome (issue
+        #120). Browse views pass no slot, so nothing renders. -->
       <slot name="badge" />
     </div>
     <RouterLink
