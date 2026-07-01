@@ -323,7 +323,7 @@ syncing — see the env-var notes below.
 
 ```
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
-App.vue            shell: top bar (brand, Cards nav, Collection nav [signed-in only], theme toggle, user menu) + <RouterView>
+App.vue            shell: top bar (brand, Cards nav, Collection nav, theme toggle, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
 lib/api/           typed fetch client (relative URLs, credentials:'include') + ApiError + types, split into client / auth / catalog (+ cardImageUrl) / collection (authenticated, token-passing) fns
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
@@ -331,7 +331,7 @@ lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that r
 lib/seo.ts         usePageMeta(): reactive per-route <head> — title, description, canonical, Open Graph / Twitter, JSON-LD
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
-components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), CardsNav (top-bar "Cards" link → /cards + game dropdown), CollectionsNav (same shape → /collection, signed-in only)
+components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), CardsNav (top-bar "Cards" link → /cards + game dropdown), CollectionsNav (same shape → /collection; shown to all, the per-game view prompts signed-out visitors to sign in)
 components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save)
 composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useSetCollectionEntryMutation via useAuthed*), useCardSearch, …
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)

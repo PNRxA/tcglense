@@ -28,23 +28,30 @@ import { useAuthStore } from '@/stores/auth'
 /** Cards per page in the collection grid (matches the catalog default). */
 export const COLLECTION_PAGE_SIZE = 60
 
-/** A page of the user's owned cards for a game. `page` is reactive (paginated view). */
+/** A page of the user's owned cards for a game. `page` is reactive (paginated view).
+ * Disabled while signed out — the collection routes are public, so a signed-out
+ * visitor lands here (and is prompted to sign in) without triggering an auth call. */
 export function useCollectionQuery(game: Ref<string>, page: Ref<number>) {
+  const auth = useAuthStore()
   const options = {
     queryKey: ['collection', game, page],
     queryFn: (token: string) =>
       getCollection(token, game.value, { page: page.value, pageSize: COLLECTION_PAGE_SIZE }),
     // Keep the current grid visible while the next page loads (smoother paging).
     placeholderData: keepPreviousData,
+    enabled: computed(() => auth.isAuthenticated),
   }
   return useAuthedQuery<CollectionPage>(options)
 }
 
-/** Aggregate stats (unique cards, total copies, estimated value) for the collection. */
+/** Aggregate stats (unique cards, total copies, estimated value) for the collection.
+ * Disabled while signed out (see `useCollectionQuery`). */
 export function useCollectionSummaryQuery(game: Ref<string>) {
+  const auth = useAuthStore()
   const options = {
     queryKey: ['collection-summary', game],
     queryFn: (token: string) => getCollectionSummary(token, game.value),
+    enabled: computed(() => auth.isAuthenticated),
   }
   return useAuthedQuery<CollectionSummary>(options)
 }

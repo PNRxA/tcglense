@@ -13,8 +13,8 @@ import {
 import { useGamesQuery } from '@/composables/useCatalog'
 
 // Mirrors CardsNav (same games registry, cached), but points at the per-game
-// collection pages instead of the public catalog. Rendered only for signed-in users
-// (see App.vue) — collections are per-account.
+// collection pages instead of the public catalog. Shown to everyone; a signed-out
+// visitor who opens a collection is prompted to sign in / sign up on that page.
 const { data } = useGamesQuery()
 const games = computed(() => data.value?.data ?? [])
 </script>

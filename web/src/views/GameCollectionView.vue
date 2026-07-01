@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
-import { LayoutGrid } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { LayoutGrid, Library } from '@lucide/vue'
+import { RouterLink, useRoute } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
@@ -15,10 +15,17 @@ import {
   useCollectionSummaryQuery,
 } from '@/composables/useCollection'
 import { usePageMeta } from '@/lib/seo'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
+
+const auth = useAuthStore()
+const route = useRoute()
+// After signing in / up, come back to this collection (both forms honour ?redirect).
+const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullPath } }))
+const registerTo = computed(() => ({ path: '/register', query: { redirect: route.fullPath } }))
 
 // Per-account page — kept out of search indexes.
 usePageMeta({
@@ -69,56 +76,79 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
       <span class="text-foreground">{{ gameName }}</span>
     </nav>
 
-    <header class="mb-6">
-      <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} collection</h1>
-
-      <!-- Summary stats: distinct cards, total copies, estimated value. -->
-      <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
-        <div>
-          <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
-          <dd class="text-xl font-semibold tabular-nums">
-            {{ summary?.unique_cards.toLocaleString() }}
-          </dd>
-        </div>
-        <div>
-          <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
-          <dd class="text-xl font-semibold tabular-nums">
-            {{ summary?.total_cards.toLocaleString() }}
-          </dd>
-        </div>
-        <div v-if="totalValue">
-          <dt class="text-muted-foreground text-xs tracking-wide uppercase">Est. value</dt>
-          <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
-        </div>
-      </dl>
-    </header>
-
-    <LoadingRow v-if="collectionQuery.isPending.value" label="Loading your collection…" />
-    <p v-else-if="collectionQuery.isError.value" class="text-destructive py-12">
-      Couldn't load your collection. Please retry.
-    </p>
-
-    <!-- Empty state: nothing owned yet. -->
-    <div v-else-if="!entries.length" class="py-16 text-center">
-      <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
-      <RouterLink
-        :to="`/cards/${game}/cards`"
-        :class="buttonVariants({ variant: 'default' })"
-        class="mt-4 inline-flex"
-      >
-        <LayoutGrid />
-        Browse cards to add some
-      </RouterLink>
+    <!-- Signed out: the collection routes are public, so rather than bouncing to the
+         login page we prompt to sign in / sign up right here. -->
+    <div v-if="!auth.isAuthenticated" class="mx-auto max-w-md py-16 text-center">
+      <div class="bg-muted mx-auto flex size-12 items-center justify-center rounded-lg">
+        <Library class="size-6" aria-hidden="true" />
+      </div>
+      <h1 class="mt-4 text-2xl font-semibold tracking-tight">Sign in to view your collection</h1>
+      <p class="text-muted-foreground mt-2">
+        Track which {{ gameName }} cards you own and what they're worth. Sign in or create a free
+        account to start your collection.
+      </p>
+      <div class="mt-6 flex justify-center gap-3">
+        <RouterLink :to="loginTo" :class="buttonVariants({ variant: 'default' })">
+          Sign in
+        </RouterLink>
+        <RouterLink :to="registerTo" :class="buttonVariants({ variant: 'outline' })">
+          Create account
+        </RouterLink>
+      </div>
     </div>
 
     <template v-else>
-      <div class="mb-4 flex justify-end">
-        <CardSizeMenu />
+      <header class="mb-6">
+        <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} collection</h1>
+
+        <!-- Summary stats: distinct cards, total copies, estimated value. -->
+        <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
+          <div>
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
+            <dd class="text-xl font-semibold tabular-nums">
+              {{ summary?.unique_cards.toLocaleString() }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
+            <dd class="text-xl font-semibold tabular-nums">
+              {{ summary?.total_cards.toLocaleString() }}
+            </dd>
+          </div>
+          <div v-if="totalValue">
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Est. value</dt>
+            <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
+          </div>
+        </dl>
+      </header>
+
+      <LoadingRow v-if="collectionQuery.isPending.value" label="Loading your collection…" />
+      <p v-else-if="collectionQuery.isError.value" class="text-destructive py-12">
+        Couldn't load your collection. Please retry.
+      </p>
+
+      <!-- Empty state: nothing owned yet. -->
+      <div v-else-if="!entries.length" class="py-16 text-center">
+        <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
+        <RouterLink
+          :to="`/cards/${game}/cards`"
+          :class="buttonVariants({ variant: 'default' })"
+          class="mt-4 inline-flex"
+        >
+          <LayoutGrid />
+          Browse cards to add some
+        </RouterLink>
       </div>
-      <CollectionGrid :game="game" :entries="entries" />
-      <div class="mt-10">
-        <CardPagination v-model:page="page" :page-size="COLLECTION_PAGE_SIZE" :total="total" />
-      </div>
+
+      <template v-else>
+        <div class="mb-4 flex justify-end">
+          <CardSizeMenu />
+        </div>
+        <CollectionGrid :game="game" :entries="entries" />
+        <div class="mt-10">
+          <CardPagination v-model:page="page" :page-size="COLLECTION_PAGE_SIZE" :total="total" />
+        </div>
+      </template>
     </template>
   </div>
 </template>

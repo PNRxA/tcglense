@@ -4,10 +4,8 @@ import CardsNav from '@/components/CardsNav.vue'
 import CollectionsNav from '@/components/CollectionsNav.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
-import { useAuthStore } from '@/stores/auth'
 
 // Session restore happens once in the router guard (see router/index.ts).
-const auth = useAuthStore()
 </script>
 
 <template>
@@ -20,10 +18,9 @@ const auth = useAuthStore()
           <div class="ml-3">
             <CardsNav />
           </div>
-          <!-- Collections are per-account, so the nav only appears when signed in. -->
-          <div v-if="auth.isAuthenticated">
-            <CollectionsNav />
-          </div>
+          <!-- Shown to everyone; a signed-out visitor who opens a collection is
+               prompted to sign in / sign up there. -->
+          <CollectionsNav />
         </div>
         <div class="flex items-center gap-1">
           <ThemeToggle />
