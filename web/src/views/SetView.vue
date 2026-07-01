@@ -21,6 +21,7 @@ import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { SET_DEFAULT_SORT, SET_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
 import { getSet, listSetCards, listSetDrops, listSets } from '@/lib/api'
+import { usePageMeta } from '@/lib/seo'
 import { findGroup, originSetCode, subSetLabel } from '@/lib/setGroups'
 import { cn } from '@/lib/utils'
 
@@ -142,6 +143,16 @@ const setQuery = useQuery({
 })
 
 const set = computed(() => setQuery.data.value)
+
+usePageMeta({
+  title: () => set.value?.name ?? code.value.toUpperCase(),
+  description: () =>
+    set.value
+      ? `Browse cards from ${set.value.name} on TCGLense, with singles prices tracked over time.`
+      : undefined,
+  canonicalPath: () => `/cards/${game.value}/sets/${code.value}`,
+})
+
 // Whether this set is browsable broken down into Secret Lair-style "drops".
 // Sourced from the (game-keyed, usually-warm) set list rather than the per-set
 // metadata, so it's known up front and stays stable across set→set navigation —

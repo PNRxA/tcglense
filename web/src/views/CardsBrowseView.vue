@@ -12,6 +12,7 @@ import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
 import { listCards, listGames } from '@/lib/api'
+import { usePageMeta } from '@/lib/seo'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
@@ -33,6 +34,13 @@ const gameName = computed(
   () =>
     gamesQuery.data.value?.data.find((g) => g.id === game.value)?.name ?? game.value.toUpperCase(),
 )
+
+usePageMeta({
+  title: () => `All ${gameName.value} cards`,
+  description: () =>
+    `Search and browse every ${gameName.value} card tracked on TCGLense, with current prices.`,
+  canonicalPath: () => `/cards/${game.value}/cards`,
+})
 
 const cardsQuery = useQuery({
   queryKey: ['cards', game, query, sort, page],

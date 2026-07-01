@@ -6,7 +6,8 @@ import { RouterLink, onBeforeRouteUpdate, useRouter } from 'vue-router'
 import CardImageZoom from '@/components/cards/CardImageZoom.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
-import { getCard } from '@/lib/api'
+import { cardImageUrl, getCard } from '@/lib/api'
+import { absoluteUrl, usePageMeta } from '@/lib/seo'
 
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
@@ -21,6 +22,50 @@ const cardQuery = useQuery({
 })
 
 const card = computed(() => cardQuery.data.value)
+
+// Absolute URL of the card's image (via the caching proxy) for the social preview
+// and JSON-LD; undefined when the card has no image.
+const cardImage = computed(() =>
+  card.value?.has_image ? absoluteUrl(cardImageUrl(game.value, card.value.id, 'large')) : undefined,
+)
+
+const metaDescription = computed(() => {
+  const c = card.value
+  if (!c) return undefined
+  const bits = [c.type_line, `${c.set_name} · #${c.collector_number}`].filter(
+    (bit): bit is string => Boolean(bit),
+  )
+  return `${c.name} — ${bits.join(' · ')}. Prices and price history on TCGLense.`
+})
+
+// Product structured data (schema.org) so search engines can identify the card as
+// a collectible product. We deliberately DON'T emit an `offers`/`InStock` block:
+// this is a price-tracking page, not a storefront, so claiming the card is
+// purchasable here would be a false structured-data assertion (and risks Google
+// suppressing the rich result). Prices are shown to users but not marked up as an
+// offer to sell.
+const jsonLd = computed<Record<string, unknown> | undefined>(() => {
+  const c = card.value
+  if (!c) return undefined
+  const data: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: c.name,
+    brand: { '@type': 'Brand', name: c.set_name },
+  }
+  if (cardImage.value) data.image = cardImage.value
+  if (c.type_line) data.category = c.type_line
+  return data
+})
+
+usePageMeta({
+  title: () => card.value?.name,
+  description: metaDescription,
+  canonicalPath: () => (card.value ? `/cards/${game.value}/cards/${card.value.id}` : undefined),
+  image: cardImage,
+  type: 'product',
+  jsonLd,
+})
 
 // The in-app location we arrived from. vue-router records the previous entry's path
 // in history state (null on a direct load or a freshly-opened tab); we resolve it to

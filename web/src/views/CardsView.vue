@@ -3,6 +3,14 @@ import { useQuery } from '@tanstack/vue-query'
 import { ChevronRight, Library, Loader2 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { listGames } from '@/lib/api'
+import { usePageMeta } from '@/lib/seo'
+
+usePageMeta({
+  title: 'Browse trading card games',
+  description:
+    'Browse the trading card games tracked on TCGLense and explore their sets, cards, and prices.',
+  canonicalPath: '/cards',
+})
 
 const { data, isPending, isError } = useQuery({
   queryKey: ['games'],

@@ -14,12 +14,15 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ApiError } from '@/lib/api'
+import { usePageMeta } from '@/lib/seo'
 import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+
+usePageMeta({ title: 'Sign in', canonicalPath: '/login', noindex: true })
 
 const email = ref('')
 const password = ref('')

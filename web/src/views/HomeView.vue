@@ -3,9 +3,17 @@ import { Layers, LibraryBig, Sparkles, TrendingUp } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+
+usePageMeta({
+  description:
+    'TCGLense is your home for trading-card prices, collection tracking, and set-completion ' +
+    'progress. Follow singles and sealed prices over time across games.',
+  canonicalPath: '/',
+})
 
 const features = [
   {

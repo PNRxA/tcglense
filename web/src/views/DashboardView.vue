@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { Sparkles } from '@lucide/vue'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+
+usePageMeta({ title: 'Dashboard', canonicalPath: '/dashboard', noindex: true })
 </script>
 
 <template>

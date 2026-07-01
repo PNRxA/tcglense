@@ -2,9 +2,12 @@
 import { computed } from 'vue'
 import { UserCircle } from '@lucide/vue'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+
+usePageMeta({ title: 'Your profile', canonicalPath: '/profile', noindex: true })
 
 const memberSince = computed(() => {
   const ts = auth.user?.created_at
