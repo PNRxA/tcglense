@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-import { collectionEntryPath, collectionPath, getCollectionOwned } from '../api'
+import {
+  collectionEntryPath,
+  collectionImportJobPath,
+  collectionImportPath,
+  collectionPath,
+  collectionSourcePath,
+  collectionSyncPath,
+  getCollectionOwned,
+} from '../api'
 
 describe('collectionPath', () => {
   it('builds the base collection path with no params', () => {
@@ -86,5 +94,24 @@ describe('getCollectionOwned', () => {
     const fetchMock = stubFetch(() => ({ data: {} }))
     expect(await getCollectionOwned('tok', 'mtg', [])).toEqual({})
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('import / sync paths', () => {
+  it('builds the import, source, and sync paths', () => {
+    expect(collectionImportPath('mtg')).toBe('/api/collection/mtg/import')
+    expect(collectionSourcePath('mtg')).toBe('/api/collection/mtg/source')
+    expect(collectionSyncPath('mtg')).toBe('/api/collection/mtg/sync')
+  })
+
+  it('builds the import-job status path', () => {
+    expect(collectionImportJobPath('mtg', 42)).toBe('/api/collection/mtg/import/jobs/42')
+  })
+
+  it('encodes the game segment', () => {
+    expect(collectionImportPath('a/b')).toContain('a%2Fb')
+    expect(collectionSourcePath('a/b')).toContain('a%2Fb')
+    expect(collectionSyncPath('a/b')).toContain('a%2Fb')
+    expect(collectionImportJobPath('a/b', 1)).toContain('a%2Fb')
   })
 })

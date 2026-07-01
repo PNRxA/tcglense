@@ -2,12 +2,17 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Card } from '@/lib/api'
+import { colorLettersToText } from '@/lib/mana'
+import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 
 const props = defineProps<{ game: string; card: Card }>()
 
 // Power/toughness + loyalty belong to a single-faced card as a whole; a multi-faced
 // card shows them per face elsewhere, so they're suppressed in this summary.
 const isMultiFace = computed(() => props.card.faces.length >= 2)
+
+// Colour identity is a list of colour letters (["W","U"]); render it as pips.
+const colorIdentityText = computed(() => colorLettersToText(props.card.color_identity))
 </script>
 
 <template>
@@ -34,12 +39,12 @@ const isMultiFace = computed(() => props.card.faces.length >= 2)
 
     <template v-if="card.mana_cost">
       <dt class="text-muted-foreground">Mana cost</dt>
-      <dd>{{ card.mana_cost }}</dd>
+      <dd><ManaSymbols :text="card.mana_cost" /></dd>
     </template>
 
     <template v-if="card.color_identity.length">
       <dt class="text-muted-foreground">Color identity</dt>
-      <dd>{{ card.color_identity.join(', ') }}</dd>
+      <dd><ManaSymbols :text="colorIdentityText" /></dd>
     </template>
 
     <template v-if="!isMultiFace && card.power && card.toughness">

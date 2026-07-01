@@ -16,6 +16,7 @@ mod harness;
 
 mod caching;
 mod collection;
+mod collection_import;
 mod cors;
 mod login;
 mod refresh;
