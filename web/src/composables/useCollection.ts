@@ -98,14 +98,23 @@ export function useCollectionSummaryQuery(game: Ref<string>) {
 /**
  * How many copies of one card the signed-in user owns — for the card-detail
  * controls. Disabled while signed out (the route is public), so a logged-out
- * visitor never triggers an auth call.
+ * visitor never triggers an auth call. Options let a caller defer and refresh the
+ * fetch: `enabled` gates it (e.g. the grid quick-add control only wants the
+ * authoritative holding once its popover opens, not for every visible tile), and
+ * `staleTime` (e.g. `0`) forces a re-fetch each time the query re-enables so the
+ * control never seeds an absolute-count edit off a stale cached holding.
  */
-export function useCollectionEntryQuery(game: Ref<string>, id: Ref<string>) {
+export function useCollectionEntryQuery(
+  game: Ref<string>,
+  id: Ref<string>,
+  opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
+) {
   const auth = useAuthStore()
   const options = {
     queryKey: ['collection-entry', game, id],
     queryFn: (token: string) => getCollectionEntry(token, game.value, id.value),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: computed(() => auth.isAuthenticated && (opts.enabled?.value ?? true)),
+    staleTime: opts.staleTime,
   }
   return useAuthedQuery<CollectionQuantities>(options)
 }
