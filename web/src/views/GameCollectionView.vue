@@ -9,6 +9,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
+import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import {
@@ -194,6 +195,16 @@ async function resync() {
             <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
           </div>
         </dl>
+
+        <!-- Quick add: type a name, pick a printing, add regular/foil — without leaving
+             this page. Useful both to seed an empty collection and to top up an
+             existing one, so it's shown regardless of what's owned. -->
+        <div class="mt-5 max-w-md">
+          <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
+            Quick add a card
+          </p>
+          <QuickAddBox :game="game" />
+        </div>
 
         <!-- Import / re-sync from an external collection provider. -->
         <div class="mt-5 flex flex-wrap items-center gap-3">

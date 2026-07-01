@@ -142,6 +142,7 @@ fn params(sort: Option<&str>, dir: Option<&str>) -> ListParams {
         include_related: None,
         sort: sort.map(str::to_string),
         dir: dir.map(str::to_string),
+        name: None,
     }
 }
 
@@ -154,6 +155,7 @@ fn list_params_clamps_page_size() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(p.page_and_size(), (1, MAX_PAGE_SIZE));
     let d = ListParams {
@@ -163,6 +165,7 @@ fn list_params_clamps_page_size() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(d.page_and_size(), (1, DEFAULT_PAGE_SIZE));
     assert_eq!(d.search(), None);
@@ -412,6 +415,92 @@ async fn prints_query_returns_other_printings_newest_first() {
 }
 
 #[test]
+fn exact_name_trims_and_blank_is_none() {
+    let p = ListParams {
+        name: Some("  Lightning Bolt ".into()),
+        ..params(None, None)
+    };
+    assert_eq!(p.exact_name(), Some("Lightning Bolt"));
+    let blank = ListParams {
+        name: Some("   ".into()),
+        ..params(None, None)
+    };
+    assert_eq!(blank.exact_name(), None);
+    assert_eq!(params(None, None).exact_name(), None);
+}
+
+/// A card row with a specific name/set, reusing the minimal `test_card` shape for
+/// every other column.
+fn named_card(id: i32, name: &str, set_code: &str) -> card::Model {
+    card::Model {
+        name: name.to_string(),
+        set_code: set_code.into(),
+        set_name: set_code.to_uppercase(),
+        ..test_card(id, None, None)
+    }
+}
+
+/// `name_suggestions_query` returns distinct names containing the term (a reprint's
+/// two printings collapse to one suggestion), surfaces prefix matches first, is
+/// case-insensitive, and honours the limit.
+#[tokio::test]
+async fn name_suggestions_are_distinct_prefix_first_and_capped() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    for c in [
+        named_card(1, "Lightning Bolt", "aaa"),
+        named_card(2, "Lightning Bolt", "bbb"), // reprint: same name, second printing
+        named_card(3, "Bolt", "aaa"),
+        named_card(4, "Bolt Catcher", "aaa"),
+        named_card(5, "Sol Ring", "aaa"), // no "bolt" -> never suggested
+    ] {
+        c.into_active_model().insert(&db).await.expect("insert card");
+    }
+
+    // Substring match, deduplicated ("Lightning Bolt" once despite two printings),
+    // prefix matches ("Bolt", "Bolt Catcher") ahead of the mid-string one, each
+    // group alphabetical.
+    let got = name_suggestions_query("mtg", "bolt", 10)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert_eq!(
+        got,
+        vec![
+            "Bolt".to_string(),
+            "Bolt Catcher".to_string(),
+            "Lightning Bolt".to_string(),
+        ],
+    );
+
+    // Case-insensitive (SQLite's ASCII LIKE), same three distinct names.
+    let upper = name_suggestions_query("mtg", "BOLT", 10)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert_eq!(upper.len(), 3);
+
+    // The limit caps the suggestion count, keeping the prefix-first pair.
+    let capped = name_suggestions_query("mtg", "bolt", 2)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert_eq!(capped, vec!["Bolt".to_string(), "Bolt Catcher".to_string()]);
+
+    // A term nothing matches yields no suggestions.
+    let none = name_suggestions_query("mtg", "zzz", 10)
+        .into_tuple::<String>()
+        .all(&db)
+        .await
+        .expect("query");
+    assert!(none.is_empty());
+}
+
+#[test]
 fn drop_page_and_size_clamps() {
     let p = ListParams {
         page: Some(0),
@@ -420,6 +509,7 @@ fn drop_page_and_size_clamps() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(p.drop_page_and_size(), (1, MAX_DROP_PAGE_SIZE));
     let d = ListParams {
@@ -429,6 +519,7 @@ fn drop_page_and_size_clamps() {
         include_related: None,
         sort: None,
         dir: None,
+        name: None,
     };
     assert_eq!(d.drop_page_and_size(), (1, DEFAULT_DROP_PAGE_SIZE));
 }
