@@ -97,3 +97,107 @@ export function setCollectionEntry(
     token,
   })
 }
+
+// ---------- Import / sync from an external collection provider ----------
+//
+// A signed-in user can import their collection from an external service (Archidekt
+// today; Moxfield planned). The backend fetches server-side and reconciles into the
+// local collection, so the client only sends the provider + a URL/id + a mode.
+
+/** Collection providers we can import from. */
+export type CollectionProvider = 'archidekt'
+
+/**
+ * How an import reconciles with the existing collection:
+ * - `overwrite` — set matched cards to the imported counts; leave other cards alone.
+ * - `replace` — mirror the import exactly (also removes owned cards not in the import).
+ * - `merge` — add the imported counts on top of what's owned.
+ */
+export type ReconcileMode = 'overwrite' | 'replace' | 'merge'
+
+/** The outcome of an import, for user feedback. */
+export interface ImportSummary {
+  provider: string
+  mode: ReconcileMode
+  total_rows: number
+  distinct_cards: number
+  matched_cards: number
+  unmatched_cards: number
+  unmatched_sample: string[]
+  regular_copies: number
+  foil_copies: number
+  removed_cards: number
+}
+
+/** A saved external collection link for a game. */
+export interface CollectionSource {
+  provider: string
+  external_id: string
+  /** A canonical, user-facing URL for the collection on the provider. */
+  url: string
+  /** RFC3339 timestamp of the last successful sync, or null if never synced. */
+  last_synced_at: string | null
+}
+
+export interface ImportCollectionBody {
+  provider: CollectionProvider
+  source: string
+  mode: ReconcileMode
+}
+
+export interface SaveSourceBody {
+  provider: CollectionProvider
+  source: string
+}
+
+/** `/api/collection/{game}/import` path. */
+export function collectionImportPath(game: string): string {
+  return `/api/collection/${encodeURIComponent(game)}/import`
+}
+
+/** `/api/collection/{game}/source` path. */
+export function collectionSourcePath(game: string): string {
+  return `/api/collection/${encodeURIComponent(game)}/source`
+}
+
+/** `/api/collection/{game}/sync` path. */
+export function collectionSyncPath(game: string): string {
+  return `/api/collection/${encodeURIComponent(game)}/sync`
+}
+
+/** Import a collection from a provider, one-off, using the given reconcile mode. */
+export function importCollection(
+  token: string,
+  game: string,
+  body: ImportCollectionBody,
+): Promise<ImportSummary> {
+  return request<ImportSummary>(collectionImportPath(game), { method: 'POST', body, token })
+}
+
+/** The saved collection link for a game, or null when none is saved. */
+export function getCollectionSource(token: string, game: string): Promise<CollectionSource | null> {
+  // A `null` body comes back from `request` as `undefined`; normalise it so callers
+  // (and vue-query, which forbids `undefined` query results) always see `null`.
+  return request<CollectionSource | null>(collectionSourcePath(game), { token }).then(
+    (source) => source ?? null,
+  )
+}
+
+/** Save (upsert) the collection link for a game. Validates the source; does not sync. */
+export function saveCollectionSource(
+  token: string,
+  game: string,
+  body: SaveSourceBody,
+): Promise<CollectionSource> {
+  return request<CollectionSource>(collectionSourcePath(game), { method: 'PUT', body, token })
+}
+
+/** Forget the saved collection link for a game. */
+export function deleteCollectionSource(token: string, game: string): Promise<void> {
+  return request<void>(collectionSourcePath(game), { method: 'DELETE', token })
+}
+
+/** Re-sync from the saved collection link (mirror/replace). */
+export function syncCollectionSource(token: string, game: string): Promise<ImportSummary> {
+  return request<ImportSummary>(collectionSyncPath(game), { method: 'POST', token })
+}

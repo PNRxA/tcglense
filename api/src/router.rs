@@ -19,7 +19,9 @@ use crate::{
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
         },
         collection::{
-            collection_summary, get_collection_entry, list_collection, set_collection_entry,
+            collection_summary, delete_collection_source, get_collection_entry,
+            get_collection_source, import_collection, list_collection, save_collection_source,
+            set_collection_entry, sync_collection_source,
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
@@ -34,7 +36,13 @@ use crate::{
 fn cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(HeaderValue::from_static("http://localhost:5173"))
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
         .allow_credentials(true)
 }
@@ -59,6 +67,16 @@ pub fn build_router(state: AppState) -> Router {
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))
         .route("/api/collection/{game}/summary", get(collection_summary))
+        // Import / sync a collection from an external provider (Archidekt; Moxfield
+        // planned): a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
+        .route("/api/collection/{game}/import", post(import_collection))
+        .route(
+            "/api/collection/{game}/source",
+            get(get_collection_source)
+                .put(save_collection_source)
+                .delete(delete_collection_source),
+        )
+        .route("/api/collection/{game}/sync", post(sync_collection_source))
         .route(
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),

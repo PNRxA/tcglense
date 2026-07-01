@@ -10,6 +10,7 @@ mod m20240101_000007_add_text_stats_to_cards;
 mod m20240101_000008_create_card_price_history_table;
 mod m20240101_000009_add_cards_oracle_id_index;
 mod m20240101_000010_create_collection_items_table;
+mod m20240101_000011_create_collection_sources_table;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000008_create_card_price_history_table::Migration),
             Box::new(m20240101_000009_add_cards_oracle_id_index::Migration),
             Box::new(m20240101_000010_create_collection_items_table::Migration),
+            Box::new(m20240101_000011_create_collection_sources_table::Migration),
         ]
     }
 }

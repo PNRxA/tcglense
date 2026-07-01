@@ -53,6 +53,11 @@ pub(super) async fn test_state() -> AppState {
         config: Arc::new(config),
         dummy_password_hash,
         images: Arc::new(ImageCache::new(image_dir, image_http)),
+        // A plain client; the import routes that use it aren't exercised over the
+        // network in these in-process tests.
+        http: reqwest::Client::builder()
+            .build()
+            .expect("build http client"),
     }
 }
 

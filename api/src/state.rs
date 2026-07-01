@@ -17,4 +17,8 @@ pub struct AppState {
     pub dummy_password_hash: Arc<str>,
     /// Lazy on-disk cache + downloader for card images.
     pub images: Arc<ImageCache>,
+    /// Shared outbound HTTP client for request-path provider calls (e.g. importing a
+    /// collection from Archidekt). Follows redirects and carries the app User-Agent;
+    /// `reqwest::Client` is internally reference-counted, so cloning it is cheap.
+    pub http: reqwest::Client,
 }

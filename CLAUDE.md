@@ -19,7 +19,11 @@ into `card_price_history`, served as a per-card time series (`.../cards/{id}/pri
 and charted on the card detail page. **Per-user collections** are also built: a
 signed-in user records how many copies (regular + foil) of each card they own, per
 game (MTG first, the model is game-agnostic), edited from the card detail page and
-browsed at `/collection/{game}` with a value/count summary. The set-completion and
+browsed at `/collection/{game}` with a value/count summary. A collection can also be
+**imported/synced from an external provider** (Archidekt first; the layer is
+provider-agnostic, Moxfield planned): a one-off import with a chosen reconcile mode
+(overwrite-matched / mirror-replace / add-merge), or a saved collection link re-synced
+on demand (always mirror/replace). The set-completion and
 sealed-product price-tracking features are not yet implemented — they are the next
 things to build on top of this scaffold (the collection gives set-completion the
 owned-card data to hang off).
@@ -250,11 +254,35 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `GET /api/collection/{game}/summary` | — | `{ unique_cards, total_cards, total_value_usd }` — distinct cards, total copies (regular + foil), and an estimated USD value (regular copies at `usd`, foil at `usd_foil`) as a 2-dp string (`null` if nothing owned is priced) |
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
+| `POST /api/collection/{game}/import` | `{ provider, source, mode }` | one-off import from a provider — `ImportSummary`. `provider` is `"archidekt"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge`. Does not save a link. `422` for an unknown provider / unparseable source / too-large or empty collection; `404` if the provider has no public collection there; `502` if the provider is unreachable |
+| `GET /api/collection/{game}/source` | — | `CollectionSource` or `null` — the saved collection link for this game |
+| `PUT /api/collection/{game}/source` | `{ provider, source }` | `CollectionSource` — save/upsert the link (one per user+game; validates the source resolves; does not sync) |
+| `DELETE /api/collection/{game}/source` | — | `204` — forget the saved link (idempotent) |
+| `POST /api/collection/{game}/sync` | — | re-sync from the saved link using **mirror/replace**, stamp `last_synced_at`, return `ImportSummary`. `404` if no link is saved |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
 the full catalog `Card` shape (reusing the catalog's `CardResponse`). The `PUT` needs
-CORS `PUT` (added to the allow-list alongside `GET`/`POST`); in dev/prod the SPA is
-same-origin so CORS isn't exercised, but a direct cross-origin write needs it.
+CORS `PUT` and the saved-source `DELETE` needs CORS `DELETE` (both added to the
+allow-list alongside `GET`/`POST`); in dev/prod the SPA is same-origin so CORS isn't
+exercised, but a direct cross-origin write needs it.
+
+**Import/sync** (`handlers::collection` + the `collection_import` module) pulls a
+collection from an external provider **server-side** (via the shared `AppState.http`
+client) and reconciles it into `collection_items`. Providers are dispatched by a
+`Provider` enum (Archidekt today, one module per service — Moxfield planned), each
+fetching + parsing to normalized `(external_card_id, foil, quantity)` holdings; the
+provider-independent engine aggregates by card (`(uid, foil)` — the same printing can
+span several provider rows), resolves each `external_card_id` to `cards.external_id`
+(for Archidekt the `card.uid` is the Scryfall id), skips unmatched cards, then applies
+the chosen `ReconcileMode` in one transaction. `ImportSummary = { provider, mode,
+total_rows, distinct_cards, matched_cards, unmatched_cards, unmatched_sample,
+regular_copies, foil_copies, removed_cards }`. A saved link is
+`entities/collection_source.rs` (`collection_sources`, unique on `(user_id, game)`,
+`user_id` FK → `users` `ON DELETE CASCADE`, stores `provider` + `external_id` +
+`last_synced_at`). Archidekt is MTG-only and its API is fetched at
+`https://archidekt.com/api/collection/{id}/?page={n}` (25 rows/page, capped at
+`MAX_IMPORT_ROWS`); the id is validated all-digits and the URL is built host-side, so
+there's no SSRF surface.
 
 ## Backend structure (`api/src/`)
 
@@ -262,10 +290,11 @@ same-origin so CORS isn't exercised, but a direct cross-origin write needs it.
 main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → seed dummy catalog (SEED_DUMMY_DATA) or spawn periodic card-data import (daily) → router → serve
 config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secret
 db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000), applied to every pooled connection
-state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
-error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
+state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client } (cloned into handlers; `http` is the request-path provider client, e.g. Archidekt import)
+error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
-entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`)
+entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`)
+collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode + fetch dispatch + aggregate/plan_reconcile/apply engine + ImportError→AppError) and archidekt.rs (parse collection id from URL/id, paginated fetch → normalized holdings). Moxfield = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -287,7 +316,7 @@ handlers/
   auth.rs          register / login / refresh / logout / me
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store
   catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history / other printings
-  collection.rs    authenticated per-user collection: list (paginate) / summary / get + set (PUT upsert, both-zero deletes) one card's owned counts; reuses catalog's CardResponse
+  collection.rs    authenticated per-user collection: list (paginate) / summary / get + set (PUT upsert, both-zero deletes) one card's owned counts; import (one-off, chosen mode) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
   health.rs        health
 ```
@@ -325,7 +354,7 @@ syncing — see the env-var notes below.
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
 App.vue            shell: top bar (brand, MainNav [Cards + Collection], theme toggle, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
-lib/api/           typed fetch client (relative URLs, credentials:'include') + ApiError + types, split into client / auth / catalog (+ cardImageUrl) / collection (authenticated, token-passing) fns
+lib/api/           typed fetch client (relative URLs, credentials:'include') + ApiError + types, split into client / auth / catalog (+ cardImageUrl) / collection (authenticated, token-passing — incl. import / saved-source CRUD / sync fns + types) fns
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
 lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 lib/seo.ts         usePageMeta(): reactive per-route <head> — title, description, canonical, Open Graph / Twitter, JSON-LD
@@ -333,7 +362,8 @@ stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, l
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
 components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards and Collection → /collection dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them; both game-dropdowns from the cached registry, Collection prompts signed-out visitors to sign in on the per-game view)
 components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save)
-composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useSetCollectionEntryMutation via useAuthed*), useCardSearch, …
+components/collection/  ImportCollectionDialog (reka dialog: paste an Archidekt URL/id, pick a reconcile mode, optionally save the link; shows an import summary) — mounted on GameCollectionView alongside a "Re-sync" button
+composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useCardSearch, …
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, chart — unovis-backed)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
@@ -435,6 +465,18 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   long-lived credential. In production set `COOKIE_SECURE=true` (HTTPS) and serve
   web + API same-origin (or configure cross-origin CORS credentials).
 - **No rate limiting / brute-force protection** on login yet.
+- **Collection import (Archidekt):** the import/sync endpoints fetch a public
+  collection **server-side** and reconcile it. Archidekt's API pages 25 rows at a time
+  with no page-size override, so a large collection is many sequential requests
+  (fetched in-request, bounded by `MAX_IMPORT_ROWS`); there's no per-user rate limit on
+  the import routes yet (same posture as login). It relies on Archidekt's unofficial,
+  undocumented API (may break on their side) and its committed-snapshot-free live fetch;
+  a private/missing collection is a `404`, an empty one a `422` (so a mirror can't
+  silently wipe a collection against a misresolved source). A saved re-sync always
+  mirrors (replace) and stamps `last_synced_at`, but there's **no automatic background
+  sync** — re-sync is user-triggered. Cards not in our catalog are skipped (surfaced in
+  the summary's `unmatched_*`). Moxfield is planned; the `collection_import` layer is
+  already provider-generic so adding it is a new `Provider` variant + module.
 - **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
   gated on `rows_affected`, so it's race-safe across connections. The
   revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation

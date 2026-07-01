@@ -1,14 +1,23 @@
 import { computed, type Ref } from 'vue'
 import { keepPreviousData, useQueryClient } from '@tanstack/vue-query'
 import {
+  deleteCollectionSource,
   getCollection,
   getCollectionEntry,
+  getCollectionSource,
   getCollectionSummary,
+  importCollection,
+  saveCollectionSource,
   setCollectionEntry,
+  syncCollectionSource,
   type ApiError,
   type CollectionPage,
+  type CollectionProvider,
   type CollectionQuantities,
+  type CollectionSource,
   type CollectionSummary,
+  type ImportSummary,
+  type ReconcileMode,
 } from '@/lib/api'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
@@ -106,4 +115,114 @@ export function useSetCollectionEntryMutation() {
     },
   }
   return useAuthedMutation<CollectionQuantities, SetCollectionVars>(options)
+}
+
+// ---------- Import / sync from an external collection provider ----------
+
+/**
+ * The user's saved external collection link for a game (or null). Drives the
+ * "Re-sync" affordance and prefills the import dialog. Disabled while signed out.
+ */
+export function useCollectionSourceQuery(game: Ref<string>) {
+  const auth = useAuthStore()
+  const options = {
+    queryKey: ['collection-source', game],
+    queryFn: (token: string) => getCollectionSource(token, game.value),
+    enabled: computed(() => auth.isAuthenticated),
+  }
+  return useAuthedQuery<CollectionSource | null>(options)
+}
+
+/** Variables for a one-off import. */
+export interface ImportCollectionVars {
+  game: string
+  provider: CollectionProvider
+  source: string
+  mode: ReconcileMode
+}
+
+/**
+ * One-off import from a provider. On settle the collection list + summary are
+ * invalidated so the grid and header refresh with the imported cards.
+ */
+export function useImportCollectionMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: ImportCollectionVars) =>
+      importCollection(token, vars.game, {
+        provider: vars.provider,
+        source: vars.source,
+        mode: vars.mode,
+      }),
+    onSettled: (
+      _data: ImportSummary | undefined,
+      _error: ApiError | null,
+      vars: ImportCollectionVars,
+    ) => {
+      qc.invalidateQueries({ queryKey: ['collection', vars.game] })
+      qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
+      // A bulk import can change any card's counts, so refresh the per-card entries
+      // (card-detail steppers) too — prefix-invalidates every ['collection-entry', game, *].
+      qc.invalidateQueries({ queryKey: ['collection-entry', vars.game] })
+    },
+  }
+  return useAuthedMutation<ImportSummary, ImportCollectionVars>(options)
+}
+
+/** Variables for saving a collection link. */
+export interface SaveSourceVars {
+  game: string
+  provider: CollectionProvider
+  source: string
+}
+
+/** Save (upsert) the collection link; invalidates the saved-source query. */
+export function useSaveCollectionSourceMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: SaveSourceVars) =>
+      saveCollectionSource(token, vars.game, { provider: vars.provider, source: vars.source }),
+    onSettled: (
+      _data: CollectionSource | undefined,
+      _error: ApiError | null,
+      vars: SaveSourceVars,
+    ) => {
+      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
+    },
+  }
+  return useAuthedMutation<CollectionSource, SaveSourceVars>(options)
+}
+
+/** Forget the saved collection link; invalidates the saved-source query. */
+export function useDeleteCollectionSourceMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: { game: string }) => deleteCollectionSource(token, vars.game),
+    onSettled: (_data: void | undefined, _error: ApiError | null, vars: { game: string }) => {
+      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
+    },
+  }
+  return useAuthedMutation<void, { game: string }>(options)
+}
+
+/**
+ * Re-sync from the saved link (mirror/replace). Invalidates the collection list,
+ * summary, and saved-source query (the sync stamps `last_synced_at`).
+ */
+export function useSyncCollectionSourceMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: { game: string }) => syncCollectionSource(token, vars.game),
+    onSettled: (
+      _data: ImportSummary | undefined,
+      _error: ApiError | null,
+      vars: { game: string },
+    ) => {
+      qc.invalidateQueries({ queryKey: ['collection', vars.game] })
+      qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
+      qc.invalidateQueries({ queryKey: ['collection-entry', vars.game] })
+      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
+    },
+  }
+  return useAuthedMutation<ImportSummary, { game: string }>(options)
 }

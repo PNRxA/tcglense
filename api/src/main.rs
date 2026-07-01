@@ -1,5 +1,6 @@
 mod auth;
 mod catalog;
+mod collection_import;
 mod config;
 mod db;
 mod entities;
@@ -111,6 +112,7 @@ async fn main() {
         config: Arc::new(config),
         dummy_password_hash,
         images: Arc::new(ImageCache::new(image_dir, image_http)),
+        http: http.clone(),
     };
 
     // Spawn background maintenance (refresh-token pruning) and either the offline

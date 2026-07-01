@@ -40,6 +40,12 @@ pub enum AppError {
     #[error("{0}")]
     NotFound(String),
 
+    /// An upstream dependency (e.g. an external collection provider) failed or was
+    /// unreachable -> 502 Bad Gateway. The message is safe to show the client; any
+    /// sensitive detail is logged at the call site, not carried here.
+    #[error("{0}")]
+    BadGateway(String),
+
     /// Unexpected internal failure -> 500. The detail is logged but never sent
     /// to the client.
     #[error("internal server error")]
@@ -61,6 +67,7 @@ impl IntoResponse for AppError {
             ),
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             AppError::Internal(detail) => {
                 // Log the real detail server-side, return a generic message.
                 tracing::error!(error = %detail, "internal server error");

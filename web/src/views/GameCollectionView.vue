@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
-import { LayoutGrid, Library } from '@lucide/vue'
+import { LayoutGrid, Library, RefreshCw } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { buttonVariants } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CollectionGrid from '@/components/cards/CollectionGrid.vue'
+import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import {
   COLLECTION_PAGE_SIZE,
   useCollectionQuery,
+  useCollectionSourceQuery,
   useCollectionSummaryQuery,
+  useSyncCollectionSourceMutation,
 } from '@/composables/useCollection'
+import { ApiError } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
@@ -66,6 +70,41 @@ const totalValue = computed(() => {
 
 // Stats are worth showing only once something is owned.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
+
+// Import / sync from an external collection provider (Archidekt today).
+const sourceQuery = useCollectionSourceQuery(game)
+const source = computed(() => sourceQuery.data.value ?? null)
+const syncMutation = useSyncCollectionSourceMutation()
+const syncMessage = ref<string | null>(null)
+
+const providerLabel = computed(() =>
+  source.value?.provider === 'archidekt' ? 'Archidekt' : (source.value?.provider ?? 'Archidekt'),
+)
+const lastSyncedText = computed(() => {
+  const t = source.value?.last_synced_at
+  if (!t) return 'Not synced yet'
+  const d = new Date(t)
+  return Number.isNaN(d.getTime()) ? '' : `Last synced ${d.toLocaleString()}`
+})
+
+// A saved re-sync mirrors (replace), so it can remove cards — confirm before running.
+async function resync() {
+  if (!source.value || syncMutation.isPending.value) return
+  const ok = window.confirm(
+    `Re-syncing replaces your ${gameName.value} collection with your ${providerLabel.value} ` +
+      'collection, removing cards that are no longer in it. Continue?',
+  )
+  if (!ok) return
+  syncMessage.value = null
+  try {
+    const summary = await syncMutation.mutateAsync({ game: game.value })
+    syncMessage.value =
+      `Synced ${summary.matched_cards.toLocaleString()} cards` +
+      (summary.removed_cards ? `, removed ${summary.removed_cards.toLocaleString()}.` : '.')
+  } catch (err) {
+    syncMessage.value = err instanceof ApiError ? err.message : 'Re-sync failed. Please try again.'
+  }
+}
 </script>
 
 <template>
@@ -120,6 +159,26 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
             <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
           </div>
         </dl>
+
+        <!-- Import / re-sync from an external collection provider. -->
+        <div class="mt-5 flex flex-wrap items-center gap-3">
+          <ImportCollectionDialog :game="game" :source="source" />
+          <template v-if="source">
+            <Button
+              variant="secondary"
+              size="sm"
+              :disabled="syncMutation.isPending.value"
+              @click="resync"
+            >
+              <RefreshCw :class="{ 'animate-spin': syncMutation.isPending.value }" />
+              Re-sync from {{ providerLabel }}
+            </Button>
+            <span class="text-muted-foreground text-sm">{{ lastSyncedText }}</span>
+          </template>
+        </div>
+        <p v-if="syncMessage" class="text-muted-foreground mt-2 text-sm" aria-live="polite">
+          {{ syncMessage }}
+        </p>
       </header>
 
       <LoadingRow v-if="collectionQuery.isPending.value" label="Loading your collection…" />

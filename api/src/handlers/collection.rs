@@ -16,8 +16,10 @@ use std::collections::HashMap;
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::StatusCode,
 };
 use chrono::Utc;
+use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
     SqlErr,
@@ -26,8 +28,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::extractor::AuthUser;
 use crate::catalog::{self, Game};
-use crate::entities::prelude::{Card, CollectionItem};
-use crate::entities::{card, collection_item};
+use crate::collection_import::{self, ImportSummary, Provider, ReconcileMode};
+use crate::entities::prelude::{Card, CollectionItem, CollectionSource};
+use crate::entities::{card, collection_item, collection_source};
 use crate::error::AppError;
 use crate::extract::JsonBody;
 use crate::handlers::catalog::CardResponse;
@@ -39,6 +42,10 @@ const MAX_PAGE_SIZE: u64 = 200;
 /// single count can't overflow the valuation arithmetic or be abused to store a
 /// pathological value.
 const MAX_QUANTITY: i32 = 1_000_000;
+/// Batch size for `IN (...)` card lookups, kept under SQLite's per-statement
+/// bind-variable limit (as few as 999 on old builds) — a collection can hold far more
+/// distinct cards than that once imported in bulk.
+const CARD_LOOKUP_CHUNK: usize = 900;
 
 // ---------- Response / request DTOs ----------
 
@@ -189,14 +196,19 @@ pub async fn collection_summary(
         .map(|r| i64::from(r.quantity) + i64::from(r.foil_quantity))
         .sum();
 
+    // Load the owned cards' prices, chunked so a large collection (now reachable via
+    // import) can't exceed SQLite's per-statement bind-variable limit.
     let card_ids: Vec<i32> = rows.iter().map(|r| r.card_id).collect();
-    let by_id: HashMap<i32, card::Model> = Card::find()
-        .filter(card::Column::Id.is_in(card_ids))
-        .all(&state.db)
-        .await?
-        .into_iter()
-        .map(|c| (c.id, c))
-        .collect();
+    let mut by_id: HashMap<i32, card::Model> = HashMap::new();
+    for chunk in card_ids.chunks(CARD_LOOKUP_CHUNK) {
+        let cards = Card::find()
+            .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .all(&state.db)
+            .await?;
+        for c in cards {
+            by_id.insert(c.id, c);
+        }
+    }
 
     let mut total_cents: i128 = 0;
     let mut any_priced = false;
@@ -319,10 +331,235 @@ pub async fn set_collection_entry(
     }))
 }
 
+// ---------- Import / sync from an external collection provider ----------
+
+/// Body of `POST .../import`: which provider, the source URL/id, and how to reconcile.
+#[derive(Debug, Deserialize)]
+pub struct ImportRequest {
+    pub provider: String,
+    pub source: String,
+    pub mode: ReconcileMode,
+}
+
+/// Body of `PUT .../source`: the collection link to remember (provider + source URL/id).
+#[derive(Debug, Deserialize)]
+pub struct SaveSourceRequest {
+    pub provider: String,
+    pub source: String,
+}
+
+/// A saved external collection link for a game.
+#[derive(Debug, Serialize)]
+pub struct CollectionSourceResponse {
+    pub provider: &'static str,
+    pub external_id: String,
+    /// A canonical, user-facing URL for the collection on the provider.
+    pub url: String,
+    /// RFC3339 timestamp of the last successful sync, or null if never synced.
+    pub last_synced_at: Option<String>,
+}
+
+/// `POST /api/collection/{game}/import` -> one-off import from a collection provider
+/// using the chosen reconcile mode. Does not save the link. Returns an import summary
+/// (matched / unmatched counts, copies applied, cards removed).
+pub async fn import_collection(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    JsonBody(payload): JsonBody<ImportRequest>,
+) -> Result<Json<ImportSummary>, AppError> {
+    require_game(&game)?;
+    let provider = parse_provider(&payload.provider)?;
+    let summary = collection_import::run_import(
+        &state.db,
+        &state.http,
+        user.id,
+        &game,
+        provider,
+        &payload.source,
+        payload.mode,
+    )
+    .await?;
+    Ok(Json(summary))
+}
+
+/// `GET /api/collection/{game}/source` -> the saved collection link for this game, or
+/// `null` if none is saved.
+pub async fn get_collection_source(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+) -> Result<Json<Option<CollectionSourceResponse>>, AppError> {
+    require_game(&game)?;
+    let row = find_source(&state, user.id, &game).await?;
+    Ok(Json(row.map(source_response)))
+}
+
+/// `PUT /api/collection/{game}/source` -> save (upsert) the collection link for this
+/// game. Validates that the source resolves to a provider collection id; does not sync.
+pub async fn save_collection_source(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    JsonBody(payload): JsonBody<SaveSourceRequest>,
+) -> Result<Json<CollectionSourceResponse>, AppError> {
+    require_game(&game)?;
+    let provider = parse_provider(&payload.provider)?;
+    if !provider.supports_game(&game) {
+        return Err(AppError::Validation(format!(
+            "{} import is not available for '{}'",
+            provider.label(),
+            game
+        )));
+    }
+    // Validate + normalise the source to a bare provider collection id.
+    let external_id = collection_import::parse_source(provider, &payload.source)?;
+    let now = Utc::now();
+
+    // Pointing the link at a different collection resets the sync marker; re-saving the
+    // same link preserves it. (Read the current link to decide, then upsert atomically.)
+    let existing = find_source(&state, user.id, &game).await?;
+    let changed = existing
+        .as_ref()
+        .is_none_or(|e| e.provider != provider.as_str() || e.external_id != external_id);
+    let last_synced_at = if changed {
+        None
+    } else {
+        existing.as_ref().and_then(|e| e.last_synced_at)
+    };
+
+    // Upsert on the unique (user, game) index so two concurrent first-time saves can't
+    // 500 on a unique violation (matches the collection-item upsert's race-safety).
+    let active = collection_source::ActiveModel {
+        user_id: Set(user.id),
+        game: Set(game.clone()),
+        provider: Set(provider.as_str().to_string()),
+        external_id: Set(external_id),
+        last_synced_at: Set(last_synced_at),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    CollectionSource::insert(active)
+        .on_conflict(
+            OnConflict::columns([
+                collection_source::Column::UserId,
+                collection_source::Column::Game,
+            ])
+            .update_columns([
+                collection_source::Column::Provider,
+                collection_source::Column::ExternalId,
+                collection_source::Column::LastSyncedAt,
+                collection_source::Column::UpdatedAt,
+            ])
+            .to_owned(),
+        )
+        .exec(&state.db)
+        .await?;
+
+    // Read back the canonical row for the response.
+    let saved = find_source(&state, user.id, &game)
+        .await?
+        .ok_or_else(|| AppError::Internal("saved collection source vanished".to_string()))?;
+    Ok(Json(source_response(saved)))
+}
+
+/// `DELETE /api/collection/{game}/source` -> forget the saved collection link.
+/// Idempotent: deleting when nothing is saved still returns `204`.
+pub async fn delete_collection_source(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+) -> Result<StatusCode, AppError> {
+    require_game(&game)?;
+    if let Some(existing) = find_source(&state, user.id, &game).await? {
+        CollectionSource::delete_by_id(existing.id)
+            .exec(&state.db)
+            .await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/collection/{game}/sync` -> re-sync from the saved collection link using
+/// mirror/replace semantics, then stamp `last_synced_at`. `404` when no link is saved.
+pub async fn sync_collection_source(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+) -> Result<Json<ImportSummary>, AppError> {
+    require_game(&game)?;
+    let source = find_source(&state, user.id, &game)
+        .await?
+        .ok_or_else(|| AppError::NotFound("no saved collection link to sync".to_string()))?;
+    let provider = Provider::from_id(&source.provider).ok_or_else(|| {
+        AppError::Internal(format!(
+            "stored collection provider '{}' is unknown",
+            source.provider
+        ))
+    })?;
+
+    let summary = collection_import::run_import(
+        &state.db,
+        &state.http,
+        user.id,
+        &game,
+        provider,
+        &source.external_id,
+        // A saved re-sync always mirrors the source (the user opted into this when
+        // saving the link; the UI warns that it replaces the collection).
+        ReconcileMode::Replace,
+    )
+    .await?;
+
+    // Record the successful sync time.
+    let now = Utc::now();
+    let mut active: collection_source::ActiveModel = source.into();
+    active.last_synced_at = Set(Some(now));
+    active.updated_at = Set(now);
+    active.update(&state.db).await?;
+
+    Ok(Json(summary))
+}
+
 // ---------- Helpers ----------
 
 fn require_game(game: &str) -> Result<&'static Game, AppError> {
     catalog::find(game).ok_or_else(|| AppError::NotFound(format!("unknown game '{game}'")))
+}
+
+/// Parse a collection-provider id from a request, 422 on an unknown provider.
+fn parse_provider(s: &str) -> Result<Provider, AppError> {
+    Provider::from_id(s)
+        .ok_or_else(|| AppError::Validation(format!("unknown collection provider '{s}'")))
+}
+
+/// The user's saved collection link for a game, if any.
+async fn find_source(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+) -> Result<Option<collection_source::Model>, AppError> {
+    Ok(CollectionSource::find()
+        .filter(collection_source::Column::UserId.eq(user_id))
+        .filter(collection_source::Column::Game.eq(game))
+        .one(&state.db)
+        .await?)
+}
+
+/// Shape a stored source row for the API, resolving its provider to a canonical URL.
+fn source_response(row: collection_source::Model) -> CollectionSourceResponse {
+    // A stored provider id should always resolve; degrade to a URL-less response rather
+    // than failing the read if a future/renamed provider id lingers in an old row.
+    let (provider, url) = match Provider::from_id(&row.provider) {
+        Some(p) => (p.as_str(), p.collection_url(&row.external_id)),
+        None => ("unknown", String::new()),
+    };
+    CollectionSourceResponse {
+        provider,
+        external_id: row.external_id,
+        url,
+        last_synced_at: row.last_synced_at.map(|t| t.to_rfc3339()),
+    }
 }
 
 /// Resolve a card by its external (provider) id within a game, 404 if unknown.
