@@ -112,6 +112,7 @@ fn dummy_prices(n: i32) -> Prices {
     Prices {
         usd: Some(format!("{:.2}", base * 0.25)),
         usd_foil: Some(format!("{:.2}", base * 0.75)),
+        usd_etched: None,
         eur: Some(format!("{:.2}", base * 0.20)),
         tix: Some(format!("{:.2}", base * 0.03)),
     }
@@ -172,6 +173,8 @@ impl SeedCard {
             image_uris: None,
             card_faces: self.card_faces,
             prices: Some(self.prices),
+            // Parity fields the dummy catalog doesn't fabricate default to None/absent.
+            ..Default::default()
         }
     }
 }
@@ -233,6 +236,7 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
                 toughness: None,
                 loyalty: None,
                 image_uris: None,
+                ..Default::default()
             },
             CardFace {
                 name: Some("Dummy Nightbound Wolf".to_string()),
@@ -243,6 +247,7 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
                 toughness: None,
                 loyalty: None,
                 image_uris: None,
+                ..Default::default()
             },
         ]),
     }
@@ -293,6 +298,7 @@ fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
         prices: Prices {
             usd: None,
             usd_foil: Some("19.99".to_string()),
+            usd_etched: None,
             eur: None,
             tix: None,
         },
@@ -323,6 +329,7 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
         prices: Prices {
             usd: None,
             usd_foil: None,
+            usd_etched: None,
             eur: None,
             tix: None,
         },

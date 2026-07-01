@@ -56,14 +56,15 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         _ => None,
     };
 
-    let (price_usd, price_usd_foil, price_eur, price_tix) = match &card.prices {
+    let (price_usd, price_usd_foil, price_usd_etched, price_eur, price_tix) = match &card.prices {
         Some(p) => (
             p.usd.clone(),
             p.usd_foil.clone(),
+            p.usd_etched.clone(),
             p.eur.clone(),
             p.tix.clone(),
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, None),
     };
 
     let color_identity = join_colors(&card.color_identity);
@@ -98,6 +99,57 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         .clone()
         .or_else(|| face_stat(&card.card_faces, |f| &f.loyalty));
 
+    // Comma-joined array columns (same shape as colours).
+    let keywords = join_colors(&card.keywords);
+    let produced_mana = join_colors(&card.produced_mana);
+    let artist_ids = join_colors(&card.artist_ids);
+    let frame_effects = join_colors(&card.frame_effects);
+    let promo_types = join_colors(&card.promo_types);
+    let finishes = join_colors(&card.finishes);
+
+    // Per-face fallbacks: use the top-level value, else the first face that has one
+    // (mirrors the power/toughness/loyalty handling above).
+    let watermark = card
+        .watermark
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.watermark));
+    let illustration_id = card
+        .illustration_id
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.illustration_id));
+    let defense = card
+        .defense
+        .clone()
+        .or_else(|| face_stat(&card.card_faces, |f| &f.defense));
+    // Flavour text joins the faces like oracle_text, so `ft:` matches either face.
+    let flavor_text = card.flavor_text.clone().or_else(|| {
+        card.card_faces.as_ref().and_then(|faces| {
+            let joined = faces
+                .iter()
+                .filter_map(|f| f.flavor_text.as_deref())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n//\n");
+            (!joined.is_empty()).then_some(joined)
+        })
+    });
+    // Colour indicator: top-level, else the first face that carries one.
+    let color_indicator = join_colors(&card.color_indicator).or_else(|| {
+        card.card_faces.as_ref().and_then(|faces| {
+            faces.iter().find_map(|f| {
+                f.color_indicator
+                    .as_ref()
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.join(","))
+            })
+        })
+    });
+    // Legalities object stored verbatim as JSON (queried via json_extract).
+    let legalities = card
+        .legalities
+        .as_ref()
+        .and_then(|v| serde_json::to_string(v).ok());
+
     card::ActiveModel {
         id: NotSet,
         game: Set(GAME.to_string()),
@@ -129,8 +181,39 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         card_faces: Set(card_faces),
         price_usd: Set(price_usd),
         price_usd_foil: Set(price_usd_foil),
+        price_usd_etched: Set(price_usd_etched),
         price_eur: Set(price_eur),
         price_tix: Set(price_tix),
+        keywords: Set(keywords),
+        produced_mana: Set(produced_mana),
+        color_indicator: Set(color_indicator),
+        watermark: Set(watermark),
+        flavor_text: Set(flavor_text),
+        illustration_id: Set(illustration_id),
+        artist: Set(card.artist),
+        artist_ids: Set(artist_ids),
+        border_color: Set(card.border_color),
+        frame: Set(card.frame),
+        frame_effects: Set(frame_effects),
+        security_stamp: Set(card.security_stamp),
+        promo_types: Set(promo_types),
+        finishes: Set(finishes),
+        defense: Set(defense),
+        legalities: Set(legalities),
+        full_art: Set(card.full_art),
+        textless: Set(card.textless),
+        oversized: Set(card.oversized),
+        promo: Set(card.promo),
+        reprint: Set(card.reprint),
+        variation: Set(card.variation),
+        booster: Set(card.booster),
+        story_spotlight: Set(card.story_spotlight),
+        content_warning: Set(card.content_warning),
+        highres_image: Set(card.highres_image),
+        reserved: Set(card.reserved),
+        game_changer: Set(card.game_changer),
+        edhrec_rank: Set(card.edhrec_rank),
+        penny_rank: Set(card.penny_rank),
         digital: Set(card.digital.unwrap_or(false)),
         created_at: Set(now),
         updated_at: Set(now),
