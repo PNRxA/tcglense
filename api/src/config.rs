@@ -61,7 +61,12 @@ impl std::fmt::Debug for Config {
             .field("public_site_url", &self.public_site_url)
             .field("data_dir", &self.data_dir)
             .field("scryfall_user_agent", &self.scryfall_user_agent)
-            .field("moxfield_user_agent", &self.moxfield_user_agent)
+            // The Moxfield-approved UA is a credential (it's what their allow-list
+            // keys on), so print only whether one is configured.
+            .field(
+                "moxfield_user_agent",
+                &self.moxfield_user_agent.as_ref().map(|_| "[redacted]"),
+            )
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)

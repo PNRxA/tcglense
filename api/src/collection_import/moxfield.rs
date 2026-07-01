@@ -24,6 +24,7 @@
 //! neither a host nor a path).
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use reqwest::{StatusCode, header};
 use serde::Deserialize;
@@ -43,6 +44,13 @@ const SORT_RECENT: &str = "sortType=lastUpdated&sortDirection=descending";
 /// Give up (fail the import) after this many `429`s, bounding the total added wait.
 /// (Backoff durations are shared with Archidekt via [`backoff_after`].)
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
+/// Overall per-request deadline. Moxfield's bot mitigation **tarpits** unapproved
+/// clients — it drips bytes slowly enough that the client's per-read timeout never
+/// fires (observed live: ~7 minutes for one page), which would otherwise let a single
+/// import monopolise the one import slot indefinitely. A collection page is ~400 KB,
+/// so a healthy fetch finishes in seconds; anything past this is the tarpit (or an
+/// outage) and should fail the job instead of hanging it.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Shortest / longest collection id we'll accept. Moxfield's public collection ids are
 /// 22-char base64url tokens; the bounds leave headroom without accepting garbage.
@@ -234,6 +242,25 @@ pub async fn fetch_smart(
     Ok((holdings, stopped_early))
 }
 
+/// Shape a network-level failure (timeout, dropped connection, stalled body). With no
+/// approved User-Agent configured, the by-far most likely cause is Moxfield's bot
+/// mitigation slow-walking us (observed live: a page dripped over ~7 minutes before
+/// dying), so say that actionably; with one configured, it's a genuine upstream
+/// failure and stays a generic gateway error.
+fn fetch_failure(ctx: &ProviderContext<'_>, detail: String) -> ImportError {
+    if ctx.settings.moxfield_user_agent.is_none() {
+        tracing::warn!(error = %detail, "Moxfield fetch failed without an approved User-Agent");
+        return ImportError::ProviderDenied(
+            "Moxfield didn't answer in time — their API throttles clients it hasn't \
+             approved. The server operator must request an approved User-Agent from \
+             Moxfield (email support@moxfield.com) and set it as MOXFIELD_USER_AGENT — \
+             or import your collection as a CSV export instead."
+                .to_string(),
+        );
+    }
+    ImportError::Upstream(detail)
+}
+
 /// Normalize one provider row, or `None` for a row we skip (a proxy, or a card without
 /// a Scryfall id).
 fn row_to_holding(row: CollectionRow) -> Option<FetchedHolding> {
@@ -286,14 +313,19 @@ async fn get_page(
             url.push('&');
             url.push_str(SORT_RECENT);
         }
-        let mut request = ctx.http.get(&url).header(header::ACCEPT, ACCEPT_JSON);
+        let mut request = ctx
+            .http
+            .get(&url)
+            .header(header::ACCEPT, ACCEPT_JSON)
+            // Whole-request deadline (connect + headers + body) — see REQUEST_TIMEOUT.
+            .timeout(REQUEST_TIMEOUT);
         if let Some(ua) = ctx.settings.moxfield_user_agent.as_deref() {
             request = request.header(header::USER_AGENT, ua);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|e| ImportError::Upstream(format!("request to Moxfield failed: {e}")))?;
+        let response = match request.send().await {
+            Ok(r) => r,
+            Err(e) => return Err(fetch_failure(ctx, format!("request to Moxfield failed: {e}"))),
+        };
 
         let status = response.status();
 
@@ -337,9 +369,15 @@ async fn get_page(
         // Read then parse in two steps (rather than `.json()`) so a connection dropped
         // mid-body reads as a transfer failure, distinct from a shape mismatch — the
         // serde error then carries the offending field path for the log.
-        let body = response.text().await.map_err(|e| {
-            ImportError::Upstream(format!("couldn't read the Moxfield response: {e}"))
-        })?;
+        let body = match response.text().await {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(fetch_failure(
+                    ctx,
+                    format!("couldn't read the Moxfield response: {e}"),
+                ));
+            }
+        };
         return serde_json::from_str(&body).map_err(|e| {
             ImportError::Upstream(format!("couldn't parse the Moxfield response: {e}"))
         });

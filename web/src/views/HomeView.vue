@@ -68,8 +68,8 @@ const features: Feature[] = [
     icon: CloudDownload,
     title: 'Import and sync',
     description:
-      'Pull in from Archidekt by link (overwrite, replace, merge, or smart) or CSV, then ' +
-      're-sync a saved link on demand.',
+      'Pull in from Archidekt or Moxfield by link (overwrite, replace, merge, or smart) ' +
+      'or CSV, then re-sync a saved link on demand.',
     to: '/collection',
   },
   {

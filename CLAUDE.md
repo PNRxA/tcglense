@@ -617,7 +617,10 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   approve a specific User-Agent string on request (email support@moxfield.com — treat the
   granted string as a credential). Set it as `MOXFIELD_USER_AGENT`; without one a URL
   import may be rejected (`403` → a clear "needs an approved User-Agent" 502, pointing
-  the user at the CSV upload, which needs no network). Moxfield pages 100 rows at a time
+  the user at the CSV upload, which needs no network) — or **tarpitted** (observed live:
+  a page dripped over ~7 minutes, defeating per-read timeouts), which is why each page
+  fetch carries a whole-request 60s deadline so a tarpitted import fails instead of
+  monopolising the single import slot for hours. Moxfield pages 100 rows at a time
   (`/v1/collections/search/{id}`, paged on `totalPages`), so URL imports are much faster
   than Archidekt's 25-row pages; smart sync uses `sortType=lastUpdated`. `isProxy` rows
   are skipped. Binder URLs (`/binders/…`) are a different endpoint and are rejected —

@@ -1,9 +1,11 @@
 //! Collection import / sync from an external provider: authentication gating, the
 //! saved-link lifecycle (GET/PUT/DELETE), provider + source validation, and the
-//! `no-store` cache policy. The parts that would reach out to Archidekt over the
-//! network are deliberately not exercised here — every assertion below resolves before
-//! any upstream fetch (bad provider / unparseable source / missing saved link), so the
-//! suite stays fully offline like the rest of `security_tests`.
+//! `no-store` cache policy. The parts that would reach out to a provider (Archidekt or
+//! Moxfield) over the network are deliberately not exercised here — every assertion
+//! below resolves before any upstream fetch (bad provider / unparseable source /
+//! missing saved link), so the suite stays fully offline like the rest of
+//! `security_tests`. (The CSV upload needs no network, so its tests drive the full
+//! path, including both providers' export shapes.)
 
 use super::harness::*;
 

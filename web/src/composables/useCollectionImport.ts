@@ -10,6 +10,7 @@ import {
   syncCollectionSource,
   ApiError,
   MAX_CSV_UPLOAD_BYTES,
+  PROVIDER_LABELS,
   type CollectionProvider,
   type CollectionSource,
   type ImportJob,
@@ -74,7 +75,8 @@ export interface ImportCsvVars {
 }
 
 /**
- * Import a collection from an uploaded Archidekt CSV export. Resolves **synchronously**
+ * Import a collection from an uploaded CSV export (Archidekt or Moxfield — the server
+ * detects which from the header row). Resolves **synchronously**
  * to an {@link ImportSummary} (the CSV needs no upstream fetch, so there's no job to
  * poll); the caller invalidates the collection caches on success.
  */
@@ -248,12 +250,15 @@ export function useCollectionImport(game: Ref<string>) {
   const busy = computed(
     () => enqueuing.value || processing.value || importCsvMutation.isPending.value,
   )
+  // Which provider the in-flight link import targets, for the status copy (set when an
+  // import is enqueued; the job itself doesn't echo the provider back).
+  const activeProvider = ref<CollectionProvider>('archidekt')
   const statusMessage = computed(() => {
     switch (job.status.value) {
       case 'queued':
         return 'Queued — waiting for a free slot…'
       case 'running':
-        return 'Importing from Archidekt… this can take a couple of minutes (we throttle requests to respect their rate limit).'
+        return `Importing from ${PROVIDER_LABELS[activeProvider.value]}… this can take a couple of minutes (we throttle requests to respect their rate limit).`
       default:
         return null
     }
@@ -273,6 +278,7 @@ export function useCollectionImport(game: Ref<string>) {
     smart: boolean
   }) {
     enqueuing.value = true
+    activeProvider.value = args.provider
     resetStatus()
     try {
       const enqueued = await importMutation.mutateAsync({
@@ -313,8 +319,9 @@ export function useCollectionImport(game: Ref<string>) {
     // message than a bare 413 (and leaves any prior outcome visible if it's rejected here).
     if (args.file.size > MAX_CSV_UPLOAD_BYTES) {
       errorMessage.value =
-        `That file is larger than ${MAX_CSV_MB} MB. Re-export from Archidekt with only the ` +
-        'Scryfall ID, Finish, and Quantity columns — that keeps it well under the limit.'
+        `That file is larger than ${MAX_CSV_MB} MB. If it came from Archidekt, re-export ` +
+        'with only the Scryfall ID, Finish, and Quantity columns — that keeps it well ' +
+        "under the limit. (Moxfield's standard export is already compact.)"
       return
     }
     errorMessage.value = null

@@ -25,6 +25,7 @@ mod types;
 
 use std::collections::HashMap;
 
+use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::entities::prelude::{Card, CollectionItem};
@@ -146,11 +147,16 @@ fn smart_absorb_page(
         });
     }
     // A card matches only once its full running aggregate equals the local counts; an
-    // unowned card (no local entry) never matches, so a new card keeps paging.
-    touched.iter().all(|uid| {
-        running.get(uid).copied()
-            == local.get(uid).map(|&(r, f)| (i64::from(r), i64::from(f)))
-    })
+    // unowned card (no local entry) never matches, so a new card keeps paging. A page
+    // that contributed NO rows (e.g. Moxfield's fetch skips proxies / id-less custom
+    // cards, so a bulk-edited block of proxies can fill a whole page) proves nothing
+    // about sync state — vacuous truth here would falsely stop the fetch, so an empty
+    // contribution reads as "keep paging".
+    !touched.is_empty()
+        && touched.iter().all(|uid| {
+            running.get(uid).copied()
+                == local.get(uid).map(|&(r, f)| (i64::from(r), i64::from(f)))
+        })
 }
 
 /// Execute an import against an already-parsed provider collection id: fetch (throttled),
@@ -279,10 +285,10 @@ async fn moxfield_rows_to_holdings(
     game: &str,
     rows: Vec<csv_import::MoxfieldCsvRow>,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
-    // Distinct (set, number) pairs: the numbers to look up per set, and each pair's
-    // unmatched-placeholder label (from its first-seen row, so the key is deterministic).
-    let mut numbers_by_set: HashMap<&str, Vec<&str>> = HashMap::new();
+    // Distinct (set, number) pairs to look up, and each pair's unmatched-placeholder
+    // label (from its first-seen row, so the key is deterministic).
     let mut placeholder_by_pair: HashMap<(&str, &str), String> = HashMap::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for row in &rows {
         let pair = (row.set_code.as_str(), row.collector_number.as_str());
         if placeholder_by_pair.contains_key(&pair) {
@@ -294,27 +300,31 @@ async fn moxfield_rows_to_holdings(
             format!("{} ({} #{})", row.name, row.set_code, row.collector_number)
         };
         placeholder_by_pair.insert(pair, label);
-        numbers_by_set
-            .entry(row.set_code.as_str())
-            .or_default()
-            .push(row.collector_number.as_str());
+        pairs.push((row.set_code.clone(), row.collector_number.clone()));
     }
 
-    // (set, number) -> external id, per-set queries chunked under the bind limit (the
-    // (game, set_code) index narrows each to one set's worth of rows).
+    // (set, number) -> external id, via row-value `(set_code, collector_number) IN
+    // ((?,?),…)` chunks. Chunking by PAIRS (two binds each, under SQLite's per-statement
+    // bind limit) means the query count is bounded by distinct pairs alone — a crafted
+    // upload naming 100k *distinct set codes* costs the same handful of queries as a
+    // genuine export, rather than one query per set (an easy DoS amplification since
+    // this runs synchronously in the request).
     let mut external_by_pair: HashMap<(String, String), String> = HashMap::new();
-    for (set_code, numbers) in &numbers_by_set {
-        for chunk in numbers.chunks(IN_CHUNK) {
-            let cards = Card::find()
-                .filter(card::Column::Game.eq(game))
-                .filter(card::Column::SetCode.eq(*set_code))
-                .filter(card::Column::CollectorNumber.is_in(chunk.iter().copied()))
-                .all(db)
-                .await
-                .map_err(ImportError::Db)?;
-            for c in cards {
-                external_by_pair.insert((c.set_code, c.collector_number), c.external_id);
-            }
+    for chunk in pairs.chunks(IN_CHUNK / 2) {
+        let cards = Card::find()
+            .filter(card::Column::Game.eq(game))
+            .filter(
+                Expr::tuple([
+                    Expr::col(card::Column::SetCode).into(),
+                    Expr::col(card::Column::CollectorNumber).into(),
+                ])
+                .in_tuples(chunk.iter().cloned()),
+            )
+            .all(db)
+            .await
+            .map_err(ImportError::Db)?;
+        for c in cards {
+            external_by_pair.insert((c.set_code, c.collector_number), c.external_id);
         }
     }
 
@@ -608,6 +618,21 @@ mod tests {
             vec![("a".to_string(), false, 3), ("x".to_string(), false, 1)],
         );
         assert!(!all);
+    }
+
+    #[test]
+    fn smart_absorb_page_treats_an_empty_contribution_as_keep_paging() {
+        // A page whose rows were ALL filtered out upstream (e.g. Moxfield proxies /
+        // id-less custom cards) contributes nothing — it must not read as "in sync"
+        // (vacuous truth), or a bulk-edited block of proxies at the front of a smart
+        // fetch would falsely stop it (or empty the whole fetch into an
+        // EmptyCollection error for a non-empty collection).
+        let local = HashMap::from([("a".to_string(), (2, 0))]);
+        let mut running = HashMap::new();
+        let mut holdings = Vec::new();
+        let all = smart_absorb_page(&mut running, &mut holdings, &local, Vec::new());
+        assert!(!all, "an empty page contribution must keep paging");
+        assert!(holdings.is_empty());
     }
 
     #[test]
