@@ -29,6 +29,9 @@ pub fn connect_options(database_url: impl Into<String>) -> ConnectOptions {
     options.map_sqlx_sqlite_opts(|opts| {
         opts.journal_mode(SqliteJournalMode::Wal)
             .pragma("cache_size", "-20000")
+            // Register a REGEXP function (sqlx `regexp` feature) on every connection
+            // so the Scryfall regex filters (`o:/…/`, `name:/…/`, …) resolve.
+            .with_regexp()
     });
     options
 }

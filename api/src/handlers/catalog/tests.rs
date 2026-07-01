@@ -171,16 +171,16 @@ fn list_params_clamps_page_size() {
 #[test]
 fn sort_spec_uses_endpoint_default_when_absent() {
     assert_eq!(
-        params(None, None).sort_spec(SortField::Number).unwrap(),
+        params(None, None).sort_spec_with(SortField::Number, None, None).unwrap(),
         (SortField::Number, SortDir::Asc),
     );
     assert_eq!(
-        params(None, None).sort_spec(SortField::Name).unwrap(),
+        params(None, None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Name, SortDir::Asc),
     );
     // Blank values are treated as absent (fall back to the default).
     assert_eq!(
-        params(Some("  "), Some("")).sort_spec(SortField::Name).unwrap(),
+        params(Some("  "), Some("")).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Name, SortDir::Asc),
     );
 }
@@ -189,24 +189,24 @@ fn sort_spec_uses_endpoint_default_when_absent() {
 fn sort_spec_field_picks_natural_direction() {
     // A field with no explicit dir defaults to its natural direction.
     assert_eq!(
-        params(Some("price"), None).sort_spec(SortField::Name).unwrap(),
+        params(Some("price"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Price, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("released"), None).sort_spec(SortField::Name).unwrap(),
+        params(Some("released"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Released, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("cmc"), None).sort_spec(SortField::Name).unwrap(),
+        params(Some("cmc"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Cmc, SortDir::Asc),
     );
     // An explicit dir overrides the natural one; aliases resolve.
     assert_eq!(
-        params(Some("collector"), Some("desc")).sort_spec(SortField::Name).unwrap(),
+        params(Some("collector"), Some("desc")).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Number, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("mv"), Some("asc")).sort_spec(SortField::Name).unwrap(),
+        params(Some("mv"), Some("asc")).sort_spec_with(SortField::Name, None, None).unwrap(),
         (SortField::Cmc, SortDir::Asc),
     );
 }
@@ -214,13 +214,81 @@ fn sort_spec_field_picks_natural_direction() {
 #[test]
 fn sort_spec_rejects_unknown_values() {
     assert!(matches!(
-        params(Some("color"), None).sort_spec(SortField::Name),
+        params(Some("nonsense"), None).sort_spec_with(SortField::Name, None, None),
         Err(AppError::Validation(_)),
     ));
     assert!(matches!(
-        params(None, Some("sideways")).sort_spec(SortField::Name),
+        params(None, Some("sideways")).sort_spec_with(SortField::Name, None, None),
         Err(AppError::Validation(_)),
     ));
+}
+
+#[test]
+fn sort_spec_precedence_url_over_directive_over_default() {
+    // An in-query order:/direction: directive fills the gap when the URL params
+    // are absent.
+    assert_eq!(
+        params(None, None)
+            .sort_spec_with(SortField::Name, Some(SortField::Edhrec), Some(SortDir::Desc))
+            .unwrap(),
+        (SortField::Edhrec, SortDir::Desc),
+    );
+    // An explicit URL sort wins over the in-query directive.
+    assert_eq!(
+        params(Some("cmc"), None)
+            .sort_spec_with(SortField::Name, Some(SortField::Edhrec), None)
+            .unwrap(),
+        (SortField::Cmc, SortDir::Asc),
+    );
+}
+
+/// `unique:cards` groups by `oracle_id`, so the paginator counts distinct cards
+/// (not printings) and a page holds one row per group — proving SeaORM's
+/// `num_items()` counts groups over a grouped query.
+#[tokio::test]
+async fn unique_cards_groups_by_oracle_id() {
+    use crate::handlers::shared::apply_card_sort;
+    use sea_orm::{ActiveModelTrait, PaginatorTrait, Set};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+    // Two printings share oracle o1; one is o2; one has no oracle id.
+    for (i, (name, oracle)) in [
+        ("A1", Some("o1")),
+        ("A2", Some("o1")),
+        ("B", Some("o2")),
+        ("C", None),
+    ]
+    .iter()
+    .enumerate()
+    {
+        card::ActiveModel {
+            game: Set("mtg".into()),
+            external_id: Set(format!("ext-{i}")),
+            name: Set((*name).into()),
+            set_code: Set("tst".into()),
+            set_name: Set("TST".into()),
+            collector_number: Set(i.to_string()),
+            lang: Set("en".into()),
+            oracle_id: Set(oracle.map(str::to_owned)),
+            digital: Set(false),
+            created_at: Set(ts),
+            updated_at: Set(ts),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    let base = || Card::find().filter(card::Column::Game.eq("mtg"));
+    assert_eq!(base().all(&db).await.unwrap().len(), 4, "4 printings total");
+    // unique:cards collapses the two o1 printings; the null-oracle card stays
+    // distinct (grouped on '#'||id). So o1 + o2 + C = 3.
+    let grouped = apply_unique(base(), Some(crate::scryfall::search::UniqueMode::Cards));
+    let paginator = apply_card_sort(grouped, SortField::Name, SortDir::Asc, false).paginate(&db, 60);
+    assert_eq!(paginator.num_items().await.unwrap(), 3, "distinct cards");
+    assert_eq!(paginator.fetch_page(0).await.unwrap().len(), 3, "one row per group");
 }
 
 /// A minimal, insertable card row whose only meaningful fields for the sort
@@ -260,6 +328,37 @@ fn test_card(id: i32, usd: Option<&str>, usd_foil: Option<&str>) -> card::Model 
         price_usd_foil: usd_foil.map(str::to_string),
         price_eur: None,
         price_tix: None,
+        price_usd_etched: None,
+        keywords: None,
+        produced_mana: None,
+        color_indicator: None,
+        watermark: None,
+        flavor_text: None,
+        illustration_id: None,
+        artist: None,
+        artist_ids: None,
+        border_color: None,
+        frame: None,
+        frame_effects: None,
+        security_stamp: None,
+        promo_types: None,
+        finishes: None,
+        defense: None,
+        legalities: None,
+        full_art: None,
+        textless: None,
+        oversized: None,
+        promo: None,
+        reprint: None,
+        variation: None,
+        booster: None,
+        story_spotlight: None,
+        content_warning: None,
+        highres_image: None,
+        reserved: None,
+        game_changer: None,
+        edhrec_rank: None,
+        penny_rank: None,
         digital: false,
         created_at: ts,
         updated_at: ts,

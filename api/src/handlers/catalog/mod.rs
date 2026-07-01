@@ -11,8 +11,8 @@
 //! proxy) — with the shared query params and card helpers kept here.
 
 use sea_orm::{
-    ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Select,
-    sea_query::NullOrdering,
+    ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Select,
+    sea_query::{Expr, NullOrdering},
 };
 use serde::Deserialize;
 
@@ -86,18 +86,23 @@ impl ListParams {
         trim_query(self.q.as_deref())
     }
 
-    /// Resolve the `sort`/`dir` params into a validated `(field, direction)`,
-    /// falling back to `default` (and the field's natural direction) when a value
-    /// is absent. An unrecognised value is a 422 — consistent with a malformed `q`
-    /// — rather than being silently ignored.
-    fn sort_spec(&self, default: SortField) -> Result<(SortField, SortDir), AppError> {
+    /// Resolve the `(field, direction)` sort from the URL `sort`/`dir` params, an
+    /// in-query `order:`/`direction:` directive, and the endpoint default, in that
+    /// precedence order (URL param > in-query directive > default). An unrecognised
+    /// value is a 422, consistent with a malformed `q` rather than silently ignored.
+    fn sort_spec_with(
+        &self,
+        default: SortField,
+        q_order: Option<SortField>,
+        q_dir: Option<SortDir>,
+    ) -> Result<(SortField, SortDir), AppError> {
         let field = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            None => default,
             Some(value) => SortField::parse(value)?,
+            None => q_order.unwrap_or(default),
         };
         let dir = match self.dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            None => field.default_dir(),
             Some(value) => SortDir::parse(value)?,
+            None => q_dir.unwrap_or(field.default_dir()),
         };
         Ok((field, dir))
     }
@@ -143,16 +148,66 @@ fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::En
         .limit(MAX_PAGE_SIZE)
 }
 
-/// Apply the optional `q` search filter to a card query. A blank/absent `q` leaves
-/// the query unchanged; a malformed query surfaces as a 422 via
-/// [`search_condition`](crate::handlers::shared::search_condition).
+/// The result-shaping directives a `q` may carry (`order:`/`direction:`/`unique:`),
+/// resolved into the catalog's own sort/unique types.
+#[derive(Default)]
+struct SearchShape {
+    order: Option<SortField>,
+    direction: Option<SortDir>,
+    unique: Option<crate::scryfall::search::UniqueMode>,
+}
+
+/// Apply the optional `q` search filter and return the filtered query plus any
+/// result-shaping directives the query carried. A blank/absent `q` leaves the query
+/// unchanged; a malformed query surfaces as a 422.
 fn apply_search(
     query: Select<card::Entity>,
     game: &Game,
     params: &ListParams,
-) -> Result<Select<card::Entity>, AppError> {
+) -> Result<(Select<card::Entity>, SearchShape), AppError> {
     match params.search() {
-        Some(search) => Ok(query.filter(search_condition(game, search)?)),
-        None => Ok(query),
+        Some(search) => {
+            let (condition, shape) = parse_search(game, search)?;
+            Ok((query.filter(condition), shape))
+        }
+        None => Ok((query, SearchShape::default())),
+    }
+}
+
+/// Parse an MTG `q` into its row condition plus result-shaping directives; other
+/// games fall back to a plain name substring with no directives.
+fn parse_search(game: &Game, search: &str) -> Result<(Condition, SearchShape), AppError> {
+    match game.id {
+        crate::scryfall::GAME => {
+            let q = crate::scryfall::search::parse_query(search)?;
+            Ok((
+                q.condition,
+                SearchShape {
+                    order: q.order.map(SortField::from),
+                    direction: q.direction.map(SortDir::from),
+                    unique: q.unique,
+                },
+            ))
+        }
+        _ => Ok((search_condition(game, search)?, SearchShape::default())),
+    }
+}
+
+/// Apply a `unique:` de-duplication mode by grouping on a null-safe key (`'#'||id`
+/// keeps NULL-key rows distinct so they don't collapse together). `prints`/absent
+/// leaves the per-printing rows untouched.
+fn apply_unique(
+    query: Select<card::Entity>,
+    unique: Option<crate::scryfall::search::UniqueMode>,
+) -> Select<card::Entity> {
+    use crate::scryfall::search::UniqueMode;
+    match unique {
+        Some(UniqueMode::Cards) => {
+            query.group_by(Expr::cust("COALESCE(cards.oracle_id, '#' || cards.id)"))
+        }
+        Some(UniqueMode::Art) => {
+            query.group_by(Expr::cust("COALESCE(cards.illustration_id, '#' || cards.id)"))
+        }
+        _ => query,
     }
 }

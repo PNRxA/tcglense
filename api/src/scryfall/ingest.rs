@@ -29,8 +29,8 @@ use super::{DATASET, GAME, GAME_NAME};
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
-/// Rows per upsert. ~34 card columns × 400 ≈ 13.6k bound parameters, comfortably
-/// under SQLite's default 32 766 parameter limit.
+/// Rows per upsert. ~65 card columns × 400 ≈ 26k bound parameters, under SQLite's
+/// default 32 766 parameter limit (drop this toward 350 if the column count grows).
 pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.
@@ -365,8 +365,39 @@ pub(super) async fn flush_cards(
                     card::Column::CardFaces,
                     card::Column::PriceUsd,
                     card::Column::PriceUsdFoil,
+                    card::Column::PriceUsdEtched,
                     card::Column::PriceEur,
                     card::Column::PriceTix,
+                    card::Column::Keywords,
+                    card::Column::ProducedMana,
+                    card::Column::ColorIndicator,
+                    card::Column::Watermark,
+                    card::Column::FlavorText,
+                    card::Column::IllustrationId,
+                    card::Column::Artist,
+                    card::Column::ArtistIds,
+                    card::Column::BorderColor,
+                    card::Column::Frame,
+                    card::Column::FrameEffects,
+                    card::Column::SecurityStamp,
+                    card::Column::PromoTypes,
+                    card::Column::Finishes,
+                    card::Column::Defense,
+                    card::Column::Legalities,
+                    card::Column::FullArt,
+                    card::Column::Textless,
+                    card::Column::Oversized,
+                    card::Column::Promo,
+                    card::Column::Reprint,
+                    card::Column::Variation,
+                    card::Column::Booster,
+                    card::Column::StorySpotlight,
+                    card::Column::ContentWarning,
+                    card::Column::HighresImage,
+                    card::Column::Reserved,
+                    card::Column::GameChanger,
+                    card::Column::EdhrecRank,
+                    card::Column::PennyRank,
                     card::Column::Digital,
                     card::Column::UpdatedAt,
                 ])

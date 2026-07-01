@@ -16,7 +16,7 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-use super::{ListParams, apply_search, prints_query};
+use super::{ListParams, apply_search, apply_unique, prints_query};
 
 /// `GET /api/games/{game}/cards` -> all cards (optional `q` search), by name.
 pub async fn list_cards(
@@ -27,9 +27,10 @@ pub async fn list_cards(
     let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
-    query = apply_search(query, game_meta, &params)?;
-    let (sort, dir) = params.sort_spec(SortField::Name)?;
+    let query = Card::find().filter(card::Column::Game.eq(game.as_str()));
+    let (query, shape) = apply_search(query, game_meta, &params)?;
+    let (sort, dir) = params.sort_spec_with(SortField::Name, shape.order, shape.direction)?;
+    let query = apply_unique(query, shape.unique);
     let paginator = apply_card_sort(query, sort, dir, false).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
