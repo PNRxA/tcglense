@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { useQuery } from '@tanstack/vue-query'
-import { ChevronRight, Library, Loader2 } from '@lucide/vue'
+import { ChevronRight, Library } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
-import { listGames } from '@/lib/api'
+import LoadingRow from '@/components/cards/LoadingRow.vue'
+import { useGamesQuery } from '@/composables/useCatalog'
 import { usePageMeta } from '@/lib/seo'
 
 usePageMeta({
@@ -12,11 +12,7 @@ usePageMeta({
   canonicalPath: '/cards',
 })
 
-const { data, isPending, isError } = useQuery({
-  queryKey: ['games'],
-  queryFn: () => listGames(),
-  staleTime: Infinity,
-})
+const { data, isPending, isError } = useGamesQuery()
 </script>
 
 <template>
@@ -26,10 +22,7 @@ const { data, isPending, isError } = useQuery({
       <p class="text-muted-foreground mt-2">Pick a game to explore its sets and cards.</p>
     </header>
 
-    <div v-if="isPending" class="text-muted-foreground flex items-center gap-2 py-12">
-      <Loader2 class="size-4 animate-spin" />
-      Loading games…
-    </div>
+    <LoadingRow v-if="isPending" label="Loading games…" />
     <p v-else-if="isError" class="text-destructive py-12">Couldn't load games. Please retry.</p>
 
     <div v-else class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

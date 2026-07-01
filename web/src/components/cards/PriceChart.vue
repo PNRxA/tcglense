@@ -40,7 +40,6 @@ function selectRange(value: PriceRange) {
 const query = useQuery({
   queryKey: ['card-prices', game, id, range],
   queryFn: () => getPriceHistory(game.value, id.value, range.value),
-  staleTime: 5 * 60 * 1000,
   placeholderData: keepPreviousData,
 })
 

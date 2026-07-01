@@ -213,16 +213,10 @@ pub async fn prune_expired(db: &DatabaseConnection) -> Result<u64, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{entities::user, migrator::Migrator};
-    use sea_orm::Database;
-    use sea_orm_migration::MigratorTrait;
+    use crate::entities::user;
 
     async fn setup_db() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect to in-memory sqlite");
-        Migrator::up(&db, None).await.expect("run migrations");
-        db
+        crate::test_support::migrated_memory_db().await
     }
 
     async fn insert_user(db: &DatabaseConnection, email: &str) -> i32 {

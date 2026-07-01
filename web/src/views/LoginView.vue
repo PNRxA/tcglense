@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Loader2 } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -13,33 +13,20 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ApiError } from '@/lib/api'
+import { useAuthSubmit } from '@/composables/useAuthSubmit'
 import { usePageMeta } from '@/lib/seo'
-import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 
-const router = useRouter()
-const route = useRoute()
 const auth = useAuthStore()
+const { error, loading, submit } = useAuthSubmit()
 
 usePageMeta({ title: 'Sign in', canonicalPath: '/login', noindex: true })
 
 const email = ref('')
 const password = ref('')
-const error = ref<string | null>(null)
-const loading = ref(false)
 
-async function onSubmit() {
-  error.value = null
-  loading.value = true
-  try {
-    await auth.login({ email: email.value, password: password.value })
-    await router.push(safeInternalPath(route.query.redirect) ?? '/dashboard')
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
-  } finally {
-    loading.value = false
-  }
+function onSubmit() {
+  submit(() => auth.login({ email: email.value, password: password.value }))
 }
 </script>
 

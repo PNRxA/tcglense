@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed } from 'vue'
 import { Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { setIconUrl, type CardSet } from '@/lib/api'
+import { useImageLoad } from '@/composables/useImageLoad'
 
 const props = withDefaults(
   defineProps<{
@@ -39,32 +40,16 @@ const rootClass = computed(() => {
 })
 
 // Show the icon (served through our caching proxy) when the set has one, with a
-// graceful fallback if the fetch fails.
-const iconFailed = ref(false)
-const iconLoaded = ref(false)
-const iconEl = useTemplateRef<HTMLImageElement>('iconEl')
+// graceful fallback if the fetch fails. SetTile instances are reused across a set
+// list (v-for), so the load state resets when we point at a different set's icon.
+const {
+  el: iconEl,
+  loaded: iconLoaded,
+  failed: iconFailed,
+  onLoad,
+  onError,
+} = useImageLoad(() => [props.game, props.set.code])
 const showIcon = computed(() => !!props.set.icon_svg_uri && !iconFailed.value)
-
-// A cached icon can finish loading before the `load` listener is attached, so its
-// event never fires. Reflect the already-complete state so it doesn't stay stuck
-// at opacity-0 waiting for an event that won't come (mirrors CardImage).
-function syncIconLoaded() {
-  const el = iconEl.value
-  if (el?.complete && el.naturalWidth > 0) iconLoaded.value = true
-}
-
-onMounted(syncIconLoaded)
-
-// SetTile instances are reused across a set list (v-for), so reset + re-check when
-// we point at a different set's icon (it may resolve instantly from cache).
-watch(
-  () => [props.game, props.set.code],
-  () => {
-    iconFailed.value = false
-    iconLoaded.value = false
-    nextTick(syncIconLoaded)
-  },
-)
 
 const released = computed(() => {
   if (!props.set.released_at) return null
@@ -91,8 +76,8 @@ const released = computed(() => {
           class="object-contain transition-opacity duration-500 ease-out motion-reduce:transition-none dark:invert"
           :class="[nested ? 'size-6' : 'size-8', iconLoaded ? 'opacity-100' : 'opacity-0']"
           loading="lazy"
-          @load="iconLoaded = true"
-          @error="iconFailed = true"
+          @load="onLoad"
+          @error="onError"
         />
         <Layers v-else class="text-muted-foreground" :class="nested ? 'size-5' : 'size-6'" />
       </div>

@@ -1,0 +1,23 @@
+//! HTTP-level security tests.
+//!
+//! These drive the *real* application router (built by [`crate::build_router`],
+//! including CORS, the JSON-body extractor, error mapping, and the auth stack)
+//! in-process via `tower`'s `oneshot` — no TCP bind, no network. They assert the
+//! security-relevant behaviour a unit test of any single module can't see on its
+//! own: end-to-end refresh-token rotation + reuse detection, generic login
+//! failures (no user enumeration), the hardened refresh cookie on the wire,
+//! correct status codes for malformed bodies, the CORS contract, and that secret
+//! material (password hashes) never leaks into a response.
+//!
+//! The shared HTTP harness lives in [`harness`]; each concern below is its own
+//! module driving that harness.
+
+mod harness;
+
+mod caching;
+mod cors;
+mod login;
+mod refresh;
+mod registration;
+mod request_body;
+mod search;

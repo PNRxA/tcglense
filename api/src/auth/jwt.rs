@@ -64,18 +64,8 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            database_url: "sqlite::memory:".to_string(),
             jwt_secret: "test-secret-key-for-unit-tests".to_string(),
-            access_token_expiry_minutes: 15,
-            refresh_token_expiry_days: 30,
-            cookie_secure: false,
-            host: "127.0.0.1".to_string(),
-            port: 8080,
-            data_dir: std::path::PathBuf::from("./data"),
-            scryfall_user_agent: "TCGLense/test".to_string(),
-            sync_on_startup: false,
-            sync_interval_hours: 24,
-            seed_dummy_data: false,
+            ..crate::test_support::test_config()
         }
     }
 

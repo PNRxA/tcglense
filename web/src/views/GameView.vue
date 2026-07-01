@@ -1,28 +1,22 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
-import { LayoutGrid, Loader2, Search } from '@lucide/vue'
+import { LayoutGrid, Loader2 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetTile from '@/components/cards/SetTile.vue'
 import SetGroup from '@/components/cards/SetGroup.vue'
-import { gameStatus, listGames, listSets } from '@/lib/api'
+import { useGameName, useSetsQuery } from '@/composables/useCatalog'
+import { gameStatus } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { filterSets, groupByYear, groupSets, partitionPinned } from '@/lib/setGroups'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 
-const gamesQuery = useQuery({
-  queryKey: ['games'],
-  queryFn: () => listGames(),
-  staleTime: Infinity,
-})
-const gameName = computed(
-  () =>
-    gamesQuery.data.value?.data.find((g) => g.id === game.value)?.name ?? game.value.toUpperCase(),
-)
+const gameName = useGameName(game)
 
 usePageMeta({
   title: () => gameName.value,
@@ -41,11 +35,7 @@ const statusQuery = useQuery({
   },
 })
 
-const setsQuery = useQuery({
-  queryKey: ['sets', game],
-  queryFn: () => listSets(game.value),
-  staleTime: 5 * 60 * 1000,
-})
+const setsQuery = useSetsQuery(game)
 
 // When the import finishes, pull the freshly-populated sets.
 watch(
@@ -125,17 +115,13 @@ const sections = computed(() => {
     <div
       class="bg-background/85 sticky top-0 z-30 -mx-4 mb-6 flex items-center gap-3 border-b px-4 py-3 backdrop-blur"
     >
-      <div v-if="sets.length" class="relative w-full sm:w-64">
-        <Search
-          class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-        />
-        <Input
-          v-model="filter"
-          aria-label="Filter sets by name or code"
-          placeholder="Filter sets…"
-          class="pl-9"
-        />
-      </div>
+      <CardSearchBox
+        v-if="sets.length"
+        v-model="filter"
+        class="w-full sm:w-64"
+        aria-label="Filter sets by name or code"
+        placeholder="Filter sets…"
+      />
       <RouterLink
         :to="`/cards/${game}/cards`"
         :class="buttonVariants({ variant: 'default' })"
@@ -161,13 +147,7 @@ const sections = computed(() => {
       </span>
     </div>
 
-    <div
-      v-if="setsQuery.isPending.value"
-      class="text-muted-foreground flex items-center gap-2 py-12"
-    >
-      <Loader2 class="size-4 animate-spin" />
-      Loading sets…
-    </div>
+    <LoadingRow v-if="setsQuery.isPending.value" label="Loading sets…" />
     <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
       Couldn't load sets. Please retry.
     </p>

@@ -14,7 +14,6 @@ const id = toRef(props, 'id')
 const query = useQuery({
   queryKey: ['card-prints', game, id],
   queryFn: () => getCardPrints(game.value, id.value),
-  staleTime: 5 * 60 * 1000,
 })
 
 const prints = computed(() => query.data.value?.data ?? [])

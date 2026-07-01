@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
 import { Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import {
@@ -11,16 +10,12 @@ import {
   NavigationMenuList,
   NavigationMenuTrigger,
 } from '@/components/ui/navigation-menu'
-import { listGames } from '@/lib/api'
+import { useGamesQuery } from '@/composables/useCatalog'
 
 // Drive the menu from the same registry the /cards landing uses (cached), so a new
 // TCG appears here automatically. The /cards landing page lists games too; this is
 // the quick-access shortcut from the top bar.
-const { data } = useQuery({
-  queryKey: ['games'],
-  queryFn: () => listGames(),
-  staleTime: Infinity,
-})
+const { data } = useGamesQuery()
 const games = computed(() => data.value?.data ?? [])
 </script>
 

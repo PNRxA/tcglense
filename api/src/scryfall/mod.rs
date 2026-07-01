@@ -8,12 +8,18 @@ pub mod client;
 pub mod drops;
 mod dummy;
 pub mod ingest;
+mod map;
 pub mod model;
+mod price_history;
 mod progress;
 pub mod search;
 
 pub use dummy::seed;
 pub use ingest::refresh;
+/// Daily price-history capture, re-exported at the provider level so callers use
+/// `scryfall::snapshot_prices` / `scryfall::format_date` without reaching into the
+/// `price_history` submodule.
+pub(crate) use price_history::{format_date, snapshot_prices};
 /// Name of the import progress span; `main.rs` scopes the `IndicatifLayer` to it.
 pub(crate) use progress::SPAN_NAME as PROGRESS_SPAN_NAME;
 
