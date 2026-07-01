@@ -33,24 +33,28 @@ function handleError() {
 </script>
 
 <template>
-  <!-- Corners match a real MTG card: a 63×88 mm card has a ~3 mm corner radius, so
-    the radius is 3/63 ≈ 4.76% of the width and 3/88 ≈ 3.4% of the height. Expressing
-    both as percentages (resolved against this frame's own 5:7 border-box) keeps the
-    radius proportional at every card size and, because 3.4% × 7/5 = 4.76%, keeps the
-    corner a true circle rather than an ellipse. `shadow-sm` lifts the card off the
-    page; CardTile deepens it (and scales the card up) on hover. In dark mode a black
-    shadow is invisible against the near-black background, so we swap in a larger,
-    higher-opacity shadow so the lift still reads. -->
+  <!-- The frame's aspect ratio is 61:85 — exactly Scryfall's card-image ratio (a
+    `normal` image is 488×680 = 61:85) — so a standard printing fills the frame
+    edge-to-edge with no transparent letterbox band peeking out under the shadow
+    (issue #81); a 5:7 frame was ~0.5% taller, leaving a hairline gap the shadow lit
+    up. Genuinely off-ratio art (landscape planes/schemes/art-series) still
+    letterboxes via the image's own `object-contain` below.
+    Corners match a real MTG card: a 63×88 mm card has a ~3 mm corner radius, so the
+    radius is 3/63 ≈ 4.76% of the width and, against this frame's own 61:85 border-box,
+    3.42% of the height — and because 3.42% × 85/61 ≈ 4.76%, the corner stays a true
+    circle rather than an ellipse at every card size. `shadow-sm` lifts the card off
+    the page; CardTile deepens it (and scales the card up) on hover. In dark mode a
+    black shadow is invisible against the near-black background, so we swap in a
+    larger, higher-opacity shadow so the lift still reads. -->
   <div
-    class="relative aspect-[5/7] overflow-hidden rounded-[4.76%_/_3.4%] shadow-sm dark:shadow-[0_2px_8px_rgba(0,0,0,0.6)]"
+    class="relative aspect-[61/85] overflow-hidden rounded-[4.76%_/_3.42%] shadow-sm dark:shadow-[0_2px_8px_rgba(0,0,0,0.6)]"
   >
     <template v-if="hasImage && !failed">
-      <!-- `object-contain`, not `object-cover`: Scryfall renders most cards slightly
-        wider than the 5:7 frame, so `cover` would slice off the card's left/right
-        borders, and off-ratio printings (landscape plane/scheme/art-series cards)
-        would be cropped hard. Contain shows the whole card. The frame has no fill,
-        so the letterbox shows the page background rather than a muted rectangle
-        peeking out around the image. -->
+      <!-- `object-contain`, not `object-cover`: a standard printing matches the 61:85
+        frame exactly, but off-ratio printings (landscape plane/scheme/art-series
+        cards) don't — `cover` would crop those hard. Contain shows the whole card.
+        The frame has no fill, so any letterbox on off-ratio art shows the page
+        background rather than a muted rectangle peeking out around the image. -->
       <img
         ref="el"
         :src="cardImageUrl(game, id, size, face)"

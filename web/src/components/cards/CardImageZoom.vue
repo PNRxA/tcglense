@@ -95,10 +95,11 @@ watch(
       </DialogTrigger>
     </div>
 
-    <!-- Width is the lesser of 90vw and the width a 5:7 card needs to stand 90vh
-      tall, so a standard card always fits the viewport; off-ratio art letterboxes
-      inside via the image's own object-contain. -->
-    <DialogContent class="w-[min(90vw,calc(90vh*5/7))]">
+    <!-- Width is the lesser of 90vw and the width a 61:85 card image needs to stand
+      90vh tall (61:85 = Scryfall's card-image ratio, matching CardImage's frame), so
+      a standard card always fits the viewport; off-ratio art letterboxes inside via
+      the image's own object-contain. -->
+    <DialogContent class="w-[min(90vw,calc(90vh*61/85))]">
       <DialogTitle class="sr-only">{{ name }}</DialogTitle>
       <DialogDescription class="sr-only">
         Enlarged card image. Press Escape or click outside to close.
