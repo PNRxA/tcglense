@@ -14,6 +14,7 @@
 //! digits-only collection id, so there is no SSRF surface (the id can carry neither a
 //! host nor a path).
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::{StatusCode, header};
@@ -26,6 +27,10 @@ const API_BASE: &str = "https://archidekt.com/api/collection";
 const ACCEPT_JSON: &str = "application/json";
 /// Archidekt's fixed collection page size.
 const PAGE_SIZE: usize = 25;
+/// Ordering that puts the most-recently-updated rows first, for a smart sync. Archidekt
+/// orders by an internal `updatedAt` (edit-aware — not the row-visible `createdAt`), so a
+/// card whose count changed bubbles to the top even though it was added long ago.
+const ORDER_RECENT: &str = "-updatedAt";
 /// Minimum wait after a `429` before retrying — the provider's rate window (one minute).
 const RATE_LIMIT_BACKOFF_SECS: u64 = 60;
 /// Ceiling on a single backoff, so a huge/hostile `Retry-After` can't stall an import.
@@ -137,64 +142,15 @@ pub async fn fetch(
 
     let mut holdings: Vec<FetchedHolding> = Vec::new();
     let mut checked_size = false;
+    // Cumulative across the whole import (not per page), so a provider that keeps
+    // rate-limiting us fails fast rather than backing off once per page for thousands
+    // of pages (which would monopolise the single import slot for hours).
     let mut rate_limit_retries = 0u32;
     let mut page = 1usize;
 
     while page <= max_pages {
-        // Respect the provider's request cap across all imports before every request.
-        limiter.acquire().await;
-
-        let url = format!("{API_BASE}/{collection_id}/?page={page}");
-        let response = http
-            .get(&url)
-            .header(header::ACCEPT, ACCEPT_JSON)
-            .send()
-            .await
-            .map_err(|e| ImportError::Upstream(format!("request to Archidekt failed: {e}")))?;
-
-        let status = response.status();
-
-        // Rate-limited: back off (globally, so every import waits) and retry the *same*
-        // page. Wait at least the provider's window (honoring a larger `Retry-After`);
-        // give up after a few tries so a persistent 429 doesn't hang the import forever.
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            if rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
-                return Err(ImportError::RateLimited);
-            }
-            rate_limit_retries += 1;
-            let wait = backoff_after(response.headers());
-            tracing::warn!(
-                page,
-                wait_secs = wait.as_secs(),
-                "Archidekt rate-limited us (429); backing off before retrying"
-            );
-            limiter.back_off(wait).await;
-            continue; // retry the same page; the next `acquire()` waits out the backoff
-        }
-
-        // Archidekt answers a missing or private collection with `400 ["No public
-        // collection found."]`; treat 400/404 alike as not-found. We follow the `next`
-        // link and never request past the last page, so this only fires on page 1.
-        if status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND {
-            return Err(ImportError::CollectionNotFound(collection_id.to_string()));
-        }
-        let response = response
-            .error_for_status()
-            .map_err(|e| ImportError::Upstream(format!("Archidekt returned an error: {e}")))?;
-        let body: CollectionPage = response.json().await.map_err(|e| {
-            ImportError::Upstream(format!("couldn't parse the Archidekt response: {e}"))
-        })?;
-
-        // Reject an over-large collection up front (from the first page's `count`).
-        if !checked_size {
-            if body.count > MAX_IMPORT_ROWS {
-                return Err(ImportError::TooLarge {
-                    count: body.count,
-                    max: MAX_IMPORT_ROWS,
-                });
-            }
-            checked_size = true;
-        }
+        let body = get_page(http, limiter, collection_id, page, None, &mut rate_limit_retries).await?;
+        check_size(&body, &mut checked_size)?;
 
         // An empty page means we're done (a truly empty collection on page 1, or a
         // provider quirk) — nothing more to collect.
@@ -222,6 +178,139 @@ pub async fn fetch(
     }
 
     Ok(holdings)
+}
+
+/// Fetch the recently-updated prefix of an Archidekt collection for a smart sync: page
+/// most-recently-updated first ([`ORDER_RECENT`]) and stop once a whole page already
+/// matches `local` (`external id -> (regular, foil)`). Returns the fetched holdings plus
+/// whether we stopped early (reached the already-synced tail) rather than paging the
+/// whole collection. Same page ceiling / size guard / rate-limit handling as [`fetch`].
+pub async fn fetch_smart(
+    http: &reqwest::Client,
+    limiter: &RateLimiter,
+    collection_id: &str,
+    local: &HashMap<String, (i32, i32)>,
+) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
+    let max_pages = MAX_IMPORT_ROWS / PAGE_SIZE + 1;
+
+    let mut holdings: Vec<FetchedHolding> = Vec::new();
+    let mut running: HashMap<String, (i64, i64)> = HashMap::new();
+    let mut checked_size = false;
+    let mut stopped_early = false;
+    // Cumulative across the import (see the note in `fetch`).
+    let mut rate_limit_retries = 0u32;
+    let mut page = 1usize;
+
+    while page <= max_pages {
+        let body =
+            get_page(http, limiter, collection_id, page, Some(ORDER_RECENT), &mut rate_limit_retries)
+                .await?;
+        check_size(&body, &mut checked_size)?;
+
+        if body.results.is_empty() {
+            break;
+        }
+        let last_page = body.next.is_none();
+        let rows = body.results.into_iter().map(|row| {
+            let foil = is_foil_finish(row.foil, row.modifier.as_deref());
+            (row.card.uid, foil, row.quantity)
+        });
+        // Fold the page into the running aggregate; `all_match` is the stop signal.
+        let all_match = super::smart_absorb_page(&mut running, &mut holdings, local, rows);
+
+        if last_page || holdings.len() >= MAX_IMPORT_ROWS {
+            break;
+        }
+        // A whole page already in sync means the rest (updated even longer ago) is too.
+        if all_match {
+            stopped_early = true;
+            break;
+        }
+        page += 1;
+    }
+
+    Ok((holdings, stopped_early))
+}
+
+/// Reject an over-large collection up front, from the first page's `count`. `checked`
+/// tracks whether this guard has already run (only the first page carries the guard).
+fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportError> {
+    if !*checked {
+        if body.count > MAX_IMPORT_ROWS {
+            return Err(ImportError::TooLarge {
+                count: body.count,
+                max: MAX_IMPORT_ROWS,
+            });
+        }
+        *checked = true;
+    }
+    Ok(())
+}
+
+/// Fetch and parse one collection page, throttled by the shared limiter and transparently
+/// retrying past a `429` (backing off the whole limiter so every import waits). `order_by`
+/// sets Archidekt's `orderBy` when present (e.g. [`ORDER_RECENT`]); `None` uses the
+/// default order. Maps a missing/private collection (`400`/`404`) to `CollectionNotFound`.
+///
+/// `rate_limit_retries` is the caller's cumulative-across-the-import 429 counter: it's
+/// carried in so [`MAX_RATE_LIMIT_RETRIES`] bounds the *total* backoffs for the whole
+/// import, not per page.
+async fn get_page(
+    http: &reqwest::Client,
+    limiter: &RateLimiter,
+    collection_id: &str,
+    page: usize,
+    order_by: Option<&str>,
+    rate_limit_retries: &mut u32,
+) -> Result<CollectionPage, ImportError> {
+    loop {
+        // Respect the provider's request cap across all imports before every request.
+        limiter.acquire().await;
+
+        let url = match order_by {
+            Some(order) => format!("{API_BASE}/{collection_id}/?orderBy={order}&page={page}"),
+            None => format!("{API_BASE}/{collection_id}/?page={page}"),
+        };
+        let response = http
+            .get(&url)
+            .header(header::ACCEPT, ACCEPT_JSON)
+            .send()
+            .await
+            .map_err(|e| ImportError::Upstream(format!("request to Archidekt failed: {e}")))?;
+
+        let status = response.status();
+
+        // Rate-limited: back off (globally, so every import waits) and retry the *same*
+        // page. Wait at least the provider's window (honoring a larger `Retry-After`);
+        // give up after a few tries so a persistent 429 doesn't hang the import forever.
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            if *rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
+                return Err(ImportError::RateLimited);
+            }
+            *rate_limit_retries += 1;
+            let wait = backoff_after(response.headers());
+            tracing::warn!(
+                page,
+                wait_secs = wait.as_secs(),
+                "Archidekt rate-limited us (429); backing off before retrying"
+            );
+            limiter.back_off(wait).await;
+            continue; // retry the same page; the next `acquire()` waits out the backoff
+        }
+
+        // Archidekt answers a missing or private collection with `400 ["No public
+        // collection found."]`; treat 400/404 alike as not-found. We follow the `next`
+        // link and never request past the last page, so this only fires on page 1.
+        if status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND {
+            return Err(ImportError::CollectionNotFound(collection_id.to_string()));
+        }
+        let response = response
+            .error_for_status()
+            .map_err(|e| ImportError::Upstream(format!("Archidekt returned an error: {e}")))?;
+        return response.json().await.map_err(|e| {
+            ImportError::Upstream(format!("couldn't parse the Archidekt response: {e}"))
+        });
+    }
 }
 
 /// How long to back off after a `429`: the `Retry-After` seconds if the provider sent a

@@ -78,13 +78,30 @@ async fn saved_source_lifecycle() {
     assert_eq!(body["external_id"], "1042487");
     assert_eq!(body["url"], "https://archidekt.com/collection/v2/1042487");
     assert!(body["last_synced_at"].is_null(), "a freshly-saved link has never synced");
+    assert_eq!(body["smart"], false, "smart sync defaults off when omitted");
 
     // Read it back.
     let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["external_id"], "1042487");
+    assert_eq!(body["smart"], false);
 
-    // Re-saving a different id upserts the single row (no duplicate).
+    // Opting into smart sync persists on the saved link.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/source",
+            &token,
+            json!({ "provider": "archidekt", "source": "1042487", "smart": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["smart"], true, "smart preference is stored");
+
+    // Re-saving a different id upserts the single row (no duplicate); omitting `smart`
+    // resets it to the default (off).
     let (status, _, body) = send(
         &app,
         json_with_bearer(
@@ -97,6 +114,7 @@ async fn saved_source_lifecycle() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["external_id"], "999");
+    assert_eq!(body["smart"], false, "omitting smart on re-save clears it");
 
     // Forget it -> 204, then it reads back as null again (delete is idempotent).
     let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &token)).await;

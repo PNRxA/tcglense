@@ -52,6 +52,11 @@ const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
     label: 'Replace my collection',
     hint: 'Mirror the list exactly — this removes owned cards that aren’t in it.',
   },
+  {
+    value: 'smart',
+    label: 'Smart sync',
+    hint: 'Only update recently-changed cards (fast). Won’t remove cards deleted on the provider.',
+  },
 ]
 
 // Two ways in: paste a public collection link (fetched server-side, async) or upload an
@@ -65,6 +70,9 @@ const provider = ref<CollectionProvider>('archidekt')
 const sourceInput = ref(props.source?.url ?? '')
 const mode = ref<ReconcileMode>('overwrite')
 const saveLink = ref(props.source != null)
+// Whether a saved link re-syncs with smart sync. Kept separate from the one-off `mode`
+// so re-importing a smart-saved link with a different mode doesn't silently downgrade it.
+const smartResync = ref(props.source?.smart ?? false)
 const csvFile = ref<File | null>(null)
 
 const gameRef = toRef(props, 'game')
@@ -93,6 +101,8 @@ watch(open, (isOpen) => {
   sourceInput.value = props.source?.url ?? ''
   mode.value = 'overwrite'
   saveLink.value = props.source != null
+  // Seed the saved-link re-sync preference from the existing link (defaults off).
+  smartResync.value = props.source?.smart ?? false
   csvFile.value = null
   errorMessage.value = null
   result.value = null
@@ -100,15 +110,24 @@ watch(open, (isOpen) => {
   enqueuing.value = false
 })
 
+// Choosing the smart one-off mode implies wanting smart re-syncs too; picking another
+// mode never forces it off (it stays whatever the saved link had / the user set).
+watch(mode, (m) => {
+  if (m === 'smart') smartResync.value = true
+})
+
 // Switching tabs clears the previous tab's outcome/error so stale feedback never lingers.
 // Also drop any chosen file: the CSV tab's file input is remounted on the way back (v-if),
 // so it renders empty — clearing csvFile keeps Import's enabled state honest (no silently
 // staged, no-longer-visible upload).
-watch(sourceType, () => {
+watch(sourceType, (type) => {
   errorMessage.value = null
   result.value = null
   jobId.value = null
   csvFile.value = null
+  // Smart isn't offered for a CSV (there's no fetch to order / stop), so drop back to a
+  // valid mode when switching to the CSV tab.
+  if (type === 'csv' && mode.value === 'smart') mode.value = 'overwrite'
 })
 
 function onCsvFileChange(event: Event) {
@@ -117,6 +136,12 @@ function onCsvFileChange(event: Event) {
   errorMessage.value = null
   result.value = null
 }
+
+// Smart is a link-only mode (it needs the newest-first fetch to stop early); the CSV
+// upload has no fetch, so it's hidden there.
+const visibleModes = computed(() =>
+  sourceType.value === 'csv' ? MODES.filter((m) => m.value !== 'smart') : MODES,
+)
 
 // React to the polled job reaching a terminal status.
 watch(
@@ -187,6 +212,8 @@ async function runImport() {
           game: props.game,
           provider: provider.value,
           source: trimmed,
+          // Remember whether future re-syncs should be smart (its own control, below).
+          smart: smartResync.value,
         })
       } catch (err) {
         errorMessage.value =
@@ -246,10 +273,18 @@ const resultLines = computed(() => {
   if (!s) return []
   const lines: string[] = []
   const copies = s.regular_copies + s.foil_copies
+  const verb = s.mode === 'smart' ? 'Updated' : 'Imported'
   lines.push(
-    `Imported ${s.matched_cards.toLocaleString()} card${s.matched_cards === 1 ? '' : 's'} ` +
+    `${verb} ${s.matched_cards.toLocaleString()} card${s.matched_cards === 1 ? '' : 's'} ` +
       `(${copies.toLocaleString()} cop${copies === 1 ? 'y' : 'ies'}).`,
   )
+  if (s.mode === 'smart') {
+    lines.push(
+      s.stopped_early
+        ? 'Smart sync stopped once it reached cards already in sync.'
+        : 'Smart sync scanned your whole collection.',
+    )
+  }
   if (s.unmatched_cards > 0) {
     lines.push(
       `${s.unmatched_cards.toLocaleString()} card${s.unmatched_cards === 1 ? '' : 's'} ` +
@@ -264,6 +299,13 @@ const resultLines = computed(() => {
   }
   return lines
 })
+
+// The re-sync behaviour the saved link will use, tailored to the smart-resync toggle.
+const savedResyncHint = computed(() =>
+  smartResync.value
+    ? 'Re-syncs update recently-changed cards only (won’t remove deleted cards).'
+    : 'Re-syncs mirror the list exactly (removes cards no longer in it).',
+)
 
 const selectClass =
   'border-input dark:bg-input/30 flex h-9 w-full rounded-md border bg-transparent px-3 text-sm ' +
@@ -375,7 +417,7 @@ const selectClass =
         <fieldset class="space-y-2">
           <legend class="mb-1 text-sm font-medium">How should we reconcile it?</legend>
           <label
-            v-for="m in MODES"
+            v-for="m in visibleModes"
             :key="m.value"
             class="flex cursor-pointer gap-3 rounded-md border p-3 transition-colors"
             :class="mode === m.value ? 'border-ring bg-accent/40' : 'hover:bg-accent/30'"
@@ -389,14 +431,18 @@ const selectClass =
         </fieldset>
 
         <!-- Save the link (link tab only — an uploaded CSV has nothing to re-sync from). -->
-        <div v-if="sourceType === 'link'">
+        <div v-if="sourceType === 'link'" class="space-y-2">
           <label class="flex cursor-pointer items-center gap-2 text-sm">
             <input v-model="saveLink" type="checkbox" />
             Remember this link for one-click re-syncing
           </label>
-          <p v-if="saveLink" class="text-muted-foreground mt-1 text-xs">
-            Saved links re-sync by mirroring (replace).
-          </p>
+          <template v-if="saveLink">
+            <label class="flex cursor-pointer items-center gap-2 pl-6 text-sm">
+              <input v-model="smartResync" type="checkbox" />
+              Re-sync with smart sync
+            </label>
+            <p class="text-muted-foreground pl-6 text-xs">{{ savedResyncHint }}</p>
+          </template>
         </div>
 
         <!-- In-progress status (queued / running) -->

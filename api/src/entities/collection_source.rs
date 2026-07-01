@@ -25,6 +25,10 @@ pub struct Model {
     pub external_id: String,
     /// When this link was last successfully synced, if ever.
     pub last_synced_at: Option<DateTimeUtc>,
+    /// Whether a saved re-sync uses smart (incremental) sync rather than a full mirror.
+    /// Smart only touches recently-changed cards, so it's fast but won't remove cards
+    /// deleted upstream — see [`crate::collection_import::ReconcileMode::Smart`].
+    pub smart: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

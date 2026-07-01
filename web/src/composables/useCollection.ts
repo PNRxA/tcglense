@@ -269,6 +269,8 @@ export interface SaveSourceVars {
   game: string
   provider: CollectionProvider
   source: string
+  /** Whether saved re-syncs should use smart (incremental) sync. */
+  smart?: boolean
 }
 
 /** Save (upsert) the collection link; invalidates the saved-source query. */
@@ -276,7 +278,11 @@ export function useSaveCollectionSourceMutation() {
   const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: SaveSourceVars) =>
-      saveCollectionSource(token, vars.game, { provider: vars.provider, source: vars.source }),
+      saveCollectionSource(token, vars.game, {
+        provider: vars.provider,
+        source: vars.source,
+        smart: vars.smart,
+      }),
     onSettled: (
       _data: CollectionSource | undefined,
       _error: ApiError | null,
