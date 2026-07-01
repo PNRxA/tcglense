@@ -152,6 +152,23 @@ pub(super) fn get_with_bearer(uri: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// A request with a JSON body and a bearer access token, for authenticated writes
+/// (e.g. `PUT`/`POST` on the collection routes).
+pub(super) fn json_with_bearer(
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Value,
+) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 /// The plaintext of the freshly-set refresh cookie, if any (ignores a cleared one).
 pub(super) fn refresh_token_from(headers: &HeaderMap) -> Option<String> {
     headers

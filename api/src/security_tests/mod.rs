@@ -15,6 +15,7 @@
 mod harness;
 
 mod caching;
+mod collection;
 mod cors;
 mod login;
 mod refresh;

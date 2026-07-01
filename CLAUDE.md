@@ -16,10 +16,13 @@ catalog**: browse trading-card games → sets → cards, with search. Magic: The
 Gathering is the first game, sourced from [Scryfall](https://scryfall.com).
 **Singles price history** is also built: every sync captures each card's daily prices
 into `card_price_history`, served as a per-card time series (`.../cards/{id}/prices`)
-and charted on the card detail page. The collection, set-completion, and
+and charted on the card detail page. **Per-user collections** are also built: a
+signed-in user records how many copies (regular + foil) of each card they own, per
+game (MTG first, the model is game-agnostic), edited from the card detail page and
+browsed at `/collection/{game}` with a value/count summary. The set-completion and
 sealed-product price-tracking features are not yet implemented — they are the next
-things to build on top of this scaffold (the catalog gives them the card/set data to
-hang off).
+things to build on top of this scaffold (the collection gives set-completion the
+owned-card data to hang off).
 
 ## Layout
 
@@ -225,6 +228,34 @@ thereafter (`Cache-Control: immutable`). We never bulk-download the whole image
 catalogue — images are cached lazily, on view. Set icons are cached the same way
 (`.../sets/{code}/icon`, served as `image/svg+xml`).
 
+## Collection API contract
+
+Per-user, **authenticated** (`Authorization: Bearer <access_token>`, via `AuthUser`),
+game-namespaced under `/api/collection/{game}`. Every route is in the router's
+`private` group, so responses are `Cache-Control: no-store` (per-user data is never
+shared-cached). Ownership is always scoped to the token's user id, so one user can
+neither read nor mutate another's collection. Card ids in the path are the **external**
+card id (the same id the public catalog exposes); the handler resolves it to the
+internal `cards.id` before storage (so a holding survives a catalog re-import). A
+missing token is `401`; an unknown game/card is `404`.
+
+A "holding" is `(user, game, card) → { quantity, foil_quantity }`; there is no row for
+a card you don't own (setting both counts to zero deletes the row), so the table holds
+only owned cards. Model: `entities/collection_item.rs` (`collection_items`, unique on
+`(user_id, game, card_id)`, `user_id` FK → `users` `ON DELETE CASCADE`).
+
+| Method & path | Body | Returns |
+|---------------|------|---------|
+| `GET /api/collection/{game}` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }` |
+| `GET /api/collection/{game}/summary` | — | `{ unique_cards, total_cards, total_value_usd }` — distinct cards, total copies (regular + foil), and an estimated USD value (regular copies at `usd`, foil at `usd_foil`) as a 2-dp string (`null` if nothing owned is priced) |
+| `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
+| `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
+
+`CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
+the full catalog `Card` shape (reusing the catalog's `CardResponse`). The `PUT` needs
+CORS `PUT` (added to the allow-list alongside `GET`/`POST`); in dev/prod the SPA is
+same-origin so CORS isn't exercised, but a direct cross-origin write needs it.
+
 ## Backend structure (`api/src/`)
 
 ```
@@ -234,7 +265,7 @@ db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal 
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache> } (cloned into handlers)
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
-entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`)
+entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`)
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -256,6 +287,7 @@ handlers/
   auth.rs          register / login / refresh / logout / me
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store
   catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history / other printings
+  collection.rs    authenticated per-user collection: list (paginate) / summary / get + set (PUT upsert, both-zero deletes) one card's owned counts; reuses catalog's CardResponse
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
   health.rs        health
 ```
@@ -291,17 +323,18 @@ syncing — see the env-var notes below.
 
 ```
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
-App.vue            shell: top bar (brand, Cards nav, theme toggle, user menu) + <RouterView>
+App.vue            shell: top bar (brand, Cards nav, Collection nav [signed-in only], theme toggle, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
-lib/api.ts         typed fetch client (relative URLs, credentials:'include') + ApiError + types; catalog fns + cardImageUrl()
+lib/api/           typed fetch client (relative URLs, credentials:'include') + ApiError + types, split into client / auth / catalog (+ cardImageUrl) / collection (authenticated, token-passing) fns
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
 lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
 lib/seo.ts         usePageMeta(): reactive per-route <head> — title, description, canonical, Open Graph / Twitter, JSON-LD
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
-components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), CardsNav (top-bar "Cards" link → /cards + game dropdown shortcut)
-components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile, CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery)
-views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView
+components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), CardsNav (top-bar "Cards" link → /cards + game dropdown), CollectionsNav (same shape → /collection, signed-in only)
+components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid, SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save)
+composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useSetCollectionEntryMutation via useAuthed*), useCardSearch, …
+views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, chart — unovis-backed)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```

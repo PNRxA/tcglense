@@ -54,6 +54,20 @@ const router = createRouter({
       component: () => import('@/views/SetView.vue'),
       props: true,
     },
+    // Per-user collections (signed-in only). Lazy-loaded like the catalog views.
+    {
+      path: '/collection',
+      name: 'collection',
+      component: () => import('@/views/CollectionsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/collection/:game',
+      name: 'game-collection',
+      component: () => import('@/views/GameCollectionView.vue'),
+      props: true,
+      meta: { requiresAuth: true },
+    },
     {
       path: '/dashboard',
       name: 'dashboard',
