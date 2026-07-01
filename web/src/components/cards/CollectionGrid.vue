@@ -23,7 +23,10 @@ const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
   <div class="grid gap-x-4 gap-y-6" :class="gridClass">
     <CardTile v-for="entry in entries" :key="entry.card.id" :game="game" :card="entry.card">
       <template #badge>
-        <div class="absolute top-1.5 right-1.5 flex items-center gap-1">
+        <!-- `z-20` keeps the owned-count chips above the card, which lifts to
+          `z-10` on hover (see CardTile); without it the enlarged card paints over
+          the badges and they vanish while hovered. -->
+        <div class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1">
           <span
             v-if="entry.quantity > 0"
             class="bg-primary text-primary-foreground inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-semibold shadow tabular-nums"
