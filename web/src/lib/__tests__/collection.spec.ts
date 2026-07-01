@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
 
-import { collectionEntryPath, collectionPath } from '../api'
+import {
+  collectionEntryPath,
+  collectionImportJobPath,
+  collectionImportPath,
+  collectionPath,
+  collectionSourcePath,
+  collectionSyncPath,
+} from '../api'
 
 describe('collectionPath', () => {
   it('builds the base collection path with no params', () => {
@@ -29,5 +36,24 @@ describe('collectionEntryPath', () => {
 
   it('encodes path segments to avoid breaking the URL', () => {
     expect(collectionEntryPath('mtg', 'a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('import / sync paths', () => {
+  it('builds the import, source, and sync paths', () => {
+    expect(collectionImportPath('mtg')).toBe('/api/collection/mtg/import')
+    expect(collectionSourcePath('mtg')).toBe('/api/collection/mtg/source')
+    expect(collectionSyncPath('mtg')).toBe('/api/collection/mtg/sync')
+  })
+
+  it('builds the import-job status path', () => {
+    expect(collectionImportJobPath('mtg', 42)).toBe('/api/collection/mtg/import/jobs/42')
+  })
+
+  it('encodes the game segment', () => {
+    expect(collectionImportPath('a/b')).toContain('a%2Fb')
+    expect(collectionSourcePath('a/b')).toContain('a%2Fb')
+    expect(collectionSyncPath('a/b')).toContain('a%2Fb')
+    expect(collectionImportJobPath('a/b', 1)).toContain('a%2Fb')
   })
 })
