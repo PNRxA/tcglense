@@ -1,0 +1,66 @@
+import { describe, it, expect } from 'vitest'
+
+import { mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import type { CardSet } from '@/lib/api'
+import SetTile from '../SetTile.vue'
+
+function makeSet(overrides: Partial<CardSet> = {}): CardSet {
+  return {
+    code: 'blb',
+    name: 'Bloomburrow',
+    set_type: 'expansion',
+    released_at: '2024-08-02',
+    card_count: 281,
+    icon_svg_uri: null,
+    parent_set_code: null,
+    has_drops: false,
+    ...overrides,
+  }
+}
+
+// SetTile renders a RouterLink, so the tree needs a router; no icon_svg_uri keeps the
+// lazy <img> off, so nothing network-facing is exercised.
+function mountTile(props: {
+  set: CardSet
+  ownedCount?: number
+  ownedValue?: string | null
+}) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
+  })
+  return mount(SetTile, { props: { game: 'mtg', ...props }, global: { plugins: [router] } })
+}
+
+describe('SetTile owned-count line', () => {
+  it('shows a set-completion "N/M owned" count when an owned count is passed', () => {
+    const wrapper = mountTile({ set: makeSet(), ownedCount: 142 })
+    expect(wrapper.text()).toContain('142/281 owned')
+    // The completion count replaces the catalog "M cards" line.
+    expect(wrapper.text()).not.toContain('281 cards')
+  })
+
+  it('clamps the owned count to the set total so it never reads "N+1 of N"', () => {
+    const wrapper = mountTile({ set: makeSet({ card_count: 100 }), ownedCount: 130 })
+    expect(wrapper.text()).toContain('100/100 owned')
+  })
+
+  it('falls back to a plain "N owned" when the set total is unknown (card_count 0)', () => {
+    const wrapper = mountTile({ set: makeSet({ card_count: 0 }), ownedCount: 5 })
+    expect(wrapper.text()).toContain('5 owned')
+    expect(wrapper.text()).not.toContain('5/0')
+  })
+
+  it('appends the owned value after the completion count when one is passed', () => {
+    const wrapper = mountTile({ set: makeSet(), ownedCount: 142, ownedValue: '$412.00' })
+    expect(wrapper.text()).toContain('142/281 owned')
+    expect(wrapper.text()).toContain('$412.00')
+  })
+
+  it('shows the set total card count (no "owned") without an owned count — catalog use', () => {
+    const wrapper = mountTile({ set: makeSet() })
+    expect(wrapper.text()).toContain('281 cards')
+    expect(wrapper.text()).not.toContain('owned')
+  })
+})

@@ -83,7 +83,7 @@ const features: Feature[] = [
 // The ghost-mode selling points, kept truthful: it is a toggle inside a collection grid.
 const ghostPoints = [
   'A “Show ghosts” toggle on any collection card grid',
-  'A live “X of Y owned” count as you scan a set',
+  'A live “X/Y owned” count as you scan a set',
   'Quick-add a missing card right where it sits',
 ]
 </script>
@@ -209,7 +209,7 @@ const ghostPoints = [
                 <span class="text-muted-foreground text-xs font-medium">Ghost</span>
               </div>
             </div>
-            <p class="text-muted-foreground text-xs">1 of 3 owned</p>
+            <p class="text-muted-foreground text-xs">1/3 owned</p>
           </div>
         </div>
       </Card>
