@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/vue-query'
 import { LayoutGrid, RefreshCw } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetTile from '@/components/cards/SetTile.vue'
 import SetGroup from '@/components/cards/SetGroup.vue'
@@ -21,7 +22,7 @@ import {
 import { ApiError } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
-import { groupSets } from '@/lib/setGroups'
+import { filterGroups, groupSets } from '@/lib/setGroups'
 import { useAuthStore } from '@/stores/auth'
 
 // The per-game collection landing: it mirrors the catalog's game view (a grid of set
@@ -48,10 +49,24 @@ const setsQuery = useCollectionSetsQuery(game)
 const summary = computed(() => summaryQuery.data.value)
 const ownedSets = computed(() => setsQuery.data.value?.data ?? [])
 
+// Client-side filter box mirroring the catalog game view (issue #127): the owned-set
+// list is already in memory, so narrowing by name/code is instant — no extra request.
+// Clears when switching games (the route reuses this component across :game).
+const filter = ref('')
+watch(game, () => {
+  filter.value = ''
+})
+const trimmedFilter = computed(() => filter.value.trim())
+const filtering = computed(() => trimmedFilter.value.length > 0)
+
 // Nest owned sub-sets (tokens, promos, Commander decks, …) under the main set they
 // belong to, exactly as the catalog game view does — a sub-set you own but whose parent
 // you don't surfaces as its own top-level tile (groupSets treats it as an orphan root).
-const ownedGroups = computed(() => groupSets(ownedSets.value))
+// Group the whole list first, then filter at the group level — keeping a group whole
+// when the main set OR any related sub-set matches (issue #128), so filtering a related
+// sub-set still surfaces its entire owned group rather than orphaning the matching tile.
+const allOwnedGroups = computed(() => groupSets(ownedSets.value))
+const ownedGroups = computed(() => filterGroups(allOwnedGroups.value, filter.value))
 // Owned-card count per set code, so each nested tile can show "N owned".
 const ownedCountByCode = computed<Record<string, number>>(() => {
   const map: Record<string, number> = {}
@@ -66,9 +81,12 @@ const ownedValueByCode = computed<Record<string, string | null>>(() => {
   for (const set of ownedSets.value) map[set.code] = formatUsd(set.owned_value_usd)
   return map
 })
-// Sub-sets folded into their parent group (owned sets minus the top-level groups) —
-// shown next to the group count so "N sets · M related" reads like the catalog.
-const relatedCount = computed(() => ownedSets.value.length - ownedGroups.value.length)
+// Sub-sets folded into the visible parent groups — shown next to the group count so
+// "N sets · M related" reads like the catalog. Summed over the (filtered) groups so it
+// tracks the filter, mirroring the catalog game view.
+const relatedCount = computed(() =>
+  ownedGroups.value.reduce((sum, group) => sum + group.children.length, 0),
+)
 
 const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
 
@@ -246,20 +264,35 @@ watch(
             >
               {{ ownedGroups.length }} {{ ownedGroups.length === 1 ? 'set' : 'sets' }}
               <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+              <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
             </span>
           </h2>
-          <RouterLink
-            :to="`/collection/${game}/cards`"
-            :class="buttonVariants({ variant: 'default' })"
-          >
-            <LayoutGrid />
-            View all cards
-          </RouterLink>
+          <div class="flex flex-wrap items-center gap-3">
+            <!-- Instant client-side filter over the owned sets, mirroring the catalog
+                 game view (issue #127); only shown once you own at least one set. -->
+            <CardSearchBox
+              v-if="ownedSets.length"
+              v-model="filter"
+              class="w-full sm:w-56"
+              aria-label="Filter sets by name or code"
+              placeholder="Filter sets…"
+            />
+            <RouterLink
+              :to="`/collection/${game}/cards`"
+              :class="buttonVariants({ variant: 'default' })"
+            >
+              <LayoutGrid />
+              View all cards
+            </RouterLink>
+          </div>
         </div>
 
         <LoadingRow v-if="setsQuery.isPending.value" label="Loading sets…" />
         <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
           Couldn't load your sets. Please retry.
+        </p>
+        <p v-else-if="filtering && !ownedGroups.length" class="text-muted-foreground py-12">
+          No sets match “{{ trimmedFilter }}”.
         </p>
         <!-- scroll-mt keeps a Tab-focused tile clear of the sticky top bar. Owned sub-sets
              nest under their parent (SetGroup), matching the catalog game view; a childless
