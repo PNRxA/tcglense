@@ -30,19 +30,25 @@ const makeFetch = () =>
 let fetchMock: ReturnType<typeof makeFetch>
 const mounted: Array<ReturnType<typeof mount>> = []
 
-function putBodies() {
+function putCalls() {
   return fetchMock.mock.calls
     .filter((call) => (call[1]?.method ?? 'GET') === 'PUT')
-    .map((call) => JSON.parse(call[1]!.body as string) as OwnedCountSeed)
+    .map((call) => ({
+      url: call[0] as string,
+      body: JSON.parse(call[1]!.body as string) as OwnedCountSeed,
+    }))
 }
 
-function mountEditor(seed: Ref<OwnedCountSeed | undefined>) {
+function putBodies() {
+  return putCalls().map((call) => call.body)
+}
+
+function mountEditor(seed: Ref<OwnedCountSeed | undefined>, cardId: Ref<string> = ref('card-a')) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().accessToken = 'test-token'
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const game = ref('mtg')
-  const cardId = ref('card-a')
   const host = defineComponent({
     setup: () => useOwnedCountEditor(game, cardId, seed),
     render: () => null,
@@ -98,12 +104,35 @@ describe('useOwnedCountEditor', () => {
     expect(putBodies()).toEqual([{ quantity: 3, foil_quantity: 1 }])
   })
 
-  it('never goes below zero', async () => {
+  it('never goes below zero and does not save a clamped no-op', async () => {
     const seed = ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 })
     const editor = mountEditor(seed)
     await flushPromises()
     editor.adjust('quantity', -1)
     expect(editor.regular).toBe(0)
+    await settle()
+    await flushPromises()
+    // A clamped no-op must not trigger a redundant PUT.
+    expect(putBodies()).toHaveLength(0)
+  })
+
+  it('flushes a pending edit against the previous card when the card changes', async () => {
+    const seed = ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 })
+    const cardId = ref('card-a')
+    const editor = mountEditor(seed, cardId)
+    await flushPromises()
+
+    // Edit card A, then switch to card B before the debounce fires.
+    editor.adjust('quantity', 1)
+    cardId.value = 'card-b'
+    await settle()
+    await flushPromises()
+
+    // The pending edit saved against card A's id (not the newly-selected card B).
+    const calls = putCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.body).toEqual({ quantity: 1, foil_quantity: 0 })
+    expect(calls[0]!.url).toContain('/cards/card-a')
   })
 
   it('does not let a background reseed clobber a pending edit', async () => {

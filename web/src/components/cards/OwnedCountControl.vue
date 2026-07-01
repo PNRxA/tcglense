@@ -31,15 +31,16 @@ const game = toRef(props, 'game')
 const cardId = toRef(props, 'cardId')
 
 // Fetch the authoritative holding only once the popover is open (a big grid must not fire
-// one request per tile); vue-query caches it, so re-opening the same card is instant. Until
-// it resolves, seed the display from the grid counts so an owned card doesn't flash "0";
-// the steppers stay disabled until `ready`, so acting on the (possibly stale) fallback —
-// and clobbering the real count — is impossible.
-const entryQuery = useCollectionEntryQuery(game, cardId, open)
+// one request per tile). `staleTime: 0` forces a re-fetch every time it re-opens, and
+// `ready` waits for that fetch to settle (not just any prior success) — otherwise a reopen
+// could seed the steppers off a stale cached count and an absolute-count save would clobber
+// the true value. Until ready, seed the display from the grid counts so an owned card
+// doesn't flash "0"; the steppers stay disabled, so acting on the fallback is impossible.
+const entryQuery = useCollectionEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
 const seed = computed<OwnedCountSeed>(
   () => entryQuery.data.value ?? { quantity: props.quantity, foil_quantity: props.foilQuantity },
 )
-const ready = computed(() => entryQuery.isSuccess.value)
+const ready = computed(() => entryQuery.isSuccess.value && !entryQuery.isFetching.value)
 
 const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed)
 
@@ -117,16 +118,27 @@ const rows = computed(() => [
             {{ row.label }}
           </span>
           <div class="flex items-center gap-2">
+            <!-- At 0 the minus is inert but stays focusable (aria-disabled + a click that
+              no-ops), not natively `disabled` — so decrementing the last copy while
+              keyboard-focused here doesn't drop focus out of the non-modal popover. -->
             <Button
               variant="outline"
               size="icon-sm"
-              :disabled="!ready || row.value <= 0"
+              :disabled="!ready"
+              :aria-disabled="row.value <= 0"
+              :class="{ 'pointer-events-none opacity-50': row.value <= 0 }"
               :aria-label="`Remove one ${row.label.toLowerCase()} copy of ${name}`"
               @click="adjust(row.key, -1)"
             >
               <Minus />
             </Button>
-            <span class="w-8 text-center text-sm font-medium tabular-nums">{{ row.value }}</span>
+            <span
+              class="w-8 text-center text-sm font-medium tabular-nums"
+              aria-live="polite"
+              aria-atomic="true"
+              :aria-label="`${row.label}: ${row.value}`"
+              >{{ row.value }}</span
+            >
             <Button
               variant="outline"
               size="icon-sm"
