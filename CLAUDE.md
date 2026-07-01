@@ -216,6 +216,21 @@ import-`status` route (a live progress signal the SPA polls), and any non-2xx
 (so a CDN can't pin a transient `404`/`5xx`). The image/icon routes set their own
 longer `immutable` header, which the layer preserves.
 
+**Conditional requests (ETag / 304):** on top of the freshness policy, a second
+public-router middleware (`cache::conditional_request_layer`, layered *outside*
+`public_cache_layer` so it can read the `Cache-Control` that layer set) adds
+**validators** so a revalidation of a stale cache entry transfers headers, not the
+whole body. It hashes each cacheable-success body into a **weak `ETag`**
+(`W/"<128-bit hex>"`, a SHA-256 prefix — weak because a downstream CDN may re-encode
+the payload in transit) and turns a matching `If-None-Match` (RFC 9110 weak
+comparison, incl. `*` and comma-separated lists) into a bodyless `304 Not Modified`
+carrying the `ETag` + `Cache-Control`. It deliberately **skips** `immutable`
+responses (the image/icon proxy — never revalidated within `max-age`, and hashing a
+large binary would be wasteful) and `no-store` responses (errors / per-user), and
+only runs for `GET` (axum serves `HEAD` off the same handler but strips the body, so
+a `HEAD` carries no validator). Buffering the body to hash it is bounded by
+`MAX_ETAG_BODY_BYTES` (a body of unknown or over-cap size is served un-`ETag`ged).
+
 **Sitemaps (crawlers):** a DB-backed XML sitemap advertises the public catalog
 (`handlers::sitemap`). `GET /api/sitemap.xml` is a **sitemap index** pointing at
 child sitemaps: `/api/sitemaps/pages.xml` (static + per-game routes),
@@ -373,7 +388,7 @@ scryfall/          MTG provider (the first game)
   dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path, plus a year of per-card seeded random-walk price history
 handlers/
   auth.rs          register / login / refresh / logout / me
-  cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store
+  cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store; plus conditional_request_layer (weak ETag + If-None-Match → 304) on cacheable public reads
   catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history / other printings
   collection.rs    authenticated per-user collection: list (paginate, optional `?set` scope) / summary (optional `?set` scope) / owned sets (`.../sets`, per-set landing tiles via build_collection_sets) / get + set (PUT upsert, both-zero deletes) one card's owned counts / batch owned counts (POST .../owned, for browse-grid badges); import (one-off URL, chosen mode) + CSV upload (POST .../import/csv, synchronous, body-limited) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL

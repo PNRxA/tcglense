@@ -6,7 +6,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
-    middleware::map_response,
+    middleware::{from_fn, map_response},
     routing::{get, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -14,7 +14,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     handlers::{
         auth::{login, logout, me, refresh, register},
-        cache::{no_store_layer, public_cache_layer},
+        cache::{conditional_request_layer, no_store_layer, public_cache_layer},
         catalog::{
             card_image, card_prices, card_prints, get_card, get_set, ingest_status, list_cards,
             list_games, list_set_cards, list_set_drops, list_sets, set_icon,
@@ -106,7 +106,11 @@ pub fn build_router(state: AppState) -> Router {
     // at most daily, so successful reads are browser- + CDN-cacheable
     // (`public, max-age=…, s-maxage=…, stale-while-revalidate=…`). The image/icon
     // routes set their own longer `immutable` header, which the layer preserves;
-    // error responses are marked `no-store`.
+    // error responses are marked `no-store`. On top of that freshness policy,
+    // `conditional_request_layer` adds an `ETag` to cacheable successes and answers a
+    // matching `If-None-Match` with `304 Not Modified`, so a stale-cache revalidation
+    // transfers headers instead of the whole body. It's layered *outside*
+    // `public_cache_layer` so it can read the `Cache-Control` that layer set.
     let public = Router::new()
         .route("/api/games", get(list_games))
         .route("/api/games/{game}/sets", get(list_sets))
@@ -125,7 +129,8 @@ pub fn build_router(state: AppState) -> Router {
         // layer preserves, and a bad chunk 404s to `no-store`.
         .route("/api/sitemap.xml", get(sitemap_index))
         .route("/api/sitemaps/{name}", get(sitemap_child))
-        .layer(map_response(public_cache_layer));
+        .layer(map_response(public_cache_layer))
+        .layer(from_fn(conditional_request_layer));
 
     Router::new()
         .merge(private)
