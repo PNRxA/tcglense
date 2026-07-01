@@ -21,7 +21,7 @@ use crate::handlers::shared::{
 use crate::state::AppState;
 
 use super::image::is_allowed_image_url;
-use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search};
+use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique};
 
 #[derive(Debug, Serialize)]
 pub struct SetResponse {
@@ -162,14 +162,15 @@ pub async fn list_set_cards(
     } else {
         query.filter(card::Column::SetCode.eq(set.code.as_str()))
     };
-    query = apply_search(query, game_meta, &params)?;
+    let (query, shape) = apply_search(query, game_meta, &params)?;
 
-    let (sort, dir) = params.sort_spec(SortField::Number)?;
+    let (sort, dir) = params.sort_spec_with(SortField::Number, shape.order, shape.direction)?;
     // For the default collector-number order, the related-sets view keeps each
     // set's cards contiguous (set code first, which spans whole sets unlike the
     // per-card released_at). Any other sort spans the whole group by the chosen
     // field instead — grouping by set there would fight the sort.
     let group_by_set = include_related && sort == SortField::Number;
+    let query = apply_unique(query, shape.unique);
     let paginator = apply_card_sort(query, sort, dir, group_by_set).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
@@ -202,10 +203,10 @@ pub async fn list_set_drops(
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete
     // regardless of where the page boundary falls.
-    let mut query = Card::find()
+    let query = Card::find()
         .filter(card::Column::Game.eq(game.as_str()))
         .filter(card::Column::SetCode.eq(set.code.as_str()));
-    query = apply_search(query, game_meta, &params)?;
+    let (query, _shape) = apply_search(query, game_meta, &params)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false)
         .all(&state.db)
         .await?;

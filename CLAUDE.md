@@ -198,21 +198,35 @@ keeps the **last real row per bucket** (one ~real day per week/fortnight/month a
 grows), so every returned point is a genuine, internally-consistent snapshot and the newest
 day is always included; the underlying `card_price_history` rows are untouched.
 
-**Search syntax (`q`):** the MTG card-list endpoints parse `q` as a subset of
-[Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search.rs`).
+**Search syntax (`q`):** the MTG card-list endpoints parse `q` as (near-)full
+[Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search/`).
 Bare words / `"quoted phrases"` are card-name substrings (ANDed); `!"exact name"`
-is an exact match. Supported filters: `name`/`n`, `t`/`type`, `o`/`oracle`,
-`m`/`mana`, `c`/`color` and `id`/`identity` (set comparison, `:` means `>=`),
-`cmc`/`mv` (incl. `:even`/`:odd`), `pow`/`tou`/`loy` (numeric, incl. cross-column
-like `pow>tou`), `usd`/`usdfoil`/`eur`/`tix`, `year`, `date`, `r`/`rarity`
-(ordered), `s`/`set`/`e`, `st`/`settype` (the set's Scryfall `set_type`, resolved
-via a game-scoped subquery on `card_sets`), `cn`/`number`, `lang`, `layout`,
-`is:`/`not:` (layout/colour/mana/type-derived — incl. `permanent`/`spell`/`vanilla`),
-`game`, `oracleid` — with comparison operators
-`: = != > >= < <=`, boolean `and`/`or`, `-` negation, and parentheses. Filters we
-don't ingest (`f:` legality, `kw:`, `a:` artist, `ft:` flavour, …) and malformed
-queries return **422** `{ error }` (surfaced in the UI under the search box). All
-user values bind as SeaORM parameters — never interpolated into SQL.
+is an exact match; `/regex/` (on `name`/`t`/`o`/`ft`) runs a case-insensitive
+regular expression via a registered SQLite `REGEXP` function (sqlx's `regexp`
+feature, enabled by `with_regexp()` in `db.rs`). Supported filters: `name`/`n`,
+`t`/`type`, `o`/`oracle`/`fulloracle`, `m`/`mana` (incl. `>`/`!=`; subset `<`/`<=`
+still 422), `c`/`color` and `id`/`identity`/`commander` (set comparison, `:` means
+`>=`, colour names + guild/shard nicknames), `produces`, `cmc`/`mv` (incl.
+`:even`/`:odd`), `pow`/`tou`/`loy`/`pt`/`def` (numeric, incl. cross-column like
+`pow>tou`), `usd`/`usdfoil`/`eur`/`tix`, `year`, `date`, `r`/`rarity` (ordered),
+`s`/`set`/`e`, `st`/`settype` (game-scoped subquery on `card_sets`), `cn`/`number`,
+`lang`, `layout`, `game`, `oracleid`, `f`/`legal`/`banned`/`restricted` (per-format
+legality via `json_extract` over the stored `legalities` JSON), `kw`/`keyword`,
+`a`/`artist` (+ `artists>N`), `ft`/`flavor`, `wm`/`watermark`, `border`, `frame`,
+`stamp`, `has:` (flavor/watermark/indicator), `prints`/`sets`/`papersets` (printing
+counts via an `oracle_id`-sibling subquery), and a broad `is:`/`not:` vocabulary
+(layout/colour/mana/type-derived — incl. `permanent`/`spell`/`vanilla` — plus finish
+`foil`/`nonfoil`/`etched`, print flags `reprint`/`fullart`/`textless`/`oversized`/
+`promo`/`reserved`/…, and promo categories). Global **result-shaping** directives
+`order:` (name/set/rarity/released/cmc/color/power/toughness/usd/eur/tix/edhrec/
+artist/number), `direction:` (asc/desc) and `unique:` (cards/art/prints) are honoured
+on the public catalog lists (URL `?sort`/`?dir` win over an in-query directive; the
+collection lists parse-and-ignore them). Comparison operators `: = != > >= < <=`,
+boolean `and`/`or`, `-` negation, and parentheses. Filters backed by datasets we
+don't ingest — Tagger tags (`otag:`/`atag:`/`function:`, issue #140), `cube:` (issue
+#141), and the curated `is:` land-cycle subjects — plus malformed queries return
+**422** `{ error }` (surfaced in the UI under the search box). All user values bind
+as SeaORM/SQL parameters — never interpolated into SQL.
 
 **HTTP caching (CDN):** the router splits routes into two cache policies via
 response middleware (`handlers::cache`, wired in `main.rs`). Public catalog reads
@@ -397,7 +411,7 @@ scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
   client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
   ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping; snapshot_prices(): daily per-card price-history capture from the committed cards rows
-  search.rs        Scryfall-style query parser: lexer + recursive-descent (and/or/-/parens/quotes) → sea_orm::Condition; SearchError → 422; values always parameterised
+  search/          Scryfall-style query parser (lexer + recursive-descent: and/or/-/parens/quotes/regex `/…/`) → sea_orm::Condition + order:/direction:/unique: directives (parse_query); legality via json_extract, prints/sets via oracle_id-sibling subqueries; SearchError → 422; values always parameterised
   drops.rs         Secret Lair drop grouping: loads sld_drops.json once → (game,set)→{ordered drops, collector#→drop}; table()/has_drops()/drop_for()
   sld_drops.json   committed snapshot of Scryfall's curated Secret Lair drop titles + collector numbers (regenerate via scripts/gen-sld-drops.mjs)
   dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path, plus a year of per-card seeded random-walk price history

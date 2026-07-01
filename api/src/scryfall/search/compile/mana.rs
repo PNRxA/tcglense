@@ -82,21 +82,29 @@ pub(super) fn mana(op: Op, value: &str) -> Result<Condition, SearchError> {
     }
     match op {
         Op::Colon | Op::Ge => Ok(mana_contains(&tokens)),
-        // Exact multiset: contains every symbol with its multiplicity AND has no
-        // others (total symbol count equal). Comparing the symbol multiset rather
-        // than a concatenated string makes `=` order-independent, matching Scryfall
-        // (e.g. `m=WW2` and `m=2WW` behave the same against canonical `mana_cost`).
-        Op::Eq => {
-            let total = tokens.len() as i64;
-            let cond = mana_contains(&tokens).add(Expr::cust_with_values(
-                "(LENGTH(IFNULL(mana_cost, '')) - LENGTH(REPLACE(IFNULL(mana_cost, ''), '}', ''))) = ?"
-                    .to_string(),
-                [total],
-            ));
-            Ok(cond)
-        }
+        // Exact multiset: contains every symbol with its multiplicity AND no others
+        // (equal total symbol count). Multiset comparison makes `=` order-independent
+        // (e.g. `m=WW2` == `m=2WW`), matching Scryfall.
+        Op::Eq => Ok(mana_contains(&tokens).add(mana_total_count("=", tokens.len() as i64))),
+        // Strict superset: contains all query symbols AND strictly more in total.
+        Op::Gt => Ok(mana_contains(&tokens).add(mana_total_count(">", tokens.len() as i64))),
+        // Anything but the exact multiset.
+        Op::Ne => Ok(mana_contains(&tokens)
+            .add(mana_total_count("=", tokens.len() as i64))
+            .not()),
+        // Subset (`<`, `<=`) needs the cost's own symbol set — not supported yet.
         _ => Err(unsupported_op("mana", op)),
     }
+}
+
+/// Compare the total mana-symbol count of `mana_cost` (the number of `}`) to `n`.
+fn mana_total_count(op_sql: &str, n: i64) -> sea_orm::sea_query::SimpleExpr {
+    Expr::cust_with_values(
+        format!(
+            "(LENGTH(IFNULL(mana_cost, '')) - LENGTH(REPLACE(IFNULL(mana_cost, ''), '}}', ''))) {op_sql} ?"
+        ),
+        [n],
+    )
 }
 
 /// Per-symbol multiplicity containment: each distinct symbol must appear at least

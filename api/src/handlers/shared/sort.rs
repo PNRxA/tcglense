@@ -9,7 +9,7 @@ use sea_orm::{
 
 use crate::entities::card;
 use crate::error::AppError;
-use crate::scryfall::search::RARITIES;
+use crate::scryfall::search::{Direction, RARITIES, SortKey};
 
 /// A user-facing card-list sort key. Maps to one or more `card` columns; fields
 /// that aren't lexically ordered (rarity, price) sort on a derived expression so
@@ -26,6 +26,19 @@ pub(crate) enum SortField {
     Cmc,
     /// USD market price.
     Price,
+    /// Set code (then collector number).
+    Set,
+    /// Colour-count rank (colourless, mono, multi).
+    Color,
+    Power,
+    Toughness,
+    /// EDHREC popularity rank (ascending = most popular).
+    Edhrec,
+    /// EUR market price.
+    Eur,
+    /// MTGO ticket price.
+    Tix,
+    Artist,
 }
 
 impl SortField {
@@ -37,6 +50,14 @@ impl SortField {
             "released" | "date" => SortField::Released,
             "cmc" | "mv" => SortField::Cmc,
             "price" | "usd" => SortField::Price,
+            "set" => SortField::Set,
+            "color" | "colors" => SortField::Color,
+            "power" | "pow" => SortField::Power,
+            "toughness" | "tou" => SortField::Toughness,
+            "edhrec" => SortField::Edhrec,
+            "eur" => SortField::Eur,
+            "tix" => SortField::Tix,
+            "artist" => SortField::Artist,
             other => return Err(AppError::Validation(format!("unknown sort '{other}'"))),
         })
     }
@@ -46,8 +67,21 @@ impl SortField {
     /// default for those fields.
     pub(crate) fn default_dir(self) -> SortDir {
         match self {
-            SortField::Number | SortField::Name | SortField::Cmc => SortDir::Asc,
-            SortField::Rarity | SortField::Released | SortField::Price => SortDir::Desc,
+            SortField::Number
+            | SortField::Name
+            | SortField::Cmc
+            | SortField::Set
+            | SortField::Color
+            | SortField::Power
+            | SortField::Toughness
+            | SortField::Artist
+            // Ascending EDHREC rank = most popular first.
+            | SortField::Edhrec => SortDir::Asc,
+            SortField::Rarity
+            | SortField::Released
+            | SortField::Price
+            | SortField::Eur
+            | SortField::Tix => SortDir::Desc,
         }
     }
 }
@@ -73,6 +107,36 @@ impl SortDir {
         match self {
             SortDir::Asc => Order::Asc,
             SortDir::Desc => Order::Desc,
+        }
+    }
+}
+
+impl From<SortKey> for SortField {
+    fn from(key: SortKey) -> Self {
+        match key {
+            SortKey::Name => SortField::Name,
+            SortKey::Set => SortField::Set,
+            SortKey::Released => SortField::Released,
+            SortKey::Rarity => SortField::Rarity,
+            SortKey::Color => SortField::Color,
+            SortKey::Cmc => SortField::Cmc,
+            SortKey::Power => SortField::Power,
+            SortKey::Toughness => SortField::Toughness,
+            SortKey::Usd => SortField::Price,
+            SortKey::Eur => SortField::Eur,
+            SortKey::Tix => SortField::Tix,
+            SortKey::Edhrec => SortField::Edhrec,
+            SortKey::Artist => SortField::Artist,
+            SortKey::Number => SortField::Number,
+        }
+    }
+}
+
+impl From<Direction> for SortDir {
+    fn from(dir: Direction) -> Self {
+        match dir {
+            Direction::Asc => SortDir::Asc,
+            Direction::Desc => SortDir::Desc,
         }
     }
 }
@@ -129,6 +193,30 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
                 NullOrdering::Last,
             )
             .order_by_asc(card::Column::Name),
+        SortField::Set => query
+            .order_by(card::Column::SetCode, dir.order())
+            .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last),
+        SortField::Color => query
+            .order_by_with_nulls(color_rank_expr(), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Power => query
+            .order_by_with_nulls(numeric_col_expr("power"), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Toughness => query
+            .order_by_with_nulls(numeric_col_expr("toughness"), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Edhrec => query
+            .order_by_with_nulls(card::Column::EdhrecRank, dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Eur => query
+            .order_by_with_nulls(price_real_expr(&["price_eur"]), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Tix => query
+            .order_by_with_nulls(price_real_expr(&["price_tix"]), dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
+        SortField::Artist => query
+            .order_by_with_nulls(card::Column::Artist, dir.order(), NullOrdering::Last)
+            .order_by_asc(card::Column::Name),
     };
     query.order_by_asc(card::Column::Id)
 }
@@ -171,6 +259,25 @@ fn price_real_expr(cols: &[&str]) -> SimpleExpr {
     Expr::cust(expr)
 }
 
+/// Colour-count rank for `order:color`: colourless (0) first, then mono, then
+/// multicoloured. `colors` is a cards-only column, so it's unambiguous under a join.
+fn color_rank_expr() -> SimpleExpr {
+    Expr::cust(
+        "CASE WHEN colors IS NULL OR colors = '' THEN 0 \
+         ELSE LENGTH(colors) - LENGTH(REPLACE(colors, ',', '')) + 1 END",
+    )
+}
+
+/// Numeric value of a power/toughness-style text column for sorting, or NULL when
+/// non-numeric (so `NULLS LAST` parks `*`/`X`/absent values at the end). `col` is a
+/// fixed, cards-only column name — never user input.
+fn numeric_col_expr(col: &str) -> SimpleExpr {
+    Expr::cust(format!(
+        "CASE WHEN {col} GLOB '[0-9]*' AND {col} NOT GLOB '*[^0-9]*' \
+         THEN CAST({col} AS REAL) ELSE NULL END"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,8 +318,39 @@ mod tests {
             card_faces: None,
             price_usd: usd.map(str::to_string),
             price_usd_foil: usd_foil.map(str::to_string),
+            price_usd_etched: None,
             price_eur: None,
             price_tix: None,
+            keywords: None,
+            produced_mana: None,
+            color_indicator: None,
+            watermark: None,
+            flavor_text: None,
+            illustration_id: None,
+            artist: None,
+            artist_ids: None,
+            border_color: None,
+            frame: None,
+            frame_effects: None,
+            security_stamp: None,
+            promo_types: None,
+            finishes: None,
+            defense: None,
+            legalities: None,
+            full_art: None,
+            textless: None,
+            oversized: None,
+            promo: None,
+            reprint: None,
+            variation: None,
+            booster: None,
+            story_spotlight: None,
+            content_warning: None,
+            highres_image: None,
+            reserved: None,
+            game_changer: None,
+            edhrec_rank: None,
+            penny_rank: None,
             digital: false,
             created_at: ts,
             updated_at: ts,

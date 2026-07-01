@@ -2,7 +2,7 @@
 
 use sea_orm::Condition;
 
-use super::common::{raw, raw_vals};
+use super::common::{array_member, bool_true, col_present, cond_one, raw, raw_vals};
 use super::super::error::SearchError;
 
 pub(super) fn is_predicate(value: &str, negated: bool) -> Result<Condition, SearchError> {
@@ -52,6 +52,34 @@ pub(super) fn is_predicate(value: &str, negated: bool) -> Result<Condition, Sear
             "type_line IS NOT NULL AND type_line LIKE '%creature%' \
              AND (oracle_text IS NULL OR oracle_text = '')",
         ),
+        // Finish availability (from the finishes array).
+        "foil" => cond_one(array_member("finishes", "foil")),
+        "nonfoil" => cond_one(array_member("finishes", "nonfoil")),
+        "etched" => cond_one(array_member("finishes", "etched")),
+        // Print-detail boolean flags.
+        "fullart" => bool_true("full_art"),
+        "textless" => bool_true("textless"),
+        "oversized" => bool_true("oversized"),
+        "promo" => bool_true("promo"),
+        "reprint" => bool_true("reprint"),
+        "variation" => bool_true("variation"),
+        "booster" => bool_true("booster"),
+        "spotlight" | "storyspotlight" => bool_true("story_spotlight"),
+        "contentwarning" => bool_true("content_warning"),
+        "hires" | "highres" => bool_true("highres_image"),
+        "reserved" => bool_true("reserved"),
+        "gamechanger" => bool_true("game_changer"),
+        // Presence of an optional print attribute.
+        "watermark" => col_present("watermark"),
+        "indicator" | "colorindicator" => col_present("color_indicator"),
+        // Promo / product-origin categories (from promo_types).
+        "buyabox" | "prerelease" | "promopack" | "gameday" | "intropack" | "giftbox" | "bundle"
+        | "release" | "datestamped" | "planeswalkerdeck" | "draftweekend" | "boosterfun"
+        | "textured" | "galaxyfoil" | "surgefoil" | "gilded" | "neonink" | "halofoil"
+        | "confettifoil" | "oilslick" | "stepandcompleat" | "embossed" | "serialized"
+        | "doublerainbow" | "rainbowfoil" | "silverfoil" => {
+            cond_one(array_member("promo_types", &v))
+        }
         _ => {
             let prefix = if negated { "not" } else { "is" };
             return Err(SearchError::UnsupportedKey(format!("{prefix}:{v}")));

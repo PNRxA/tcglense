@@ -72,6 +72,12 @@ fn parse_color_operand(key: &str, value: &str) -> Result<ColorOperand, SearchErr
     match lower.as_str() {
         "c" | "colorless" => return Ok(ColorOperand::Colorless),
         "m" | "multi" | "multicolor" | "multicolored" => return Ok(ColorOperand::Multicolor),
+        // Full colour-name words.
+        "white" => return Ok(ColorOperand::Letters(vec!['W'])),
+        "blue" => return Ok(ColorOperand::Letters(vec!['U'])),
+        "black" => return Ok(ColorOperand::Letters(vec!['B'])),
+        "red" => return Ok(ColorOperand::Letters(vec!['R'])),
+        "green" => return Ok(ColorOperand::Letters(vec!['G'])),
         _ => {}
     }
     if let Some(set) = nickname(&lower) {

@@ -231,7 +231,7 @@ async function resync() {
       <div v-else-if="collectionIsEmpty" class="py-16 text-center">
         <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
         <RouterLink
-          :to="`/cards/${game}/cards`"
+          :to="`/cards/${game}`"
           :class="buttonVariants({ variant: 'default' })"
           class="mt-4 inline-flex"
         >
