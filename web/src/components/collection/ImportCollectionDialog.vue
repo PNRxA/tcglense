@@ -24,10 +24,23 @@ import type { CollectionProvider, CollectionSource, ReconcileMode } from '@/lib/
 // parent view mounts this only when the visitor is authenticated.
 const props = defineProps<{ game: string; source: CollectionSource | null }>()
 
-// One entry per supported provider — structured so Moxfield slots in later.
+// One entry per supported provider.
 const PROVIDERS: { value: CollectionProvider; label: string }[] = [
   { value: 'archidekt', label: 'Archidekt' },
+  { value: 'moxfield', label: 'Moxfield' },
 ]
+
+// An example collection URL per provider, as the source input's placeholder.
+const PLACEHOLDERS: Record<CollectionProvider, string> = {
+  archidekt: 'https://archidekt.com/collection/v2/1042487',
+  moxfield: 'https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q',
+}
+
+/** The saved source's provider, when it's one we know (a stored id is a plain string). */
+function savedProvider(source: CollectionSource | null): CollectionProvider | null {
+  const known = PROVIDERS.find((p) => p.value === source?.provider)
+  return known?.value ?? null
+}
 
 const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
   {
@@ -59,7 +72,7 @@ type SourceType = 'link' | 'csv'
 
 const open = ref(false)
 const sourceType = ref<SourceType>('link')
-const provider = ref<CollectionProvider>('archidekt')
+const provider = ref<CollectionProvider>(savedProvider(props.source) ?? 'archidekt')
 const sourceInput = ref(props.source?.url ?? '')
 const mode = ref<ReconcileMode>('overwrite')
 const saveLink = ref(props.source != null)
@@ -83,13 +96,13 @@ const {
   removeLink: removeSavedLink,
 } = useCollectionImport(gameRef)
 
-// Reset the form each time the dialog opens: seed the URL/checkbox from the current
-// saved link and clear any leftover status from a previous session (the component
-// instance persists across opens and across game switches).
+// Reset the form each time the dialog opens: seed the provider/URL/checkbox from the
+// current saved link and clear any leftover status from a previous session (the
+// component instance persists across opens and across game switches).
 watch(open, (isOpen) => {
   if (!isOpen) return
   sourceType.value = 'link'
-  provider.value = 'archidekt'
+  provider.value = savedProvider(props.source) ?? 'archidekt'
   sourceInput.value = props.source?.url ?? ''
   mode.value = 'overwrite'
   saveLink.value = props.source != null
@@ -174,21 +187,21 @@ const selectClass =
   <Dialog v-model:open="open">
     <DialogTrigger :class="buttonVariants({ variant: 'outline', size: 'sm' })">
       <Download />
-      Import from {{ providerLabel }}
+      Import collection
     </DialogTrigger>
 
     <DialogContent
       class="bg-background max-h-[90vh] w-[min(92vw,32rem)] overflow-y-auto rounded-xl border p-6 shadow-xl"
     >
-      <DialogTitle class="text-lg font-semibold">Import from {{ providerLabel }}</DialogTitle>
+      <DialogTitle class="text-lg font-semibold">Import a collection</DialogTitle>
       <DialogDescription class="text-muted-foreground mt-1 text-sm">
         <template v-if="sourceType === 'link'">
-          Paste a public collection URL (or id) and choose how to reconcile it with your collection.
-          We fetch it server-side — nothing is uploaded from your device.
+          Paste a public {{ providerLabel }} collection URL (or id) and choose how to reconcile it
+          with your collection. We fetch it server-side — nothing is uploaded from your device.
         </template>
         <template v-else>
-          Upload your exported {{ providerLabel }} collection CSV and choose how to reconcile it
-          with your collection.
+          Upload a collection CSV exported from Archidekt or Moxfield and choose how to reconcile
+          it with your collection. We detect which service it came from automatically.
         </template>
       </DialogDescription>
 
@@ -232,21 +245,16 @@ const selectClass =
             <select id="import-provider" v-model="provider" :class="selectClass">
               <option v-for="p in PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
             </select>
-            <p class="text-muted-foreground text-xs">More providers (e.g. Moxfield) are coming.</p>
           </div>
 
           <div class="space-y-1.5">
             <Label for="import-source">Collection URL or id</Label>
-            <Input
-              id="import-source"
-              v-model="sourceInput"
-              placeholder="https://archidekt.com/collection/v2/1042487"
-            />
+            <Input id="import-source" v-model="sourceInput" :placeholder="PLACEHOLDERS[provider]" />
           </div>
         </template>
 
-        <!-- CSV tab: file picker + which columns to export. -->
-        <CsvImportFields v-else :provider-label="providerLabel" @file-change="onCsvFile" />
+        <!-- CSV tab: file picker + how to export from each supported service. -->
+        <CsvImportFields v-else @file-change="onCsvFile" />
 
         <!-- Reconcile mode -->
         <fieldset class="space-y-2">

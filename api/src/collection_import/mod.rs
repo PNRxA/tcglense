@@ -1,21 +1,24 @@
 //! Provider-agnostic collection import / sync.
 //!
 //! Pulls a user's card collection from an external collection service and reconciles
-//! it into the local per-user `collection_items`. Archidekt is the first provider;
-//! Moxfield is planned, so the provider layer is a thin fetch/parse boundary — one
-//! module per service, dispatched by the [`Provider`] enum (mirroring how `catalog`
-//! dispatches per game). Everything downstream — aggregation, external-id resolution,
-//! reconcile, apply — is provider-independent.
+//! it into the local per-user `collection_items`. The provider layer is a thin
+//! fetch/parse boundary — one module per service (Archidekt and Moxfield today),
+//! dispatched by the [`Provider`] enum (mirroring how `catalog` dispatches per game).
+//! Everything downstream — aggregation, external-id resolution, reconcile, apply — is
+//! provider-independent.
 //!
 //! A provider exposes each card by an id in the form our catalog stores as
-//! `cards.external_id` (for Archidekt that is the Scryfall id, `card.uid`), so a fetched
+//! `cards.external_id` (for both providers that is the Scryfall id), so a fetched
 //! holding maps straight onto a local card by a single indexed lookup. Cards with no
-//! match in our catalog are reported as "unmatched" and skipped.
+//! match in our catalog are reported as "unmatched" and skipped. (A Moxfield **CSV**
+//! carries no card id at all; its rows resolve by set code + collector number instead —
+//! see [`execute_csv_import`].)
 
 mod archidekt;
 mod csv_import;
 mod error;
 pub mod jobs;
+mod moxfield;
 pub mod rate_limit;
 mod reconcile;
 mod types;
@@ -49,15 +52,25 @@ const UNMATCHED_SAMPLE_CAP: usize = 20;
 /// under that limit — a large collection can carry far more distinct cards than that.
 const IN_CHUNK: usize = 900;
 
+/// Everything a provider fetch needs beyond the collection id: the shared HTTP client,
+/// the process-wide provider rate limiter, and deployment-level provider settings.
+/// Borrowed for the duration of one import.
+pub struct ProviderContext<'a> {
+    pub http: &'a reqwest::Client,
+    pub limiter: &'a rate_limit::RateLimiter,
+    pub settings: &'a ProviderSettings,
+}
+
 /// Parse the collection id from a user-supplied source (a full provider URL or a bare
 /// id). Pure and provider-specific.
 pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportError> {
     let parsed = match provider {
         Provider::Archidekt => archidekt::parse_collection_id(input),
+        Provider::Moxfield => moxfield::parse_collection_id(input),
     };
     parsed.ok_or_else(|| {
         ImportError::InvalidSource(format!(
-            "couldn't read an {} collection id from '{}'",
+            "couldn't read a {} collection id from '{}'",
             provider.label(),
             input.trim()
         ))
@@ -68,12 +81,12 @@ pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportErr
 /// rate limiter.
 async fn fetch_holdings(
     provider: Provider,
-    http: &reqwest::Client,
-    limiter: &rate_limit::RateLimiter,
+    ctx: &ProviderContext<'_>,
     collection_id: &str,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
     match provider {
-        Provider::Archidekt => archidekt::fetch(http, limiter, collection_id).await,
+        Provider::Archidekt => archidekt::fetch(ctx.http, ctx.limiter, collection_id).await,
+        Provider::Moxfield => moxfield::fetch(ctx, collection_id).await,
     }
 }
 
@@ -84,13 +97,15 @@ async fn fetch_holdings(
 /// whole collection.
 async fn fetch_holdings_smart(
     provider: Provider,
-    http: &reqwest::Client,
-    limiter: &rate_limit::RateLimiter,
+    ctx: &ProviderContext<'_>,
     collection_id: &str,
     local: &HashMap<String, (i32, i32)>,
 ) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
     match provider {
-        Provider::Archidekt => archidekt::fetch_smart(http, limiter, collection_id, local).await,
+        Provider::Archidekt => {
+            archidekt::fetch_smart(ctx.http, ctx.limiter, collection_id, local).await
+        }
+        Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local).await,
     }
 }
 
@@ -142,11 +157,9 @@ fn smart_absorb_page(
 /// aggregate, resolve to local cards, reconcile per `mode`, and apply in one transaction.
 /// Runs in the background worker (see [`jobs`]); the handler does the synchronous
 /// validation (provider/game/source) before enqueuing, so this trusts its inputs.
-#[allow(clippy::too_many_arguments)]
 pub async fn execute_import(
     db: &DatabaseConnection,
-    http: &reqwest::Client,
-    limiter: &rate_limit::RateLimiter,
+    ctx: &ProviderContext<'_>,
     user_id: i32,
     game: &str,
     provider: Provider,
@@ -160,14 +173,14 @@ pub async fn execute_import(
         // fetch, so a concurrent edit during the fetch isn't clobbered.
         let local = load_local_by_external(db, user_id, game).await?;
         let (holdings, stopped_early) =
-            fetch_holdings_smart(provider, http, limiter, collection_id, &local).await?;
+            fetch_holdings_smart(provider, ctx, collection_id, &local).await?;
         if holdings.is_empty() {
             return Err(ImportError::EmptyCollection);
         }
         return reconcile_smart(db, user_id, game, provider, holdings, stopped_early).await;
     }
 
-    let holdings = fetch_holdings(provider, http, limiter, collection_id).await?;
+    let holdings = fetch_holdings(provider, ctx, collection_id).await?;
     if holdings.is_empty() {
         return Err(ImportError::EmptyCollection);
     }
@@ -215,7 +228,8 @@ async fn load_local_by_external(
     Ok(local)
 }
 
-/// Import a collection from an uploaded Archidekt CSV export.
+/// Import a collection from an uploaded CSV export (Archidekt or Moxfield — the shape is
+/// sniffed from the header row, see [`csv_import::parse_csv`]).
 ///
 /// Parses the (untrusted, already size-bounded) CSV bytes into normalized holdings, then
 /// runs the exact same aggregate / resolve / reconcile / apply path as a network import —
@@ -223,6 +237,11 @@ async fn load_local_by_external(
 /// runs inline in the request. A CSV has no persistent location, so it's always a
 /// one-off; the caller picks the `mode`. An empty parse (no usable rows) is refused so a
 /// `Replace` can't silently wipe the collection against a blank upload.
+///
+/// An Archidekt export carries Scryfall ids, so its rows are already keyed the way the
+/// engine expects. A Moxfield export carries **no card id** — its rows are first resolved
+/// from `(set code, collector number)` to the catalog's external ids
+/// ([`moxfield_rows_to_holdings`]); the summary's `provider` reflects the detected shape.
 pub async fn execute_csv_import(
     db: &DatabaseConnection,
     user_id: i32,
@@ -230,13 +249,92 @@ pub async fn execute_csv_import(
     mode: ReconcileMode,
     csv_bytes: &[u8],
 ) -> Result<ImportSummary, ImportError> {
-    let holdings = csv_import::parse_archidekt_csv(csv_bytes)?;
+    let (provider, holdings) = match csv_import::parse_csv(csv_bytes)? {
+        csv_import::ParsedCsv::Archidekt(holdings) => (Provider::Archidekt, holdings),
+        csv_import::ParsedCsv::Moxfield(rows) => (
+            Provider::Moxfield,
+            moxfield_rows_to_holdings(db, game, rows).await?,
+        ),
+    };
     if holdings.is_empty() {
         return Err(ImportError::EmptyCollection);
     }
-    // A CSV export is Archidekt data, so it reconciles as the Archidekt provider (the
-    // summary's `provider` field, and the finish semantics, match the URL import).
-    reconcile_holdings(db, user_id, game, Provider::Archidekt, mode, holdings).await
+    reconcile_holdings(db, user_id, game, provider, mode, holdings).await
+}
+
+/// Resolve Moxfield CSV rows — identified by `(set code, collector number)` rather than
+/// a card id — into the engine's normalized holdings.
+///
+/// Each distinct `(set, number)` pair is looked up against the catalog (per set, chunked
+/// under SQLite's bind-variable limit; set codes are already lowercased to match the
+/// catalog, numbers compare exactly). A matched row's holding carries the card's
+/// `external_id`, so downstream aggregation merges it with any other spelling of the same
+/// printing. An unmatched row keeps a **readable placeholder key** (`"Name (set #num)"`)
+/// instead: placeholders can never collide with a real external id (Scryfall UUIDs don't
+/// contain `#` or spaces), so the engine counts them as unmatched and surfaces them in
+/// the summary's sample verbatim — far more useful to a user than a bare UUID. The
+/// placeholder is keyed off the pair's first-seen row so duplicate rows still aggregate.
+async fn moxfield_rows_to_holdings(
+    db: &DatabaseConnection,
+    game: &str,
+    rows: Vec<csv_import::MoxfieldCsvRow>,
+) -> Result<Vec<FetchedHolding>, ImportError> {
+    // Distinct (set, number) pairs: the numbers to look up per set, and each pair's
+    // unmatched-placeholder label (from its first-seen row, so the key is deterministic).
+    let mut numbers_by_set: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut placeholder_by_pair: HashMap<(&str, &str), String> = HashMap::new();
+    for row in &rows {
+        let pair = (row.set_code.as_str(), row.collector_number.as_str());
+        if placeholder_by_pair.contains_key(&pair) {
+            continue;
+        }
+        let label = if row.name.is_empty() {
+            format!("{} #{}", row.set_code, row.collector_number)
+        } else {
+            format!("{} ({} #{})", row.name, row.set_code, row.collector_number)
+        };
+        placeholder_by_pair.insert(pair, label);
+        numbers_by_set
+            .entry(row.set_code.as_str())
+            .or_default()
+            .push(row.collector_number.as_str());
+    }
+
+    // (set, number) -> external id, per-set queries chunked under the bind limit (the
+    // (game, set_code) index narrows each to one set's worth of rows).
+    let mut external_by_pair: HashMap<(String, String), String> = HashMap::new();
+    for (set_code, numbers) in &numbers_by_set {
+        for chunk in numbers.chunks(IN_CHUNK) {
+            let cards = Card::find()
+                .filter(card::Column::Game.eq(game))
+                .filter(card::Column::SetCode.eq(*set_code))
+                .filter(card::Column::CollectorNumber.is_in(chunk.iter().copied()))
+                .all(db)
+                .await
+                .map_err(ImportError::Db)?;
+            for c in cards {
+                external_by_pair.insert((c.set_code, c.collector_number), c.external_id);
+            }
+        }
+    }
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let pair = (row.set_code.as_str(), row.collector_number.as_str());
+            let external_card_id = external_by_pair
+                .get(&(row.set_code.clone(), row.collector_number.clone()))
+                .cloned()
+                // Unmatched: keep the readable placeholder so the summary's
+                // unmatched sample names the card, not an opaque key.
+                .unwrap_or_else(|| placeholder_by_pair[&pair].clone());
+            FetchedHolding {
+                external_card_id,
+                foil: row.foil,
+                quantity: row.quantity,
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -645,6 +743,96 @@ mod tests {
         assert_eq!(summary.matched_cards, 2);
         assert_eq!(summary.unmatched_cards, 1, "the ghost card isn't in the catalog");
         assert_eq!(summary.removed_cards, 1);
+    }
+
+    /// Insert a minimal card with a specific set code + collector number (the key a
+    /// Moxfield CSV identifies printings by).
+    async fn insert_card_at(
+        db: &DatabaseConnection,
+        external_id: &str,
+        set_code: &str,
+        collector_number: &str,
+    ) -> i32 {
+        let now = Utc::now();
+        let card = card::ActiveModel {
+            game: Set(crate::scryfall::GAME.to_string()),
+            external_id: Set(external_id.to_string()),
+            name: Set(format!("Card {external_id}")),
+            set_code: Set(set_code.to_string()),
+            set_name: Set("Test Set".to_string()),
+            collector_number: Set(collector_number.to_string()),
+            lang: Set("en".to_string()),
+            digital: Set(false),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        card.insert(db).await.expect("insert card").id
+    }
+
+    #[tokio::test]
+    async fn execute_csv_import_resolves_a_moxfield_export_by_set_and_number() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = insert_user(&db).await;
+        // Two printings the CSV references by (set, number) — including an uppercase
+        // Edition cell that must match the catalog's lowercase set code — plus one row
+        // pointing nowhere (unmatched, surfaced by name).
+        let a = insert_card_at(&db, "ext-tle-146", "tle", "146").await;
+        let b = insert_card_at(&db, "ext-tla-203", "tla", "203").await;
+
+        let csv = "Count,Tradelist Count,Name,Edition,Foil,Collector Number,Proxy\n\
+                   1,1,\"Aang, A Lot to Learn\",TLE,foil,146,False\n\
+                   2,0,\"Aang, at the Crossroads // Aang, Destined Savior\",tla,,203,False\n\
+                   1,0,Ghost Card,zzz,,999,False\n";
+
+        let summary = execute_csv_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Merge,
+            csv.as_bytes(),
+        )
+        .await
+        .expect("csv import");
+
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((0, 1)), "foil row applied");
+        assert_eq!(owned_counts(&db, user_id, b).await, Some((2, 0)), "regular row applied");
+        assert_eq!(summary.provider, "moxfield", "the shape was sniffed as Moxfield");
+        assert_eq!(summary.matched_cards, 2);
+        assert_eq!(summary.unmatched_cards, 1);
+        assert_eq!(
+            summary.unmatched_sample,
+            vec!["Ghost Card (zzz #999)".to_string()],
+            "unmatched rows are labelled by name + set + number, not an opaque key"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_csv_import_aggregates_duplicate_moxfield_rows_onto_one_card() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = insert_user(&db).await;
+        let a = insert_card_at(&db, "ext-tle-146", "tle", "146").await;
+
+        // The same printing across three rows (differing condition/tags upstream): two
+        // regular rows and a foil row must land on one holding.
+        let csv = "Count,Name,Edition,Foil,Collector Number\n\
+                   2,Aang,tle,,146\n\
+                   1,Aang,tle,,146\n\
+                   1,Aang,tle,foil,146\n";
+
+        let summary = execute_csv_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Overwrite,
+            csv.as_bytes(),
+        )
+        .await
+        .expect("csv import");
+
+        assert_eq!(owned_counts(&db, user_id, a).await, Some((3, 1)));
+        assert_eq!(summary.distinct_cards, 1);
+        assert_eq!(summary.total_rows, 3);
     }
 
     #[tokio::test]

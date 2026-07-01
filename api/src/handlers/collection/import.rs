@@ -73,9 +73,10 @@ pub async fn import_collection(
 }
 
 /// `POST /api/collection/{game}/import/csv?mode=...` -> import a collection from an
-/// uploaded Archidekt CSV export. The request body is the raw CSV file (bounded by the
-/// route's body limit, [`MAX_CSV_UPLOAD_BYTES`](super::MAX_CSV_UPLOAD_BYTES)); the
-/// reconcile mode is a query param.
+/// uploaded CSV export (Archidekt or Moxfield — the shape is sniffed from the header
+/// row). The request body is the raw CSV file (bounded by the route's body limit,
+/// [`MAX_CSV_UPLOAD_BYTES`](super::MAX_CSV_UPLOAD_BYTES)); the reconcile mode is a
+/// query param.
 ///
 /// Unlike the URL import this needs no upstream fetch, so it reconciles **synchronously**
 /// and returns the [`ImportSummary`] directly (no rate limiter, no background job): a CSV
@@ -89,9 +90,9 @@ pub async fn import_collection_csv(
     body: Bytes,
 ) -> Result<Json<ImportSummary>, AppError> {
     require_game(&game)?;
-    // The CSV shape is Archidekt's, and Archidekt is Magic-only (its card ids are Scryfall
-    // ids); gate on the same provider/game support as the URL import.
-    if !Provider::Archidekt.supports_game(&game) {
+    // Both CSV shapes identify Magic printings (Scryfall ids / set + collector number),
+    // so gate on the same provider/game support as the URL imports.
+    if !Provider::Archidekt.supports_game(&game) && !Provider::Moxfield.supports_game(&game) {
         return Err(AppError::Validation(format!(
             "CSV collection import is not available for '{game}'"
         )));

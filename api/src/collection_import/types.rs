@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     Archidekt,
+    Moxfield,
 }
 
 impl Provider {
@@ -16,6 +17,7 @@ impl Provider {
     pub fn as_str(self) -> &'static str {
         match self {
             Provider::Archidekt => "archidekt",
+            Provider::Moxfield => "moxfield",
         }
     }
 
@@ -23,6 +25,7 @@ impl Provider {
     pub fn from_id(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "archidekt" => Some(Provider::Archidekt),
+            "moxfield" => Some(Provider::Moxfield),
             _ => None,
         }
     }
@@ -31,14 +34,15 @@ impl Provider {
     pub fn label(self) -> &'static str {
         match self {
             Provider::Archidekt => "Archidekt",
+            Provider::Moxfield => "Moxfield",
         }
     }
 
-    /// Whether this provider can supply a collection for `game`. Archidekt is
-    /// Magic-only (its card ids are Scryfall ids).
+    /// Whether this provider can supply a collection for `game`. Both are Magic-only
+    /// (their card ids / printings key off Scryfall data).
     pub fn supports_game(self, game: &str) -> bool {
         match self {
-            Provider::Archidekt => game == crate::scryfall::GAME,
+            Provider::Archidekt | Provider::Moxfield => game == crate::scryfall::GAME,
         }
     }
 
@@ -47,8 +51,19 @@ impl Provider {
     pub fn collection_url(self, id: &str) -> String {
         match self {
             Provider::Archidekt => format!("https://archidekt.com/collection/v2/{id}"),
+            Provider::Moxfield => format!("https://moxfield.com/collection/{id}"),
         }
     }
+}
+
+/// Deployment-level provider settings that a fetch needs beyond the shared HTTP client
+/// (today: Moxfield's approved User-Agent). Captured once at startup into the import
+/// queue so background workers don't reach back into the full app config.
+#[derive(Debug, Clone, Default)]
+pub struct ProviderSettings {
+    /// `User-Agent` for Moxfield requests. Moxfield's API only serves approved agents
+    /// (see `Config::moxfield_user_agent`); `None` falls back to the client default.
+    pub moxfield_user_agent: Option<String>,
 }
 
 /// How an import reconciles with the user's existing collection for the game.

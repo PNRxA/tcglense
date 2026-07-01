@@ -107,13 +107,20 @@ async fn main() {
         .expect("hashing the timing-equalizer constant must succeed")
         .into();
 
+    // Captured before `config` moves into the state Arc below.
+    let moxfield_user_agent = config.moxfield_user_agent.clone();
+
     let state = AppState {
         db,
         config: Arc::new(config),
         dummy_password_hash,
         images: Arc::new(ImageCache::new(image_dir, image_http)),
         http: http.clone(),
-        imports: Arc::new(collection_import::jobs::ImportQueue::default()),
+        imports: Arc::new(collection_import::jobs::ImportQueue::default().with_settings(
+            collection_import::ProviderSettings {
+                moxfield_user_agent: moxfield_user_agent.clone(),
+            },
+        )),
     };
 
     // Spawn background maintenance (refresh-token pruning) and either the offline

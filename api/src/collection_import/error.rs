@@ -21,6 +21,11 @@ pub enum ImportError {
     TooLarge { count: usize, max: usize },
     /// The provider kept rate-limiting us (`429`) even after backing off -> 503.
     RateLimited,
+    /// The provider refused to serve us at all (e.g. Moxfield's bot wall rejecting an
+    /// unapproved User-Agent) -> 502, with the actionable detail passed through —
+    /// unlike [`Upstream`](Self::Upstream), this is a deployment-configuration problem
+    /// the message helps fix, not incidental upstream detail to hide.
+    ProviderDenied(String),
     /// The provider request or response parse failed -> 502.
     Upstream(String),
     /// A local database error -> 500.
@@ -49,6 +54,10 @@ impl From<ImportError> for AppError {
                 "the collection provider is rate-limiting us; please try again in a few minutes"
                     .to_string(),
             ),
+            ImportError::ProviderDenied(detail) => {
+                tracing::warn!(error = %detail, "collection provider denied our request");
+                AppError::BadGateway(detail)
+            }
             ImportError::Upstream(detail) => {
                 // Log the upstream detail server-side; return a generic gateway error.
                 tracing::warn!(error = %detail, "collection provider request failed");

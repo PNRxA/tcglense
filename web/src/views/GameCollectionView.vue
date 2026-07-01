@@ -22,7 +22,7 @@ import {
   usePolledImportJob,
   useSyncCollectionSourceMutation,
 } from '@/composables/useCollectionImport'
-import { ApiError } from '@/lib/api'
+import { ApiError, providerLabel as providerName } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -88,16 +88,14 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 // the summary to load before deciding.
 const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasStats.value)
 
-// Import / sync from an external collection provider (Archidekt today).
+// Import / sync from an external collection provider (Archidekt or Moxfield).
 const qc = useQueryClient()
 const sourceQuery = useCollectionSourceQuery(game)
 const source = computed(() => sourceQuery.data.value ?? null)
 const syncMutation = useSyncCollectionSourceMutation()
 const syncMessage = ref<string | null>(null)
 
-const providerLabel = computed(() =>
-  source.value?.provider === 'archidekt' ? 'Archidekt' : (source.value?.provider ?? 'Archidekt'),
-)
+const providerLabel = computed(() => providerName(source.value?.provider ?? 'archidekt'))
 // A saved link can re-sync by smart (incremental) sync or a full mirror; the label,
 // confirmation, and result copy differ because smart never removes cards.
 const smart = computed(() => source.value?.smart ?? false)
@@ -114,8 +112,8 @@ const lastSyncedText = computed(() => {
 const syncJob = usePolledImportJob(game, {
   onRunning: () => {
     syncMessage.value = smart.value
-      ? 'Smart-syncing from Archidekt… this can take a couple of minutes.'
-      : 'Re-syncing from Archidekt… this can take a couple of minutes.'
+      ? `Smart-syncing from ${providerLabel.value}… this can take a couple of minutes.`
+      : `Re-syncing from ${providerLabel.value}… this can take a couple of minutes.`
   },
   onComplete: (summary) => {
     if (!summary) {

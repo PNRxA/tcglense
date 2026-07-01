@@ -82,8 +82,8 @@ pub fn build_router(state: AppState) -> Router {
         // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
         // counts out). POST so a big page's id list can't blow the URL length.
         .route("/api/collection/{game}/owned", post(owned_counts))
-        // Import / sync a collection from an external provider (Archidekt; Moxfield
-        // planned): a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
+        // Import / sync a collection from an external provider (Archidekt or Moxfield):
+        // a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))
         // CSV upload: the raw file is the request body, so this route overrides axum's
         // default 2 MB body limit with our own (larger, but still bounded) cap. The limit

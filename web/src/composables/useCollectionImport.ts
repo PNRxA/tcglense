@@ -20,7 +20,7 @@ import { invalidateCollectionData } from '@/composables/useCollection'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 
-// Import / sync from an external collection provider (Archidekt today; Moxfield planned).
+// Import / sync from an external collection provider (Archidekt or Moxfield).
 // This module holds the vue-query hooks for the import/sync surface plus two higher-level
 // composables layered on top of them: `usePolledImportJob` (the shared job-poll-to-terminal
 // plumbing both the import dialog and the collection landing use) and `useCollectionImport`

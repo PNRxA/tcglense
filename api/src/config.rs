@@ -26,6 +26,11 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// `User-Agent` sent to Scryfall (their API guidelines require a descriptive one).
     pub scryfall_user_agent: String,
+    /// `User-Agent` sent to Moxfield, when set. Moxfield's API sits behind bot
+    /// protection that rejects unknown clients; they approve specific User-Agent
+    /// strings on request (email support@moxfield.com). Unset = requests go out with
+    /// the client's default UA (and will likely be rejected with a clear error).
+    pub moxfield_user_agent: Option<String>,
     /// Whether to import card data from providers on startup (disable in tests).
     pub sync_on_startup: bool,
     /// How often to re-import card data after the startup import, in hours.
@@ -56,6 +61,7 @@ impl std::fmt::Debug for Config {
             .field("public_site_url", &self.public_site_url)
             .field("data_dir", &self.data_dir)
             .field("scryfall_user_agent", &self.scryfall_user_agent)
+            .field("moxfield_user_agent", &self.moxfield_user_agent)
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)
@@ -195,6 +201,9 @@ impl Config {
         let scryfall_user_agent = env_trimmed("SCRYFALL_USER_AGENT")
             .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
 
+        // Moxfield only serves approved User-Agents (see the struct field); no default.
+        let moxfield_user_agent = env_trimmed("MOXFIELD_USER_AGENT");
+
         // Importing card data is the default; tests and offline runs disable it.
         let sync_on_startup = env_bool("SYNC_ON_STARTUP", true);
 
@@ -218,6 +227,7 @@ impl Config {
             public_site_url,
             data_dir,
             scryfall_user_agent,
+            moxfield_user_agent,
             sync_on_startup,
             sync_interval_hours,
             seed_dummy_data,
