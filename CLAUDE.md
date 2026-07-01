@@ -19,7 +19,9 @@ into `card_price_history`, served as a per-card time series (`.../cards/{id}/pri
 and charted on the card detail page. **Per-user collections** are also built: a
 signed-in user records how many copies (regular + foil) of each card they own, per
 game (MTG first, the model is game-agnostic), edited from the card detail page and
-browsed at `/collection/{game}` with a value/count summary. A collection can also be
+browsed at `/collection/{game}` with a value/count summary — a per-set landing (mirroring
+the catalog's game → sets view) lets you pick a set you own (`/collection/{game}/sets/{code}`)
+or view every owned card (`/collection/{game}/cards`). A collection can also be
 **imported/synced from an external provider** (Archidekt first; the layer is
 provider-agnostic, Moxfield planned): a one-off import with a chosen reconcile mode
 (overwrite-matched / mirror-replace / add-merge / smart-incremental), or a saved
@@ -253,8 +255,9 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/collection/{game}` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }` |
-| `GET /api/collection/{game}/summary` | — | `{ unique_cards, total_cards, total_value_usd }` — distinct cards, total copies (regular + foil), and an estimated USD value (regular copies at `usd`, foil at `usd_foil`) as a 2-dp string (`null` if nothing owned is priced) |
+| `GET /api/collection/{game}?…&set` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view |
+| `GET /api/collection/{game}/summary?set` | — | `{ unique_cards, total_cards, total_value_usd }` — distinct cards, total copies (regular + foil), and an estimated USD value (regular copies at `usd`, foil at `usd_foil`) as a 2-dp string (`null` if nothing owned is priced). Optional `?set=<code>` scopes the stats to one set |
+| `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus `owned_cards` (distinct owned) + `owned_copies` (regular + foil). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
@@ -267,7 +270,12 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `POST /api/collection/{game}/sync` | — | **`202`** `ImportJob` — enqueues a re-sync from the saved link (the worker stamps `last_synced_at` on success). Uses **smart** sync when the saved link opted in, otherwise **mirror/replace**. `404` if no link is saved |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
-the full catalog `Card` shape (reusing the catalog's `CardResponse`). The batch/import
+the full catalog `Card` shape (reusing the catalog's `CardResponse`). `CollectionSet` is
+the catalog `Set` shape (`code`, `name`, `released_at`, `icon_svg_uri`, `has_drops`, …)
+plus `owned_cards` + `owned_copies` (built by `collection::build_collection_sets`, which
+aggregates owned holdings per `set_code`, dresses each with its `card_sets` metadata —
+falling back to the card's own `set_name` when the set row is missing — and orders newest
+set first). The batch/import
 `POST`s, the `PUT`s, and the saved-source `DELETE` need CORS `POST`/`PUT`/`DELETE` (all in
 the allow-list alongside `GET`); in dev/prod the SPA is same-origin so CORS isn't
 exercised, but a direct cross-origin call needs it.
@@ -367,7 +375,7 @@ handlers/
   auth.rs          register / login / refresh / logout / me
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store
   catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history / other printings
-  collection.rs    authenticated per-user collection: list (paginate) / summary / get + set (PUT upsert, both-zero deletes) one card's owned counts / batch owned counts (POST .../owned, for browse-grid badges); import (one-off URL, chosen mode) + CSV upload (POST .../import/csv, synchronous, body-limited) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
+  collection.rs    authenticated per-user collection: list (paginate, optional `?set` scope) / summary (optional `?set` scope) / owned sets (`.../sets`, per-set landing tiles via build_collection_sets) / get + set (PUT upsert, both-zero deletes) one card's owned counts / batch owned counts (POST .../owned, for browse-grid badges); import (one-off URL, chosen mode) + CSV upload (POST .../import/csv, synchronous, body-limited) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
   health.rs        health
 ```
@@ -413,10 +421,10 @@ lib/mana.ts        parseManaText(): split card text into plain-text runs + recog
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
 components/         UserMenu (profile dropdown), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards and Collection → /collection dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them; both game-dropdowns from the cached registry, Collection prompts signed-out visitors to sign in on the per-game view)
-components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid (optional owned-count badges via `ownership` map), SetTile, CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: OwnedCountBadge (shared total/foil chip overlay), CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save); ManaSymbols (renders card text with `{…}` mana/cost symbols as mana-font icons — mana cost, colour identity, oracle text)
-components/collection/  ImportCollectionDialog (reka dialog with two tabs: "Paste a link" — an Archidekt URL/id, pick a reconcile mode incl. smart, optionally save the link with a smart re-sync toggle — or "Upload a CSV" — an exported Archidekt CSV file, which names the three required columns and reconciles synchronously; both show an import summary) — mounted on GameCollectionView alongside a "Re-sync" button (labelled "Smart re-sync" when the saved link opted into smart)
-composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useOwnedCounts [browse-grid badges] + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useCardSearch, …
-views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)
+components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot), CardGrid (optional owned-count badges via `ownership` map), SetTile (optional `to` link override + `ownedCount`, reused for the collection's per-set landing), CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: OwnedCountBadge (shared total/foil chip overlay), CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save); ManaSymbols (renders card text with `{…}` mana/cost symbols as mana-font icons — mana cost, colour identity, oracle text)
+components/collection/  ImportCollectionDialog (reka dialog with two tabs: "Paste a link" — an Archidekt URL/id, pick a reconcile mode incl. smart, optionally save the link with a smart re-sync toggle — or "Upload a CSV" — an exported Archidekt CSV file, which names the three required columns and reconciles synchronously; both show an import summary) — mounted on GameCollectionView alongside a "Re-sync" button (labelled "Smart re-sync" when the saved link opted into smart); CollectionSignInPrompt (shared signed-out prompt on the public collection pages, preserving ?redirect)
+composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery [optional set scope] / Summary [optional set scope] / Sets [per-set landing] / Entry + useOwnedCounts [browse-grid badges] + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useCardSearch, …
+views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game — the per-set landing: owned-set tiles + "All cards", mirrors GameView), CollectionBrowseView (/collection/:game/cards + /collection/:game/sets/:code — the owned-card grids, all or set-scoped)
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, tooltip, chart — unovis-backed)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```

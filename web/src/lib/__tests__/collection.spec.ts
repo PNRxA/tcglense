@@ -9,6 +9,8 @@ import {
   collectionSourcePath,
   collectionSyncPath,
   getCollectionOwned,
+  getCollectionSets,
+  getCollectionSummary,
   importCollectionCsv,
 } from '../api'
 
@@ -37,8 +39,49 @@ describe('collectionPath', () => {
     expect(collectionPath('mtg', { q: '', page: 2 })).toBe('/api/collection/mtg?page=2')
   })
 
+  it('appends and encodes the set scope', () => {
+    expect(collectionPath('mtg', { set: 'blb' })).toBe('/api/collection/mtg?set=blb')
+    expect(collectionPath('mtg', { q: 't:goblin', set: 'blb' })).toBe(
+      '/api/collection/mtg?q=t%3Agoblin&set=blb',
+    )
+  })
+
   it('encodes the game segment', () => {
     expect(collectionPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('getCollectionSets / getCollectionSummary', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function stubJson(payload: unknown) {
+    const fetchMock = vi.fn<(url: string, init?: unknown) => Promise<Response>>(async () => {
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('requests the per-set landing endpoint', async () => {
+    const fetchMock = stubJson({ data: [] })
+    await getCollectionSets('tok', 'mtg')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/sets')
+  })
+
+  it('scopes the summary to a set when given', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', 'blb')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/summary?set=blb')
+  })
+
+  it('omits the set param for the whole-collection summary', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/summary')
+    expect(url).not.toContain('set=')
   })
 })
 

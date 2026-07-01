@@ -31,6 +31,11 @@ async fn collection_requires_authentication() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(cache_control(&headers), Some("no-store"));
 
+    // The per-set landing is per-user too: unauthenticated -> 401, no-store.
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/sets")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
     let ids = sample_card_ids(&app, 1).await;
     let (status, _, _) = send(
         &app,
@@ -90,6 +95,37 @@ async fn set_get_and_remove_round_trip() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["unique_cards"], 1);
     assert_eq!(body["total_cards"], 4);
+
+    // The per-set landing lists the one set that card belongs to, with owned counts,
+    // and a set-scoped summary matches the whole-collection one (only one set owned).
+    let set_code = entry["card"]["set_code"].as_str().expect("card set_code").to_string();
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/sets", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let sets = body["data"].as_array().expect("sets array");
+    assert_eq!(sets.len(), 1, "one owned set");
+    assert_eq!(sets[0]["code"], set_code);
+    assert_eq!(sets[0]["owned_cards"], 1);
+    assert_eq!(sets[0]["owned_copies"], 4);
+    assert!(sets[0]["name"].as_str().is_some(), "set tile carries a name");
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/collection/mtg/summary?set={set_code}"), &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["unique_cards"], 1);
+    assert_eq!(body["total_cards"], 4);
+    // A set the user owns nothing in yields an empty scoped summary.
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/summary?set=zzz-nope", &token),
+    )
+    .await;
+    assert_eq!(body["unique_cards"], 0);
+    assert_eq!(body["total_cards"], 0);
 
     // Updating the same card upserts (no duplicate row).
     let (_, _, body) = send(

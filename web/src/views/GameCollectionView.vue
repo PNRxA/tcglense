@@ -1,25 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { LayoutGrid, Library, RefreshCw } from '@lucide/vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { LayoutGrid, RefreshCw } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
 import { Button, buttonVariants } from '@/components/ui/button'
-import CardPagination from '@/components/cards/CardPagination.vue'
-import CardSearchBox from '@/components/cards/CardSearchBox.vue'
-import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
-import CardSortMenu from '@/components/cards/CardSortMenu.vue'
-import CollectionGrid from '@/components/cards/CollectionGrid.vue'
-import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
-import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
+import SetTile from '@/components/cards/SetTile.vue'
+import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
+import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import { useGameName } from '@/composables/useCatalog'
-import { useClampPage } from '@/composables/useClampPage'
-import { COLLECTION_DEFAULT_SORT, COLLECTION_SORT_OPTIONS } from '@/lib/cardSort'
 import {
-  COLLECTION_PAGE_SIZE,
   invalidateCollectionData,
-  useCollectionQuery,
+  useCollectionSetsQuery,
   useCollectionSourceQuery,
   useCollectionSummaryQuery,
   useImportJobQuery,
@@ -29,15 +21,16 @@ import { ApiError } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
+// The per-game collection landing: it mirrors the catalog's game view (a grid of set
+// tiles + a "View all cards" entry), but scoped to what the signed-in user owns — pick
+// a set to see just your cards from it, or "All cards" for the whole collection. The
+// header carries the value/count summary plus the import / re-sync controls; the actual
+// card grids live on CollectionBrowseView (`/collection/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
 
 const auth = useAuthStore()
-const route = useRoute()
-// After signing in / up, come back to this collection (both forms honour ?redirect).
-const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullPath } }))
-const registerTo = computed(() => ({ path: '/register', query: { redirect: route.fullPath } }))
 
 // Per-account page — kept out of search indexes.
 usePageMeta({
@@ -46,30 +39,11 @@ usePageMeta({
   noindex: true,
 })
 
-// Page, search and sort live in the URL query (like the catalog browse views), so
-// they survive opening a card and pressing Back and are shareable/reload-safe.
-// Switching games routes to a fresh path, which resets them.
-const { page, searchInput, query, sort } = useCardSearch(
-  COLLECTION_DEFAULT_SORT,
-  COLLECTION_SORT_OPTIONS.map((option) => option.value),
-)
-
-const collectionQuery = useCollectionQuery(game, page, query, sort)
 const summaryQuery = useCollectionSummaryQuery(game)
+const setsQuery = useCollectionSetsQuery(game)
 
-const entries = computed(() => collectionQuery.data.value?.data ?? [])
-const total = computed(() => collectionQuery.data.value?.total ?? 0)
 const summary = computed(() => summaryQuery.data.value)
-// A malformed search query comes back as 422; surface its message inline.
-const searchError = computed(() => searchErrorMessage(collectionQuery.error.value))
-
-// Keep the requested page within range as the collection shrinks (e.g. after
-// removing the last card on the final page).
-useClampPage(page, () => ({
-  ready: collectionQuery.isSuccess.value,
-  total: total.value,
-  pageSize: COLLECTION_PAGE_SIZE,
-}))
+const ownedSets = computed(() => setsQuery.data.value?.data ?? [])
 
 const totalValue = computed(() => {
   const raw = summary.value?.total_value_usd
@@ -84,13 +58,9 @@ const totalValue = computed(() => {
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 
 // Whether the collection is genuinely empty — decided by the whole-collection summary
-// (which no search filters), so a zero-match search or an in-flight refetch never makes
-// a non-empty collection look empty. Wait for the summary to load before deciding.
+// (so an in-flight sets refetch never makes a non-empty collection look empty). Wait for
+// the summary to load before deciding.
 const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasStats.value)
-
-// Show the search + sort controls whenever the collection has cards or a search is
-// active; a genuinely empty collection keeps the clean "add some cards" CTA instead.
-const showControls = computed(() => hasStats.value || !!query.value)
 
 // Import / sync from an external collection provider (Archidekt today).
 const qc = useQueryClient()
@@ -183,24 +153,7 @@ watch(
 
     <!-- Signed out: the collection routes are public, so rather than bouncing to the
          login page we prompt to sign in / sign up right here. -->
-    <div v-if="!auth.isAuthenticated" class="mx-auto max-w-md py-16 text-center">
-      <div class="bg-muted mx-auto flex size-12 items-center justify-center rounded-lg">
-        <Library class="size-6" aria-hidden="true" />
-      </div>
-      <h1 class="mt-4 text-2xl font-semibold tracking-tight">Sign in to view your collection</h1>
-      <p class="text-muted-foreground mt-2">
-        Track which {{ gameName }} cards you own and what they're worth. Sign in or create a free
-        account to start your collection.
-      </p>
-      <div class="mt-6 flex justify-center gap-3">
-        <RouterLink :to="loginTo" :class="buttonVariants({ variant: 'default' })">
-          Sign in
-        </RouterLink>
-        <RouterLink :to="registerTo" :class="buttonVariants({ variant: 'outline' })">
-          Create account
-        </RouterLink>
-      </div>
-    </div>
+    <CollectionSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" />
 
     <template v-else>
       <header class="mb-6">
@@ -242,33 +195,13 @@ watch(
         </p>
       </header>
 
-      <!-- Search + sort over the collection (same Scryfall syntax as the catalog).
-           Shown once the collection has cards, or while a search is active. -->
-      <template v-if="showControls">
-        <div class="bg-background/85 sticky top-0 z-30 -mx-4 border-b px-4 py-3 backdrop-blur">
-          <CardSearchBox
-            v-model="searchInput"
-            placeholder="Search your collection — name, c:r, t:goblin…"
-          />
-        </div>
-        <SearchSyntaxHint class="mt-2" />
-        <p v-if="query" class="text-muted-foreground mt-4 mb-6 text-sm">
-          <template v-if="collectionQuery.isFetching.value && !entries.length">Searching…</template>
-          <template v-else>
-            {{ total.toLocaleString() }} {{ total === 1 ? 'card' : 'cards' }} matching “{{ query }}”
-          </template>
-        </p>
-      </template>
-
-      <LoadingRow v-if="collectionQuery.isPending.value" label="Loading your collection…" />
-      <p v-else-if="collectionQuery.isError.value" class="text-destructive py-12">
-        {{ searchError ?? "Couldn't load your collection. Please retry." }}
+      <LoadingRow v-if="summaryQuery.isPending.value" label="Loading your collection…" />
+      <p v-else-if="summaryQuery.isError.value" class="text-destructive py-12">
+        Couldn't load your collection. Please retry.
       </p>
 
-      <!-- Genuinely-empty collection (no search active): prompt to add cards. Gated on
-           the summary, not the filtered list, so an in-flight search-clear never shows
-           this by mistake. -->
-      <div v-else-if="collectionIsEmpty && !query" class="py-16 text-center">
+      <!-- Genuinely-empty collection: prompt to add cards. -->
+      <div v-else-if="collectionIsEmpty" class="py-16 text-center">
         <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
         <RouterLink
           :to="`/cards/${game}/cards`"
@@ -280,23 +213,43 @@ watch(
         </RouterLink>
       </div>
 
-      <!-- A search that matched nothing in the collection. -->
-      <p v-else-if="!entries.length && query" class="text-muted-foreground py-12">
-        No cards in your collection match “{{ query }}”.
-      </p>
-
-      <!-- No entries yet but the collection isn't empty (e.g. refetching after clearing
-           a search): keep a loading affordance rather than flashing an empty state. -->
-      <LoadingRow v-else-if="!entries.length" label="Loading your collection…" />
-
+      <!-- Pick a set or view every owned card — mirrors the catalog's game view. -->
       <template v-else>
-        <div class="mb-4 flex justify-end gap-2">
-          <CardSizeMenu />
-          <CardSortMenu v-model="sort" :options="COLLECTION_SORT_OPTIONS" />
+        <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-xl font-semibold tracking-tight">
+            Sets you own
+            <!-- Only once the sets query has resolved, so we never flash "0 sets" next
+                 to the "Loading sets…" row when the summary lands first. -->
+            <span
+              v-if="setsQuery.isSuccess.value"
+              class="text-muted-foreground ml-1 text-sm font-normal"
+            >
+              {{ ownedSets.length }} {{ ownedSets.length === 1 ? 'set' : 'sets' }}
+            </span>
+          </h2>
+          <RouterLink
+            :to="`/collection/${game}/cards`"
+            :class="buttonVariants({ variant: 'default' })"
+          >
+            <LayoutGrid />
+            View all cards
+          </RouterLink>
         </div>
-        <CollectionGrid :game="game" :entries="entries" />
-        <div class="mt-10">
-          <CardPagination v-model:page="page" :page-size="COLLECTION_PAGE_SIZE" :total="total" />
+
+        <LoadingRow v-if="setsQuery.isPending.value" label="Loading sets…" />
+        <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
+          Couldn't load your sets. Please retry.
+        </p>
+        <!-- scroll-mt keeps a Tab-focused tile clear of the sticky top bar. -->
+        <div v-else class="grid items-start gap-3 [&_a]:scroll-mt-20 sm:grid-cols-2 lg:grid-cols-3">
+          <SetTile
+            v-for="ownedSet in ownedSets"
+            :key="ownedSet.code"
+            :game="game"
+            :set="ownedSet"
+            :to="`/collection/${game}/sets/${ownedSet.code}`"
+            :owned-count="ownedSet.owned_cards"
+          />
         </div>
       </template>
     </template>

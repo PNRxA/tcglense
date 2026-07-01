@@ -1,10 +1,11 @@
-import { computed, type Ref } from 'vue'
+import { computed, ref, type Ref } from 'vue'
 import { keepPreviousData, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import {
   deleteCollectionSource,
   getCollection,
   getCollectionEntry,
   getCollectionOwned,
+  getCollectionSets,
   getCollectionSource,
   getCollectionSummary,
   getImportJob,
@@ -18,6 +19,7 @@ import {
   type CollectionPage,
   type CollectionProvider,
   type CollectionQuantities,
+  type CollectionSet,
   type CollectionSource,
   type CollectionSummary,
   type ImportJob,
@@ -35,6 +37,8 @@ export function invalidateCollectionData(qc: QueryClient, game: string) {
   qc.invalidateQueries({ queryKey: ['collection', game] })
   qc.invalidateQueries({ queryKey: ['collection-summary', game] })
   qc.invalidateQueries({ queryKey: ['collection-entry', game] })
+  // Refresh the per-set landing tiles (ownership per set can change broadly).
+  qc.invalidateQueries({ queryKey: ['collection-sets', game] })
   // Refresh the browse-grid owned-count badges too (an import can change ownership broadly).
   qc.invalidateQueries({ queryKey: ['collection-owned', game] })
 }
@@ -56,24 +60,29 @@ export const COLLECTION_PAGE_SIZE = 60
 
 /** A page of the user's owned cards for a game. `page`, `query` and `sort` are
  * reactive: `query` is a Scryfall-style search (same syntax as the catalog) and
- * `sort` is a `field:dir` value (see `lib/cardSort`), both carried in the query key
- * so a change refetches. Disabled while signed out — the collection routes are
- * public, so a signed-out visitor lands here (and is prompted to sign in) without
- * triggering an auth call. */
+ * `sort` is a `field:dir` value (see `lib/cardSort`), all carried in the query key
+ * so a change refetches. An optional `set` ref scopes the list to one set (the per-set
+ * collection view), ANDed with the search. Disabled while signed out — the collection
+ * routes are public, so a signed-out visitor lands here (and is prompted to sign in)
+ * without triggering an auth call. */
 export function useCollectionQuery(
   game: Ref<string>,
   page: Ref<number>,
   query: Ref<string>,
   sort: Ref<string>,
+  set?: Ref<string | undefined>,
 ) {
   const auth = useAuthStore()
+  // Fall back to a stable "no scope" ref so the query key is well-formed either way.
+  const setCode = set ?? ref<string | undefined>(undefined)
   const options = {
-    queryKey: ['collection', game, query, sort, page],
+    queryKey: ['collection', game, setCode, query, sort, page],
     queryFn: (token: string) =>
       getCollection(token, game.value, {
         page: page.value,
         pageSize: COLLECTION_PAGE_SIZE,
         q: query.value || undefined,
+        set: setCode.value || undefined,
         ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
       }),
     // Keep the current grid visible while the next page loads (smoother paging).
@@ -83,16 +92,29 @@ export function useCollectionQuery(
   return useAuthedQuery<CollectionPage>(options)
 }
 
-/** Aggregate stats (unique cards, total copies, estimated value) for the collection.
- * Disabled while signed out (see `useCollectionQuery`). */
-export function useCollectionSummaryQuery(game: Ref<string>) {
+/** Aggregate stats (unique cards, total copies, estimated value) for the collection,
+ * optionally scoped to one set. Disabled while signed out (see `useCollectionQuery`). */
+export function useCollectionSummaryQuery(game: Ref<string>, set?: Ref<string | undefined>) {
   const auth = useAuthStore()
+  const setCode = set ?? ref<string | undefined>(undefined)
   const options = {
-    queryKey: ['collection-summary', game],
-    queryFn: (token: string) => getCollectionSummary(token, game.value),
+    queryKey: ['collection-summary', game, setCode],
+    queryFn: (token: string) => getCollectionSummary(token, game.value, setCode.value || undefined),
     enabled: computed(() => auth.isAuthenticated),
   }
   return useAuthedQuery<CollectionSummary>(options)
+}
+
+/** The sets the signed-in user owns cards in (newest set first) — the per-set
+ * collection landing. Disabled while signed out (see `useCollectionQuery`). */
+export function useCollectionSetsQuery(game: Ref<string>) {
+  const auth = useAuthStore()
+  const options = {
+    queryKey: ['collection-sets', game],
+    queryFn: (token: string) => getCollectionSets(token, game.value),
+    enabled: computed(() => auth.isAuthenticated),
+  }
+  return useAuthedQuery<{ data: CollectionSet[] }>(options)
 }
 
 /**
@@ -175,6 +197,8 @@ export function useSetCollectionEntryMutation() {
       qc.invalidateQueries({ queryKey: ['collection', vars.game] })
       qc.invalidateQueries({ queryKey: ['collection-summary', vars.game] })
       qc.invalidateQueries({ queryKey: ['collection-entry', vars.game, vars.id] })
+      // Refresh the per-set landing tiles (owned counts per set change on an edit).
+      qc.invalidateQueries({ queryKey: ['collection-sets', vars.game] })
       // Refresh the browse-grid badges so an edit shows next time a grid is viewed.
       qc.invalidateQueries({ queryKey: ['collection-owned', vars.game] })
     },
