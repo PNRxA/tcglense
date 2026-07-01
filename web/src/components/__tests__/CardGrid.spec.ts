@@ -47,10 +47,12 @@ function mountGrid(cards: Card[], ownership?: OwnedCountsMap) {
   })
 }
 
-// The badge chips carry a semantic `title` ("3 total" / "1 foil"); count the "total"
-// chips to know how many tiles got a badge without depending on styling classes.
+// The badge chips carry a semantic `aria-label` ("3 total" / "1 foil") — their tooltip
+// text lives in a portalled TooltipContent that only mounts on hover, so the label is
+// the stable hook. Count the "total" chips to know how many tiles got a badge without
+// depending on styling classes.
 function totalBadges(wrapper: ReturnType<typeof mountGrid>) {
-  return wrapper.findAll('span').filter((s) => (s.attributes('title') ?? '').endsWith('total'))
+  return wrapper.findAll('span').filter((s) => (s.attributes('aria-label') ?? '').endsWith('total'))
 }
 
 describe('CardGrid ownership badges', () => {
@@ -59,16 +61,16 @@ describe('CardGrid ownership badges', () => {
       a: { quantity: 2, foil_quantity: 1 },
     })
     // Owned card A: total is regular + foil (3), with a separate foil chip (1).
-    expect(wrapper.find('[title="3 total"]').exists()).toBe(true)
-    expect(wrapper.find('[title="1 foil"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="1 foil"]').exists()).toBe(true)
     // Unowned card B gets none, so exactly one tile carries a badge.
     expect(totalBadges(wrapper)).toHaveLength(1)
   })
 
   it('shows no foil chip for a card owned only in regular', () => {
     const wrapper = mountGrid([makeCard('a')], { a: { quantity: 3, foil_quantity: 0 } })
-    expect(wrapper.find('[title="3 total"]').exists()).toBe(true)
-    expect(wrapper.find('[title="0 foil"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="0 foil"]').exists()).toBe(false)
   })
 
   it('renders no badges when no ownership map is provided', () => {

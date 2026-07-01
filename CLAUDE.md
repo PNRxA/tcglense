@@ -388,7 +388,7 @@ components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), C
 components/collection/  ImportCollectionDialog (reka dialog: paste an Archidekt URL/id, pick a reconcile mode, optionally save the link; shows an import summary) — mounted on GameCollectionView alongside a "Re-sync" button
 composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery/Summary/Entry + useOwnedCounts [browse-grid badges] + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useCardSearch, …
 views/             LoginView, RegisterView, DashboardView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game)
-components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, chart — unovis-backed)
+components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, tooltip, chart — unovis-backed)
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```
 
