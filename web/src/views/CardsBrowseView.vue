@@ -52,7 +52,7 @@ const cardsQuery = useQuery({
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
 // Owned-count badges for signed-in users, overlaid on the grid below.
-const ownership = useOwnedCounts(game, cards)
+const { ownership } = useOwnedCounts(game, cards)
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
 

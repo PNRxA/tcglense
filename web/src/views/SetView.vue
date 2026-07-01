@@ -121,7 +121,7 @@ const dropTotal = computed(() => dropsQuery.data.value?.total ?? 0)
 const visibleCards = computed<Card[]>(() =>
   byDrop.value ? dropGroups.value.flatMap((drop) => drop.cards) : cards.value,
 )
-const ownership = useOwnedCounts(game, visibleCards)
+const { ownership } = useOwnedCounts(game, visibleCards)
 
 // The list's loading / error / empty state reads from whichever query drives the
 // current view. cardsQuery waits on the set list, so an as-yet-undecided drop set

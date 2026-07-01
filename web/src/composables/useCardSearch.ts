@@ -1,4 +1,4 @@
-import { onUnmounted, computed, ref, watch } from 'vue'
+import { onUnmounted, computed, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
 import { ApiError } from '@/lib/api'
 
@@ -40,8 +40,16 @@ function queriesEqual(a: LocationQueryRaw, b: LocationQuery): boolean {
  * into the existing query, so unrelated keys (a set view's `related`/`from`) are
  * preserved. `validSorts`, when given, clamps an unknown `?sort=` (e.g. a
  * hand-edited URL) back to the default rather than letting the API reject it.
+ *
+ * `defaultSort`/`validSorts` may be plain values or refs/getters: a view whose sort
+ * set depends on a mode (e.g. the collection view's owned vs. show-ghosts toggle,
+ * which swaps the collection sorts for the catalog ones) passes getters so the
+ * committed sort re-clamps to the active mode's default when the mode flips.
  */
-export function useCardSearch(defaultSort = '', validSorts?: readonly string[]) {
+export function useCardSearch(
+  defaultSort: MaybeRefOrGetter<string> = '',
+  validSorts?: MaybeRefOrGetter<readonly string[] | undefined>,
+) {
   const route = useRoute()
   const router = useRouter()
 
@@ -66,11 +74,12 @@ export function useCardSearch(defaultSort = '', validSorts?: readonly string[]) 
   const sort = computed({
     get: () => {
       const raw = readString(route.query.sort)
-      return raw && (!validSorts || validSorts.includes(raw)) ? raw : defaultSort
+      const valid = toValue(validSorts)
+      return raw && (!valid || valid.includes(raw)) ? raw : toValue(defaultSort)
     },
     // A new sort restarts paging — page 3 of the old order is meaningless in the new.
     set: (value) =>
-      patch({ sort: value && value !== defaultSort ? value : undefined, page: undefined }),
+      patch({ sort: value && value !== toValue(defaultSort) ? value : undefined, page: undefined }),
   })
 
   // The text box mirrors the committed query, debounced so we don't rewrite the URL
