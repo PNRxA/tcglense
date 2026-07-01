@@ -11,8 +11,18 @@ pub(crate) const MAX_PAGE_SIZE: u64 = 200;
 pub(crate) const DEFAULT_DROP_PAGE_SIZE: u64 = 20;
 pub(crate) const MAX_DROP_PAGE_SIZE: u64 = 100;
 
+/// A bare `{ "data": T }` wire envelope — the typed form of the handlers'
+/// `json!({ "data": ... })` responses, for endpoints that return a plain
+/// (non-paginated) payload rather than a [`Page`].
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub(crate) struct DataBody<T> {
+    pub data: T,
+}
+
 /// A page of results plus the cursor metadata the SPA needs to paginate.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub(crate) struct Page<T> {
     pub data: Vec<T>,
     pub page: u64,

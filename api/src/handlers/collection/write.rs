@@ -6,7 +6,8 @@ use axum::{
     extract::{Path, State},
 };
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set, SqlErr};
+use sea_orm::sea_query::OnConflict;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
 use crate::auth::extractor::AuthUser;
 use crate::entities::collection_item;
@@ -16,7 +17,7 @@ use crate::extract::JsonBody;
 use crate::handlers::shared::{load_card, require_game};
 use crate::state::AppState;
 
-use super::{CollectionQuantities, MAX_QUANTITY, SetQuantitiesRequest, find_row};
+use super::{CollectionQuantities, MAX_CARD_QUANTITY, SetQuantitiesRequest};
 
 /// `PUT /api/collection/{game}/cards/{id}` -> set the owned counts for one card
 /// (absolute values, not a delta). Both zero removes the card from the collection.
@@ -33,59 +34,50 @@ pub async fn set_collection_entry(
     let foil_quantity = validate_quantity(payload.foil_quantity, "foil_quantity")?;
     let card = load_card(&state, &game, &id).await?;
 
-    let existing = find_row(&state, user.id, &game, card.id).await?;
-    let now = Utc::now();
-
-    // Owning zero of both is "not in the collection": drop the row if present.
+    // Owning zero of both is "not in the collection": drop the row by key if present.
     if quantity == 0 && foil_quantity == 0 {
-        if let Some(row) = existing {
-            CollectionItem::delete_by_id(row.id)
-                .exec(&state.db)
-                .await?;
-        }
+        CollectionItem::delete_many()
+            .filter(collection_item::Column::UserId.eq(user.id))
+            .filter(collection_item::Column::Game.eq(game.as_str()))
+            .filter(collection_item::Column::CardId.eq(card.id))
+            .exec(&state.db)
+            .await?;
         return Ok(Json(CollectionQuantities {
             quantity: 0,
             foil_quantity: 0,
         }));
     }
 
-    match existing {
-        Some(row) => {
-            let mut active: collection_item::ActiveModel = row.into();
-            active.quantity = Set(quantity);
-            active.foil_quantity = Set(foil_quantity);
-            active.updated_at = Set(now);
-            active.update(&state.db).await?;
-        }
-        None => {
-            let active = collection_item::ActiveModel {
-                user_id: Set(user.id),
-                game: Set(game.clone()),
-                card_id: Set(card.id),
-                quantity: Set(quantity),
-                foil_quantity: Set(foil_quantity),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
-            };
-            // The unique (user, game, card) index is the real source of truth: two
-            // concurrent first-adds can both see `None`, so a unique violation means
-            // we lost the race — fall back to updating the row that won.
-            if let Err(err) = active.insert(&state.db).await {
-                if matches!(err.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
-                    if let Some(row) = find_row(&state, user.id, &game, card.id).await? {
-                        let mut active: collection_item::ActiveModel = row.into();
-                        active.quantity = Set(quantity);
-                        active.foil_quantity = Set(foil_quantity);
-                        active.updated_at = Set(now);
-                        active.update(&state.db).await?;
-                    }
-                } else {
-                    return Err(err.into());
-                }
-            }
-        }
-    }
+    let now = Utc::now();
+    let active = collection_item::ActiveModel {
+        user_id: Set(user.id),
+        game: Set(game.clone()),
+        card_id: Set(card.id),
+        quantity: Set(quantity),
+        foil_quantity: Set(foil_quantity),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    // Upsert on the unique (user, game, card) index so a concurrent first-add can't
+    // abort on a unique violation — the row is created or updated atomically either way.
+    // `created_at` stays out of the update set, so it's preserved when the row exists.
+    CollectionItem::insert(active)
+        .on_conflict(
+            OnConflict::columns([
+                collection_item::Column::UserId,
+                collection_item::Column::Game,
+                collection_item::Column::CardId,
+            ])
+            .update_columns([
+                collection_item::Column::Quantity,
+                collection_item::Column::FoilQuantity,
+                collection_item::Column::UpdatedAt,
+            ])
+            .to_owned(),
+        )
+        .exec(&state.db)
+        .await?;
 
     Ok(Json(CollectionQuantities {
         quantity,
@@ -99,9 +91,9 @@ pub(super) fn validate_quantity(value: i32, field: &str) -> Result<i32, AppError
             "{field} must not be negative"
         )));
     }
-    if value > MAX_QUANTITY {
+    if value > MAX_CARD_QUANTITY {
         return Err(AppError::Validation(format!(
-            "{field} must be at most {MAX_QUANTITY}"
+            "{field} must be at most {MAX_CARD_QUANTITY}"
         )));
     }
     Ok(value)

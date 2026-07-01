@@ -5,7 +5,7 @@ use sea_orm::entity::prelude::*;
 /// One row per `(game, card_id, as_of_date)` capturing the day's price snapshot for
 /// a card. Unlike the single, overwritten price snapshot on `cards`, these rows
 /// accumulate so the API can serve a price-over-time series for charting. Populated
-/// daily by `scryfall::ingest::snapshot_prices` (which reads the already-committed
+/// daily by `scryfall::price_history::snapshot_prices` (which reads the already-committed
 /// `cards` rows, so it runs on every sync tick regardless of the version gate).
 ///
 /// `Eq` is derivable — every column is an integer or string (prices are kept as the

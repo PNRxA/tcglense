@@ -5,26 +5,25 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import type { CardSet } from '@/lib/api'
+import { makeCardSet } from '@/test/fixtures'
 import { useSetGrouping } from '../useSetGrouping'
 
 // A main set (Bloomburrow) with one related sub-set (its Commander decks). findGroup
 // resolves both codes to this same group, which is all the scope nav needs.
-function makeSet(code: string, name: string, parent: string | null): CardSet {
-  return {
-    code,
-    name,
-    set_type: parent ? 'commander' : 'expansion',
-    released_at: '2024-08-01',
-    card_count: 100,
-    icon_svg_uri: null,
-    parent_set_code: parent,
-    has_drops: false,
-  }
-}
-
 const SETS: CardSet[] = [
-  makeSet('blb', 'Bloomburrow', null),
-  makeSet('blc', 'Bloomburrow Commander', 'blb'),
+  makeCardSet('blb', { name: 'Bloomburrow' }),
+  makeCardSet('blc', {
+    name: 'Bloomburrow Commander',
+    parent_set_code: 'blb',
+    set_type: 'commander',
+  }),
+  // A drop-grouped set (Secret Lair) with one related sub-set, for the by-drop tests.
+  makeCardSet('sld', { name: 'Secret Lair Drop', has_drops: true }),
+  makeCardSet('sls', {
+    name: 'Secret Lair Showdown',
+    parent_set_code: 'sld',
+    set_type: 'commander',
+  }),
 ]
 
 function makeRouter() {
@@ -98,6 +97,27 @@ describe('useSetGrouping', () => {
       { code: 'blb', name: 'Bloomburrow', label: 'Bloomburrow' },
       { code: 'blc', name: 'Bloomburrow Commander', label: 'Commander' },
     ])
+    // The bundle the views v-bind onto SetScopeBar mirrors those derivations (the
+    // origin falls back to the main set when there's no ?from).
+    expect(api.scopeBarProps.value).toEqual({
+      includeRelated: false,
+      isMainSet: false,
+      mainName: 'Bloomburrow',
+      relatedCount: 1,
+      setsWord: 'set',
+      memberOptions: api.memberOptions.value,
+      activeSetCode: 'blc',
+      originName: 'Bloomburrow',
+    })
+  })
+
+  it('stays inert for the unscoped collection view (empty code)', async () => {
+    // The collection's all-cards view passes code '' — it resolves to no group and no
+    // drops, so the scope bar and by-drop stay off without a scoped guard in the view.
+    const { api } = await start('/', '')
+    expect(api.hasRelated.value).toBe(false)
+    expect(api.hasDrops.value).toBe(false)
+    expect(api.byDrop.value).toBe(false)
   })
 
   it('remembers the origin set across a sub-set → view-all → view-single round-trip', async () => {
@@ -199,6 +219,51 @@ describe('useSetGrouping', () => {
     api.viewSingleSet('blb')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/collection/mtg/sets/blb')
+    expect(query(router).ghosts).toBe('1')
+  })
+
+  it('drives the by-drop view off hasDrops, ?view=all and the related scope', async () => {
+    // A drop-grouped set defaults to by-drop; a plain set never activates it.
+    const { router, api } = await start('/cards/mtg/sets/sld', 'sld')
+    expect(api.hasDrops.value).toBe(true)
+    expect(api.byDrop.value).toBe(true)
+
+    // ?view=all opts back into the flat grid.
+    await router.replace({ query: { view: 'all' } })
+    expect(api.byDrop.value).toBe(false)
+
+    // The related-sets view is itself a flat cross-set listing, so it suppresses by-drop.
+    await router.replace({ query: { related: '1' } })
+    expect(api.includeRelated.value).toBe(true)
+    expect(api.byDrop.value).toBe(false)
+  })
+
+  it('toggles the by-drop vs flat view, keeping search + sort and restarting paging', async () => {
+    const { router, api } = await start('/cards/mtg/sets/sld?q=elf&sort=name:desc&page=3', 'sld')
+    api.setDropView('all')
+    await flushPromises()
+    expect(query(router).view).toBe('all')
+    expect(query(router).q).toBe('elf')
+    expect(query(router).sort).toBe('name:desc')
+    expect(query(router).page).toBeUndefined()
+    expect(api.byDrop.value).toBe(false)
+
+    // Back to by-drop: ?view is shed (by-drop is the bare default).
+    api.setDropView('drops')
+    await flushPromises()
+    expect(query(router).view).toBeUndefined()
+    expect(query(router).q).toBe('elf')
+    expect(api.byDrop.value).toBe(true)
+  })
+
+  it('carries a preserved query key (ghosts) across the by-drop toggle', async () => {
+    const { router, api } = await start('/collection/mtg/sets/sld?ghosts=1', 'sld', {
+      basePath: '/collection',
+      preserveQuery: ['ghosts'],
+    })
+    api.setDropView('all')
+    await flushPromises()
+    expect(query(router).view).toBe('all')
     expect(query(router).ghosts).toBe('1')
   })
 })

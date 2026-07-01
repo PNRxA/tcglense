@@ -14,7 +14,7 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    ColumnTrait, DatabaseConnection, EntityTrait, Iterable, QueryFilter,
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
@@ -53,6 +53,38 @@ pub enum IngestError {
     Other(String),
 }
 
+/// Import lifecycle recorded in `ingest_state.status`. `put_state` is the only
+/// writer, and only ever records these three (a row is absent, not `"idle"`,
+/// before the first import).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum IngestStatus {
+    Running,
+    Complete,
+    Error,
+}
+
+impl IngestStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            IngestStatus::Running => "running",
+            IngestStatus::Complete => "complete",
+            IngestStatus::Error => "error",
+        }
+    }
+}
+
+/// Named fields for a `put_state` upsert. `Default` yields all-`None`/zero, so a
+/// call site sets only the fields it means to record via `..Default::default()`.
+#[derive(Default)]
+pub(super) struct IngestStateUpdate {
+    pub(super) source_updated_at: Option<String>,
+    pub(super) detail: Option<String>,
+    pub(super) sets_imported: i32,
+    pub(super) cards_imported: i32,
+    pub(super) started_at: Option<DateTimeUtc>,
+    pub(super) finished_at: Option<DateTimeUtc>,
+}
+
 /// Refresh MTG card data from Scryfall, recording status in `ingest_state`.
 ///
 /// On error the state row is best-effort marked `"error"` so the next boot
@@ -63,13 +95,12 @@ pub async fn refresh(db: &DatabaseConnection, client: &Client) -> Result<(), Ing
         Err(err) => {
             let _ = put_state(
                 db,
-                None,
-                "error",
-                Some(truncate(&err.to_string(), 500)),
-                0,
-                0,
-                None,
-                Some(Utc::now()),
+                IngestStatus::Error,
+                IngestStateUpdate {
+                    detail: Some(truncate(&err.to_string(), 500)),
+                    finished_at: Some(Utc::now()),
+                    ..Default::default()
+                },
             )
             .await;
             Err(err)
@@ -93,7 +124,7 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
         .one(db)
         .await?;
     if let Some(state) = &existing
-        && state.status == "complete"
+        && state.status == IngestStatus::Complete.as_str()
         && state.source_updated_at.as_deref() == Some(entry.updated_at.as_str())
     {
         tracing::info!(updated_at = %entry.updated_at, "scryfall {DATASET} already up to date");
@@ -112,13 +143,13 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
     );
     put_state(
         db,
-        Some(entry.updated_at.clone()),
-        "running",
-        Some("importing sets".into()),
-        0,
-        0,
-        Some(started),
-        None,
+        IngestStatus::Running,
+        IngestStateUpdate {
+            source_updated_at: Some(entry.updated_at.clone()),
+            detail: Some("importing sets".into()),
+            started_at: Some(started),
+            ..Default::default()
+        },
     )
     .await?;
 
@@ -132,13 +163,14 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
     let sets_imported = import_sets(db, &sets).await?;
     put_state(
         db,
-        Some(entry.updated_at.clone()),
-        "running",
-        Some("importing cards".into()),
-        sets_imported,
-        0,
-        Some(started),
-        None,
+        IngestStatus::Running,
+        IngestStateUpdate {
+            source_updated_at: Some(entry.updated_at.clone()),
+            detail: Some("importing cards".into()),
+            sets_imported,
+            started_at: Some(started),
+            ..Default::default()
+        },
     )
     .await?;
 
@@ -170,13 +202,15 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
     drop(progress);
     put_state(
         db,
-        Some(entry.updated_at.clone()),
-        "complete",
-        None,
-        sets_imported,
-        cards_imported,
-        Some(started),
-        Some(Utc::now()),
+        IngestStatus::Complete,
+        IngestStateUpdate {
+            source_updated_at: Some(entry.updated_at.clone()),
+            sets_imported,
+            cards_imported,
+            started_at: Some(started),
+            finished_at: Some(Utc::now()),
+            ..Default::default()
+        },
     )
     .await?;
     tracing::info!(
@@ -209,17 +243,17 @@ pub(super) async fn import_sets(
         CardSet::insert_many(chunk)
             .on_conflict(
                 OnConflict::columns([card_set::Column::Game, card_set::Column::Code])
-                    .update_columns([
-                        card_set::Column::Name,
-                        card_set::Column::SetType,
-                        card_set::Column::ReleasedAt,
-                        card_set::Column::CardCount,
-                        card_set::Column::Digital,
-                        card_set::Column::IconSvgUri,
-                        card_set::Column::ParentSetCode,
-                        card_set::Column::ExternalId,
-                        card_set::Column::UpdatedAt,
-                    ])
+                    // Update every provider-owned column — all but the
+                    // identity/conflict keys and created_at.
+                    .update_columns(card_set::Column::iter().filter(|c| {
+                        !matches!(
+                            c,
+                            card_set::Column::Id
+                                | card_set::Column::Game
+                                | card_set::Column::Code
+                                | card_set::Column::CreatedAt
+                        )
+                    }))
                     .to_owned(),
             )
             .exec_without_returning(db)
@@ -298,13 +332,15 @@ async fn import_cards(
                 batches_since_progress = 0;
                 let _ = put_state(
                     db,
-                    Some(updated_at.to_string()),
-                    "running",
-                    Some(format!("imported {total} cards")),
-                    sets_imported,
-                    total,
-                    Some(started),
-                    None,
+                    IngestStatus::Running,
+                    IngestStateUpdate {
+                        source_updated_at: Some(updated_at.to_string()),
+                        detail: Some(format!("imported {total} cards")),
+                        sets_imported,
+                        cards_imported: total,
+                        started_at: Some(started),
+                        ..Default::default()
+                    },
                 )
                 .await;
             }
@@ -337,70 +373,17 @@ pub(super) async fn flush_cards(
     Card::insert_many(batch)
         .on_conflict(
             OnConflict::columns([card::Column::Game, card::Column::ExternalId])
-                .update_columns([
-                    card::Column::OracleId,
-                    card::Column::Name,
-                    card::Column::SetCode,
-                    card::Column::SetName,
-                    card::Column::CollectorNumber,
-                    card::Column::CollectorNumberInt,
-                    card::Column::Rarity,
-                    card::Column::Lang,
-                    card::Column::ReleasedAt,
-                    card::Column::ManaCost,
-                    card::Column::Cmc,
-                    card::Column::TypeLine,
-                    card::Column::ColorIdentity,
-                    card::Column::Colors,
-                    card::Column::Layout,
-                    card::Column::OracleText,
-                    card::Column::Power,
-                    card::Column::Toughness,
-                    card::Column::Loyalty,
-                    card::Column::ImageSmall,
-                    card::Column::ImageNormal,
-                    card::Column::ImageLarge,
-                    card::Column::ImageArtCrop,
-                    card::Column::ImagePng,
-                    card::Column::CardFaces,
-                    card::Column::PriceUsd,
-                    card::Column::PriceUsdFoil,
-                    card::Column::PriceUsdEtched,
-                    card::Column::PriceEur,
-                    card::Column::PriceTix,
-                    card::Column::Keywords,
-                    card::Column::ProducedMana,
-                    card::Column::ColorIndicator,
-                    card::Column::Watermark,
-                    card::Column::FlavorText,
-                    card::Column::IllustrationId,
-                    card::Column::Artist,
-                    card::Column::ArtistIds,
-                    card::Column::BorderColor,
-                    card::Column::Frame,
-                    card::Column::FrameEffects,
-                    card::Column::SecurityStamp,
-                    card::Column::PromoTypes,
-                    card::Column::Finishes,
-                    card::Column::Defense,
-                    card::Column::Legalities,
-                    card::Column::FullArt,
-                    card::Column::Textless,
-                    card::Column::Oversized,
-                    card::Column::Promo,
-                    card::Column::Reprint,
-                    card::Column::Variation,
-                    card::Column::Booster,
-                    card::Column::StorySpotlight,
-                    card::Column::ContentWarning,
-                    card::Column::HighresImage,
-                    card::Column::Reserved,
-                    card::Column::GameChanger,
-                    card::Column::EdhrecRank,
-                    card::Column::PennyRank,
-                    card::Column::Digital,
-                    card::Column::UpdatedAt,
-                ])
+                // Update every provider-owned column — all but the
+                // identity/conflict keys and created_at.
+                .update_columns(card::Column::iter().filter(|c| {
+                    !matches!(
+                        c,
+                        card::Column::Id
+                            | card::Column::Game
+                            | card::Column::ExternalId
+                            | card::Column::CreatedAt
+                    )
+                }))
                 .to_owned(),
         )
         .exec_without_returning(db)
@@ -417,24 +400,28 @@ pub(super) fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Upsert the single `ingest_state` row for `(GAME, DATASET)`.
-#[allow(clippy::too_many_arguments)]
+/// Upsert the single `ingest_state` row for `(GAME, DATASET)`. `status` stays a
+/// required argument so `..Default::default()` on `update` can never silently
+/// drop it.
 pub(super) async fn put_state(
     db: &DatabaseConnection,
-    source_updated_at: Option<String>,
-    status: &str,
-    detail: Option<String>,
-    sets_imported: i32,
-    cards_imported: i32,
-    started_at: Option<DateTimeUtc>,
-    finished_at: Option<DateTimeUtc>,
+    status: IngestStatus,
+    update: IngestStateUpdate,
 ) -> Result<(), IngestError> {
+    let IngestStateUpdate {
+        source_updated_at,
+        detail,
+        sets_imported,
+        cards_imported,
+        started_at,
+        finished_at,
+    } = update;
     let model = ingest_state::ActiveModel {
         id: NotSet,
         game: Set(GAME.to_string()),
         dataset: Set(DATASET.to_string()),
         source_updated_at: Set(source_updated_at),
-        status: Set(status.to_string()),
+        status: Set(status.as_str().to_string()),
         detail: Set(detail),
         sets_imported: Set(sets_imported),
         cards_imported: Set(cards_imported),
@@ -444,15 +431,15 @@ pub(super) async fn put_state(
     IngestState::insert(model)
         .on_conflict(
             OnConflict::columns([ingest_state::Column::Game, ingest_state::Column::Dataset])
-                .update_columns([
-                    ingest_state::Column::SourceUpdatedAt,
-                    ingest_state::Column::Status,
-                    ingest_state::Column::Detail,
-                    ingest_state::Column::SetsImported,
-                    ingest_state::Column::CardsImported,
-                    ingest_state::Column::StartedAt,
-                    ingest_state::Column::FinishedAt,
-                ])
+                // Update every column but the identity/conflict keys (id/game/dataset).
+                .update_columns(ingest_state::Column::iter().filter(|c| {
+                    !matches!(
+                        c,
+                        ingest_state::Column::Id
+                            | ingest_state::Column::Game
+                            | ingest_state::Column::Dataset
+                    )
+                }))
                 .to_owned(),
         )
         .exec_without_returning(db)

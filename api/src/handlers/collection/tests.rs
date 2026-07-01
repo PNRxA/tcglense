@@ -1,6 +1,6 @@
 use super::*;
-use super::import::{dedupe_ids, parse_reconcile_mode};
-use super::read::{collection_query, summary};
+use super::import::parse_reconcile_mode;
+use super::read::{collection_query, dedupe_ids, summary};
 use super::sets::build_collection_sets;
 use super::write::validate_quantity;
 
@@ -166,7 +166,7 @@ fn validate_quantity_bounds() {
         Err(AppError::Validation(_))
     ));
     assert!(matches!(
-        validate_quantity(MAX_QUANTITY + 1, "foil_quantity"),
+        validate_quantity(MAX_CARD_QUANTITY + 1, "foil_quantity"),
         Err(AppError::Validation(_))
     ));
 }
@@ -174,76 +174,11 @@ fn validate_quantity_bounds() {
 /// A minimal `mtg` card row: only the fields the collection search/sort tests
 /// exercise (name, type line, USD price) are meaningful; the rest are defaulted.
 fn seed_card(id: i32, name: &str, type_line: &str, price_usd: Option<&str>) -> card::Model {
-    let ts = "2024-01-01T00:00:00Z"
-        .parse::<sea_orm::prelude::DateTimeUtc>()
-        .unwrap();
     card::Model {
-        id,
-        game: "mtg".into(),
-        external_id: format!("ext-{id}"),
-        oracle_id: None,
         name: name.into(),
-        set_code: "tst".into(),
-        set_name: "TST".into(),
-        collector_number: id.to_string(),
-        collector_number_int: Some(id),
-        rarity: None,
-        lang: "en".into(),
-        released_at: None,
-        mana_cost: None,
-        cmc: None,
         type_line: Some(type_line.into()),
-        color_identity: None,
-        colors: None,
-        layout: None,
-        oracle_text: None,
-        power: None,
-        toughness: None,
-        loyalty: None,
-        image_small: None,
-        image_normal: None,
-        image_large: None,
-        image_art_crop: None,
-        image_png: None,
-        card_faces: None,
         price_usd: price_usd.map(str::to_string),
-        price_usd_foil: None,
-        price_eur: None,
-        price_tix: None,
-        price_usd_etched: None,
-        keywords: None,
-        produced_mana: None,
-        color_indicator: None,
-        watermark: None,
-        flavor_text: None,
-        illustration_id: None,
-        artist: None,
-        artist_ids: None,
-        border_color: None,
-        frame: None,
-        frame_effects: None,
-        security_stamp: None,
-        promo_types: None,
-        finishes: None,
-        defense: None,
-        legalities: None,
-        full_art: None,
-        textless: None,
-        oversized: None,
-        promo: None,
-        reprint: None,
-        variation: None,
-        booster: None,
-        story_spotlight: None,
-        content_warning: None,
-        highres_image: None,
-        reserved: None,
-        game_changer: None,
-        edhrec_rank: None,
-        penny_rank: None,
-        digital: false,
-        created_at: ts,
-        updated_at: ts,
+        ..crate::test_support::card_model(id)
     }
 }
 
@@ -608,19 +543,12 @@ fn build_collection_sets_aggregates_dresses_and_orders() {
         c
     };
     let set_meta = |code: &str, name: &str, released: &str| card_set::Model {
-        id: 0,
-        game: "mtg".into(),
-        code: code.into(),
         name: name.into(),
         set_type: Some("expansion".into()),
         released_at: Some(released.into()),
         card_count: 100,
-        digital: false,
         icon_svg_uri: Some(format!("https://example.test/{code}.svg")),
-        parent_set_code: None,
-        external_id: None,
-        created_at: ts,
-        updated_at: ts,
+        ..crate::test_support::card_set_model(code)
     };
 
     let rows = vec![

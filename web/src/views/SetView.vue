@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { ArrowLeft } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
@@ -15,24 +14,24 @@ import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
+import {
+  CARD_PAGE_SIZE,
+  DROP_PAGE_SIZE,
+  useSetCardsQuery,
+  useSetDropsQuery,
+  useSetQuery,
+} from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useSetGrouping } from '@/composables/useSetGrouping'
-import { SET_DEFAULT_SORT, SET_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
-import { getSet, listSetCards, listSetDrops, type Card } from '@/lib/api'
+import { SET_DEFAULT_SORT, SET_SORT_OPTIONS } from '@/lib/cardSort'
+import { type Card } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
 const props = defineProps<{ game: string; code: string }>()
 const game = toRef(props, 'game')
 const code = toRef(props, 'code')
 
-const route = useRoute()
-const router = useRouter()
-
-const PAGE_SIZE = 60
-// The by-drop view paginates over *drops* (each a handful of cards), so it uses
-// a smaller page size than the flat card grid.
-const DROP_PAGE_SIZE = 20
 // Page, search and sort live in the URL query (alongside the related/from scope), so
 // they survive opening a card and pressing Back. Routing to a different set lands on
 // a fresh URL, so it starts clean.
@@ -42,28 +41,26 @@ const { page, searchInput, query, sort } = useCardSearch(
 )
 
 // Related-sub-set grouping + the "view all together" / "view just one set" scope
-// nav, all keyed off the (game-cached) full set list. `hasDrops` and `setsPending`
-// come from that same list, which the flat card fetch below gates on.
+// nav + the by-drop view, all keyed off the (game-cached) full set list.
+// `hasDrops`/`byDrop` and `setsPending` come from that same list, which the flat
+// card fetch below gates on — so a drop set is known up front (no flat-grid flash,
+// no throwaway fetch).
 const {
   group,
-  isMainSet,
   relatedCount,
   hasRelated,
   includeRelated,
-  memberOptions,
-  activeSetCode,
-  originName,
   hasDrops,
+  byDrop,
+  setsWord,
+  scopeBarProps,
   setsPending,
-  listState,
   setIncludeRelated,
   viewSingleSet,
+  setDropView,
 } = useSetGrouping(game, code)
 
-const setQuery = useQuery({
-  queryKey: ['set', game, code],
-  queryFn: () => getSet(game.value, code.value),
-})
+const setQuery = useSetQuery(game, code)
 
 const set = computed(() => setQuery.data.value)
 
@@ -76,41 +73,20 @@ usePageMeta({
   canonicalPath: () => `/cards/${game.value}/sets/${code.value}`,
 })
 
-// By-drop is the default for a drop-grouped set; ?view=all opts back into the flat
-// grid, and the related-sets view (?related=1) is itself a flat listing, so it
-// suppresses by-drop too. (`hasDrops` comes from the game-cached set list via
-// useSetGrouping, so it's known up front — no flat-grid flash, no throwaway fetch.)
-const byDrop = computed(() => hasDrops.value && route.query.view !== 'all' && !includeRelated.value)
-
-const cardsQuery = useQuery({
-  queryKey: ['set-cards', game, code, query, sort, page, includeRelated],
-  queryFn: () =>
-    listSetCards(game.value, code.value, {
-      q: query.value || undefined,
-      page: page.value,
-      pageSize: PAGE_SIZE,
-      includeRelated: includeRelated.value || undefined,
-      ...toSortParam(sort.value, SET_DEFAULT_SORT),
-    }),
+const cardsQuery = useSetCardsQuery(game, code, {
+  page,
+  query,
+  sort,
+  defaultSort: SET_DEFAULT_SORT,
+  includeRelated,
   // Skip the flat list while the by-drop view is active, and wait for the set
   // list to settle first — it's what tells us whether this is a drop set (and
   // resolves the related grouping), so we never fire a throwaway flat request
   // that a cold-loaded by-drop / related link would immediately discard.
   enabled: computed(() => !byDrop.value && !setsPending.value),
-  placeholderData: keepPreviousData,
 })
 
-const dropsQuery = useQuery({
-  queryKey: ['set-drops', game, code, query, page],
-  queryFn: () =>
-    listSetDrops(game.value, code.value, {
-      q: query.value || undefined,
-      page: page.value,
-      pageSize: DROP_PAGE_SIZE,
-    }),
-  enabled: byDrop,
-  placeholderData: keepPreviousData,
-})
+const dropsQuery = useSetDropsQuery(game, code, { page, query, enabled: byDrop })
 
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
@@ -140,21 +116,11 @@ const isEmpty = computed(() =>
   byDrop.value ? dropGroups.value.length === 0 : cards.value.length === 0,
 )
 
-// Toggle the by-drop vs flat view of this set. Preserves the search + sort (like the
-// related-scope controls) but sheds the related/from scope and restarts paging (page
-// is dropped by listState) — the two views paginate over different units. ?view=all
-// marks the flat mode; by-drop is the bare default.
-function setView(mode: 'drops' | 'all') {
-  const next = listState()
-  if (mode === 'all') next.view = 'all'
-  router.replace({ query: next })
-}
-
 // The active view sets the pagination unit: drops (by-drop) or printings (flat).
 useClampPage(page, () =>
   byDrop.value
     ? { ready: dropsQuery.isSuccess.value, total: dropTotal.value, pageSize: DROP_PAGE_SIZE }
-    : { ready: cardsQuery.isSuccess.value, total: total.value, pageSize: PAGE_SIZE },
+    : { ready: cardsQuery.isSuccess.value, total: total.value, pageSize: CARD_PAGE_SIZE },
 )
 
 // When folding in related sets, the page is rooted at the group's main set.
@@ -163,7 +129,6 @@ const heading = computed(() =>
     ? group.value.main.name
     : (set.value?.name ?? code.value.toUpperCase()),
 )
-const setsWord = computed(() => (relatedCount.value === 1 ? 'set' : 'sets'))
 const countLabel = computed(() => {
   // By-drop mode counts drops; the flat view counts card printings.
   const [n, singular] = byDrop.value ? [dropTotal.value, 'drop'] : [total.value, 'printing']
@@ -220,14 +185,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
            sets is inherently a flat cross-set listing, so acting on it leaves by-drop. -->
       <SetScopeBar
         v-if="hasRelated"
-        :include-related="includeRelated"
-        :is-main-set="isMainSet"
-        :main-name="group?.main.name ?? ''"
-        :related-count="relatedCount"
-        :sets-word="setsWord"
-        :member-options="memberOptions"
-        :active-set-code="activeSetCode"
-        :origin-name="originName"
+        v-bind="scopeBarProps"
         @toggle="setIncludeRelated"
         @select="viewSingleSet"
       />
@@ -249,7 +207,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
              fixed drop order). The size menu shows in both views since the
              by-drop sections are grids too. -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setView" />
+          <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setDropView" />
           <span v-else />
           <div class="flex gap-2">
             <CardSizeMenu />
@@ -271,7 +229,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         <template v-else>
           <CardGrid :game="game" :cards="cards" :ownership="ownership" />
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
+            <CardPagination v-model:page="page" :page-size="CARD_PAGE_SIZE" :total="total" />
           </div>
         </template>
       </template>

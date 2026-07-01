@@ -1,7 +1,10 @@
 import type { ChartConfig } from '.'
-import { isClient } from '@vueuse/core'
 import { useId } from 'reka-ui'
 import { h, render } from 'vue'
+
+// No @vueuse dep here — vueuse's exact isClient definition inlined (the guarded code
+// below calls document.createElement, so the document check matters).
+const isClient = typeof window !== 'undefined' && typeof document !== 'undefined'
 
 // Simple cache using a Map to store serialized object keys
 const cache = new Map<string, string>()

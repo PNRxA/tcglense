@@ -1,62 +1,31 @@
 import { request } from './client'
+import type {
+  CollectionProvider,
+  CollectionSource,
+  ImportJob,
+  ImportSummary,
+  ReconcileMode,
+} from './generated'
 
 // ---------- Import / sync from an external collection provider ----------
 //
 // A signed-in user can import their collection from an external service (Archidekt
 // today; Moxfield planned). The backend fetches server-side and reconciles into the
-// local collection, so the client only sends the provider + a URL/id + a mode.
+// local collection, so the client only sends the provider + a URL/id + a mode. The
+// wire types are generated from the API's Rust DTOs into `./generated` and
+// re-exported here.
 
-/** Collection providers we can import from. */
-export type CollectionProvider = 'archidekt'
+export type {
+  CollectionProvider,
+  CollectionSource,
+  ImportJob,
+  ImportSummary,
+  ReconcileMode,
+} from './generated'
 
-/**
- * How an import reconciles with the existing collection:
- * - `overwrite` — set matched cards to the imported counts; leave other cards alone.
- * - `replace` — mirror the import exactly (also removes owned cards not in the import).
- * - `merge` — add the imported counts on top of what's owned.
- * - `smart` — an incremental mirror: fetch most-recently-updated first and stop once a
- *   page already matches; updates recently-changed cards only and never removes cards.
- */
-export type ReconcileMode = 'overwrite' | 'replace' | 'merge' | 'smart'
-
-/** A background import/sync job's status (imports run async, throttled by the provider
- * rate limit, so the client polls this until a terminal status). */
-export interface ImportJob {
-  job_id: number
-  status: 'queued' | 'running' | 'complete' | 'error'
-  /** Present only when `status === 'complete'`. */
-  summary?: ImportSummary
-  /** Present only when `status === 'error'`. */
-  error?: string
-}
-
-/** The outcome of an import, for user feedback. */
-export interface ImportSummary {
-  provider: string
-  mode: ReconcileMode
-  total_rows: number
-  distinct_cards: number
-  matched_cards: number
-  unmatched_cards: number
-  unmatched_sample: string[]
-  regular_copies: number
-  foil_copies: number
-  removed_cards: number
-  /** `smart` mode only: whether the fetch stopped early on reaching already-synced cards. */
-  stopped_early: boolean
-}
-
-/** A saved external collection link for a game. */
-export interface CollectionSource {
-  provider: string
-  external_id: string
-  /** A canonical, user-facing URL for the collection on the provider. */
-  url: string
-  /** RFC3339 timestamp of the last successful sync, or null if never synced. */
-  last_synced_at: string | null
-  /** Whether a saved re-sync uses smart (incremental) sync rather than a full mirror. */
-  smart: boolean
-}
+// The request bodies stay hand-written: the wire `ImportRequest`/`SaveSourceRequest`
+// accept any `provider` string (validated server-side), while the client deliberately
+// narrows it to the known `CollectionProvider` union.
 
 export interface ImportCollectionBody {
   provider: CollectionProvider

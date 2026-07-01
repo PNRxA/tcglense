@@ -5,7 +5,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Card, OwnedCountsMap } from '@/lib/api'
-import CardGrid from '../cards/CardGrid.vue'
+import CardGrid from '../CardGrid.vue'
 import { useAuthStore } from '@/stores/auth'
 
 function makeCard(id: string): Card {

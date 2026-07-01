@@ -43,6 +43,7 @@ pub struct LoginRequest {
 
 /// Public-facing user shape (never includes the password hash).
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "User"))]
 pub struct UserResponse {
     pub id: i32,
     pub email: String,
@@ -62,6 +63,7 @@ impl From<user::Model> for UserResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AuthResponse {
     pub access_token: String,
     pub user: UserResponse,
@@ -70,6 +72,7 @@ pub struct AuthResponse {
 /// Body returned by `/api/auth/refresh` (the rotated refresh token rides in the
 /// `Set-Cookie` header, never in the JSON body).
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "RefreshResponse"))]
 pub struct AccessTokenResponse {
     pub access_token: String,
 }

@@ -1,6 +1,6 @@
 <!--
   Help shown under the catalog search boxes. The backend understands a
-  Scryfall-style query grammar (see api/src/scryfall/search.rs); this nudges users
+  Scryfall-style query grammar (see api/src/scryfall/search/); this nudges users
   toward it. Unsupported operators come back as a clear error message.
 -->
 <template>
