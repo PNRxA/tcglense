@@ -5,32 +5,41 @@ import type { AuthResponse, RefreshResponse, RegisterResponse, User } from './ge
 // re-exported here; the request payloads stay hand-written client types.
 export type { AuthResponse, RefreshResponse, RegisterResponse, User } from './generated'
 
+// `captcha_token` is the Cloudflare Turnstile token from the widget; optional
+// here because it's only produced/required when a Turnstile site key is set (the
+// server verifies it, and treats it as absent when CAPTCHA is disabled).
 export interface RegisterPayload {
   email: string
   password: string
   display_name?: string | null
+  captcha_token?: string
 }
 
 export interface LoginPayload {
   email: string
   password: string
+  captcha_token?: string
 }
 
 export interface VerifyEmailPayload {
   token: string
+  captcha_token?: string
 }
 
 export interface ResendVerificationPayload {
   email: string
+  captcha_token?: string
 }
 
 export interface ForgotPasswordPayload {
   email: string
+  captcha_token?: string
 }
 
 export interface ResetPasswordPayload {
   token: string
   password: string
+  captcha_token?: string
 }
 
 // Registration mints no session (the account must verify its email first), so it

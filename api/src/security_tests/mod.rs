@@ -15,6 +15,7 @@
 mod harness;
 
 mod caching;
+mod captcha;
 mod collection;
 mod collection_import;
 mod cors;
@@ -22,6 +23,7 @@ mod email_verification;
 mod login;
 mod pagination;
 mod password_reset;
+mod rate_limit;
 mod refresh;
 mod registration;
 mod request_body;

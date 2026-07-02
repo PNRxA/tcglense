@@ -20,6 +20,7 @@ use crate::{
         password::{hash_password, verify_password},
         refresh::{issue_refresh_token, revoke_all_for_user, revoke_one, rotate},
     },
+    client_ip::ClientIp,
     email::{OutgoingEmail, password_reset_email, verification_email},
     entities::{prelude::User, user},
     error::AppError,
@@ -35,33 +36,47 @@ pub struct RegisterRequest {
     pub password: String,
     #[serde(default)]
     pub display_name: Option<String>,
+    /// CAPTCHA token from the browser widget (required only when a verifier is
+    /// configured; absent/ignored in dev/test where CAPTCHA is disabled).
+    #[serde(default)]
+    pub captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+    #[serde(default)]
+    pub captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyEmailRequest {
     pub token: String,
+    #[serde(default)]
+    pub captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ResendVerificationRequest {
     pub email: String,
+    #[serde(default)]
+    pub captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ForgotPasswordRequest {
     pub email: String,
+    #[serde(default)]
+    pub captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ResetPasswordRequest {
     pub token: String,
     pub password: String,
+    #[serde(default)]
+    pub captcha_token: Option<String>,
 }
 
 /// Public-facing user shape (never includes the password hash).
@@ -175,8 +190,13 @@ fn spawn_send(state: &AppState, email: OutgoingEmail) {
 /// `POST /api/auth/register`
 pub async fn register(
     State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
     // Canonicalise the email so look-alike casings map to a single account.
     let email = payload.email.trim().to_lowercase();
     validate_email(&email)?;
@@ -242,9 +262,14 @@ pub async fn register(
 /// `POST /api/auth/login`
 pub async fn login(
     State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
     jar: CookieJar,
     JsonBody(payload): JsonBody<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
     let email = payload.email.trim().to_lowercase();
 
     // Cap the password length here too (register enforces it, but login must as
@@ -366,8 +391,13 @@ pub async fn me(AuthUser(user): AuthUser) -> Result<impl IntoResponse, AppError>
 /// the account verified. Mints no session — the user signs in normally after.
 pub async fn verify_email(
     State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
     JsonBody(payload): JsonBody<VerifyEmailRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
     let row = consume(&state.db, &payload.token, EmailTokenPurpose::VerifyEmail).await?;
 
     let user = User::find_by_id(row.user_id)
@@ -394,8 +424,13 @@ pub async fn verify_email(
 /// path — the endpoint reveals nothing about which accounts exist.
 pub async fn resend_verification(
     State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
     JsonBody(payload): JsonBody<ResendVerificationRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
     let email = payload.email.trim().to_lowercase();
     validate_email(&email)?;
 
@@ -424,8 +459,13 @@ pub async fn resend_verification(
 /// [`reset_password`]), so losing a password never strands an account.
 pub async fn forgot_password(
     State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
     JsonBody(payload): JsonBody<ForgotPasswordRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
     let email = payload.email.trim().to_lowercase();
     validate_email(&email)?;
 
@@ -453,8 +493,13 @@ pub async fn forgot_password(
 /// stamps a still-unverified account verified.
 pub async fn reset_password(
     State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
     JsonBody(payload): JsonBody<ResetPasswordRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
     validate_password(&payload.password)?;
 
     let row = consume(&state.db, &payload.token, EmailTokenPurpose::ResetPassword).await?;

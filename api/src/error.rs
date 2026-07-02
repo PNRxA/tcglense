@@ -52,6 +52,11 @@ pub enum AppError {
     #[error("{0}")]
     BadGateway(String),
 
+    /// Too many requests from the client -> 429. Used by the auth rate limiter
+    /// (which also sets `Retry-After` on its response directly).
+    #[error("{0}")]
+    TooManyRequests(String),
+
     /// The server is temporarily overloaded and declines the request -> 503 Service
     /// Unavailable (e.g. too many collection imports queued).
     #[error("{0}")]
@@ -80,6 +85,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg.clone()),
             AppError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             AppError::Internal(detail) => {
                 // Log the real detail server-side, return a generic message.

@@ -11,6 +11,7 @@ use tower::ServiceExt;
 
 use crate::{
     build_router,
+    captcha::Captcha,
     config::Config,
     email::{Emailer, Mailbox, OutgoingEmail},
     state::AppState,
@@ -97,6 +98,36 @@ pub(super) async fn test_app_with_catalog() -> TestApp {
     test_app_over(state)
 }
 
+/// An app that trusts `X-Forwarded-For`, so a test can drive the per-IP rate
+/// limiter (the in-process harness has no socket peer) by setting that header.
+pub(super) async fn test_app_trusting_proxy() -> TestApp {
+    let db = crate::test_support::migrated_memory_db().await;
+    let config = Config {
+        data_dir: std::env::temp_dir().join("tcglense-security-tests"),
+        public_site_url: "https://sitemap.test".to_string(),
+        trust_proxy_headers: true,
+        ..crate::test_support::test_config()
+    };
+    let http = reqwest::Client::builder().build().expect("build http client");
+    let image_http = reqwest::Client::builder().build().expect("build image client");
+    let state = AppState::new(config, db, http, image_http).expect("assemble test app state");
+    test_app_over(state)
+}
+
+/// An app whose CAPTCHA verifier is enabled and expects the fixed token
+/// `"good-token"`, so a test can exercise the token-required path with no network.
+pub(super) async fn test_app_requiring_captcha() -> TestApp {
+    let mut state = test_state().await;
+    let mailbox = Mailbox::default();
+    state.email = Arc::new(Emailer::Capture(mailbox.clone()));
+    state.captcha = Arc::new(Captcha::ExpectToken("good-token"));
+    TestApp {
+        router: build_router(state.clone()),
+        state,
+        mailbox,
+    }
+}
+
 /// Drive one request through the router (clones it, since `oneshot` consumes the
 /// service) and return `(status, headers, json_body)`. A non-JSON / empty body
 /// comes back as `Value::Null`.
@@ -158,6 +189,18 @@ pub(super) fn json_post(uri: &str, body: Value) -> Request<Body> {
         .method("POST")
         .uri(uri)
         .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// A JSON POST carrying an `X-Forwarded-For`, for driving the per-IP rate limiter
+/// (only honoured by an app built via [`test_app_trusting_proxy`]).
+pub(super) fn json_post_from(uri: &str, forwarded_for: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", forwarded_for)
         .body(Body::from(body.to_string()))
         .unwrap()
 }

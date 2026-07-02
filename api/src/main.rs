@@ -1,5 +1,7 @@
 mod auth;
+mod captcha;
 mod catalog;
+mod client_ip;
 mod collection_import;
 mod config;
 mod db;
@@ -9,6 +11,7 @@ mod error;
 mod extract;
 mod handlers;
 mod migrator;
+mod ratelimit;
 mod router;
 mod scryfall;
 mod state;
@@ -19,6 +22,7 @@ mod security_tests;
 #[cfg(test)]
 mod test_support;
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use sea_orm::Database;
@@ -117,5 +121,13 @@ async fn main() {
 
     tracing::info!("TCGLense API listening on http://{host}:{port}");
 
-    axum::serve(listener, app).await.expect("server error");
+    // `into_make_service_with_connect_info` surfaces the socket peer address as a
+    // `ConnectInfo<SocketAddr>` extension so the auth rate limiter can key on the
+    // client IP (see `ratelimit` / `client_ip`).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }
