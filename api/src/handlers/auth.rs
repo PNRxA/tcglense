@@ -107,12 +107,16 @@ pub struct AuthResponse {
     pub user: UserResponse,
 }
 
-/// Body returned by `/api/auth/register`: the created account, with NO session —
-/// signing in requires the emailed verification link first.
+/// Body returned by `/api/auth/register`: the created account. Normally there is
+/// **no session** — signing in requires the emailed verification link first — so
+/// `access_token` is `null`. But when email verification is bypassed (no email
+/// provider configured — dev), the account is created already-verified and signed
+/// in, and `access_token` carries the session (with the refresh cookie set).
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct RegisterResponse {
     pub user: UserResponse,
+    pub access_token: Option<String>,
 }
 
 /// Body returned by `/api/auth/refresh` (the rotated refresh token rides in the
@@ -191,6 +195,7 @@ fn spawn_send(state: &AppState, email: OutgoingEmail) {
 pub async fn register(
     State(state): State<AppState>,
     ClientIp(client_ip): ClientIp,
+    jar: CookieJar,
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     state
@@ -238,24 +243,48 @@ pub async fn register(
             return Err(err.into());
         }
     };
-    // Registration does NOT start a session: the account must prove it owns the
-    // address (the emailed verification link) before login accepts it.
-    let token = issue(&state.db, model.id, EmailTokenPurpose::VerifyEmail).await?;
-    let link = spa_link(&state, "verify-email", &token);
-    // Await the send so the mail is normally on its way before we answer, but
-    // don't fail the registration over it: the account exists either way, and
-    // the sign-in screen offers a fresh link (resend-verification) at any time.
-    if let Err(err) = state
-        .email
-        .send(verification_email(&model.email, &link))
-        .await
-    {
-        tracing::error!(error = %err, "failed to send the verification email");
-    }
+    // The response's user shape is verification-agnostic, so build it up front
+    // (the DB row may be stamped verified just below).
+    let user = UserResponse::from(model.clone());
+
+    let (access_token, jar) = if state.email.is_enabled() {
+        // Verify-first: registration does NOT start a session — the account must
+        // prove it owns the address (the emailed link) before login accepts it.
+        let token = issue(&state.db, model.id, EmailTokenPurpose::VerifyEmail).await?;
+        let link = spa_link(&state, "verify-email", &token);
+        // Await the send so the mail is normally on its way before we answer, but
+        // don't fail the registration over it: the account exists either way, and
+        // the sign-in screen offers a fresh link (resend-verification) at any time.
+        if let Err(err) = state
+            .email
+            .send(verification_email(&model.email, &link))
+            .await
+        {
+            tracing::error!(error = %err, "failed to send the verification email");
+        }
+        (None, jar)
+    } else {
+        // No email provider (dev): there is no way to deliver a verification link,
+        // so bypass verification entirely — mark the account verified and sign it
+        // in immediately, so a dev can register and use it in one step.
+        user::ActiveModel {
+            id: Set(model.id),
+            email_verified_at: Set(Some(now)),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .update(&state.db)
+        .await?;
+        let access = encode_token(&model, &state.config)?;
+        let refresh =
+            issue_refresh_token(&state.db, model.id, state.config.refresh_token_expiry_days).await?;
+        (Some(access), jar.add(build_refresh_cookie(refresh, &state.config)))
+    };
 
     Ok((
         StatusCode::CREATED,
-        Json(RegisterResponse { user: model.into() }),
+        jar,
+        Json(RegisterResponse { user, access_token }),
     ))
 }
 
@@ -305,7 +334,9 @@ pub async fn login(
     // Checked only AFTER the password verified, so the distinct error is never
     // an account-enumeration oracle (the generic-401 timing paths above are
     // untouched); 403 (not 401) so the SPA's auto-refresh never fires on it.
-    if user.email_verified_at.is_none() {
+    // Only enforced when an email provider is configured: with no provider (dev)
+    // there's no way to verify, so verification is bypassed (see `register`).
+    if user.email_verified_at.is_none() && state.email.is_enabled() {
         return Err(AppError::Forbidden("email not verified".to_string()));
     }
 

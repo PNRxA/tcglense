@@ -114,6 +114,20 @@ pub(super) async fn test_app_trusting_proxy() -> TestApp {
     test_app_over(state)
 }
 
+/// An app with **no email provider** (`Emailer::Disabled`) — the dev posture in
+/// which email verification is bypassed: register signs you in immediately and
+/// login doesn't gate on verification.
+pub(super) async fn test_app_email_disabled() -> TestApp {
+    let mut state = test_state().await;
+    state.email = Arc::new(Emailer::Disabled);
+    TestApp {
+        router: build_router(state.clone()),
+        state,
+        // Nothing is ever sent in this mode; an empty mailbox suffices.
+        mailbox: Mailbox::default(),
+    }
+}
+
 /// An app whose CAPTCHA verifier is enabled and expects the fixed token
 /// `"good-token"`, so a test can exercise the token-required path with no network.
 pub(super) async fn test_app_requiring_captcha() -> TestApp {

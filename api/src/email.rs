@@ -97,6 +97,16 @@ impl Emailer {
         }
     }
 
+    /// Whether a real email provider is configured. When `false` (no
+    /// `RESEND_API_KEY` — dev), the auth flow **bypasses email verification**:
+    /// registration completes the account already-verified and signed in, and
+    /// login doesn't gate on verification, since no verification link can be
+    /// delivered. `Capture` (tests) counts as enabled, so the test suites still
+    /// exercise the real verify-first flow.
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, Emailer::Disabled)
+    }
+
     /// Deliver one message. Callers on anti-enumeration endpoints must log and
     /// swallow the error (a surfaced failure would reveal that a send was
     /// attempted, i.e. that the account exists); see `handlers::auth`.
