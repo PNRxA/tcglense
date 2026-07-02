@@ -2,7 +2,10 @@
 import type { User } from "./User";
 
 /**
- * Body returned by `/api/auth/register`: the created account, with NO session —
- * signing in requires the emailed verification link first.
+ * Body returned by `/api/auth/register`: the created account. Normally there is
+ * **no session** — signing in requires the emailed verification link first — so
+ * `access_token` is `null`. But when email verification is bypassed (no email
+ * provider configured — dev), the account is created already-verified and signed
+ * in, and `access_token` carries the session (with the refresh cookie set).
  */
-export type RegisterResponse = { user: User, };
+export type RegisterResponse = { user: User, access_token: string | null, };

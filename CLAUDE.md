@@ -136,15 +136,23 @@ success or error — is JSON. Errors are always `{ "error": string }`.
 server-side as a SHA-256 hash).
 
 **Verify-first registration:** register creates the account and emails a
-verification link, but mints **no session**; login answers `403 "email not
-verified"` (only after the password matched, so it's no enumeration oracle) until
-the link is used. Pre-feature accounts were grandfathered as verified by the
-migration.
+verification link, but mints **no session** (`access_token: null`); login answers
+`403 "email not verified"` (only after the password matched, so it's no
+enumeration oracle) until the link is used. Pre-feature accounts were grandfathered
+as verified by the migration.
+
+**No-email dev bypass:** when **no email provider is configured** (no
+`RESEND_API_KEY` — `Emailer::is_enabled()` is false), verification can't be
+delivered, so it's **bypassed**: register marks the account verified and returns a
+session (`access_token` set + refresh cookie — the SPA signs straight in), and
+login's `403` gate is skipped. This is the dev/CI posture (the e2e suite runs this
+way); the test suites use a mail *sink* (which counts as enabled) so they still
+exercise the real verify-first flow.
 
 | Method & path | Body | Success | Notes |
 |---------------|------|---------|-------|
-| `POST /api/auth/register` | `{ email, password, display_name? }` | `201 { user }` (**no session**) + verification email | `409` taken · `422` invalid |
-| `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic) · `403 "email not verified"` |
+| `POST /api/auth/register` | `{ email, password, display_name? }` | `201 { user, access_token }` — `access_token` is `null` (verify-first) unless email is disabled (dev bypass: signed in + refresh cookie) | `409` taken · `422` invalid |
+| `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic) · `403 "email not verified"` (skipped when email is disabled) |
 | `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/revoked (clears cookie) |
 | `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes token + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
@@ -486,7 +494,7 @@ scryfall/          MTG provider (the first game)
   sld_drops.json   committed snapshot of Scryfall's curated Secret Lair drop titles + collector numbers (regenerate via scripts/gen-sld-drops.mjs)
   dummy/           seed(): deterministic offline dummy catalog (no network/images) reusing ingest's map/upsert path — catalog.rs (the fabricated sets/cards), prices.rs (the year of per-card seeded random-walk price history)
 handlers/
-  auth.rs          register (no session; sends the verification email) / login (403 gate on unverified email) / refresh / logout / me / verify-email / resend-verification / forgot-password / reset-password (the lookup-by-email pair answer generically + send off the request path). Each mutation endpoint takes a ClientIp + verifies the request's `captcha_token` (state.captcha) before any work; per-IP rate limiting is applied as router middleware, not here
+  auth.rs          register (verify-first: no session + sends the verification email; OR, when email is disabled, marks verified + returns a session — the dev bypass) / login (403 gate on unverified email, skipped when email is disabled) / refresh / logout / me / verify-email / resend-verification / forgot-password / reset-password (the lookup-by-email pair answer generically + send off the request path). Each mutation endpoint takes a ClientIp + verifies the request's `captcha_token` (state.captcha) before any work; per-IP rate limiting is applied as router middleware, not here
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store; plus conditional_request_layer (weak ETag + If-None-Match → 304) on cacheable public reads
   shared/          helpers both catalog + collection handlers use (dependencies only flow *into* shared): dto.rs (CardResponse + faces/prices — the ts-rs-exported card wire shape), pagination.rs (Page<T>/DataBody envelopes, page/query clamping), lookup.rs (game/set/card resolution + group_set_codes), sort.rs (the card-list sort/dir vocabulary), grouping.rs (generic Secret Lair drop grouping + by-drop pagination), search.rs (?q → sea_orm::Condition), valuation.rs (holdings → USD cents → 2-dp string)
   catalog/         public catalog endpoints, one file per concern: status.rs (games list + import status), sets.rs (set list/detail/icon + set cards incl. include_related + by-drop), cards.rs (all-cards list / card detail / other printings), prices.rs (price history + ?range downsampling), image.rs (image proxy); mod.rs holds the shared list params
@@ -698,11 +706,13 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   10s per-request timeout; there is no retry/queue — a failed registration send is
   logged and the user recovers via resend-verification, and the anti-enumeration
   endpoints (resend/forgot) **spawn** their sends off the request path and swallow
-  failures (a surfaced 502 would only fire for existing accounts). Disabled mode
-  (no `RESEND_API_KEY`) logs the full message including the tokened link — by
-  design for dev (the only way to complete the flow offline), so don't run prod
-  without a key. `onboarding@resend.dev` (the default From) only delivers to the
-  Resend account owner's address; production needs a verified domain + `EMAIL_FROM`.
+  failures (a surfaced 502 would only fire for existing accounts). **Disabled mode
+  (no `RESEND_API_KEY`) bypasses email verification entirely** (register verifies +
+  signs in; login skips the gate — see the auth contract) — the intended dev/CI
+  posture, so don't run prod without a key (an unverified-email deploy would let
+  anyone sign in with an unowned address). `onboarding@resend.dev` (the default
+  From) only delivers to the Resend account owner's address; production needs a
+  verified domain + `EMAIL_FROM`.
 - **Collection import (Archidekt / Moxfield):** the import/sync endpoints fetch a public
   collection **server-side** and reconcile it. Archidekt caps requests (≈20/min) and
   pages 25 rows at a time with no page-size override, so a large collection takes minutes.

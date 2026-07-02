@@ -2,18 +2,22 @@
  * Security end-to-end tests.
  *
  * These exercise the real auth stack through the browser and the HTTP API: the
- * verify-first registration contract (no session until the emailed link is
- * used), the httpOnly + SameSite refresh cookie, generic (non-enumerable) login
- * failures, bearer-protected routes, malformed-body handling, and that the
- * access token never reaches JS-readable storage.
+ * httpOnly + SameSite refresh cookie, generic (non-enumerable) login failures,
+ * bearer-protected routes, malformed-body handling, and that the access token
+ * never reaches JS-readable storage.
+ *
+ * NOTE on email verification: the CI job runs the API with **no email provider**,
+ * so email verification is bypassed (register verifies + signs in immediately).
+ * These tests therefore assert the bypass behaviour; the verify-first flow (the
+ * check-your-email step, the 403 login gate, resend) is enforced only when a
+ * provider is configured and is covered by the Rust security tests (which use a
+ * mail sink). Dummy mode also seeds a verified dev account (see api/src/tasks.rs)
+ * used by the session flows.
  *
  * They need the backend running. The CI e2e job starts the API with the offline
  * dummy catalog (SEED_DUMMY_DATA) and waits for /api/health before invoking
- * Playwright, so these run there. Dummy mode also seeds a verified dev account
- * (see api/src/tasks.rs) — an offline run can't receive verification email, so
- * the session flows sign in as that account instead of registering. Locally (a
- * bare `npm run test:e2e` with no API) they skip instead of failing — hence the
- * intentional API-availability guards below.
+ * Playwright. Locally (a bare `npm run test:e2e` with no API) they skip instead
+ * of failing — hence the intentional API-availability guards below.
  */
 /* eslint-disable playwright/no-skipped-test */
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
@@ -59,27 +63,32 @@ test.describe('security: auth API contract', () => {
     test.skip(!(await apiReachable(request)), 'API not reachable; security e2e needs the backend')
   })
 
-  test('register mints no session and never leaks the hash', async ({ request }) => {
+  test('register signs you in (no-email dev bypass) and never leaks the hash', async ({
+    request,
+  }) => {
+    // CI runs the API with no email provider, so verification is bypassed:
+    // register creates an already-verified account and returns a session. (With a
+    // provider configured, register instead returns `access_token: null` and mails
+    // a link — that verify-first path is covered by the Rust security tests.)
     const email = uniqueEmail('reg')
     const res = await registerViaApi(request, email)
     expect(res.status()).toBe(201)
 
     const body = await res.json()
-    // Verify-first: the account exists but there is no session until the
-    // emailed verification link is used.
-    expect(body.access_token).toBeUndefined()
+    expect(body.access_token, 'session returned in the no-email bypass').toBeTruthy()
     expect(body.user.email).toBe(email)
     const serialized = JSON.stringify(body)
     expect(serialized).not.toContain('password_hash')
     expect(serialized).not.toContain('$argon2')
 
-    // No refresh cookie either — the session material only exists after login.
+    // The refresh token rides ONLY in a hardened Set-Cookie, never the body.
     const setCookie = res
       .headersArray()
       .filter((h) => h.name.toLowerCase() === 'set-cookie')
       .map((h) => h.value)
       .find((v) => v.startsWith('tcglense_refresh=') && !v.startsWith('tcglense_refresh=;'))
-    expect(setCookie, 'no refresh Set-Cookie on register').toBeFalsy()
+    expect(setCookie, 'refresh Set-Cookie present').toBeTruthy()
+    expect(serialized).not.toContain(String(setCookie).split('=')[1].split(';')[0])
   })
 
   test('duplicate registration is rejected with 409', async ({ request }) => {
@@ -88,9 +97,7 @@ test.describe('security: auth API contract', () => {
     expect((await registerViaApi(request, email)).status()).toBe(409)
   })
 
-  test('login failures are generic; unverified is revealed only to the right password', async ({
-    request,
-  }) => {
+  test('login failures are generic — no user enumeration', async ({ request }) => {
     const email = uniqueEmail('login')
     await registerViaApi(request, email)
 
@@ -106,13 +113,13 @@ test.describe('security: auth API contract', () => {
     // Identical message in both cases: nothing reveals whether the account exists.
     expect((await wrongPassword.json()).error).toBe((await noSuchUser.json()).error)
 
-    // The distinct unverified error requires the CORRECT password, so it is not
-    // an enumeration oracle — and it still mints no session.
-    const unverified = await request.post('/api/auth/login', {
+    // The correct password signs in — the no-email bypass verifies at register, so
+    // there's no verification gate. (The gate's 403 is covered by the Rust tests,
+    // which run with a mail sink so verification is enforced.)
+    const ok = await request.post('/api/auth/login', {
       data: { email, password: PASSWORD },
     })
-    expect(unverified.status()).toBe(403)
-    expect((await unverified.json()).error).toBe('email not verified')
+    expect(ok.status()).toBe(200)
   })
 
   test('the recovery endpoints answer generically for unknown addresses', async ({ request }) => {
@@ -240,28 +247,19 @@ test.describe('security: browser session', () => {
     await expect(page).toHaveURL(/\/login(\?|$)/)
   })
 
-  test('registering shows the check-your-email step; unverified sign-in offers a resend', async ({
-    page,
-  }) => {
-    const email = uniqueEmail('verify-ui')
+  test('registering in the no-email bypass signs you straight in', async ({ page }) => {
+    // With no email provider (the CI config), register verifies + signs in and
+    // lands on the homepage — no check-your-email step. (The verify-first
+    // check-your-email / resend UX applies only when a provider is configured and
+    // is covered by the Rust security tests.)
+    const email = uniqueEmail('reg-ui')
     await page.goto('/register')
     await page.locator('#email').fill(email)
     await page.locator('#password').fill(PASSWORD)
     await page.getByRole('button', { name: /create account/i }).click()
 
-    // No auto-signin: the form swaps for the check-your-email step, still on
-    // /register, with no signed-in account menu.
-    await expect(page.getByText('Check your email')).toBeVisible()
-    await expect(page).toHaveURL(/\/register$/)
-
-    // Trying to sign in before verifying gets the distinct message plus a
-    // resend affordance.
-    await page.goto('/login')
-    await page.locator('#email').fill(email)
-    await page.locator('#password').fill(PASSWORD)
-    await page.getByRole('button', { name: /sign in/i }).click()
-    await expect(page.getByRole('alert')).toHaveText(/email not verified/i)
-    await expect(page.getByRole('button', { name: /resend it/i })).toBeVisible()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('button', { name: /account menu/i })).toBeVisible()
   })
 
   test('invalid login surfaces a generic error message', async ({ page }) => {

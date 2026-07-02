@@ -8,6 +8,42 @@ use super::harness::*;
 use crate::entities::{email_token, prelude::EmailToken};
 
 #[tokio::test]
+async fn with_no_email_provider_registration_bypasses_verification_and_signs_in() {
+    // Dev posture: no email provider, so verification can't be delivered and is
+    // bypassed. Register signs the account in immediately (a session in the body
+    // + a refresh cookie), and it can act right away.
+    let app = test_app_email_disabled().await;
+
+    let (status, headers, body) = send(
+        &app,
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "dev@example.com", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let access = body["access_token"].as_str().expect("session on register");
+    assert!(refresh_token_from(&headers).is_some(), "refresh cookie set");
+
+    // The returned access token works on a protected route straight away.
+    let (me, _, me_body) = send(&app, get_with_bearer("/api/auth/me", access)).await;
+    assert_eq!(me, StatusCode::OK);
+    assert_eq!(me_body["user"]["email"], "dev@example.com");
+
+    // And a fresh login works with no verification step.
+    let (login, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": "dev@example.com", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(login, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn login_is_refused_until_the_email_is_verified() {
     let app = test_app().await;
     let (status, _, _) = send(

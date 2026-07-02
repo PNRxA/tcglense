@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Loader2, MailCheck } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -16,8 +16,12 @@ import { Label } from '@/components/ui/label'
 import { useTurnstile } from '@/composables/useTurnstile'
 import { ApiError, register, resendVerification } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { useAuthStore } from '@/stores/auth'
 
 usePageMeta({ title: 'Create your account', canonicalPath: '/register', noindex: true })
+
+const auth = useAuthStore()
+const router = useRouter()
 
 const email = ref('')
 const password = ref('')
@@ -27,8 +31,10 @@ const { execute } = useTurnstile(turnstileEl)
 
 const error = ref<string | null>(null)
 const loading = ref(false)
-// Registration mints no session — on success we stay here and show the
-// check-your-email step (the canonicalised address the server mailed).
+// Registration normally mints no session — on success we stay here and show the
+// check-your-email step (the canonicalised address the server mailed). The one
+// exception is the no-email dev bypass, where the response carries a session and
+// we sign straight in (see below).
 const registeredEmail = ref<string | null>(null)
 
 async function onSubmit() {
@@ -42,7 +48,13 @@ async function onSubmit() {
       display_name: displayName.value.trim() || null,
       captcha_token,
     })
-    registeredEmail.value = response.user.email
+    if (response.access_token) {
+      // No-email dev bypass: the account is already verified and signed in.
+      auth.setSession(response.access_token, response.user)
+      await router.push('/')
+    } else {
+      registeredEmail.value = response.user.email
+    }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
   } finally {
