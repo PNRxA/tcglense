@@ -1,27 +1,34 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { LayoutGrid } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
+import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
-import { useGameName } from '@/composables/useCatalog'
+import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
 import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
+import { groupByYear, partitionPinned } from '@/lib/setGroups'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
+import type { CardSet } from '@/lib/api'
 
-// The per-game collection landing: it mirrors the catalog's game view (a grid of set
-// tiles + a "View all cards" entry), but scoped to what the signed-in user owns — pick
-// a set to see just your cards from it, or "All cards" for the whole collection. The
-// header carries the value/count summary plus the import / re-sync controls; the actual
-// card grids live on CollectionBrowseView (`/collection/:game/cards` + `.../sets/:code`).
+// The per-game collection landing: pick a set to see just your cards from it, or "All
+// cards" for the whole collection. By default it lists just the sets you own cards in;
+// a segmented toggle (`?sets=all`) flips it to the catalog game view's FULL set list —
+// featured + year sections and all — the same Collected/All-sets control as the
+// wish-list landing. Either way the per-set owned counts/values overlay the tiles that
+// have any. The header carries the value/count summary plus the import / re-sync
+// controls; the actual card grids live on CollectionBrowseView
+// (`/collection/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
@@ -36,27 +43,75 @@ usePageMeta({
 })
 
 const summaryQuery = useCollectionSummaryQuery(game)
-const setsQuery = useCollectionSetsQuery(game)
+// The sets holding owned cards — the default mode's list and the per-set overlay
+// either mode shows.
+const collectionSetsQuery = useCollectionSetsQuery(game)
 
 const summary = computed(() => summaryQuery.data.value)
-const ownedSets = computed(() => setsQuery.data.value?.data ?? [])
+const ownedSets = computed(() => collectionSetsQuery.data.value?.data ?? [])
 
-// Client-side filter box + nested sub-set grouping mirroring the catalog game view
-// (issues #127/#128), shared via useFilteredSetGroups: the owned-set list is already in
-// memory, so narrowing by name/code is instant, and a sub-set you own nests under its
-// owned parent (or stands alone as an orphan root). Keeps a group whole when the main set
-// OR any related sub-set matches, so filtering a sub-set surfaces its whole owned group.
-const {
-  filter,
-  trimmedFilter,
-  filtering,
-  groups: ownedGroups,
-  relatedCount,
-} = useFilteredSetGroups(game, ownedSets)
+// Which sets the grid lists: just the owned ones (default) or the whole catalog
+// (`?sets=all`). A URL param, like the browse views' `?ghosts`, so the choice survives
+// navigation and the back button.
+const route = useRoute()
+const router = useRouter()
+const showAllSets = computed(() => route.query.sets === 'all')
+function setShowAllSets(on: boolean) {
+  const next = { ...route.query }
+  if (on) next.sets = 'all'
+  else delete next.sets
+  router.replace({ query: next })
+}
+
+// The FULL public set list (shared, cached with the catalog game view) — the all-sets
+// mode's source, fetched unconditionally so toggling never starts from a spinner.
+const catalogSetsQuery = useSetsQuery(game)
+const catalogSets = computed(() => catalogSetsQuery.data.value?.data ?? [])
+
+// The active mode's sets, grouped and filterable exactly like the catalog game view:
+// nested sub-sets, instant name/code narrowing, groups kept whole when any member
+// matches (issues #127/#128). One grouping instance over the switched source, so the
+// filter box and header counts track whichever mode is on.
+const sourceSets = computed<CardSet[]>(() =>
+  showAllSets.value ? catalogSets.value : ownedSets.value,
+)
+const { filter, trimmedFilter, filtering, groups, relatedCount } = useFilteredSetGroups(
+  game,
+  sourceSets,
+)
+
+// The active mode's query state, for the loading/error rows below.
+const activePending = computed(() =>
+  showAllSets.value ? catalogSetsQuery.isPending.value : collectionSetsQuery.isPending.value,
+)
+const activeError = computed(() =>
+  showAllSets.value ? catalogSetsQuery.isError.value : collectionSetsQuery.isError.value,
+)
+
+// Pinned sets (e.g. Secret Lair) lead as a "Featured" section; the rest break into
+// release-year sections — the same scannable layout as the catalog game view. Used by
+// the all-sets mode only (the owned-sets default is a flat newest-first grid).
+const partitioned = computed(() => partitionPinned(groups.value))
+const years = computed(() => groupByYear(partitioned.value.rest))
+const yearLabel = (year: number | null) => (year === null ? 'Unknown year' : String(year))
+const sections = computed(() => {
+  const featured = partitioned.value.pinned
+  const yearSections = years.value.map((section) => ({
+    key: section.year === null ? 'unknown' : String(section.year),
+    label: yearLabel(section.year),
+    groups: section.groups,
+  }))
+  return featured.length
+    ? [{ key: 'featured', label: 'Featured', groups: featured }, ...yearSections]
+    : yearSections
+})
+
 // Per-set-code owned stats each tile shows next to its name: the "N/M owned" completion
 // count, the "N copies" total (when you own duplicates, issue #125), and the preformatted
-// owned value (issue #119; null/unpriced sets carry a null the tile omits). Built in one
-// pass and passed to SetGroupGrid as a single `ownership` object.
+// owned value (issue #119; null/unpriced sets carry a null the tile omits) plus its bulk
+// slice. Built in one pass and passed to SetGroupGrid as a single `ownership` object;
+// sets you own nothing in are simply absent, so in all-sets mode their tiles keep the
+// plain catalog card count.
 const ownership = computed(() => {
   const counts: Record<string, number> = {}
   const copies: Record<string, number> = {}
@@ -77,11 +132,6 @@ const bulkValue = computed(() => formatUsd(summary.value?.bulk_value_usd))
 
 // Stats are worth showing only once something is owned.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
-
-// Whether the collection is genuinely empty — decided by the whole-collection summary
-// (so an in-flight sets refetch never makes a non-empty collection look empty). Wait for
-// the summary to load before deciding.
-const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasStats.value)
 </script>
 
 <template>
@@ -95,6 +145,13 @@ const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasSta
     <template v-else>
       <header class="mb-6">
         <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} collection</h1>
+        <!-- The active mode's set count — just the owned sets by default, the whole
+             catalog under "All sets" — mirroring the catalog game view's header line. -->
+        <p class="text-muted-foreground mt-1">
+          {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
+          <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+          <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
+        </p>
 
         <!-- Summary stats: distinct cards, total copies, estimated value. -->
         <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
@@ -135,82 +192,117 @@ const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasSta
         <CollectionSyncControls :game="game" />
       </header>
 
-      <LoadingRow v-if="summaryQuery.isPending.value" label="Loading your collection…" />
-      <p v-else-if="summaryQuery.isError.value" class="text-destructive py-12">
-        Couldn't load your collection. Please retry.
-      </p>
-
-      <!-- Genuinely-empty collection: prompt to add cards. -->
-      <div v-else-if="collectionIsEmpty" class="py-16 text-center">
-        <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
+      <!-- The set list — owned sets by default, the whole catalog under "All sets".
+           The filter bar sticks to the top of the viewport, and the all-mode year
+           headings below offset against its fixed height (their sticky `top-15`),
+           mirroring the catalog game view. -->
+      <StickySearchBar class="mb-6 flex flex-wrap items-center gap-3">
+        <!-- Which sets to list — the DropViewToggle-style segmented control. -->
+        <div class="bg-muted text-muted-foreground inline-flex shrink-0 rounded-md p-0.5 text-sm">
+          <button
+            type="button"
+            :class="
+              cn(
+                'rounded px-3 py-1.5 font-medium transition-colors',
+                !showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+              )
+            "
+            @click="setShowAllSets(false)"
+          >
+            Collected
+          </button>
+          <button
+            type="button"
+            :class="
+              cn(
+                'rounded px-3 py-1.5 font-medium transition-colors',
+                showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+              )
+            "
+            @click="setShowAllSets(true)"
+          >
+            All sets
+          </button>
+        </div>
+        <CardSearchBox
+          v-if="sourceSets.length"
+          v-model="filter"
+          class="w-full sm:w-64"
+          aria-label="Filter sets by name or code"
+          placeholder="Filter sets…"
+        />
         <RouterLink
-          :to="`/cards/${game}`"
+          :to="`/collection/${game}/cards`"
           :class="buttonVariants({ variant: 'default' })"
-          class="mt-4 inline-flex"
+          class="shrink-0"
         >
           <LayoutGrid />
-          Browse cards to add some
+          View all cards
         </RouterLink>
+      </StickySearchBar>
+
+      <LoadingRow v-if="activePending" label="Loading sets…" />
+      <p v-else-if="activeError" class="text-destructive py-12">
+        Couldn't load sets. Please retry.
+      </p>
+      <p v-else-if="showAllSets && !catalogSets.length" class="text-muted-foreground py-12">
+        No sets available yet.
+      </p>
+      <!-- Collected mode with nothing owned anywhere: offer the all-sets view, which is
+           where adding starts. -->
+      <div v-else-if="!showAllSets && !ownedSets.length" class="py-16 text-center">
+        <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
+        <button
+          type="button"
+          :class="buttonVariants({ variant: 'default' })"
+          class="mt-4 inline-flex"
+          @click="setShowAllSets(true)"
+        >
+          <LayoutGrid />
+          Show all sets to start adding
+        </button>
+      </div>
+      <p v-else-if="filtering && !groups.length" class="text-muted-foreground py-12">
+        No sets match “{{ trimmedFilter }}”.
+      </p>
+
+      <!-- All sets: the catalog game view's featured + year sections. -->
+      <div v-else-if="showAllSets" class="space-y-10">
+        <section v-for="section in sections" :key="section.key">
+          <!-- Stuck below the sticky filter bar above (top-15 = its height) so the
+               two stack rather than overlap at the top of the viewport. -->
+          <div
+            class="bg-background/85 sticky top-15 z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur"
+          >
+            <h2 class="text-xl font-semibold tracking-tight">{{ section.label }}</h2>
+            <span class="text-muted-foreground text-sm">
+              {{ section.groups.length }} {{ section.groups.length === 1 ? 'set' : 'sets' }}
+            </span>
+          </div>
+          <SetGroupGrid
+            :game="game"
+            :groups="section.groups"
+            :scroll-mt="28"
+            base-path="/collection"
+            :query="trimmedFilter"
+            :ownership="ownership"
+          />
+        </section>
       </div>
 
-      <!-- Pick a set or view every owned card — mirrors the catalog's game view. -->
-      <template v-else>
-        <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-xl font-semibold tracking-tight">
-            Sets you own
-            <!-- Only once the sets query has resolved, so we never flash "0 sets" next
-                 to the "Loading sets…" row when the summary lands first. Counts top-level
-                 groups (sub-sets nest under their parent), with the folded-in related
-                 count alongside — mirroring the catalog game view. -->
-            <span
-              v-if="setsQuery.isSuccess.value"
-              class="text-muted-foreground ml-1 text-sm font-normal"
-            >
-              {{ ownedGroups.length }} {{ ownedGroups.length === 1 ? 'set' : 'sets' }}
-              <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
-              <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
-            </span>
-          </h2>
-          <div class="flex flex-wrap items-center gap-3">
-            <!-- Instant client-side filter over the owned sets, mirroring the catalog
-                 game view (issue #127); only shown once you own at least one set. -->
-            <CardSearchBox
-              v-if="ownedSets.length"
-              v-model="filter"
-              class="w-full sm:w-56"
-              aria-label="Filter sets by name or code"
-              placeholder="Filter sets…"
-            />
-            <RouterLink
-              :to="`/collection/${game}/cards`"
-              :class="buttonVariants({ variant: 'default' })"
-            >
-              <LayoutGrid />
-              View all cards
-            </RouterLink>
-          </div>
-        </div>
-
-        <LoadingRow v-if="setsQuery.isPending.value" label="Loading sets…" />
-        <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
-          Couldn't load your sets. Please retry.
-        </p>
-        <p v-else-if="filtering && !ownedGroups.length" class="text-muted-foreground py-12">
-          No sets match “{{ trimmedFilter }}”.
-        </p>
-        <!-- Owned sub-sets nest under their parent (SetGroup), matching the catalog game
-             view; a childless owned set stays a plain tile. Both link to the collection's
-             per-set view and show owned counts. -->
-        <SetGroupGrid
-          v-else
-          :game="game"
-          :groups="ownedGroups"
-          :scroll-mt="20"
-          base-path="/collection"
-          :query="trimmedFilter"
-          :ownership="ownership"
-        />
-      </template>
+      <!-- Owned sets only (the default): a flat newest-first grid. Owned sub-sets nest
+           under their parent (SetGroup), matching the catalog game view; a childless
+           owned set stays a plain tile. Both link to the collection's per-set view and
+           show owned counts. -->
+      <SetGroupGrid
+        v-else
+        :game="game"
+        :groups="groups"
+        :scroll-mt="28"
+        base-path="/collection"
+        :query="trimmedFilter"
+        :ownership="ownership"
+      />
     </template>
   </div>
 </template>
