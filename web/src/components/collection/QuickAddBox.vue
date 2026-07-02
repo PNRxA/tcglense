@@ -180,12 +180,15 @@ function onKeydown(event: KeyboardEvent) {
       aria-hidden="true"
     />
 
+    <!-- z-40: the landings mount this box above a `sticky z-30` filter bar
+         (StickySearchBar), so the list must sit one layer higher or the bar
+         paints over the suggestions as they extend down the page. -->
     <div
       v-if="showDropdown"
       :id="listboxId"
       role="listbox"
       aria-label="Card name suggestions"
-      class="bg-popover text-popover-foreground absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-md border p-1 shadow-md"
+      class="bg-popover text-popover-foreground absolute z-40 mt-1 max-h-72 w-full overflow-auto rounded-md border p-1 shadow-md"
     >
       <button
         v-for="(name, index) in suggestions"
