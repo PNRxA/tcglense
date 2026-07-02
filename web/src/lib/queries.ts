@@ -1,3 +1,4 @@
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import {
   useMutation,
   useQuery,
@@ -19,6 +20,12 @@ import { useAuthStore } from '@/stores/auth'
  * (e.g. `['prices', productId, range]`), never `productId.value` — otherwise the
  * value is baked in and refetch-on-change silently breaks.
  *
+ * The signed-out gate is baked in: the query is always disabled while signed out (its
+ * `queryFn` needs an access token, so it can never usefully run then), ANDed with the
+ * caller's optional `enabled`. `enabled` is narrowed to `MaybeRefOrGetter<boolean>`
+ * (mirroring the `queryFn` redeclaration): query-core also accepts a `(query) => boolean`
+ * form, which `toValue` would miscall as a 0-arg getter, so we reject it here.
+ *
  * ```ts
  * const { data, isPending, error } = useAuthedQuery({
  *   queryKey: ['prices', productId, range],
@@ -27,12 +34,13 @@ import { useAuthStore } from '@/stores/auth'
  * ```
  */
 export function useAuthedQuery<TData>(
-  options: Omit<UseQueryOptions<TData, ApiError, TData>, 'queryFn'> & {
+  options: Omit<UseQueryOptions<TData, ApiError, TData>, 'queryFn' | 'enabled'> & {
     queryFn: (token: string) => Promise<TData>
+    enabled?: MaybeRefOrGetter<boolean>
   },
 ) {
   const auth = useAuthStore()
-  const { queryFn } = options
+  const { queryFn, enabled } = options
   // The merged object is a valid UseQueryOptions at runtime, but vue-query's deeply
   // reactive option types defeat TS inference through the spread (it can't see the
   // required queryKey), so bridge via `unknown`. Caller-facing typing on `options`
@@ -40,6 +48,7 @@ export function useAuthedQuery<TData>(
   return useQuery<TData, ApiError, TData>({
     ...options,
     queryFn: () => auth.authFetch(queryFn),
+    enabled: computed(() => auth.isAuthenticated && toValue(enabled ?? true)),
   } as unknown as UseQueryOptions<TData, ApiError, TData>)
 }
 

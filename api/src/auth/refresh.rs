@@ -213,26 +213,10 @@ pub async fn prune_expired(db: &DatabaseConnection) -> Result<u64, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::user;
+    use crate::test_support::insert_user;
 
     async fn setup_db() -> DatabaseConnection {
         crate::test_support::migrated_memory_db().await
-    }
-
-    async fn insert_user(db: &DatabaseConnection, email: &str) -> i32 {
-        let now = Utc::now();
-        let model = user::ActiveModel {
-            email: Set(email.to_string()),
-            password_hash: Set("irrelevant".to_string()),
-            display_name: Set(None),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .insert(db)
-        .await
-        .expect("insert user");
-        model.id
     }
 
     async fn find_by_hash(db: &DatabaseConnection, plaintext: &str) -> refresh_token::Model {

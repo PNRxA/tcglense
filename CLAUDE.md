@@ -176,7 +176,8 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
 | `GET /api/games/{game}/sets/{code}/cards?q&page&page_size&include_related` | page of `Card` (optional `q` Scryfall-style search), by collector number. `include_related=true` spans the set's whole **group** — its top-level root plus every related sub-set (tokens/promos/decks) — grouped by set (set-code order), each set in collector order |
 | `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated drop titles), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cards: Card[] }` and `total` counts drops. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
-| `GET /api/games/{game}/cards?q&page&page_size` | page of `Card` (optional `q` Scryfall-style search), by name |
+| `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
+| `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection quick-add autocomplete |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
@@ -193,7 +194,7 @@ The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only
 
 `PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
 strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
-every sync tick from the already-committed `cards` rows (`scryfall::ingest::snapshot_prices`),
+every sync tick from the already-committed `cards` rows (`scryfall::price_history::snapshot_prices`),
 so the *stored* series stays continuous even on a tick where the version-gated import is
 skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
 keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
@@ -231,7 +232,7 @@ don't ingest — Tagger tags (`otag:`/`atag:`/`function:`, issue #140), `cube:` 
 as SeaORM/SQL parameters — never interpolated into SQL.
 
 **HTTP caching (CDN):** the router splits routes into two cache policies via
-response middleware (`handlers::cache`, wired in `main.rs`). Public catalog reads
+response middleware (`handlers::cache`, wired in `router.rs`). Public catalog reads
 (`/api/games/...`) are the same for everyone and change at most daily, so a
 successful response carries `Cache-Control: public, max-age=300, s-maxage=3600,
 stale-while-revalidate=86400` — browser- and CDN-cacheable, served stale-while-
@@ -311,7 +312,7 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `POST /api/collection/{game}/sync` | — | **`202`** `ImportJob` — enqueues a re-sync from the saved link (the worker stamps `last_synced_at` on success). Uses **smart** sync when the saved link opted in, otherwise **mirror/replace**. `404` if no link is saved |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
-the full catalog `Card` shape (reusing the catalog's `CardResponse`). `CollectionSet` is
+the full catalog `Card` shape (reusing the shared `CardResponse`). `CollectionSet` is
 the catalog `Set` shape (`code`, `name`, `released_at`, `icon_svg_uri`, `has_drops`, …)
 plus `owned_cards` + `owned_copies` + `owned_value_usd` (built by
 `collection::build_collection_sets`, which aggregates owned holdings per `set_code` — count,
@@ -319,8 +320,8 @@ copies, and estimated value the same way the summary does — dresses each with 
 metadata — falling back to the card's own `set_name` when the set row is missing — and orders
 newest set first). `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }`
 is the collection mirror of the catalog's `DropGroupResponse` (owned cards only, each
-carrying its counts); the `.../sets/{code}/drops` handler reuses the catalog's generic
-`group_into_drops` (now generic over the grouped item, so it folds `(collection_item, card)`
+carrying its counts); the `.../sets/{code}/drops` handler reuses the shared generic
+`group_into_drops` (generic over the grouped item, so it folds `(collection_item, card)`
 pairs) and paginates by drop in memory. The batch/import
 `POST`s, the `PUT`s, and the saved-source `DELETE` need CORS `POST`/`PUT`/`DELETE` (all in
 the allow-list alongside `GET`); in dev/prod the SPA is same-origin so CORS isn't
@@ -405,14 +406,29 @@ runs smart instead of mirror/replace).
 ## Backend structure (`api/src/`)
 
 ```
+<<<<<<< HEAD
 main.rs            bootstrap: env → tracing → DB connect → migrate → build HTTP client + image cache → seed dummy catalog (SEED_DUMMY_DATA) or spawn periodic card-data import (daily) → router → serve
 config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, MOXFIELD_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secret
 db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000), applied to every pooled connection
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + provider rate limiter)
+=======
+main.rs            bootstrap: env → tracing → DB connect → migrate → AppState::new → tasks::start → build_router → serve
+router.rs          build_router(): every route + the shared middleware stack (CORS, cache layers, body limits) — kept out of main so the security tests drive the exact same router in-process
+tasks.rs           background startup tasks: refresh-token pruning (always) + either the awaited offline dummy-catalog seed (SEED_DUMMY_DATA) or the spawned startup/periodic card-data sync
+config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secret
+db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000) + a registered REGEXP function (sqlx `regexp` feature, for the search `/regex/` syntax), applied to every pooled connection
+state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + provider rate limiter); AppState::new is the one construction site, shared with the security-test harness
+>>>>>>> origin/main
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
+test_support.rs    shared #[cfg(test)] fixtures: test_config(), a migrated in-memory SQLite DB, canonical card/set/user/holding rows (per-test tweaks via struct-update)
+security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, cookie/CORS/caching contracts, request bodies, search, collection + import
 entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`)
+<<<<<<< HEAD
 collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode incl. Smart + ProviderContext/ProviderSettings + execute_import/execute_csv_import [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution]/aggregate/plan_reconcile/apply engine + smart_absorb_page/reconcile_smart/load_local_by_external for the incremental smart path + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
+=======
+collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration, parse_source, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish), csv_import.rs (parse an uploaded Archidekt CSV export → normalized holdings; bounded + defensive), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
+>>>>>>> origin/main
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -425,16 +441,20 @@ catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all(
 scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
   client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
-  ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts, ingest_state bookkeeping; snapshot_prices(): daily per-card price-history capture from the committed cards rows
-  search/          Scryfall-style query parser (lexer + recursive-descent: and/or/-/parens/quotes/regex `/…/`) → sea_orm::Condition + order:/direction:/unique: directives (parse_query); legality via json_extract, prints/sets via oracle_id-sibling subqueries; SearchError → 422; values always parameterised
+  ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts (update-column lists derived from the entity columns), ingest_state bookkeeping
+  map.rs           pure Scryfall JSON → ActiveModel shaping, kept out of ingest so it (and its tests) stand alone
+  price_history.rs snapshot_prices(): daily per-card price-history capture from the committed cards rows (also used by the dummy seeder)
+  progress.rs      live terminal progress for the bulk import (tracing-indicatif; renders nothing when stderr isn't a TTY)
+  search/          Scryfall-style query compiler: lexer.rs → parser.rs (recursive descent: and/or/-/parens/quotes/regex `/…/` → Node AST) → compile/ (one submodule per filter family → sea_orm::Condition; legality via json_extract, prints/sets via oracle_id-sibling subqueries) + order:/direction:/unique: directives (parse_query); error.rs (SearchError → 422); values always parameterised
   drops.rs         Secret Lair drop grouping: loads sld_drops.json once → (game,set)→{ordered drops, collector#→drop}; table()/has_drops()/drop_for()
   sld_drops.json   committed snapshot of Scryfall's curated Secret Lair drop titles + collector numbers (regenerate via scripts/gen-sld-drops.mjs)
-  dummy.rs         seed(): deterministic offline dummy catalog (fake sets/cards, no network/images) reusing ingest's map/upsert path, plus a year of per-card seeded random-walk price history
+  dummy/           seed(): deterministic offline dummy catalog (no network/images) reusing ingest's map/upsert path — catalog.rs (the fabricated sets/cards), prices.rs (the year of per-card seeded random-walk price history)
 handlers/
   auth.rs          register / login / refresh / logout / me
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store; plus conditional_request_layer (weak ETag + If-None-Match → 304) on cacheable public reads
-  catalog.rs       games / status / sets / set cards / set drops / all cards (search+paginate) / card detail / image proxy / price history / other printings
-  collection.rs    authenticated per-user collection: list (paginate, optional `?set` scope + `?include_related` group span) / summary (optional `?set` scope + `?include_related` group span) / owned sets (`.../sets`, per-set landing tiles via build_collection_sets, each carrying owned value) / owned cards by Secret Lair drop (`.../sets/{code}/drops`, paginated by drop — reuses catalog's `group_into_drops`/`group_set_codes`/`load_set`) / get + set (PUT upsert, both-zero deletes) one card's owned counts / batch owned counts (POST .../owned, for browse-grid badges); import (one-off URL, chosen mode) + CSV upload (POST .../import/csv, synchronous, body-limited) + saved-source CRUD + sync (mirror/replace) via the `collection_import` module; reuses catalog's CardResponse
+  shared/          helpers both catalog + collection handlers use (dependencies only flow *into* shared): dto.rs (CardResponse + faces/prices — the ts-rs-exported card wire shape), pagination.rs (Page<T>/DataBody envelopes, page/query clamping), lookup.rs (game/set/card resolution + group_set_codes), sort.rs (the card-list sort/dir vocabulary), grouping.rs (generic Secret Lair drop grouping + by-drop pagination), search.rs (?q → sea_orm::Condition), valuation.rs (holdings → USD cents → 2-dp string)
+  catalog/         public catalog endpoints, one file per concern: status.rs (games list + import status), sets.rs (set list/detail/icon + set cards incl. include_related + by-drop), cards.rs (all-cards list / card detail / other printings), prices.rs (price history + ?range downsampling), image.rs (image proxy); mod.rs holds the shared list params
+  collection/      authenticated per-user collection, one file per concern: read.rs (owned list [optional `?set` scope + `?include_related` group span] / summary / single + batch owned counts [POST .../owned, for browse-grid badges]), sets.rs (owned-set landing tiles via build_collection_sets, each carrying owned value; owned cards by Secret Lair drop, paginated by drop), write.rs (PUT absolute owned counts — ON CONFLICT upsert, both-zero deletes), import.rs (one-off URL import + CSV upload [POST .../import/csv, synchronous, body-limited] + saved-source CRUD + sync via the `collection_import` module); mod.rs holds the shared params + wire types; reuses shared's CardResponse/`group_into_drops`/`group_set_codes`/`load_set`
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
   health.rs        health
 ```
@@ -443,13 +463,13 @@ handlers/
 discriminator column; the catalog layer + routes are generic. Adding a TCG = add a
 `Game` to `catalog::GAMES`, a provider module (like `scryfall/`), and one arm each
 in `catalog::refresh_all` (live import) and `catalog::seed_all` (offline dummy seed).
-On startup `main.rs` spawns `catalog::refresh_all` in the
+On startup `tasks::start` spawns `catalog::refresh_all` in the
 background (gated by `SYNC_ON_STARTUP`) so the server is up immediately, then
 re-runs it on a fixed interval (`SYNC_INTERVAL_HOURS`, default 24 = daily) to pick
 up newer prices/sets; the import streams the bulk file with bounded memory and
 **skips re-import when the provider's `updated_at` is unchanged**
 (`ingest_state.source_updated_at`), so a tick with no upstream change is cheap. When
-`SEED_DUMMY_DATA` is set, `main.rs` instead **awaits** `catalog::seed_all` (no
+`SEED_DUMMY_DATA` is set, `tasks::start` instead **awaits** `catalog::seed_all` (no
 network, no images) to populate a small deterministic offline catalog and skips all
 syncing — see the env-var notes below.
 
@@ -461,7 +481,7 @@ syncing — see the env-var notes below.
    and register it in `migrator/mod.rs`'s `migrations()` vec. It runs on next boot.
 3. **Handler:** add a module under `handlers/`, take `State(state): State<AppState>`
    for DB access and `AuthUser` to require a logged-in user.
-4. **Route:** wire it in `main.rs`. Return `AppError` for failures — never
+4. **Route:** wire it in `router.rs`. Return `AppError` for failures — never
    `unwrap`/`expect`/`panic!` on a request path. Use the SeaORM query API only
    (parameterized; no hand-built SQL). For JSON request bodies use `JsonBody<T>`,
    not axum's raw `Json<T>`, so malformed-body errors stay JSON.
@@ -472,20 +492,34 @@ syncing — see the env-var notes below.
 main.ts            createApp + pinia + vue-query (VueQueryPlugin) + router
 App.vue            shell: top bar (brand, MainNav [Cards + Collection], theme toggle, user menu) + <RouterView>
 router/index.ts    routes + global guard (requiresAuth / requiresGuest, one-time session restore)
-lib/api/           typed fetch client (relative URLs, credentials:'include') + ApiError + types, split into client / auth / catalog (+ cardImageUrl) / collection (authenticated, token-passing — incl. import / saved-source CRUD / sync fns + types) fns
+lib/api/           typed fetch client (relative URLs, credentials:'include') + ApiError, split into client / auth / catalog (+ cardImageUrl) / collection + collection-import (authenticated, token-passing — incl. import / saved-source CRUD / sync fns) fns; generated/ holds the wire types (Card, CardSet, Page, ImportSummary, …) exported from the API's Rust DTOs by ts-rs — regenerate with `cargo test` from `api/` (committed; CI fails on drift), never edit by hand
 lib/queryClient.ts createQueryClient (defaults: staleTime 5m, retry skips 4xx) + shouldRetryQuery
-lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch
+lib/queries.ts     useAuthedQuery / useAuthedMutation: vue-query wrappers that run through auth.authFetch (queries also auto-gate `enabled` on being signed in)
 lib/seo.ts         usePageMeta(): reactive per-route <head> — title, description, canonical, Open Graph / Twitter, JSON-LD
 lib/mana.ts        parseManaText(): split card text into plain-text runs + recognised {…} mana/cost symbols (→ mana-font `ms-*` classes, unknown tokens kept literal); colorLettersToText() for color_identity pips
 lib/money.ts       formatUsd(): format the API's decimal USD strings as localized currency (shared by the collection value displays), null when unpriced
+lib/searchQuery.ts pure helpers to read/edit individual filter tokens in a query string (tokenize/parse/read/remove/upsertFilter, read/setRange), non-destructive to free text + unrelated tokens; searchBuilder.ts the advanced-search builder's option lists + get/set domain layer mapping each control ↔ Scryfall tokens on top — both back AdvancedSearchPanel
+lib/setGroups.ts   nest related sub-sets under their top-level parent (groupSets + filter/order helpers) — the one grouping the catalog + collection set landings share
+lib/…              small pure helpers: cardPrice (tile price pick, foil fallback), cardSort (sort options ↔ API sort/dir), cardSize (grid density), ownership (owned-count labels), importSummary (import-result lines), quickAddFilter (client-side filter over a name's printings for the quick-add print picker — unit-tested matching rules), persistedRef (localStorage-backed ref)
 stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/register/logout/refresh/fetchMe/tryRestore + authFetch helper
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
+<<<<<<< HEAD
 components/         UserMenu (profile menu — a reka NavigationMenu matching MainNav's Cards/Collection triggers, its own root + viewport=false so it right-aligns; collapses to a Sign-in link when signed out), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards and Collection → /collection dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them; both game-dropdowns from the cached registry, Collection prompts signed-out visitors to sign in on the per-game view)
 components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot; optional `ghost` prop dims the image+text for a card you don't own), CardGrid (optional owned-count badges via `ownership` map; optional `ghostUnowned` dims every card absent from that map — the collection show-ghosts mode, issue #112), SetTile (optional `to` link override + `ownedCount`, reused for the collection's per-set landing), SetGroup (nests a set's related sub-sets, `basePath`- + `ownedCounts`-parameterised so the collection landing reuses it), SetScopeBar (presentational include-related banner), CardPagination, PriceChart (price-history line chart, public useQuery); collection UI: OwnedCountBadge (shared total/foil chip overlay), CollectionGrid (owned-count badges), CollectionControls (card-detail owned-count steppers, debounced+serialized save); ManaSymbols (renders card text with `{…}` mana/cost symbols as mana-font icons — mana cost, colour identity, oracle text)
 components/collection/  ImportCollectionDialog (reka dialog with two tabs: "Paste a link" — pick a provider [Archidekt or Moxfield] + collection URL/id, a reconcile mode incl. smart, optionally save the link with a smart re-sync toggle — or "Upload a CSV" — an exported Archidekt or Moxfield CSV file [the server sniffs which], with per-service export hints, reconciled synchronously; both show an import summary) — mounted on GameCollectionView alongside a "Re-sync" button (labelled "Smart re-sync" when the saved link opted into smart); CollectionSignInPrompt (shared signed-out prompt on the public collection pages, preserving ?redirect)
 composables/       shared query hooks: useCatalog (games/sets), useCollection (useCollectionQuery [optional set scope + include-related group span, `enabled` gate] / DropsQuery [owned cards by Secret Lair drop] / Summary [optional set scope + include-related group span, `enabled` gate] / Sets [per-set landing] / Entry + useOwnedCounts [browse-grid badges → `{ ownership, ready }`, the `ready` flag gating the ghost dimming] + useSetCollectionEntryMutation + useCollectionSourceQuery + useImport/Save/Delete/SyncCollectionSourceMutation via useAuthed*), useSetGrouping (related-set grouping + hasDrops + scope-nav, `basePath`-parameterised so the collection reuses it), useCardSearch, …
 views/             LoginView, RegisterView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game — the per-set landing: owned-set tiles + "All cards", mirrors GameView incl. nesting owned sub-sets under their parent via SetGroup; each tile shows owned count + value), CollectionBrowseView (/collection/:game/cards + /collection/:game/sets/:code — the owned-card grids, all or set-scoped; the header count line also carries the scope's owned **value** [issue #119, from the summary, tracking the set/group scope], the set-scoped view carries the catalog set view's by-drop + include-related toggles [reusing useSetGrouping (basePath `/collection`) + SetScopeBar over what the user owns], and any view offers a "Show ghosts" toggle switching the data source to the public catalog list [owned + unowned, catalog sorts / by-drop] with unowned cards dimmed — the two compose into an {owned, ghost} × {flat, by-drop} matrix)
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, tooltip, chart — unovis-backed)
+=======
+stores/cardSize.ts Pinia store: the persisted card-grid size preference (via lib/persistedRef)
+components/         UserMenu (profile menu — a reka NavigationMenu matching MainNav's Cards/Collection triggers, its own root + viewport=false so it right-aligns; collapses to a Sign-in link when signed out), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards and Collection → /collection dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them; both game-dropdowns from the cached registry, Collection prompts signed-out visitors to sign in on the per-game view), MobileNav (the same links as a small-screen hamburger dropdown), PageBreadcrumbs (page-level breadcrumb trail)
+components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), CardTile (optional #badge overlay slot; optional `ghost` prop dims the image+text for a card you don't own), CardGrid (optional owned-count badges via `ownership` map; optional `ghostUnowned` dims every card absent from that map — the collection show-ghosts mode, issue #112), SetTile (optional `to` link override + `ownedCount`, reused for the collection's per-set landing), SetGroup + SetGroupGrid (nest a set's related sub-sets, `basePath`- + `ownedCounts`-parameterised so the collection landing reuses them), SetScopeBar (presentational include-related banner), DropSection + DropViewToggle (a by-drop group's grid + the by-drop/all switch), StickySearchBar, CardPagination, PriceChart (price-history line chart, public useQuery); AdvancedSearchPanel (point-and-click Scryfall-syntax filter-builder popover — colours/type/rarity/mana value/format/price, built from shadcn-vue Select/Toggle/ToggleGroup/NumberField in a Popover — mounted beside CardSearchBox/SearchSyntaxHint, v-model-bound to the same search-box `q` so hand-typed syntax and the builder read/write the one query and compose); ownership chips the catalog grids embed: OwnedCountBadge (shared total/foil chip overlay) + OwnedCountControl; ManaSymbols (renders card text with `{…}` mana/cost symbols as mana-font icons — mana cost, colour identity, oracle text); …
+components/collection/  signed-in collection-domain UI: ImportCollectionDialog + CsvImportFields (reka dialog with two tabs: "Paste a link" — an Archidekt URL/id, pick a reconcile mode incl. smart, optionally save the link with a smart re-sync toggle — or "Upload a CSV" — an exported Archidekt CSV file, which names the three required columns and reconciles synchronously; both show an import summary); CollectionSyncControls (mounts that dialog on GameCollectionView alongside a "Re-sync" button, labelled "Smart re-sync" when the saved link opted into smart); QuickAddBox + QuickAddPrintDialog + QuickAddPrintTile (the GameCollectionView quick-add flow: a name-autocomplete combobox → a print-picker dialog [filterable via lib/quickAddFilter] → add regular/foil copies in place); CollectionGrid (owned-card grid with count controls); CollectionControls (card-detail owned-count steppers, debounced+serialized save); CollectionSignInPrompt (shared signed-out prompt on the public collection pages, preserving ?redirect)
+composables/       shared query hooks: useCatalog (games/sets registry + the shared catalog list queries — useSetQuery/useSetCardsQuery/useAllCardsQuery/useSetDropsQuery + CARD_PAGE_SIZE/DROP_PAGE_SIZE), useCollection (useCollectionQuery [optional set scope + include-related group span, `enabled` gate] / DropsQuery [owned cards by Secret Lair drop] / Summary [optional set scope + include-related group span, `enabled` gate] / Sets [per-set landing] / Entry + useOwnedCounts [browse-grid badges → `{ ownership, ready, fetching }`, the `ready` flag gating the ghost dimming, `fetching` gating the quick-add dialog's absolute-count seeding; opts `{ enabled, staleTime }`] + useSetCollectionEntryMutation + invalidateCollectionData), useCollectionImport (the import/sync flow: useCollectionSourceQuery, useSyncCollectionSourceMutation, import-job polling, and the dialog's orchestration hook), useQuickAdd (quick-add server state: useCardNameSuggestions [distinct-name autocomplete over `/card-names`] + useCardPrintingsByName [every printing of an exact name via the all-cards `name` filter]), useSetGrouping (related-set grouping + hasDrops + scope-nav, `basePath`-parameterised so the collection reuses it), useCardSearch, and small focused ones (useAuthSubmit, useCardBackLink, useClampPage, useImageLoad, useOwnedCountEditor)
+views/             HomeView (/, the public landing page), LoginView, RegisterView, ProfileView; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game — the per-set landing: owned-set tiles + "All cards", mirrors GameView incl. nesting owned sub-sets under their parent via SetGroup; each tile shows owned count + value; the header carries the summary stats, the quick-add box [QuickAddBox], and the import/re-sync controls [CollectionSyncControls]), CollectionBrowseView (/collection/:game/cards + /collection/:game/sets/:code — the owned-card grids, all or set-scoped; the header count line also carries the scope's owned **value** [issue #119, from the summary, tracking the set/group scope], the set-scoped view carries the catalog set view's by-drop + include-related toggles [reusing useSetGrouping (basePath `/collection`) + SetScopeBar over what the user owns], and any view offers a "Show ghosts" toggle switching the data source to the public catalog list [owned + unowned, catalog sorts / by-drop] with unowned cards dimmed — the two compose into an {owned, ghost} × {flat, by-drop} matrix)
+components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, select, toggle, toggle-group, number-field, popover, dialog, navigation-menu, tooltip, chart — unovis-backed)
+test/fixtures.ts   shared unit-test fixtures (makeCardSet) so a spec only spells out what it asserts on
+>>>>>>> origin/main
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
 ```
 
@@ -527,9 +561,12 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 
 ### Adding a frontend feature
 
-- **Server state (anything fetched from the API):** add typed functions + types to
-  `lib/api.ts`, then read/write it through **vue-query** so caching, dedup,
-  background refresh, and invalidation come for free. Use the `lib/queries.ts`
+- **Server state (anything fetched from the API):** add typed fetch functions under
+  `lib/api/` — the wire types come from the Rust DTOs: derive `ts_rs::TS` on the
+  API struct and run `cargo test` from `api/` to regenerate `lib/api/generated/`
+  (don't hand-write a twin type). Then read/write it through **vue-query** so
+  caching, dedup, background refresh, and invalidation come for free. Use the
+  `lib/queries.ts`
   wrappers — `useAuthedQuery({ queryKey, queryFn })` for reads and
   `useAuthedMutation({ mutationFn, onSettled })` for writes — which run the call
   through the `auth` store's `authFetch` so access-token expiry refreshes
@@ -629,7 +666,7 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   pages newest-updated-first and stops at the first already-synced page, so it only
   updates recently-changed cards and **never removes cards deleted upstream** (run a full
   mirror/replace for that). Two residual edges, both benign and documented in
-  `collection_import::mod.rs`: (1) it relies on Archidekt's `?orderBy=-updatedAt` truly
+  the `collection_import` module: (1) it relies on Archidekt's `?orderBy=-updatedAt` truly
   reflecting edit time, and on pagination staying stable mid-fetch — a collection edited
   *during* a sync could shift rows across the page boundary; (2) a card whose *same
   finish* is split across several provider rows (different condition/language/tags) where
@@ -687,7 +724,7 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   The parser assumes Scryfall's one-object-per-line bulk format; per-line length
   isn't capped, so a format change to a single-line array would not be parsed safely
   (it'd hit the zero-card guard but only after buffering).
-- **Dummy catalog seed:** `SEED_DUMMY_DATA=true` makes `main.rs` **await**
+- **Dummy catalog seed:** `SEED_DUMMY_DATA=true` makes `tasks::start` **await**
   `catalog::seed_all` (no network, no images) before serving, populating a small
   deterministic fake catalog (a few MTG-flavoured sets — including a parent/child
   pair — and ~95 cards with a double-faced card, non-numeric collector numbers, and a
@@ -695,7 +732,7 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   printings" view has something to show),
   plus **a year** of daily price history per card so the card-detail chart has real
   movement without a network. For offline dev, CI, and `npm run test:e2e`. It reuses the real
-  `ingest::map_card`/`import_sets`/`flush_cards`/`put_state` path (so seeded rows are
+  `map::map_card`/`ingest::import_sets`/`flush_cards`/`put_state` path (so seeded rows are
   shaped exactly like imported ones) and reuses the same `(game, "default_cards")`
   `ingest_state` row, marking it `complete` with a synthetic `source_updated_at`
   (`dummy-seed-v1`) — a later real sync's version gate sees the mismatch and

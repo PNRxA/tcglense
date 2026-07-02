@@ -3,21 +3,13 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { CardSet } from '@/lib/api'
+import { makeCardSet } from '@/test/fixtures'
 import SetTile from '../SetTile.vue'
 
-function makeSet(overrides: Partial<CardSet> = {}): CardSet {
-  return {
-    code: 'blb',
-    name: 'Bloomburrow',
-    set_type: 'expansion',
-    released_at: '2024-08-02',
-    card_count: 281,
-    icon_svg_uri: null,
-    parent_set_code: null,
-    has_drops: false,
-    ...overrides,
-  }
-}
+// This spec's assertions ('142/281 owned') depend on these defaults, so keep them local
+// rather than exposing the tile tests to shared-fixture default drift.
+const makeSet = (over: Partial<CardSet> = {}): CardSet =>
+  makeCardSet('blb', { name: 'Bloomburrow', card_count: 281, ...over })
 
 // SetTile renders a RouterLink, so the tree needs a router; no icon_svg_uri keeps the
 // lazy <img> off, so nothing network-facing is exercised.

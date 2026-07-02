@@ -35,11 +35,6 @@ pub use error::ImportError;
 pub use types::*;
 use reconcile::{reconcile_holdings, reconcile_smart};
 
-/// Upper bound on how many copies a single card holding may carry after reconcile,
-/// mirroring the collection handler's per-card clamp so an import can neither store a
-/// pathological count nor overflow the valuation arithmetic.
-const MAX_QUANTITY: i64 = 1_000_000;
-
 /// Hard cap on how many holding rows we'll pull from a provider in one import, so a
 /// request can't make us fan out an unbounded number of upstream page fetches.
 const MAX_IMPORT_ROWS: usize = 100_000;
@@ -350,238 +345,9 @@ async fn moxfield_rows_to_holdings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::reconcile::{Counts, aggregate, clamp_count, plan_reconcile};
-    use chrono::Utc;
-    use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
-
-    fn holding(id: &str, foil: bool, quantity: i32) -> FetchedHolding {
-        FetchedHolding {
-            external_card_id: id.to_string(),
-            foil,
-            quantity,
-        }
-    }
-
-    fn counts(quantity: i64, foil_quantity: i64) -> Counts {
-        Counts {
-            quantity,
-            foil_quantity,
-        }
-    }
-
-    #[test]
-    fn aggregate_sums_duplicate_rows_and_splits_foil() {
-        // The same printing across three rows: two regular, one foil; plus another card.
-        let holdings = vec![
-            holding("a", false, 1),
-            holding("a", false, 2),
-            holding("a", true, 1),
-            holding("b", true, 3),
-        ];
-        let agg = aggregate(&holdings);
-        assert_eq!(agg[&"a".to_string()], counts(3, 1));
-        assert_eq!(agg[&"b".to_string()], counts(0, 3));
-        assert_eq!(agg.len(), 2);
-    }
-
-    #[test]
-    fn aggregate_drops_cards_that_net_to_zero_copies() {
-        // A negative/zero-only card contributes no real copies, so it's dropped entirely
-        // (it must not later count as imported or trigger a delete).
-        let agg = aggregate(&[holding("a", false, -5), holding("b", false, 2)]);
-        assert!(!agg.contains_key("a"));
-        assert_eq!(agg[&"b".to_string()], counts(2, 0));
-    }
-
-    #[test]
-    fn overwrite_sets_matched_and_leaves_others() {
-        let existing = HashMap::from([(1, (2, 0)), (9, (1, 1))]);
-        let imported = HashMap::from([(1, counts(1, 0)), (2, counts(4, 0))]);
-        let plan = plan_reconcile(&existing, &imported, ReconcileMode::Overwrite);
-        let mut upserts = plan.upserts.clone();
-        upserts.sort();
-        assert_eq!(upserts, vec![(1, 1, 0), (2, 4, 0)]);
-        assert!(plan.deletes.is_empty(), "overwrite never deletes");
-    }
-
-    #[test]
-    fn merge_adds_onto_existing() {
-        let existing = HashMap::from([(1, (2, 1))]);
-        let imported = HashMap::from([(1, counts(1, 0)), (2, counts(3, 0))]);
-        let plan = plan_reconcile(&existing, &imported, ReconcileMode::Merge);
-        let mut upserts = plan.upserts.clone();
-        upserts.sort();
-        assert_eq!(upserts, vec![(1, 3, 1), (2, 3, 0)]);
-        assert!(plan.deletes.is_empty(), "merge never deletes");
-    }
-
-    #[test]
-    fn replace_sets_matched_and_deletes_unimported() {
-        let existing = HashMap::from([(1, (2, 0)), (9, (1, 1))]);
-        let imported = HashMap::from([(1, counts(1, 0)), (2, counts(4, 0))]);
-        let plan = plan_reconcile(&existing, &imported, ReconcileMode::Replace);
-        let mut upserts = plan.upserts.clone();
-        upserts.sort();
-        assert_eq!(upserts, vec![(1, 1, 0), (2, 4, 0)]);
-        assert_eq!(plan.deletes, vec![9], "card 9 wasn't imported, so it's removed");
-    }
-
-    #[test]
-    fn clamp_count_bounds_to_max() {
-        assert_eq!(clamp_count(-1), 0);
-        assert_eq!(clamp_count(5), 5);
-        assert_eq!(clamp_count(MAX_QUANTITY + 10), MAX_QUANTITY as i32);
-    }
-
-    // ---- DB-backed reconcile tests (in-memory SQLite, no network) ----
-
-    /// Insert a user (collection rows FK to `users`) and return its id.
-    async fn insert_user(db: &DatabaseConnection) -> i32 {
-        let now = Utc::now();
-        crate::entities::user::ActiveModel {
-            email: Set("importer@test.example".to_string()),
-            password_hash: Set("x".to_string()),
-            display_name: Set(None),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .insert(db)
-        .await
-        .expect("insert user")
-        .id
-    }
-
-    /// Insert a minimal card and return its internal id.
-    async fn insert_card(db: &DatabaseConnection, external_id: &str) -> i32 {
-        let now = Utc::now();
-        let card = card::ActiveModel {
-            game: Set(crate::scryfall::GAME.to_string()),
-            external_id: Set(external_id.to_string()),
-            name: Set(format!("Card {external_id}")),
-            set_code: Set("tst".to_string()),
-            set_name: Set("Test Set".to_string()),
-            collector_number: Set("1".to_string()),
-            lang: Set("en".to_string()),
-            digital: Set(false),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        };
-        card.insert(db).await.expect("insert card").id
-    }
-
-    async fn insert_holding(db: &DatabaseConnection, user_id: i32, card_id: i32, q: i32, f: i32) {
-        let now = Utc::now();
-        collection_item::ActiveModel {
-            user_id: Set(user_id),
-            game: Set(crate::scryfall::GAME.to_string()),
-            card_id: Set(card_id),
-            quantity: Set(q),
-            foil_quantity: Set(f),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .insert(db)
-        .await
-        .expect("insert holding");
-    }
-
-    async fn owned_counts(db: &DatabaseConnection, user_id: i32, card_id: i32) -> Option<(i32, i32)> {
-        CollectionItem::find()
-            .filter(collection_item::Column::UserId.eq(user_id))
-            .filter(collection_item::Column::CardId.eq(card_id))
-            .one(db)
-            .await
-            .expect("query holding")
-            .map(|r| (r.quantity, r.foil_quantity))
-    }
-
-    #[tokio::test]
-    async fn replace_mirrors_the_import_over_a_db() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let a = insert_card(&db, "ext-a").await; // owned + imported -> updated
-        let b = insert_card(&db, "ext-b").await; // not owned + imported -> inserted
-        let c = insert_card(&db, "ext-c").await; // owned, not imported -> deleted (mirror)
-        insert_holding(&db, user_id, a, 5, 0).await;
-        insert_holding(&db, user_id, c, 2, 0).await;
-
-        let holdings = vec![holding("ext-a", false, 1), holding("ext-b", true, 3), holding("ext-x", false, 9)];
-        let summary = reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Replace, holdings)
-            .await
-            .expect("reconcile");
-
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((1, 0)), "a overwritten to import");
-        assert_eq!(owned_counts(&db, user_id, b).await, Some((0, 3)), "b inserted as foil");
-        assert_eq!(owned_counts(&db, user_id, c).await, None, "c mirrored away");
-        assert_eq!(summary.matched_cards, 2);
-        assert_eq!(summary.unmatched_cards, 1, "ext-x isn't in the catalog");
-        assert_eq!(summary.unmatched_sample, vec!["ext-x".to_string()]);
-        assert_eq!(summary.removed_cards, 1);
-        assert_eq!(summary.total_rows, 3);
-        assert_eq!(summary.distinct_cards, 3);
-    }
-
-    #[tokio::test]
-    async fn overwrite_leaves_unimported_owned_cards() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let a = insert_card(&db, "ext-a").await;
-        let c = insert_card(&db, "ext-c").await;
-        insert_holding(&db, user_id, a, 5, 0).await;
-        insert_holding(&db, user_id, c, 2, 1).await;
-
-        let holdings = vec![holding("ext-a", false, 1)];
-        let summary = reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Overwrite, holdings)
-            .await
-            .expect("reconcile");
-
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((1, 0)));
-        assert_eq!(owned_counts(&db, user_id, c).await, Some((2, 1)), "untouched by overwrite");
-        assert_eq!(summary.removed_cards, 0);
-    }
-
-    #[tokio::test]
-    async fn replace_with_no_matches_is_refused_and_keeps_collection() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let a = insert_card(&db, "ext-a").await;
-        insert_holding(&db, user_id, a, 3, 0).await;
-
-        // The provider returned cards, but none of them are in our catalog.
-        let holdings = vec![holding("ext-unknown", false, 1)];
-        let err = reconcile_holdings(
-            &db,
-            user_id,
-            crate::scryfall::GAME,
-            Provider::Archidekt,
-            ReconcileMode::Replace,
-            holdings,
-        )
-        .await
-        .expect_err("replace with no matches must be refused");
-        assert!(matches!(err, ImportError::NoMatchingCards));
-
-        // The existing collection is untouched — nothing was wiped.
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((3, 0)));
-    }
-
-    #[tokio::test]
-    async fn merge_adds_onto_owned_counts_over_a_db() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let a = insert_card(&db, "ext-a").await;
-        insert_holding(&db, user_id, a, 2, 1).await;
-
-        let holdings = vec![holding("ext-a", false, 3), holding("ext-a", true, 1)];
-        reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Merge, holdings)
-            .await
-            .expect("reconcile");
-
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((5, 2)), "2+3 regular, 1+1 foil");
-    }
+    use crate::test_support::{
+        insert_card, insert_holding, insert_user, migrated_memory_db, owned_counts,
+    };
 
     // ---- Smart sync ----
 
@@ -652,89 +418,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn smart_preserves_unobserved_foil_and_never_deletes() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let a = insert_card(&db, "ext-a").await; // owned reg+foil; only regular re-fetched
-        let c = insert_card(&db, "ext-c").await; // owned, not fetched -> must remain
-        insert_holding(&db, user_id, a, 2, 3).await;
-        insert_holding(&db, user_id, c, 4, 0).await;
-
-        // The smart fetch only paged a's regular row (its foil sat in the unscanned tail).
-        let holdings = vec![holding("ext-a", false, 5)];
-        let summary = reconcile_smart(
-            &db,
-            user_id,
-            crate::scryfall::GAME,
-            Provider::Archidekt,
-            holdings,
-            true,
-        )
-        .await
-        .expect("reconcile smart");
-
-        assert_eq!(
-            owned_counts(&db, user_id, a).await,
-            Some((5, 3)),
-            "regular overwritten, unobserved foil preserved"
-        );
-        assert_eq!(
-            owned_counts(&db, user_id, c).await,
-            Some((4, 0)),
-            "unfetched card kept (smart never deletes)"
-        );
-        assert_eq!(summary.matched_cards, 1);
-        assert_eq!(summary.removed_cards, 0);
-        assert!(summary.stopped_early);
-    }
-
-    #[tokio::test]
-    async fn smart_inserts_a_newly_fetched_card() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let b = insert_card(&db, "ext-b").await; // not owned yet
-
-        let holdings = vec![holding("ext-b", true, 2), holding("ext-b", false, 1)];
-        reconcile_smart(
-            &db,
-            user_id,
-            crate::scryfall::GAME,
-            Provider::Archidekt,
-            holdings,
-            false,
-        )
-        .await
-        .expect("reconcile smart");
-
-        assert_eq!(owned_counts(&db, user_id, b).await, Some((1, 2)));
-    }
-
-    #[tokio::test]
-    async fn smart_preserve_reads_live_counts_not_a_stale_snapshot() {
-        // Models a single-card edit landing while the (slow) smart fetch was running: the
-        // regular count is now 2 in the DB. Smart re-fetched only this card's foil finish,
-        // so it must overwrite foil but preserve the *current* regular (2), not revert it.
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
-        let a = insert_card(&db, "ext-a").await;
-        insert_holding(&db, user_id, a, 2, 5).await; // the post-edit live state
-
-        let holdings = vec![holding("ext-a", true, 6)]; // foil observed, regular not
-        reconcile_smart(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, holdings, true)
-            .await
-            .expect("reconcile smart");
-
-        assert_eq!(
-            owned_counts(&db, user_id, a).await,
-            Some((2, 6)),
-            "regular preserved from the live count, foil overwritten"
-        );
-    }
-
-    #[tokio::test]
     async fn execute_csv_import_parses_then_reconciles_over_a_db() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
         // Two catalog cards keyed by the Scryfall ids the CSV references, plus one owned
         // card absent from the CSV (to prove Replace mirrors it away).
         let uid_a = "f369827d-e4cd-4bc7-8c5e-72882eff0908";
@@ -778,8 +464,9 @@ mod tests {
         set_code: &str,
         collector_number: &str,
     ) -> i32 {
-        let now = Utc::now();
-        let card = card::ActiveModel {
+        use sea_orm::{ActiveModelTrait, Set};
+        let now = chrono::Utc::now();
+        card::ActiveModel {
             game: Set(crate::scryfall::GAME.to_string()),
             external_id: Set(external_id.to_string()),
             name: Set(format!("Card {external_id}")),
@@ -791,14 +478,17 @@ mod tests {
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
-        };
-        card.insert(db).await.expect("insert card").id
+        }
+        .insert(db)
+        .await
+        .expect("insert card")
+        .id
     }
 
     #[tokio::test]
     async fn execute_csv_import_resolves_a_moxfield_export_by_set_and_number() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "moxfield-csv@test.example").await;
         // Two printings the CSV references by (set, number) — including an uppercase
         // Edition cell that must match the catalog's lowercase set code — plus one row
         // pointing nowhere (unmatched, surfaced by name).
@@ -834,8 +524,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_csv_import_aggregates_duplicate_moxfield_rows_onto_one_card() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "moxfield-dupes@test.example").await;
         let a = insert_card_at(&db, "ext-tle-146", "tle", "146").await;
 
         // The same printing across three rows (differing condition/tags upstream): two
@@ -862,8 +552,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_csv_import_refuses_an_empty_upload() {
-        let db = crate::test_support::migrated_memory_db().await;
-        let user_id = insert_user(&db).await;
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
         let a = insert_card(&db, "ext-a").await;
         insert_holding(&db, user_id, a, 3, 0).await;
 

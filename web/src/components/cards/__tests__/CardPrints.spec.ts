@@ -5,7 +5,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Card } from '@/lib/api'
-import CardPrints from '../cards/CardPrints.vue'
+import CardPrints from '../CardPrints.vue'
 
 function makeCard(id: string, setCode: string): Card {
   return {

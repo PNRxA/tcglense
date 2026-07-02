@@ -14,6 +14,7 @@ use serde::Serialize;
 
 /// Static metadata describing a supported game (serialised to the SPA).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct Game {
     /// Stable id slug used in URLs and the `game` column, e.g. `"mtg"`.
     pub id: &'static str,

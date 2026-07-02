@@ -1,109 +1,29 @@
-import { API_URL, request } from './client'
+import { API_URL, listQuery, request } from './client'
+import type { Card, CardSet, DropGroup, Game, IngestStatus, Page, PricePoint } from './generated'
 
 // ---------- Card catalog (public, game-agnostic) ----------
+//
+// The wire types (`Game`, `CardSet`, `Card`, `Page`, ...) are generated from the
+// API's Rust DTOs into `./generated` and re-exported here so importers keep the
+// `@/lib/api` entrypoint.
 
-/** A supported trading-card game. */
-export interface Game {
-  id: string
-  name: string
-  publisher: string
-  data_source: string
-}
-
-/** A set/expansion within a game. */
-export interface CardSet {
-  code: string
-  name: string
-  set_type: string | null
-  released_at: string | null
-  card_count: number
-  icon_svg_uri: string | null
-  parent_set_code: string | null
-  /** Whether this set can be browsed broken down into Secret Lair-style "drops"
-   * (the `listSetDrops` endpoint). */
-  has_drops: boolean
-}
-
-export interface CardFace {
-  name: string | null
-  mana_cost: string | null
-  type_line: string | null
-  oracle_text: string | null
-  power: string | null
-  toughness: string | null
-  loyalty: string | null
-}
-
-export interface CardPrices {
-  usd: string | null
-  usd_foil: string | null
-  eur: string | null
-  tix: string | null
-}
-
-/** A single printing of a card. */
-export interface Card {
-  id: string
-  name: string
-  set_code: string
-  set_name: string
-  collector_number: string
-  rarity: string | null
-  lang: string
-  released_at: string | null
-  mana_cost: string | null
-  cmc: number | null
-  type_line: string | null
-  oracle_text: string | null
-  power: string | null
-  toughness: string | null
-  loyalty: string | null
-  color_identity: string[]
-  colors: string[]
-  layout: string | null
-  prices: CardPrices
-  has_image: boolean
-  /** Secret Lair drop title this card belongs to (for drop-grouped sets); null otherwise. */
-  drop_name: string | null
-  /** Slug of the drop above, paired with `drop_name`. */
-  drop_slug: string | null
-  faces: CardFace[]
-}
-
-/** A page of items plus pagination cursors — the shape every paginated list endpoint
- * returns. Reused by the collection API for its own paged responses. */
-export interface Page<T> {
-  data: T[]
-  page: number
-  page_size: number
-  total: number
-  has_more: boolean
-}
+export type {
+  Card,
+  CardFace,
+  CardPrices,
+  CardSet,
+  DropGroup,
+  Game,
+  IngestStatus,
+  Page,
+  PricePoint,
+} from './generated'
 
 /** A page of cards plus pagination cursors. */
 export type CardPage = Page<Card>
 
-/** A Secret Lair drop: a named group of cards (e.g. "Wild in Bloom"). */
-export interface DropGroup {
-  /** Stable slug for anchors; null for the catch-all "Other" group. */
-  slug: string | null
-  title: string
-  card_count: number
-  cards: Card[]
-}
-
 /** A page of drop groups — `total`/pagination count *drops*, not cards. */
 export type DropGroupPage = Page<DropGroup>
-
-/** Background import status for a game's card data. */
-export interface IngestStatus {
-  status: string
-  detail: string | null
-  sets_imported: number
-  cards_imported: number
-  source_updated_at: string | null
-  finished_at: string | null
-}
 
 export type ImageSize = 'small' | 'normal' | 'large' | 'png' | 'art_crop'
 
@@ -124,16 +44,7 @@ export interface CardListParams {
 }
 
 function cardQuery(params: CardListParams = {}): string {
-  const search = new URLSearchParams()
-  if (params.page) search.set('page', String(params.page))
-  if (params.pageSize) search.set('page_size', String(params.pageSize))
-  if (params.q) search.set('q', params.q)
-  if (params.includeRelated) search.set('include_related', 'true')
-  if (params.sort) search.set('sort', params.sort)
-  if (params.dir) search.set('dir', params.dir)
-  if (params.name) search.set('name', params.name)
-  const qs = search.toString()
-  return qs ? `?${qs}` : ''
+  return listQuery(params)
 }
 
 export function listGames(): Promise<{ data: Game[] }> {
@@ -218,15 +129,6 @@ export function getCardPrints(game: string, id: string): Promise<{ data: Card[] 
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<{ data: Card[] }>(`/api/games/${g}/cards/${i}/prints`)
-}
-
-/** A single day's recorded prices for a card (decimal strings, exactly as stored). */
-export interface PricePoint {
-  date: string
-  usd: string | null
-  usd_foil: string | null
-  eur: string | null
-  tix: string | null
 }
 
 /**

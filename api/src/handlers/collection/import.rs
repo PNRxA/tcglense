@@ -3,8 +3,6 @@
 //! provider fetch + reconcile live in [`crate::collection_import`]; these handlers
 //! validate, enqueue, and shape the responses.
 
-use std::collections::HashSet;
-
 use axum::{
     Json,
     body::Bytes,
@@ -323,16 +321,4 @@ fn source_response(row: collection_source::Model) -> CollectionSourceResponse {
         last_synced_at: row.last_synced_at.map(|t| t.to_rfc3339()),
         smart: row.smart,
     }
-}
-
-/// Trim, drop blanks, and de-duplicate a batch of requested external card ids,
-/// preserving first-seen order (so the `IN (...)` bind list has no repeats and a
-/// sloppy client list is tolerated).
-pub(super) fn dedupe_ids(ids: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    ids.into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .filter(|s| seen.insert(s.clone()))
-        .collect()
 }

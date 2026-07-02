@@ -83,27 +83,32 @@ pub(crate) fn group_set_codes(all_sets: &[card_set::Model], code: &str) -> Vec<S
     }
 }
 
+/// Resolve every set code in `code`'s group by fetching the game's flat set list and
+/// running [`group_set_codes`] over it. The single seam the catalog set view and the
+/// collection include-related view both resolve their group span through, so both are
+/// guaranteed to cover identical sets. `code` is passed through opaquely (no trimming
+/// or casing here) — an unknown code falls back to `[code]` via `group_set_codes`.
+pub(crate) async fn load_group_set_codes(
+    state: &AppState,
+    game: &str,
+    code: &str,
+) -> Result<Vec<String>, AppError> {
+    let all_sets = CardSet::find()
+        .filter(card_set::Column::Game.eq(game))
+        .all(&state.db)
+        .await?;
+    Ok(group_set_codes(&all_sets, code))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::prelude::DateTimeUtc;
+    use crate::test_support::card_set_model;
 
     fn test_set(code: &str, parent: Option<&str>) -> card_set::Model {
-        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
         card_set::Model {
-            id: 0,
-            game: "mtg".into(),
-            code: code.into(),
-            name: code.to_uppercase(),
-            set_type: None,
-            released_at: None,
-            card_count: 0,
-            digital: false,
-            icon_svg_uri: None,
             parent_set_code: parent.map(str::to_string),
-            external_id: None,
-            created_at: ts,
-            updated_at: ts,
+            ..card_set_model(code)
         }
     }
 

@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { Ghost } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
-import CollectionGrid from '@/components/cards/CollectionGrid.vue'
+import CollectionGrid from '@/components/collection/CollectionGrid.vue'
 import DropSection from '@/components/cards/DropSection.vue'
 import DropViewToggle from '@/components/cards/DropViewToggle.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
@@ -18,11 +19,17 @@ import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
-import { useGameName } from '@/composables/useCatalog'
+import {
+  CARD_PAGE_SIZE,
+  DROP_PAGE_SIZE,
+  useAllCardsQuery,
+  useGameName,
+  useSetCardsQuery,
+  useSetDropsQuery,
+  useSetQuery,
+} from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import {
-  COLLECTION_DROP_PAGE_SIZE,
-  COLLECTION_PAGE_SIZE,
   useCollectionDropsQuery,
   useCollectionQuery,
   useCollectionSummaryQuery,
@@ -36,9 +43,8 @@ import {
   COLLECTION_SORT_OPTIONS,
   SET_DEFAULT_SORT,
   SET_SORT_OPTIONS,
-  toSortParam,
 } from '@/lib/cardSort'
-import { getSet, listCards, listSetCards, listSetDrops, type Card } from '@/lib/api'
+import { type Card } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { formatCompletion, formatCopies } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
@@ -88,32 +94,30 @@ function setShowGhosts(on: boolean) {
   router.replace({ query: next })
 }
 
-// Related-sub-set grouping + the "view all together" scope nav + `hasDrops`, all keyed
-// off the (game-cached) public set list — reused from the catalog set view, but pointed
-// at the collection's own routes.
+// Related-sub-set grouping + the "view all together" scope nav + the by-drop view, all
+// keyed off the (game-cached) public set list — reused from the catalog set view, but
+// pointed at the collection's own routes. The unscoped all-cards view passes code '',
+// so `hasRelated`/`hasDrops`/`byDrop` resolve false and the scope controls stay inert
+// without a scoped guard here. By-drop composes with show-ghosts (owned drops vs. the
+// catalog's every-card drops).
 const {
   group,
-  isMainSet,
   relatedCount,
   hasRelated,
   includeRelated,
-  memberOptions,
-  activeSetCode,
-  originName,
   hasDrops,
+  byDrop,
+  setsWord,
+  scopeBarProps,
   setsPending,
-  listState,
   setIncludeRelated,
   viewSingleSet,
+  setDropView,
 } = useSetGrouping(game, groupCode, { basePath: '/collection', preserveQuery: ['ghosts'] })
 
 // A set's display name for the header/breadcrumb (public, cached). Only fetched for the
 // set-scoped view; falls back to the upper-cased code until it loads or if it's unknown.
-const setQuery = useQuery({
-  queryKey: ['set', game, code],
-  queryFn: () => getSet(game.value, code.value as string),
-  enabled: scoped,
-})
+const setQuery = useSetQuery(game, groupCode, scoped)
 const setName = computed(() =>
   scoped.value ? (setQuery.data.value?.name ?? code.value?.toUpperCase() ?? '') : '',
 )
@@ -122,7 +126,6 @@ const heading = computed(() => {
   if (!scoped.value) return 'All cards'
   return includeRelated.value && group.value ? group.value.main.name : setName.value
 })
-const setsWord = computed(() => (relatedCount.value === 1 ? 'set' : 'sets'))
 
 // Per-account page — kept out of search indexes.
 usePageMeta({
@@ -136,15 +139,6 @@ usePageMeta({
       : `/collection/${game.value}/cards`,
   noindex: true,
 })
-
-// By-drop is the default for a drop-grouped set; ?view=all opts back into the flat grid,
-// and the include-related view (?related=1) is itself a flat cross-set listing, so it
-// suppresses by-drop. Only ever active in the set-scoped view; composes with show-ghosts
-// (owned drops vs. the catalog's every-card drops). `hasDrops` comes from the game-cached
-// set list, so it's known up front — no flat-grid flash.
-const byDrop = computed(
-  () => scoped.value && hasDrops.value && route.query.view !== 'all' && !includeRelated.value,
-)
 
 // In show-ghosts mode the flat grid is really the catalog list (owned + unowned), so it
 // offers the catalog's sorts — a set's collector order, or the all-cards name order — while
@@ -194,51 +188,47 @@ const ownedDropGroups = computed(() => ownedDropsQuery.data.value?.data ?? [])
 
 // Ghost + flat: the public catalog list for this scope (owned + unowned), paginated +
 // searchable + sortable exactly like the catalog browse grids, spanning the set's group
-// when include-related is on.
-const ghostQuery = useQuery({
-  queryKey: ['collection-ghosts', game, setCode, includeRelated, query, sort, page],
-  queryFn: () => {
-    const params = {
-      q: query.value || undefined,
-      page: page.value,
-      pageSize: COLLECTION_PAGE_SIZE,
-      ...toSortParam(sort.value, defaultSort.value),
-    }
-    return setCode.value
-      ? listSetCards(game.value, setCode.value, {
-          ...params,
-          includeRelated: includeRelated.value || undefined,
-        })
-      : listCards(game.value, params)
-  },
-  // Signed-in + show-ghosts + flat only (and, when scoped, once the set list has settled).
-  // The whole grid lives behind the signed-in template, so a signed-out visitor landing on
-  // `?ghosts=1` sees the sign-in prompt — don't fetch for them.
-  enabled: computed(
-    () => auth.isAuthenticated && showGhosts.value && !byDrop.value && flatReady.value,
-  ),
-  placeholderData: keepPreviousData,
+// when include-related is on. Reuses the catalog views' query hooks (and so their cache
+// entries — toggling ghosts on a just-browsed set is a cache hit).
+// Signed-in + show-ghosts + flat only (and, when scoped, once the set list has settled).
+// The whole grid lives behind the signed-in template, so a signed-out visitor landing on
+// `?ghosts=1` sees the sign-in prompt — don't fetch for them.
+const ghostFlat = computed(
+  () => auth.isAuthenticated && showGhosts.value && !byDrop.value && flatReady.value,
+)
+// Both hooks are called unconditionally — this component backs both the all-cards and
+// set-scoped routes, so `scoped` can flip on the same reused instance — with `enabled`
+// gates picking the one matching the current scope.
+const ghostSetCardsQuery = useSetCardsQuery(game, groupCode, {
+  page,
+  query,
+  sort,
+  defaultSort: SET_DEFAULT_SORT,
+  includeRelated,
+  enabled: computed(() => ghostFlat.value && scoped.value),
 })
-const ghostCards = computed<Card[]>(() => ghostQuery.data.value?.data ?? [])
+const ghostAllCardsQuery = useAllCardsQuery(game, {
+  page,
+  query,
+  sort,
+  defaultSort: ALL_CARDS_DEFAULT_SORT,
+  enabled: computed(() => ghostFlat.value && !scoped.value),
+})
+const ghostQuery = computed(() => (scoped.value ? ghostSetCardsQuery : ghostAllCardsQuery))
+const ghostCards = computed<Card[]>(() => ghostQuery.value.data.value?.data ?? [])
 // The ghost list is showing a genuine, current result (not the previous page held by
 // keepPreviousData) — used to gate the completion label so it isn't computed from a stale
 // total while a filter/page change reloads.
 const ghostSettled = computed(
-  () => ghostQuery.isSuccess.value && !ghostQuery.isPlaceholderData.value,
+  () => ghostQuery.value.isSuccess.value && !ghostQuery.value.isPlaceholderData.value,
 )
 
 // Ghost + by drop: the catalog's by-drop endpoint (every card in each drop), so the drops
 // show what you're missing (dimmed) alongside what you own.
-const ghostDropsQuery = useQuery({
-  queryKey: ['collection-ghost-drops', game, setCode, query, page],
-  queryFn: () =>
-    listSetDrops(game.value, setCode.value as string, {
-      q: query.value || undefined,
-      page: page.value,
-      pageSize: COLLECTION_DROP_PAGE_SIZE,
-    }),
+const ghostDropsQuery = useSetDropsQuery(game, groupCode, {
+  page,
+  query,
   enabled: computed(() => auth.isAuthenticated && showGhosts.value && byDrop.value),
-  placeholderData: keepPreviousData,
 })
 const ghostDropGroups = computed(() => ghostDropsQuery.data.value?.data ?? [])
 
@@ -297,7 +287,7 @@ const active = computed(() =>
   showGhosts.value
     ? byDrop.value
       ? ghostDropsQuery
-      : ghostQuery
+      : ghostQuery.value
     : byDrop.value
       ? ownedDropsQuery
       : collectionQuery,
@@ -316,22 +306,12 @@ const hasCards = computed(() => (active.value.data.value?.data?.length ?? 0) > 0
 const searchError = computed(() => searchErrorMessage(listError.value))
 
 // The active view sets the pagination unit: drops (by-drop) or printings (flat).
-const pageSize = computed(() => (byDrop.value ? COLLECTION_DROP_PAGE_SIZE : COLLECTION_PAGE_SIZE))
+const pageSize = computed(() => (byDrop.value ? DROP_PAGE_SIZE : CARD_PAGE_SIZE))
 useClampPage(page, () => ({
   ready: listIsSuccess.value,
   total: total.value,
   pageSize: pageSize.value,
 }))
-
-// Toggle the by-drop vs flat view of this set. Preserves the search + sort and the
-// show-ghosts mode, but sheds the related/from scope and restarts paging — the two views
-// paginate over different units. ?view=all marks the flat mode; by-drop is the default.
-function setView(mode: 'drops' | 'all') {
-  const next = listState()
-  if (showGhosts.value) next.ghosts = '1'
-  if (mode === 'all') next.view = 'all'
-  router.replace({ query: next })
-}
 
 const countLabel = computed(() => {
   const n = total.value
@@ -382,13 +362,13 @@ const errorMessage = computed(() =>
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <nav class="text-muted-foreground mb-4 text-sm">
-      <RouterLink to="/collection" class="hover:underline">Collection</RouterLink>
-      <span class="mx-1.5">/</span>
-      <RouterLink :to="`/collection/${game}`" class="hover:underline">{{ gameName }}</RouterLink>
-      <span class="mx-1.5">/</span>
-      <span class="text-foreground">{{ heading }}</span>
-    </nav>
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Collection', to: '/collection' },
+        { label: gameName, to: `/collection/${game}` },
+        { label: heading },
+      ]"
+    />
 
     <!-- Signed out: the collection routes are public, so prompt to sign in rather than
          bouncing to the login page (matches the landing view, preserving ?redirect). -->
@@ -416,7 +396,10 @@ const errorMessage = computed(() =>
 
       <!-- Search + sort over the (optionally set-scoped) cards. -->
       <StickySearchBar>
-        <CardSearchBox v-model="searchInput" :placeholder="searchPlaceholder" />
+        <div class="flex items-center gap-2">
+          <CardSearchBox v-model="searchInput" :placeholder="searchPlaceholder" class="flex-1" />
+          <AdvancedSearchPanel v-model="searchInput" />
+        </div>
       </StickySearchBar>
       <SearchSyntaxHint class="mt-2 mb-6" />
 
@@ -424,15 +407,8 @@ const errorMessage = computed(() =>
            a picker to drop into any single set — the collection mirror of the catalog set
            view's scope bar. Composes with show-ghosts; acting on it leaves by-drop. -->
       <SetScopeBar
-        v-if="scoped && hasRelated"
-        :include-related="includeRelated"
-        :is-main-set="isMainSet"
-        :main-name="group?.main.name ?? ''"
-        :related-count="relatedCount"
-        :sets-word="setsWord"
-        :member-options="memberOptions"
-        :active-set-code="activeSetCode"
-        :origin-name="originName"
+        v-if="hasRelated"
+        v-bind="scopeBarProps"
         @toggle="setIncludeRelated"
         @select="viewSingleSet"
       />
@@ -447,7 +423,7 @@ const errorMessage = computed(() =>
              then the card-size + sort menus (flat views only — by-drop has a fixed order). -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
-            <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setView" />
+            <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setDropView" />
             <button
               type="button"
               :class="
@@ -536,11 +512,7 @@ const errorMessage = computed(() =>
             </DropSection>
           </template>
           <div class="mt-10">
-            <CardPagination
-              v-model:page="page"
-              :page-size="COLLECTION_DROP_PAGE_SIZE"
-              :total="total"
-            />
+            <CardPagination v-model:page="page" :page-size="DROP_PAGE_SIZE" :total="total" />
           </div>
         </template>
 
@@ -558,7 +530,7 @@ const errorMessage = computed(() =>
             :ghost-unowned="ownershipReady"
           />
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="COLLECTION_PAGE_SIZE" :total="total" />
+            <CardPagination v-model:page="page" :page-size="CARD_PAGE_SIZE" :total="total" />
           </div>
         </template>
       </template>

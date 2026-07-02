@@ -2,7 +2,7 @@
 //! card's owned counts, and the batch owned-counts lookup that backs the browse-grid
 //! badges.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -13,17 +13,16 @@ use sea_orm::{
 };
 
 use crate::auth::extractor::AuthUser;
-use crate::entities::prelude::{Card, CardSet, CollectionItem};
-use crate::entities::{card, card_set, collection_item};
+use crate::entities::prelude::{Card, CollectionItem};
+use crate::entities::{card, collection_item};
 use crate::error::AppError;
 use crate::extract::JsonBody;
 use crate::handlers::shared::{
-    CardResponse, Page, SortDir, Valuation, apply_card_sort, build_page, group_set_codes, load_card,
-    require_game, search_condition,
+    CardResponse, Page, SortDir, Valuation, apply_card_sort, build_page, load_card,
+    load_group_set_codes, require_game, search_condition,
 };
 use crate::state::AppState;
 
-use super::import::dedupe_ids;
 use super::{
     CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary, ListParams,
     MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SummaryParams, find_row,
@@ -76,18 +75,39 @@ pub async fn list_collection(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
-/// Build the collection-list query for a user + game: join `cards` (so it can be
-/// searched and sorted on card columns), apply the optional already-parsed search
-/// condition, and order by the chosen sort. Kept separate from the handler so the
-/// join/filter/sort can be unit-tested against a seeded DB without an `AppState`.
+/// The per-user owned-holdings base query: every `collection_items` row for one
+/// `user_id` + `game`, left-joined to its `cards` row, optionally scoped to a set-code
+/// slice. This encodes the collection's core per-user scoping invariant, so the list,
+/// summary, and owned-sets reads all build on the one join + filter.
+///
+/// `set_codes` scopes to the joined card's `set_code`: `None` = the whole collection,
+/// a single code = the per-set view, several codes = the include-related group view. An
+/// empty slice would match nothing, but the scope resolver never produces one (a group
+/// always contains at least the set itself).
+pub(super) fn owned_with_cards(
+    user_id: i32,
+    game: &str,
+    set_codes: Option<&[String]>,
+) -> SelectTwo<collection_item::Entity, card::Entity> {
+    let mut query = CollectionItem::find()
+        .find_also_related(Card)
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game));
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
+    }
+    query
+}
+
+/// Build the collection-list query for a user + game: the [`owned_with_cards`] base
+/// (per-user scope + optional set scope), plus the optional already-parsed search
+/// condition and the chosen sort. Kept separate from the handler so the join/filter/sort
+/// can be unit-tested against a seeded DB without an `AppState`.
 ///
 /// The search condition, the set scope, and the card sort touch only `cards` columns;
 /// the `user_id` and `game` filters and the recency sort stay entity-qualified to
 /// `collection_items`, so nothing is ambiguous across the join (both tables carry a
 /// `game` column).
-///
-/// `set_codes` scopes to the joined card's `set_code`: `None` = the whole collection,
-/// a single code = the per-set view, several codes = the include-related group view.
 pub(super) fn collection_query(
     user_id: i32,
     game: &str,
@@ -96,16 +116,7 @@ pub(super) fn collection_query(
     sort: CollectionSort,
     dir: SortDir,
 ) -> SelectTwo<collection_item::Entity, card::Entity> {
-    let mut query = CollectionItem::find()
-        .find_also_related(Card)
-        .filter(collection_item::Column::UserId.eq(user_id))
-        .filter(collection_item::Column::Game.eq(game));
-    // Scope to one set (per-set view) or several (the include-related group) by the
-    // joined card row's `set_code`. An empty slice would match nothing, but the scope
-    // resolver never produces one (a group always contains at least the set itself).
-    if let Some(codes) = set_codes {
-        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
-    }
+    let mut query = owned_with_cards(user_id, game, set_codes);
     if let Some(condition) = search {
         query = query.filter(condition);
     }
@@ -121,9 +132,9 @@ pub(super) fn collection_query(
 
 /// Resolve the set-code scope for a collection list: `None` (no scope, the whole
 /// collection), a single-code slice (the per-set view), or — with `include_related` —
-/// the scoped set's whole group (root + related sub-sets), resolved from the same flat
-/// set list the catalog uses ([`group_set_codes`]) so both span identical sets. Only
-/// fetches the set list when a group actually needs resolving.
+/// the scoped set's whole group (root + related sub-sets), resolved through the shared
+/// [`load_group_set_codes`] seam the catalog set view also uses, so both span identical
+/// sets. Only fetches the set list when a group actually needs resolving.
 async fn resolve_set_scope(
     state: &AppState,
     game: &str,
@@ -134,11 +145,7 @@ async fn resolve_set_scope(
     if !include_related {
         return Ok(Some(vec![code.to_string()]));
     }
-    let all_sets = CardSet::find()
-        .filter(card_set::Column::Game.eq(game))
-        .all(&state.db)
-        .await?;
-    Ok(Some(group_set_codes(&all_sets, code)))
+    Ok(Some(load_group_set_codes(state, game, code).await?))
 }
 
 /// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
@@ -176,14 +183,7 @@ pub(super) async fn summary(
     game: &str,
     set_codes: Option<&[String]>,
 ) -> Result<CollectionSummary, AppError> {
-    let mut query = CollectionItem::find()
-        .find_also_related(Card)
-        .filter(collection_item::Column::UserId.eq(user_id))
-        .filter(collection_item::Column::Game.eq(game));
-    if let Some(codes) = set_codes {
-        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
-    }
-    let rows = query.all(db).await?;
+    let rows = owned_with_cards(user_id, game, set_codes).all(db).await?;
 
     let mut unique_cards: i64 = 0;
     let mut total_cards: i64 = 0;
@@ -299,4 +299,16 @@ pub async fn owned_counts(
         .collect();
 
     Ok(Json(OwnedCountsResponse { data }))
+}
+
+/// Trim, drop blanks, and de-duplicate a batch of requested external card ids,
+/// preserving first-seen order (so the `IN (...)` bind list has no repeats and a
+/// sloppy client list is tolerated).
+pub(super) fn dedupe_ids(ids: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    ids.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .filter(|s| seen.insert(s.clone()))
+        .collect()
 }

@@ -6,13 +6,13 @@ use axum::{
     extract::{Path, Query, State},
 };
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
-use serde_json::json;
 
 use crate::entities::card;
 use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, Page, SortField, apply_card_sort, build_page, load_card, require_game, trim_query,
+    CardResponse, DataBody, Page, SortField, apply_card_sort, build_page, load_card, require_game,
+    trim_query,
 };
 use crate::state::AppState;
 
@@ -60,10 +60,10 @@ pub async fn card_names(
     State(state): State<AppState>,
     Path(game): Path<String>,
     Query(params): Query<NameSuggestParams>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<DataBody<Vec<String>>>, AppError> {
     require_game(&game)?;
     let Some(term) = trim_query(params.q.as_deref()) else {
-        return Ok(Json(json!({ "data": Vec::<String>::new() })));
+        return Ok(Json(DataBody { data: Vec::new() }));
     };
     let limit = params
         .limit
@@ -75,7 +75,7 @@ pub async fn card_names(
         .all(&state.db)
         .await?;
 
-    Ok(Json(json!({ "data": names })))
+    Ok(Json(DataBody { data: names }))
 }
 
 /// `GET /api/games/{game}/cards/{id}` -> one card's full detail.
@@ -97,7 +97,7 @@ pub async fn get_card(
 pub async fn card_prints(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<DataBody<Vec<CardResponse>>>, AppError> {
     require_game(&game)?;
     let card = load_card(&state, &game, &id).await?;
     // Without an oracle_id there's no key to find sibling printings by, so the
@@ -111,5 +111,5 @@ pub async fn card_prints(
             .map(CardResponse::from)
             .collect(),
     };
-    Ok(Json(json!({ "data": data })))
+    Ok(Json(DataBody { data }))
 }

@@ -1,27 +1,25 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { RouterLink } from 'vue-router'
+import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
-import { useGameName } from '@/composables/useCatalog'
+import { CARD_PAGE_SIZE, useAllCardsQuery, useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import { useOwnedCounts } from '@/composables/useCollection'
-import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS, toSortParam } from '@/lib/cardSort'
-import { listCards } from '@/lib/api'
+import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
 import { usePageMeta } from '@/lib/seo'
 
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 
-const PAGE_SIZE = 60
 // Page, search and sort live in the URL query, so they survive opening a card and
 // pressing Back. Switching games routes to a fresh URL, so it starts clean.
 const { page, searchInput, query, sort } = useCardSearch(
@@ -38,16 +36,11 @@ usePageMeta({
   canonicalPath: () => `/cards/${game.value}/cards`,
 })
 
-const cardsQuery = useQuery({
-  queryKey: ['cards', game, query, sort, page],
-  queryFn: () =>
-    listCards(game.value, {
-      q: query.value || undefined,
-      page: page.value,
-      pageSize: PAGE_SIZE,
-      ...toSortParam(sort.value, ALL_CARDS_DEFAULT_SORT),
-    }),
-  placeholderData: keepPreviousData,
+const cardsQuery = useAllCardsQuery(game, {
+  page,
+  query,
+  sort,
+  defaultSort: ALL_CARDS_DEFAULT_SORT,
 })
 
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
@@ -60,26 +53,33 @@ const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
 useClampPage(page, () => ({
   ready: cardsQuery.isSuccess.value,
   total: total.value,
-  pageSize: PAGE_SIZE,
+  pageSize: CARD_PAGE_SIZE,
 }))
 </script>
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <nav class="text-muted-foreground mb-4 text-sm">
-      <RouterLink to="/cards" class="hover:underline">Cards</RouterLink>
-      <span class="mx-1.5">/</span>
-      <RouterLink :to="`/cards/${game}`" class="hover:underline">{{ gameName }}</RouterLink>
-      <span class="mx-1.5">/</span>
-      <span class="text-foreground">All cards</span>
-    </nav>
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Cards', to: '/cards' },
+        { label: gameName, to: `/cards/${game}` },
+        { label: 'All cards' },
+      ]"
+    />
 
     <h1 class="mb-4 text-3xl font-semibold tracking-tight">All cards</h1>
 
     <!-- The search bar sticks to the top of the viewport so it stays reachable
          while scrolling a long results grid. -->
     <StickySearchBar>
-      <CardSearchBox v-model="searchInput" placeholder="Search — name, c:r, t:goblin…" />
+      <div class="flex items-center gap-2">
+        <CardSearchBox
+          v-model="searchInput"
+          placeholder="Search — name, c:r, t:goblin…"
+          class="flex-1"
+        />
+        <AdvancedSearchPanel v-model="searchInput" />
+      </div>
     </StickySearchBar>
     <SearchSyntaxHint class="mt-2" />
 
@@ -102,7 +102,7 @@ useClampPage(page, () => ({
       </div>
       <CardGrid :game="game" :cards="cards" :ownership="ownership" />
       <div class="mt-10">
-        <CardPagination v-model:page="page" :page-size="PAGE_SIZE" :total="total" />
+        <CardPagination v-model:page="page" :page-size="CARD_PAGE_SIZE" :total="total" />
       </div>
     </template>
   </div>

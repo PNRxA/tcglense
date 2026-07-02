@@ -17,7 +17,9 @@ export default defineConfigWithVueTs(
     files: ['**/*.{vue,ts,mts,tsx}'],
   },
 
-  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/coverage/**']),
+  // src/lib/api/generated is emitted by the API's ts-rs derives (`cargo test`) and
+  // must stay byte-identical to that output, so it's exempt from lint/format.
+  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/coverage/**', 'src/lib/api/generated/**']),
 
   ...pluginVue.configs['flat/essential'],
   vueTsConfigs.recommended,

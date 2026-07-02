@@ -3,6 +3,7 @@ import { computed, toRef, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { LayoutGrid, Loader2 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
+import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
@@ -86,11 +87,7 @@ const sections = computed(() => {
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <nav class="text-muted-foreground mb-4 text-sm">
-      <RouterLink to="/cards" class="hover:underline">Cards</RouterLink>
-      <span class="mx-1.5">/</span>
-      <span class="text-foreground">{{ gameName }}</span>
-    </nav>
+    <PageBreadcrumbs :items="[{ label: 'Cards', to: '/cards' }, { label: gameName }]" />
 
     <header class="mb-4">
       <h1 class="text-3xl font-semibold tracking-tight">{{ gameName }}</h1>

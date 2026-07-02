@@ -19,31 +19,30 @@ import {
 } from '@/lib/api'
 import { invalidateCollectionData } from '@/composables/useCollection'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
-import { useAuthStore } from '@/stores/auth'
 
 // Import / sync from an external collection provider (Archidekt or Moxfield).
-// This module holds the vue-query hooks for the import/sync surface plus two higher-level
-// composables layered on top of them: `usePolledImportJob` (the shared job-poll-to-terminal
-// plumbing both the import dialog and the collection landing use) and `useCollectionImport`
-// (the dialog's whole link/CSV/save lifecycle). The read side of the collection stays in
-// `useCollection`; this depends on it only for `invalidateCollectionData`.
+// The low-level vue-query hooks for each import/sync endpoint are internal plumbing; the
+// module's public surface is `useCollectionSourceQuery` + `useSyncCollectionSourceMutation`
+// (the saved-link read/re-sync the collection landing uses) plus two higher-level
+// composables layered on the internal hooks: `usePolledImportJob` (the shared
+// job-poll-to-terminal plumbing both the import dialog and the collection landing use) and
+// `useCollectionImport` (the dialog's whole link/CSV/save lifecycle). The read side of the
+// collection stays in `useCollection`; this depends on it only for `invalidateCollectionData`.
 
 /**
  * The user's saved external collection link for a game (or null). Drives the
  * "Re-sync" affordance and prefills the import dialog. Disabled while signed out.
  */
 export function useCollectionSourceQuery(game: Ref<string>) {
-  const auth = useAuthStore()
   const options = {
     queryKey: ['collection-source', game],
     queryFn: (token: string) => getCollectionSource(token, game.value),
-    enabled: computed(() => auth.isAuthenticated),
   }
   return useAuthedQuery<CollectionSource | null>(options)
 }
 
 /** Variables for a one-off import. */
-export interface ImportCollectionVars {
+interface ImportCollectionVars {
   game: string
   provider: CollectionProvider
   source: string
@@ -55,7 +54,7 @@ export interface ImportCollectionVars {
  * {@link useImportJobQuery}); the collection caches are invalidated only once that job
  * completes, so nothing is invalidated here.
  */
-export function useImportCollectionMutation() {
+function useImportCollectionMutation() {
   const options = {
     mutationFn: (token: string, vars: ImportCollectionVars) =>
       importCollection(token, vars.game, {
@@ -68,7 +67,7 @@ export function useImportCollectionMutation() {
 }
 
 /** Variables for a CSV upload import: the file and how to reconcile it. */
-export interface ImportCsvVars {
+interface ImportCsvVars {
   game: string
   file: File
   mode: ReconcileMode
@@ -80,7 +79,7 @@ export interface ImportCsvVars {
  * to an {@link ImportSummary} (the CSV needs no upstream fetch, so there's no job to
  * poll); the caller invalidates the collection caches on success.
  */
-export function useImportCollectionCsvMutation() {
+function useImportCollectionCsvMutation() {
   const options = {
     mutationFn: (token: string, vars: ImportCsvVars) =>
       importCollectionCsv(token, vars.game, vars.file, vars.mode),
@@ -92,12 +91,11 @@ export function useImportCollectionCsvMutation() {
  * Poll a background import/sync job until it reaches a terminal status. Enabled only
  * while `jobId` is set; refetches every 2s while `queued`/`running`, then stops.
  */
-export function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) {
-  const auth = useAuthStore()
+function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) {
   const options = {
     queryKey: ['import-job', game, jobId],
     queryFn: (token: string) => getImportJob(token, game.value, jobId.value as number),
-    enabled: computed(() => auth.isAuthenticated && jobId.value != null),
+    enabled: computed(() => jobId.value != null),
     refetchInterval: (query: { state: { data?: ImportJob } }) => {
       const status = query.state.data?.status
       return status === 'queued' || status === 'running' ? 2000 : false
@@ -110,7 +108,7 @@ export function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) 
 }
 
 /** Variables for saving a collection link. */
-export interface SaveSourceVars {
+interface SaveSourceVars {
   game: string
   provider: CollectionProvider
   source: string
@@ -119,7 +117,7 @@ export interface SaveSourceVars {
 }
 
 /** Save (upsert) the collection link; invalidates the saved-source query. */
-export function useSaveCollectionSourceMutation() {
+function useSaveCollectionSourceMutation() {
   const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: SaveSourceVars) =>
@@ -140,7 +138,7 @@ export function useSaveCollectionSourceMutation() {
 }
 
 /** Forget the saved collection link; invalidates the saved-source query. */
-export function useDeleteCollectionSourceMutation() {
+function useDeleteCollectionSourceMutation() {
   const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: { game: string }) => deleteCollectionSource(token, vars.game),

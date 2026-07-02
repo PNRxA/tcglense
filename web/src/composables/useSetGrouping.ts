@@ -12,10 +12,11 @@ import { filterGroups, findGroup, groupSets, originSetCode, subSetLabel } from '
  * scope in the URL so it's shareable and survives a reload.
  *
  * `game`/`code` are the set-view route params (refs). Returns the group derivations
- * the view renders, plus the two nav helpers that toggle the scope. `setsPending`
- * is the underlying set-list query's pending flag, which the view gates its flat
- * card fetch on so a cold-loaded by-drop/related link doesn't fire a throwaway
- * request.
+ * the view renders — including the bundled SetScopeBar props and the by-drop view
+ * flag — plus the nav helpers that toggle the scope and the by-drop/flat view.
+ * `setsPending` is the underlying set-list query's pending flag, which the view gates
+ * its flat card fetch on so a cold-loaded by-drop/related link doesn't fire a
+ * throwaway request.
  *
  * `options.basePath` is the route prefix the scope-nav helpers navigate under
  * (default `/cards`); the collection's set view passes `/collection` so the same
@@ -46,6 +47,7 @@ export function useSetGrouping(
   // whether you're on the main set or one of its sub-sets.
   const relatedCount = computed(() => group.value?.children.length ?? 0)
   const hasRelated = computed(() => relatedCount.value > 0)
+  const setsWord = computed(() => (relatedCount.value === 1 ? 'set' : 'sets'))
 
   // The "view related" state lives in the URL (?related=1) so it's shareable and
   // survives a reload, but only takes effect when there actually are related sets.
@@ -89,6 +91,28 @@ export function useSetGrouping(
   const hasDrops = computed(
     () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.has_drops ?? false,
   )
+
+  // By-drop is the default for a drop-grouped set; ?view=all opts back into the flat
+  // grid, and the related-sets view (?related=1) is itself a flat cross-set listing,
+  // so it suppresses by-drop too. `hasDrops` resolves false for the collection's
+  // unscoped '' code, so the all-cards view needs no scope guard of its own.
+  const byDrop = computed(
+    () => hasDrops.value && route.query.view !== 'all' && !includeRelated.value,
+  )
+
+  // The full prop set SetScopeBar renders, bundled so both set-scoped views bind the
+  // bar with one v-bind (the camelCase keys match its props) instead of relaying
+  // eight props in lockstep.
+  const scopeBarProps = computed(() => ({
+    includeRelated: includeRelated.value,
+    isMainSet: isMainSet.value,
+    mainName: group.value?.main.name ?? '',
+    relatedCount: relatedCount.value,
+    setsWord: setsWord.value,
+    memberOptions: memberOptions.value,
+    activeSetCode: activeSetCode.value,
+    originName: originName.value,
+  }))
 
   // The passthrough query keys (e.g. the collection's `ghosts` view mode) that ride
   // along every scope-nav so a view preference orthogonal to the scope survives it.
@@ -146,6 +170,16 @@ export function useSetGrouping(
     }
   }
 
+  // Toggle the by-drop vs flat view of this set. Preserves the search + sort (and any
+  // preserved view mode) but sheds the related/from scope and restarts paging (page is
+  // dropped by listState) — the two views paginate over different units. ?view=all
+  // marks the flat mode; by-drop is the bare default.
+  function setDropView(mode: 'drops' | 'all') {
+    const next = listState()
+    if (mode === 'all') next.view = 'all'
+    router.replace({ query: next })
+  }
+
   return {
     group,
     isMainSet,
@@ -156,12 +190,13 @@ export function useSetGrouping(
     activeSetCode,
     originName,
     hasDrops,
+    byDrop,
+    setsWord,
+    scopeBarProps,
     setsPending: setsQuery.isPending,
-    // Exposed so the view's own by-drop/flat toggle can preserve the search + sort
-    // (and restart paging) the same way the scope nav does.
-    listState,
     setIncludeRelated,
     viewSingleSet,
+    setDropView,
   }
 }
 
