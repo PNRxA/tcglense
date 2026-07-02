@@ -5,9 +5,16 @@
 //! can reuse them; the HTTP/JSON types are re-exported for the same reason, so a
 //! concern file only needs `use super::harness::*`.
 
+use std::sync::Arc;
+
 use tower::ServiceExt;
 
-use crate::{build_router, config::Config, state::AppState};
+use crate::{
+    build_router,
+    config::Config,
+    email::{Emailer, Mailbox, OutgoingEmail},
+    state::AppState,
+};
 
 // Re-exported so the concern modules get both the helpers below and the HTTP/JSON
 // types they build requests and assert with from a single `use super::harness::*`.
@@ -46,17 +53,48 @@ pub(super) async fn test_state() -> AppState {
     AppState::new(config, db, http, image_http).expect("assemble test app state")
 }
 
-/// A router over a fresh, empty (no catalog) state.
-pub(super) async fn test_app() -> Router {
-    build_router(test_state().await)
+/// The router plus the state and captured outbox behind it. Tests that only
+/// drive HTTP use it exactly like the `Router` it derefs to (`send(&app, …)`);
+/// the extra fields exist because email verification made two things reachable
+/// only from outside the HTTP surface: the emailed token (the DB stores just
+/// its hash, so only the captured message carries the plaintext) and direct DB
+/// fixtures.
+pub(super) struct TestApp {
+    pub router: Router,
+    pub state: AppState,
+    pub mailbox: Mailbox,
 }
 
-/// A router whose DB has the deterministic offline dummy catalog seeded, so the
+impl std::ops::Deref for TestApp {
+    type Target = Router;
+    fn deref(&self) -> &Router {
+        &self.router
+    }
+}
+
+/// Wrap a state in the real router, swapping the emailer for a capturing sink
+/// so tests can read what would have been sent.
+fn test_app_over(mut state: AppState) -> TestApp {
+    let mailbox = Mailbox::default();
+    state.email = Arc::new(Emailer::Capture(mailbox.clone()));
+    TestApp {
+        router: build_router(state.clone()),
+        state,
+        mailbox,
+    }
+}
+
+/// An app over a fresh, empty (no catalog) state.
+pub(super) async fn test_app() -> TestApp {
+    test_app_over(test_state().await)
+}
+
+/// An app whose DB has the deterministic offline dummy catalog seeded, so the
 /// public catalog/search routes have data to exercise.
-pub(super) async fn test_app_with_catalog() -> Router {
+pub(super) async fn test_app_with_catalog() -> TestApp {
     let state = test_state().await;
     crate::catalog::seed_all(&state.db).await;
-    build_router(state)
+    test_app_over(state)
 }
 
 /// Drive one request through the router (clones it, since `oneshot` consumes the
@@ -185,9 +223,13 @@ pub(super) fn refresh_cookie_cleared(headers: &HeaderMap) -> bool {
         })
 }
 
-/// Register a user and return its access token and refresh-cookie plaintext.
-pub(super) async fn register(app: &Router, email: &str, password: &str) -> (String, String) {
-    let (status, headers, body) = send(
+/// Register a **verified** user and return its access token and refresh-cookie
+/// plaintext. Registration mints no session under the verify-first contract, so
+/// this walks the real user journey: register, consume the verification token
+/// from the captured email, then log in. Tests that care about the unverified
+/// in-between state drive the endpoints directly instead.
+pub(super) async fn register(app: &TestApp, email: &str, password: &str) -> (String, String) {
+    let (status, _, body) = send(
         app,
         json_post(
             "/api/auth/register",
@@ -196,7 +238,62 @@ pub(super) async fn register(app: &Router, email: &str, password: &str) -> (Stri
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "register failed: {body:?}");
+
+    // The handler canonicalises the address before mailing it.
+    let token = latest_email_token(app, &email.trim().to_lowercase()).await;
+    let (status, _, body) = send(
+        app,
+        json_post("/api/auth/verify-email", json!({ "token": token })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "verify-email failed: {body:?}");
+
+    login(app, email, password).await
+}
+
+/// Log in and return the access token and refresh-cookie plaintext.
+pub(super) async fn login(app: &TestApp, email: &str, password: &str) -> (String, String) {
+    let (status, headers, body) = send(
+        app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": email, "password": password }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "login failed: {body:?}");
     let access = body["access_token"].as_str().expect("access_token").to_string();
     let refresh = refresh_token_from(&headers).expect("refresh cookie");
     (access, refresh)
+}
+
+/// Everything "sent" so far, after letting any fire-and-forget send tasks run
+/// (the resend/forgot endpoints spawn their sends off the request path; on the
+/// test runtime those complete as soon as the test yields — the capture sink
+/// does no real I/O).
+pub(super) async fn delivered_emails(app: &TestApp) -> Vec<OutgoingEmail> {
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    app.mailbox.emails()
+}
+
+/// The token carried by the most recent email delivered to `to`. The DB stores
+/// only the token's hash, so the captured message is the sole source of the
+/// plaintext — exactly like a real inbox.
+pub(super) async fn latest_email_token(app: &TestApp, to: &str) -> String {
+    let emails = delivered_emails(app).await;
+    let email = emails
+        .iter()
+        .rev()
+        .find(|e| e.to == to)
+        .unwrap_or_else(|| panic!("no email delivered to {to}"));
+    let after = email
+        .text
+        .split_once("token=")
+        .expect("email text carries a token link")
+        .1;
+    let token: String = after.chars().take_while(char::is_ascii_hexdigit).collect();
+    assert!(!token.is_empty(), "token link is empty: {}", email.text);
+    token
 }

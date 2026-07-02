@@ -31,6 +31,16 @@ pub struct Config {
     /// strings on request (email support@moxfield.com). Unset = requests go out with
     /// the client's default UA (and will likely be rejected with a clear error).
     pub moxfield_user_agent: Option<String>,
+    /// API key for [Resend](https://resend.com), the transactional-email provider
+    /// (verification + password-reset mail). Unset = email sending is disabled:
+    /// sends are skipped and logged instead (offline dev / tests). A credential —
+    /// redacted in `Debug`.
+    pub resend_api_key: Option<String>,
+    /// `From` address on outbound email, e.g. `TCGLense <no-reply@tcglense.app>`.
+    /// The domain must be verified with the email provider; the default is
+    /// Resend's shared onboarding sender, which only delivers to the Resend
+    /// account owner's own address (fine for dev, set a real one in production).
+    pub email_from: String,
     /// Whether to import card data from providers on startup (disable in tests).
     pub sync_on_startup: bool,
     /// How often to re-import card data after the startup import, in hours.
@@ -67,6 +77,12 @@ impl std::fmt::Debug for Config {
                 "moxfield_user_agent",
                 &self.moxfield_user_agent.as_ref().map(|_| "[redacted]"),
             )
+            // The Resend API key is a credential; print only whether one is set.
+            .field(
+                "resend_api_key",
+                &self.resend_api_key.as_ref().map(|_| "[redacted]"),
+            )
+            .field("email_from", &self.email_from)
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)
@@ -209,6 +225,14 @@ impl Config {
         // Moxfield only serves approved User-Agents (see the struct field); no default.
         let moxfield_user_agent = env_trimmed("MOXFIELD_USER_AGENT");
 
+        // Unset = email sending disabled (sends are logged instead) — see the field.
+        let resend_api_key = env_trimmed("RESEND_API_KEY");
+
+        // Resend's shared onboarding sender only delivers to the account owner's
+        // own address — enough for dev; production sets a verified-domain sender.
+        let email_from = env_trimmed("EMAIL_FROM")
+            .unwrap_or_else(|| "TCGLense <onboarding@resend.dev>".to_string());
+
         // Importing card data is the default; tests and offline runs disable it.
         let sync_on_startup = env_bool("SYNC_ON_STARTUP", true);
 
@@ -233,6 +257,8 @@ impl Config {
             data_dir,
             scryfall_user_agent,
             moxfield_user_agent,
+            resend_api_key,
+            email_from,
             sync_on_startup,
             sync_interval_hours,
             seed_dummy_data,

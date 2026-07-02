@@ -12,6 +12,11 @@ pub struct Model {
     pub display_name: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
+    /// When the account's email address was verified (via an emailed link, or a
+    /// completed password reset — both prove mailbox ownership). `None` means
+    /// unverified, and login is refused until it is set. Accounts predating the
+    /// column were backfilled as verified.
+    pub email_verified_at: Option<DateTimeUtc>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

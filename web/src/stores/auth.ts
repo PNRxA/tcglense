@@ -1,13 +1,12 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { LoginPayload, RegisterPayload, User } from '@/lib/api'
+import type { LoginPayload, User } from '@/lib/api'
 import {
   ApiError,
   login as apiLogin,
   logout as apiLogout,
   me as apiMe,
   refresh as apiRefresh,
-  register as apiRegister,
 } from '@/lib/api'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -24,11 +23,10 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = response.user
   }
 
-  async function register(payload: RegisterPayload) {
-    const response = await apiRegister(payload)
-    accessToken.value = response.access_token
-    user.value = response.user
-  }
+  // NOTE: there is deliberately no `register` action. Registration mints no
+  // session (the account must verify its email before it can sign in), so the
+  // view calls the API fn directly; writing the returned user into this store
+  // would flip `isAuthenticated` and bounce the visitor off the guest routes.
 
   async function logout() {
     try {
@@ -140,7 +138,6 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     isAuthenticated,
     login,
-    register,
     logout,
     refresh,
     fetchMe,

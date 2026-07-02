@@ -35,6 +35,12 @@ pub enum AppError {
     #[error("{0}")]
     Unauthorized(String),
 
+    /// The credentials are valid but the account may not proceed yet (e.g. its
+    /// email address is unverified) -> 403 Forbidden. Distinct from 401 so the
+    /// SPA's "access token expired" auto-refresh logic never fires on it.
+    #[error("{0}")]
+    Forbidden(String),
+
     /// Resource not found -> 404. Used by the card-catalog endpoints (unknown
     /// game/set/card) and available to future collection endpoints.
     #[error("{0}")]
@@ -71,6 +77,7 @@ impl IntoResponse for AppError {
                 "invalid email or password".to_string(),
             ),
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             AppError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),

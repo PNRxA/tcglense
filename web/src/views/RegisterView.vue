@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Loader2 } from '@lucide/vue'
+import { Loader2, MailCheck } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,12 +13,8 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useAuthSubmit } from '@/composables/useAuthSubmit'
+import { ApiError, register, resendVerification } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
-import { useAuthStore } from '@/stores/auth'
-
-const auth = useAuthStore()
-const { error, loading, submit } = useAuthSubmit()
 
 usePageMeta({ title: 'Create your account', canonicalPath: '/register', noindex: true })
 
@@ -26,20 +22,80 @@ const email = ref('')
 const password = ref('')
 const displayName = ref('')
 
-function onSubmit() {
-  submit(() =>
-    auth.register({
+const error = ref<string | null>(null)
+const loading = ref(false)
+// Registration mints no session — on success we stay here and show the
+// check-your-email step (the canonicalised address the server mailed).
+const registeredEmail = ref<string | null>(null)
+
+async function onSubmit() {
+  error.value = null
+  loading.value = true
+  try {
+    const response = await register({
       email: email.value,
       password: password.value,
       display_name: displayName.value.trim() || null,
-    }),
-  )
+    })
+    registeredEmail.value = response.user.email
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
+  } finally {
+    loading.value = false
+  }
+}
+
+const resendLoading = ref(false)
+const resendSent = ref(false)
+
+async function onResend() {
+  if (!registeredEmail.value) return
+  resendLoading.value = true
+  try {
+    await resendVerification({ email: registeredEmail.value })
+    resendSent.value = true
+  } catch {
+    // Generic endpoint; a failure here is transient — the button stays available.
+  } finally {
+    resendLoading.value = false
+  }
 }
 </script>
 
 <template>
   <div class="flex min-h-[calc(100vh-3.5rem)] items-center justify-center px-4 py-12">
-    <Card class="w-full max-w-sm">
+    <Card v-if="registeredEmail" class="w-full max-w-sm">
+      <CardHeader>
+        <MailCheck class="text-primary size-8" />
+        <CardTitle class="text-2xl">Check your email</CardTitle>
+        <CardDescription>
+          We sent a verification link to <span class="font-medium">{{ registeredEmail }}</span
+          >. Open it to activate your account, then sign in.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button as-child class="w-full">
+          <RouterLink to="/login">Go to sign in</RouterLink>
+        </Button>
+      </CardContent>
+      <CardFooter class="justify-center">
+        <p class="text-muted-foreground text-sm">
+          <template v-if="resendSent">Verification email sent — check your inbox.</template>
+          <template v-else>
+            Didn't get it?
+            <button
+              type="button"
+              class="text-primary font-medium hover:underline"
+              :disabled="resendLoading"
+              @click="onResend"
+            >
+              Resend the link
+            </button>
+          </template>
+        </p>
+      </CardFooter>
+    </Card>
+    <Card v-else class="w-full max-w-sm">
       <CardHeader>
         <CardTitle class="text-2xl">Create your account</CardTitle>
         <CardDescription>Start tracking your collection with TCGLense</CardDescription>

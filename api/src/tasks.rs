@@ -9,9 +9,9 @@ use sea_orm::DatabaseConnection;
 
 use crate::{catalog, state::AppState};
 
-/// Periodically prune expired refresh tokens so the table can't grow unbounded.
-/// The first tick fires immediately, then every 6 hours.
-fn spawn_refresh_token_pruner(db: DatabaseConnection) {
+/// Periodically prune expired refresh + email tokens so those tables can't grow
+/// unbounded. The first tick fires immediately, then every 6 hours.
+fn spawn_token_pruner(db: DatabaseConnection) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));
         loop {
@@ -21,6 +21,13 @@ fn spawn_refresh_token_pruner(db: DatabaseConnection) {
                 Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to prune expired refresh tokens")
+                }
+            }
+            match crate::auth::email_token::prune_expired(&db).await {
+                Ok(n) if n > 0 => tracing::info!("pruned {n} expired email tokens"),
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to prune expired email tokens")
                 }
             }
         }
@@ -72,7 +79,7 @@ fn spawn_card_sync(db: DatabaseConnection, http: Client, sync_interval_hours: u6
 /// present before the first request (handy for CI/e2e). A seed error is logged but
 /// does not abort startup. Never enable this outside dev/CI/test.
 pub async fn start(state: &AppState, http: &Client) {
-    spawn_refresh_token_pruner(state.db.clone());
+    spawn_token_pruner(state.db.clone());
 
     if state.config.seed_dummy_data {
         tracing::warn!(

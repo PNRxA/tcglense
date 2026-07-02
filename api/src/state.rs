@@ -7,6 +7,7 @@ use crate::catalog::images::ImageCache;
 use crate::collection_import::ProviderSettings;
 use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
+use crate::email::Emailer;
 use crate::error::AppError;
 
 /// The fixed plaintext whose Argon2 hash backs the login timing-equalizer (see
@@ -34,6 +35,9 @@ pub struct AppState {
     /// Background queue + per-provider rate limiters for collection imports/syncs (they run
     /// asynchronously because the provider rate limits make them slow).
     pub imports: Arc<ImportQueue>,
+    /// Outbound transactional email (verification / password-reset links); a
+    /// logging no-op when no provider key is configured.
+    pub email: Arc<Emailer>,
 }
 
 impl AppState {
@@ -59,6 +63,9 @@ impl AppState {
         let imports = Arc::new(ImportQueue::default().with_settings(ProviderSettings {
             moxfield_user_agent: config.moxfield_user_agent.clone(),
         }));
+        // Sends ride the shared client (with a per-request timeout); the key and
+        // From address are captured here so handlers just call `state.email`.
+        let email = Arc::new(Emailer::from_config(&config, http.clone()));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -66,6 +73,7 @@ impl AppState {
             images,
             http,
             imports,
+            email,
         })
     }
 }

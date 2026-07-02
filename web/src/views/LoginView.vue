@@ -14,11 +14,12 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthSubmit } from '@/composables/useAuthSubmit'
+import { resendVerification } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
-const { error, loading, submit } = useAuthSubmit()
+const { error, errorStatus, loading, submit } = useAuthSubmit()
 
 usePageMeta({ title: 'Sign in', canonicalPath: '/login', noindex: true })
 
@@ -27,6 +28,23 @@ const password = ref('')
 
 function onSubmit() {
   submit(() => auth.login({ email: email.value, password: password.value }))
+}
+
+// A 403 means the credentials were right but the email is unverified — offer to
+// resend the verification link (the server answers generically either way).
+const resendLoading = ref(false)
+const resendSent = ref(false)
+
+async function onResend() {
+  resendLoading.value = true
+  try {
+    await resendVerification({ email: email.value })
+    resendSent.value = true
+  } catch {
+    // Generic endpoint; a failure here is transient — leave the prompt in place.
+  } finally {
+    resendLoading.value = false
+  }
 }
 </script>
 
@@ -51,7 +69,15 @@ function onSubmit() {
             />
           </div>
           <div class="flex flex-col gap-2">
-            <Label for="password">Password</Label>
+            <div class="flex items-center justify-between">
+              <Label for="password">Password</Label>
+              <RouterLink
+                to="/forgot-password"
+                class="text-muted-foreground text-xs hover:underline"
+              >
+                Forgot password?
+              </RouterLink>
+            </div>
             <Input
               id="password"
               v-model="password"
@@ -61,6 +87,22 @@ function onSubmit() {
             />
           </div>
           <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
+          <p v-if="errorStatus === 403" class="text-muted-foreground text-sm">
+            <template v-if="resendSent">
+              Verification email sent — check your inbox, then sign in.
+            </template>
+            <template v-else>
+              Check your inbox for the verification link, or
+              <button
+                type="button"
+                class="text-primary font-medium hover:underline"
+                :disabled="resendLoading"
+                @click="onResend"
+              >
+                resend it</button
+              >.
+            </template>
+          </p>
           <Button type="submit" class="w-full" :disabled="loading">
             <Loader2 v-if="loading" class="animate-spin" />
             {{ loading ? 'Signing in...' : 'Sign in' }}
