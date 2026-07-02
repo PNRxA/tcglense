@@ -46,6 +46,10 @@ pub async fn import_collection(
             game
         )));
     }
+    // Refuse a provider whose live network import is temporarily disabled (Moxfield today)
+    // before doing anything else — the disable is unconditional, so a bad URL shouldn't be
+    // reported as a source error when the provider is off entirely.
+    ensure_network_import_enabled(provider)?;
     // Resolve the source id up front so a bad URL/id is an immediate 422, not a job that
     // fails later.
     let collection_id = collection_import::parse_source(provider, &payload.source)?;
@@ -151,6 +155,9 @@ pub async fn save_collection_source(
             game
         )));
     }
+    // A saved link exists only to be re-synced, so don't let one be saved for a provider
+    // whose live import is disabled (Moxfield today) — it could never sync.
+    ensure_network_import_enabled(provider)?;
     // Validate + normalise the source to a bare provider collection id.
     let external_id = collection_import::parse_source(provider, &payload.source)?;
     let now = Utc::now();
@@ -240,6 +247,9 @@ pub async fn sync_collection_source(
             source.provider
         ))
     })?;
+    // A link saved before the provider's live import was disabled can still be on file
+    // (saving is now blocked too, but old rows persist), so gate the re-sync as well.
+    ensure_network_import_enabled(provider)?;
 
     // The saved link records how it re-syncs: smart (incremental, only recently-changed
     // cards) or a full mirror (removes cards no longer upstream). Both stamp the source
@@ -277,6 +287,22 @@ pub async fn sync_collection_source(
 fn parse_provider(s: &str) -> Result<Provider, AppError> {
     Provider::from_id(s)
         .ok_or_else(|| AppError::Validation(format!("unknown collection provider '{s}'")))
+}
+
+/// Reject a provider whose **live network** import (URL/link import + saved-link re-sync)
+/// is temporarily disabled — Moxfield today, pending an approved `User-Agent` (see
+/// [`Provider::network_import_enabled`]). Returns `422` with an actionable message; the
+/// CSV upload path never calls this, so a disabled provider's collection can still be
+/// imported by uploading its CSV export.
+fn ensure_network_import_enabled(provider: Provider) -> Result<(), AppError> {
+    if provider.network_import_enabled() {
+        return Ok(());
+    }
+    Err(AppError::Validation(format!(
+        "{label} link import and re-sync are temporarily unavailable. You can still import \
+         a {label} collection by uploading a CSV export instead.",
+        label = provider.label()
+    )))
 }
 
 /// Parse a reconcile mode from a query param, 422 when absent or unrecognised. Used by

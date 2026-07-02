@@ -47,6 +47,25 @@ impl Provider {
         }
     }
 
+    /// Whether this provider's **live network** import is currently enabled — the one-off
+    /// URL/link import and the saved-link re-sync, both of which fetch from the provider's
+    /// API. Moxfield is **temporarily disabled**: its API only serves clients whose
+    /// `User-Agent` it has explicitly approved, which we don't have yet, so a live fetch is
+    /// throttled / tarpitted into failure (see `moxfield::fetch_failure`). Its **CSV
+    /// upload** needs no network and is unaffected — that stays the supported way to import
+    /// a Moxfield collection for now.
+    ///
+    /// This is the single source of truth for the disable; the import handlers gate on it
+    /// (see `handlers::collection::import`) and the web UI hides the disabled provider from
+    /// the link-import picker. Re-enable by flipping the arm to `true` once an approved
+    /// `MOXFIELD_USER_AGENT` is configured.
+    pub fn network_import_enabled(self) -> bool {
+        match self {
+            Provider::Archidekt => true,
+            Provider::Moxfield => false,
+        }
+    }
+
     /// A canonical, user-facing URL for a collection id on this provider (for linking
     /// back from the UI). `id` is a validated provider collection id.
     pub fn collection_url(self, id: &str) -> String {
@@ -124,4 +143,26 @@ pub struct ImportSummary {
     /// `Smart` only: whether the fetch stopped early having reached already-synced
     /// cards (vs. scanning the whole collection). Always `false` for other modes.
     pub stopped_early: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_ids_round_trip() {
+        for provider in [Provider::Archidekt, Provider::Moxfield] {
+            assert_eq!(Provider::from_id(provider.as_str()), Some(provider));
+        }
+        assert_eq!(Provider::from_id("MOXFIELD"), Some(Provider::Moxfield));
+        assert_eq!(Provider::from_id("deckbox"), None);
+    }
+
+    #[test]
+    fn moxfield_network_import_is_disabled_but_archidekt_is_enabled() {
+        // Moxfield's live URL import / re-sync is turned off pending an approved
+        // User-Agent (its CSV upload is unaffected — that path never checks this).
+        assert!(!Provider::Moxfield.network_import_enabled());
+        assert!(Provider::Archidekt.network_import_enabled());
+    }
 }
