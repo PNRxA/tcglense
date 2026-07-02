@@ -330,8 +330,9 @@ async fn get_page(
 
         let status = response.status();
 
-        // Rate-limited: back off (globally, so every import waits) and retry the *same*
-        // page; give up after a few tries so a persistent 429 doesn't hang the import.
+        // Rate-limited: back off Moxfield's limiter (so every Moxfield import waits, not
+        // other providers) and retry the *same* page; give up after a few tries so a
+        // persistent 429 doesn't hang the import.
         if status == StatusCode::TOO_MANY_REQUESTS {
             if *rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
                 return Err(ImportError::RateLimited);

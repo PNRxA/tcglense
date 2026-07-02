@@ -148,4 +148,24 @@ mod tests {
         limiters.for_provider(Provider::Moxfield).acquire().await;
         assert_eq!(start.elapsed(), Duration::from_secs(0));
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn for_provider_maps_each_cap_to_its_own_provider() {
+        // Distinct caps prove both the wiring (which cap governs which provider) and that
+        // the two can differ: Archidekt at 60/min (1s spacing), Moxfield at 6/min (10s).
+        // Swapping the `new` args or the `for_provider` match arms would flip these.
+        let limiters = ProviderLimiters::new(60, 6);
+
+        let archidekt = limiters.for_provider(Provider::Archidekt);
+        archidekt.acquire().await; // immediate
+        let start = Instant::now();
+        archidekt.acquire().await; // +1s at 60/min
+        assert_eq!(start.elapsed(), Duration::from_secs(1));
+
+        let moxfield = limiters.for_provider(Provider::Moxfield);
+        moxfield.acquire().await; // immediate
+        let start = Instant::now();
+        moxfield.acquire().await; // +10s at 6/min
+        assert_eq!(start.elapsed(), Duration::from_secs(10));
+    }
 }

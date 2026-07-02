@@ -280,9 +280,10 @@ async fn get_page(
 
         let status = response.status();
 
-        // Rate-limited: back off (globally, so every import waits) and retry the *same*
-        // page. Wait at least the provider's window (honoring a larger `Retry-After`);
-        // give up after a few tries so a persistent 429 doesn't hang the import forever.
+        // Rate-limited: back off Archidekt's limiter (so every Archidekt import waits, not
+        // other providers) and retry the *same* page. Wait at least the provider's window
+        // (honoring a larger `Retry-After`); give up after a few tries so a persistent 429
+        // doesn't hang the import forever.
         if status == StatusCode::TOO_MANY_REQUESTS {
             if *rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
                 return Err(ImportError::RateLimited);

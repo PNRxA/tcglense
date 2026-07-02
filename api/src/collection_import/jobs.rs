@@ -155,7 +155,8 @@ pub struct ImportRequest {
 
 /// Queue an import and spawn its background worker; returns the job id immediately. The
 /// worker waits for the concurrency slot (reporting `queued`), then fetches + reconciles
-/// throttled by the shared provider rate limiter, recording the outcome on the job.
+/// throttled by the provider's own rate limiter (from `ProviderLimiters`), recording the
+/// outcome on the job.
 pub fn spawn_import_job(
     db: DatabaseConnection,
     http: reqwest::Client,

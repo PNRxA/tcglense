@@ -101,8 +101,8 @@ async fn fetch_holdings_smart(
 ) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
     match provider {
         Provider::Archidekt => {
-            archidekt::fetch_smart(ctx.http, ctx.limiters.for_provider(provider), collection_id, local)
-                .await
+            let limiter = ctx.limiters.for_provider(provider);
+            archidekt::fetch_smart(ctx.http, limiter, collection_id, local).await
         }
         Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local).await,
     }
