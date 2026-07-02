@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
+import CompleteRegistrationView from '@/views/CompleteRegistrationView.vue'
 import ForgotPasswordView from '@/views/ForgotPasswordView.vue'
 import HomeView from '@/views/HomeView.vue'
 import LoginView from '@/views/LoginView.vue'
@@ -132,8 +133,16 @@ const router = createRouter({
       meta: { requiresGuest: true },
     },
     // Emailed-link + recovery routes. Deliberately public (no requiresGuest): a
-    // signed-in user clicking an emailed verify/reset link must reach the view —
-    // the guest guard would bounce them to '/' before the token is consumed.
+    // signed-in user clicking an emailed complete-registration / verify / reset
+    // link must reach the view — the guest guard would bounce them to '/' before
+    // the token is consumed.
+    {
+      // Step two of the email-first registration: the emailed link lands here with
+      // ?token=… to choose a password and sign in.
+      path: '/complete-registration',
+      name: 'complete-registration',
+      component: CompleteRegistrationView,
+    },
     {
       path: '/forgot-password',
       name: 'forgot-password',

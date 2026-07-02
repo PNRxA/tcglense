@@ -14,18 +14,19 @@ async fn register_is_rate_limited_per_ip_when_behind_a_trusted_proxy() {
     let app = test_app_trusting_proxy().await;
     let ip = "198.51.100.7";
 
-    // The register quota allows a burst of 5 from one IP...
+    // The register quota allows a burst of 5 from one IP... (email-first
+    // registration answers a generic 200).
     for i in 0..5 {
         let (status, _, body) = send(
             &app,
             json_post_from(
                 "/api/auth/register",
                 ip,
-                json!({ "email": format!("rl{i}@example.com"), "password": "password123" }),
+                json!({ "email": format!("rl{i}@example.com") }),
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::CREATED, "request {i} within burst: {body:?}");
+        assert_eq!(status, StatusCode::OK, "request {i} within burst: {body:?}");
     }
 
     // ...the 6th is throttled with a 429 carrying Retry-After.
@@ -34,7 +35,7 @@ async fn register_is_rate_limited_per_ip_when_behind_a_trusted_proxy() {
         json_post_from(
             "/api/auth/register",
             ip,
-            json!({ "email": "rl-over@example.com", "password": "password123" }),
+            json!({ "email": "rl-over@example.com" }),
         ),
     )
     .await;
@@ -50,11 +51,59 @@ async fn register_is_rate_limited_per_ip_when_behind_a_trusted_proxy() {
         json_post_from(
             "/api/auth/register",
             "198.51.100.8",
-            json!({ "email": "rl-other@example.com", "password": "password123" }),
+            json!({ "email": "rl-other@example.com" }),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn complete_registration_is_rate_limited_per_ip_when_behind_a_trusted_proxy() {
+    let app = test_app_trusting_proxy().await;
+    let ip = "198.51.100.30";
+
+    // Completion rides the looser Token class (20/min, burst 20) — the token
+    // itself is garbage, so each attempt is a 401 until the burst is spent.
+    for i in 0..20 {
+        let (status, _, _) = send(
+            &app,
+            json_post_from(
+                "/api/auth/complete-registration",
+                ip,
+                json!({ "token": "deadbeef", "password": "password123" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "attempt {i} within burst");
+    }
+
+    // The 21st from that IP is throttled with a 429 carrying Retry-After — the
+    // limiter fires ahead of the token check, so it's a 429, not another 401.
+    let (status, headers, body) = send(
+        &app,
+        json_post_from(
+            "/api/auth/complete-registration",
+            ip,
+            json!({ "token": "deadbeef", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(headers.get("retry-after").is_some(), "429 carries Retry-After");
+    assert!(body["error"].as_str().is_some());
+
+    // A different IP has its own Token budget and still reaches the 401.
+    let (status, _, _) = send(
+        &app,
+        json_post_from(
+            "/api/auth/complete-registration",
+            "198.51.100.31",
+            json!({ "token": "deadbeef", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -69,7 +118,7 @@ async fn login_and_register_limits_are_independent() {
             json_post_from(
                 "/api/auth/register",
                 ip,
-                json!({ "email": format!("ind{i}@example.com"), "password": "password123" }),
+                json!({ "email": format!("ind{i}@example.com") }),
             ),
         )
         .await;
@@ -79,7 +128,7 @@ async fn login_and_register_limits_are_independent() {
         json_post_from(
             "/api/auth/register",
             ip,
-            json!({ "email": "ind-over@example.com", "password": "password123" }),
+            json!({ "email": "ind-over@example.com" }),
         ),
     )
     .await;
@@ -112,13 +161,13 @@ async fn a_spoofed_forwarded_for_is_ignored_without_a_trusted_proxy() {
             json_post_from(
                 "/api/auth/register",
                 "203.0.113.9",
-                json!({ "email": format!("spoof{i}@example.com"), "password": "password123" }),
+                json!({ "email": format!("spoof{i}@example.com") }),
             ),
         )
         .await;
         assert_eq!(
             status,
-            StatusCode::CREATED,
+            StatusCode::OK,
             "request {i} must not be limited when the proxy header is untrusted"
         );
     }

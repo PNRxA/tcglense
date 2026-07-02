@@ -14,8 +14,8 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     handlers::{
         auth::{
-            forgot_password, login, logout, me, refresh, register, resend_verification,
-            reset_password, verify_email,
+            complete_registration, forgot_password, login, logout, me, refresh, register,
+            resend_verification, reset_password, verify_email,
         },
         cache::{conditional_request_layer, no_store_layer, public_cache_layer},
         catalog::{
@@ -67,6 +67,12 @@ pub fn build_router(state: AppState) -> Router {
     let private = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/register", post(register))
+        // Finishes an email-first registration: consumes the emailed completion
+        // token, sets the first password, and signs the account in.
+        .route(
+            "/api/auth/complete-registration",
+            post(complete_registration),
+        )
         .route("/api/auth/login", post(login))
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))

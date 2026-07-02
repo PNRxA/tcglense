@@ -14,27 +14,23 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useTurnstile } from '@/composables/useTurnstile'
-import { ApiError, register, resendVerification } from '@/lib/api'
+import { ApiError, register } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
-import { useAuthStore } from '@/stores/auth'
 
 usePageMeta({ title: 'Create your account', canonicalPath: '/register', noindex: true })
 
-const auth = useAuthStore()
 const router = useRouter()
 
 const email = ref('')
-const password = ref('')
-const displayName = ref('')
 const turnstileEl = ref<HTMLElement>()
 const { execute } = useTurnstile(turnstileEl)
 
 const error = ref<string | null>(null)
 const loading = ref(false)
-// Registration normally mints no session — on success we stay here and show the
-// check-your-email step (the canonicalised address the server mailed). The one
-// exception is the no-email dev bypass, where the response carries a session and
-// we sign straight in (see below).
+// Registration is email-first: on success we normally stay here and show the
+// check-your-email step (the address we mailed a completion link to). The one
+// exception is the no-email dev bypass, where the response carries the completion
+// token directly and we jump straight to the set-password step (see below).
 const registeredEmail = ref<string | null>(null)
 
 async function onSubmit() {
@@ -42,18 +38,18 @@ async function onSubmit() {
   loading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
-    const response = await register({
-      email: email.value,
-      password: password.value,
-      display_name: displayName.value.trim() || null,
-      captcha_token,
-    })
-    if (response.access_token) {
-      // No-email dev bypass: the account is already verified and signed in.
-      auth.setSession(response.access_token, response.user)
-      await router.push('/')
+    const response = await register({ email: email.value, captcha_token })
+    if (response.completion_token) {
+      // No-email dev bypass: the completion link couldn't be emailed, so its token
+      // rides in the response — drive straight to the set-password step.
+      await router.push({
+        path: '/complete-registration',
+        query: { token: response.completion_token },
+      })
     } else {
-      registeredEmail.value = response.user.email
+      // The server no longer echoes the address, so canonicalise the submitted one
+      // the same way it does (trim + lowercase) for the confirmation copy.
+      registeredEmail.value = email.value.trim().toLowerCase()
     }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
@@ -70,7 +66,9 @@ async function onResend() {
   resendLoading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
-    await resendVerification({ email: registeredEmail.value, captcha_token })
+    // Re-registering the same address re-sends the completion link (generic 200,
+    // 60s cooldown) — the same call the form makes.
+    await register({ email: registeredEmail.value, captcha_token })
     resendSent.value = true
   } catch {
     // Generic endpoint; a failure here is transient — the button stays available.
@@ -88,8 +86,8 @@ async function onResend() {
           <MailCheck class="text-primary size-8" />
           <CardTitle class="text-2xl">Check your email</CardTitle>
           <CardDescription>
-            We sent a verification link to <span class="font-medium">{{ registeredEmail }}</span
-            >. Open it to activate your account, then sign in.
+            We sent a link to <span class="font-medium">{{ registeredEmail }}</span> to finish
+            creating your account. Open it to choose a password and sign in.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -99,7 +97,7 @@ async function onResend() {
         </CardContent>
         <CardFooter class="justify-center">
           <p class="text-muted-foreground text-sm">
-            <template v-if="resendSent">Verification email sent — check your inbox.</template>
+            <template v-if="resendSent">Link sent — check your inbox.</template>
             <template v-else>
               Didn't get it?
               <button
@@ -122,15 +120,6 @@ async function onResend() {
         <CardContent>
           <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
             <div class="flex flex-col gap-2">
-              <Label for="display-name">Display name (optional)</Label>
-              <Input
-                id="display-name"
-                v-model="displayName"
-                autocomplete="nickname"
-                placeholder="Ash"
-              />
-            </div>
-            <div class="flex flex-col gap-2">
               <Label for="email">Email</Label>
               <Input
                 id="email"
@@ -140,23 +129,14 @@ async function onResend() {
                 placeholder="you@example.com"
                 required
               />
-            </div>
-            <div class="flex flex-col gap-2">
-              <Label for="password">Password</Label>
-              <Input
-                id="password"
-                v-model="password"
-                type="password"
-                autocomplete="new-password"
-                minlength="8"
-                required
-              />
-              <p class="text-muted-foreground text-xs">Must be at least 8 characters.</p>
+              <p class="text-muted-foreground text-xs">
+                We'll email you a link to finish creating your account.
+              </p>
             </div>
             <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
             <Button type="submit" class="w-full" :disabled="loading">
               <Loader2 v-if="loading" class="animate-spin" />
-              {{ loading ? 'Creating account...' : 'Create account' }}
+              {{ loading ? 'Sending link...' : 'Continue' }}
             </Button>
           </form>
         </CardContent>

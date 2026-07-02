@@ -17,10 +17,12 @@ use crate::{
 };
 
 /// Publicly-known credentials for the offline dev/e2e account seeded in dummy
-/// mode. Registration requires an emailed verification link, which an offline
-/// dev/CI run can never receive, so `SEED_DUMMY_DATA` provides one
-/// already-verified account to sign in with (the Playwright e2e suite uses it).
-/// Only ever seeded behind that flag — never enable it in production.
+/// mode: a ready-made, already-verified account to sign in with, so the
+/// Playwright e2e suite's login/session journeys don't have to register first
+/// (offline registration works too — with no email provider the register
+/// response carries the completion token — but a stable seeded account keeps
+/// those tests independent of the registration flow). Only ever seeded behind
+/// `SEED_DUMMY_DATA` — never enable it in production.
 const DEV_USER_EMAIL: &str = "e2e@tcglense.test";
 const DEV_USER_PASSWORD: &str = "password123";
 
@@ -51,7 +53,7 @@ async fn seed_dev_user(db: &DatabaseConnection) {
     let now = Utc::now();
     let result = user::ActiveModel {
         email: Set(DEV_USER_EMAIL.to_string()),
-        password_hash: Set(password_hash),
+        password_hash: Set(Some(password_hash)),
         display_name: Set(Some("Dev Tester".to_string())),
         created_at: Set(now),
         updated_at: Set(now),

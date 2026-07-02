@@ -16,6 +16,7 @@ mod m20240101_000013_add_scryfall_fields_to_cards;
 mod m20240101_000014_add_user_email_verified_at;
 mod m20240101_000015_create_email_tokens_table;
 mod m20240101_000016_create_wishlist_items_table;
+mod m20240101_000017_make_user_password_hash_nullable;
 
 pub struct Migrator;
 
@@ -39,6 +40,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000014_add_user_email_verified_at::Migration),
             Box::new(m20240101_000015_create_email_tokens_table::Migration),
             Box::new(m20240101_000016_create_wishlist_items_table::Migration),
+            Box::new(m20240101_000017_make_user_password_hash_nullable::Migration),
         ]
     }
 }

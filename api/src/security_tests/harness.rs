@@ -115,8 +115,9 @@ pub(super) async fn test_app_trusting_proxy() -> TestApp {
 }
 
 /// An app with **no email provider** (`Emailer::Disabled`) — the dev posture in
-/// which email verification is bypassed: register signs you in immediately and
-/// login doesn't gate on verification.
+/// which the emailed completion link can't be delivered: register returns the
+/// completion token in the response instead, and login doesn't gate on
+/// verification.
 pub(super) async fn test_app_email_disabled() -> TestApp {
     let mut state = test_state().await;
     state.email = Arc::new(Emailer::Disabled);
@@ -280,32 +281,38 @@ pub(super) fn refresh_cookie_cleared(headers: &HeaderMap) -> bool {
         })
 }
 
-/// Register a **verified** user and return its access token and refresh-cookie
-/// plaintext. Registration mints no session under the verify-first contract, so
-/// this walks the real user journey: register, consume the verification token
-/// from the captured email, then log in. Tests that care about the unverified
-/// in-between state drive the endpoints directly instead.
+/// Register a usable account and return its access token and refresh-cookie
+/// plaintext. Email-first registration takes only the address and answers
+/// generically, so this walks the real user journey: submit the email, pull the
+/// completion token from the captured email, then complete the registration
+/// (choose the password), which verifies the account and signs it in. Tests
+/// that care about the pending in-between state drive the endpoints directly.
 pub(super) async fn register(app: &TestApp, email: &str, password: &str) -> (String, String) {
     let (status, _, body) = send(
         app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": email, "password": password }),
-        ),
+        json_post("/api/auth/register", json!({ "email": email })),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "register failed: {body:?}");
+    assert_eq!(status, StatusCode::OK, "register failed: {body:?}");
 
     // The handler canonicalises the address before mailing it.
     let token = latest_email_token(app, &email.trim().to_lowercase()).await;
-    let (status, _, body) = send(
+    let (status, headers, body) = send(
         app,
-        json_post("/api/auth/verify-email", json!({ "token": token })),
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": password }),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "verify-email failed: {body:?}");
-
-    login(app, email, password).await
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "complete-registration failed: {body:?}"
+    );
+    let access = body["access_token"].as_str().expect("access_token").to_string();
+    let refresh = refresh_token_from(&headers).expect("refresh cookie");
+    (access, refresh)
 }
 
 /// Log in and return the access token and refresh-cookie plaintext.

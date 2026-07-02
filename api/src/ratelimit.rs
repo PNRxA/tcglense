@@ -70,8 +70,9 @@ enum AuthRoute {
     /// Email-sending endpoints — mail-bombing surface (on top of the per-user
     /// token cooldown).
     EmailSend,
-    /// Emailed-token consumption (verify-email / reset-password) — token-guessing
-    /// surface (already infeasible against 256-bit tokens; this just caps abuse).
+    /// Emailed-token consumption (verify-email / reset-password /
+    /// complete-registration) — token-guessing surface (already infeasible
+    /// against 256-bit tokens; this just caps abuse).
     Token,
 }
 
@@ -83,7 +84,9 @@ impl AuthRoute {
             "/api/auth/login" => Some(Self::Login),
             "/api/auth/register" => Some(Self::Register),
             "/api/auth/forgot-password" | "/api/auth/resend-verification" => Some(Self::EmailSend),
-            "/api/auth/verify-email" | "/api/auth/reset-password" => Some(Self::Token),
+            "/api/auth/verify-email"
+            | "/api/auth/reset-password"
+            | "/api/auth/complete-registration" => Some(Self::Token),
             _ => None,
         }
     }
@@ -389,6 +392,42 @@ mod tests {
         // A different /64 has its own budget.
         let c: IpAddr = "2001:db8:abcd:9999::1".parse().unwrap();
         assert!(limiters.check(AuthRoute::Register, c).is_ok());
+    }
+
+    #[test]
+    fn auth_route_classifies_each_endpoint() {
+        // The three token-consuming endpoints share the looser Token class — in
+        // particular email-first registration's completion step, so it isn't
+        // silently unlimited or lumped in with account creation.
+        assert_eq!(
+            AuthRoute::from_path("/api/auth/complete-registration"),
+            Some(AuthRoute::Token)
+        );
+        assert_eq!(
+            AuthRoute::from_path("/api/auth/verify-email"),
+            Some(AuthRoute::Token)
+        );
+        assert_eq!(
+            AuthRoute::from_path("/api/auth/reset-password"),
+            Some(AuthRoute::Token)
+        );
+
+        // Account creation and the email-sending endpoints keep their own classes.
+        assert_eq!(
+            AuthRoute::from_path("/api/auth/register"),
+            Some(AuthRoute::Register)
+        );
+        assert_eq!(
+            AuthRoute::from_path("/api/auth/forgot-password"),
+            Some(AuthRoute::EmailSend)
+        );
+        assert_eq!(
+            AuthRoute::from_path("/api/auth/resend-verification"),
+            Some(AuthRoute::EmailSend)
+        );
+
+        // Session ops we deliberately don't per-IP limit fall through to `None`.
+        assert_eq!(AuthRoute::from_path("/api/auth/refresh"), None);
     }
 
     #[test]

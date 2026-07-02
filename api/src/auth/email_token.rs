@@ -1,5 +1,5 @@
-//! Single-use email-token service backing the verification and password-reset
-//! links.
+//! Single-use email-token service backing the registration-completion,
+//! verification, and password-reset links.
 //!
 //! Mirrors the refresh-token storage design (see [`super::refresh`]): tokens are
 //! high-entropy random values (32 bytes, hex-encoded), only their SHA-256 hex
@@ -31,6 +31,9 @@ const ISSUE_COOLDOWN_SECONDS: i64 = 60;
 /// spent as a password reset (or vice versa).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmailTokenPurpose {
+    /// Finish an email-first registration: prove mailbox ownership AND set the
+    /// account's first password (+ display name) in one step, minting a session.
+    CompleteRegistration,
     VerifyEmail,
     ResetPassword,
 }
@@ -38,16 +41,20 @@ pub enum EmailTokenPurpose {
 impl EmailTokenPurpose {
     fn as_str(self) -> &'static str {
         match self {
+            Self::CompleteRegistration => "complete_registration",
             Self::VerifyEmail => "verify_email",
             Self::ResetPassword => "reset_password",
         }
     }
 
-    /// Token lifetime: generous for verification (the user may open the mail
-    /// much later), tight for password resets (a live credential-changer).
+    /// Token lifetime: generous for registration/verification (the user may
+    /// open the mail much later), tight for password resets (a live
+    /// credential-changer). A completion token only ever acts on an account
+    /// with no password yet (enforced at consumption), so the generous window
+    /// doesn't expose an existing credential.
     fn expiry(self) -> Duration {
         match self {
-            Self::VerifyEmail => Duration::hours(24),
+            Self::CompleteRegistration | Self::VerifyEmail => Duration::hours(24),
             Self::ResetPassword => Duration::hours(1),
         }
     }
@@ -67,6 +74,7 @@ fn hash_token(plaintext: &str) -> String {
 
 /// Insert a token row for `user_id` expiring at `now + expiry`, persisting only
 /// its hash. Split from [`issue`] so tests can plant an already-expired row.
+#[cfg_attr(not(test), allow(dead_code))]
 async fn insert_token(
     db: &DatabaseConnection,
     user_id: i32,
@@ -93,6 +101,11 @@ async fn insert_token(
 
 /// Issue a brand-new email token for `user_id`, persisting only its hash.
 /// Returns the PLAINTEXT token (the only time it ever leaves this module).
+///
+/// Every request-path issuance now goes through [`issue_with_cooldown`] (all
+/// three purposes ride anti-enumeration endpoints); this uncooled variant
+/// remains for tests that need a second live token inside the window.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn issue(
     db: &DatabaseConnection,
     user_id: i32,
@@ -103,8 +116,9 @@ pub async fn issue(
 
 /// Like [`issue`], but returns `Ok(None)` — issuing nothing — when the user
 /// already has a token of this purpose younger than the cooldown. Callers on the
-/// anti-enumeration endpoints (resend-verification, forgot-password) treat
-/// `None` exactly like a success so the cooldown is unobservable from outside.
+/// anti-enumeration endpoints (register, resend-verification, forgot-password)
+/// treat `None` exactly like a success so the cooldown is unobservable from
+/// outside.
 ///
 /// The check and the insert are a **single atomic statement** (a conditional
 /// `INSERT … WHERE NOT EXISTS(recent row)`, gated on `rows_affected` like the

@@ -11,9 +11,10 @@ Guidance for working in this repository.
 - A user's personal collection
 - Set-completion progress (how much of a set you own)
 
-The **auth foundation** (register / login / session, plus **email verification
-and password reset** — transactional mail via Resend, sign-in blocked until the
-address is verified — hardened with **Cloudflare Turnstile CAPTCHA and per-IP
+The **auth foundation** (**email-first registration** / login / session, plus **email
+verification and password reset** — transactional mail via Resend, a new account
+finished via an emailed completion link that sets its first password and verifies the
+address — hardened with **Cloudflare Turnstile CAPTCHA and per-IP
 rate limiting** on the auth endpoints) is built, plus a **card
 catalog**: browse trading-card games → sets → cards, with search. Magic: The
 Gathering is the first game, sourced from [Scryfall](https://scryfall.com).
@@ -145,31 +146,49 @@ success or error — is JSON. Errors are always `{ "error": string }`.
 (opaque, 30 days, delivered only as the `tcglense_refresh` httpOnly cookie, stored
 server-side as a SHA-256 hash).
 
-**Verify-first registration:** register creates the account and emails a
-verification link, but mints **no session** (`access_token: null`); login answers
-`403 "email not verified"` (only after the password matched, so it's no
-enumeration oracle) until the link is used. Pre-feature accounts were grandfathered
-as verified by the migration.
+**Email-first registration (issue #176):** register takes only `{ email }` and always
+answers a generic `200 { completion_token: null }` — a new, a pending, and an
+already-registered address are indistinguishable (no enumeration oracle; the pre-#176
+duplicate-email `409` is gone). A new address creates a **pending** account
+(`users.password_hash` is now nullable — `NULL` = pending, cannot sign in) and emails a
+**completion link** (`{PUBLIC_SITE_URL}/complete-registration?token=…`, a
+`complete_registration` email-token, 24h, single-use, issued through the 60s cooldown,
+sent fire-and-forget off the request path); re-POSTing register re-sends it for a
+pending address (the cooldown collapses bursts) and sends nothing for an activated one.
+`POST /api/auth/complete-registration` then consumes the token, sets the first password
+(+ optional display name), stamps the email verified (using the link proves mailbox
+ownership), and **signs the user in** (`access_token` + refresh cookie) — the two-step
+account creation. The password rules are checked **before** the token is spent (a weak
+password doesn't burn the single-use link), and the token is refused (`401`) once the
+account already has a password, so a completion link can never double as a password
+reset. Accounts created before #176 keep working unchanged: they already hold a
+password (the nullable-`password_hash` migration touches no existing rows), and any
+still-unverified ones are the accounts login's `403` gate and `resend-verification`
+continue to serve (accounts predating email verification itself were grandfathered as
+verified by *that* feature's migration).
 
 **No-email dev bypass:** when **no email provider is configured** (no
-`RESEND_API_KEY` — `Emailer::is_enabled()` is false), verification can't be
-delivered, so it's **bypassed**: register marks the account verified and returns a
-session (`access_token` set + refresh cookie — the SPA signs straight in), and
-login's `403` gate is skipped. This is the dev/CI posture (the e2e suite runs this
-way); the test suites use a mail *sink* (which counts as enabled) so they still
-exercise the real verify-first flow.
+`RESEND_API_KEY` — `Emailer::is_enabled()` is false), the completion link can't be
+delivered, so register hands it back instead: the response's `completion_token` carries
+the token (its **only** non-null case), and the SPA drives straight to the set-password
+page — the offline dev/CI/e2e journey stays completable through the real two-step UI.
+Login's unverified-`403` gate is likewise skipped in this posture. This is the dev/CI
+posture (the e2e suite runs this way); the test suites use a mail *sink* (which counts
+as enabled) so `completion_token` stays null and they exercise the real email-first
+flow end to end.
 
 | Method & path | Body | Success | Notes |
 |---------------|------|---------|-------|
-| `POST /api/auth/register` | `{ email, password, display_name? }` | `201 { user, access_token }` — `access_token` is `null` (verify-first) unless email is disabled (dev bypass: signed in + refresh cookie) | `409` taken · `422` invalid |
-| `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic) · `403 "email not verified"` (skipped when email is disabled) |
+| `POST /api/auth/register` | `{ email }` | `200 { completion_token }` — `completion_token` is **always `null`** (the link is emailed) unless email is disabled (dev bypass: the token is returned so the SPA can drive the set-password step) | generic (a new, pending, or already-registered address are identical — no `409`) · `422` invalid email |
+| `POST /api/auth/complete-registration` | `{ token, password, display_name? }` | `200 { access_token, user }` + refresh cookie — finishes registration: sets the first password, verifies the email, and signs in | `401 "invalid or expired token"` (also once the account already has a password) · `422` weak password (checked **before** the token is spent) |
+| `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic — incl. a pending password-less account, same dummy-hash timing) · `403 "email not verified"` (skipped when email is disabled; now only reachable by grandfathered accounts) |
 | `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/revoked (clears cookie) |
 | `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes token + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
 | `POST /api/auth/verify-email` | `{ token }` | `204` (stamps `users.email_verified_at`; no session) | `401 "invalid or expired token"` |
-| `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
+| `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
-| `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, **revokes every refresh token**, verifies a still-unverified email) | `401` bad token · `422` weak password (checked **before** the token is spent) |
+| `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, **revokes every refresh token**, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
 
 All responses (success or error) are JSON; errors are `{ "error": string }`. A
@@ -177,7 +196,7 @@ malformed JSON body is `400`, a missing/wrong `Content-Type` is `415`, and a
 schema/validation failure is `422` (the `JsonBody` extractor maps each kind to its
 correct status; the client message is fixed and the parser detail is logged only).
 
-**Anti-abuse (all six auth mutation endpoints above):** each request body may carry
+**Anti-abuse (all seven auth mutation endpoints above):** each request body may carry
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the
 token is **required** — a missing/rejected one is `400 "captcha …"` (deliberately
 not 401/403, so it never collides with login's `403`), verified **before** any
@@ -203,12 +222,14 @@ been consumed) revokes the user's whole token family, while a benign concurrent
 double-submit (successor still active) is just rejected. A revoked token is never
 exchanged for a new one. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
 Secure=COOKIE_SECURE` (SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
-**Email tokens** (verification 24h, reset 1h) mirror the refresh-token storage:
+**Email tokens** (registration-completion 24h, verification 24h, reset 1h) mirror the
+refresh-token storage:
 32 CSPRNG bytes hex-encoded, only the SHA-256 hex persisted (`email_tokens`, whose
-`purpose` column is filtered in the claim so a verification token can't be spent
-as a reset), single-use via the same atomic conditional `UPDATE`, pruned by the
-same 6h background task. The emailed links point at the SPA
-(`{PUBLIC_SITE_URL}/verify-email?token=…`, `/reset-password?token=…`); mail goes
+`purpose` column is filtered in the claim so a completion token can't be spent
+as a reset — nor vice versa), single-use via the same atomic conditional `UPDATE`,
+pruned by the same 6h background task. The emailed links point at the SPA
+(`{PUBLIC_SITE_URL}/complete-registration?token=…`, `/verify-email?token=…`,
+`/reset-password?token=…`); mail goes
 out through Resend's HTTPS API on the shared client (10s per-request timeout).
 With no `RESEND_API_KEY` sending is **disabled**: the message — including the
 link — is logged instead, so offline dev and the test suites work with zero
@@ -502,18 +523,18 @@ same way the catalog's come from `/owned`.
 ```
 main.rs            bootstrap: env → tracing → DB connect → migrate → AppState::new → tasks::start → build_router → serve
 router.rs          build_router(): every route + the shared middleware stack (CORS, cache layers, body limits) — kept out of main so the security tests drive the exact same router in-process
-tasks.rs           background startup tasks: 6h maintenance loop (prune expired refresh- + email-tokens; retain_recent on the per-IP + per-user rate limiters) + either the awaited offline dummy-catalog seed (SEED_DUMMY_DATA — which also seeds the verified `e2e@tcglense.test`/`password123` dev account, since offline runs can't receive verification email) or the spawned startup/periodic card-data sync
+tasks.rs           background startup tasks: 6h maintenance loop (prune expired refresh- + email-tokens; retain_recent on the per-IP + per-user rate limiters) + either the awaited offline dummy-catalog seed (SEED_DUMMY_DATA — which also seeds the verified `e2e@tcglense.test`/`password123` dev account; offline registration is itself completable via the returned completion token, but the seeded account keeps the e2e login/session tests independent of the registration flow) or the spawned startup/periodic card-data sync
 config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, MOXFIELD_USER_AGENT, RESEND_API_KEY, EMAIL_FROM, TURNSTILE_SECRET_KEY, TRUST_PROXY_HEADERS, RATE_LIMIT_ENABLED, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secrets
 captcha.rs         CAPTCHA verification: Captcha enum (Turnstile via the shared client + per-request timeout / Disabled when TURNSTILE_SECRET_KEY unset / test-only ExpectToken) — enum dispatch like email.rs; a missing/rejected token is a 400, checked before any account work
 client_ip.rs       resolve the client IP for rate limiting (socket-peer default; X-Forwarded-For/Forwarded only when TRUST_PROXY_HEADERS) + a ClientIp extractor; None when unresolvable (the in-process test harness) so the limiter fails open
 ratelimit.rs       rate limiting, two flavours: per-IP for the auth endpoints — RateLimiters (one governor keyed limiter per auth class — login/register/email-send/token) + the `rate_limit` middleware (429 + Retry-After; no-ops for non-auth paths, a disabled limiter, or an unresolvable IP) — and per-user for the authenticated surface (issue #168) — UserRateLimiters (general/import classes, keyed by the access-token user id) + the `user_rate_limit` middleware (skips a request with no valid bearer); both retain_recent bound their keyspace
 db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000) + a registered REGEXP function (sqlx `regexp` feature, for the search `/regex/` syntax), applied to every pooled connection
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue>, email: Arc<Emailer>, captcha: Arc<Captcha>, rate_limiters: Arc<RateLimiters>, user_rate_limiters: Arc<UserRateLimiters> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + per-provider rate limiters; `email` is the transactional-email sender; `captcha` is the auth CAPTCHA verifier; `rate_limiters` are the per-IP auth limiters, `user_rate_limiters` the per-user limiters for the authenticated surface); AppState::new is the one construction site, shared with the security-test harness
-email.rs           outbound transactional email: Emailer enum (Resend via the shared client + per-request timeout / Disabled when RESEND_API_KEY unset, logging the message / test-only Capture mailbox) + the verification/reset message builders — enum dispatch, mirroring collection_import's Provider
+email.rs           outbound transactional email: Emailer enum (Resend via the shared client + per-request timeout / Disabled when RESEND_API_KEY unset, logging the message / test-only Capture mailbox) + the registration-completion/verification/reset message builders — enum dispatch, mirroring collection_import's Provider
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. Forbidden → 403 for the unverified-email login gate, TooManyRequests → 429 for rate limiting, BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
 test_support.rs    shared #[cfg(test)] fixtures: test_config(), a migrated in-memory SQLite DB, canonical card/set/user/holding rows (per-test tweaks via struct-update)
-security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, email verification + password reset (via the harness's capturing mailbox), cookie/CORS/caching contracts, request bodies, search, collection + import, wishlist (incl. wishlist↔collection independence)
+security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, email-first registration + completion, email verification + password reset (via the harness's capturing mailbox), cookie/CORS/caching contracts, request bodies, search, collection + import, wishlist (incl. wishlist↔collection independence)
 entities/          SeaORM entities (user [incl. email_verified_at], refresh_token, email_token = `email_tokens`; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`, wishlist_item = `wishlist_items`)
 collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution], parse_source, ProviderContext, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + ProviderSettings + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (per-provider RateLimiters via ProviderLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
@@ -521,7 +542,7 @@ auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
   jwt.rs           access-token Claims + encode/decode (HS256, expiry in minutes)
   refresh.rs       opaque refresh-token service: issue / rotate (single-use, successor-linked reuse detection) / revoke_one / revoke_all / prune_expired
-  email_token.rs   single-use emailed-token service (verification 24h / password reset 1h): issue / issue_with_cooldown (60s, atomic conditional INSERT gated on rows_affected so a concurrent burst can't bypass it) / consume (atomic claim, purpose-scoped) / prune_expired — same storage design as refresh.rs, no rotation lineage
+  email_token.rs   single-use emailed-token service (registration-completion 24h / verification 24h / password reset 1h): issue / issue_with_cooldown (60s, atomic conditional INSERT gated on rows_affected so a concurrent burst can't bypass it) / consume (atomic claim, purpose-scoped) / prune_expired — same storage design as refresh.rs, no rotation lineage
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
 catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all()/seed_all() (dispatch per game to its provider / offline dummy seeder)
@@ -538,7 +559,7 @@ scryfall/          MTG provider (the first game)
   sld_drops.json   committed snapshot of Scryfall's curated Secret Lair drop titles + collector numbers (regenerate via scripts/gen-sld-drops.mjs)
   dummy/           seed(): deterministic offline dummy catalog (no network/images) reusing ingest's map/upsert path — catalog.rs (the fabricated sets/cards), prices.rs (the year of per-card seeded random-walk price history)
 handlers/
-  auth.rs          register (verify-first: no session + sends the verification email; OR, when email is disabled, marks verified + returns a session — the dev bypass) / login (403 gate on unverified email, skipped when email is disabled) / refresh / logout / me / verify-email / resend-verification / forgot-password / reset-password (the lookup-by-email pair answer generically + send off the request path). Each mutation endpoint takes a ClientIp + verifies the request's `captcha_token` (state.captcha) before any work; per-IP rate limiting is applied as router middleware, not here
+  auth.rs          register (email-first: generic 200, a pending account + emailed completion link; OR, when email is disabled, returns the completion token — the dev bypass) / complete-registration (consume the link → set first password + verify + sign in; refused once a password exists) / login (403 gate on unverified email, skipped when email is disabled; a pending password-less account fails the generic 401) / refresh / logout / me / verify-email / resend-verification / forgot-password / reset-password (the lookup-by-email pair answer generically + send off the request path). Each mutation endpoint takes a ClientIp + verifies the request's `captcha_token` (state.captcha) before any work; per-IP rate limiting is applied as router middleware, not here
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store; plus conditional_request_layer (weak ETag + If-None-Match → 304) on cacheable public reads
   shared/          helpers the catalog + collection + wishlist handlers share (dependencies only flow *into* shared): dto.rs (CardResponse + faces/prices — the ts-rs-exported card wire shape), pagination.rs (Page<T>/DataBody envelopes, page/query clamping), lookup.rs (game/set/card resolution + group_set_codes), sort.rs (the card-list sort/dir vocabulary), grouping.rs (generic Secret Lair drop grouping + by-drop pagination), search.rs (?q → sea_orm::Condition), valuation.rs (holdings → USD cents → 2-dp string), holdings.rs (the per-user-holdings core the collection + wishlist twins share: the ts-rs-exported wire DTOs [CollectionEntry/Summary/Set/Quantities/DropGroup + request shapes], list/summary params, quantity validation, id dedupe, set-scope resolution, and the HoldingCounts-trait aggregation cores behind the summary + set-landing builders)
   catalog/         public catalog endpoints, one file per concern: status.rs (games list + import status), sets.rs (set list/detail/icon + set cards incl. include_related + by-drop), cards.rs (all-cards list / card detail / other printings), prices.rs (price history + ?range downsampling), image.rs (image proxy); mod.rs holds the shared list params
@@ -591,7 +612,7 @@ lib/searchQuery.ts pure helpers to read/edit individual filter tokens in a query
 lib/setGroups.ts   nest related sub-sets under their top-level parent (groupSets + filter/order helpers) — the one grouping the catalog + collection set landings share
 lib/turnstile.ts   Cloudflare Turnstile loader (inject the API script once) + TURNSTILE_SITE_KEY/turnstileEnabled (from VITE_TURNSTILE_SITE_KEY); paired with the useTurnstile composable
 lib/…              small pure helpers: cardPrice (tile price pick, foil fallback), cardSort (sort options ↔ API sort/dir), cardSize (grid density), ownership (owned-count labels), importSummary (import-result lines), quickAddFilter (client-side filter over a name's printings for the quick-add print picker — unit-tested matching rules), persistedRef (localStorage-backed ref)
-stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/logout/refresh/fetchMe/tryRestore + authFetch helper (deliberately NO register action — registration mints no session, so RegisterView calls the api fn directly; writing the user into the store would flip isAuthenticated)
+stores/auth.ts     Pinia store: in-memory accessToken + user, isAuthenticated, login/logout/refresh/fetchMe/tryRestore/setSession + authFetch helper (deliberately NO register action — email-first registration mints no session, so RegisterView calls the api fn directly; completing registration DOES sign in, so CompleteRegistrationView adopts the session via setSession)
 stores/theme.ts    Pinia store: theme (light/dark/system, default system) persisted to localStorage; reflects the resolved theme onto <html>.dark and follows the OS in system mode
 stores/cardSize.ts Pinia store: the persisted card-grid size preference (via lib/persistedRef)
 components/         UserMenu (profile menu — a reka NavigationMenu matching MainNav's Cards/Collection triggers, its own root + viewport=false so it right-aligns; collapses to a Sign-in link when signed out), ThemeToggle (light/dark/system dropdown), MainNav (top-bar primary nav: Cards → /cards, Collection → /collection and Wish list → /wishlist dropdowns under ONE reka NavigationMenu so the swipe/fade motion plays between them, with `viewport=false` so each dropdown sits under its own trigger instead of one shared viewport pinned at the menu's left edge; the game-dropdowns come from the cached registry, Collection + Wish list prompt signed-out visitors to sign in on the per-game view), MobileNav (the same links as a small-screen hamburger dropdown), PageBreadcrumbs (page-level breadcrumb trail)
@@ -599,7 +620,7 @@ components/cards/  catalog UI: CardImage (lazy <img> via proxy + placeholder), C
 components/collection/  signed-in collection-domain UI: ImportCollectionDialog + CsvImportFields (reka dialog with two tabs: "Paste a link" — pick a provider [Archidekt or Moxfield] + collection URL/id, a reconcile mode incl. smart, optionally save the link with a smart re-sync toggle — or "Upload a CSV" — an exported Archidekt or Moxfield CSV file [the server sniffs which], with per-service export hints, reconciled synchronously; both show an import summary); CollectionSyncControls (mounts that dialog on GameCollectionView alongside a "Re-sync" button, labelled "Smart re-sync" when the saved link opted into smart); QuickAddBox + QuickAddPrintDialog + QuickAddPrintTile (the GameCollectionView quick-add flow: a name-autocomplete combobox → a print-picker dialog [filterable via lib/quickAddFilter] → add regular/foil copies in place); CollectionGrid (owned-card grid with count controls); CollectionControls (card-detail owned-count steppers, debounced+serialized save); CollectionSignInPrompt (shared signed-out prompt on the public collection pages, preserving ?redirect) — the quick-add trio, grid, steppers, and prompt all take a `list` target ('collection' default | 'wishlist': wish-list copy + queries), so the wish-list views reuse them rather than fork them
 components/wishlist/  WishlistGameTile (the /wishlist landing's per-game tile — wish-list copy + summary hook, mirrors the collection's)
 composables/       shared query hooks: useCatalog (games/sets registry + the shared catalog list queries — useSetQuery/useSetCardsQuery/useAllCardsQuery/useSetDropsQuery + CARD_PAGE_SIZE/DROP_PAGE_SIZE), useCollection (useCollectionQuery [optional set scope + include-related group span, `enabled` gate] / DropsQuery [owned cards by Secret Lair drop] / Summary [optional set scope + include-related group span, `enabled` gate] / Sets [per-set landing] / Entry + useOwnedCounts [browse-grid badges → `{ ownership, ready, fetching }`, the `ready` flag gating the ghost dimming, `fetching` gating the quick-add dialog's absolute-count seeding; opts `{ enabled, staleTime }`] + useSetCollectionEntryMutation + invalidateCollectionData), useCollectionImport (the import/sync flow: useCollectionSourceQuery, useSyncCollectionSourceMutation, import-job polling, and the dialog's orchestration hook), useQuickAdd (quick-add server state: useCardNameSuggestions [distinct-name autocomplete over `/card-names`] + useCardPrintingsByName [every printing of an exact name via the all-cards `name` filter]), useWishlist (the wish-list mirror of useCollection — same hook surface over `/api/wishlist`, `['wishlist*', …]` query keys, useWishlistCounts for wish-list badges/ghosts, useSetWishlistEntryMutation + invalidateWishlistData), useSetGrouping (related-set grouping + hasDrops + scope-nav, `basePath`-parameterised so the collection + wish list reuse it), useCardSearch, and small focused ones (useAuthSubmit [now also exposes errorStatus for the login 403 branch], useTurnstile [invisible Turnstile widget → execute() mints a fresh captcha token, null when disabled], useCardBackLink, useClampPage, useImageLoad, useOwnedCountEditor [`list`-targeted: collection or wishlist entry query + mutation])
-views/             HomeView (/, the public landing page), LoginView ("Forgot password?" link + the 403 email-not-verified branch [via useAuthSubmit's errorStatus] offering a resend), RegisterView (no auto-signin — success swaps the form for a "check your email" card with a resend button), ProfileView; email flows (public routes — no requiresGuest, so a signed-in user clicking an emailed link still lands: VerifyEmailView (/verify-email?token=…, consumes on mount), ForgotPasswordView (/forgot-password, always-generic success), ResetPasswordView (/reset-password?token=…); all noindex + robots-Disallowed). Every auth form (+ the resend buttons + verify-on-mount) runs Turnstile via useTurnstile and passes the `captcha_token`; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game — the per-set landing: owned-set tiles by default [a flat grid, nesting owned sub-sets under their parent via SetGroup], with a segmented "Collected / All sets" toggle [`?sets=all`] flipping to GameView's full catalog listing [featured/year sections]; either mode filterable, each owned tile showing owned count + value; the header carries the summary stats, the quick-add box [QuickAddBox], and the import/re-sync controls [CollectionSyncControls]), CollectionBrowseView (/collection/:game/cards + /collection/:game/sets/:code — the owned-card grids, all or set-scoped; the header count line also carries the scope's owned **value** [issue #119, from the summary, tracking the set/group scope], the set-scoped view carries the catalog set view's by-drop + include-related toggles [reusing useSetGrouping (basePath `/collection`) + SetScopeBar over what the user owns], and any view offers a "Show ghosts" toggle switching the data source to the public catalog list [owned + unowned, catalog sorts / by-drop] with unowned cards dimmed — the two compose into an {owned, ghost} × {flat, by-drop} matrix); wish list: WishlistsView (/wishlist), GameWishlistView (/wishlist/:game — wishlisted sets by default [a flat grid à la the collection landing], with a segmented "Wishlisted / All sets" toggle [`?sets=all`] flipping to GameView's full catalog listing [featured/year sections]; either mode filterable, with wanted counts/values overlaid from the wishlist sets query, plus the summary header + quick-add box; wish-list pages show total value only, no bulk slice), WishlistBrowseView (/wishlist/:game/cards + /wishlist/:game/sets/:code — CollectionBrowseView's matrix with wish-list queries; ghost mode defaults off like the collection [`?ghosts=1` opts in]; every count control on these pages writes to the wish list)
+views/             HomeView (/, the public landing page), LoginView ("Forgot password?" link + the 403 email-not-verified branch [via useAuthSubmit's errorStatus] offering a resend), RegisterView (email-only form — no auto-signin; success swaps the form for a "check your email" card whose resend re-POSTs register, or, when the response carries a `completion_token` [dev/no-email posture], routes straight to the set-password page), ProfileView; email flows (public routes — no requiresGuest, so a signed-in user clicking an emailed link still lands: CompleteRegistrationView (/complete-registration?token=…, finishes an email-first registration — optional display name + password → adopts the session via auth.setSession and redirects home), VerifyEmailView (/verify-email?token=…, consumes on mount), ForgotPasswordView (/forgot-password, always-generic success), ResetPasswordView (/reset-password?token=…); all noindex + robots-Disallowed). Every auth form (+ the resend buttons + verify-on-mount) runs Turnstile via useTurnstile and passes the `captcha_token`; catalog: CardsView (/cards), GameView (/cards/:game), SetView, CardsBrowseView, CardDetailView; collection: CollectionsView (/collection), GameCollectionView (/collection/:game — the per-set landing: owned-set tiles by default [a flat grid, nesting owned sub-sets under their parent via SetGroup], with a segmented "Collected / All sets" toggle [`?sets=all`] flipping to GameView's full catalog listing [featured/year sections]; either mode filterable, each owned tile showing owned count + value; the header carries the summary stats, the quick-add box [QuickAddBox], and the import/re-sync controls [CollectionSyncControls]), CollectionBrowseView (/collection/:game/cards + /collection/:game/sets/:code — the owned-card grids, all or set-scoped; the header count line also carries the scope's owned **value** [issue #119, from the summary, tracking the set/group scope], the set-scoped view carries the catalog set view's by-drop + include-related toggles [reusing useSetGrouping (basePath `/collection`) + SetScopeBar over what the user owns], and any view offers a "Show ghosts" toggle switching the data source to the public catalog list [owned + unowned, catalog sorts / by-drop] with unowned cards dimmed — the two compose into an {owned, ghost} × {flat, by-drop} matrix); wish list: WishlistsView (/wishlist), GameWishlistView (/wishlist/:game — wishlisted sets by default [a flat grid à la the collection landing], with a segmented "Wishlisted / All sets" toggle [`?sets=all`] flipping to GameView's full catalog listing [featured/year sections]; either mode filterable, with wanted counts/values overlaid from the wishlist sets query, plus the summary header + quick-add box; wish-list pages show total value only, no bulk slice), WishlistBrowseView (/wishlist/:game/cards + /wishlist/:game/sets/:code — CollectionBrowseView's matrix with wish-list queries; ghost mode defaults off like the collection [`?ghosts=1` opts in]; every count control on these pages writes to the wish list)
 components/ui/      shadcn-vue primitives (button, input, label, card, dropdown-menu, select, toggle, toggle-group, number-field, popover, dialog, navigation-menu, tooltip, chart — unovis-backed)
 test/fixtures.ts   shared unit-test fixtures (makeCardSet) so a spec only spells out what it asserts on
 assets/main.css    Tailwind 4 theme + CSS variables (light/dark, keyed off the .dark class)
@@ -694,7 +715,7 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —
   email support@moxfield.com to get one approved, and treat it as a secret),
-  `RESEND_API_KEY` (unset; the Resend API key for verification/reset email — a
+  `RESEND_API_KEY` (unset; the Resend API key for registration-completion/verification/reset email — a
   secret; unset = email sending disabled, messages logged instead), `EMAIL_FROM`
   (`TCGLense <onboarding@resend.dev>`; the outbound From address — Resend's shared
   onboarding sender only delivers to the account owner, so set a verified-domain
@@ -764,16 +785,17 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   that would still need the per-IP/WAF layer). The public catalog + image routes
   remain unthrottled (same open posture noted under image caching).
 - **Transactional email (Resend):** sends ride the shared reqwest client with a
-  10s per-request timeout; there is no retry/queue — a failed registration send is
-  logged and the user recovers via resend-verification, and the anti-enumeration
-  endpoints (resend/forgot) **spawn** their sends off the request path and swallow
-  failures (a surfaced 502 would only fire for existing accounts). **Disabled mode
-  (no `RESEND_API_KEY`) bypasses email verification entirely** (register verifies +
-  signs in; login skips the gate — see the auth contract) — the intended dev/CI
-  posture, so don't run prod without a key (an unverified-email deploy would let
-  anyone sign in with an unowned address). `onboarding@resend.dev` (the default
-  From) only delivers to the Resend account owner's address; production needs a
-  verified domain + `EMAIL_FROM`.
+  10s per-request timeout; there is no retry/queue — every account-lookup endpoint
+  (register / resend / forgot) **spawns** its send off the request path and swallows
+  failures (a surfaced 502 would only fire for existing accounts), and a dropped
+  registration-completion mail is recovered by re-POSTing register. **Disabled mode
+  (no `RESEND_API_KEY`) returns the registration-completion token in the register
+  response instead of emailing it** (the SPA drives straight to the set-password step;
+  login skips the unverified-`403` gate — see the auth contract) — the intended dev/CI
+  posture, so don't run prod without a key (there the token stays out of the response,
+  so an unverified/unowned address can never complete registration). `onboarding@resend.dev`
+  (the default From) only delivers to the Resend account owner's address; production
+  needs a verified domain + `EMAIL_FROM`.
 - **Collection import (Archidekt / Moxfield):** the import/sync endpoints fetch a public
   collection **server-side** and reconcile it. Archidekt caps requests (≈20/min) and
   pages 25 rows at a time with no page-size override, so a large collection takes minutes.
