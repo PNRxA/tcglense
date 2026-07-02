@@ -18,9 +18,12 @@ const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
-// Selectable time window; longer ranges come back downsampled from the API. The
-// issue asks the chart to default to one year.
-const range = ref<PriceRange>('1y')
+// Selectable time window; longer ranges come back downsampled from the API. We
+// default to 30 days — a daily (un-downsampled) window — so a young series shows
+// every captured day. The 1y+ ranges bucket to weekly/coarser and keep only the
+// last day per bucket, which collapses a handful of same-week days into a single
+// point (misreads as "no history" on a fresh deployment).
+const range = ref<PriceRange>('30d')
 const RANGE_OPTIONS: { value: PriceRange; label: string }[] = [
   { value: '7d', label: '7D' },
   { value: '30d', label: '30D' },
