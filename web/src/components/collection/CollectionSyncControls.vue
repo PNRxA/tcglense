@@ -11,7 +11,7 @@ import {
   usePolledImportJob,
   useSyncCollectionSourceMutation,
 } from '@/composables/useCollectionImport'
-import { ApiError } from '@/lib/api'
+import { ApiError, providerLabel as providerName } from '@/lib/api'
 
 // The import / re-sync surface for the per-game collection landing: the import dialog, a
 // re-sync button for a saved link, and the live job status. Keyed only off the game;
@@ -20,16 +20,14 @@ const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
 
-// Import / sync from an external collection provider (Archidekt today).
+// Import / sync from an external collection provider (Archidekt or Moxfield).
 const qc = useQueryClient()
 const sourceQuery = useCollectionSourceQuery(game)
 const source = computed(() => sourceQuery.data.value ?? null)
 const syncMutation = useSyncCollectionSourceMutation()
 const syncMessage = ref<string | null>(null)
 
-const providerLabel = computed(() =>
-  source.value?.provider === 'archidekt' ? 'Archidekt' : (source.value?.provider ?? 'Archidekt'),
-)
+const providerLabel = computed(() => providerName(source.value?.provider ?? 'archidekt'))
 // A saved link can re-sync by smart (incremental) sync or a full mirror; the label,
 // confirmation, and result copy differ because smart never removes cards.
 const smart = computed(() => source.value?.smart ?? false)
@@ -46,8 +44,8 @@ const lastSyncedText = computed(() => {
 const syncJob = usePolledImportJob(game, {
   onRunning: () => {
     syncMessage.value = smart.value
-      ? 'Smart-syncing from Archidekt… this can take a couple of minutes.'
-      : 'Re-syncing from Archidekt… this can take a couple of minutes.'
+      ? `Smart-syncing from ${providerLabel.value}… this can take a couple of minutes.`
+      : `Re-syncing from ${providerLabel.value}… this can take a couple of minutes.`
   },
   onComplete: (summary) => {
     if (!summary) {

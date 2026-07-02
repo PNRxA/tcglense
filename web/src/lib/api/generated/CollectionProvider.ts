@@ -3,4 +3,4 @@
 /**
  * A collection provider we can import from. One variant per external service.
  */
-export type CollectionProvider = "archidekt";
+export type CollectionProvider = "archidekt" | "moxfield";

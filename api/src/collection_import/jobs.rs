@@ -22,7 +22,9 @@ use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
 use super::rate_limit::RateLimiter;
-use super::{ImportSummary, Provider, ReconcileMode, execute_import};
+use super::{
+    ImportSummary, Provider, ProviderContext, ProviderSettings, ReconcileMode, execute_import,
+};
 use crate::entities::collection_source;
 use crate::error::AppError;
 
@@ -63,6 +65,9 @@ pub struct ImportQueue {
     next_id: AtomicU64,
     limiter: RateLimiter,
     permits: Arc<Semaphore>,
+    /// Deployment-level provider settings (e.g. Moxfield's approved User-Agent),
+    /// captured at startup so background workers don't need the full app config.
+    settings: ProviderSettings,
 }
 
 impl Default for ImportQueue {
@@ -79,7 +84,14 @@ impl ImportQueue {
             next_id: AtomicU64::new(1),
             limiter: RateLimiter::per_minute(requests_per_minute),
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT_IMPORTS)),
+            settings: ProviderSettings::default(),
         }
+    }
+
+    /// Attach deployment-level provider settings (builder-style, used at startup).
+    pub fn with_settings(mut self, settings: ProviderSettings) -> Self {
+        self.settings = settings;
+        self
     }
 
     /// A job's status, scoped to its owner + game — anyone else (or an unknown id) gets
@@ -162,10 +174,14 @@ pub fn spawn_import_job(
         };
         imports.set(id, JobStatus::Running);
 
+        let ctx = ProviderContext {
+            http: &http,
+            limiter: &imports.limiter,
+            settings: &imports.settings,
+        };
         let result = execute_import(
             &db,
-            &http,
-            &imports.limiter,
+            &ctx,
             request.user_id,
             &request.game,
             request.provider,

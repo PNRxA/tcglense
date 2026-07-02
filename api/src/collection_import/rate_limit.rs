@@ -1,9 +1,10 @@
 //! A small global rate limiter for outbound provider requests.
 //!
-//! Archidekt enforces a strict request cap (≈20 requests/minute). We must stay under it
-//! **across every import/sync in the process**, not per job, so the limiter is shared
-//! (held in the import queue) and every Archidekt request goes through [`RateLimiter::acquire`]
-//! before it is sent.
+//! Collection providers enforce strict request caps (Archidekt ≈20 requests/minute;
+//! Moxfield expects ≈1 request/second, which the same spacing sits comfortably under).
+//! We must stay under them **across every import/sync in the process**, not per job, so
+//! the limiter is shared (held in the import queue) and every provider request — any
+//! provider — goes through [`RateLimiter::acquire`] before it is sent.
 //!
 //! It works by reserving evenly-spaced slots: each `acquire` claims the next slot
 //! (`max(now, last_reserved) + interval`) under a short lock, then sleeps until that

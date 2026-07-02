@@ -1,9 +1,11 @@
 //! Collection import / sync from an external provider: authentication gating, the
 //! saved-link lifecycle (GET/PUT/DELETE), provider + source validation, and the
-//! `no-store` cache policy. The parts that would reach out to Archidekt over the
-//! network are deliberately not exercised here — every assertion below resolves before
-//! any upstream fetch (bad provider / unparseable source / missing saved link), so the
-//! suite stays fully offline like the rest of `security_tests`.
+//! `no-store` cache policy. The parts that would reach out to a provider (Archidekt or
+//! Moxfield) over the network are deliberately not exercised here — every assertion
+//! below resolves before any upstream fetch (bad provider / unparseable source /
+//! missing saved link), so the suite stays fully offline like the rest of
+//! `security_tests`. (The CSV upload needs no network, so its tests drive the full
+//! path, including both providers' export shapes.)
 
 use super::harness::*;
 
@@ -116,6 +118,23 @@ async fn saved_source_lifecycle() {
     assert_eq!(body["external_id"], "999");
     assert_eq!(body["smart"], false, "omitting smart on re-save clears it");
 
+    // A Moxfield link works the same way: the id is extracted from the URL and the
+    // canonical URL is rebuilt from it.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/source",
+            &token,
+            json!({ "provider": "moxfield", "source": "https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "save failed: {body:?}");
+    assert_eq!(body["provider"], "moxfield");
+    assert_eq!(body["external_id"], "4xUdq-66IEKK6X53bhUS8Q");
+    assert_eq!(body["url"], "https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q");
+
     // Forget it -> 204, then it reads back as null again (delete is idempotent).
     let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &token)).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -138,7 +157,7 @@ async fn save_and_import_reject_bad_provider_and_source() {
             "PUT",
             "/api/collection/mtg/source",
             &token,
-            json!({ "provider": "moxfield", "source": "1042487" }),
+            json!({ "provider": "deckbox", "source": "1042487" }),
         ),
     )
     .await;
@@ -164,7 +183,20 @@ async fn save_and_import_reject_bad_provider_and_source() {
             "POST",
             "/api/collection/mtg/import",
             &token,
-            json!({ "provider": "moxfield", "source": "1042487", "mode": "replace" }),
+            json!({ "provider": "deckbox", "source": "1042487", "mode": "replace" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A Moxfield source whose URL carries no plausible collection id -> 422 too.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/collection/mtg/import",
+            &token,
+            json!({ "provider": "moxfield", "source": "https://moxfield.com/collection/", "mode": "replace" }),
         ),
     )
     .await;
@@ -349,4 +381,35 @@ async fn csv_import_reconciles_against_the_catalog_and_returns_a_summary() {
     let (status, _, list) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(list["total"], 2);
+}
+
+#[tokio::test]
+async fn csv_import_sniffs_a_moxfield_export_and_resolves_by_set_and_number() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "csv-mox@example.com", "password123").await;
+
+    // A Moxfield-shaped export (no Scryfall ID column): rows resolve against the dummy
+    // catalog by (Edition, Collector Number); the proxy row and the unknown set are
+    // skipped, and the whole path — sniff, resolve, reconcile — runs offline.
+    let csv = "Count,Tradelist Count,Name,Edition,Foil,Collector Number,Proxy\n\
+               2,0,Card One,dmb,foil,1,False\n\
+               3,0,Card Two,DMB,,2,False\n\
+               1,0,Fake Proxy,dmb,,3,True\n\
+               1,0,Ghost,zzz,,999,False\n";
+    let (status, headers, body) = send(
+        &app,
+        csv_upload("/api/collection/mtg/import/csv?mode=overwrite", &token, csv),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "import failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["provider"], "moxfield", "the shape was sniffed as Moxfield");
+    assert_eq!(body["matched_cards"], 2, "the uppercase Edition still matched");
+    assert_eq!(body["unmatched_cards"], 1);
+    assert_eq!(body["foil_copies"], 2);
+    assert_eq!(body["regular_copies"], 3);
+
+    let (status, _, list) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 2, "the proxy and the unknown card were not imported");
 }

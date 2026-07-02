@@ -316,7 +316,9 @@ async fn get_page(
 /// How long to back off after a `429`: the `Retry-After` seconds if the provider sent a
 /// (numeric) one, otherwise the default window — always at least the window (per our
 /// "wait a minute" policy) and never longer than [`MAX_BACKOFF_SECS`].
-fn backoff_after(headers: &header::HeaderMap) -> Duration {
+///
+/// `pub(super)` so the Moxfield provider applies the exact same backoff policy.
+pub(super) fn backoff_after(headers: &header::HeaderMap) -> Duration {
     let requested = headers
         .get(header::RETRY_AFTER)
         .and_then(|v| v.to_str().ok())

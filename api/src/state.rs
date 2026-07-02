@@ -4,6 +4,7 @@ use sea_orm::DatabaseConnection;
 
 use crate::auth::password::hash_password;
 use crate::catalog::images::ImageCache;
+use crate::collection_import::ProviderSettings;
 use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
 use crate::error::AppError;
@@ -53,13 +54,18 @@ impl AppState {
     ) -> Result<Self, AppError> {
         let dummy_password_hash: Arc<str> = hash_password(TIMING_EQUALIZER_PLAINTEXT)?.into();
         let images = Arc::new(ImageCache::new(config.data_dir.join("images"), image_http));
+        // Deployment-level provider settings (e.g. Moxfield's approved User-Agent) are
+        // captured into the import queue so background workers don't need the config.
+        let imports = Arc::new(ImportQueue::default().with_settings(ProviderSettings {
+            moxfield_user_agent: config.moxfield_user_agent.clone(),
+        }));
         Ok(Self {
             db,
             config: Arc::new(config),
             dummy_password_hash,
             images,
             http,
-            imports: Arc::new(ImportQueue::default()),
+            imports,
         })
     }
 }

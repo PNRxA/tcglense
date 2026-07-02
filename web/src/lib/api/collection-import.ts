@@ -9,11 +9,10 @@ import type {
 
 // ---------- Import / sync from an external collection provider ----------
 //
-// A signed-in user can import their collection from an external service (Archidekt
-// today; Moxfield planned). The backend fetches server-side and reconciles into the
-// local collection, so the client only sends the provider + a URL/id + a mode. The
-// wire types are generated from the API's Rust DTOs into `./generated` and
-// re-exported here.
+// A signed-in user can import their collection from an external service (Archidekt or
+// Moxfield). The backend fetches server-side and reconciles into the local collection,
+// so the client only sends the provider + a URL/id + a mode. The wire types are
+// generated from the API's Rust DTOs into `./generated` and re-exported here.
 
 export type {
   CollectionProvider,
@@ -22,6 +21,17 @@ export type {
   ImportSummary,
   ReconcileMode,
 } from './generated'
+
+/** Human-readable provider names, for labels and copy. */
+export const PROVIDER_LABELS: Record<CollectionProvider, string> = {
+  archidekt: 'Archidekt',
+  moxfield: 'Moxfield',
+}
+
+/** The display label for a provider id (saved sources carry the id as a plain string). */
+export function providerLabel(provider: string): string {
+  return PROVIDER_LABELS[provider as CollectionProvider] ?? provider
+}
 
 // The request bodies stay hand-written: the wire `ImportRequest`/`SaveSourceRequest`
 // accept any `provider` string (validated server-side), while the client deliberately
@@ -119,10 +129,11 @@ export function syncCollectionSource(token: string, game: string): Promise<Impor
 }
 
 /**
- * Import a collection from an uploaded Archidekt CSV export. The file is sent as the raw
- * request body (there's no persistent source to re-sync, so this is always one-off) and
- * reconciled server-side; unlike the URL import it needs no upstream fetch, so it
- * resolves **synchronously** to the {@link ImportSummary} (no job to poll).
+ * Import a collection from an uploaded CSV export (Archidekt or Moxfield — the server
+ * detects which from the header row). The file is sent as the raw request body (there's
+ * no persistent source to re-sync, so this is always one-off) and reconciled
+ * server-side; unlike the URL import it needs no upstream fetch, so it resolves
+ * **synchronously** to the {@link ImportSummary} (no job to poll).
  */
 export function importCollectionCsv(
   token: string,

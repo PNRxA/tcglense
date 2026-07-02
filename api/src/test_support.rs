@@ -30,6 +30,7 @@ pub(crate) fn test_config() -> Config {
         public_site_url: "https://tcglense.example".to_string(),
         data_dir: std::path::PathBuf::from("./data"),
         scryfall_user_agent: "TCGLense/test".to_string(),
+        moxfield_user_agent: None,
         sync_on_startup: false,
         sync_interval_hours: 24,
         seed_dummy_data: false,
