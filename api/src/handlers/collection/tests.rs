@@ -331,6 +331,8 @@ async fn summary_skips_holdings_whose_card_row_is_missing() {
     assert_eq!(s.unique_cards, 2);
     assert_eq!(s.total_cards, 4);
     assert_eq!(s.total_value_usd.as_deref(), Some("12.00"));
+    // Both priced cards are $2+, so the bulk (< $1) portion is a meaningful $0.00, not null.
+    assert_eq!(s.bulk_value_usd.as_deref(), Some("0.00"));
 }
 
 /// The optional set scope filters the joined card's `set_code`, and it ANDs with a
@@ -584,6 +586,9 @@ fn build_collection_sets_aggregates_dresses_and_orders() {
     assert_eq!(out[0].owned_cards, 2);
     assert_eq!(out[0].owned_copies, 4); // (2+1) + (1+0)
     assert_eq!(out[0].owned_value_usd.as_deref(), Some("9.00")); // priced holdings summed
+    // Every priced finish in "aaa" is $1+ ($1.00 regular is exactly at the boundary and so
+    // excluded, $5.00 foil, $2.00 regular), so the bulk portion is a meaningful $0.00.
+    assert_eq!(out[0].owned_bulk_value_usd.as_deref(), Some("0.00"));
 
     assert_eq!(out[1].code, "bbb");
     assert_eq!(out[1].name, "Newer Set"); // fallback to the card's set_name
@@ -592,4 +597,47 @@ fn build_collection_sets_aggregates_dresses_and_orders() {
     assert_eq!(out[1].owned_cards, 1);
     assert_eq!(out[1].owned_copies, 4);
     assert_eq!(out[1].owned_value_usd, None); // nothing priced -> null, not $0.00
+    assert_eq!(out[1].owned_bulk_value_usd, None); // nothing priced -> null bulk too
+}
+
+/// The per-set bulk value is the value of just the finishes priced under $1, judged per
+/// finish — a card whose regular printing is bulk but whose foil isn't contributes only
+/// its regular copies to the bulk figure (and vice-versa).
+#[test]
+fn build_collection_sets_splits_bulk_per_finish() {
+    let ts = "2024-01-01T00:00:00Z"
+        .parse::<sea_orm::prelude::DateTimeUtc>()
+        .unwrap();
+    let hold = |id: i32, card_id: i32, quantity: i32, foil_quantity: i32| collection_item::Model {
+        id,
+        user_id: 1,
+        game: "mtg".into(),
+        card_id,
+        quantity,
+        foil_quantity,
+        created_at: ts,
+        updated_at: ts,
+    };
+    let carded = |id: i32, usd: Option<&str>, foil: Option<&str>| {
+        let mut c = seed_card(id, "Card", "Creature", usd);
+        c.set_code = "aaa".into();
+        c.set_name = "Alpha".into();
+        c.price_usd_foil = foil.map(str::to_string);
+        c
+    };
+
+    let rows = vec![
+        // Bulk regular ($0.25 ×4 = $1.00), non-bulk foil ($3.00 ×1): only the regulars
+        // are bulk.
+        (hold(1, 1, 4, 1), Some(carded(1, Some("0.25"), Some("3.00")))),
+        // Non-bulk regular ($2.00 ×1), bulk foil ($0.50 ×2 = $1.00): only the foils.
+        (hold(2, 2, 1, 2), Some(carded(2, Some("2.00"), Some("0.50")))),
+    ];
+
+    let out = build_collection_sets("mtg", rows, vec![]);
+    assert_eq!(out.len(), 1);
+    // Total = 1.00 + 3.00 + 2.00 + 1.00 = 7.00.
+    assert_eq!(out[0].owned_value_usd.as_deref(), Some("7.00"));
+    // Bulk = $1.00 (card 1 regulars) + $1.00 (card 2 foils) = $2.00.
+    assert_eq!(out[0].owned_bulk_value_usd.as_deref(), Some("2.00"));
 }

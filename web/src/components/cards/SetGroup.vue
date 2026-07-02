@@ -27,6 +27,9 @@ const props = withDefaults(
     // Preformatted owned value per set code (e.g. "$123.45"), appended to each tile's
     // meta line alongside the owned count — the collection landing's per-set value.
     ownedValues?: Record<string, string | null>
+    // Preformatted bulk (< $1/card) value per set code, shown under the total on each
+    // tile — the collection landing's per-set bulk value.
+    bulkValues?: Record<string, string | null>
   }>(),
   {
     basePath: '/cards',
@@ -34,6 +37,7 @@ const props = withDefaults(
     ownedCounts: undefined,
     ownedCopies: undefined,
     ownedValues: undefined,
+    bulkValues: undefined,
   },
 )
 
@@ -57,6 +61,7 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
 const ownedCount = (code: string) => props.ownedCounts?.[code]
 const ownedCopiesCount = (code: string) => props.ownedCopies?.[code]
 const ownedValue = (code: string) => props.ownedValues?.[code]
+const bulkValue = (code: string) => props.bulkValues?.[code]
 </script>
 
 <template>
@@ -69,6 +74,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
       :owned-count="ownedCount(group.main.code)"
       :owned-copies="ownedCopiesCount(group.main.code)"
       :owned-value="ownedValue(group.main.code)"
+      :bulk-value="bulkValue(group.main.code)"
     />
 
     <div class="flex items-center justify-between gap-2 px-3 pb-2">
@@ -109,6 +115,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
           :owned-count="ownedCount(child.code)"
           :owned-copies="ownedCopiesCount(child.code)"
           :owned-value="ownedValue(child.code)"
+          :bulk-value="bulkValue(child.code)"
         />
       </li>
     </ul>

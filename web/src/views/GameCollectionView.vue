@@ -61,14 +61,19 @@ const ownership = computed(() => {
   const counts: Record<string, number> = {}
   const copies: Record<string, number> = {}
   const values: Record<string, string | null> = {}
+  const bulkValues: Record<string, string | null> = {}
   for (const set of ownedSets.value) {
     counts[set.code] = set.owned_cards
     copies[set.code] = set.owned_copies
     values[set.code] = formatUsd(set.owned_value_usd)
+    bulkValues[set.code] = formatUsd(set.owned_bulk_value_usd)
   }
-  return { counts, copies, values }
+  return { counts, copies, values, bulkValues }
 })
 const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
+// The bulk (< $1/card) slice of the total value (issue: bulk-card value). Present
+// whenever the total is (both gate on something being priced).
+const bulkValue = computed(() => formatUsd(summary.value?.bulk_value_usd))
 
 // Stats are worth showing only once something is owned.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
@@ -106,8 +111,14 @@ const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasSta
             </dd>
           </div>
           <div v-if="totalValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Est. value</dt>
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
             <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
+          </div>
+          <!-- The bulk (< $1/card) slice of the total, so it's clear how much of the
+               collection's value is chaff vs. real money. -->
+          <div v-if="bulkValue">
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Bulk value</dt>
+            <dd class="text-xl font-semibold tabular-nums">{{ bulkValue }}</dd>
           </div>
         </dl>
 
