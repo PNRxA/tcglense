@@ -45,6 +45,24 @@ describe('clearAuthedQueries', () => {
     expect(qc.getQueryData(['collection', 'mtg'])).toBeUndefined()
     expect(qc.getQueryData(['games'])).toBe('public-games')
   })
+
+  it('drops setQueryData-seeded per-user entries that carry no meta', () => {
+    const qc = new QueryClient()
+    // The per-card entry mutations write straight into the cache; in the quick-add flow no
+    // entry-query observer is mounted, so this cache entry is built with meta === undefined
+    // — it must still be dropped, matched by its key prefix rather than the meta tag.
+    qc.setQueryData(['collection-entry', 'mtg', 'card-x'], { quantity: 1, foil_quantity: 0 })
+    qc.setQueryData(['wishlist-entry', 'mtg', 'card-y'], { quantity: 2, foil_quantity: 0 })
+    qc.setQueryData(['card', 'mtg', 'card-x'], 'public-card')
+    expect(qc.getQueryState(['collection-entry', 'mtg', 'card-x'])?.data).toBeDefined()
+
+    clearAuthedQueries(qc)
+
+    expect(qc.getQueryData(['collection-entry', 'mtg', 'card-x'])).toBeUndefined()
+    expect(qc.getQueryData(['wishlist-entry', 'mtg', 'card-y'])).toBeUndefined()
+    // A public key that isn't per-user must survive.
+    expect(qc.getQueryData(['card', 'mtg', 'card-x'])).toBe('public-card')
+  })
 })
 
 describe('useAuthCacheReset', () => {

@@ -3,13 +3,36 @@ import { useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import { useAuthStore } from '@/stores/auth'
 
 /**
+ * Whether a query key addresses per-user data. Every per-user family is namespaced under
+ * a `collection*` / `wishlist*` prefix (or the `import-job` poll); no public catalog key
+ * uses those, so this never matches shared data.
+ *
+ * This is a belt to the `meta.authed` tag's braces: `useAuthedQuery` tags every per-user
+ * *read*, but the per-card entry mutations write their result straight into the cache with
+ * `qc.setQueryData(['collection-entry'|'wishlist-entry', …])`. When no entry-query observer
+ * is mounted for that id — the quick-add flow, which seeds from the batch counts and never
+ * mounts the single-entry query — `setQueryData` builds a fresh cache entry from default
+ * options, so it carries no `meta`. Matching by key too drops those orphans on a switch.
+ */
+function isPerUserQueryKey(key: readonly unknown[]): boolean {
+  const head = key[0]
+  return (
+    typeof head === 'string' &&
+    (head.startsWith('collection') || head.startsWith('wishlist') || head === 'import-job')
+  )
+}
+
+/**
  * Remove every cached per-user query — those `useAuthedQuery` tags with `meta.authed`
- * (the collection + wish-list families and their per-card/summary/set/import reads).
- * Public catalog queries (games/sets/cards/prices), which are identical for everyone,
- * are left untouched so a logout/login doesn't needlessly reload them.
+ * (the collection + wish-list families and their per-card/summary/set/import reads), plus
+ * any `setQueryData`-seeded per-user entry that carries no meta (see {@link isPerUserQueryKey}).
+ * Public catalog queries (games/sets/cards/prices), which are identical for everyone, are
+ * left untouched so a logout/login doesn't needlessly reload them.
  */
 export function clearAuthedQueries(qc: QueryClient) {
-  qc.removeQueries({ predicate: (query) => query.meta?.authed === true })
+  qc.removeQueries({
+    predicate: (query) => query.meta?.authed === true || isPerUserQueryKey(query.queryKey),
+  })
 }
 
 /**
