@@ -10,6 +10,13 @@ pub(crate) const MAX_PAGE_SIZE: u64 = 200;
 /// they use their own smaller default than the per-card lists.
 pub(crate) const DEFAULT_DROP_PAGE_SIZE: u64 = 20;
 pub(crate) const MAX_DROP_PAGE_SIZE: u64 = 100;
+/// Ceiling on the requested page. Far past any real dataset (a maxed-out
+/// `page_size` puts page 1M at row 200M), yet small enough that the
+/// `offset = page * page_size` multiply downstream (SeaORM's paginator) can't
+/// overflow the u64 — which would panic a debug build and wrap to a bogus
+/// offset in release. A clamped page behaves like any other past-the-end page:
+/// empty `data`, `has_more: false`.
+pub(crate) const MAX_PAGE: u64 = 1_000_000;
 
 /// A bare `{ "data": T }` wire envelope — the typed form of the handlers'
 /// `json!({ "data": ... })` responses, for endpoints that return a plain
@@ -54,14 +61,15 @@ pub(crate) fn build_page<T>(data: Vec<T>, page: u64, page_size: u64, total: u64)
 
 /// Resolve a requested (1-based) `page` and clamp the `page_size` against the
 /// caller-supplied `default`/`max` bounds. The card and by-drop listings differ
-/// only in those two constants, so both go through this.
+/// only in those two constants, so both go through this. The page is clamped to
+/// [`MAX_PAGE`] so a huge `?page` can't overflow the offset multiply downstream.
 pub(crate) fn resolve_page(
     page: Option<u64>,
     page_size: Option<u64>,
     default: u64,
     max: u64,
 ) -> (u64, u64) {
-    let page = page.unwrap_or(1).max(1);
+    let page = page.unwrap_or(1).clamp(1, MAX_PAGE);
     let page_size = page_size.unwrap_or(default).clamp(1, max);
     (page, page_size)
 }
@@ -75,6 +83,16 @@ pub(crate) fn trim_query(value: Option<&str>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_page_clamps_both_bounds() {
+        // Zero/absent floor to 1; an absurd page clamps to MAX_PAGE instead of
+        // riding into SeaORM's `page * page_size` offset multiply (u64 overflow:
+        // debug panic, release wraparound).
+        assert_eq!(resolve_page(None, None, 60, 200), (1, 60));
+        assert_eq!(resolve_page(Some(0), Some(0), 60, 200), (1, 1));
+        assert_eq!(resolve_page(Some(u64::MAX), Some(u64::MAX), 60, 200), (MAX_PAGE, 200));
+    }
 
     #[test]
     fn build_page_derives_has_more() {
