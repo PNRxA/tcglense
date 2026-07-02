@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SetTile from '@/components/cards/SetTile.vue'
+import type { CountNoun } from '@/lib/ownership'
 import { queryMatchesRelated, subSetLabel, type SetGroup } from '@/lib/setGroups'
 
 const props = withDefaults(
@@ -30,6 +31,9 @@ const props = withDefaults(
     // Preformatted bulk (< $1/card) value per set code, shown under the total on each
     // tile — the collection landing's per-set bulk value.
     bulkValues?: Record<string, string | null>
+    // The word each tile's count line ends with ("owned" by default; the wish-list
+    // landing passes "wanted", issue #167).
+    countNoun?: CountNoun
   }>(),
   {
     basePath: '/cards',
@@ -38,6 +42,7 @@ const props = withDefaults(
     ownedCopies: undefined,
     ownedValues: undefined,
     bulkValues: undefined,
+    countNoun: 'owned',
   },
 )
 
@@ -75,6 +80,7 @@ const bulkValue = (code: string) => props.bulkValues?.[code]
       :owned-copies="ownedCopiesCount(group.main.code)"
       :owned-value="ownedValue(group.main.code)"
       :bulk-value="bulkValue(group.main.code)"
+      :count-noun="countNoun"
     />
 
     <div class="flex items-center justify-between gap-2 px-3 pb-2">
@@ -116,6 +122,7 @@ const bulkValue = (code: string) => props.bulkValues?.[code]
           :owned-copies="ownedCopiesCount(child.code)"
           :owned-value="ownedValue(child.code)"
           :bulk-value="bulkValue(child.code)"
+          :count-noun="countNoun"
         />
       </li>
     </ul>

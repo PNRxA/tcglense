@@ -85,6 +85,34 @@ const router = createRouter({
       component: () => import('@/views/CollectionBrowseView.vue'),
       props: true,
     },
+    // Per-user wish lists (issue #167) — the collection's twin for cards the user wants
+    // to buy. Same public-route pattern: signed-out visitors get an in-view sign-in
+    // prompt rather than a bounce to /login.
+    {
+      path: '/wishlist',
+      name: 'wishlists',
+      component: () => import('@/views/WishlistsView.vue'),
+    },
+    {
+      path: '/wishlist/:game',
+      name: 'game-wishlist',
+      component: () => import('@/views/GameWishlistView.vue'),
+      props: true,
+    },
+    // Every wishlisted card in a game, or scoped to one set — the wish list's browse
+    // grids, mirroring the collection's /collection/:game/cards and .../sets/:code split.
+    {
+      path: '/wishlist/:game/cards',
+      name: 'wishlist-cards',
+      component: () => import('@/views/WishlistBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/wishlist/:game/sets/:code',
+      name: 'wishlist-set',
+      component: () => import('@/views/WishlistBrowseView.vue'),
+      props: true,
+    },
     {
       path: '/profile',
       name: 'profile',

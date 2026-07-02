@@ -4,18 +4,23 @@ import { useId } from 'reka-ui'
 import { Loader2, Search } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import QuickAddPrintDialog from '@/components/collection/QuickAddPrintDialog.vue'
+import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import { QUICK_ADD_MIN_CHARS, useCardNameSuggestions } from '@/composables/useQuickAdd'
 
-// Step one of quick-add (mounted on GameCollectionView while signed in): a text box
-// that suggests distinct card names as you type. Picking a name opens the print
-// picker (QuickAddPrintDialog) to choose a printing + regular/foil and add it.
+// Step one of quick-add (mounted on the collection / wish-list landing while signed
+// in): a text box that suggests distinct card names as you type. Picking a name opens
+// the print picker (QuickAddPrintDialog) to choose a printing + regular/foil and add
+// it — to the collection by default, or to the wish list when `list` says so (#167).
 //
 // A hand-rolled combobox (rather than reka's) so the list is driven purely by the
 // server's already-unique name suggestions with full control over the async/keyboard
 // behaviour — options are chosen by mouse or keyboard and announced via the standard
 // combobox/listbox ARIA roles.
-const props = defineProps<{ game: string }>()
+const props = withDefaults(defineProps<{ game: string; list?: CardListTarget }>(), {
+  list: 'collection',
+})
 const game = toRef(props, 'game')
+const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
 
 // `term` is the live input; `debouncedTerm` is what actually drives the query, so we
 // don't fire a request on every keystroke.
@@ -158,7 +163,7 @@ function onKeydown(event: KeyboardEvent) {
       v-model="term"
       class="pl-9"
       placeholder="Quick add a card by name…"
-      aria-label="Quick add a card to your collection"
+      :aria-label="`Quick add a card to your ${listName}`"
       role="combobox"
       aria-autocomplete="list"
       autocomplete="off"
@@ -215,6 +220,7 @@ function onKeydown(event: KeyboardEvent) {
       v-model:open="dialogOpen"
       :game="game"
       :name="selectedName"
+      :list="list"
       @close-auto-focus="onDialogCloseAutoFocus"
     />
   </div>

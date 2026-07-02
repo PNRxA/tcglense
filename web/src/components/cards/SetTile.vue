@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { setIconUrl, type CardSet } from '@/lib/api'
-import { formatCompletion, formatCopies } from '@/lib/ownership'
+import { formatCompletion, formatCopies, type CountNoun } from '@/lib/ownership'
 import { useImageLoad } from '@/composables/useImageLoad'
 
 const props = withDefaults(
@@ -35,6 +35,9 @@ const props = withDefaults(
     // as "BULK $X" on the stats line (in line with the owned count) — the collection
     // landing's per-set bulk value.
     bulkValue?: string | null
+    // The word the count line ends with: "owned" (the collection landing, the default)
+    // or "wanted" (the wish-list landing, issue #167).
+    countNoun?: CountNoun
   }>(),
   {
     variant: 'default',
@@ -44,6 +47,7 @@ const props = withDefaults(
     ownedCopies: undefined,
     ownedValue: undefined,
     bulkValue: undefined,
+    countNoun: 'owned',
   },
 )
 
@@ -90,14 +94,14 @@ const released = computed(() => {
 
 // The owned-count line on the collection landing: a set-completion "N/M owned" count
 // (owned / the set's total card count) so how much of the set you have reads at a glance
-// (issue #125). `ownedCount` is clamped to the total so a paper-only vs. Scryfall
-// card-count skew can never read "N+1 of N"; when the total is unknown (card_count 0) it
-// degrades to a plain "N owned".
+// (issue #125) — "N/M wanted" on the wish-list landing (`countNoun`). `ownedCount` is
+// clamped to the total so a paper-only vs. Scryfall card-count skew can never read
+// "N+1 of N"; when the total is unknown (card_count 0) it degrades to a plain "N owned".
 const ownedLabel = computed(() => {
   if (props.ownedCount == null) return null
   const total = props.set.card_count
-  if (total > 0) return formatCompletion(props.ownedCount, total)
-  return `${props.ownedCount.toLocaleString()} owned`
+  if (total > 0) return formatCompletion(props.ownedCount, total, props.countNoun)
+  return `${props.ownedCount.toLocaleString()} ${props.countNoun}`
 })
 
 // The total copies (with duplicates) as "N copies", shown next to the completion count

@@ -176,6 +176,10 @@ const hasSeparateFaceImages = computed(
 
           <!-- Track how many copies you own (signed-in users). -->
           <CollectionControls :game="game" :card="card" />
+
+          <!-- …and how many you want to buy — the wish-list twin (issue #167). Both
+               gate internally on auth, so signed-out visitors see the nudges. -->
+          <CollectionControls :game="game" :card="card" list="wishlist" />
         </div>
       </div>
 

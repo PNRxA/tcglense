@@ -5,6 +5,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Card, OwnedCountsMap } from '@/lib/api'
+import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import CardGrid from '../CardGrid.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -43,6 +44,7 @@ function mountGrid(
   ownership?: OwnedCountsMap,
   authenticated = true,
   ghostUnowned = false,
+  list: CardListTarget = 'collection',
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -55,7 +57,7 @@ function mountGrid(
   // store, and the quick-add control uses vue-query, so the tree needs all three.
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(CardGrid, {
-    props: { game: 'mtg', cards, ownership, ghostUnowned },
+    props: { game: 'mtg', cards, ownership, ghostUnowned, list },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
 }
@@ -108,6 +110,21 @@ describe('CardGrid quick-add controls', () => {
     expect(wrapper.findAll('[aria-label^="Add Card"]')).toHaveLength(0)
     // The tiles themselves still render as links to each card page.
     expect(wrapper.find('a[href="/cards/mtg/cards/a"]').exists()).toBe(true)
+  })
+
+  it('retargets the controls at the wish list when the grid is (issue #167)', () => {
+    const wrapper = mountGrid(
+      [makeCard('a'), makeCard('b')],
+      { a: { quantity: 2, foil_quantity: 1 } },
+      true,
+      false,
+      'wishlist',
+    )
+    // Owned card A keeps its count chips; unowned card B's add affordance targets the
+    // wish list — the controls write there instead of the collection.
+    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Add Card b to your wish list"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Add Card b to your collection"]').exists()).toBe(false)
   })
 })
 

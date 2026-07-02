@@ -1,5 +1,11 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { useSetCollectionEntryMutation } from '@/composables/useCollection'
+import { useSetWishlistEntryMutation } from '@/composables/useWishlist'
+
+/** Which per-user card list a count editor/control reads and writes: the collection
+ * (cards you own, the default) or the wish list (cards you want to buy, issue #167).
+ * The two share the holding shape and endpoints, so the editor plumbing is common. */
+export type CardListTarget = 'collection' | 'wishlist'
 
 /** The authoritative owned counts to seed an editor from (the server holding). */
 export interface OwnedCountSeed {
@@ -24,13 +30,19 @@ export interface OwnedCountSeed {
  * `seed` is `undefined` until the authoritative holding has loaded; because writes are
  * absolute, callers should keep the +/- disabled until it resolves so an early click
  * can't save an adjustment off a stale zero.
+ *
+ * `opts.list` picks which list the saves write to — the collection (default) or the
+ * wish list, whose mutations share the same variables/response shape. Fixed for the
+ * editor's lifetime (it's read once, at setup).
  */
 export function useOwnedCountEditor(
   game: Ref<string>,
   cardId: Ref<string>,
   seed: Ref<OwnedCountSeed | undefined>,
+  opts: { list?: CardListTarget } = {},
 ) {
-  const mutation = useSetCollectionEntryMutation()
+  const mutation =
+    opts.list === 'wishlist' ? useSetWishlistEntryMutation() : useSetCollectionEntryMutation()
 
   const regular = ref(0)
   const foil = ref(0)

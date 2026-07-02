@@ -8,3 +8,4 @@ pub mod ingest_state;
 pub mod prelude;
 pub mod refresh_token;
 pub mod user;
+pub mod wishlist_item;

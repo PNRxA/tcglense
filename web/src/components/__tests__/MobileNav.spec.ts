@@ -28,6 +28,8 @@ function makeRouter() {
       { path: '/cards/:game', component: { template: '<div />' } },
       { path: '/collection', component: { template: '<div />' } },
       { path: '/collection/:game', component: { template: '<div />' } },
+      { path: '/wishlist', component: { template: '<div />' } },
+      { path: '/wishlist/:game', component: { template: '<div />' } },
     ],
   })
 }
@@ -61,7 +63,7 @@ describe('MobileNav', () => {
     wrapper.unmount()
   })
 
-  it('reveals both catalog and collection links when opened', async () => {
+  it('reveals catalog, collection and wish-list links when opened', async () => {
     const wrapper = await mountNav([MTG])
     await wrapper.find('button[aria-label="Open navigation menu"]').trigger('click')
     await flushPromises()
@@ -72,6 +74,8 @@ describe('MobileNav', () => {
     expect(hrefs).toContain('/cards/mtg')
     expect(hrefs).toContain('/collection')
     expect(hrefs).toContain('/collection/mtg')
+    expect(hrefs).toContain('/wishlist')
+    expect(hrefs).toContain('/wishlist/mtg')
 
     wrapper.unmount()
   })

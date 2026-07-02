@@ -5,12 +5,19 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
 import { useCollectionEntryQuery } from '@/composables/useCollection'
-import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
+import { useWishlistEntryQuery } from '@/composables/useWishlist'
+import {
+  useOwnedCountEditor,
+  type CardListTarget,
+  type OwnedCountSeed,
+} from '@/composables/useOwnedCountEditor'
 
 // Quick-add control overlaid on a card tile (issue #95): a corner trigger showing the
 // owned count (or a "+" on a card you don't own yet) that opens a small popover with
 // regular/foil steppers, so a signed-in user can add to or adjust their collection
 // without leaving the grid. Rendered by CardGrid / CollectionGrid only while signed in.
+// `list` retargets the whole control at the wish list (issue #167) — same behaviour,
+// reading/writing the wish-list counts with "wish list" wording.
 //
 // `quantity`/`foilQuantity` are the *display* counts from the grid's ownership source —
 // good enough for the resting badge, but they can lag (a browse grid loads them async).
@@ -18,17 +25,22 @@ import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwned
 // authoritative single-card holding fetched when the popover opens, and the steppers stay
 // disabled until it resolves — so an early click can never clobber the real count with a
 // stale zero.
-const props = defineProps<{
-  game: string
-  cardId: string
-  name: string
-  quantity: number
-  foilQuantity: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    game: string
+    cardId: string
+    name: string
+    quantity: number
+    foilQuantity: number
+    list?: CardListTarget
+  }>(),
+  { list: 'collection' },
+)
 
 const open = ref(false)
 const game = toRef(props, 'game')
 const cardId = toRef(props, 'cardId')
+const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
 
 // Fetch the authoritative holding only once the popover is open (a big grid must not fire
 // one request per tile). `staleTime: 0` forces a re-fetch every time it re-opens, and
@@ -36,13 +48,19 @@ const cardId = toRef(props, 'cardId')
 // could seed the steppers off a stale cached count and an absolute-count save would clobber
 // the true value. Until ready, seed the display from the grid counts so an owned card
 // doesn't flash "0"; the steppers stay disabled, so acting on the fallback is impossible.
-const entryQuery = useCollectionEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
+// The target list is fixed per instance, so picking the entry hook once at setup is safe.
+const entryQuery =
+  props.list === 'wishlist'
+    ? useWishlistEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
+    : useCollectionEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
 const seed = computed<OwnedCountSeed>(
   () => entryQuery.data.value ?? { quantity: props.quantity, foil_quantity: props.foilQuantity },
 )
 const ready = computed(() => entryQuery.isSuccess.value && !entryQuery.isFetching.value)
 
-const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed)
+const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
+  list: props.list,
+})
 
 // Resting trigger reflects the grid counts; the live edited counts show inside the panel.
 const displayTotal = computed(() => props.quantity + props.foilQuantity)
@@ -75,7 +93,7 @@ const rows = computed(() => [
             : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
         "
         :aria-label="
-          owned ? `Edit copies of ${name} in your collection` : `Add ${name} to your collection`
+          owned ? `Edit copies of ${name} in your ${listName}` : `Add ${name} to your ${listName}`
         "
         @click.stop
       >

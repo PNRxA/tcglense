@@ -29,3 +29,4 @@ mod registration;
 mod request_body;
 mod search;
 mod sitemap;
+mod wishlist;

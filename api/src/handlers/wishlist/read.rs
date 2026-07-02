@@ -1,6 +1,6 @@
-//! Collection read endpoints: the owned-card list, the aggregate summary, a single
-//! card's owned counts, and the batch owned-counts lookup that backs the browse-grid
-//! badges.
+//! Wish-list read endpoints: the wanted-card list, the aggregate summary, a single
+//! card's wanted counts, and the batch wanted-counts lookup that backs the browse-grid
+//! badges and ghost views.
 
 use std::collections::HashMap;
 
@@ -13,25 +13,24 @@ use sea_orm::{
 };
 
 use crate::auth::extractor::AuthUser;
-use crate::entities::prelude::{Card, CollectionItem};
-use crate::entities::{card, collection_item};
+use crate::entities::prelude::{Card, WishlistItem};
+use crate::entities::{card, wishlist_item};
 use crate::error::AppError;
 use crate::extract::JsonBody;
 use crate::handlers::shared::{
-    CardResponse, Page, SortDir, apply_card_sort, build_page, dedupe_ids, load_card, require_game,
+    CardResponse, CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary,
+    ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page, SortDir,
+    SummaryParams, apply_card_sort, build_page, dedupe_ids, load_card, require_game,
     resolve_set_scope, search_condition, summarize_holdings,
 };
 use crate::state::AppState;
 
-use super::{
-    CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary, ListParams,
-    MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SummaryParams, find_row,
-};
+use super::find_row;
 
-/// `GET /api/collection/{game}` -> the signed-in user's owned cards for a game,
+/// `GET /api/wishlist/{game}` -> the signed-in user's wanted cards for a game,
 /// most-recently-updated first, paginated. Each entry carries the full card payload
-/// plus the owned counts.
-pub async fn list_collection(
+/// plus the wanted counts.
+pub async fn list_wishlist(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
@@ -49,18 +48,18 @@ pub async fn list_collection(
 
     // Resolve the (optional) set scope: a single set, or — with `include_related` — the
     // set's whole group (root + related sub-sets), spanning exactly the sets the catalog
-    // does. `None` means the whole collection.
+    // does. `None` means the whole wish list.
     let set_codes =
         resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
 
-    let paginator = collection_query(user.id, &game, set_codes.as_deref(), search, sort, dir)
+    let paginator = wishlist_query(user.id, &game, set_codes.as_deref(), search, sort, dir)
         .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
 
-    // `find_also_related` is a LEFT join, so a holding whose card row is gone (e.g.
-    // removed by a catalog re-import) comes back with `None` — skip it, exactly as
-    // the summary/valuation reads do.
+    // `find_also_related` is a LEFT join, so a row whose card is gone (e.g. removed
+    // by a catalog re-import) comes back with `None` — skip it, exactly as the
+    // summary/valuation reads do.
     let data: Vec<CollectionEntry> = rows
         .into_iter()
         .filter_map(|(item, card)| {
@@ -75,48 +74,48 @@ pub async fn list_collection(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
-/// The per-user owned-holdings base query: every `collection_items` row for one
+/// The per-user wanted-holdings base query: every `wishlist_items` row for one
 /// `user_id` + `game`, left-joined to its `cards` row, optionally scoped to a set-code
-/// slice. This encodes the collection's core per-user scoping invariant, so the list,
-/// summary, and owned-sets reads all build on the one join + filter.
+/// slice. This encodes the wish list's core per-user scoping invariant, so the list,
+/// summary, and wanted-sets reads all build on the one join + filter.
 ///
-/// `set_codes` scopes to the joined card's `set_code`: `None` = the whole collection,
+/// `set_codes` scopes to the joined card's `set_code`: `None` = the whole wish list,
 /// a single code = the per-set view, several codes = the include-related group view. An
 /// empty slice would match nothing, but the scope resolver never produces one (a group
 /// always contains at least the set itself).
-pub(super) fn owned_with_cards(
+pub(super) fn wanted_with_cards(
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
-) -> SelectTwo<collection_item::Entity, card::Entity> {
-    let mut query = CollectionItem::find()
+) -> SelectTwo<wishlist_item::Entity, card::Entity> {
+    let mut query = WishlistItem::find()
         .find_also_related(Card)
-        .filter(collection_item::Column::UserId.eq(user_id))
-        .filter(collection_item::Column::Game.eq(game));
+        .filter(wishlist_item::Column::UserId.eq(user_id))
+        .filter(wishlist_item::Column::Game.eq(game));
     if let Some(codes) = set_codes {
         query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
     }
     query
 }
 
-/// Build the collection-list query for a user + game: the [`owned_with_cards`] base
+/// Build the wish-list query for a user + game: the [`wanted_with_cards`] base
 /// (per-user scope + optional set scope), plus the optional already-parsed search
 /// condition and the chosen sort. Kept separate from the handler so the join/filter/sort
 /// can be unit-tested against a seeded DB without an `AppState`.
 ///
 /// The search condition, the set scope, and the card sort touch only `cards` columns;
 /// the `user_id` and `game` filters and the recency sort stay entity-qualified to
-/// `collection_items`, so nothing is ambiguous across the join (both tables carry a
+/// `wishlist_items`, so nothing is ambiguous across the join (both tables carry a
 /// `game` column).
-pub(super) fn collection_query(
+pub(super) fn wishlist_query(
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
     search: Option<Condition>,
     sort: CollectionSort,
     dir: SortDir,
-) -> SelectTwo<collection_item::Entity, card::Entity> {
-    let mut query = owned_with_cards(user_id, game, set_codes);
+) -> SelectTwo<wishlist_item::Entity, card::Entity> {
+    let mut query = wanted_with_cards(user_id, game, set_codes);
     if let Some(condition) = search {
         query = query.filter(condition);
     }
@@ -124,18 +123,18 @@ pub(super) fn collection_query(
         // Newest change first (or oldest, if reversed), with a stable id tiebreaker
         // for deterministic paging.
         CollectionSort::Recent => query
-            .order_by(collection_item::Column::UpdatedAt, dir.order())
-            .order_by(collection_item::Column::Id, dir.order()),
+            .order_by(wishlist_item::Column::UpdatedAt, dir.order())
+            .order_by(wishlist_item::Column::Id, dir.order()),
         CollectionSort::Card(field) => apply_card_sort(query, field, dir, false),
     }
 }
 
-/// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
-/// copies, estimated USD value) for the signed-in user's collection in a game.
-/// An optional `?set` scopes the stats to a single set (the per-set collection view);
+/// `GET /api/wishlist/{game}/summary` -> aggregate stats (distinct cards, total
+/// copies, estimated USD value) for the signed-in user's wish list in a game.
+/// An optional `?set` scopes the stats to a single set (the per-set wish-list view);
 /// `?include_related=true` with a set spans its whole group (root + related sub-sets),
-/// so the header value matches the set / include-related collection browse view.
-pub async fn collection_summary(
+/// so the header value matches the set / include-related wish-list browse view.
+pub async fn wishlist_summary(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
@@ -144,8 +143,8 @@ pub async fn collection_summary(
     require_game(&game)?;
 
     // Resolve the optional scope: one set, or its whole group under include-related, or
-    // `None` for the whole collection — the same resolution the collection list uses, so
-    // the value spans identical sets. Then aggregate over exactly those holdings.
+    // `None` for the whole wish list — the same resolution the wish-list list uses, so
+    // the value spans identical sets. Then aggregate over exactly those rows.
     let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let set_codes =
         resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?;
@@ -153,26 +152,25 @@ pub async fn collection_summary(
 }
 
 /// Aggregate stats (distinct cards, total copies, estimated USD value) for a user's
-/// collection in a game, optionally scoped. `set_codes = Some(codes)` scopes to those sets
+/// wish list in a game, optionally scoped. `set_codes = Some(codes)` scopes to those sets
 /// (never empty — `resolve_set_scope` yields at least the scoped set); `None` spans the
-/// whole collection. The fold itself is the shared [`summarize_holdings`] core: each
-/// holding is left-joined to its card, so a holding whose card row is gone (a catalog
-/// re-import) is skipped for **all three** stats — matching the collection list
-/// (`list_collection`).
+/// whole wish list. The fold itself is the shared [`summarize_holdings`] core: each row
+/// is left-joined to its card, so a row whose card is gone (a catalog re-import) is
+/// skipped for **all three** stats — matching the wish-list list (`list_wishlist`).
 pub(super) async fn summary(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
 ) -> Result<CollectionSummary, AppError> {
-    let rows = owned_with_cards(user_id, game, set_codes).all(db).await?;
+    let rows = wanted_with_cards(user_id, game, set_codes).all(db).await?;
     Ok(summarize_holdings(&rows))
 }
 
-/// `GET /api/collection/{game}/cards/{id}` -> how many copies of one card the user
-/// owns (zeros when the card isn't in their collection). `id` is the external card
+/// `GET /api/wishlist/{game}/cards/{id}` -> how many copies of one card the user
+/// wants (zeros when the card isn't on their wish list). `id` is the external card
 /// id; a `404` means the game or card is unknown.
-pub async fn get_collection_entry(
+pub async fn get_wishlist_entry(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path((game, id)): Path<(String, String)>,
@@ -192,13 +190,13 @@ pub async fn get_collection_entry(
     }))
 }
 
-/// `POST /api/collection/{game}/owned` -> the owned counts for the subset of the
-/// given external card ids that the signed-in user actually owns, keyed by external
-/// id. Cards the user doesn't own are absent from the map (so an all-unowned page
-/// returns `{ "data": {} }`). This backs the owned-count badges overlaid on the
-/// public browse grids without an N+1 of per-card lookups. `422` if more than
-/// [`MAX_OWNED_IDS`] ids are requested at once.
-pub async fn owned_counts(
+/// `POST /api/wishlist/{game}/counts` -> the wanted counts for the subset of the
+/// given external card ids that are actually on the signed-in user's wish list, keyed
+/// by external id. Cards the user doesn't want are absent from the map (so an
+/// all-unwanted page returns `{ "data": {} }`). This backs the wanted-count badges and
+/// ghost dimming overlaid on the wish-list browse grids without an N+1 of per-card
+/// lookups. `422` if more than [`MAX_OWNED_IDS`] ids are requested at once.
+pub async fn wishlist_counts(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
@@ -235,13 +233,13 @@ pub async fn owned_counts(
         }));
     }
 
-    // One query for the user's holdings among those cards; a card with no row is
-    // simply not owned and contributes nothing to the map.
+    // One query for the user's wish-list rows among those cards; a card with no row is
+    // simply not wanted and contributes nothing to the map.
     let internal_ids: Vec<i32> = external_by_internal.keys().copied().collect();
-    let rows = CollectionItem::find()
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
-        .filter(collection_item::Column::CardId.is_in(internal_ids))
+    let rows = WishlistItem::find()
+        .filter(wishlist_item::Column::UserId.eq(user.id))
+        .filter(wishlist_item::Column::Game.eq(game.as_str()))
+        .filter(wishlist_item::Column::CardId.is_in(internal_ids))
         .all(&state.db)
         .await?;
 

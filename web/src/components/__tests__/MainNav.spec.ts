@@ -28,6 +28,8 @@ function makeRouter() {
       { path: '/cards/:game', component: { template: '<div />' } },
       { path: '/collection', component: { template: '<div />' } },
       { path: '/collection/:game', component: { template: '<div />' } },
+      { path: '/wishlist', component: { template: '<div />' } },
+      { path: '/wishlist/:game', component: { template: '<div />' } },
     ],
   })
 }
@@ -59,10 +61,11 @@ function trigger(wrapper: Awaited<ReturnType<typeof mountNav>>, label: string) {
 }
 
 describe('MainNav', () => {
-  it('renders both the Cards and Collection triggers in one menu', async () => {
+  it('renders the Cards, Collection and Wish list triggers in one menu', async () => {
     const wrapper = await mountNav()
     expect(trigger(wrapper, 'Cards').exists()).toBe(true)
     expect(trigger(wrapper, 'Collection').exists()).toBe(true)
+    expect(trigger(wrapper, 'Wish list').exists()).toBe(true)
   })
 
   it('reveals catalog links when the Cards menu is opened', async () => {
@@ -85,5 +88,16 @@ describe('MainNav', () => {
     expect(all.exists()).toBe(true)
     expect(all.text()).toContain('All collections')
     expect(wrapper.find('a[href="/collection/mtg"]').exists()).toBe(true)
+  })
+
+  it('reveals wish-list links when the Wish list menu is opened', async () => {
+    const wrapper = await mountNav([MTG])
+    await trigger(wrapper, 'Wish list').trigger('click')
+    await flushPromises()
+
+    const all = wrapper.find('a[href="/wishlist"]')
+    expect(all.exists()).toBe(true)
+    expect(all.text()).toContain('All wish lists')
+    expect(wrapper.find('a[href="/wishlist/mtg"]').exists()).toBe(true)
   })
 })

@@ -13,14 +13,19 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import QuickAddPrintTile from '@/components/collection/QuickAddPrintTile.vue'
 import { useCardPrintingsByName } from '@/composables/useQuickAdd'
 import { useOwnedCounts } from '@/composables/useCollection'
+import { useWishlistCounts } from '@/composables/useWishlist'
 import { filterPrintings } from '@/lib/quickAddFilter'
 import type { Card } from '@/lib/api'
-import type { OwnedCountSeed } from '@/composables/useOwnedCountEditor'
+import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 
 // Step two of quick-add: having chosen a name, pick which printing and add regular
-// and/or foil copies. Opened by QuickAddBox once a name is selected. The reka dialog
+// and/or foil copies — to the collection by default, or the wish list when `list`
+// says so (#167). Opened by QuickAddBox once a name is selected. The reka dialog
 // gives a focus trap, Escape-to-close, and click-outside dismissal for free.
-const props = defineProps<{ game: string; name: string | null }>()
+const props = withDefaults(
+  defineProps<{ game: string; name: string | null; list?: CardListTarget }>(),
+  { list: 'collection' },
+)
 const open = defineModel<boolean>('open', { required: true })
 // Forwarded to the parent so it can return focus to the quick-add box on close (this
 // dialog is opened programmatically, without a trigger, so reka has no element to
@@ -45,17 +50,19 @@ watch(open, (isOpen) => {
 })
 const filteredPrints = computed<Card[]>(() => filterPrintings(prints.value, filter.value))
 
-// Authoritative owned counts for every printing, refetched on each open (staleTime 0)
-// so the absolute-count editors seed off the true current holding, never a stale one.
-// Keyed on the full `prints` list (not the filtered view) so typing in the filter box
-// never refetches. Gate on `ready && !fetching`, not `ready` alone: reopening the SAME
-// name reuses the query key, so `ready` stays true off the retained (possibly stale)
-// cache while the staleTime-0 refetch runs — seeding an editor then, and saving before
-// it settles, would clobber the true count (mirrors OwnedCountControl's guard).
-const { ownership, ready, fetching } = useOwnedCounts(game, prints, {
-  enabled: open,
-  staleTime: 0,
-})
+// Authoritative counts for every printing, refetched on each open (staleTime 0) so the
+// absolute-count editors seed off the true current holding, never a stale one — from
+// the collection or the wish list per the target (fixed per instance, so picking the
+// hook once at setup is safe). Keyed on the full `prints` list (not the filtered view)
+// so typing in the filter box never refetches. Gate on `ready && !fetching`, not
+// `ready` alone: reopening the SAME name reuses the query key, so `ready` stays true
+// off the retained (possibly stale) cache while the staleTime-0 refetch runs — seeding
+// an editor then, and saving before it settles, would clobber the true count (mirrors
+// OwnedCountControl's guard).
+const { ownership, ready, fetching } =
+  props.list === 'wishlist'
+    ? useWishlistCounts(game, prints, { enabled: open, staleTime: 0 })
+    : useOwnedCounts(game, prints, { enabled: open, staleTime: 0 })
 const seedReady = computed(() => ready.value && !fetching.value)
 function seedFor(card: Card): OwnedCountSeed | undefined {
   return seedReady.value
@@ -74,7 +81,8 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
         Add <span class="text-primary">{{ name }}</span>
       </DialogTitle>
       <DialogDescription class="text-muted-foreground mt-1 text-sm">
-        Pick a printing, then add regular or foil copies to your collection.
+        Pick a printing, then add regular or foil copies to your
+        {{ list === 'wishlist' ? 'wish list' : 'collection' }}.
       </DialogDescription>
 
       <div class="mt-4">
@@ -113,6 +121,7 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
               :card="card"
               :seed="seedFor(card)"
               :ready="seedReady"
+              :list="list"
             />
           </div>
         </template>

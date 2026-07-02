@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Layers, Library } from '@lucide/vue'
+import { Heart, Layers, Library } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import {
   NavigationMenu,
@@ -12,18 +12,19 @@ import {
 } from '@/components/ui/navigation-menu'
 import { useGamesQuery } from '@/composables/useCatalog'
 
-// The top-bar primary nav: "Cards" (public catalog) and "Collection" (per-user).
+// The top-bar primary nav: "Cards" (public catalog), "Collection" and "Wish list"
+// (per-user).
 //
-// Both items live under ONE NavigationMenu / NavigationMenuList on purpose: reka-ui
+// All items live under ONE NavigationMenu / NavigationMenuList on purpose: reka-ui
 // shares a single animated viewport across the items in a menu and computes the swipe
 // direction (data-motion=from-start/from-end) only between siblings in that same menu.
-// Splitting them into two separate <NavigationMenu> roots (as this used to) gives each
+// Splitting them into separate <NavigationMenu> roots (as this used to) gives each
 // its own isolated viewport and no directional motion, so the docs' swipe-and-fade
-// between the two never plays.
+// between them never plays.
 //
-// Both dropdowns are driven by the same cached games registry, so a new TCG appears in
-// both automatically. Collection is shown to everyone; a signed-out visitor who opens a
-// collection is prompted to sign in / sign up on that page.
+// The dropdowns are driven by the same cached games registry, so a new TCG appears in
+// all of them automatically. Collection and Wish list are shown to everyone; a
+// signed-out visitor who opens one is prompted to sign in / sign up on that page.
 const { data } = useGamesQuery()
 const games = computed(() => data.value?.data ?? [])
 </script>
@@ -77,6 +78,32 @@ const games = computed(() => data.value?.data ?? [])
             <li v-for="game in games" :key="game.id">
               <NavigationMenuLink as-child>
                 <RouterLink :to="`/collection/${game.id}`">{{ game.name }}</RouterLink>
+              </NavigationMenuLink>
+            </li>
+          </ul>
+        </NavigationMenuContent>
+      </NavigationMenuItem>
+
+      <!-- Wish list: the cards the user wants to buy (issue #167; prompts sign-in if
+           needed). -->
+      <NavigationMenuItem>
+        <NavigationMenuTrigger>
+          <Heart class="mr-1.5 size-4" aria-hidden="true" />
+          Wish list
+        </NavigationMenuTrigger>
+        <NavigationMenuContent>
+          <ul class="grid w-56 gap-1">
+            <li>
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/wishlist">
+                  <Heart aria-hidden="true" />
+                  All wish lists
+                </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <li v-for="game in games" :key="game.id">
+              <NavigationMenuLink as-child>
+                <RouterLink :to="`/wishlist/${game.id}`">{{ game.name }}</RouterLink>
               </NavigationMenuLink>
             </li>
           </ul>

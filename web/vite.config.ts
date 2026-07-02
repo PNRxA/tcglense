@@ -41,6 +41,7 @@ function robotsTxt(): string {
     'Disallow: /register',
     'Disallow: /profile',
     'Disallow: /collection',
+    'Disallow: /wishlist',
     // The email-flow routes carry secret tokens in the query string.
     'Disallow: /forgot-password',
     'Disallow: /reset-password',
