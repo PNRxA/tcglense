@@ -448,7 +448,7 @@ auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
   jwt.rs           access-token Claims + encode/decode (HS256, expiry in minutes)
   refresh.rs       opaque refresh-token service: issue / rotate (single-use, successor-linked reuse detection) / revoke_one / revoke_all / prune_expired
-  email_token.rs   single-use emailed-token service (verification 24h / password reset 1h): issue / issue_with_cooldown (60s, DB-backed) / consume (atomic claim, purpose-scoped) / prune_expired — same storage design as refresh.rs, no rotation lineage
+  email_token.rs   single-use emailed-token service (verification 24h / password reset 1h): issue / issue_with_cooldown (60s, atomic conditional INSERT gated on rows_affected so a concurrent burst can't bypass it) / consume (atomic claim, purpose-scoped) / prune_expired — same storage design as refresh.rs, no rotation lineage
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
 catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all()/seed_all() (dispatch per game to its provider / offline dummy seeder)
@@ -642,9 +642,10 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   long-lived credential. In production set `COOKIE_SECURE=true` (HTTPS) and serve
   web + API same-origin (or configure cross-origin CORS credentials).
 - **No rate limiting / brute-force protection** on login yet. The email endpoints
-  have a narrow DB-backed guard — a 60s per-user cooldown on issuing
-  verification/reset tokens (`issue_with_cooldown`) — but no per-IP limiting;
-  registration itself is also unthrottled, so a bot burst could still send many
+  have a narrow DB-backed guard — a 60s per-(user, purpose) cooldown on issuing
+  verification/reset tokens (`issue_with_cooldown`, an atomic conditional insert so
+  a concurrent burst can't slip past it) — but no per-IP limiting; registration
+  itself is also unthrottled, so a bot burst could still send many
   first-registration emails (a complaint-rate risk with the email provider).
   Captcha + per-IP rate limiting on `/register` is future work.
 - **Transactional email (Resend):** sends ride the shared reqwest client with a

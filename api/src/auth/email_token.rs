@@ -11,8 +11,8 @@
 use chrono::{Duration, Utc};
 use rand::Rng;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    Set, Statement, sea_query::Expr,
 };
 use sha2::{Digest, Sha256};
 
@@ -101,30 +101,51 @@ pub async fn issue(
     insert_token(db, user_id, purpose, purpose.expiry()).await
 }
 
-/// Like [`issue`], but returns `Ok(None)` — issuing nothing — when the user's
-/// newest token of this purpose is younger than the cooldown. Callers on the
+/// Like [`issue`], but returns `Ok(None)` — issuing nothing — when the user
+/// already has a token of this purpose younger than the cooldown. Callers on the
 /// anti-enumeration endpoints (resend-verification, forgot-password) treat
 /// `None` exactly like a success so the cooldown is unobservable from outside.
+///
+/// The check and the insert are a **single atomic statement** (a conditional
+/// `INSERT … WHERE NOT EXISTS(recent row)`, gated on `rows_affected` like the
+/// rotation/[`consume`] claims): a plain read-then-insert would let a burst of
+/// concurrent requests all pass the check before any row committed and each send
+/// an email, defeating the very mail-bombing brake this exists to be.
 pub async fn issue_with_cooldown(
     db: &DatabaseConnection,
     user_id: i32,
     purpose: EmailTokenPurpose,
 ) -> Result<Option<String>, AppError> {
-    let newest = EmailToken::find()
-        .filter(email_token::Column::UserId.eq(user_id))
-        .filter(email_token::Column::Purpose.eq(purpose.as_str()))
-        .order_by_desc(email_token::Column::CreatedAt)
-        .limit(1)
-        .one(db)
-        .await?;
+    let plaintext = generate_token();
+    let now = Utc::now();
+    let cutoff = now - Duration::seconds(ISSUE_COOLDOWN_SECONDS);
 
-    if let Some(row) = newest
-        && Utc::now() - row.created_at < Duration::seconds(ISSUE_COOLDOWN_SECONDS)
-    {
-        return Ok(None);
-    }
+    // The datetime values bind as chrono `Value`s (same encoding SeaORM uses to
+    // store `created_at`), so the `created_at > cutoff` text comparison lines up.
+    // All values are bound parameters — nothing is interpolated into the SQL.
+    let stmt = Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "INSERT INTO email_tokens \
+             (user_id, purpose, token_hash, expires_at, consumed_at, created_at) \
+         SELECT ?, ?, ?, ?, NULL, ? \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM email_tokens \
+             WHERE user_id = ? AND purpose = ? AND created_at > ? \
+         )",
+        [
+            user_id.into(),
+            purpose.as_str().into(),
+            hash_token(&plaintext).into(),
+            (now + purpose.expiry()).into(),
+            now.into(),
+            user_id.into(),
+            purpose.as_str().into(),
+            cutoff.into(),
+        ],
+    );
 
-    issue(db, user_id, purpose).await.map(Some)
+    let result = db.execute(stmt).await?;
+    Ok((result.rows_affected() > 0).then_some(plaintext))
 }
 
 /// Consume the presented token: spend it if it is a live, unconsumed token of
@@ -283,6 +304,40 @@ mod tests {
             .await
             .expect("reset issue");
         assert!(reset.is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_cooldown_issues_are_atomic() {
+        // A burst of concurrent requests (as an anonymous client could fire at
+        // forgot-password/resend) must still issue at most ONE token in the
+        // window — the cooldown is an atomic conditional insert, not a racy
+        // check-then-insert.
+        let db = setup_db().await;
+        let user_id = insert_user(&db, "burst@example.com").await;
+
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let db = db.clone();
+            handles.push(tokio::spawn(async move {
+                issue_with_cooldown(&db, user_id, EmailTokenPurpose::ResetPassword).await
+            }));
+        }
+
+        let mut issued = 0;
+        for handle in handles {
+            if handle.await.expect("task").expect("issue").is_some() {
+                issued += 1;
+            }
+        }
+        assert_eq!(issued, 1, "exactly one token may be issued within the cooldown");
+
+        // And exactly one row landed.
+        let rows = EmailToken::find()
+            .filter(email_token::Column::UserId.eq(user_id))
+            .all(&db)
+            .await
+            .expect("query");
+        assert_eq!(rows.len(), 1);
     }
 
     #[tokio::test]

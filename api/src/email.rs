@@ -51,7 +51,7 @@ impl Mailbox {
 }
 
 /// The configured email sender, built once in `AppState::new`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Emailer {
     /// No `RESEND_API_KEY` configured: skip the send and log the message.
     Disabled,
@@ -64,6 +64,23 @@ pub enum Emailer {
     /// Test-only: capture the message instead of sending anything.
     #[cfg(test)]
     Capture(Mailbox),
+}
+
+// Manual `Debug` so the Resend API key can never leak via `{:?}`/logs — mirrors
+// the redaction the same key gets in `Config`'s Debug impl.
+impl std::fmt::Debug for Emailer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Emailer::Disabled => f.write_str("Emailer::Disabled"),
+            Emailer::Resend { from, .. } => f
+                .debug_struct("Emailer::Resend")
+                .field("api_key", &"[redacted]")
+                .field("from", from)
+                .finish(),
+            #[cfg(test)]
+            Emailer::Capture(_) => f.write_str("Emailer::Capture"),
+        }
+    }
 }
 
 impl Emailer {
