@@ -41,6 +41,10 @@ function robotsTxt(): string {
     'Disallow: /register',
     'Disallow: /profile',
     'Disallow: /collection',
+    // The email-flow routes carry secret tokens in the query string.
+    'Disallow: /forgot-password',
+    'Disallow: /reset-password',
+    'Disallow: /verify-email',
     '',
     // The DB-backed sitemap lives on the API (index + chunked child sitemaps).
     `Sitemap: ${SITE_URL}/api/sitemap.xml`,

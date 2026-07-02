@@ -3,6 +3,7 @@ pub use super::card_price_history::Entity as CardPriceHistory;
 pub use super::card_set::Entity as CardSet;
 pub use super::collection_item::Entity as CollectionItem;
 pub use super::collection_source::Entity as CollectionSource;
+pub use super::email_token::Entity as EmailToken;
 pub use super::ingest_state::Entity as IngestState;
 pub use super::refresh_token::Entity as RefreshToken;
 pub use super::user::Entity as User;

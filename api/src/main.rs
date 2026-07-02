@@ -3,6 +3,7 @@ mod catalog;
 mod collection_import;
 mod config;
 mod db;
+mod email;
 mod entities;
 mod error;
 mod extract;

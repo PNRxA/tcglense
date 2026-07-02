@@ -3,7 +3,7 @@
 use super::harness::*;
 
 #[tokio::test]
-async fn register_hardens_cookie_and_never_leaks_password_hash() {
+async fn register_mints_no_session_and_never_leaks_secret_material() {
     let app = test_app().await;
     let (status, headers, body) = send(
         &app,
@@ -15,10 +15,42 @@ async fn register_hardens_cookie_and_never_leaks_password_hash() {
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert!(body["access_token"].as_str().is_some());
+    // Verify-first: registration mints NO session — no access token in the
+    // body, no refresh cookie on the wire — until the emailed link is used.
+    assert!(body["access_token"].is_null());
+    assert!(refresh_token_from(&headers).is_none());
     // Email is canonicalised (trimmed + lowercased).
     assert_eq!(body["user"]["email"], "user@example.com");
     assert_eq!(body["user"]["display_name"], "Tester");
+
+    // The public user shape must never carry secret material — including the
+    // verification token, which must ride ONLY in the email (the response going
+    // back to the unauthenticated caller must not shortcut the mailbox proof).
+    let raw = body.to_string();
+    assert!(!raw.contains("password_hash"), "leaked field name: {raw}");
+    assert!(!raw.contains("$argon2"), "leaked a hash: {raw}");
+    let token = latest_email_token(&app, "user@example.com").await;
+    assert!(
+        !raw.contains(&token),
+        "the verification token must not appear in the response body"
+    );
+}
+
+#[tokio::test]
+async fn login_hardens_cookie_and_never_leaks_password_hash() {
+    let app = test_app().await;
+    register(&app, "hygiene@example.com", "password123").await;
+
+    let (status, headers, body) = send(
+        &app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": "hygiene@example.com", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["access_token"].as_str().is_some());
 
     // The public user shape must never carry secret material.
     let raw = body.to_string();

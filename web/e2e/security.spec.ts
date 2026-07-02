@@ -2,19 +2,27 @@
  * Security end-to-end tests.
  *
  * These exercise the real auth stack through the browser and the HTTP API: the
- * httpOnly + SameSite refresh cookie, generic (non-enumerable) login failures,
- * bearer-protected routes, malformed-body handling, and that the access token
- * never reaches JS-readable storage.
+ * verify-first registration contract (no session until the emailed link is
+ * used), the httpOnly + SameSite refresh cookie, generic (non-enumerable) login
+ * failures, bearer-protected routes, malformed-body handling, and that the
+ * access token never reaches JS-readable storage.
  *
  * They need the backend running. The CI e2e job starts the API with the offline
- * dummy catalog and waits for /api/health before invoking Playwright, so these
- * run there. Locally (a bare `npm run test:e2e` with no API) they skip instead of
- * failing — hence the intentional API-availability guard below.
+ * dummy catalog (SEED_DUMMY_DATA) and waits for /api/health before invoking
+ * Playwright, so these run there. Dummy mode also seeds a verified dev account
+ * (see api/src/tasks.rs) — an offline run can't receive verification email, so
+ * the session flows sign in as that account instead of registering. Locally (a
+ * bare `npm run test:e2e` with no API) they skip instead of failing — hence the
+ * intentional API-availability guards below.
  */
 /* eslint-disable playwright/no-skipped-test */
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
 const PASSWORD = 'password123'
+
+// The verified account seeded by SEED_DUMMY_DATA (api/src/tasks.rs).
+const SEEDED_EMAIL = 'e2e@tcglense.test'
+const SEEDED_PASSWORD = 'password123'
 
 async function apiReachable(request: APIRequestContext): Promise<boolean> {
   try {
@@ -33,6 +41,16 @@ async function registerViaApi(request: APIRequestContext, email: string) {
   return request.post('/api/auth/register', { data: { email, password: PASSWORD } })
 }
 
+/** Access token for the seeded verified account, or null when it isn't there
+ * (an API started without SEED_DUMMY_DATA). */
+async function loginSeeded(request: APIRequestContext): Promise<string | null> {
+  const res = await request.post('/api/auth/login', {
+    data: { email: SEEDED_EMAIL, password: SEEDED_PASSWORD },
+  })
+  if (!res.ok()) return null
+  return (await res.json()).access_token as string
+}
+
 test.describe('security: auth API contract', () => {
   test.beforeEach(async ({ request, browserName }) => {
     // These hit the HTTP API directly (no browser), so running them once is
@@ -41,30 +59,27 @@ test.describe('security: auth API contract', () => {
     test.skip(!(await apiReachable(request)), 'API not reachable; security e2e needs the backend')
   })
 
-  test('register sets a hardened httpOnly refresh cookie and never leaks the hash', async ({
-    request,
-  }) => {
+  test('register mints no session and never leaks the hash', async ({ request }) => {
     const email = uniqueEmail('reg')
     const res = await registerViaApi(request, email)
     expect(res.status()).toBe(201)
 
     const body = await res.json()
-    expect(body.access_token).toBeTruthy()
+    // Verify-first: the account exists but there is no session until the
+    // emailed verification link is used.
+    expect(body.access_token).toBeUndefined()
     expect(body.user.email).toBe(email)
     const serialized = JSON.stringify(body)
     expect(serialized).not.toContain('password_hash')
     expect(serialized).not.toContain('$argon2')
 
+    // No refresh cookie either — the session material only exists after login.
     const setCookie = res
       .headersArray()
       .filter((h) => h.name.toLowerCase() === 'set-cookie')
       .map((h) => h.value)
-      .find((v) => v.startsWith('tcglense_refresh='))
-    expect(setCookie, 'refresh Set-Cookie present').toBeTruthy()
-    const cookie = setCookie as string
-    expect(cookie.toLowerCase()).toContain('httponly')
-    expect(cookie.toLowerCase()).toContain('samesite=lax')
-    expect(cookie).toContain('Path=/api/auth')
+      .find((v) => v.startsWith('tcglense_refresh=') && !v.startsWith('tcglense_refresh=;'))
+    expect(setCookie, 'no refresh Set-Cookie on register').toBeFalsy()
   })
 
   test('duplicate registration is rejected with 409', async ({ request }) => {
@@ -73,7 +88,9 @@ test.describe('security: auth API contract', () => {
     expect((await registerViaApi(request, email)).status()).toBe(409)
   })
 
-  test('login failures are generic — no user enumeration', async ({ request }) => {
+  test('login failures are generic; unverified is revealed only to the right password', async ({
+    request,
+  }) => {
     const email = uniqueEmail('login')
     await registerViaApi(request, email)
 
@@ -88,23 +105,56 @@ test.describe('security: auth API contract', () => {
     expect(noSuchUser.status()).toBe(401)
     // Identical message in both cases: nothing reveals whether the account exists.
     expect((await wrongPassword.json()).error).toBe((await noSuchUser.json()).error)
+
+    // The distinct unverified error requires the CORRECT password, so it is not
+    // an enumeration oracle — and it still mints no session.
+    const unverified = await request.post('/api/auth/login', {
+      data: { email, password: PASSWORD },
+    })
+    expect(unverified.status()).toBe(403)
+    expect((await unverified.json()).error).toBe('email not verified')
+  })
+
+  test('the recovery endpoints answer generically for unknown addresses', async ({ request }) => {
+    // Neither endpoint may reveal whether an account exists: an unknown address
+    // gets the same 204 as a real one.
+    const forgot = await request.post('/api/auth/forgot-password', {
+      data: { email: uniqueEmail('forgot-ghost') },
+    })
+    expect(forgot.status()).toBe(204)
+
+    const resend = await request.post('/api/auth/resend-verification', {
+      data: { email: uniqueEmail('resend-ghost') },
+    })
+    expect(resend.status()).toBe(204)
+
+    // A garbage token can neither verify an email nor reset a password.
+    const badVerify = await request.post('/api/auth/verify-email', {
+      data: { token: 'deadbeef' },
+    })
+    expect(badVerify.status()).toBe(401)
+    const badReset = await request.post('/api/auth/reset-password', {
+      data: { token: 'deadbeef', password: PASSWORD },
+    })
+    expect(badReset.status()).toBe(401)
   })
 
   test('the /me route requires a valid bearer token', async ({ request }) => {
-    const email = uniqueEmail('me')
-    const reg = await registerViaApi(request, email)
-    const token = (await reg.json()).access_token as string
+    const token = await loginSeeded(request)
+    test.skip(!token, 'seeded e2e account unavailable (API not running with SEED_DUMMY_DATA)')
 
     expect((await request.get('/api/auth/me')).status()).toBe(401)
     expect(
-      (await request.get('/api/auth/me', { headers: { Authorization: 'Bearer not.a.jwt' } })).status(),
+      (
+        await request.get('/api/auth/me', { headers: { Authorization: 'Bearer not.a.jwt' } })
+      ).status(),
     ).toBe(401)
 
     const authed = await request.get('/api/auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     })
     expect(authed.status()).toBe(200)
-    expect((await authed.json()).user.email).toBe(email)
+    expect((await authed.json()).user.email).toBe(SEEDED_EMAIL)
   })
 
   test('malformed request bodies get the right status and a JSON error', async ({ request }) => {
@@ -142,19 +192,24 @@ test.describe('security: browser session', () => {
     test.skip(!(await apiReachable(request)), 'API not reachable; security e2e needs the backend')
   })
 
-  async function registerViaUi(page: Page, email: string) {
-    await page.goto('/register')
+  async function loginViaUi(page: Page, email: string, password: string) {
+    await page.goto('/login')
     await page.locator('#email').fill(email)
-    await page.locator('#password').fill(PASSWORD)
-    await page.getByRole('button', { name: /create account/i }).click()
-    // Registering straight from /register (no ?redirect=) lands on the homepage.
+    await page.locator('#password').fill(password)
+    await page.getByRole('button', { name: /sign in/i }).click()
+    // Signing in straight from /login (no ?redirect=) lands on the homepage.
     await expect(page).toHaveURL(/\/$/)
   }
 
   test('session lives in an httpOnly cookie, not JS storage, and logout protects routes', async ({
     page,
+    request,
   }) => {
-    await registerViaUi(page, uniqueEmail('ui'))
+    test.skip(
+      !(await loginSeeded(request)),
+      'seeded e2e account unavailable (API not running with SEED_DUMMY_DATA)',
+    )
+    await loginViaUi(page, SEEDED_EMAIL, SEEDED_PASSWORD)
 
     // The refresh token is httpOnly — invisible to document.cookie.
     const cookieString = await page.evaluate(() => document.cookie)
@@ -183,6 +238,30 @@ test.describe('security: browser session', () => {
 
     await page.goto('/profile')
     await expect(page).toHaveURL(/\/login(\?|$)/)
+  })
+
+  test('registering shows the check-your-email step; unverified sign-in offers a resend', async ({
+    page,
+  }) => {
+    const email = uniqueEmail('verify-ui')
+    await page.goto('/register')
+    await page.locator('#email').fill(email)
+    await page.locator('#password').fill(PASSWORD)
+    await page.getByRole('button', { name: /create account/i }).click()
+
+    // No auto-signin: the form swaps for the check-your-email step, still on
+    // /register, with no signed-in account menu.
+    await expect(page.getByText('Check your email')).toBeVisible()
+    await expect(page).toHaveURL(/\/register$/)
+
+    // Trying to sign in before verifying gets the distinct message plus a
+    // resend affordance.
+    await page.goto('/login')
+    await page.locator('#email').fill(email)
+    await page.locator('#password').fill(PASSWORD)
+    await page.getByRole('button', { name: /sign in/i }).click()
+    await expect(page.getByRole('alert')).toHaveText(/email not verified/i)
+    await expect(page.getByRole('button', { name: /resend it/i })).toBeVisible()
   })
 
   test('invalid login surfaces a generic error message', async ({ page }) => {

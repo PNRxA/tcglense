@@ -14,11 +14,13 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{
         cookie::{REFRESH_COOKIE_NAME, build_refresh_cookie, removal_cookie},
+        email_token::{EmailTokenPurpose, consume, issue, issue_with_cooldown},
         extractor::AuthUser,
         jwt::encode_token,
         password::{hash_password, verify_password},
-        refresh::{issue_refresh_token, revoke_one, rotate},
+        refresh::{issue_refresh_token, revoke_all_for_user, revoke_one, rotate},
     },
+    email::{OutgoingEmail, password_reset_email, verification_email},
     entities::{prelude::User, user},
     error::AppError,
     extract::JsonBody,
@@ -38,6 +40,27 @@ pub struct RegisterRequest {
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyEmailRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResendVerificationRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub token: String,
     pub password: String,
 }
 
@@ -66,6 +89,14 @@ impl From<user::Model> for UserResponse {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AuthResponse {
     pub access_token: String,
+    pub user: UserResponse,
+}
+
+/// Body returned by `/api/auth/register`: the created account, with NO session —
+/// signing in requires the emailed verification link first.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct RegisterResponse {
     pub user: UserResponse,
 }
 
@@ -121,10 +152,29 @@ fn validate_password(password: &str) -> Result<(), AppError> {
 
 // ---------- Handlers ----------
 
+/// Absolute SPA link carrying an emailed token, built against the configured
+/// public site origin (`public_site_url` is trailing-slash-trimmed; the token is
+/// hex, so no URL-encoding is needed).
+fn spa_link(state: &AppState, path: &str, token: &str) -> String {
+    format!("{}/{path}?token={token}", state.config.public_site_url)
+}
+
+/// Fire-and-forget email send for the anti-enumeration endpoints: the send runs
+/// off the request path so response timing can't reveal whether an account
+/// exists, and failures are logged, never surfaced (a 502 would only ever fire
+/// for existing accounts — leaking exactly what those endpoints must not).
+fn spawn_send(state: &AppState, email: OutgoingEmail) {
+    let emailer = state.email.clone();
+    tokio::spawn(async move {
+        if let Err(err) = emailer.send(email).await {
+            tracing::warn!(error = %err, "failed to send email");
+        }
+    });
+}
+
 /// `POST /api/auth/register`
 pub async fn register(
     State(state): State<AppState>,
-    jar: CookieJar,
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Canonicalise the email so look-alike casings map to a single account.
@@ -168,18 +218,24 @@ pub async fn register(
             return Err(err.into());
         }
     };
-    let access_token = encode_token(&model, &state.config)?;
-    let refresh_plaintext =
-        issue_refresh_token(&state.db, model.id, state.config.refresh_token_expiry_days).await?;
-    let jar = jar.add(build_refresh_cookie(refresh_plaintext, &state.config));
+    // Registration does NOT start a session: the account must prove it owns the
+    // address (the emailed verification link) before login accepts it.
+    let token = issue(&state.db, model.id, EmailTokenPurpose::VerifyEmail).await?;
+    let link = spa_link(&state, "verify-email", &token);
+    // Await the send so the mail is normally on its way before we answer, but
+    // don't fail the registration over it: the account exists either way, and
+    // the sign-in screen offers a fresh link (resend-verification) at any time.
+    if let Err(err) = state
+        .email
+        .send(verification_email(&model.email, &link))
+        .await
+    {
+        tracing::error!(error = %err, "failed to send the verification email");
+    }
 
     Ok((
         StatusCode::CREATED,
-        jar,
-        Json(AuthResponse {
-            access_token,
-            user: model.into(),
-        }),
+        Json(RegisterResponse { user: model.into() }),
     ))
 }
 
@@ -219,6 +275,13 @@ pub async fn login(
 
     if !verify_password(&user.password_hash, &payload.password) {
         return Err(AppError::InvalidCredentials);
+    }
+
+    // Checked only AFTER the password verified, so the distinct error is never
+    // an account-enumeration oracle (the generic-401 timing paths above are
+    // untouched); 403 (not 401) so the SPA's auto-refresh never fires on it.
+    if user.email_verified_at.is_none() {
+        return Err(AppError::Forbidden("email not verified".to_string()));
     }
 
     let access_token = encode_token(&user, &state.config)?;
@@ -295,4 +358,124 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoR
 /// `GET /api/auth/me`
 pub async fn me(AuthUser(user): AuthUser) -> Result<impl IntoResponse, AppError> {
     Ok((StatusCode::OK, Json(MeResponse { user: user.into() })))
+}
+
+/// `POST /api/auth/verify-email`
+///
+/// Consumes an emailed verification token (single-use, 24h expiry) and stamps
+/// the account verified. Mints no session — the user signs in normally after.
+pub async fn verify_email(
+    State(state): State<AppState>,
+    JsonBody(payload): JsonBody<VerifyEmailRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let row = consume(&state.db, &payload.token, EmailTokenPurpose::VerifyEmail).await?;
+
+    let user = User::find_by_id(row.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("invalid or expired token".to_string()))?;
+
+    if user.email_verified_at.is_none() {
+        let now = Utc::now();
+        let mut active: user::ActiveModel = user.into();
+        active.email_verified_at = Set(Some(now));
+        active.updated_at = Set(now);
+        active.update(&state.db).await?;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/auth/resend-verification`
+///
+/// Unauthenticated (an unverified account cannot sign in to ask). Deliberately
+/// generic: an unknown address, an already-verified account, and the issue
+/// cooldown all return the same 204, and the send itself runs off the request
+/// path — the endpoint reveals nothing about which accounts exist.
+pub async fn resend_verification(
+    State(state): State<AppState>,
+    JsonBody(payload): JsonBody<ResendVerificationRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let email = payload.email.trim().to_lowercase();
+    validate_email(&email)?;
+
+    let user = User::find()
+        .filter(user::Column::Email.eq(&email))
+        .one(&state.db)
+        .await?;
+
+    if let Some(user) = user
+        && user.email_verified_at.is_none()
+        && let Some(token) =
+            issue_with_cooldown(&state.db, user.id, EmailTokenPurpose::VerifyEmail).await?
+    {
+        let link = spa_link(&state, "verify-email", &token);
+        spawn_send(&state, verification_email(&user.email, &link));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/auth/forgot-password`
+///
+/// Deliberately generic like resend-verification: always 204, send off the
+/// request path. The reset link is issued even for an unverified account —
+/// completing the reset proves mailbox ownership (and verifies it, see
+/// [`reset_password`]), so losing a password never strands an account.
+pub async fn forgot_password(
+    State(state): State<AppState>,
+    JsonBody(payload): JsonBody<ForgotPasswordRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let email = payload.email.trim().to_lowercase();
+    validate_email(&email)?;
+
+    let user = User::find()
+        .filter(user::Column::Email.eq(&email))
+        .one(&state.db)
+        .await?;
+
+    if let Some(user) = user
+        && let Some(token) =
+            issue_with_cooldown(&state.db, user.id, EmailTokenPurpose::ResetPassword).await?
+    {
+        let link = spa_link(&state, "reset-password", &token);
+        spawn_send(&state, password_reset_email(&user.email, &link));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/auth/reset-password`
+///
+/// Consumes an emailed reset token (single-use, 1h expiry), re-hashes the
+/// password, and revokes every refresh token — a changed password ends all
+/// existing sessions. Completing a reset also proves mailbox ownership, so it
+/// stamps a still-unverified account verified.
+pub async fn reset_password(
+    State(state): State<AppState>,
+    JsonBody(payload): JsonBody<ResetPasswordRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    validate_password(&payload.password)?;
+
+    let row = consume(&state.db, &payload.token, EmailTokenPurpose::ResetPassword).await?;
+
+    let user = User::find_by_id(row.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("invalid or expired token".to_string()))?;
+
+    let user_id = user.id;
+    let now = Utc::now();
+    let was_verified = user.email_verified_at.is_some();
+    let mut active: user::ActiveModel = user.into();
+    active.password_hash = Set(hash_password(&payload.password)?);
+    active.updated_at = Set(now);
+    if !was_verified {
+        active.email_verified_at = Set(Some(now));
+    }
+    active.update(&state.db).await?;
+
+    revoke_all_for_user(&state.db, user_id).await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }

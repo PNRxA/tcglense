@@ -188,8 +188,10 @@ pub async fn revoke_one(
     Ok(())
 }
 
-/// Revoke every still-active refresh token belonging to `user_id`.
-async fn revoke_all_for_user(db: &DatabaseConnection, user_id: i32) -> Result<(), AppError> {
+/// Revoke every still-active refresh token belonging to `user_id`. Used by
+/// reuse-detection here and by password reset (a changed password must end
+/// every existing session).
+pub async fn revoke_all_for_user(db: &DatabaseConnection, user_id: i32) -> Result<(), AppError> {
     RefreshToken::update_many()
         .col_expr(refresh_token::Column::RevokedAt, Expr::value(Utc::now()))
         .filter(refresh_token::Column::UserId.eq(user_id))

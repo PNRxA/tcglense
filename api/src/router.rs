@@ -13,7 +13,10 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
     handlers::{
-        auth::{login, logout, me, refresh, register},
+        auth::{
+            forgot_password, login, logout, me, refresh, register, resend_verification,
+            reset_password, verify_email,
+        },
         cache::{conditional_request_layer, no_store_layer, public_cache_layer},
         catalog::{
             card_image, card_names, card_prices, card_prints, get_card, get_set, ingest_status,
@@ -64,6 +67,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        // Email verification + password reset: single-use emailed tokens. All
+        // unauthenticated POSTs; the lookup-by-email ones answer generically.
+        .route("/api/auth/verify-email", post(verify_email))
+        .route(
+            "/api/auth/resend-verification",
+            post(resend_verification),
+        )
+        .route("/api/auth/forgot-password", post(forgot_password))
+        .route("/api/auth/reset-password", post(reset_password))
         .route("/api/games/{game}/status", get(ingest_status))
         // Per-user card collections: reads + upserts of how many copies a signed-in
         // user owns, per game. Authenticated (via AuthUser) and no-store.

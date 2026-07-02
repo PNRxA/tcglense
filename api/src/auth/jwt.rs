@@ -78,6 +78,7 @@ mod tests {
             display_name: Some("Tester".to_string()),
             created_at: now,
             updated_at: now,
+            email_verified_at: Some(now),
         }
     }
 
