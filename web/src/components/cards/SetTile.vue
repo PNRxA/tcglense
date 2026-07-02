@@ -186,10 +186,10 @@ const copiesLabel = computed(() =>
     <!-- A standalone tile (no collapsible sub-sets) reserves the height of the
          footer row that SetGroup renders below its header, so a childless tile
          lines up with the collapsible tiles sharing its row instead of looking
-         stunted (2.25rem = the h-7 "View all" button that drives the row height
-         + its pb-2). Only needed once the grid is multi-column (sm+); in the
-         single-column layout there is no row neighbour to match, so the tile
+         stunted (2.75rem = the min-h-9 related-sets toggle that drives the row
+         height + its pb-2). Only needed once the grid is multi-column (sm+); in
+         the single-column layout there is no row neighbour to match, so the tile
          stays compact. -->
-    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-9 sm:block"></div>
+    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-11 sm:block"></div>
   </RouterLink>
 </template>

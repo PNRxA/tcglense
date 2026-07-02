@@ -63,8 +63,13 @@ watch(
 )
 
 const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
-const ownedCount = (code: string) => props.ownedCounts?.[code]
-const ownedCopiesCount = (code: string) => props.ownedCopies?.[code]
+// In an ownership context (a counts map was passed), a set with no entry truthfully
+// reads as owning zero — so its tile still gets a "0/N owned|wanted" count line and
+// mixed rows of owned and unowned tiles stay the same height.
+const ownedCount = (code: string) =>
+  props.ownedCounts ? (props.ownedCounts[code] ?? 0) : undefined
+const ownedCopiesCount = (code: string) =>
+  props.ownedCopies ? (props.ownedCopies[code] ?? 0) : undefined
 const ownedValue = (code: string) => props.ownedValues?.[code]
 const bulkValue = (code: string) => props.bulkValues?.[code]
 </script>

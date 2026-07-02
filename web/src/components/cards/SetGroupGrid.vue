@@ -51,13 +51,16 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
 <template>
   <div class="grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3" :class="scrollClass">
     <template v-for="group in groups" :key="group.main.code">
+      <!-- In an ownership context (an `ownership` object was passed), a set with no
+           entry truthfully shows a "0/N owned|wanted" count line rather than omitting
+           it — so mixed rows of owned and unowned tiles stay the same height. -->
       <SetTile
         v-if="!group.children.length"
         :game="game"
         :set="group.main"
         :to="setLink(group.main.code)"
-        :owned-count="ownership?.counts[group.main.code]"
-        :owned-copies="ownership?.copies[group.main.code]"
+        :owned-count="ownership ? (ownership.counts[group.main.code] ?? 0) : undefined"
+        :owned-copies="ownership ? (ownership.copies[group.main.code] ?? 0) : undefined"
         :owned-value="ownership?.values[group.main.code]"
         :bulk-value="ownership?.bulkValues?.[group.main.code]"
         :count-noun="countNoun"
