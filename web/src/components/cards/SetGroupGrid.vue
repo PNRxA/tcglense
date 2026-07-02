@@ -18,6 +18,9 @@ const props = withDefaults(
     // Route prefix the tiles link under (catalog set pages by default; `/collection` for
     // the collection landing).
     basePath?: string
+    // The landing view's active set-list filter, forwarded to each SetGroup so a match
+    // on a related sub-set auto-opens that group's dropdown (issue #149).
+    query?: string
     // Owned counts per set code (the collection landing only). Collapsed into one object
     // so it's a single prop rather than several parallel maps.
     ownership?: {
@@ -27,7 +30,7 @@ const props = withDefaults(
       bulkValues: Record<string, string | null>
     }
   }>(),
-  { scrollMt: 28, basePath: '/cards', ownership: undefined },
+  { scrollMt: 28, basePath: '/cards', query: '', ownership: undefined },
 )
 
 // Literal class strings (not interpolated) so Tailwind's JIT emits them.
@@ -57,6 +60,7 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
         :game="game"
         :group="group"
         :base-path="basePath"
+        :query="query"
         :owned-counts="ownership?.counts"
         :owned-copies="ownership?.copies"
         :owned-values="ownership?.values"

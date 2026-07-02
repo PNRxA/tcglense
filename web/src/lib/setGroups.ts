@@ -133,6 +133,20 @@ export function filterGroups(groups: SetGroup[], query: string): SetGroup[] {
 }
 
 /**
+ * Whether `query` matches one of the group's **related sub-sets** (case-insensitive
+ * substring over name/code; a blank/whitespace query matches nothing). This is the
+ * signal for auto-revealing a collapsed related-sets dropdown: when {@link filterGroups}
+ * keeps a group in the listing on the strength of a hidden sub-set, the matching tile
+ * would otherwise stay tucked behind the collapsed toggle (issue #149). Independent of
+ * whether the main set also matches — either way the sub-set is worth surfacing.
+ */
+export function queryMatchesRelated(group: SetGroup, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return false
+  return group.children.some((child) => setMatchesQuery(child, q))
+}
+
+/**
  * Find the group a given set code belongs to — whether `code` is the main set or
  * one of its sub-sets. Returns `undefined` if the code isn't in `sets`. Used by
  * the set page to offer an "include related sets" view rooted at the main set.
