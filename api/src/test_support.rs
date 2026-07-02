@@ -15,7 +15,7 @@ use crate::entities::prelude::CollectionItem;
 use crate::entities::{card, card_set, collection_item, user};
 use crate::{config::Config, migrator::Migrator};
 
-/// A canonical, fully-populated [`Config`] for tests. All thirteen fields carry sane,
+/// A canonical, fully-populated [`Config`] for tests. All fields carry sane,
 /// offline-safe defaults (in-memory DB, no card sync); a test that cares about a
 /// particular field overrides just that one via `Config { field: …, ..test_config() }`.
 pub(crate) fn test_config() -> Config {
@@ -34,6 +34,7 @@ pub(crate) fn test_config() -> Config {
         sync_on_startup: false,
         sync_interval_hours: 24,
         seed_dummy_data: false,
+        cdn_mode: false,
     }
 }
 
