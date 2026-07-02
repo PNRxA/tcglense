@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
+import ImportProgressBar from '@/components/collection/ImportProgressBar.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { invalidateCollectionData } from '@/composables/useCollection'
 import {
@@ -183,7 +184,8 @@ async function resync() {
       <span class="text-muted-foreground text-sm">{{ lastSyncedText }}</span>
     </template>
   </div>
-  <p v-if="syncMessage" class="text-muted-foreground mt-2 text-sm" aria-live="polite">
-    {{ syncMessage }}
-  </p>
+  <div v-if="syncMessage" class="mt-2 space-y-2">
+    <p class="text-muted-foreground text-sm" aria-live="polite">{{ syncMessage }}</p>
+    <ImportProgressBar v-if="syncJob.progress.value" :progress="syncJob.progress.value" />
+  </div>
 </template>

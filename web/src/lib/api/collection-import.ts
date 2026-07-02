@@ -18,6 +18,7 @@ export type {
   CollectionProvider,
   CollectionSource,
   ImportJob,
+  ImportProgress,
   ImportSummary,
   ReconcileMode,
 } from './generated'

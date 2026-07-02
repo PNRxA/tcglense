@@ -120,11 +120,11 @@ pub async fn get_import_job(
     Path((game, job_id)): Path<(String, u64)>,
 ) -> Result<Json<ImportJobResponse>, AppError> {
     require_game(&game)?;
-    let status = state
+    let view = state
         .imports
-        .status(job_id, user.id, &game)
+        .view(job_id, user.id, &game)
         .ok_or_else(|| AppError::NotFound("import job not found".to_string()))?;
-    Ok(Json(ImportJobResponse::from_status(job_id, status)))
+    Ok(Json(ImportJobResponse::from_view(job_id, view)))
 }
 
 /// `GET /api/collection/{game}/source` -> the saved collection link for this game, or

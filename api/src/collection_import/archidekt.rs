@@ -21,7 +21,7 @@ use reqwest::{StatusCode, header};
 use serde::Deserialize;
 
 use super::rate_limit::RateLimiter;
-use super::{FetchedHolding, ImportError, MAX_IMPORT_ROWS};
+use super::{FetchedHolding, ImportError, MAX_IMPORT_ROWS, ProgressReporter};
 
 const API_BASE: &str = "https://archidekt.com/api/collection";
 const ACCEPT_JSON: &str = "application/json";
@@ -135,6 +135,7 @@ pub async fn fetch(
     http: &reqwest::Client,
     limiter: &RateLimiter,
     collection_id: &str,
+    progress: &ProgressReporter,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
     // A hard page ceiling bounds the worst case even if the provider keeps handing us a
     // `next` link (25 rows/page, so this many pages covers `MAX_IMPORT_ROWS`).
@@ -151,12 +152,18 @@ pub async fn fetch(
     while page <= max_pages {
         let body = get_page(http, limiter, collection_id, page, None, &mut rate_limit_retries).await?;
         check_size(&body, &mut checked_size)?;
+        // On the first page, publish the collection's total so the poll endpoint can show a
+        // determinate progress bar (the page's `count` is the whole-collection row total).
+        if page == 1 {
+            progress.set_total(body.count);
+        }
 
         // An empty page means we're done (a truly empty collection on page 1, or a
         // provider quirk) — nothing more to collect.
         if body.results.is_empty() {
             break;
         }
+        progress.add_fetched(body.results.len());
         for row in body.results {
             let foil = is_foil_finish(row.foil, row.modifier.as_deref());
             holdings.push(FetchedHolding {
@@ -190,6 +197,7 @@ pub async fn fetch_smart(
     limiter: &RateLimiter,
     collection_id: &str,
     local: &HashMap<String, (i32, i32)>,
+    progress: &ProgressReporter,
 ) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
     let max_pages = MAX_IMPORT_ROWS / PAGE_SIZE + 1;
 
@@ -210,6 +218,9 @@ pub async fn fetch_smart(
         if body.results.is_empty() {
             break;
         }
+        // Smart sync stops at the already-synced tail, so a total would be misleading —
+        // publish only the running fetched count (an indeterminate "N cards checked").
+        progress.add_fetched(body.results.len());
         let last_page = body.next.is_none();
         let rows = body.results.into_iter().map(|row| {
             let foil = is_foil_finish(row.foil, row.modifier.as_deref());
