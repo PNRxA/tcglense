@@ -204,6 +204,7 @@ pub(super) async fn summary(
         unique_cards,
         total_cards,
         total_value_usd: valuation.total_usd(),
+        bulk_value_usd: valuation.bulk_usd(),
     })
 }
 

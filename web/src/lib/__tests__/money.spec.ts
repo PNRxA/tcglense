@@ -3,13 +3,13 @@ import { describe, it, expect } from 'vitest'
 import { formatUsd } from '../money'
 
 describe('formatUsd', () => {
-  // The exact currency symbol/placement is locale-dependent (the test runtime may render
-  // USD as "$1,234.50" or "USD 1,234.50"), so assert the amount is present + grouped rather
-  // than pinning the symbol.
-  it('formats a decimal string as a grouped 2-dp amount', () => {
-    expect(formatUsd('1234.5')).toContain('1,234.50')
-    expect(formatUsd('9.99')).toContain('9.99')
-    expect(formatUsd('0.01')).toContain('0.01')
+  // The `$` prefix is emitted literally (not via Intl currency, which would render "US$"
+  // or "USD" in some locales), so it's always present; only the grouping/decimals are
+  // locale-shaped, so the amount is asserted with `toContain`.
+  it('formats a decimal string as a $-prefixed, grouped 2-dp amount', () => {
+    expect(formatUsd('1234.5')).toBe('$1,234.50')
+    expect(formatUsd('9.99')).toBe('$9.99')
+    expect(formatUsd('0.01')).toBe('$0.01')
   })
 
   it('returns null when the API sends no value', () => {

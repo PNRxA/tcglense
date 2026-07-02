@@ -18,6 +18,7 @@ function mountTile(props: {
   ownedCount?: number
   ownedCopies?: number
   ownedValue?: string | null
+  bulkValue?: string | null
 }) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -57,15 +58,29 @@ describe('SetTile owned-count line', () => {
     expect(wrapper.text()).not.toContain('copies')
   })
 
-  it('appends the owned value after the completion count when one is passed', () => {
+  it('shows the total owned value labelled "Total" when one is passed', () => {
     const wrapper = mountTile({ set: makeSet(), ownedCount: 142, ownedValue: '$412.00' })
     expect(wrapper.text()).toContain('142/281 owned')
+    expect(wrapper.text()).toContain('Total')
     expect(wrapper.text()).toContain('$412.00')
   })
 
-  it('shows the set total card count (no "owned") without an owned count — catalog use', () => {
+  it('shows the bulk (< $1) value labelled "Bulk" when one is passed', () => {
+    const wrapper = mountTile({
+      set: makeSet(),
+      ownedCount: 142,
+      ownedValue: '$412.00',
+      bulkValue: '$12.30',
+    })
+    expect(wrapper.text()).toContain('Bulk')
+    expect(wrapper.text()).toContain('$12.30')
+  })
+
+  it('omits the value labels in catalog use (no owned/bulk value passed)', () => {
     const wrapper = mountTile({ set: makeSet() })
     expect(wrapper.text()).toContain('281 cards')
     expect(wrapper.text()).not.toContain('owned')
+    expect(wrapper.text()).not.toContain('Total')
+    expect(wrapper.text()).not.toContain('Bulk')
   })
 })

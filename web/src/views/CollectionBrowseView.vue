@@ -265,11 +265,15 @@ const scopeTotal = computed<number | null>(() => {
   }
   return setQuery.data.value?.card_count ?? null
 })
-// The scope's owned value, formatted (null while loading or when nothing in scope is
-// priced). Shown only when there's no active search — the value is the whole scope's,
-// so pairing it with a search-filtered count would misread.
-const scopeValueLabel = computed(() =>
+// The scope's owned value, split into the total and its bulk (< $1/card) slice, both
+// formatted (null while loading or when nothing in scope is priced). Shown only when
+// there's no active search — the values are the whole scope's, so pairing them with a
+// search-filtered count would misread.
+const scopeTotalValue = computed(() =>
   query.value ? null : formatUsd(summaryQuery.data.value?.total_value_usd),
+)
+const scopeBulkValue = computed(() =>
+  query.value ? null : formatUsd(summaryQuery.data.value?.bulk_value_usd),
 )
 // The scope's total owned copies (with duplicates) as "N copies", shown next to the count
 // when you own more copies than distinct cards (issue #125). Like the value, it's the whole
@@ -389,8 +393,18 @@ const errorMessage = computed(() =>
                than distinct cards (issue #125). Hidden while searching. -->
           <template v-if="scopeCopiesLabel"> · {{ scopeCopiesLabel }}</template>
           <!-- The scope's owned value (issue #119): what your cards in this set / group /
-               whole collection are worth. Hidden while searching or when nothing is priced. -->
-          <template v-if="scopeValueLabel"> · {{ scopeValueLabel }}</template>
+               whole collection are worth — the total, then its bulk (< $1/card) slice to the
+               right. Hidden while searching or when nothing is priced. -->
+          <template v-if="scopeTotalValue">
+            ·
+            <span class="text-muted-foreground text-[0.7rem] tracking-wide uppercase">Total</span>
+            {{ scopeTotalValue }}
+          </template>
+          <template v-if="scopeBulkValue">
+            ·
+            <span class="text-muted-foreground text-[0.7rem] tracking-wide uppercase">Bulk</span>
+            {{ scopeBulkValue }}
+          </template>
         </p>
       </header>
 

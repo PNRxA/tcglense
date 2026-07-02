@@ -63,7 +63,11 @@ impl AppState {
         image_http: reqwest::Client,
     ) -> Result<Self, AppError> {
         let dummy_password_hash: Arc<str> = hash_password(TIMING_EQUALIZER_PLAINTEXT)?.into();
-        let images = Arc::new(ImageCache::new(config.data_dir.join("images"), image_http));
+        let images = Arc::new(ImageCache::new(
+            config.data_dir.join("images"),
+            image_http,
+            config.cdn_mode,
+        ));
         // Deployment-level provider settings (e.g. Moxfield's approved User-Agent) are
         // captured into the import queue so background workers don't need the config.
         let imports = Arc::new(ImportQueue::default().with_settings(ProviderSettings {

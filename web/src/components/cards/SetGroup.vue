@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { ChevronDown, Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SetTile from '@/components/cards/SetTile.vue'
-import { subSetLabel, type SetGroup } from '@/lib/setGroups'
+import { queryMatchesRelated, subSetLabel, type SetGroup } from '@/lib/setGroups'
 
 const props = withDefaults(
   defineProps<{
@@ -14,6 +14,10 @@ const props = withDefaults(
     // Route prefix the tiles + "View all" link point under (default the catalog
     // set pages); the collection landing passes `/collection` for its own pages.
     basePath?: string
+    // The landing view's active set-list filter. When it matches one of this group's
+    // related sub-sets, the dropdown auto-opens so the match isn't hidden behind the
+    // collapsed toggle (issue #149); '' (no filter) leaves it collapsed by default.
+    query?: string
     // Owned distinct-card count per set code. When set, each tile shows an "N/M owned"
     // completion count (the collection landing) instead of the set's total card count.
     ownedCounts?: Record<string, number>
@@ -23,18 +27,41 @@ const props = withDefaults(
     // Preformatted owned value per set code (e.g. "$123.45"), appended to each tile's
     // meta line alongside the owned count — the collection landing's per-set value.
     ownedValues?: Record<string, string | null>
+    // Preformatted bulk (< $1/card) value per set code, shown under the total on each
+    // tile — the collection landing's per-set bulk value.
+    bulkValues?: Record<string, string | null>
   }>(),
-  { basePath: '/cards', ownedCounts: undefined, ownedCopies: undefined, ownedValues: undefined },
+  {
+    basePath: '/cards',
+    query: '',
+    ownedCounts: undefined,
+    ownedCopies: undefined,
+    ownedValues: undefined,
+    bulkValues: undefined,
+  },
 )
 
 // Collapsed by default to keep the set listing scannable; the sub-sets reveal on
-// demand. Each group manages its own toggle state.
+// demand, and each group manages its own toggle state. But when the active filter
+// matches a related sub-set, auto-reveal it so the match that kept this group in the
+// filtered listing isn't buried behind the collapsed toggle (issue #149). Additive
+// only — it never force-collapses, so the toggle button keeps full manual control (a
+// user can still hide the sub-sets while filtering) and a broadening filter that
+// re-surfaces the group re-opens it (immediate + fires on the match becoming true).
 const expanded = ref(false)
+watch(
+  () => queryMatchesRelated(props.group, props.query),
+  (matched) => {
+    if (matched) expanded.value = true
+  },
+  { immediate: true },
+)
 
 const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
 const ownedCount = (code: string) => props.ownedCounts?.[code]
 const ownedCopiesCount = (code: string) => props.ownedCopies?.[code]
 const ownedValue = (code: string) => props.ownedValues?.[code]
+const bulkValue = (code: string) => props.bulkValues?.[code]
 </script>
 
 <template>
@@ -47,6 +74,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
       :owned-count="ownedCount(group.main.code)"
       :owned-copies="ownedCopiesCount(group.main.code)"
       :owned-value="ownedValue(group.main.code)"
+      :bulk-value="bulkValue(group.main.code)"
     />
 
     <div class="flex items-center justify-between gap-2 px-3 pb-2">
@@ -87,6 +115,7 @@ const ownedValue = (code: string) => props.ownedValues?.[code]
           :owned-count="ownedCount(child.code)"
           :owned-copies="ownedCopiesCount(child.code)"
           :owned-value="ownedValue(child.code)"
+          :bulk-value="bulkValue(child.code)"
         />
       </li>
     </ul>

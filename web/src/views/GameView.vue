@@ -157,7 +157,12 @@ const sections = computed(() => {
             {{ section.groups.length }} {{ section.groups.length === 1 ? 'set' : 'sets' }}
           </span>
         </div>
-        <SetGroupGrid :game="game" :groups="section.groups" :scroll-mt="28" />
+        <SetGroupGrid
+          :game="game"
+          :groups="section.groups"
+          :scroll-mt="28"
+          :query="trimmedFilter"
+        />
       </section>
     </div>
   </div>

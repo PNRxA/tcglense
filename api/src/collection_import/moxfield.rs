@@ -172,10 +172,16 @@ pub async fn fetch(
     while page <= max_pages {
         let body = get_page(ctx, collection_id, page, false, &mut rate_limit_retries).await?;
         check_size(&body, &mut checked_size)?;
+        // Publish the collection's total once, from the first page, for a determinate
+        // progress bar (`totalResults` is the whole-collection row count).
+        if page == 1 {
+            ctx.progress.set_total(body.total_results);
+        }
 
         if body.data.is_empty() {
             break;
         }
+        ctx.progress.add_fetched(body.data.len());
         let last_page = page >= body.total_pages;
         for row in body.data {
             let Some(holding) = row_to_holding(row) else {
@@ -220,6 +226,8 @@ pub async fn fetch_smart(
         if body.data.is_empty() {
             break;
         }
+        // Smart sync stops early, so publish only the running fetched count (no total).
+        ctx.progress.add_fetched(body.data.len());
         let last_page = page >= body.total_pages;
         let rows = body.data.into_iter().filter_map(|row| {
             let h = row_to_holding(row)?;
