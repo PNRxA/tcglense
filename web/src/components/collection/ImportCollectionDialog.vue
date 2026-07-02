@@ -24,10 +24,13 @@ import type { CollectionProvider, CollectionSource, ReconcileMode } from '@/lib/
 // parent view mounts this only when the visitor is authenticated.
 const props = defineProps<{ game: string; source: CollectionSource | null }>()
 
-// One entry per supported provider.
-const PROVIDERS: { value: CollectionProvider; label: string }[] = [
+// One entry per provider. Moxfield's link import is temporarily disabled — its API only
+// serves clients with a User-Agent it has approved, which we don't have yet — so it's shown
+// but not selectable here; its CSV export still imports via the "Upload a CSV" tab. Drop
+// `disabled` to re-enable once an approved MOXFIELD_USER_AGENT is configured server-side.
+const PROVIDERS: { value: CollectionProvider; label: string; disabled?: boolean }[] = [
   { value: 'archidekt', label: 'Archidekt' },
-  { value: 'moxfield', label: 'Moxfield' },
+  { value: 'moxfield', label: 'Moxfield — use the CSV tab for now', disabled: true },
 ]
 
 // An example collection URL per provider, as the source input's placeholder.
@@ -36,10 +39,20 @@ const PLACEHOLDERS: Record<CollectionProvider, string> = {
   moxfield: 'https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q',
 }
 
-/** The saved source's provider, when it's one we know (a stored id is a plain string). */
+/** The saved source's provider, when it's one we can still import from (a stored id is a
+ *  plain string). A disabled provider (e.g. a legacy Moxfield link) falls through so the
+ *  picker defaults to an enabled provider instead of pre-selecting an unselectable option. */
 function savedProvider(source: CollectionSource | null): CollectionProvider | null {
-  const known = PROVIDERS.find((p) => p.value === source?.provider)
+  const known = PROVIDERS.find((p) => p.value === source?.provider && !p.disabled)
   return known?.value ?? null
+}
+
+/** The URL to prefill the source field with. Only when the saved link's provider is still
+ *  selectable here — otherwise the provider falls back (e.g. a legacy Moxfield link drops to
+ *  Archidekt), and prefilling that provider's field with a Moxfield URL would be a confusing
+ *  mismatch, so we start blank to match the provider fallback. */
+function savedSourceUrl(source: CollectionSource | null): string {
+  return savedProvider(source) ? (source?.url ?? '') : ''
 }
 
 const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
@@ -73,7 +86,7 @@ type SourceType = 'link' | 'csv'
 const open = ref(false)
 const sourceType = ref<SourceType>('link')
 const provider = ref<CollectionProvider>(savedProvider(props.source) ?? 'archidekt')
-const sourceInput = ref(props.source?.url ?? '')
+const sourceInput = ref(savedSourceUrl(props.source))
 const mode = ref<ReconcileMode>('overwrite')
 const saveLink = ref(props.source != null)
 // Whether a saved link re-syncs with smart sync. Kept separate from the one-off `mode`
@@ -103,7 +116,7 @@ watch(open, (isOpen) => {
   if (!isOpen) return
   sourceType.value = 'link'
   provider.value = savedProvider(props.source) ?? 'archidekt'
-  sourceInput.value = props.source?.url ?? ''
+  sourceInput.value = savedSourceUrl(props.source)
   mode.value = 'overwrite'
   saveLink.value = props.source != null
   // Seed the saved-link re-sync preference from the existing link (defaults off).
@@ -243,7 +256,9 @@ const selectClass =
           <div class="space-y-1.5">
             <Label for="import-provider">Provider</Label>
             <select id="import-provider" v-model="provider" :class="selectClass">
-              <option v-for="p in PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
+              <option v-for="p in PROVIDERS" :key="p.value" :value="p.value" :disabled="p.disabled">
+                {{ p.label }}
+              </option>
             </select>
           </div>
 

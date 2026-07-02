@@ -118,22 +118,10 @@ async fn saved_source_lifecycle() {
     assert_eq!(body["external_id"], "999");
     assert_eq!(body["smart"], false, "omitting smart on re-save clears it");
 
-    // A Moxfield link works the same way: the id is extracted from the URL and the
-    // canonical URL is rebuilt from it.
-    let (status, _, body) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &token,
-            json!({ "provider": "moxfield", "source": "https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "save failed: {body:?}");
-    assert_eq!(body["provider"], "moxfield");
-    assert_eq!(body["external_id"], "4xUdq-66IEKK6X53bhUS8Q");
-    assert_eq!(body["url"], "https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q");
+    // (Moxfield's saved-link lifecycle isn't exercised here: its live import is temporarily
+    // disabled, so saving a Moxfield link is refused — see
+    // `moxfield_link_import_and_save_are_temporarily_disabled`. Its URL/id parsing is
+    // covered by `collection_import::moxfield`'s unit tests.)
 
     // Forget it -> 204, then it reads back as null again (delete is idempotent).
     let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &token)).await;
@@ -189,18 +177,9 @@ async fn save_and_import_reject_bad_provider_and_source() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
-    // A Moxfield source whose URL carries no plausible collection id -> 422 too.
-    let (status, _, _) = send(
-        &app,
-        json_with_bearer(
-            "POST",
-            "/api/collection/mtg/import",
-            &token,
-            json!({ "provider": "moxfield", "source": "https://moxfield.com/collection/", "mode": "replace" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // (Moxfield source parsing isn't retested here — its live import is disabled, so a
+    // Moxfield import is refused before the source is even parsed; see
+    // `moxfield_link_import_and_save_are_temporarily_disabled`.)
 
     let (status, _, _) = send(
         &app,
@@ -213,6 +192,52 @@ async fn save_and_import_reject_bad_provider_and_source() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn moxfield_link_import_and_save_are_temporarily_disabled() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "mox-off@example.com", "password123").await;
+
+    // A one-off Moxfield link import is refused up front (422) even with a perfectly valid
+    // collection id: Moxfield's live API needs an approved User-Agent we don't have yet, so
+    // its link import is temporarily turned off. The refusal is unconditional (it doesn't
+    // reach the source parse or spawn a job), so this resolves offline like the rest of the
+    // suite. (Moxfield CSV upload is unaffected — covered by the CSV tests below.)
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/collection/mtg/import",
+            &token,
+            json!({ "provider": "moxfield", "source": "4xUdq-66IEKK6X53bhUS8Q", "mode": "merge" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "moxfield import disabled: {body:?}");
+    assert!(
+        body["error"].as_str().is_some_and(|e| e.contains("CSV")),
+        "the error points the user at the CSV upload: {body:?}"
+    );
+
+    // Saving a Moxfield link is likewise refused — a saved link exists only to be re-synced,
+    // and the re-sync is disabled.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/source",
+            &token,
+            json!({ "provider": "moxfield", "source": "https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "moxfield save disabled: {body:?}");
+
+    // Nothing was saved, so there's still no source on file.
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_null(), "a disabled provider's link is never saved: {body:?}");
 }
 
 #[tokio::test]

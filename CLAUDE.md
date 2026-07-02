@@ -632,6 +632,15 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   user-triggered. Cards not in our catalog are skipped (surfaced in the summary's
   `unmatched_*`). The layer is provider-generic: another service is a new `Provider`
   variant + module.
+- **Moxfield link import is temporarily disabled:** because we don't yet have an approved
+  User-Agent (below), Moxfield's *live* import — the one-off link import and saved-link
+  re-sync — is turned off for now. `Provider::network_import_enabled()` is the single
+  source of truth (returns `false` for Moxfield); the import handlers reject a Moxfield
+  URL import / saved-link save / re-sync with a `422` pointing the user at the CSV upload,
+  and the web import dialog shows Moxfield in the link picker but greys it out. Moxfield's
+  **CSV upload** needs no network and is unaffected — it's the supported way to import a
+  Moxfield collection meanwhile. Re-enable by flipping that method to `true` (and dropping
+  the `disabled` flag on the web picker's Moxfield entry) once the approved UA is in place.
 - **Moxfield URL import needs an approved User-Agent:** since late 2024 Moxfield fronts
   `api2.moxfield.com` with bot protection that only serves allow-listed clients; they
   approve a specific User-Agent string on request (email support@moxfield.com — treat the
