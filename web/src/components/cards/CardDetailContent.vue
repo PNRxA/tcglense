@@ -7,6 +7,7 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/collection/CollectionControls.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
+import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { getCard } from '@/lib/api'
@@ -128,6 +129,9 @@ const hasSeparateFaceImages = computed(
 
     <!-- Price history over time (full width, below the card details). -->
     <PriceChart :game="game" :id="card.id" />
+
+    <!-- Outbound "buy this card" links, grouped by region (issue #175). -->
+    <CardBuyLinks :game="game" :card="card" />
 
     <!-- This card's other printings (same gameplay object, issue #63). Renders
       nothing when there are none. -->
