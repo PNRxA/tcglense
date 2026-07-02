@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import CardImage from '@/components/cards/CardImage.vue'
@@ -18,6 +18,25 @@ const props = defineProps<{
 // Show the regular USD price, falling back to the foil price for foil-only cards.
 const price = computed(() => displayUsdPrice(props.card.prices))
 const to = computed(() => `/cards/${props.game}/cards/${props.card.id}`)
+
+// A plain left-click opens the card in the detail modal over the current page — the
+// URL gains `?card=<id>` (see CardDetailDialog in App.vue), so the list underneath
+// keeps its scroll/search/page state and the browser's Back closes the modal. The
+// tile is a hand-rendered <a> (not a RouterLink, whose own click handler would race
+// this one) whose href stays the real card page, so modifier/middle clicks, "open in
+// new tab", and crawlers still get the full page.
+const route = useRoute()
+const router = useRouter()
+const href = computed(() => router.resolve(to.value).href)
+function onClick(event: MouseEvent) {
+  if (event.defaultPrevented) return
+  // Let the browser handle anything that isn't a plain left-click.
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return
+  }
+  event.preventDefault()
+  void router.push({ query: { ...route.query, card: props.card.id } })
+}
 
 // The image dims + desaturates; the text block dims with opacity only. Crucially the
 // grayscale goes on the IMAGE, never on the RouterLink below: a `filter` other than `none`
@@ -66,10 +85,11 @@ const ghostTextClass = computed(() =>
         #120). Browse views pass no slot, so nothing renders. -->
       <slot name="badge" />
     </div>
-    <RouterLink
-      :to="to"
+    <a
+      :href="href"
       class="mt-1.5 block px-0.5 after:absolute after:inset-0 after:z-10 after:content-['']"
       :class="ghostTextClass"
+      @click="onClick"
     >
       <p class="truncate text-sm font-medium group-hover:underline" :title="card.name">
         {{ card.name }}
@@ -88,6 +108,6 @@ const ghostTextClass = computed(() =>
           ></span
         >
       </p>
-    </RouterLink>
+    </a>
   </div>
 </template>
