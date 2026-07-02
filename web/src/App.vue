@@ -5,8 +5,13 @@ import MainNav from '@/components/MainNav.vue'
 import MobileNav from '@/components/MobileNav.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
+import { useAuthCacheReset } from '@/composables/useAuthCacheReset'
 
 // Session restore happens once in the router guard (see router/index.ts).
+
+// Wipe the per-user query cache whenever the signed-in identity changes, so one
+// account never sees another's cached collection/wish list (issue #177).
+useAuthCacheReset()
 </script>
 
 <template>
