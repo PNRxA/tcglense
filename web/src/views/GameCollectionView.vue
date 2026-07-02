@@ -196,6 +196,7 @@ const collectionIsEmpty = computed(() => summaryQuery.isSuccess.value && !hasSta
           :groups="ownedGroups"
           :scroll-mt="20"
           base-path="/collection"
+          :query="trimmedFilter"
           :ownership="ownership"
         />
       </template>
