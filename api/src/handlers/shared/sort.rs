@@ -281,79 +281,16 @@ fn numeric_col_expr(col: &str) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{EntityTrait, prelude::DateTimeUtc};
+    use crate::test_support::card_model;
+    use sea_orm::EntityTrait;
 
     /// A minimal, insertable card row whose only meaningful fields for the sort
     /// tests are its id and the two USD price columns.
     fn test_card(id: i32, usd: Option<&str>, usd_foil: Option<&str>) -> card::Model {
-        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
         card::Model {
-            id,
-            game: "mtg".into(),
-            external_id: format!("ext-{id}"),
-            oracle_id: None,
-            name: format!("Card {id}"),
-            set_code: "tst".into(),
-            set_name: "TST".into(),
-            collector_number: id.to_string(),
-            collector_number_int: Some(id),
-            rarity: None,
-            lang: "en".into(),
-            released_at: None,
-            mana_cost: None,
-            cmc: None,
-            type_line: None,
-            color_identity: None,
-            colors: None,
-            layout: None,
-            oracle_text: None,
-            power: None,
-            toughness: None,
-            loyalty: None,
-            image_small: None,
-            image_normal: None,
-            image_large: None,
-            image_art_crop: None,
-            image_png: None,
-            card_faces: None,
             price_usd: usd.map(str::to_string),
             price_usd_foil: usd_foil.map(str::to_string),
-            price_usd_etched: None,
-            price_eur: None,
-            price_tix: None,
-            keywords: None,
-            produced_mana: None,
-            color_indicator: None,
-            watermark: None,
-            flavor_text: None,
-            illustration_id: None,
-            artist: None,
-            artist_ids: None,
-            border_color: None,
-            frame: None,
-            frame_effects: None,
-            security_stamp: None,
-            promo_types: None,
-            finishes: None,
-            defense: None,
-            legalities: None,
-            full_art: None,
-            textless: None,
-            oversized: None,
-            promo: None,
-            reprint: None,
-            variation: None,
-            booster: None,
-            story_spotlight: None,
-            content_warning: None,
-            highres_image: None,
-            reserved: None,
-            game_changer: None,
-            edhrec_rank: None,
-            penny_rank: None,
-            digital: false,
-            created_at: ts,
-            updated_at: ts,
+            ..card_model(id)
         }
     }
 

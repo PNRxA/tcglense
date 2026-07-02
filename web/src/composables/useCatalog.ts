@@ -1,12 +1,33 @@
-import { computed, type ComputedRef, type Ref } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
-import { listGames, listSets } from '@/lib/api'
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
+import { getSet, listCards, listGames, listSetCards, listSetDrops, listSets } from '@/lib/api'
+import { toSortParam } from '@/lib/cardSort'
 
 /**
  * Shared catalog reads. The game registry and per-game set list are used across the
  * catalog nav + views, so they're centralised here to share one query key (and thus
- * one warm cache entry) rather than being re-declared inline in each consumer.
+ * one warm cache entry) rather than being re-declared inline in each consumer. The
+ * card-list reads are shared too: the collection's show-ghosts mode renders exactly
+ * the catalog lists, so it reuses these hooks (and their cache entries) rather than
+ * re-declaring the same fetches under different keys.
  */
+
+/** Cards per page in the flat card grids (catalog and collection alike). */
+export const CARD_PAGE_SIZE = 60
+
+/** Drops per page in the by-drop views — they paginate over *drops* (each a handful
+ * of cards), so they use a smaller page size than the flat card grid. */
+export const DROP_PAGE_SIZE = 20
+
+/** Reactive list controls shared by the card-list queries: `page`/`query`/`sort` are
+ * carried in the query key so a change refetches; `defaultSort` backs an empty sort. */
+interface CardListQueryOptions {
+  page: Ref<number>
+  query: Ref<string>
+  sort: Ref<string>
+  defaultSort: string
+  enabled?: Ref<boolean>
+}
 
 /** The supported-games registry. Effectively static, so it never goes stale. */
 export function useGamesQuery() {
@@ -34,5 +55,77 @@ export function useSetsQuery(game: Ref<string>) {
   return useQuery({
     queryKey: ['sets', game],
     queryFn: () => listSets(game.value),
+  })
+}
+
+/** One set's metadata. Keyed on `['set', game, code]` so the catalog and collection
+ * set views share one warm entry. */
+export function useSetQuery(game: Ref<string>, code: Ref<string>, enabled?: Ref<boolean>) {
+  return useQuery({
+    queryKey: ['set', game, code],
+    queryFn: () => getSet(game.value, code.value),
+    enabled,
+  })
+}
+
+/** A page of one set's cards (searchable + sortable, optionally spanning the set's
+ * related group). `keepPreviousData` keeps the current grid up while the next page
+ * loads (smoother paging). */
+export function useSetCardsQuery(
+  game: Ref<string>,
+  code: Ref<string>,
+  opts: CardListQueryOptions & { includeRelated?: Ref<boolean> },
+) {
+  // Fall back to a stable "not grouped" ref so the query key is well-formed either way.
+  const includeRelated = opts.includeRelated ?? ref(false)
+  return useQuery({
+    queryKey: ['set-cards', game, code, opts.query, opts.sort, opts.page, includeRelated],
+    queryFn: () =>
+      listSetCards(game.value, code.value, {
+        q: opts.query.value || undefined,
+        page: opts.page.value,
+        pageSize: CARD_PAGE_SIZE,
+        includeRelated: includeRelated.value || undefined,
+        ...toSortParam(opts.sort.value, opts.defaultSort),
+      }),
+    enabled: opts.enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A page of a game's whole card list (searchable + sortable). */
+export function useAllCardsQuery(game: Ref<string>, opts: CardListQueryOptions) {
+  return useQuery({
+    queryKey: ['cards', game, opts.query, opts.sort, opts.page],
+    queryFn: () =>
+      listCards(game.value, {
+        q: opts.query.value || undefined,
+        page: opts.page.value,
+        pageSize: CARD_PAGE_SIZE,
+        ...toSortParam(opts.sort.value, opts.defaultSort),
+      }),
+    enabled: opts.enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A page (by drop) of a drop-grouped set's cards, grouped into Secret Lair drops.
+ * The caller gates it on the by-drop view being active via `opts.enabled` (the
+ * endpoint 404s for a set without drops — see `CardSet.has_drops`). */
+export function useSetDropsQuery(
+  game: Ref<string>,
+  code: Ref<string>,
+  opts: { page: Ref<number>; query: Ref<string>; enabled?: Ref<boolean> },
+) {
+  return useQuery({
+    queryKey: ['set-drops', game, code, opts.query, opts.page],
+    queryFn: () =>
+      listSetDrops(game.value, code.value, {
+        q: opts.query.value || undefined,
+        page: opts.page.value,
+        pageSize: DROP_PAGE_SIZE,
+      }),
+    enabled: opts.enabled,
+    placeholderData: keepPreviousData,
   })
 }

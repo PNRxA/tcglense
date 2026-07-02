@@ -7,16 +7,17 @@ use axum::{
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, prelude::DateTimeUtc};
 use serde::Serialize;
-use serde_json::json;
 
 use crate::catalog;
 use crate::entities::ingest_state;
 use crate::entities::prelude::IngestState;
 use crate::error::AppError;
-use crate::handlers::shared::require_game;
+use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
 
+/// Background card-data import status for a game.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "IngestStatus"))]
 pub struct StatusResponse {
     pub status: String,
     pub detail: Option<String>,
@@ -27,8 +28,8 @@ pub struct StatusResponse {
 }
 
 /// `GET /api/games` -> the list of supported games.
-pub async fn list_games() -> Json<serde_json::Value> {
-    Json(json!({ "data": catalog::GAMES }))
+pub async fn list_games() -> Json<DataBody<&'static [catalog::Game]>> {
+    Json(DataBody { data: catalog::GAMES })
 }
 
 /// `GET /api/games/{game}/status` -> the card-data import status for a game.

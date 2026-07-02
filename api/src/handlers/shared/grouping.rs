@@ -3,7 +3,21 @@
 //! pagination tail both endpoints run once their rows are grouped into buckets.
 
 use super::pagination::Page;
+use crate::error::AppError;
 use crate::scryfall::drops::DropTable;
+
+/// Resolve a game's set to its Secret Lair drop table, `404`ing an set that isn't
+/// drop-grouped. This is the single definition of "drop-grouped" the by-drop endpoints
+/// gate on, so it must agree with [`crate::scryfall::drops::has_drops`] — the same
+/// non-empty-table predicate the SPA uses to decide whether to offer the by-drop view.
+pub(crate) fn require_drop_table(
+    game: &str,
+    set_code: &str,
+) -> Result<&'static DropTable, AppError> {
+    crate::scryfall::drops::table(game, set_code)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::NotFound(format!("set '{set_code}' has no drops")))
+}
 
 /// A drop's items, before pagination/serialization (so off-page drops never get
 /// turned into response DTOs). Generic over the item type `T`: the public catalog
@@ -75,9 +89,9 @@ pub(crate) fn paginate_buckets<T, R>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::prelude::DateTimeUtc;
 
     use crate::entities::card;
+    use crate::test_support::card_model;
 
     /// A minimal card row; only its set code and collector number matter to the
     /// drop grouping.
@@ -86,74 +100,14 @@ mod tests {
         collector_number: &str,
         number_int: Option<i32>,
     ) -> card::Model {
-        let ts: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
         card::Model {
-            id: 0,
-            game: "mtg".into(),
             external_id: format!("ext-{set_code}-{collector_number}"),
-            oracle_id: None,
             name: format!("Card {collector_number}"),
             set_code: set_code.into(),
             set_name: set_code.to_uppercase(),
             collector_number: collector_number.into(),
             collector_number_int: number_int,
-            rarity: None,
-            lang: "en".into(),
-            released_at: None,
-            mana_cost: None,
-            cmc: None,
-            type_line: None,
-            color_identity: None,
-            colors: None,
-            layout: None,
-            oracle_text: None,
-            power: None,
-            toughness: None,
-            loyalty: None,
-            image_small: None,
-            image_normal: None,
-            image_large: None,
-            image_art_crop: None,
-            image_png: None,
-            card_faces: None,
-            price_usd: None,
-            price_usd_foil: None,
-            price_eur: None,
-            price_tix: None,
-            price_usd_etched: None,
-            keywords: None,
-            produced_mana: None,
-            color_indicator: None,
-            watermark: None,
-            flavor_text: None,
-            illustration_id: None,
-            artist: None,
-            artist_ids: None,
-            border_color: None,
-            frame: None,
-            frame_effects: None,
-            security_stamp: None,
-            promo_types: None,
-            finishes: None,
-            defense: None,
-            legalities: None,
-            full_art: None,
-            textless: None,
-            oversized: None,
-            promo: None,
-            reprint: None,
-            variation: None,
-            booster: None,
-            story_spotlight: None,
-            content_warning: None,
-            highres_image: None,
-            reserved: None,
-            game_changer: None,
-            edhrec_rank: None,
-            penny_rank: None,
-            digital: false,
-            created_at: ts,
-            updated_at: ts,
+            ..card_model(0)
         }
     }
 

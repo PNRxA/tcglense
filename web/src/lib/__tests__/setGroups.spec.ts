@@ -11,21 +11,9 @@ import {
   PINNED_SET_CODES,
   subSetLabel,
 } from '../setGroups'
-import type { CardSet } from '../api'
+import { makeCardSet } from '@/test/fixtures'
 
-function set(code: string, over: Partial<CardSet> = {}): CardSet {
-  return {
-    code,
-    name: code.toUpperCase(),
-    set_type: 'expansion',
-    released_at: '2024-01-01',
-    card_count: 100,
-    icon_svg_uri: null,
-    parent_set_code: null,
-    has_drops: false,
-    ...over,
-  }
-}
+const set = makeCardSet
 
 const mains = (groups: ReturnType<typeof groupSets>) => groups.map((g) => g.main.code)
 const children = (groups: ReturnType<typeof groupSets>) =>

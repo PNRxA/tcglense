@@ -116,13 +116,12 @@ pub async fn seed(db: &DatabaseConnection) -> Result<(), IngestError> {
         Err(err) => {
             let _ = ingest::put_state(
                 db,
-                None,
-                "error",
-                Some(ingest::truncate(&err.to_string(), 500)),
-                0,
-                0,
-                None,
-                Some(Utc::now()),
+                ingest::IngestStatus::Error,
+                ingest::IngestStateUpdate {
+                    detail: Some(ingest::truncate(&err.to_string(), 500)),
+                    finished_at: Some(Utc::now()),
+                    ..Default::default()
+                },
             )
             .await;
             Err(err)
@@ -171,13 +170,15 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     // status route ambiguous.
     ingest::put_state(
         db,
-        Some(DUMMY_SOURCE_VERSION.to_string()),
-        "complete",
-        Some("seeded dummy offline catalog".to_string()),
-        sets_imported,
-        cards_imported,
-        Some(started),
-        Some(Utc::now()),
+        ingest::IngestStatus::Complete,
+        ingest::IngestStateUpdate {
+            source_updated_at: Some(DUMMY_SOURCE_VERSION.to_string()),
+            detail: Some("seeded dummy offline catalog".to_string()),
+            sets_imported,
+            cards_imported,
+            started_at: Some(started),
+            finished_at: Some(Utc::now()),
+        },
     )
     .await?;
     tracing::info!(

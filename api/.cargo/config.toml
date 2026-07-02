@@ -1,0 +1,8 @@
+# ts-rs export configuration: `cargo test` writes the TS wire types generated from
+# the `#[cfg_attr(test, derive(ts_rs::TS))]` DTOs into the SPA's source tree, where
+# they are committed (CI fails if they drift from the Rust definitions).
+[env]
+TS_RS_EXPORT_DIR = { value = "../web/src/lib/api/generated", relative = true }
+# serde_json serializes i64/u64 as plain JSON numbers, so bind them to `number`
+# (the default `bigint` would misdescribe the wire format).
+TS_RS_LARGE_INT = "number"

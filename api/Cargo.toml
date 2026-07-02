@@ -42,3 +42,8 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # drive the real router in-process (no TCP bind). Feature-unified with the
 # runtime `tower` dep above; only compiled for tests.
 tower = { version = "0.5.3", features = ["util"] }
+# Generates the SPA's wire types (web/src/lib/api/generated) from the wire DTOs'
+# `#[cfg_attr(test, derive(ts_rs::TS))]` derives: `cargo test` writes the files (export
+# dir + number bindings configured in .cargo/config.toml). `chrono-impl` maps the
+# `DateTimeUtc` fields to `string`.
+ts-rs = { version = "12.0.1", features = ["chrono-impl"] }

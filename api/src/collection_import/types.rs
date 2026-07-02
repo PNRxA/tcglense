@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// A collection provider we can import from. One variant per external service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CollectionProvider"))]
 pub enum Provider {
     Archidekt,
 }
@@ -54,6 +55,7 @@ impl Provider {
 /// How an import reconciles with the user's existing collection for the game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum ReconcileMode {
     /// Set each imported card to the imported counts; leave cards not in the import
     /// untouched. Idempotent and non-destructive.
@@ -84,6 +86,7 @@ pub struct FetchedHolding {
 
 /// The outcome of an import, surfaced to the user.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ImportSummary {
     pub provider: &'static str,
     pub mode: ReconcileMode,

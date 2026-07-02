@@ -1,56 +1,35 @@
-import type { Card, CardSet, Page } from './catalog'
-import { request } from './client'
+import { listQuery, request } from './client'
+import type {
+  CollectionDropGroup,
+  CollectionEntry,
+  CollectionQuantities,
+  CollectionSet,
+  CollectionSummary,
+  Page,
+} from './generated'
 
 // ---------- Collections (per-user, authenticated) ----------
 //
 // Every call takes an access `token` (obtained via the auth store's `authFetch`,
 // which the `useAuthed*` composables wire up). Card ids are the same external ids
 // the public catalog exposes. Paths are built here so they can be unit-tested; the
-// heavy lifting (auth header, credentials, JSON) lives in `request`.
+// heavy lifting (auth header, credentials, JSON) lives in `request`. The wire types
+// are generated from the API's Rust DTOs into `./generated` and re-exported here.
 
-/** How many copies of a card a user owns. */
-export interface CollectionQuantities {
-  quantity: number
-  foil_quantity: number
-}
+export type {
+  CollectionDropGroup,
+  CollectionEntry,
+  CollectionQuantities,
+  CollectionSet,
+  CollectionSummary,
+} from './generated'
 
-/** One owned card: the full public card payload plus the owned counts. */
-export interface CollectionEntry {
-  card: Card
-  quantity: number
-  foil_quantity: number
-}
-
-/** Owned counts for a batch of cards, keyed by external card id (owned cards only). */
+/** Owned counts for a batch of cards, keyed by external card id (owned cards only) —
+ * the `data` payload of the wire `DataBody<HashMap<..>>` response. */
 export type OwnedCountsMap = Record<string, CollectionQuantities>
 
 /** A page of collection entries plus pagination cursors. */
 export type CollectionPage = Page<CollectionEntry>
-
-/** Aggregate stats for a user's per-game collection. */
-export interface CollectionSummary {
-  /** Distinct cards owned. */
-  unique_cards: number
-  /** Total copies owned (regular + foil). */
-  total_cards: number
-  /** Estimated USD value as a decimal string, or null when nothing is priced. */
-  total_value_usd: string | null
-}
-
-/**
- * One set a user owns cards in, for the collection's per-set landing. Carries the same
- * catalog set metadata a `SetTile` needs (so the tile can be reused) plus how much of
- * the set the user owns.
- */
-export interface CollectionSet extends CardSet {
-  /** Distinct cards owned in this set. */
-  owned_cards: number
-  /** Total copies owned (regular + foil) in this set. */
-  owned_copies: number
-  /** Estimated USD value of the owned cards in this set as a decimal string, or null
-   * when nothing owned in the set is priced. Same semantics as the summary value. */
-  owned_value_usd: string | null
-}
 
 export interface CollectionListParams {
   page?: number
@@ -69,16 +48,7 @@ export interface CollectionListParams {
 
 /** Relative `/api/collection/...` path for a user's collection in a game. */
 export function collectionPath(game: string, params: CollectionListParams = {}): string {
-  const search = new URLSearchParams()
-  if (params.page) search.set('page', String(params.page))
-  if (params.pageSize) search.set('page_size', String(params.pageSize))
-  if (params.q) search.set('q', params.q)
-  if (params.sort) search.set('sort', params.sort)
-  if (params.dir) search.set('dir', params.dir)
-  if (params.set) search.set('set', params.set)
-  if (params.includeRelated) search.set('include_related', 'true')
-  const qs = search.toString()
-  return `/api/collection/${encodeURIComponent(game)}${qs ? `?${qs}` : ''}`
+  return `/api/collection/${encodeURIComponent(game)}${listQuery(params)}`
 }
 
 /** Relative `/api/collection/{game}/cards/{id}` path for one card's holding. */
@@ -105,15 +75,11 @@ export function getCollectionSummary(
   set?: string,
   includeRelated?: boolean,
 ): Promise<CollectionSummary> {
-  const search = new URLSearchParams()
-  if (set) search.set('set', set)
   // include_related only means anything alongside a set scope (matches the backend).
-  if (set && includeRelated) search.set('include_related', 'true')
-  const qs = search.toString()
-  return request<CollectionSummary>(
-    `/api/collection/${encodeURIComponent(game)}/summary${qs ? `?${qs}` : ''}`,
-    { token },
-  )
+  const qs = listQuery({ set, includeRelated: set ? includeRelated : undefined })
+  return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary${qs}`, {
+    token,
+  })
 }
 
 /** The sets the user owns cards in, newest set first — the per-set collection landing. */
@@ -121,16 +87,6 @@ export function getCollectionSets(token: string, game: string): Promise<{ data: 
   return request<{ data: CollectionSet[] }>(`/api/collection/${encodeURIComponent(game)}/sets`, {
     token,
   })
-}
-
-/** One Secret Lair drop with the user's owned cards in it — the collection mirror of the
- * catalog `DropGroup`, but each card carries the owned counts. */
-export interface CollectionDropGroup {
-  /** Stable slug for anchors; null for the catch-all "Other" group. */
-  slug: string | null
-  title: string
-  card_count: number
-  cards: CollectionEntry[]
 }
 
 /** A page of collection drop groups — `total`/pagination count *drops*, not cards. */
@@ -150,14 +106,9 @@ export function collectionSetDropsPath(
   code: string,
   params: CollectionDropsParams = {},
 ): string {
-  const search = new URLSearchParams()
-  if (params.page) search.set('page', String(params.page))
-  if (params.pageSize) search.set('page_size', String(params.pageSize))
-  if (params.q) search.set('q', params.q)
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  const qs = search.toString()
-  return `/api/collection/${g}/sets/${c}/drops${qs ? `?${qs}` : ''}`
+  return `/api/collection/${g}/sets/${c}/drops${listQuery(params)}`
 }
 
 /** The signed-in user's owned cards in a drop-grouped set (e.g. Secret Lair), grouped by
