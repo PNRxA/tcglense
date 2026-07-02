@@ -49,6 +49,11 @@ export function useAuthedQuery<TData>(
     ...options,
     queryFn: () => auth.authFetch(queryFn),
     enabled: computed(() => auth.isAuthenticated && toValue(enabled ?? true)),
+    // Tag every authenticated (per-user) query so the cache can be wiped wholesale
+    // when the signed-in identity changes — see `useAuthCacheReset`. Without this the
+    // previous account's collection/wish list lingers in the cache and shows through
+    // to the next user until a hard refresh (issue #177).
+    meta: { authed: true },
   } as unknown as UseQueryOptions<TData, ApiError, TData>)
 }
 
