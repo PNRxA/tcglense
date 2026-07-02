@@ -113,6 +113,10 @@ pub struct CollectionSummary {
     /// Estimated USD value: regular copies at the card's `usd`, foil copies at
     /// `usd_foil`, as a 2-dp decimal string. `null` when nothing owned is priced.
     pub total_value_usd: Option<String>,
+    /// The "bulk" portion of the total: the value of just the finishes priced under $1
+    /// each (the low-value commons/uncommons), a 2-dp decimal string. `"0.00"` when
+    /// something is priced but none of it is bulk; `null` when nothing owned is priced.
+    pub bulk_value_usd: Option<String>,
 }
 
 /// One set the user owns cards in, for the collection's per-set landing. Carries the
@@ -137,6 +141,10 @@ pub struct CollectionSet {
     /// foil at `usd_foil`), a 2-dp decimal string. `null` when nothing owned is priced —
     /// same semantics as the summary's `total_value_usd`, scoped to the one set.
     pub owned_value_usd: Option<String>,
+    /// The "bulk" portion of `owned_value_usd`: the value of just the finishes priced
+    /// under $1 each, a 2-dp decimal string. `"0.00"` when the set's owned cards are
+    /// priced but none are bulk; `null` when nothing owned in the set is priced.
+    pub owned_bulk_value_usd: Option<String>,
 }
 
 /// The sets a user owns cards in, newest set first.

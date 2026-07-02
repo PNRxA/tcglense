@@ -21,18 +21,27 @@ pub(crate) fn format_cents(cents: i128) -> String {
     format!("{dollars}.{rem:02}")
 }
 
-/// Running valuation of a set of holdings in integer cents, tracking whether any
-/// holding was priced so an all-unpriced set reports `null` rather than `$0.00`.
+/// Per-unit price (in cents) at or above which a card is *not* bulk. Any single copy
+/// priced strictly under $1.00 counts toward the "bulk" value — the low-value
+/// commons/uncommons you'd sell by the box rather than one at a time.
+pub(crate) const BULK_THRESHOLD_CENTS: i128 = 100;
+
+/// Running valuation of a set of holdings in integer cents. Tracks the full total,
+/// the "bulk" subtotal (finishes priced under [`BULK_THRESHOLD_CENTS`]), and whether
+/// any holding was priced at all — so an all-unpriced set reports `null` rather than
+/// `$0.00` for both figures.
 #[derive(Debug, Default)]
 pub(crate) struct Valuation {
     pub(crate) cents: i128,
+    pub(crate) bulk_cents: i128,
     pub(crate) any_priced: bool,
 }
 
 impl Valuation {
     /// Add one card's holding: `qty` regular copies at `usd`, `foil_qty` foil copies
     /// at `usd_foil`. An unpriced finish contributes nothing (and doesn't flip
-    /// `any_priced`); a priced finish adds `price × copies` and marks the total priced.
+    /// `any_priced`); a priced finish adds `price × copies` to the total and, when the
+    /// per-unit price is under [`BULK_THRESHOLD_CENTS`], to the bulk subtotal too.
     pub(crate) fn add(
         &mut self,
         usd: Option<&str>,
@@ -40,12 +49,21 @@ impl Valuation {
         usd_foil: Option<&str>,
         foil_qty: i32,
     ) {
-        if let Some(cents) = price_cents(usd) {
-            self.cents += cents * i128::from(qty);
-            self.any_priced = true;
-        }
-        if let Some(cents) = price_cents(usd_foil) {
-            self.cents += cents * i128::from(foil_qty);
+        self.add_finish(usd, qty);
+        self.add_finish(usd_foil, foil_qty);
+    }
+
+    /// Fold one finish (a price + copy count) into the total, and — if the per-unit
+    /// price is under the bulk threshold — the bulk subtotal. Bulk is judged per unit,
+    /// so a card whose regular printing is bulk but whose foil isn't (or vice-versa)
+    /// contributes only its bulk finish to the bulk subtotal.
+    fn add_finish(&mut self, price: Option<&str>, qty: i32) {
+        if let Some(cents) = price_cents(price) {
+            let amount = cents * i128::from(qty);
+            self.cents += amount;
+            if cents < BULK_THRESHOLD_CENTS {
+                self.bulk_cents += amount;
+            }
             self.any_priced = true;
         }
     }
@@ -53,6 +71,14 @@ impl Valuation {
     /// The total as a 2-dp USD string, or `None` when nothing was priced.
     pub(crate) fn total_usd(&self) -> Option<String> {
         self.any_priced.then(|| format_cents(self.cents))
+    }
+
+    /// The bulk subtotal (finishes priced under $1) as a 2-dp USD string, or `None`
+    /// when nothing was priced. Gated on the same `any_priced` flag as the total, so a
+    /// priced collection with no bulk cards reports `"0.00"` (not `null`) — the total is
+    /// meaningful, the bulk portion of it is genuinely zero.
+    pub(crate) fn bulk_usd(&self) -> Option<String> {
+        self.any_priced.then(|| format_cents(self.bulk_cents))
     }
 }
 
@@ -77,5 +103,37 @@ mod tests {
         assert_eq!(format_cents(5), "0.05");
         assert_eq!(format_cents(100), "1.00");
         assert_eq!(format_cents(0), "0.00");
+    }
+
+    #[test]
+    fn valuation_totals_and_bulk_split_at_a_dollar() {
+        let mut v = Valuation::default();
+        // $0.50 regular ×2 (all bulk) + $5.00 foil ×1 (not bulk).
+        v.add(Some("0.50"), 2, Some("5.00"), 1);
+        // Exactly $1.00 is NOT bulk (strictly under a dollar); ×3 regular.
+        v.add(Some("1.00"), 3, None, 0);
+        // A foil-only bulk finish: $0.99 ×1.
+        v.add(None, 0, Some("0.99"), 1);
+        // Total = 1.00 + 5.00 + 3.00 + 0.99 = 9.99.
+        assert_eq!(v.total_usd().as_deref(), Some("9.99"));
+        // Bulk = (0.50×2) + 0.99 = 1.99 — the $5.00 foil and $1.00 regulars excluded.
+        assert_eq!(v.bulk_usd().as_deref(), Some("1.99"));
+    }
+
+    #[test]
+    fn bulk_is_zero_when_priced_but_nothing_is_bulk() {
+        let mut v = Valuation::default();
+        v.add(Some("5.00"), 1, Some("12.00"), 2);
+        // Something is priced, so bulk is a meaningful "0.00", not null.
+        assert_eq!(v.total_usd().as_deref(), Some("29.00"));
+        assert_eq!(v.bulk_usd().as_deref(), Some("0.00"));
+    }
+
+    #[test]
+    fn total_and_bulk_are_null_when_nothing_is_priced() {
+        let mut v = Valuation::default();
+        v.add(None, 3, None, 2);
+        assert_eq!(v.total_usd(), None);
+        assert_eq!(v.bulk_usd(), None);
     }
 }

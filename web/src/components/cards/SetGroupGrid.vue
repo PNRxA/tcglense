@@ -19,11 +19,12 @@ const props = withDefaults(
     // the collection landing).
     basePath?: string
     // Owned counts per set code (the collection landing only). Collapsed into one object
-    // so it's a single prop rather than three parallel maps.
+    // so it's a single prop rather than several parallel maps.
     ownership?: {
       counts: Record<string, number>
       copies: Record<string, number>
       values: Record<string, string | null>
+      bulkValues: Record<string, string | null>
     }
   }>(),
   { scrollMt: 28, basePath: '/cards', ownership: undefined },
@@ -49,6 +50,7 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
         :owned-count="ownership?.counts[group.main.code]"
         :owned-copies="ownership?.copies[group.main.code]"
         :owned-value="ownership?.values[group.main.code]"
+        :bulk-value="ownership?.bulkValues[group.main.code]"
       />
       <SetGroup
         v-else
@@ -58,6 +60,7 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
         :owned-counts="ownership?.counts"
         :owned-copies="ownership?.copies"
         :owned-values="ownership?.values"
+        :bulk-values="ownership?.bulkValues"
       />
     </template>
   </div>

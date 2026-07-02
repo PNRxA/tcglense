@@ -191,6 +191,7 @@ pub(super) fn build_collection_sets(
                 owned_cards,
                 owned_copies,
                 owned_value_usd: valuation.total_usd(),
+                owned_bulk_value_usd: valuation.bulk_usd(),
                 code,
             }
         })
