@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 
-use crate::collection_import::jobs::JobStatus;
-use crate::collection_import::{ImportSummary, ReconcileMode};
+use crate::collection_import::jobs::{JobStatus, JobView};
+use crate::collection_import::{ImportSummary, ProgressSnapshot, ReconcileMode};
 use crate::entities::collection_item;
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::prelude::CollectionItem;
@@ -315,6 +315,30 @@ pub struct CollectionSourceResponse {
     pub smart: bool,
 }
 
+/// Live fetch progress for a running import: how many provider rows we've fetched so far,
+/// and the collection's total when the provider reported one up front. A determinate
+/// progress bar can be drawn when `total` is present; otherwise (a smart sync, which stops
+/// early) only the running `fetched` count is meaningful.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ImportProgress {
+    /// Provider rows fetched so far.
+    pub fetched: u32,
+    /// Total rows to fetch, when known; `null` for a smart sync (no meaningful total).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub total: Option<u32>,
+}
+
+impl From<ProgressSnapshot> for ImportProgress {
+    fn from(s: ProgressSnapshot) -> Self {
+        Self {
+            fetched: s.fetched_rows,
+            total: s.total_rows,
+        }
+    }
+}
+
 /// The status of a background import/sync job — returned when one is enqueued and each
 /// time the client polls. Imports run asynchronously (throttled by the provider rate
 /// limit), so the client kicks one off and polls this until `complete`/`error`.
@@ -327,6 +351,11 @@ pub struct ImportJobResponse {
     // `from_status` below, which the TS derive can't see through).
     #[cfg_attr(test, ts(type = "\"queued\" | \"running\" | \"complete\" | \"error\""))]
     pub status: &'static str,
+    /// Live fetch progress, present only while `status == "running"` (the fetch is
+    /// underway); absent once queued/complete/error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub progress: Option<ImportProgress>,
     /// The import summary, present only when `status == "complete"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -338,6 +367,8 @@ pub struct ImportJobResponse {
 }
 
 impl ImportJobResponse {
+    /// Shape a lifecycle status alone (no progress) — used for the immediate `202` when a
+    /// job is enqueued (always `Queued`, nothing fetched yet).
     fn from_status(job_id: u64, status: JobStatus) -> Self {
         let (status, summary, error) = match status {
             JobStatus::Queued => ("queued", None, None),
@@ -348,9 +379,21 @@ impl ImportJobResponse {
         Self {
             job_id,
             status,
+            progress: None,
             summary,
             error,
         }
+    }
+
+    /// Shape a polled job view: the lifecycle status plus, while the fetch is running, its
+    /// live progress (so the client can render a progress bar).
+    fn from_view(job_id: u64, view: JobView) -> Self {
+        let running = matches!(view.status, JobStatus::Running);
+        let mut resp = Self::from_status(job_id, view.status);
+        if running {
+            resp.progress = Some(ImportProgress::from(view.progress));
+        }
+        resp
     }
 }
 

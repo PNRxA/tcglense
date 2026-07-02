@@ -183,6 +183,9 @@ export function usePolledImportJob(
   const jobQuery = useImportJobQuery(game, jobId)
   const status = computed(() => jobQuery.data.value?.status ?? null)
   const processing = computed(() => status.value === 'queued' || status.value === 'running')
+  // Live fetch progress while running (rows fetched / total), for the progress bar; the
+  // server only sends it in the `running` phase, so it's null when queued/terminal.
+  const progress = computed(() => jobQuery.data.value?.progress ?? null)
 
   watch(
     () => jobQuery.data.value,
@@ -198,6 +201,7 @@ export function usePolledImportJob(
     jobId,
     status,
     processing,
+    progress,
     start(id: number) {
       jobId.value = id
     },
@@ -356,6 +360,7 @@ export function useCollectionImport(game: Ref<string>) {
     result,
     busy,
     processing,
+    progress: job.progress,
     statusMessage,
     deletePending: deleteMutation.isPending,
     resetStatus,
