@@ -9,6 +9,7 @@ import {
   originSetCode,
   partitionPinned,
   PINNED_SET_CODES,
+  queryMatchesRelated,
   subSetLabel,
 } from '../setGroups'
 import { makeCardSet } from '@/test/fixtures'
@@ -231,6 +232,51 @@ describe('filterGroups', () => {
     const result = filterGroups(groups, 'neon')
     expect(result.map((g) => g.main.code)).toEqual(['neo'])
     expect(result[0]?.children).toEqual([])
+  })
+})
+
+describe('queryMatchesRelated', () => {
+  // Ixalan with a "Jurassic World" sub-set (and its tokens) nested under it — the same
+  // shape as the filterGroups tests, so a query can hit a sub-set but not the main.
+  const group = {
+    main: set('xln', { name: 'Ixalan' }),
+    children: [
+      set('rex', { name: 'Jurassic World Collection', parent_set_code: 'xln' }),
+      set('trex', { name: 'Jurassic World Tokens', parent_set_code: 'xln' }),
+    ],
+  }
+  const childless = { main: set('neo', { name: 'Kamigawa: Neon Dynasty' }), children: [] }
+
+  it('is true when the query matches a related sub-set by name or code', () => {
+    expect(queryMatchesRelated(group, 'jurassic')).toBe(true)
+    expect(queryMatchesRelated(group, 'TREX')).toBe(true)
+  })
+
+  it('is false when only the main set matches (name or code)', () => {
+    expect(queryMatchesRelated(group, 'ixalan')).toBe(false)
+    expect(queryMatchesRelated(group, 'xln')).toBe(false)
+  })
+
+  it('is true when the main set and a sub-set both match — a sub-set hit is enough', () => {
+    const blb = {
+      main: set('blb', { name: 'Bloomburrow' }),
+      children: [set('blc', { name: 'Bloomburrow Commander', parent_set_code: 'blb' })],
+    }
+    expect(queryMatchesRelated(blb, 'bloomburrow')).toBe(true)
+  })
+
+  it('is false for a blank/whitespace query', () => {
+    expect(queryMatchesRelated(group, '')).toBe(false)
+    expect(queryMatchesRelated(group, '   ')).toBe(false)
+  })
+
+  it('trims surrounding whitespace before matching', () => {
+    expect(queryMatchesRelated(group, '  jurassic  ')).toBe(true)
+  })
+
+  it('is false for a childless group and when nothing matches', () => {
+    expect(queryMatchesRelated(childless, 'neon')).toBe(false)
+    expect(queryMatchesRelated(group, 'zzz')).toBe(false)
   })
 })
 

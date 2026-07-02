@@ -16,4 +16,10 @@ total_cards: number,
  * Estimated USD value: regular copies at the card's `usd`, foil copies at
  * `usd_foil`, as a 2-dp decimal string. `null` when nothing owned is priced.
  */
-total_value_usd: string | null, };
+total_value_usd: string | null, 
+/**
+ * The "bulk" portion of the total: the value of just the finishes priced under $1
+ * each (the low-value commons/uncommons), a 2-dp decimal string. `"0.00"` when
+ * something is priced but none of it is bulk; `null` when nothing owned is priced.
+ */
+bulk_value_usd: string | null, };

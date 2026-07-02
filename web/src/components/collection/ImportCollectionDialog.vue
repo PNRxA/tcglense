@@ -13,6 +13,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import CsvImportFields from '@/components/collection/CsvImportFields.vue'
+import ImportProgressBar from '@/components/collection/ImportProgressBar.vue'
 import { useCollectionImport } from '@/composables/useCollectionImport'
 import { formatImportSummaryLines } from '@/lib/importSummary'
 import type { CollectionProvider, CollectionSource, ReconcileMode } from '@/lib/api'
@@ -102,6 +103,7 @@ const {
   result,
   busy,
   statusMessage,
+  progress,
   deletePending,
   resetStatus,
   runLinkImport,
@@ -213,8 +215,8 @@ const selectClass =
           with your collection. We fetch it server-side — nothing is uploaded from your device.
         </template>
         <template v-else>
-          Upload a collection CSV exported from Archidekt or Moxfield and choose how to reconcile
-          it with your collection. We detect which service it came from automatically.
+          Upload a collection CSV exported from Archidekt or Moxfield and choose how to reconcile it
+          with your collection. We detect which service it came from automatically.
         </template>
       </DialogDescription>
 
@@ -303,15 +305,14 @@ const selectClass =
           </template>
         </div>
 
-        <!-- In-progress status (queued / running) -->
-        <p
-          v-if="statusMessage"
-          class="text-muted-foreground flex items-start gap-2 text-sm"
-          aria-live="polite"
-        >
-          <LoaderCircle class="mt-0.5 size-4 shrink-0 animate-spin" />
-          <span>{{ statusMessage }}</span>
-        </p>
+        <!-- In-progress status (queued / running) + a live fetch-progress bar once running. -->
+        <div v-if="statusMessage" class="space-y-2">
+          <p class="text-muted-foreground flex items-start gap-2 text-sm" aria-live="polite">
+            <LoaderCircle class="mt-0.5 size-4 shrink-0 animate-spin" />
+            <span>{{ statusMessage }}</span>
+          </p>
+          <ImportProgressBar v-if="progress" :progress="progress" />
+        </div>
 
         <!-- Error -->
         <p

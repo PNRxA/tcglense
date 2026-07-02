@@ -27,9 +27,14 @@ const props = withDefaults(
     // "· N copies" after the completion count, but only when it exceeds the distinct owned
     // count — with no duplicates the completion count already conveys the total (issue #125).
     ownedCopies?: number
-    // Optional preformatted owned value (e.g. "$123.45"). When set, it's appended to
-    // the meta line after the owned count — the collection landing's per-set value.
+    // Optional preformatted owned value (e.g. "$123.45"). When set, it's shown as
+    // "TOTAL $X" on the identity line (in line with the release date) — the collection
+    // landing's per-set total value.
     ownedValue?: string | null
+    // Optional preformatted bulk (< $1/card) value (e.g. "$12.30"). When set, it's shown
+    // as "BULK $X" on the stats line (in line with the owned count) — the collection
+    // landing's per-set bulk value.
+    bulkValue?: string | null
   }>(),
   {
     variant: 'default',
@@ -38,6 +43,7 @@ const props = withDefaults(
     ownedCount: undefined,
     ownedCopies: undefined,
     ownedValue: undefined,
+    bulkValue: undefined,
   },
 )
 
@@ -132,17 +138,29 @@ const copiesLabel = computed(() =>
         </p>
         <!-- Set identity (code + release). Off the collection landing the set's total card
              count rides along here; on it, the owned counts move to their own line below so
-             the combined string can't overflow this one (issue #125). -->
-        <p class="text-muted-foreground truncate text-xs">
-          {{ set.code.toUpperCase() }}
-          <template v-if="released"> · {{ released }}</template>
-          <template v-if="ownedLabel == null && set.card_count">
-            · {{ set.card_count }} cards</template
+             the combined string can't overflow this one (issue #125). The collection
+             landing also pins the total owned value ("TOTAL $X") to the right here, in line
+             with the release date, so the identity truncates first and the worth stays. -->
+        <div class="text-muted-foreground flex items-baseline justify-between gap-2 text-xs">
+          <span class="min-w-0 truncate">
+            {{ set.code.toUpperCase() }}
+            <template v-if="released"> · {{ released }}</template>
+            <template v-if="ownedLabel == null && set.card_count">
+              · {{ set.card_count }} cards</template
+            >
+          </span>
+          <span
+            v-if="ownedValue"
+            class="text-foreground shrink-0 font-medium tabular-nums"
+            title="Total estimated value"
           >
-        </p>
+            <span class="text-muted-foreground text-[0.625rem] tracking-wide uppercase">Total</span>
+            {{ ownedValue }}
+          </span>
+        </div>
         <!-- Collection stats on their own line: the completion count (+ copies) truncates
-             first while the value stays pinned to the right, so the worth is never the bit
-             that gets clipped on a narrow tile. -->
+             first while the bulk value stays pinned to the right, in line with the count, so
+             the worth is never the bit that gets clipped on a narrow tile. -->
         <div
           v-if="ownedLabel != null"
           class="text-muted-foreground mt-0.5 flex items-baseline justify-between gap-2 text-xs"
@@ -150,8 +168,13 @@ const copiesLabel = computed(() =>
           <span class="min-w-0 truncate tabular-nums">
             {{ ownedLabel }}<template v-if="copiesLabel"> · {{ copiesLabel }}</template>
           </span>
-          <span v-if="ownedValue" class="text-foreground shrink-0 font-medium tabular-nums">
-            {{ ownedValue }}
+          <span
+            v-if="bulkValue"
+            class="text-foreground shrink-0 font-medium tabular-nums"
+            title="Value of cards worth under $1 each"
+          >
+            <span class="text-muted-foreground text-[0.625rem] tracking-wide uppercase">Bulk</span>
+            {{ bulkValue }}
           </span>
         </div>
       </div>

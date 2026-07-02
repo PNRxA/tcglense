@@ -19,6 +19,7 @@ mod csv_import;
 mod error;
 pub mod jobs;
 mod moxfield;
+mod progress;
 pub mod rate_limit;
 mod reconcile;
 mod types;
@@ -32,6 +33,7 @@ use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 
 pub use error::ImportError;
+pub use progress::{ProgressReporter, ProgressSnapshot};
 pub use types::*;
 use reconcile::{reconcile_holdings, reconcile_smart};
 
@@ -55,6 +57,9 @@ pub struct ProviderContext<'a> {
     pub http: &'a reqwest::Client,
     pub limiters: &'a rate_limit::ProviderLimiters,
     pub settings: &'a ProviderSettings,
+    /// Where the fetch loop publishes its live row-progress (rows fetched / total), for
+    /// the job-status endpoint's progress bar.
+    pub progress: &'a ProgressReporter,
 }
 
 /// Parse the collection id from a user-supplied source (a full provider URL or a bare
@@ -82,7 +87,13 @@ async fn fetch_holdings(
 ) -> Result<Vec<FetchedHolding>, ImportError> {
     match provider {
         Provider::Archidekt => {
-            archidekt::fetch(ctx.http, ctx.limiters.for_provider(provider), collection_id).await
+            archidekt::fetch(
+                ctx.http,
+                ctx.limiters.for_provider(provider),
+                collection_id,
+                ctx.progress,
+            )
+            .await
         }
         Provider::Moxfield => moxfield::fetch(ctx, collection_id).await,
     }
@@ -102,7 +113,7 @@ async fn fetch_holdings_smart(
     match provider {
         Provider::Archidekt => {
             let limiter = ctx.limiters.for_provider(provider);
-            archidekt::fetch_smart(ctx.http, limiter, collection_id, local).await
+            archidekt::fetch_smart(ctx.http, limiter, collection_id, local, ctx.progress).await
         }
         Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local).await,
     }

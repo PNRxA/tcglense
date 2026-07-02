@@ -298,7 +298,12 @@ is downloaded from Scryfall (HTTPS, host allow-listed to `scryfall.io`, redirect
 disabled), written under `<DATA_DIR>/images/<game>/<size>/`, and served from disk
 thereafter (`Cache-Control: immutable`). We never bulk-download the whole image
 catalogue — images are cached lazily, on view. Set icons are cached the same way
-(`.../sets/{code}/icon`, served as `image/svg+xml`).
+(`.../sets/{code}/icon`, served as `image/svg+xml`). With **`CDN_MODE=true`** the
+on-disk step is skipped entirely: the origin still fetches each asset on demand and
+serves it with the same `immutable` headers, but never persists it — for
+deployments fronted by a CDN that caches those responses, so the origin needs no
+writable image dir and is only hit on a CDN cache miss (leave it off when no CDN
+sits in front, or every view re-fetches upstream).
 
 ## Collection API contract
 
@@ -452,7 +457,7 @@ auth/
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
 catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all()/seed_all() (dispatch per game to its provider / offline dummy seeder)
-  images.rs        ImageCache: lazy on-disk image cache/downloader (<DATA_DIR>/images/<game>/<size>/<key>.<ext>), path-sanitised, fetch-concurrency-limited
+  images.rs        ImageCache: lazy on-disk image cache/downloader (<DATA_DIR>/images/<game>/<size>/<key>.<ext>), path-sanitised, fetch-concurrency-limited; CDN_MODE bypasses disk (fetch-and-serve only, no persistence)
 scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
   client.rs        reqwest helpers: bulk-data catalog, /sets (paginated), streaming bulk download
@@ -613,7 +618,9 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `PUBLIC_SITE_URL` (`http://localhost:5173`; public SPA origin for the sitemap
   `<loc>`s — set to the real site origin in prod), `RUST_LOG` (`info`),
   `DATA_DIR` (`./data`; holds cached card images under
-  `images/`), `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
+  `images/`), `CDN_MODE` (`false`; when `true` the image/icon proxy skips the
+  on-disk cache and only fetch-and-serves — for origins behind a caching CDN),
+  `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —
   email support@moxfield.com to get one approved, and treat it as a secret),
   `RESEND_API_KEY` (unset; the Resend API key for verification/reset email — a
@@ -805,6 +812,11 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   cache budget, or eviction yet (same posture as the unfinished login rate-limiting).
   Set icons go through the same cache (`.../sets/{code}/icon`, `image/svg+xml`), so
   the provider is hit only once per asset rather than hotlinked on every view.
+  `CDN_MODE=true` turns the disk cache off entirely (fetch-and-serve only, no
+  persistence) for origins that sit behind a caching CDN — the CDN then absorbs the
+  repeat views instead of local disk, and the origin keeps no image dir; without a
+  CDN in front it's a pessimisation (every view re-fetches upstream), so it's
+  off by default.
 - **Gotcha — `reqwest`:** pinned `default-features = false, features = ["rustls",
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on
