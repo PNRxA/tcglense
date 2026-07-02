@@ -1,17 +1,27 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { RefreshCw } from '@lucide/vue'
+import { RefreshCw, Settings } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import ImportCollectionDialog from '@/components/collection/ImportCollectionDialog.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { invalidateCollectionData } from '@/composables/useCollection'
 import {
   useCollectionSourceQuery,
   usePolledImportJob,
+  useSaveCollectionSourceMutation,
   useSyncCollectionSourceMutation,
 } from '@/composables/useCollectionImport'
-import { ApiError, providerLabel as providerName } from '@/lib/api'
+import { ApiError, providerLabel as providerName, type CollectionProvider } from '@/lib/api'
 
 // The import / re-sync surface for the per-game collection landing: the import dialog, a
 // re-sync button for a saved link, and the live job status. Keyed only off the game;
@@ -37,6 +47,44 @@ const lastSyncedText = computed(() => {
   const d = new Date(t)
   return Number.isNaN(d.getTime()) ? '' : `Last synced ${d.toLocaleString()}`
 })
+
+// The cog next to the re-sync button switches how the saved link re-syncs — smart
+// (incremental) vs. a full mirror — the same choice the import dialog offers, without
+// reopening it. It re-saves the link with the new `smart` flag (preserving the provider,
+// source, and last-synced marker); the reloaded source re-labels the Re-sync button.
+type ResyncMode = 'smart' | 'mirror'
+const saveMutation = useSaveCollectionSourceMutation()
+const savingResyncMode = computed(() => saveMutation.isPending.value)
+// Mirror the server truth locally so the menu reflects the pick instantly; reconcile to
+// the reloaded source whenever it changes (a save landing, or a switch between games).
+const resyncMode = ref<ResyncMode>(smart.value ? 'smart' : 'mirror')
+watch(smart, (s) => {
+  resyncMode.value = s ? 'smart' : 'mirror'
+})
+
+async function setResyncMode(value: string | undefined) {
+  const src = source.value
+  if (!src || (value !== 'smart' && value !== 'mirror')) return
+  // Skip a truly-redundant re-pick, but compare against the current (optimistic) selection
+  // rather than the possibly-stale server `smart`: after a save resolves but before its
+  // refetch lands, `smart` is still the old value, so guarding on it would silently drop a
+  // quick toggle back and leave the controlled radio stuck on the pending pick.
+  if (value === resyncMode.value) return
+  const nextSmart = value === 'smart'
+  resyncMode.value = value // optimistic; reverted below if the save fails
+  syncMessage.value = null
+  try {
+    await saveMutation.mutateAsync({
+      game: game.value,
+      provider: src.provider as CollectionProvider,
+      source: src.external_id,
+      smart: nextSmart,
+    })
+  } catch (err) {
+    resyncMode.value = smart.value ? 'smart' : 'mirror'
+    syncMessage.value = err instanceof ApiError ? err.message : 'Could not update the re-sync mode.'
+  }
+}
 
 // Re-sync runs in the background (throttled by the provider rate limit); poll its job to a
 // terminal status via the shared poller (usePolledImportJob), tailoring the copy to smart
@@ -95,10 +143,43 @@ async function resync() {
   <div class="mt-5 flex flex-wrap items-center gap-3">
     <ImportCollectionDialog :game="game" :source="source" />
     <template v-if="source">
-      <Button variant="secondary" size="sm" :disabled="syncing" @click="resync">
-        <RefreshCw :class="{ 'animate-spin': syncing }" />
-        {{ smart ? 'Smart re-sync' : 'Re-sync' }} from {{ providerLabel }}
-      </Button>
+      <div class="flex items-center gap-1">
+        <Button variant="secondary" size="sm" :disabled="syncing" @click="resync">
+          <RefreshCw :class="{ 'animate-spin': syncing }" />
+          {{ smart ? 'Smart re-sync' : 'Re-sync' }} from {{ providerLabel }}
+        </Button>
+        <!-- Cog: switch how the saved link re-syncs (smart vs. full mirror). -->
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button variant="ghost" size="icon-sm" :disabled="savingResyncMode">
+              <Settings />
+              <span class="sr-only">Re-sync settings</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" class="w-64">
+            <DropdownMenuLabel>Re-sync mode</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup :model-value="resyncMode" @update:model-value="setResyncMode">
+              <DropdownMenuRadioItem value="mirror">
+                <span class="flex flex-col">
+                  <span class="font-medium">Full mirror</span>
+                  <span class="text-muted-foreground text-xs">
+                    Mirror the collection exactly; removes cards no longer in it.
+                  </span>
+                </span>
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="smart">
+                <span class="flex flex-col">
+                  <span class="font-medium">Smart sync</span>
+                  <span class="text-muted-foreground text-xs">
+                    Only update recently-changed cards; won’t remove deleted cards.
+                  </span>
+                </span>
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <span class="text-muted-foreground text-sm">{{ lastSyncedText }}</span>
     </template>
   </div>

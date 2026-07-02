@@ -116,8 +116,12 @@ interface SaveSourceVars {
   smart?: boolean
 }
 
-/** Save (upsert) the collection link; invalidates the saved-source query. */
-function useSaveCollectionSourceMutation() {
+/**
+ * Save (upsert) the collection link; invalidates the saved-source query. Exported so the
+ * collection landing's re-sync cog can flip the saved link's smart flag without reopening
+ * the import dialog (it re-saves the same provider+source with the new `smart`).
+ */
+export function useSaveCollectionSourceMutation() {
   const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: SaveSourceVars) =>
@@ -238,6 +242,9 @@ export function useCollectionImport(game: Ref<string>) {
       result.value = summary
       // The collection contents changed — refresh the grid, header, and card steppers.
       invalidateCollectionData(qc, game.value)
+      // Importing the saved collection stamps its `last_synced_at` server-side, so refresh
+      // the saved link too (updates the landing's "Last synced" line for a link import).
+      qc.invalidateQueries({ queryKey: ['collection-source', game.value] })
     },
     onError: (error) => {
       errorMessage.value = error ?? 'Import failed. Please try again.'
