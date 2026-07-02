@@ -213,8 +213,8 @@ const selectClass =
           with your collection. We fetch it server-side — nothing is uploaded from your device.
         </template>
         <template v-else>
-          Upload a collection CSV exported from Archidekt or Moxfield and choose how to reconcile
-          it with your collection. We detect which service it came from automatically.
+          Upload a collection CSV exported from Archidekt or Moxfield and choose how to reconcile it
+          with your collection. We detect which service it came from automatically.
         </template>
       </DialogDescription>
 

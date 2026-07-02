@@ -3,12 +3,14 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 
 use crate::auth::password::hash_password;
+use crate::captcha::Captcha;
 use crate::catalog::images::ImageCache;
 use crate::collection_import::ProviderSettings;
 use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
 use crate::email::Emailer;
 use crate::error::AppError;
+use crate::ratelimit::RateLimiters;
 
 /// The fixed plaintext whose Argon2 hash backs the login timing-equalizer (see
 /// `dummy_password_hash`). Its value is irrelevant to security — only the cost of
@@ -38,6 +40,10 @@ pub struct AppState {
     /// Outbound transactional email (verification / password-reset links); a
     /// logging no-op when no provider key is configured.
     pub email: Arc<Emailer>,
+    /// CAPTCHA verifier for the auth endpoints; a pass-through when no key is set.
+    pub captcha: Arc<Captcha>,
+    /// Per-IP rate limiters for the auth endpoints.
+    pub rate_limiters: Arc<RateLimiters>,
 }
 
 impl AppState {
@@ -66,6 +72,10 @@ impl AppState {
         // Sends ride the shared client (with a per-request timeout); the key and
         // From address are captured here so handlers just call `state.email`.
         let email = Arc::new(Emailer::from_config(&config, http.clone()));
+        // CAPTCHA verifier (Turnstile, or a pass-through when unconfigured) rides
+        // the same shared client; the per-IP auth limiters are in-memory.
+        let captcha = Arc::new(Captcha::from_config(&config, http.clone()));
+        let rate_limiters = Arc::new(RateLimiters::default());
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -74,6 +84,8 @@ impl AppState {
             http,
             imports,
             email,
+            captcha,
+            rate_limiters,
         })
     }
 }

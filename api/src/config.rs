@@ -41,6 +41,21 @@ pub struct Config {
     /// Resend's shared onboarding sender, which only delivers to the Resend
     /// account owner's own address (fine for dev, set a real one in production).
     pub email_from: String,
+    /// Cloudflare Turnstile secret key, used to verify the CAPTCHA token the
+    /// browser widget produces on the auth forms. A credential — redacted in
+    /// `Debug`. Unset = CAPTCHA verification is disabled (checks pass; no widget
+    /// is expected). The matching public site key lives in the web build's
+    /// `VITE_TURNSTILE_SITE_KEY`.
+    pub turnstile_secret_key: Option<String>,
+    /// Whether to trust `X-Forwarded-For` / `Forwarded` when resolving the client
+    /// IP for rate limiting. Default `false` (use the socket peer). Enable ONLY
+    /// when the API sits behind a trusted reverse proxy that sets the header —
+    /// trusting it when directly exposed lets a client spoof its IP and dodge the
+    /// per-IP limits.
+    pub trust_proxy_headers: bool,
+    /// Master switch for the per-IP auth rate limiting. Default `true`; set
+    /// `false` to defer entirely to an upstream WAF/proxy limiter.
+    pub rate_limit_enabled: bool,
     /// Whether to import card data from providers on startup (disable in tests).
     pub sync_on_startup: bool,
     /// How often to re-import card data after the startup import, in hours.
@@ -83,6 +98,13 @@ impl std::fmt::Debug for Config {
                 &self.resend_api_key.as_ref().map(|_| "[redacted]"),
             )
             .field("email_from", &self.email_from)
+            // The Turnstile secret is a credential; print only whether one is set.
+            .field(
+                "turnstile_secret_key",
+                &self.turnstile_secret_key.as_ref().map(|_| "[redacted]"),
+            )
+            .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("rate_limit_enabled", &self.rate_limit_enabled)
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)
@@ -233,6 +255,14 @@ impl Config {
         let email_from = env_trimmed("EMAIL_FROM")
             .unwrap_or_else(|| "TCGLense <onboarding@resend.dev>".to_string());
 
+        // Unset = CAPTCHA disabled (checks pass) — see the field.
+        let turnstile_secret_key = env_trimmed("TURNSTILE_SECRET_KEY");
+
+        // Only trust proxy IP headers when explicitly opted in (see the field);
+        // rate limiting is on by default.
+        let trust_proxy_headers = env_bool("TRUST_PROXY_HEADERS", false);
+        let rate_limit_enabled = env_bool("RATE_LIMIT_ENABLED", true);
+
         // Importing card data is the default; tests and offline runs disable it.
         let sync_on_startup = env_bool("SYNC_ON_STARTUP", true);
 
@@ -259,6 +289,9 @@ impl Config {
             moxfield_user_agent,
             resend_api_key,
             email_from,
+            turnstile_secret_key,
+            trust_proxy_headers,
+            rate_limit_enabled,
             sync_on_startup,
             sync_interval_hours,
             seed_dummy_data,

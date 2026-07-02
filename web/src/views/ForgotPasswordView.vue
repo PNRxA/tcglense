@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useTurnstile } from '@/composables/useTurnstile'
 import { ApiError, forgotPassword } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
@@ -24,12 +25,15 @@ const loading = ref(false)
 // The server answers generically whether or not the address has an account, so
 // the success state is the whole outcome — there is nothing else to reveal.
 const submitted = ref(false)
+const turnstileEl = ref<HTMLElement>()
+const { execute } = useTurnstile(turnstileEl)
 
 async function onSubmit() {
   error.value = null
   loading.value = true
   try {
-    await forgotPassword({ email: email.value })
+    const captcha_token = (await execute()) ?? undefined
+    await forgotPassword({ email: email.value, captcha_token })
     submitted.value = true
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
@@ -70,6 +74,7 @@ async function onSubmit() {
             />
           </div>
           <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
+          <div ref="turnstileEl" class="empty:hidden"></div>
           <Button type="submit" class="w-full" :disabled="loading">
             <Loader2 v-if="loading" class="animate-spin" />
             {{ loading ? 'Sending link...' : 'Send reset link' }}

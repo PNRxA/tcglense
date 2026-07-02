@@ -6,7 +6,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
-    middleware::{from_fn, map_response},
+    middleware::{from_fn, from_fn_with_state, map_response},
     routing::{get, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -119,6 +119,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),
         )
+        // Per-IP rate limiting for the auth endpoints (the middleware picks a quota
+        // by path and no-ops for the rest). Added before `no_store_layer` so a 429
+        // it short-circuits still gets `Cache-Control: no-store` from that outer
+        // layer (a CDN must never pin a rate-limit response).
+        .layer(from_fn_with_state(state.clone(), crate::ratelimit::rate_limit))
         .layer(map_response(no_store_layer));
 
     // Public, game-agnostic card catalog: the same for every visitor and changing

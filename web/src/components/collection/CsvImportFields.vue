@@ -28,8 +28,8 @@ function onChange(event: Event) {
       <div>
         <p class="text-foreground font-medium">Exporting from Archidekt</p>
         <p class="mt-1">
-          Open your collection and choose Export → CSV. You only need these three columns — you
-          can leave the rest unchecked:
+          Open your collection and choose Export → CSV. You only need these three columns — you can
+          leave the rest unchecked:
         </p>
         <ul class="mt-1.5 flex flex-wrap gap-1.5">
           <li class="bg-background rounded border px-1.5 py-0.5 font-medium">Scryfall ID</li>
@@ -40,8 +40,8 @@ function onChange(event: Event) {
       <div>
         <p class="text-foreground font-medium">Exporting from Moxfield</p>
         <p class="mt-1">
-          Open your collection and choose Export — the standard export already includes
-          everything we need (Count, Edition, Collector Number, Foil).
+          Open your collection and choose Export — the standard export already includes everything
+          we need (Count, Edition, Collector Number, Foil).
         </p>
       </div>
     </div>

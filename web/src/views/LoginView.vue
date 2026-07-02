@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthSubmit } from '@/composables/useAuthSubmit'
+import { useTurnstile } from '@/composables/useTurnstile'
 import { resendVerification } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -25,9 +26,14 @@ usePageMeta({ title: 'Sign in', canonicalPath: '/login', noindex: true })
 
 const email = ref('')
 const password = ref('')
+const turnstileEl = ref<HTMLElement>()
+const { execute } = useTurnstile(turnstileEl)
 
 function onSubmit() {
-  submit(() => auth.login({ email: email.value, password: password.value }))
+  submit(async () => {
+    const captcha_token = (await execute()) ?? undefined
+    await auth.login({ email: email.value, password: password.value, captcha_token })
+  })
 }
 
 // A 403 means the credentials were right but the email is unverified — offer to
@@ -38,7 +44,8 @@ const resendSent = ref(false)
 async function onResend() {
   resendLoading.value = true
   try {
-    await resendVerification({ email: email.value })
+    const captcha_token = (await execute()) ?? undefined
+    await resendVerification({ email: email.value, captcha_token })
     resendSent.value = true
   } catch {
     // Generic endpoint; a failure here is transient — leave the prompt in place.
@@ -103,6 +110,7 @@ async function onResend() {
               >.
             </template>
           </p>
+          <div ref="turnstileEl" class="empty:hidden"></div>
           <Button type="submit" class="w-full" :disabled="loading">
             <Loader2 v-if="loading" class="animate-spin" />
             {{ loading ? 'Signing in...' : 'Sign in' }}

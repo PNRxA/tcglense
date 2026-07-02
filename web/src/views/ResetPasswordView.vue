@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useTurnstile } from '@/composables/useTurnstile'
 import { ApiError, resetPassword } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
@@ -21,13 +22,16 @@ const password = ref('')
 const error = ref<string | null>(null)
 const loading = ref(false)
 const done = ref(false)
+const turnstileEl = ref<HTMLElement>()
+const { execute } = useTurnstile(turnstileEl)
 
 async function onSubmit() {
   if (!token.value) return
   error.value = null
   loading.value = true
   try {
-    await resetPassword({ token: token.value, password: password.value })
+    const captcha_token = (await execute()) ?? undefined
+    await resetPassword({ token: token.value, password: password.value, captcha_token })
     done.value = true
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
@@ -96,6 +100,7 @@ async function onSubmit() {
                 </RouterLink>
               </template>
             </p>
+            <div ref="turnstileEl" class="empty:hidden"></div>
             <Button type="submit" class="w-full" :disabled="loading">
               <Loader2 v-if="loading" class="animate-spin" />
               {{ loading ? 'Updating password...' : 'Update password' }}
