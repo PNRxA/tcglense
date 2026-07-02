@@ -119,11 +119,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),
         )
-        // Per-IP rate limiting for the auth endpoints (the middleware picks a quota
-        // by path and no-ops for the rest). Added before `no_store_layer` so a 429
-        // it short-circuits still gets `Cache-Control: no-store` from that outer
-        // layer (a CDN must never pin a rate-limit response).
+        // Rate limiting, two complementary middlewares (each picks a quota by path
+        // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,
+        // and per-user (keyed by the access-token user id) for the authenticated
+        // collection surface + `me`. Added before `no_store_layer` so a 429 that
+        // either one short-circuits still gets `Cache-Control: no-store` from that
+        // outer layer (a CDN must never pin a rate-limit response).
         .layer(from_fn_with_state(state.clone(), crate::ratelimit::rate_limit))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::ratelimit::user_rate_limit,
+        ))
         .layer(map_response(no_store_layer));
 
     // Public, game-agnostic card catalog: the same for every visitor and changing
