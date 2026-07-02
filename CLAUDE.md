@@ -673,7 +673,12 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   limiter's keyspace isn't shared across instances, so a multi-instance deploy
   would want a shared store (Redis) or an edge/WAF limiter — and the client-IP
   resolution trusts proxy headers only when `TRUST_PROXY_HEADERS=true`, so behind
-  a proxy that env **must** be set or every client keys as the proxy's IP.
+  a proxy that env **must** be set or every client keys as the proxy's IP. When it
+  IS set, the left-most `X-Forwarded-For` is used, which is only safe if the proxy
+  **replaces/strips** any inbound header (an appending proxy lets a client spoof
+  the left-most entry); a multi-hop CDN chain would need a trusted-proxy list
+  (future work). IPv6 clients are keyed by their **/64** (not /128) so a client
+  can't rotate source addresses within its block to dodge the limit.
   CAPTCHA and rate limiting are both **disabled by default** (no `TURNSTILE_SECRET_KEY`;
   though rate limiting is on, it fails open when the client IP is unresolvable, e.g.
   in-process tests) so dev/CI/e2e run without either — a production deploy must set

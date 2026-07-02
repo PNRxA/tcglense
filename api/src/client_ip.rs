@@ -29,8 +29,12 @@ pub fn resolve_client_ip(
 ) -> Option<IpAddr> {
     if trust_proxy {
         // `X-Forwarded-For: client, proxy1, proxy2` — the left-most entry is the
-        // original client. (We trust the whole chain because the header only
-        // reaches us via a proxy we've been told to trust.)
+        // original client. This is only trustworthy if the trusted proxy REPLACES
+        // (or strips) any inbound `X-Forwarded-For`; a proxy that merely *appends*
+        // lets a client inject a spoofed left-most entry, so operators enabling
+        // `TRUST_PROXY_HEADERS` must configure the proxy to overwrite the header
+        // (see the env docs). Multi-hop CDN chains need a trusted-proxy list —
+        // future work.
         if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
             && let Some(first) = xff.split(',').next()
             && let Ok(ip) = first.trim().parse::<IpAddr>()

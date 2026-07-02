@@ -12,7 +12,10 @@
 //! [`RateLimiters::retain_recent`] is swept periodically so the keyspace can't
 //! grow unbounded.
 
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::{IpAddr, Ipv6Addr},
+    time::Duration,
+};
 
 use axum::{
     extract::{Request, State},
@@ -31,6 +34,22 @@ use serde_json::json;
 use crate::{client_ip::resolve_client_ip, state::AppState};
 
 type KeyedLimiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
+
+/// The key an IP is bucketed under. IPv4 is keyed whole; IPv6 is masked to its
+/// /64 prefix — a single client is routinely handed a whole /64 (or larger), so
+/// per-/128 keying would let it evade the limit just by rotating source
+/// addresses (and would balloon the keyspace). /64 is the smallest block a host
+/// is reliably assigned, so it's the natural per-client unit.
+fn rate_limit_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(Ipv6Addr::from(octets))
+        }
+    }
+}
 
 /// The rate-limited auth route classes. Each gets its own limiter + quota; the
 /// quotas below are deliberately generous for a human and tight for a script.
@@ -117,7 +136,7 @@ impl RateLimiters {
     /// Check one request against `route`'s limiter for `ip`. `Ok(())` if allowed;
     /// `Err(retry_after)` (rounded up to whole seconds, min 1) if limited.
     fn check(&self, route: AuthRoute, ip: IpAddr) -> Result<(), Duration> {
-        match self.limiter(route).check_key(&ip) {
+        match self.limiter(route).check_key(&rate_limit_key(ip)) {
             Ok(()) => Ok(()),
             Err(not_until) => {
                 let wait = not_until.wait_time_from(self.clock.now());
@@ -192,6 +211,26 @@ mod tests {
             .check(AuthRoute::Register, ip)
             .expect_err("the 6th register is limited");
         assert!(retry.as_secs() >= 1);
+    }
+
+    #[test]
+    fn ipv6_addresses_are_keyed_by_their_64_prefix() {
+        let limiters = RateLimiters::default();
+        // Two addresses in the same /64 share a bucket, so rotating within it
+        // can't dodge the limit.
+        let a: IpAddr = "2001:db8:abcd:1234::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:abcd:1234:ffff:ffff:ffff:ffff".parse().unwrap();
+        for _ in 0..5 {
+            let _ = limiters.check(AuthRoute::Register, a);
+        }
+        assert!(
+            limiters.check(AuthRoute::Register, b).is_err(),
+            "a sibling /128 in the same /64 shares the bucket"
+        );
+
+        // A different /64 has its own budget.
+        let c: IpAddr = "2001:db8:abcd:9999::1".parse().unwrap();
+        assert!(limiters.check(AuthRoute::Register, c).is_ok());
     }
 
     #[test]
