@@ -16,11 +16,12 @@ import { useGamesQuery } from '@/composables/useCatalog'
 // (per-user).
 //
 // All items live under ONE NavigationMenu / NavigationMenuList on purpose: reka-ui
-// shares a single animated viewport across the items in a menu and computes the swipe
-// direction (data-motion=from-start/from-end) only between siblings in that same menu.
-// Splitting them into separate <NavigationMenu> roots (as this used to) gives each
-// its own isolated viewport and no directional motion, so the docs' swipe-and-fade
-// between them never plays.
+// computes the swipe direction (data-motion=from-start/from-end) only between siblings
+// in that same menu, so moving across triggers still animates directionally. The menu
+// runs `viewport=false`, though: the default shared viewport renders every panel in one
+// box pinned to the menu's left edge, which reads as the dropdown being stuck under
+// "Cards" — without it each NavigationMenuContent positions itself under its own
+// trigger (the item is `relative`, the content `top-full`), like UserMenu already does.
 //
 // The dropdowns are driven by the same cached games registry, so a new TCG appears in
 // all of them automatically. Collection and Wish list are shown to everyone; a
@@ -30,7 +31,7 @@ const games = computed(() => data.value?.data ?? [])
 </script>
 
 <template>
-  <NavigationMenu>
+  <NavigationMenu :viewport="false">
     <NavigationMenuList>
       <!-- Cards: the public catalog. -->
       <NavigationMenuItem>
