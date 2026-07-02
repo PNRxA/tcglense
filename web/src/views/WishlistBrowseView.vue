@@ -266,15 +266,13 @@ const scopeTotal = computed<number | null>(() => {
   }
   return setQuery.data.value?.card_count ?? null
 })
-// What the scope's wishlisted cards would cost, split into the total and its bulk
-// (< $1/card) slice, both formatted (null while loading or when nothing in scope is
-// priced). Shown only when there's no active search — the values are the whole scope's,
-// so pairing them with a search-filtered count would misread.
+// What the scope's wishlisted cards would cost, formatted (null while loading or when
+// nothing in scope is priced). No bulk slice on wish-list pages — a wish list is a
+// shopping list, so only what it costs matters. Shown only when there's no active
+// search — the value is the whole scope's, so pairing it with a search-filtered count
+// would misread.
 const scopeTotalValue = computed(() =>
   query.value ? null : formatUsd(summaryQuery.data.value?.total_value_usd),
-)
-const scopeBulkValue = computed(() =>
-  query.value ? null : formatUsd(summaryQuery.data.value?.bulk_value_usd),
 )
 // The scope's total wanted copies (with duplicates) as "N copies", shown next to the
 // count when more copies than distinct cards are wanted. Like the value, it's the whole
@@ -396,18 +394,13 @@ const errorMessage = computed(() =>
           <!-- The scope's total wanted copies (with duplicates), shown when more copies
                than distinct cards are wanted. Hidden while searching. -->
           <template v-if="scopeCopiesLabel"> · {{ scopeCopiesLabel }}</template>
-          <!-- What the scope's wishlisted cards would cost — the total, then its bulk
-               (< $1/card) slice to the right. Hidden while searching or when nothing is
-               priced. -->
+          <!-- What the scope's wishlisted cards would cost. No bulk slice (unlike the
+               collection browse header) — a wish list is a shopping list, so only the
+               cost matters. Hidden while searching or when nothing is priced. -->
           <template v-if="scopeTotalValue">
             ·
             <span class="text-muted-foreground text-[0.7rem] tracking-wide uppercase">Total</span>
             {{ scopeTotalValue }}
-          </template>
-          <template v-if="scopeBulkValue">
-            ·
-            <span class="text-muted-foreground text-[0.7rem] tracking-wide uppercase">Bulk</span>
-            {{ scopeBulkValue }}
           </template>
         </p>
       </header>

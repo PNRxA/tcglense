@@ -8,9 +8,10 @@ import { formatUsd } from '@/lib/money'
 
 // One game tile on the `/wishlist` landing — the wish-list twin of CollectionGameTile.
 // Each tile fetches that game's wish-list summary so its subtitle can show what the
-// wanted cards would cost + the bulk (< $1/card) slice, instead of the static
-// "Your <game> wish list" line. The summary query is per-game (a composable can't be
-// called in a v-for), so the tile owns its own fetch.
+// wanted cards would cost, instead of the static "Your <game> wish list" line. No bulk
+// slice here: a wish list is a shopping list, so only what it costs matters. The summary
+// query is per-game (a composable can't be called in a v-for), so the tile owns its own
+// fetch.
 const props = defineProps<{ game: Game }>()
 const gameId = toRef(() => props.game.id)
 
@@ -18,9 +19,6 @@ const gameId = toRef(() => props.game.id)
 // gracefully falls back to the static subtitle below.
 const summaryQuery = useWishlistSummaryQuery(gameId)
 const totalValue = computed(() => formatUsd(summaryQuery.data.value?.total_value_usd))
-// Bulk is present whenever the total is (both gate on something being priced), so a
-// truthy `totalValue` guarantees a `bulkValue` too.
-const bulkValue = computed(() => formatUsd(summaryQuery.data.value?.bulk_value_usd))
 </script>
 
 <template>
@@ -33,11 +31,10 @@ const bulkValue = computed(() => formatUsd(summaryQuery.data.value?.bulk_value_u
     </div>
     <div class="min-w-0 flex-1">
       <p class="font-medium">{{ game.name }}</p>
-      <!-- Total value + its bulk slice once the summary lands; the static line until
-           then (and while signed out / nothing wanted). -->
+      <!-- Total value once the summary lands; the static line until then (and while
+           signed out / nothing wanted). -->
       <p v-if="totalValue" class="text-muted-foreground truncate text-sm tabular-nums">
-        <span class="text-[0.7rem] tracking-wide uppercase">Total</span> {{ totalValue }} ·
-        <span class="text-[0.7rem] tracking-wide uppercase">Bulk</span> {{ bulkValue }}
+        <span class="text-[0.7rem] tracking-wide uppercase">Total</span> {{ totalValue }}
       </p>
       <p v-else class="text-muted-foreground truncate text-sm">Your {{ game.name }} wish list</p>
     </div>

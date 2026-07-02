@@ -23,12 +23,14 @@ const props = withDefaults(
     // on a related sub-set auto-opens that group's dropdown (issue #149).
     query?: string
     // Owned counts per set code (the collection + wish-list landings only). Collapsed
-    // into one object so it's a single prop rather than several parallel maps.
+    // into one object so it's a single prop rather than several parallel maps. The bulk
+    // map is optional: the wish-list landing omits it (a wish list is a shopping list,
+    // so only what it costs matters — no bulk slice on its tiles).
     ownership?: {
       counts: Record<string, number>
       copies: Record<string, number>
       values: Record<string, string | null>
-      bulkValues: Record<string, string | null>
+      bulkValues?: Record<string, string | null>
     }
     // The word each tile's count line ends with ("owned" by default; the wish-list
     // landing passes "wanted", issue #167).
@@ -57,7 +59,7 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
         :owned-count="ownership?.counts[group.main.code]"
         :owned-copies="ownership?.copies[group.main.code]"
         :owned-value="ownership?.values[group.main.code]"
-        :bulk-value="ownership?.bulkValues[group.main.code]"
+        :bulk-value="ownership?.bulkValues?.[group.main.code]"
         :count-noun="countNoun"
       />
       <SetGroup
