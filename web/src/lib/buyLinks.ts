@@ -10,12 +10,17 @@ import type { Card } from '@/lib/api'
 // The registry is keyed by game slug so a future TCG gets its own store list
 // (an unknown game simply renders no buy section).
 
-export interface BuyStore {
+interface BuyStore {
   name: string
   template: string
+  // Set on stores whose template wraps {name} in %22 quotes (an exact-phrase
+  // search): the few card names that contain literal double quotes (Portal
+  // Three Kingdoms "nickname" cards, some Un-cards) would nest quotes and
+  // malform the phrase query, so those characters are dropped first.
+  stripQuotes?: boolean
 }
 
-export interface BuySection {
+interface BuySection {
   title: string
   stores: BuyStore[]
 }
@@ -35,18 +40,20 @@ export interface BuyLinkSection {
 // MTG Mate has no free-text search endpoint — /cards/{name} is its exact-name
 // landing page listing every printing. MTG Singles Australia wraps the name in
 // literal %22 quotes: its Shopify search otherwise OR-matches individual words
-// (quotes force the exact phrase; no MTG card name contains a double quote).
+// (quotes force the exact phrase; see BuyStore.stripQuotes).
 const MTG_SECTIONS: BuySection[] = [
   {
     title: 'Global',
     stores: [
       {
         name: 'TCGplayer',
-        template: 'https://www.tcgplayer.com/search/magic/product?productLineName=magic&view=grid&q={name}',
+        template:
+          'https://www.tcgplayer.com/search/magic/product?productLineName=magic&view=grid&q={name}',
       },
       {
         name: 'Card Kingdom',
-        template: 'https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D={name}',
+        template:
+          'https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D={name}',
       },
       {
         name: 'Cardmarket',
@@ -85,6 +92,7 @@ const MTG_SECTIONS: BuySection[] = [
       {
         name: 'MTG Singles Australia',
         template: 'https://www.mtgsinglesaustralia.com/search?q=%22{name}%22',
+        stripQuotes: true,
       },
       { name: 'Guf', template: 'https://guf.com.au/search?q={name}' },
       { name: 'The Games Cube', template: 'https://www.thegamescube.com/products/search?q={name}' },
@@ -100,17 +108,28 @@ const SECTIONS_BY_GAME: Record<string, BuySection[]> = {
 
 // The slice of `Card` the link builder needs (structural, so tests don't have
 // to fabricate full CardFace rows).
-export type BuyCard = Pick<Card, 'name'> & { faces: { name: string | null }[] }
+export type BuyCard = Pick<Card, 'name' | 'layout'> & { faces: { name: string | null }[] }
+
+// Layouts catalogued under the combined "A // B" name: a split card's halves
+// aren't standalone product names ('Fire' alone isn't a product, 'Fire // Ice'
+// is). Aftermath and Room cards are also `split` in Scryfall's data. Every
+// other multi-faced layout (transform / modal_dfc / adventure / flip / …) is
+// catalogued by its front face.
+const COMBINED_NAME_LAYOUTS = new Set(['split'])
 
 export function buildSearchUrl(template: string, cardName: string): string {
-  return template.replace('{name}', encodeURIComponent(cardName))
+  return template.replace(/\{name\}/g, encodeURIComponent(cardName))
 }
 
-// Multi-faced cards search by their FRONT face name: every store indexes the
-// front face, while the full "A // B" form (or its `/`s) trips some search
-// engines. Single-faced cards have an empty `faces` array and use `name`.
+// The name to search a store for. Split cards keep the full "A // B" name (the
+// halves aren't products on their own); other multi-faced cards search by
+// their FRONT face name — stores index the front face, while the combined
+// form's `//` trips exact-name lookups and phrase searches. Single-faced cards
+// have an empty `faces` array and use `name`; a multi-faced card missing its
+// face names falls back to the combined name cut at the face separator.
 export function searchName(card: BuyCard): string {
-  return card.faces[0]?.name ?? card.name
+  if (COMBINED_NAME_LAYOUTS.has(card.layout ?? '')) return card.name
+  return card.faces[0]?.name ?? card.name.split(' // ')[0] ?? card.name
 }
 
 export function buyLinksFor(game: string, card: BuyCard): BuyLinkSection[] {
@@ -121,7 +140,7 @@ export function buyLinksFor(game: string, card: BuyCard): BuyLinkSection[] {
     title: section.title,
     links: section.stores.map((store) => ({
       name: store.name,
-      href: buildSearchUrl(store.template, name),
+      href: buildSearchUrl(store.template, store.stripQuotes ? name.replace(/"/g, '') : name),
     })),
   }))
 }
