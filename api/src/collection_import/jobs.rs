@@ -149,8 +149,6 @@ pub struct ImportRequest {
     pub provider: Provider,
     pub collection_id: String,
     pub mode: ReconcileMode,
-    /// Whether to stamp the saved source's `last_synced_at` on success (a re-sync).
-    pub stamp_source_synced: bool,
 }
 
 /// Queue an import and spawn its background worker; returns the job id immediately. The
@@ -192,8 +190,19 @@ pub fn spawn_import_job(
 
         match result {
             Ok(summary) => {
-                if request.stamp_source_synced
-                    && let Err(err) = stamp_last_synced(&db, request.user_id, &request.game).await
+                // A successful fetch is a sync of whatever saved link points at this exact
+                // collection: stamp its `last_synced_at`. Matching on (provider, external_id)
+                // means a one-off import of the saved collection (or a re-sync of it) marks
+                // the link synced, while importing an *unrelated* collection leaves it alone.
+                // Best-effort — a stamp failure never fails the import.
+                if let Err(err) = stamp_last_synced(
+                    &db,
+                    request.user_id,
+                    &request.game,
+                    request.provider,
+                    &request.collection_id,
+                )
+                .await
                 {
                     tracing::warn!(error = %err, "failed to stamp collection sync time");
                 }
@@ -210,12 +219,17 @@ pub fn spawn_import_job(
     Ok(id)
 }
 
-/// Stamp `last_synced_at` (and `updated_at`) on the user's saved source for a game, on a
-/// successful re-sync. Best-effort — a failure here doesn't fail the import.
+/// Stamp `last_synced_at` (and `updated_at`) on the saved source that points at the
+/// just-imported collection — matched on `(user, game, provider, external_id)` — so a
+/// successful import or re-sync of a saved link marks it synced, while importing some
+/// *other* collection leaves the saved link's marker untouched. A no-op (zero rows) when
+/// no saved link matches. Best-effort — a failure here doesn't fail the import.
 async fn stamp_last_synced(
     db: &DatabaseConnection,
     user_id: i32,
     game: &str,
+    provider: Provider,
+    external_id: &str,
 ) -> Result<(), sea_orm::DbErr> {
     let now = Utc::now();
     collection_source::Entity::update_many()
@@ -223,6 +237,8 @@ async fn stamp_last_synced(
         .col_expr(collection_source::Column::UpdatedAt, Expr::value(now))
         .filter(collection_source::Column::UserId.eq(user_id))
         .filter(collection_source::Column::Game.eq(game))
+        .filter(collection_source::Column::Provider.eq(provider.as_str()))
+        .filter(collection_source::Column::ExternalId.eq(external_id))
         .exec(db)
         .await?;
     Ok(())
@@ -275,5 +291,60 @@ mod tests {
         let a = q.create(1, "mtg").unwrap();
         let b = q.create(1, "mtg").unwrap();
         assert_ne!(a, b);
+    }
+
+    /// Stamping only marks the saved link that points at the just-imported collection:
+    /// importing an unrelated collection leaves it untouched, importing the saved one
+    /// stamps it. This is what lets a one-off import of the saved link (or a re-sync)
+    /// update "Last synced" while an unrelated import doesn't.
+    #[tokio::test]
+    async fn stamp_last_synced_only_marks_the_matching_saved_link() {
+        use crate::test_support::{insert_user, migrated_memory_db};
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "sync@example.com").await;
+        let now = Utc::now();
+        collection_source::ActiveModel {
+            user_id: Set(user_id),
+            game: Set("mtg".to_string()),
+            provider: Set(Provider::Archidekt.as_str().to_string()),
+            external_id: Set("123".to_string()),
+            last_synced_at: Set(None),
+            smart: Set(false),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("insert source");
+
+        let reload = || async {
+            collection_source::Entity::find()
+                .filter(collection_source::Column::UserId.eq(user_id))
+                .one(&db)
+                .await
+                .expect("query source")
+                .expect("source exists")
+        };
+
+        // A stamp for a *different* collection id must not touch the saved link.
+        stamp_last_synced(&db, user_id, "mtg", Provider::Archidekt, "999")
+            .await
+            .expect("stamp");
+        assert!(
+            reload().await.last_synced_at.is_none(),
+            "importing an unrelated collection left the saved link unsynced",
+        );
+
+        // A stamp for the saved collection id marks it synced.
+        stamp_last_synced(&db, user_id, "mtg", Provider::Archidekt, "123")
+            .await
+            .expect("stamp");
+        assert!(
+            reload().await.last_synced_at.is_some(),
+            "importing the saved collection stamped the link",
+        );
     }
 }

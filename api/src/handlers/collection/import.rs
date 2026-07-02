@@ -30,7 +30,9 @@ use super::{
 /// `POST /api/collection/{game}/import` -> enqueue a one-off import from a collection
 /// provider using the chosen reconcile mode (does not save the link). Validates the
 /// request synchronously, then returns `202` with a job id to poll; the fetch +
-/// reconcile run in the background, throttled by the provider rate limit.
+/// reconcile run in the background, throttled by the provider rate limit. On success the
+/// worker stamps `last_synced_at` on a saved link that points at this same collection (if
+/// any), so importing your saved collection updates "Last synced" just like a re-sync.
 pub async fn import_collection(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -64,7 +66,6 @@ pub async fn import_collection(
             provider,
             collection_id,
             mode: payload.mode,
-            stamp_source_synced: false,
         },
     )?;
 
@@ -270,8 +271,6 @@ pub async fn sync_collection_source(
             provider,
             collection_id: source.external_id,
             mode,
-            // Stamp `last_synced_at` on success (this is a re-sync of the saved link).
-            stamp_source_synced: true,
         },
     )?;
 
