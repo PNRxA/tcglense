@@ -247,9 +247,9 @@ fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportErr
     Ok(())
 }
 
-/// Fetch and parse one collection page, throttled by the shared limiter and transparently
-/// retrying past a `429` (backing off the whole limiter so every import waits). `order_by`
-/// sets Archidekt's `orderBy` when present (e.g. [`ORDER_RECENT`]); `None` uses the
+/// Fetch and parse one collection page, throttled by Archidekt's limiter and transparently
+/// retrying past a `429` (backing off that limiter so every Archidekt import waits).
+/// `order_by` sets Archidekt's `orderBy` when present (e.g. [`ORDER_RECENT`]); `None` uses the
 /// default order. Maps a missing/private collection (`400`/`404`) to `CollectionNotFound`.
 ///
 /// `rate_limit_retries` is the caller's cumulative-across-the-import 429 counter: it's

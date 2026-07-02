@@ -343,11 +343,13 @@ request cap (Archidekt ≈20 req/min), an import of a large collection takes min
 runs **asynchronously**: the handler validates synchronously, enqueues a background job
 (`collection_import::jobs`), and returns `202` + a `job_id`; the SPA polls the job-status
 route until `complete`/`error`. Imports run **one at a time** (a job waiting for the slot
-reports `queued`), and a process-wide `RateLimiter` (`collection_import::rate_limit`,
-20/min ⇒ one request every 3s) throttles **every** provider request across all imports.
-If the provider still returns **`429`**, the fetch **backs off** the shared limiter by at
-least a minute (honoring a larger `Retry-After`, capped at 5 min) so *all* imports pause,
-then retries the same page — giving up (`503`) after a few attempts.
+reports `queued`), and a **per-provider** `RateLimiter` (`collection_import::rate_limit`'s
+`ProviderLimiters`, one limiter per provider — Archidekt + Moxfield both 20/min ⇒ one
+request every 3s for now, tunable independently) throttles **every** request to that
+provider across all imports (so one provider's spacing/back-off never stalls another's).
+If the provider still returns **`429`**, the fetch **backs off** that provider's limiter by
+at least a minute (honoring a larger `Retry-After`, capped at 5 min) so all imports for
+*that provider* pause, then retries the same page — giving up (`503`) after a few attempts.
 Providers are dispatched by a `Provider` enum (Archidekt + Moxfield, one module per
 service), each fetching + parsing to normalized `(external_card_id, foil,
 quantity)` holdings; the provider-independent engine aggregates by card (`(uid, foil)` —
@@ -425,9 +427,9 @@ test_support.rs    shared #[cfg(test)] fixtures: test_config(), a migrated in-me
 security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, cookie/CORS/caching contracts, request bodies, search, collection + import
 entities/          SeaORM entities (user, refresh_token; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`)
 <<<<<<< HEAD
-collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode incl. Smart + ProviderContext/ProviderSettings + execute_import/execute_csv_import [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution]/aggregate/plan_reconcile/apply engine + smart_absorb_page/reconcile_smart/load_local_by_external for the incremental smart path + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
+collection_import/ provider-agnostic collection import/sync: mod.rs (Provider enum + ReconcileMode incl. Smart + ProviderContext/ProviderSettings + execute_import/execute_csv_import [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution]/aggregate/plan_reconcile/apply engine + smart_absorb_page/reconcile_smart/load_local_by_external for the incremental smart path + ImportError→AppError), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (per-provider RateLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
 =======
-collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration, parse_source, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish), csv_import.rs (parse an uploaded Archidekt CSV export → normalized holdings; bounded + defensive), rate_limit.rs (global RateLimiter: 20 req/min spacing + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
+collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration, parse_source, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish), csv_import.rs (parse an uploaded Archidekt CSV export → normalized holdings; bounded + defensive), rate_limit.rs (per-provider RateLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, spawn_import_job). Moxfield = add a Provider variant + a module
 >>>>>>> origin/main
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
@@ -635,8 +637,9 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   collection **server-side** and reconcile it. Archidekt caps requests (≈20/min) and
   pages 25 rows at a time with no page-size override, so a large collection takes minutes.
   Imports therefore run **asynchronously**: the endpoint returns `202` + a job id and the
-  client polls; a process-wide `RateLimiter` (20/min ⇒ one request every 3s) throttles
-  every provider request across all imports, and a single-slot queue runs one import at a
+  client polls; a **per-provider** `RateLimiter` (`ProviderLimiters` — Archidekt + Moxfield
+  each 20/min ⇒ one request every 3s for now, set independently) throttles every request to
+  that provider across all imports, and a single-slot queue runs one import at a
   time (others report `queued`). Jobs are **in-memory** (`AppState.imports`) — lost on
   restart (the client just re-imports) and not shared across instances, so a multi-instance
   deploy would need a shared job store + a distributed rate limiter (or a dedicated worker).
