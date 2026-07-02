@@ -5,3 +5,4 @@ pub mod collection;
 pub mod health;
 pub mod shared;
 pub mod sitemap;
+pub mod wishlist;

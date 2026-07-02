@@ -6,7 +6,7 @@
 //!   the IP can't be resolved (only the in-process test harness, which has no socket
 //!   peer) the request fails open — a real deployment always has a peer address.
 //! * **Per-user** ([`UserRateLimiters`] + [`user_rate_limit`]) — guards the
-//!   *authenticated* API surface (the collection endpoints + `me`), keyed by the
+//!   *authenticated* API surface (the collection + wishlist endpoints + `me`), keyed by the
 //!   user id in the access token, so it caps what one account can do regardless of
 //!   the IP it comes from (issue #168). A request with no valid bearer token has no
 //!   user to key on and passes through (it's a public route, or gets a `401` from
@@ -480,13 +480,17 @@ mod tests {
             UserRoute::Import
         );
 
-        // Reads, edits, job polling, and non-collection authenticated routes are general.
+        // Reads, edits, job polling, and non-collection authenticated routes are general
+        // (the whole wishlist surface included — it has no expensive import twin).
         for general in [
             "/api/collection/mtg",
             "/api/collection/mtg/summary",
             "/api/collection/mtg/sets",
             "/api/collection/mtg/cards/some-external-id",
             "/api/collection/mtg/import/jobs/1",
+            "/api/wishlist/mtg",
+            "/api/wishlist/mtg/counts",
+            "/api/wishlist/mtg/cards/some-external-id",
             "/api/auth/me",
         ] {
             assert_eq!(

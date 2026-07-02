@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Layers } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { setIconUrl, type CardSet } from '@/lib/api'
-import { formatCompletion, formatCopies } from '@/lib/ownership'
+import { formatCompletion, formatCopies, type CountNoun } from '@/lib/ownership'
 import { useImageLoad } from '@/composables/useImageLoad'
 
 const props = withDefaults(
@@ -35,6 +35,9 @@ const props = withDefaults(
     // as "BULK $X" on the stats line (in line with the owned count) — the collection
     // landing's per-set bulk value.
     bulkValue?: string | null
+    // The word the count line ends with: "owned" (the collection landing, the default)
+    // or "wanted" (the wish-list landing, issue #167).
+    countNoun?: CountNoun
   }>(),
   {
     variant: 'default',
@@ -44,6 +47,7 @@ const props = withDefaults(
     ownedCopies: undefined,
     ownedValue: undefined,
     bulkValue: undefined,
+    countNoun: 'owned',
   },
 )
 
@@ -90,14 +94,14 @@ const released = computed(() => {
 
 // The owned-count line on the collection landing: a set-completion "N/M owned" count
 // (owned / the set's total card count) so how much of the set you have reads at a glance
-// (issue #125). `ownedCount` is clamped to the total so a paper-only vs. Scryfall
-// card-count skew can never read "N+1 of N"; when the total is unknown (card_count 0) it
-// degrades to a plain "N owned".
+// (issue #125) — "N/M wanted" on the wish-list landing (`countNoun`). `ownedCount` is
+// clamped to the total so a paper-only vs. Scryfall card-count skew can never read
+// "N+1 of N"; when the total is unknown (card_count 0) it degrades to a plain "N owned".
 const ownedLabel = computed(() => {
   if (props.ownedCount == null) return null
   const total = props.set.card_count
-  if (total > 0) return formatCompletion(props.ownedCount, total)
-  return `${props.ownedCount.toLocaleString()} owned`
+  if (total > 0) return formatCompletion(props.ownedCount, total, props.countNoun)
+  return `${props.ownedCount.toLocaleString()} ${props.countNoun}`
 })
 
 // The total copies (with duplicates) as "N copies", shown next to the completion count
@@ -182,10 +186,10 @@ const copiesLabel = computed(() =>
     <!-- A standalone tile (no collapsible sub-sets) reserves the height of the
          footer row that SetGroup renders below its header, so a childless tile
          lines up with the collapsible tiles sharing its row instead of looking
-         stunted (2.25rem = the h-7 "View all" button that drives the row height
-         + its pb-2). Only needed once the grid is multi-column (sm+); in the
-         single-column layout there is no row neighbour to match, so the tile
+         stunted (2.75rem = the min-h-9 related-sets toggle that drives the row
+         height + its pb-2). Only needed once the grid is multi-column (sm+); in
+         the single-column layout there is no row neighbour to match, so the tile
          stays compact. -->
-    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-9 sm:block"></div>
+    <div v-if="variant === 'default'" aria-hidden="true" class="hidden h-11 sm:block"></div>
   </RouterLink>
 </template>

@@ -3,16 +3,23 @@ import { computed } from 'vue'
 import type { CollectionEntry } from '@/lib/api'
 import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
+import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
 
 // Same density-follows-preference grid as CardGrid, but each tile carries the quick-add
 // control (issue #95) seeded from the owned entry, so counts can be adjusted inline
-// without opening the card page. This view only renders for signed-in users.
-defineProps<{
-  game: string
-  entries: CollectionEntry[]
-}>()
+// without opening the card page. This view only renders for signed-in users. `list`
+// retargets the controls at the wish list (issue #167) — the entries are then wish-list
+// holdings, edited in place the same way.
+withDefaults(
+  defineProps<{
+    game: string
+    entries: CollectionEntry[]
+    list?: CardListTarget
+  }>(),
+  { list: 'collection' },
+)
 
 const cardSize = useCardSizeStore()
 const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
@@ -28,6 +35,7 @@ const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
           :name="entry.card.name"
           :quantity="entry.quantity"
           :foil-quantity="entry.foil_quantity"
+          :list="list"
         />
       </template>
     </CardTile>

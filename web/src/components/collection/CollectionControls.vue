@@ -5,23 +5,34 @@ import { RouterLink, useRoute } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { useCollectionEntryQuery } from '@/composables/useCollection'
-import { useOwnedCountEditor } from '@/composables/useOwnedCountEditor'
+import { useWishlistEntryQuery } from '@/composables/useWishlist'
+import { useOwnedCountEditor, type CardListTarget } from '@/composables/useOwnedCountEditor'
 import { useAuthStore } from '@/stores/auth'
 
 // "How many do I own?" controls for the card-detail page. Reads the current holding
 // and lets a signed-in user adjust the regular + foil counts; the route is public,
 // so signed-out visitors instead get a sign-in nudge. The debounced/serialized save
 // loop lives in useOwnedCountEditor (shared with the grid quick-add control).
-const props = defineProps<{ game: string; card: Card }>()
+// `list` retargets the section at the wish list (issue #167) — "how many do I want to
+// buy?" — reading/writing the wish-list counts with its own wording.
+const props = withDefaults(defineProps<{ game: string; card: Card; list?: CardListTarget }>(), {
+  list: 'collection',
+})
 const auth = useAuthStore()
 const route = useRoute()
 
 const game = toRef(props, 'game')
 const cardId = computed(() => props.card.id)
+const wishlist = computed(() => props.list === 'wishlist')
 
-const entryQuery = useCollectionEntryQuery(game, cardId)
+// The target list is fixed per instance, so picking the entry hook once at setup is safe.
+const entryQuery = wishlist.value
+  ? useWishlistEntryQuery(game, cardId)
+  : useCollectionEntryQuery(game, cardId)
 const seed = computed(() => entryQuery.data.value)
-const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed)
+const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
+  list: props.list,
+})
 
 // Disable the steppers until the initial holding has loaded, so an early click can't
 // adjust off a stale zero.
@@ -33,7 +44,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
 <template>
   <section class="mt-6 rounded-lg border p-4">
     <div class="mb-3 flex items-center justify-between gap-2">
-      <h2 class="text-sm font-semibold">Your collection</h2>
+      <h2 class="text-sm font-semibold">{{ wishlist ? 'Your wish list' : 'Your collection' }}</h2>
       <!-- Save status (signed-in only). -->
       <span
         v-if="auth.isAuthenticated"
@@ -59,7 +70,8 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
       <RouterLink :to="loginTo" class="text-primary font-medium hover:underline"
         >Sign in</RouterLink
       >
-      to track this card in your collection.
+      <template v-if="wishlist"> to keep a wish list of cards you want to buy.</template>
+      <template v-else> to track this card in your collection.</template>
     </p>
 
     <div v-else class="space-y-3">
@@ -97,8 +109,9 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
 
       <p class="text-muted-foreground text-xs">
         <template v-if="owned > 0">
-          You own {{ owned }} {{ owned === 1 ? 'copy' : 'copies' }}.
+          You {{ wishlist ? 'want' : 'own' }} {{ owned }} {{ owned === 1 ? 'copy' : 'copies' }}.
         </template>
+        <template v-else-if="wishlist"> Not on your wish list yet. </template>
         <template v-else> Not in your collection yet. </template>
       </p>
     </div>

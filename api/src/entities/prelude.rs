@@ -7,3 +7,4 @@ pub use super::email_token::Entity as EmailToken;
 pub use super::ingest_state::Entity as IngestState;
 pub use super::refresh_token::Entity as RefreshToken;
 pub use super::user::Entity as User;
+pub use super::wishlist_item::Entity as WishlistItem;

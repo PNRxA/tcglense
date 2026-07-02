@@ -3,7 +3,11 @@ import { computed, toRef } from 'vue'
 import { Check, Loader2, Minus, Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import CardImage from '@/components/cards/CardImage.vue'
-import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
+import {
+  useOwnedCountEditor,
+  type CardListTarget,
+  type OwnedCountSeed,
+} from '@/composables/useOwnedCountEditor'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import type { Card } from '@/lib/api'
 
@@ -11,26 +15,33 @@ import type { Card } from '@/lib/api'
 // is large enough to actually tell printings apart: full-size card image on top, then
 // set/number/rarity/price, then regular/foil steppers. Reuses the same
 // `useOwnedCountEditor` the card-detail and grid controls use, so the tricky bits
-// (debounced + serialized absolute-count saves, dirty guarding) are shared.
+// (debounced + serialized absolute-count saves, dirty guarding) are shared. `list`
+// retargets the saves at the wish list (issue #167).
 //
 // Writes are ABSOLUTE, so the editor must be seeded from the authoritative holding
-// before it can be trusted: the parent dialog fetches every printing's owned counts
+// before it can be trusted: the parent dialog fetches every printing's counts
 // fresh on open and passes each tile its `seed` (once `ready`). Until then the steppers
 // stay disabled, so a click can never save an adjustment off a stale zero.
-const props = defineProps<{
-  game: string
-  card: Card
-  /** Authoritative owned counts for this printing, or `undefined` until they load. */
-  seed: OwnedCountSeed | undefined
-  /** Whether `seed` reflects the current server holding (gates the steppers). */
-  ready: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    game: string
+    card: Card
+    /** Authoritative counts for this printing, or `undefined` until they load. */
+    seed: OwnedCountSeed | undefined
+    /** Whether `seed` reflects the current server holding (gates the steppers). */
+    ready: boolean
+    list?: CardListTarget
+  }>(),
+  { list: 'collection' },
+)
 
 const game = toRef(props, 'game')
 const cardId = computed(() => props.card.id)
 const seed = toRef(props, 'seed')
 
-const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed)
+const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
+  list: props.list,
+})
 
 const price = computed(() => displayUsdPrice(props.card.prices))
 const owned = computed(() => regular.value + foil.value > 0)

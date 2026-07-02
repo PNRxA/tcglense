@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
+import CardDetailDialog from '@/components/cards/CardDetailDialog.vue'
 import MainNav from '@/components/MainNav.vue'
 import MobileNav from '@/components/MobileNav.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
@@ -35,5 +36,8 @@ import UserMenu from '@/components/UserMenu.vue'
     <main>
       <RouterView />
     </main>
+    <!-- The card-detail modal any browse grid opens via `?card=<id>` (see CardTile /
+         CardDetailDialog) — mounted once here so it overlays whichever page is up. -->
+    <CardDetailDialog />
   </div>
 </template>

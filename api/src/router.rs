@@ -30,6 +30,10 @@ use crate::{
         },
         health::health,
         sitemap::{sitemap_child, sitemap_index},
+        wishlist::{
+            get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
+            wishlist_set_drops, wishlist_sets, wishlist_summary,
+        },
     },
     state::AppState,
 };
@@ -119,12 +123,31 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),
         )
+        // Per-user wish lists: the collection's "want" twin (same holding shape and
+        // routes, minus import/sync — a wish list has nothing to import). Authenticated
+        // (via AuthUser) and no-store. Registered before the rate-limit layers below so
+        // the per-user limiter wraps these routes too.
+        .route("/api/wishlist/{game}", get(list_wishlist))
+        .route("/api/wishlist/{game}/summary", get(wishlist_summary))
+        .route("/api/wishlist/{game}/sets", get(wishlist_sets))
+        .route(
+            "/api/wishlist/{game}/sets/{code}/drops",
+            get(wishlist_set_drops),
+        )
+        // Batch wanted-counts lookup for the browse-grid badges/ghosts (external ids
+        // in, wanted counts out). POST so a big page's id list can't blow the URL
+        // length. `/counts`, not `/owned` — a wish list doesn't track ownership.
+        .route("/api/wishlist/{game}/counts", post(wishlist_counts))
+        .route(
+            "/api/wishlist/{game}/cards/{id}",
+            get(get_wishlist_entry).put(set_wishlist_entry),
+        )
         // Rate limiting, two complementary middlewares (each picks a quota by path
         // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,
         // and per-user (keyed by the access-token user id) for the authenticated
-        // collection surface + `me`. Added before `no_store_layer` so a 429 that
-        // either one short-circuits still gets `Cache-Control: no-store` from that
-        // outer layer (a CDN must never pin a rate-limit response).
+        // collection + wishlist surfaces + `me`. Added before `no_store_layer` so a
+        // 429 that either one short-circuits still gets `Cache-Control: no-store`
+        // from that outer layer (a CDN must never pin a rate-limit response).
         .layer(from_fn_with_state(state.clone(), crate::ratelimit::rate_limit))
         .layer(from_fn_with_state(
             state.clone(),

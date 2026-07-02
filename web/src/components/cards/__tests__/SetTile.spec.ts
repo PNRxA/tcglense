@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { CardSet } from '@/lib/api'
+import type { CountNoun } from '@/lib/ownership'
 import { makeCardSet } from '@/test/fixtures'
 import SetTile from '../SetTile.vue'
 
@@ -19,6 +20,7 @@ function mountTile(props: {
   ownedCopies?: number
   ownedValue?: string | null
   bulkValue?: string | null
+  countNoun?: CountNoun
 }) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -82,5 +84,21 @@ describe('SetTile owned-count line', () => {
     expect(wrapper.text()).not.toContain('owned')
     expect(wrapper.text()).not.toContain('Total')
     expect(wrapper.text()).not.toContain('Bulk')
+  })
+
+  it('swaps the count noun with countNoun (the wish-list landing, issue #167)', () => {
+    const wrapper = mountTile({ set: makeSet(), ownedCount: 142, countNoun: 'wanted' })
+    expect(wrapper.text()).toContain('142/281 wanted')
+    expect(wrapper.text()).not.toContain('owned')
+  })
+
+  it('applies the count noun to the plain fallback too (card_count 0)', () => {
+    const wrapper = mountTile({
+      set: makeSet({ card_count: 0 }),
+      ownedCount: 5,
+      countNoun: 'wanted',
+    })
+    expect(wrapper.text()).toContain('5 wanted')
+    expect(wrapper.text()).not.toContain('5/0')
   })
 })

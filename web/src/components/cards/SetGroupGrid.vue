@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import SetTile from '@/components/cards/SetTile.vue'
 import SetGroup from '@/components/cards/SetGroup.vue'
+import type { CountNoun } from '@/lib/ownership'
 import type { SetGroup as SetGroupModel } from '@/lib/setGroups'
 
 // The responsive grid of set tiles that both landing views render: a childless set is a
@@ -21,16 +22,21 @@ const props = withDefaults(
     // The landing view's active set-list filter, forwarded to each SetGroup so a match
     // on a related sub-set auto-opens that group's dropdown (issue #149).
     query?: string
-    // Owned counts per set code (the collection landing only). Collapsed into one object
-    // so it's a single prop rather than several parallel maps.
+    // Owned counts per set code (the collection + wish-list landings only). Collapsed
+    // into one object so it's a single prop rather than several parallel maps. The bulk
+    // map is optional: the wish-list landing omits it (a wish list is a shopping list,
+    // so only what it costs matters — no bulk slice on its tiles).
     ownership?: {
       counts: Record<string, number>
       copies: Record<string, number>
       values: Record<string, string | null>
-      bulkValues: Record<string, string | null>
+      bulkValues?: Record<string, string | null>
     }
+    // The word each tile's count line ends with ("owned" by default; the wish-list
+    // landing passes "wanted", issue #167).
+    countNoun?: CountNoun
   }>(),
-  { scrollMt: 28, basePath: '/cards', query: '', ownership: undefined },
+  { scrollMt: 28, basePath: '/cards', query: '', ownership: undefined, countNoun: 'owned' },
 )
 
 // Literal class strings (not interpolated) so Tailwind's JIT emits them.
@@ -45,15 +51,19 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
 <template>
   <div class="grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3" :class="scrollClass">
     <template v-for="group in groups" :key="group.main.code">
+      <!-- In an ownership context (an `ownership` object was passed), a set with no
+           entry truthfully shows a "0/N owned|wanted" count line rather than omitting
+           it — so mixed rows of owned and unowned tiles stay the same height. -->
       <SetTile
         v-if="!group.children.length"
         :game="game"
         :set="group.main"
         :to="setLink(group.main.code)"
-        :owned-count="ownership?.counts[group.main.code]"
-        :owned-copies="ownership?.copies[group.main.code]"
+        :owned-count="ownership ? (ownership.counts[group.main.code] ?? 0) : undefined"
+        :owned-copies="ownership ? (ownership.copies[group.main.code] ?? 0) : undefined"
         :owned-value="ownership?.values[group.main.code]"
-        :bulk-value="ownership?.bulkValues[group.main.code]"
+        :bulk-value="ownership?.bulkValues?.[group.main.code]"
+        :count-noun="countNoun"
       />
       <SetGroup
         v-else
@@ -65,6 +75,7 @@ const setLink = (code: string) => `${props.basePath}/${props.game}/sets/${code}`
         :owned-copies="ownership?.copies"
         :owned-values="ownership?.values"
         :bulk-values="ownership?.bulkValues"
+        :count-noun="countNoun"
       />
     </template>
   </div>

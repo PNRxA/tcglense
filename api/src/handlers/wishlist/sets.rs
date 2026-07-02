@@ -1,4 +1,4 @@
-//! Collection per-set endpoints: the owned-set landing tiles and the owned cards of a
+//! Wish-list per-set endpoints: the wanted-set landing tiles and the wanted cards of a
 //! drop-grouped set, grouped by Secret Lair drop.
 
 use axum::{
@@ -9,34 +9,32 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::CardSet;
-use crate::entities::{card, card_set, collection_item};
+use crate::entities::{card, card_set, wishlist_item};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, Page, SortDir, SortField, build_collection_sets, group_into_drops, load_set,
+    CardResponse, CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSort,
+    ListParams, Page, SortDir, SortField, build_collection_sets, group_into_drops, load_set,
     paginate_buckets, require_drop_table, require_game, search_condition,
 };
 use crate::state::AppState;
 
-use super::read::{collection_query, owned_with_cards};
-use super::{
-    CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSort, ListParams,
-};
+use super::read::{wanted_with_cards, wishlist_query};
 
-/// `GET /api/collection/{game}/sets` -> the sets the signed-in user owns cards in,
-/// newest set first, each with the catalog set metadata plus owned counts. Backs the
-/// collection's per-set landing (mirrors the catalog's game -> sets view).
-pub async fn collection_sets(
+/// `GET /api/wishlist/{game}/sets` -> the sets the signed-in user wants cards in,
+/// newest set first, each with the catalog set metadata plus wanted counts. Backs the
+/// wish list's per-set landing (its `owned_*` fields read as wanted counts there).
+pub async fn wishlist_sets(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
 ) -> Result<Json<CollectionSetsResponse>, AppError> {
     require_game(&game)?;
 
-    // Every owned card (with its joined card row) for the game — bounded by how many
-    // distinct cards the user owns.
-    let rows = owned_with_cards(user.id, &game, None).all(&state.db).await?;
+    // Every wanted card (with its joined card row) for the game — bounded by how many
+    // distinct cards the user wants.
+    let rows = wanted_with_cards(user.id, &game, None).all(&state.db).await?;
 
-    // The game's set metadata, to dress each owned set as a full catalog tile.
+    // The game's set metadata, to dress each wanted set as a full catalog tile.
     let sets = CardSet::find()
         .filter(card_set::Column::Game.eq(game.as_str()))
         .all(&state.db)
@@ -47,16 +45,16 @@ pub async fn collection_sets(
     }))
 }
 
-/// `GET /api/collection/{game}/sets/{code}/drops` -> the signed-in user's owned cards
+/// `GET /api/wishlist/{game}/sets/{code}/drops` -> the signed-in user's wanted cards
 /// in a drop-grouped set (e.g. Secret Lair), grouped by Secret Lair drop and
-/// **paginated by drop** — the collection mirror of the catalog's set-drops endpoint,
-/// but scoped to (and carrying the owned counts of) what the user owns.
+/// **paginated by drop** — the wish-list mirror of the catalog's set-drops endpoint,
+/// but scoped to (and carrying the wanted counts of) what the user wants.
 ///
-/// Only owned cards appear, so a drop the user owns nothing in is simply absent; cards
-/// whose collector number isn't in the snapshot fall into a trailing "Other" group.
-/// `404` if the set isn't drop-grouped (check `has_drops` first). An optional `q`
-/// narrows the owned cards, dropping now-empty drops.
-pub async fn collection_set_drops(
+/// Only wanted cards appear, so a drop the user wants nothing in is simply absent;
+/// cards whose collector number isn't in the snapshot fall into a trailing "Other"
+/// group. `404` if the set isn't drop-grouped (check `has_drops` first). An optional
+/// `q` narrows the wanted cards, dropping now-empty drops.
+pub async fn wishlist_set_drops(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path((game, code)): Path<(String, String)>,
@@ -74,11 +72,11 @@ pub async fn collection_set_drops(
         .map(|s| search_condition(game_meta, s))
         .transpose()?;
 
-    // The user's owned cards in this set, in collector-number order (with their
-    // holdings) — bounded by one set, so we group + paginate by drop in memory, keeping
-    // every drop complete regardless of where the page boundary falls.
+    // The user's wanted cards in this set, in collector-number order (with their
+    // wish-list rows) — bounded by one set, so we group + paginate by drop in memory,
+    // keeping every drop complete regardless of where the page boundary falls.
     let scope = [set.code.clone()];
-    let rows = collection_query(
+    let rows = wishlist_query(
         user.id,
         &game,
         Some(&scope),
@@ -89,9 +87,9 @@ pub async fn collection_set_drops(
     .all(&state.db)
     .await?;
 
-    // A holding whose card row is gone (a catalog re-import) left-joins to `None` — skip
-    // it, exactly as the list/summary reads do.
-    let pairs: Vec<(collection_item::Model, card::Model)> = rows
+    // A row whose card is gone (a catalog re-import) left-joins to `None` — skip it,
+    // exactly as the list/summary reads do.
+    let pairs: Vec<(wishlist_item::Model, card::Model)> = rows
         .into_iter()
         .filter_map(|(item, card)| card.map(|c| (item, c)))
         .collect();

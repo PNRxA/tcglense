@@ -3,18 +3,15 @@ import { computed, toRef } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
-import CardImageZoom from '@/components/cards/CardImageZoom.vue'
-import CardMetaList from '@/components/cards/CardMetaList.vue'
-import ManaSymbols from '@/components/cards/ManaSymbols.vue'
-import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
-import CollectionControls from '@/components/collection/CollectionControls.vue'
-import CardPrints from '@/components/cards/CardPrints.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
-import PriceChart from '@/components/cards/PriceChart.vue'
+import CardDetailContent from '@/components/cards/CardDetailContent.vue'
 import { useCardBackLink } from '@/composables/useCardBackLink'
 import { cardImageUrl, getCard } from '@/lib/api'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
 
+// The full card-detail page. The detail body itself lives in CardDetailContent
+// (shared with the browse-grid modal, CardDetailDialog); this view adds what only a
+// real page needs — the per-URL meta/JSON-LD and the in-app back link. Its card query
+// shares CardDetailContent's ['card', game, id] key, so the two never double-fetch.
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -72,119 +69,19 @@ usePageMeta({
 
 // The in-app "back" link, mirroring the path the user arrived by (issue #18/#63).
 const backLink = useCardBackLink(game, card)
-
-// Layouts whose faces carry their OWN images (so we render one image per face).
-// Split / flip / adventure / aftermath also have two faces, but only a single
-// top-level image — those use the one-image path so we don't 404 per face.
-const SEPARATE_FACE_IMAGE_LAYOUTS = [
-  'transform',
-  'modal_dfc',
-  'double_faced_token',
-  'reversible_card',
-  'battle',
-  'art_series',
-]
-const isMultiFace = computed(() => (card.value?.faces.length ?? 0) >= 2)
-const hasSeparateFaceImages = computed(
-  () => isMultiFace.value && SEPARATE_FACE_IMAGE_LAYOUTS.includes(card.value?.layout ?? ''),
-)
 </script>
 
 <template>
   <div class="mx-auto max-w-5xl px-4 py-10">
-    <LoadingRow v-if="cardQuery.isPending.value" label="Loading card…" />
-    <p v-else-if="cardQuery.isError.value || !card" class="text-destructive py-12">
-      Card not found.
-    </p>
+    <RouterLink
+      v-if="card"
+      :to="backLink.to"
+      class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
+    >
+      <ArrowLeft class="size-4" />
+      {{ backLink.label }}
+    </RouterLink>
 
-    <template v-else-if="card">
-      <RouterLink
-        :to="backLink.to"
-        class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
-      >
-        <ArrowLeft class="size-4" />
-        {{ backLink.label }}
-      </RouterLink>
-
-      <div class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
-        <!-- Image(s): one per face only for layouts with separate face images.
-          Each is clickable to enlarge it in a lightbox (issue #53). -->
-        <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
-          <template v-if="hasSeparateFaceImages">
-            <CardImageZoom
-              v-for="(face, index) in card.faces"
-              :key="index"
-              :game="game"
-              :id="card.id"
-              :name="face.name ?? card.name"
-              :face="index"
-              class="w-full"
-            />
-          </template>
-          <CardImageZoom
-            v-else
-            :game="game"
-            :id="card.id"
-            :name="card.name"
-            :has-image="card.has_image"
-            class="w-full"
-          />
-        </div>
-
-        <!-- Details -->
-        <div>
-          <h1 class="text-3xl font-semibold tracking-tight">{{ card.name }}</h1>
-          <p v-if="card.type_line" class="text-muted-foreground mt-1">{{ card.type_line }}</p>
-
-          <CardMetaList :game="game" :card="card" />
-
-          <!-- Oracle text (single-faced cards; multi-faced show text per face below). -->
-          <p
-            v-if="!isMultiFace && card.oracle_text"
-            class="mt-6 text-sm leading-relaxed whitespace-pre-line"
-          >
-            <ManaSymbols :text="card.oracle_text" />
-          </p>
-
-          <!-- Per-face text breakdown for any multi-faced card (incl. split/flip). -->
-          <div v-if="isMultiFace" class="mt-6 space-y-3">
-            <div v-for="(face, index) in card.faces" :key="index" class="rounded-lg border p-3">
-              <p class="font-medium">{{ face.name }}</p>
-              <p v-if="face.type_line" class="text-muted-foreground text-sm">
-                {{ face.type_line }}
-              </p>
-              <p v-if="face.mana_cost" class="text-muted-foreground text-sm">
-                <ManaSymbols :text="face.mana_cost" />
-              </p>
-              <p v-if="face.oracle_text" class="mt-1 text-sm leading-relaxed whitespace-pre-line">
-                <ManaSymbols :text="face.oracle_text" />
-              </p>
-              <p
-                v-if="face.power && face.toughness"
-                class="text-muted-foreground mt-1 text-sm tabular-nums"
-              >
-                {{ face.power }} / {{ face.toughness }}
-              </p>
-              <p v-if="face.loyalty" class="text-muted-foreground mt-1 text-sm tabular-nums">
-                Loyalty {{ face.loyalty }}
-              </p>
-            </div>
-          </div>
-
-          <!-- Prices -->
-          <CardPriceSummary :card="card" />
-
-          <!-- Track how many copies you own (signed-in users). -->
-          <CollectionControls :game="game" :card="card" />
-        </div>
-      </div>
-
-      <!-- Price history over time (full width, below the card details). -->
-      <PriceChart :game="game" :id="card.id" />
-
-      <!-- This card's other printings (same gameplay object, issue #63). Renders
-        nothing when there are none. -->
-      <CardPrints :game="game" :id="card.id" />
-    </template>
+    <CardDetailContent :game="game" :id="id" />
   </div>
 </template>

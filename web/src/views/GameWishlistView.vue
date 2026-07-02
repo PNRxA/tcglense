@@ -9,11 +9,10 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
-import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
-import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
+import { useWishlistSetsQuery, useWishlistSummaryQuery } from '@/composables/useWishlist'
 import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { groupByYear, partitionPinned } from '@/lib/setGroups'
@@ -21,14 +20,14 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 import type { CardSet } from '@/lib/api'
 
-// The per-game collection landing: pick a set to see just your cards from it, or "All
-// cards" for the whole collection. By default it lists just the sets you own cards in;
-// a segmented toggle (`?sets=all`) flips it to the catalog game view's FULL set list —
-// featured + year sections and all — the same Collected/All-sets control as the
-// wish-list landing. Either way the per-set owned counts/values overlay the tiles that
-// have any. The header carries the value/count summary plus the import / re-sync
-// controls; the actual card grids live on CollectionBrowseView
-// (`/collection/:game/cards` + `.../sets/:code`).
+// The per-game wish-list landing (issue #167). By default it lists just the sets
+// holding wishlisted cards (like the collection landing lists only owned sets); a
+// segmented toggle (`?sets=all`) flips it to the catalog game view's FULL set list —
+// featured + year sections and all — so there's always somewhere to click through and
+// start wishing. Either way the user's per-set wanted counts/values overlay the tiles
+// that have any. The header carries the value/count summary and a quick-add box (no
+// import/sync — a wish list has nothing to sync from); the card grids live on
+// WishlistBrowseView (`/wishlist/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
@@ -37,20 +36,20 @@ const auth = useAuthStore()
 
 // Per-account page — kept out of search indexes.
 usePageMeta({
-  title: () => `Your ${gameName.value} collection`,
-  canonicalPath: () => `/collection/${game.value}`,
+  title: () => `Your ${gameName.value} wish list`,
+  canonicalPath: () => `/wishlist/${game.value}`,
   noindex: true,
 })
 
-const summaryQuery = useCollectionSummaryQuery(game)
-// The sets holding owned cards — the default mode's list and the per-set overlay
-// either mode shows.
-const collectionSetsQuery = useCollectionSetsQuery(game)
+const summaryQuery = useWishlistSummaryQuery(game)
+// The sets holding wishlisted cards — only the per-set counts/values overlay, since the
+// grid itself lists the whole catalog.
+const wishlistSetsQuery = useWishlistSetsQuery(game)
 
 const summary = computed(() => summaryQuery.data.value)
-const ownedSets = computed(() => collectionSetsQuery.data.value?.data ?? [])
+const wishlistSets = computed(() => wishlistSetsQuery.data.value?.data ?? [])
 
-// Which sets the grid lists: just the owned ones (default) or the whole catalog
+// Which sets the grid lists: just the wishlisted ones (default) or the whole catalog
 // (`?sets=all`). A URL param, like the browse views' `?ghosts`, so the choice survives
 // navigation and the back button.
 const route = useRoute()
@@ -65,16 +64,14 @@ function setShowAllSets(on: boolean) {
 
 // The FULL public set list (shared, cached with the catalog game view) — the all-sets
 // mode's source, fetched unconditionally so toggling never starts from a spinner.
-const catalogSetsQuery = useSetsQuery(game)
-const catalogSets = computed(() => catalogSetsQuery.data.value?.data ?? [])
+const setsQuery = useSetsQuery(game)
+const sets = computed(() => setsQuery.data.value?.data ?? [])
 
 // The active mode's sets, grouped and filterable exactly like the catalog game view:
 // nested sub-sets, instant name/code narrowing, groups kept whole when any member
 // matches (issues #127/#128). One grouping instance over the switched source, so the
 // filter box and header counts track whichever mode is on.
-const sourceSets = computed<CardSet[]>(() =>
-  showAllSets.value ? catalogSets.value : ownedSets.value,
-)
+const sourceSets = computed<CardSet[]>(() => (showAllSets.value ? sets.value : wishlistSets.value))
 const { filter, trimmedFilter, filtering, groups, relatedCount } = useFilteredSetGroups(
   game,
   sourceSets,
@@ -82,15 +79,14 @@ const { filter, trimmedFilter, filtering, groups, relatedCount } = useFilteredSe
 
 // The active mode's query state, for the loading/error rows below.
 const activePending = computed(() =>
-  showAllSets.value ? catalogSetsQuery.isPending.value : collectionSetsQuery.isPending.value,
+  showAllSets.value ? setsQuery.isPending.value : wishlistSetsQuery.isPending.value,
 )
 const activeError = computed(() =>
-  showAllSets.value ? catalogSetsQuery.isError.value : collectionSetsQuery.isError.value,
+  showAllSets.value ? setsQuery.isError.value : wishlistSetsQuery.isError.value,
 )
 
 // Pinned sets (e.g. Secret Lair) lead as a "Featured" section; the rest break into
-// release-year sections — the same scannable layout as the catalog game view. Used by
-// the all-sets mode only (the owned-sets default is a flat newest-first grid).
+// release-year sections — the same scannable layout as the catalog game view.
 const partitioned = computed(() => partitionPinned(groups.value))
 const years = computed(() => groupByYear(partitioned.value.rest))
 const yearLabel = (year: number | null) => (year === null ? 'Unknown year' : String(year))
@@ -106,46 +102,43 @@ const sections = computed(() => {
     : yearSections
 })
 
-// Per-set-code owned stats each tile shows next to its name: the "N/M owned" completion
-// count, the "N copies" total (when you own duplicates, issue #125), and the preformatted
-// owned value (issue #119; null/unpriced sets carry a null the tile omits) plus its bulk
-// slice. Built in one pass and passed to SetGroupGrid as a single `ownership` object;
-// sets you own nothing in are simply absent, so in all-sets mode their tiles keep the
-// plain catalog card count.
+// Per-set-code wanted stats each tile shows next to its name: the "N/M wanted"
+// completion count, the "N copies" total (duplicates), and the preformatted value
+// its wanted cards would cost (null/unpriced sets carry a null the tile omits) — the
+// wish-list mirror of the collection landing's ownership object, built in one pass
+// and passed to SetGroupGrid. Sets with nothing wishlisted are simply absent, so
+// their tiles keep the plain catalog card count.
 const ownership = computed(() => {
   const counts: Record<string, number> = {}
   const copies: Record<string, number> = {}
   const values: Record<string, string | null> = {}
-  const bulkValues: Record<string, string | null> = {}
-  for (const set of ownedSets.value) {
+  for (const set of wishlistSets.value) {
     counts[set.code] = set.owned_cards
     copies[set.code] = set.owned_copies
     values[set.code] = formatUsd(set.owned_value_usd)
-    bulkValues[set.code] = formatUsd(set.owned_bulk_value_usd)
   }
-  return { counts, copies, values, bulkValues }
+  // No bulkValues map (unlike the collection landing): a wish list is a shopping list,
+  // so its tiles show only what buying the set's wanted cards would cost.
+  return { counts, copies, values }
 })
 const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
-// The bulk (< $1/card) slice of the total value (issue: bulk-card value). Present
-// whenever the total is (both gate on something being priced).
-const bulkValue = computed(() => formatUsd(summary.value?.bulk_value_usd))
 
-// Stats are worth showing only once something is owned.
+// Stats are worth showing only once something is wanted.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 </script>
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <PageBreadcrumbs :items="[{ label: 'Collection', to: '/collection' }, { label: gameName }]" />
+    <PageBreadcrumbs :items="[{ label: 'Wish list', to: '/wishlist' }, { label: gameName }]" />
 
-    <!-- Signed out: the collection routes are public, so rather than bouncing to the
+    <!-- Signed out: the wish-list routes are public, so rather than bouncing to the
          login page we prompt to sign in / sign up right here. -->
-    <CollectionSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" />
+    <CollectionSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" list="wishlist" />
 
     <template v-else>
       <header class="mb-6">
-        <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} collection</h1>
-        <!-- The active mode's set count — just the owned sets by default, the whole
+        <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} wish list</h1>
+        <!-- The active mode's set count — just the wishlisted sets by default, the whole
              catalog under "All sets" — mirroring the catalog game view's header line. -->
         <p class="text-muted-foreground mt-1">
           {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
@@ -153,7 +146,7 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
           <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
         </p>
 
-        <!-- Summary stats: distinct cards, total copies, estimated value. -->
+        <!-- Summary stats: distinct cards, total copies, what they'd cost. -->
         <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
           <div>
             <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
@@ -167,32 +160,26 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
               {{ summary?.total_cards.toLocaleString() }}
             </dd>
           </div>
+          <!-- No bulk-value stat (unlike the collection landing): a wish list is a
+               shopping list, so only what it costs matters. -->
           <div v-if="totalValue">
             <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
             <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
           </div>
-          <!-- The bulk (< $1/card) slice of the total, so it's clear how much of the
-               collection's value is chaff vs. real money. -->
-          <div v-if="bulkValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Bulk value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ bulkValue }}</dd>
-          </div>
         </dl>
 
         <!-- Quick add: type a name, pick a printing, add regular/foil — without leaving
-             this page. Useful both to seed an empty collection and to top up an
-             existing one, so it's shown regardless of what's owned. -->
+             this page. Useful both to seed an empty wish list and to grow one, so it's
+             shown regardless of what's wanted. -->
         <div class="mt-5 max-w-md">
           <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
             Quick add a card
           </p>
-          <QuickAddBox :game="game" />
+          <QuickAddBox :game="game" list="wishlist" />
         </div>
-
-        <CollectionSyncControls :game="game" />
       </header>
 
-      <!-- The set list — owned sets by default, the whole catalog under "All sets".
+      <!-- The set list — wishlisted sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year
            headings below offset against its fixed height (their sticky `top-15`),
            mirroring the catalog game view. -->
@@ -209,7 +196,7 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
             "
             @click="setShowAllSets(false)"
           >
-            Collected
+            Wishlisted
           </button>
           <button
             type="button"
@@ -232,7 +219,7 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
           placeholder="Filter sets…"
         />
         <RouterLink
-          :to="`/collection/${game}/cards`"
+          :to="`/wishlist/${game}/cards`"
           :class="buttonVariants({ variant: 'default' })"
           class="shrink-0"
         >
@@ -245,13 +232,13 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
       <p v-else-if="activeError" class="text-destructive py-12">
         Couldn't load sets. Please retry.
       </p>
-      <p v-else-if="showAllSets && !catalogSets.length" class="text-muted-foreground py-12">
+      <p v-else-if="showAllSets && !sets.length" class="text-muted-foreground py-12">
         No sets available yet.
       </p>
-      <!-- Collected mode with nothing owned anywhere: offer the all-sets view, which is
-           where adding starts. -->
-      <div v-else-if="!showAllSets && !ownedSets.length" class="py-16 text-center">
-        <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
+      <!-- Wishlisted mode with nothing wishlisted anywhere: offer the all-sets view,
+           which is where adding starts. -->
+      <div v-else-if="!showAllSets && !wishlistSets.length" class="py-16 text-center">
+        <p class="text-muted-foreground">No sets with wishlisted cards yet.</p>
         <button
           type="button"
           :class="buttonVariants({ variant: 'default' })"
@@ -283,25 +270,25 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
             :game="game"
             :groups="section.groups"
             :scroll-mt="28"
-            base-path="/collection"
+            base-path="/wishlist"
             :query="trimmedFilter"
             :ownership="ownership"
+            count-noun="wanted"
           />
         </section>
       </div>
 
-      <!-- Owned sets only (the default): a flat newest-first grid. Owned sub-sets nest
-           under their parent (SetGroup), matching the catalog game view; a childless
-           owned set stays a plain tile. Both link to the collection's per-set view and
-           show owned counts. -->
+      <!-- Wishlisted sets only (the default): a flat newest-first grid, mirroring the
+           collection landing's owned-sets view. -->
       <SetGroupGrid
         v-else
         :game="game"
         :groups="groups"
         :scroll-mt="28"
-        base-path="/collection"
+        base-path="/wishlist"
         :query="trimmedFilter"
         :ownership="ownership"
+        count-noun="wanted"
       />
     </template>
   </div>

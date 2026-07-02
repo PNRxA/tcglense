@@ -3,7 +3,11 @@ import { defineComponent, ref, type Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
-import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
+import {
+  useOwnedCountEditor,
+  type CardListTarget,
+  type OwnedCountSeed,
+} from '@/composables/useOwnedCountEditor'
 import { useAuthStore } from '@/stores/auth'
 
 type FetchInit = { method?: string; body?: string }
@@ -43,14 +47,18 @@ function putBodies() {
   return putCalls().map((call) => call.body)
 }
 
-function mountEditor(seed: Ref<OwnedCountSeed | undefined>, cardId: Ref<string> = ref('card-a')) {
+function mountEditor(
+  seed: Ref<OwnedCountSeed | undefined>,
+  cardId: Ref<string> = ref('card-a'),
+  list?: CardListTarget,
+) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().accessToken = 'test-token'
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const game = ref('mtg')
   const host = defineComponent({
-    setup: () => useOwnedCountEditor(game, cardId, seed),
+    setup: () => useOwnedCountEditor(game, cardId, seed, { list }),
     render: () => null,
   })
   const wrapper = mount(host, {
@@ -102,6 +110,32 @@ describe('useOwnedCountEditor', () => {
 
     // One PUT of the final absolute counts, not one per click.
     expect(putBodies()).toEqual([{ quantity: 3, foil_quantity: 1 }])
+  })
+
+  it('saves to the collection endpoint by default and the wish list when targeted', async () => {
+    // Default target: the collection write.
+    const editor = mountEditor(ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }))
+    await flushPromises()
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+    expect(putCalls()).toHaveLength(1)
+    expect(putCalls()[0]!.url).toContain('/api/collection/mtg/cards/card-a')
+
+    // Explicit wish-list target: the same save shape against the wish-list endpoint.
+    const wishlistEditor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }),
+      ref('card-a'),
+      'wishlist',
+    )
+    await flushPromises()
+    wishlistEditor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+    const calls = putCalls()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.url).toContain('/api/wishlist/mtg/cards/card-a')
+    expect(calls[1]!.body).toEqual({ quantity: 1, foil_quantity: 0 })
   })
 
   it('never goes below zero and does not save a clamped no-op', async () => {
