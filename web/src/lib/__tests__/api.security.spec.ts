@@ -78,7 +78,7 @@ describe('api client: error mapping', () => {
   it('falls back to a status-based message when the error body is not JSON', async () => {
     fetchMock.mockResolvedValueOnce(fakeResponse(502, '<html>bad gateway</html>'))
 
-    const err = await register({ email: 'a@b.com', password: 'password123' }).catch((e) => e)
+    const err = await register({ email: 'a@b.com' }).catch((e) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect(err.status).toBe(502)
     // The non-JSON proxy page must not surface as the user-facing message.

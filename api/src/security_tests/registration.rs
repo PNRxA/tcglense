@@ -1,39 +1,286 @@
 //! Registration / response hygiene.
+//!
+//! Registration is email-first (issue #176): `POST /register` takes ONLY the
+//! address and always answers the same generic 200 — whether the address is
+//! new, mid-registration, or already registered — so it can't be used to
+//! enumerate accounts (the old duplicate `409` was exactly that oracle). The
+//! password (+ display name) is set by `POST /complete-registration`, which
+//! consumes the emailed single-use token and signs the account in.
 
 use super::harness::*;
 
 #[tokio::test]
-async fn register_mints_no_session_and_never_leaks_secret_material() {
+async fn register_answers_generically_and_mints_no_session() {
     let app = test_app().await;
     let (status, headers, body) = send(
         &app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": "User@Example.COM", "password": "password123", "display_name": "Tester" }),
-        ),
+        json_post("/api/auth/register", json!({ "email": "User@Example.COM" })),
     )
     .await;
 
-    assert_eq!(status, StatusCode::CREATED);
-    // Verify-first: registration mints NO session — no access token in the
-    // body, no refresh cookie on the wire — until the emailed link is used.
-    assert!(body["access_token"].is_null());
+    assert_eq!(status, StatusCode::OK);
+    // No session, and no account echo: the body reveals nothing about whether
+    // the address was new or already registered.
+    assert!(body["completion_token"].is_null());
+    assert!(body.get("user").is_none(), "no user echo: {body}");
     assert!(refresh_token_from(&headers).is_none());
-    // Email is canonicalised (trimmed + lowercased).
-    assert_eq!(body["user"]["email"], "user@example.com");
-    assert_eq!(body["user"]["display_name"], "Tester");
 
-    // The public user shape must never carry secret material — including the
-    // verification token, which must ride ONLY in the email (the response going
+    // The completion token must ride ONLY in the email (the response going
     // back to the unauthenticated caller must not shortcut the mailbox proof).
-    let raw = body.to_string();
-    assert!(!raw.contains("password_hash"), "leaked field name: {raw}");
-    assert!(!raw.contains("$argon2"), "leaked a hash: {raw}");
+    // The address is canonicalised (trimmed + lowercased) before mailing.
     let token = latest_email_token(&app, "user@example.com").await;
+    let raw = body.to_string();
     assert!(
         !raw.contains(&token),
-        "the verification token must not appear in the response body"
+        "the completion token must not appear in the response body"
     );
+    assert!(!raw.contains("password_hash"), "leaked field name: {raw}");
+    assert!(!raw.contains("$argon2"), "leaked a hash: {raw}");
+}
+
+#[tokio::test]
+async fn registering_an_existing_email_is_indistinguishable_and_sends_nothing() {
+    use crate::entities::email_token;
+    use sea_orm::{EntityTrait, sea_query::Expr};
+
+    let app = test_app().await;
+    register(&app, "taken@example.com", "password123").await;
+
+    // Age the account's tokens out of the 60s issue cooldown, so "no mail" below
+    // can only mean the activated account was skipped — not that the cooldown
+    // happened to swallow the issue.
+    email_token::Entity::update_many()
+        .col_expr(
+            email_token::Column::CreatedAt,
+            Expr::value(chrono::Utc::now() - chrono::Duration::hours(2)),
+        )
+        .exec(&app.state.db)
+        .await
+        .expect("age tokens");
+
+    let taken = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "Taken@Example.com" })),
+    )
+    .await;
+    let fresh = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "fresh@example.com" })),
+    )
+    .await;
+
+    // Identical status + body for a taken and an unknown address — no 409, no
+    // distinguishable field. (Timing is covered by the send running off the
+    // request path; see `spawn_send`.)
+    assert_eq!(taken.0, StatusCode::OK);
+    assert_eq!(fresh.0, StatusCode::OK);
+    assert_eq!(taken.2, fresh.2);
+
+    // The activated account got no new mail; the fresh address got its link.
+    let emails = delivered_emails(&app).await;
+    assert_eq!(
+        emails.iter().filter(|e| e.to == "taken@example.com").count(),
+        1,
+        "an already-registered address must not be mailed again by register"
+    );
+    assert_eq!(
+        emails.iter().filter(|e| e.to == "fresh@example.com").count(),
+        1,
+        "a new address gets exactly one completion link"
+    );
+}
+
+#[tokio::test]
+async fn a_pending_registration_gets_the_link_resent_with_cooldown() {
+    use crate::entities::email_token;
+    use sea_orm::{EntityTrait, sea_query::Expr};
+
+    let app = test_app().await;
+
+    // Start a registration but never complete it.
+    let (s, _, _) = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Registering again inside the cooldown answers the same 200 and sends
+    // nothing (the cooldown is unobservable from outside).
+    let (s, _, _) = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let sent = delivered_emails(&app).await;
+    assert_eq!(sent.len(), 1, "cooldown suppresses the re-send");
+
+    // Once the cooldown ages out, registering again re-sends a fresh link.
+    email_token::Entity::update_many()
+        .col_expr(
+            email_token::Column::CreatedAt,
+            Expr::value(chrono::Utc::now() - chrono::Duration::hours(2)),
+        )
+        .exec(&app.state.db)
+        .await
+        .expect("age tokens");
+    let (s, _, _) = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let sent = delivered_emails(&app).await;
+    assert_eq!(sent.len(), 2, "an aged pending registration is re-sent");
+}
+
+#[tokio::test]
+async fn a_pending_registration_cannot_sign_in() {
+    let app = test_app().await;
+    let (s, _, _) = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "limbo@example.com" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // No password exists yet, so ANY password fails — with exactly the same
+    // generic 401 an unknown address gets (no pending-account oracle either).
+    let pending = send(
+        &app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": "limbo@example.com", "password": "password123" }),
+        ),
+    )
+    .await;
+    let unknown = send(
+        &app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": "ghost@example.com", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(pending.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(unknown.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(pending.2, unknown.2);
+}
+
+#[tokio::test]
+async fn completion_enforces_password_rules_before_spending_the_token() {
+    let app = test_app().await;
+    let (s, _, _) = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "rules@example.com" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let token = latest_email_token(&app, "rules@example.com").await;
+
+    // A weak password is refused BEFORE the single-use token is consumed…
+    let (s, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": "short" }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // …so the same link still completes with a valid one, signing the user in
+    // (session + refresh cookie) with the chosen display name.
+    let (s, headers, body) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": "password123", "display_name": "  Tester  " }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(body["access_token"].as_str().is_some());
+    assert_eq!(body["user"]["email"], "rules@example.com");
+    assert_eq!(body["user"]["display_name"], "Tester");
+    assert!(refresh_token_from(&headers).is_some());
+
+    // Single-use: the spent token cannot complete again.
+    let (s, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": "password456" }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_whitespace_only_display_name_is_stored_as_null() {
+    let app = test_app().await;
+    let (s, _, _) = send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "blank-name@example.com" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let token = latest_email_token(&app, "blank-name@example.com").await;
+
+    // A display name that is only whitespace normalises to no name at all (an
+    // all-spaces string must not become a stored, renderable display name).
+    let (s, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": "password123", "display_name": "   " }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        body["user"]["display_name"].is_null(),
+        "a whitespace-only display name must be stored as null: {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_completed_account_refuses_further_completion_tokens() {
+    use crate::auth::email_token::{EmailTokenPurpose, issue};
+    use crate::entities::{prelude::User, user};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let app = test_app().await;
+    register(&app, "done@example.com", "password123").await;
+
+    // Plant a second, still-live completion token for the (now completed)
+    // account — the shape an attacker would need a completion link to act as a
+    // password reset. It must be refused: the account has a password.
+    let user = User::find()
+        .filter(user::Column::Email.eq("done@example.com"))
+        .one(&app.state.db)
+        .await
+        .expect("query")
+        .expect("user exists");
+    let planted = issue(&app.state.db, user.id, EmailTokenPurpose::CompleteRegistration)
+        .await
+        .expect("issue");
+
+    let (s, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": planted, "password": "hijacked-pass" }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"], "invalid or expired token");
+
+    // The original password still works — nothing was overwritten.
+    login(&app, "done@example.com", "password123").await;
 }
 
 #[tokio::test]
@@ -79,46 +326,16 @@ async fn login_hardens_cookie_and_never_leaks_password_hash() {
 }
 
 #[tokio::test]
-async fn register_rejects_invalid_email_and_weak_password() {
+async fn register_rejects_an_invalid_email() {
     let app = test_app().await;
 
     let (s1, _, b1) = send(
         &app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": "no-at-sign", "password": "password123" }),
-        ),
+        json_post("/api/auth/register", json!({ "email": "no-at-sign" })),
     )
     .await;
     assert_eq!(s1, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(b1["error"].as_str().is_some());
-
-    let (s2, _, _) = send(
-        &app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": "ok@example.com", "password": "short" }),
-        ),
-    )
-    .await;
-    assert_eq!(s2, StatusCode::UNPROCESSABLE_ENTITY);
-}
-
-#[tokio::test]
-async fn duplicate_email_is_conflict_case_insensitively() {
-    let app = test_app().await;
-    register(&app, "Dup@Example.com", "password123").await;
-
-    // Same address, different casing — the case-insensitive account must collide.
-    let (status, _, _) = send(
-        &app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": "dup@example.com", "password": "password123" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -134,7 +351,7 @@ async fn case_insensitive_uniqueness_is_enforced_at_the_database() {
     let now = Utc::now();
     let row = |email: &str| user::ActiveModel {
         email: Set(email.to_string()),
-        password_hash: Set("irrelevant".to_string()),
+        password_hash: Set(Some("irrelevant".to_string())),
         display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
@@ -156,26 +373,24 @@ async fn case_insensitive_uniqueness_is_enforced_at_the_database() {
 async fn oversized_credentials_are_rejected_before_hashing() {
     let app = test_app().await;
 
-    // Register: a password past the 1024-char cap is a cheap-to-send /
-    // expensive-to-hash Argon2 DoS -> 422.
-    let (s, _, _) = send(
-        &app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": "big@example.com", "password": "a".repeat(1025) }),
-        ),
-    )
-    .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
-
     // Register: an email past the 254-char cap -> 422.
     let long_email = format!("{}@example.com", "a".repeat(250));
     assert!(long_email.len() > 254);
     let (s, _, _) = send(
         &app,
+        json_post("/api/auth/register", json!({ "email": long_email })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Completion: a password past the 1024-char cap is a cheap-to-send /
+    // expensive-to-hash Argon2 DoS -> 422, checked before the token is even
+    // looked at (a garbage token still gets the validation error, not a 401).
+    let (s, _, _) = send(
+        &app,
         json_post(
-            "/api/auth/register",
-            json!({ "email": long_email, "password": "password123" }),
+            "/api/auth/complete-registration",
+            json!({ "token": "garbage", "password": "a".repeat(1025) }),
         ),
     )
     .await;

@@ -6,13 +6,18 @@
  * bearer-protected routes, malformed-body handling, and that the access token
  * never reaches JS-readable storage.
  *
- * NOTE on email verification: the CI job runs the API with **no email provider**,
- * so email verification is bypassed (register verifies + signs in immediately).
- * These tests therefore assert the bypass behaviour; the verify-first flow (the
- * check-your-email step, the 403 login gate, resend) is enforced only when a
- * provider is configured and is covered by the Rust security tests (which use a
- * mail sink). Dummy mode also seeds a verified dev account (see api/src/tasks.rs)
- * used by the session flows.
+ * NOTE on registration email: registration is email-first — step one (`register`)
+ * takes only the address and emails a "finish creating your account" link; step
+ * two (`complete-registration`) spends that link's token on a password and signs
+ * in. The CI job runs the API with **no email provider**, so the link can't be
+ * delivered: instead register returns the completion token directly in its
+ * response body, and these tests drive complete-registration with it (the
+ * no-email dev bypass). The emailed-link path and login's verification gate are
+ * enforced only when a provider is configured and are covered by the Rust
+ * security tests (which use a mail sink); the 60s re-send cooldown is active
+ * even here (re-registering an address inside it answers `completion_token:
+ * null` — see the duplicate-registration test). Dummy mode also seeds a
+ * verified dev account (see api/src/tasks.rs) used by the session flows.
  *
  * They need the backend running. The CI e2e job starts the API with the offline
  * dummy catalog (SEED_DUMMY_DATA) and waits for /api/health before invoking
@@ -41,8 +46,26 @@ function uniqueEmail(tag: string): string {
   return `sec-${tag}-${Date.now()}-${Math.round(Math.random() * 1e9)}@example.com`
 }
 
+// Step one: register the address. In the no-email bypass the response carries the
+// completion token (no session yet); the caller inspects or composes it.
 async function registerViaApi(request: APIRequestContext, email: string) {
-  return request.post('/api/auth/register', { data: { email, password: PASSWORD } })
+  return request.post('/api/auth/register', { data: { email } })
+}
+
+// Step two: spend the completion token on a password (this is what signs in).
+async function completeViaApi(request: APIRequestContext, token: string, password: string) {
+  return request.post('/api/auth/complete-registration', { data: { token, password } })
+}
+
+/** Register + complete an account in the no-email bypass; returns the completion
+ * response (already signed in). Used where a test just needs a usable account. */
+async function createAccount(request: APIRequestContext, email: string, password = PASSWORD) {
+  const reg = await registerViaApi(request, email)
+  expect(reg.status()).toBe(200)
+  const token = (await reg.json()).completion_token as string
+  const done = await completeViaApi(request, token, password)
+  expect(done.status()).toBe(200)
+  return done
 }
 
 /** Access token for the seeded verified account, or null when it isn't there
@@ -63,26 +86,48 @@ test.describe('security: auth API contract', () => {
     test.skip(!(await apiReachable(request)), 'API not reachable; security e2e needs the backend')
   })
 
-  test('register signs you in (no-email dev bypass) and never leaks the hash', async ({
+  test('register then complete signs you in (no-email bypass) and never leaks the hash', async ({
     request,
   }) => {
-    // CI runs the API with no email provider, so verification is bypassed:
-    // register creates an already-verified account and returns a session. (With a
-    // provider configured, register instead returns `access_token: null` and mails
-    // a link — that verify-first path is covered by the Rust security tests.)
+    // CI runs the API with no email provider, so the completion link can't be
+    // mailed: register returns the completion token in its body instead. (With a
+    // provider configured, `completion_token` is null and the token only reaches
+    // the user by email — that path is covered by the Rust security tests.)
     const email = uniqueEmail('reg')
-    const res = await registerViaApi(request, email)
-    expect(res.status()).toBe(201)
 
-    const body = await res.json()
-    expect(body.access_token, 'session returned in the no-email bypass').toBeTruthy()
+    // Step one: register takes only the address and mints no session yet.
+    const reg = await registerViaApi(request, email)
+    expect(reg.status()).toBe(200)
+    const regBody = await reg.json()
+    expect(typeof regBody.completion_token, 'completion token in the no-email bypass').toBe(
+      'string',
+    )
+    expect(regBody.completion_token.length).toBeGreaterThan(0)
+
+    // No refresh cookie from register alone — the session is minted on completion.
+    const regCookie = reg
+      .headersArray()
+      .filter((h) => h.name.toLowerCase() === 'set-cookie')
+      .map((h) => h.value)
+      .find((v) => v.startsWith('tcglense_refresh=') && !v.startsWith('tcglense_refresh=;'))
+    expect(regCookie, 'no session cookie from register alone').toBeFalsy()
+    const regSerialized = JSON.stringify(regBody)
+    expect(regSerialized).not.toContain('password_hash')
+    expect(regSerialized).not.toContain('$argon2')
+
+    // Step two: complete-registration spends the token on a password and signs in.
+    const done = await completeViaApi(request, regBody.completion_token, PASSWORD)
+    expect(done.status()).toBe(200)
+
+    const body = await done.json()
+    expect(body.access_token, 'session returned on completion').toBeTruthy()
     expect(body.user.email).toBe(email)
     const serialized = JSON.stringify(body)
     expect(serialized).not.toContain('password_hash')
     expect(serialized).not.toContain('$argon2')
 
     // The refresh token rides ONLY in a hardened Set-Cookie, never the body.
-    const setCookie = res
+    const setCookie = done
       .headersArray()
       .filter((h) => h.name.toLowerCase() === 'set-cookie')
       .map((h) => h.value)
@@ -91,15 +136,24 @@ test.describe('security: auth API contract', () => {
     expect(serialized).not.toContain(String(setCookie).split('=')[1].split(';')[0])
   })
 
-  test('duplicate registration is rejected with 409', async ({ request }) => {
+  test('re-registering an address is generic (no enumeration), never a 409', async ({ request }) => {
     const email = uniqueEmail('dup')
-    expect((await registerViaApi(request, email)).status()).toBe(201)
-    expect((await registerViaApi(request, email)).status()).toBe(409)
+    // Both registrations return 200 — the endpoint never reveals the address is
+    // already mid-registration. The first carries a completion token; the second,
+    // inside the 60s resend cooldown, comes back with a null token. There is no
+    // 409 anymore.
+    const first = await registerViaApi(request, email)
+    expect(first.status()).toBe(200)
+    expect((await first.json()).completion_token).toBeTruthy()
+
+    const second = await registerViaApi(request, email)
+    expect(second.status()).toBe(200)
+    expect((await second.json()).completion_token).toBeNull()
   })
 
   test('login failures are generic — no user enumeration', async ({ request }) => {
     const email = uniqueEmail('login')
-    await registerViaApi(request, email)
+    await createAccount(request, email)
 
     const wrongPassword = await request.post('/api/auth/login', {
       data: { email, password: 'definitely-wrong' },
@@ -113,7 +167,7 @@ test.describe('security: auth API contract', () => {
     // Identical message in both cases: nothing reveals whether the account exists.
     expect((await wrongPassword.json()).error).toBe((await noSuchUser.json()).error)
 
-    // The correct password signs in — the no-email bypass verifies at register, so
+    // The correct password signs in — the no-email bypass verifies at completion, so
     // there's no verification gate. (The gate's 403 is covered by the Rust tests,
     // which run with a mail sink so verification is enforced.)
     const ok = await request.post('/api/auth/login', {
@@ -144,6 +198,13 @@ test.describe('security: auth API contract', () => {
       data: { token: 'deadbeef', password: PASSWORD },
     })
     expect(badReset.status()).toBe(401)
+
+    // A garbage completion token can't create an account either. The password is
+    // valid-length, so this is purely the token being rejected (401, not 422).
+    const badComplete = await request.post('/api/auth/complete-registration', {
+      data: { token: 'deadbeef', password: PASSWORD },
+    })
+    expect(badComplete.status()).toBe(401)
   })
 
   test('the /me route requires a valid bearer token', async ({ request }) => {
@@ -247,14 +308,19 @@ test.describe('security: browser session', () => {
     await expect(page).toHaveURL(/\/login(\?|$)/)
   })
 
-  test('registering in the no-email bypass signs you straight in', async ({ page }) => {
-    // With no email provider (the CI config), register verifies + signs in and
-    // lands on the homepage — no check-your-email step. (The verify-first
-    // check-your-email / resend UX applies only when a provider is configured and
-    // is covered by the Rust security tests.)
+  test('registering (email-first, no-email bypass) walks through set-password and signs you in', async ({
+    page,
+  }) => {
+    // With no email provider (the CI config), register returns the completion token
+    // in its body, so the SPA navigates straight to /complete-registration?token=…
+    // instead of a check-your-email dead end. Choose a password there to finish and
+    // land on the homepage signed in.
     const email = uniqueEmail('reg-ui')
     await page.goto('/register')
     await page.locator('#email').fill(email)
+    await page.getByRole('button', { name: /continue/i }).click()
+
+    await expect(page).toHaveURL(/\/complete-registration\?token=/)
     await page.locator('#password').fill(PASSWORD)
     await page.getByRole('button', { name: /create account/i }).click()
 

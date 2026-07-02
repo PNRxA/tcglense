@@ -8,7 +8,11 @@ pub struct Model {
     pub id: i32,
     #[sea_orm(unique)]
     pub email: String,
-    pub password_hash: String,
+    /// `None` marks a **pending registration** (email-first flow, issue #176):
+    /// the address was submitted and a completion link emailed, but no password
+    /// has been chosen yet. Such an account cannot sign in; completing the
+    /// registration (or a password reset) sets the hash.
+    pub password_hash: Option<String>,
     pub display_name: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

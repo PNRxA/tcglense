@@ -98,11 +98,13 @@ impl Emailer {
     }
 
     /// Whether a real email provider is configured. When `false` (no
-    /// `RESEND_API_KEY` — dev), the auth flow **bypasses email verification**:
-    /// registration completes the account already-verified and signed in, and
-    /// login doesn't gate on verification, since no verification link can be
-    /// delivered. `Capture` (tests) counts as enabled, so the test suites still
-    /// exercise the real verify-first flow.
+    /// `RESEND_API_KEY` — dev), the emailed registration-completion link can't
+    /// be delivered, so register **returns the completion token in the response
+    /// body instead** (the SPA drives straight to the set-password step; no
+    /// session until `POST /api/auth/complete-registration`), and login doesn't
+    /// gate on email verification. `Capture` (tests) counts as enabled, so the
+    /// test suites still exercise the real email-first flow (the token stays
+    /// out of the response and is read from the captured email).
     pub fn is_enabled(&self) -> bool {
         !matches!(self, Emailer::Disabled)
     }
@@ -169,6 +171,31 @@ impl Emailer {
     }
 }
 
+/// The registration-completion message (email-first sign-up). `link` points at
+/// the SPA's `/complete-registration?token=…` route, where the user chooses
+/// their password; the wording mirrors the token's 24h expiry.
+pub fn registration_email(to: &str, link: &str) -> OutgoingEmail {
+    OutgoingEmail {
+        to: to.to_string(),
+        subject: "Finish creating your TCGLense account".to_string(),
+        html: format!(
+            "<p>Welcome to TCGLense!</p>\
+             <p>Confirm this email address and choose a password to finish \
+             creating your account:</p>\
+             <p><a href=\"{link}\">Finish creating my account</a></p>\
+             <p>The link is valid for 24 hours. If you didn't request a TCGLense \
+             account, you can ignore this email.</p>"
+        ),
+        text: format!(
+            "Welcome to TCGLense!\n\n\
+             Confirm this email address and choose a password to finish creating \
+             your account:\n\n{link}\n\n\
+             The link is valid for 24 hours. If you didn't request a TCGLense \
+             account, you can ignore this email.\n"
+        ),
+    }
+}
+
 /// The account-verification message. `link` points at the SPA's
 /// `/verify-email?token=…` route; the wording mirrors the token's 24h expiry.
 pub fn verification_email(to: &str, link: &str) -> OutgoingEmail {
@@ -218,6 +245,12 @@ mod tests {
 
     #[test]
     fn message_builders_embed_the_link_and_recipient() {
+        let complete =
+            registration_email("a@example.com", "https://x.test/complete-registration?token=abc");
+        assert_eq!(complete.to, "a@example.com");
+        assert!(complete.html.contains("https://x.test/complete-registration?token=abc"));
+        assert!(complete.text.contains("https://x.test/complete-registration?token=abc"));
+
         let verify = verification_email("a@example.com", "https://x.test/verify-email?token=abc");
         assert_eq!(verify.to, "a@example.com");
         assert!(verify.html.contains("https://x.test/verify-email?token=abc"));
