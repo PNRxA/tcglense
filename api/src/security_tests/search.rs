@@ -94,6 +94,48 @@ async fn cards_by_exact_name_returns_every_printing() {
     assert_eq!(miss_body["total"].as_u64(), Some(0));
 }
 
+/// Regression: a colour search on the by-drop set view
+/// (`GET /sets/sld/drops?q=c:rg`) took the dev server down (2026-07-01 report).
+/// The by-drop endpoint must answer a searched request like any other list route.
+#[tokio::test]
+async fn set_drops_color_search_succeeds() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+
+    // An `sld` set row plus coloured cards: collector number 2658 is in a known
+    // drop ("Wild in Bloom"); 999999 isn't in the snapshot (folds into "Other").
+    crate::test_support::card_set_model("sld")
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld set");
+    for (id, cn, colors) in [(1, "2658", "R,G"), (2, "999999", "R")] {
+        crate::entities::card::Model {
+            set_code: "sld".into(),
+            set_name: "Secret Lair Drop".into(),
+            collector_number: cn.into(),
+            collector_number_int: cn.parse().ok(),
+            colors: Some(colors.into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld card");
+    }
+    let app = crate::build_router(state);
+
+    let (status, _, body) =
+        send(&app, get("/api/games/mtg/sets/sld/drops?page=1&page_size=20&q=c%3Arg")).await;
+    assert_eq!(status, StatusCode::OK, "drops search must succeed: {body:?}");
+    // Only the R,G card matches c:rg (colour ⊇ {R,G}); its drop is the one group.
+    let groups = body["data"].as_array().expect("drop groups");
+    assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
+    assert_eq!(groups[0]["title"].as_str(), Some("Wild in Bloom"));
+    assert_eq!(groups[0]["card_count"].as_u64(), Some(1));
+}
+
 /// Percent-encode a query value (only what these tests need: the injection chars).
 fn url_encode(input: &str) -> String {
     let mut out = String::new();

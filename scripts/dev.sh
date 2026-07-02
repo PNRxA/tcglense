@@ -44,6 +44,20 @@ if [ ! -d "$WEB_DIR/node_modules" ]; then
   (cd "$WEB_DIR" && npm install)
 fi
 
+# Refuse to start on top of a stale server. A leftover API/web process from an
+# earlier session can keep serving old code while the new one appears to start
+# fine (on macOS a 0.0.0.0 bind can even succeed alongside a stale 127.0.0.1
+# listener on the same port), which makes for very confusing debugging.
+for port in 8080 5173; do
+  stale_pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  if [ -n "$stale_pids" ]; then
+    echo "Error: port $port is already in use by pid(s): $(echo "$stale_pids" | tr '\n' ' ')" >&2
+    echo "Another dev server is likely still running; stop it first, e.g.:" >&2
+    echo "  kill $(echo "$stale_pids" | tr '\n' ' ')" >&2
+    exit 1
+  fi
+done
+
 echo "Starting TCGLense dev servers (Ctrl+C to stop both):"
 echo "  API  -> http://localhost:8080"
 echo "  Web  -> http://localhost:5173"
