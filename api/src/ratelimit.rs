@@ -1,16 +1,22 @@
-//! Per-IP rate limiting for the auth endpoints — brute-force / mail-bombing /
-//! abuse protection (issue #… follow-up to the auth feature).
+//! Abuse-protection rate limiting, in two complementary flavours:
 //!
-//! Each protected route class has its own keyed [`governor`] limiter (GCRA), so
-//! a burst on one endpoint doesn't spend another's budget. The limiter is keyed
-//! by the resolved client IP (see [`crate::client_ip`]); when the IP can't be
-//! resolved (only the in-process test harness, which has no socket peer) the
-//! request fails open — a real deployment always has a peer address.
+//! * **Per-IP** ([`RateLimiters`] + [`rate_limit`]) — guards the unauthenticated
+//!   auth endpoints (login/register/email-send/token) against brute-force /
+//!   mail-bombing, keyed by the resolved client IP (see [`crate::client_ip`]). When
+//!   the IP can't be resolved (only the in-process test harness, which has no socket
+//!   peer) the request fails open — a real deployment always has a peer address.
+//! * **Per-user** ([`UserRateLimiters`] + [`user_rate_limit`]) — guards the
+//!   *authenticated* API surface (the collection endpoints + `me`), keyed by the
+//!   user id in the access token, so it caps what one account can do regardless of
+//!   the IP it comes from (issue #168). A request with no valid bearer token has no
+//!   user to key on and passes through (it's a public route, or gets a `401` from
+//!   the handler's `AuthUser` extractor — not the limiter's job).
 //!
-//! State is in-memory (like the collection-import queue): limits are per-process
-//! and reset on restart, and a multi-instance deploy would want a shared store.
-//! [`RateLimiters::retain_recent`] is swept periodically so the keyspace can't
-//! grow unbounded.
+//! Each protected route class has its own keyed [`governor`] limiter (GCRA), so a
+//! burst on one endpoint doesn't spend another's budget. All state is in-memory
+//! (like the collection-import queue): limits are per-process and reset on restart,
+//! and a multi-instance deploy would want a shared store. `retain_recent` (on both
+//! limiter sets) is swept periodically so the keyspace can't grow unbounded.
 
 use std::{
     net::{IpAddr, Ipv6Addr},
@@ -31,7 +37,9 @@ use governor::{
 use nonzero_ext::nonzero;
 use serde_json::json;
 
-use crate::{client_ip::resolve_client_ip, state::AppState};
+use crate::{
+    auth::jwt::decode_token, client_ip::resolve_client_ip, config::Config, state::AppState,
+};
 
 type KeyedLimiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
 
@@ -191,6 +199,156 @@ pub async fn rate_limit(State(state): State<AppState>, request: Request, next: N
     }
 }
 
+// ---------- Per-user rate limiting (the authenticated API surface) ----------
+
+/// A per-user limiter keyed by the authenticated user's id (`users.id`), decoded
+/// from the request's access token.
+type UserKeyedLimiter = RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>;
+
+/// The per-user rate-limit classes for the authenticated API surface. Each gets its
+/// own keyed limiter + quota, so a burst of imports can't spend a browse session's
+/// budget and vice versa (mirroring [`AuthRoute`]'s per-IP split).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UserRoute {
+    /// General authenticated requests — collection reads, absolute-count edits,
+    /// batch owned-count lookups, `me`. A generous ceiling for a signed-in human.
+    General,
+    /// The expensive collection import / sync / CSV-upload endpoints, which do real
+    /// server-side work (an upstream fetch, a CSV parse, or a full-collection DB
+    /// reconcile). A much tighter cap.
+    Import,
+}
+
+impl UserRoute {
+    /// Classify an authenticated request path into its per-user quota class. `{game}`
+    /// is a path variable, so this matches on the trailing segments after
+    /// `/api/collection/{game}`; everything else (reads, edits, `me`, an unknown
+    /// path) falls into the generous [`Self::General`] bucket.
+    fn from_path(path: &str) -> Self {
+        if let Some(rest) = path.strip_prefix("/api/collection/")
+            && let Some((_game, tail)) = rest.split_once('/')
+            && matches!(tail, "import" | "import/csv" | "sync")
+        {
+            return Self::Import;
+        }
+        Self::General
+    }
+
+    /// Per-user quota: a sustained rate with an initial burst allowance (governor's
+    /// GCRA starts the cell full, so up to `burst` requests pass immediately, then
+    /// one every `period/burst`). `Quota::per_minute(n)` sets both to `n`.
+    fn quota(self) -> Quota {
+        match self {
+            // ~300/min (5/s): plenty for a human browsing + editing a collection
+            // (list + summary + batch owned-count lookups per page), tight for a
+            // script grinding the API.
+            Self::General => Quota::per_minute(nonzero!(300u32)),
+            // Imports are heavy and already globally serialised; a low per-user cap
+            // stops one account queuing / CSV-spamming them.
+            Self::Import => Quota::per_minute(nonzero!(10u32)),
+        }
+    }
+}
+
+/// One keyed limiter per per-user route class, plus the shared clock (for computing
+/// `Retry-After`). Held in [`AppState`] and cloned cheaply (each limiter is `Arc`-y
+/// internally via its shared state store). The per-user complement to
+/// [`RateLimiters`].
+pub struct UserRateLimiters {
+    general: UserKeyedLimiter,
+    import: UserKeyedLimiter,
+    clock: DefaultClock,
+}
+
+impl Default for UserRateLimiters {
+    fn default() -> Self {
+        Self {
+            general: RateLimiter::keyed(UserRoute::General.quota()),
+            import: RateLimiter::keyed(UserRoute::Import.quota()),
+            clock: DefaultClock::default(),
+        }
+    }
+}
+
+impl UserRateLimiters {
+    fn limiter(&self, route: UserRoute) -> &UserKeyedLimiter {
+        match route {
+            UserRoute::General => &self.general,
+            UserRoute::Import => &self.import,
+        }
+    }
+
+    /// Check one request against `route`'s limiter for `user_id`. `Ok(())` if
+    /// allowed; `Err(retry_after)` (rounded up to whole seconds, min 1) if limited.
+    fn check(&self, route: UserRoute, user_id: i32) -> Result<(), Duration> {
+        match self.limiter(route).check_key(&user_id) {
+            Ok(()) => Ok(()),
+            Err(not_until) => {
+                let wait = not_until.wait_time_from(self.clock.now());
+                Err(Duration::from_secs(wait.as_secs().max(1)))
+            }
+        }
+    }
+
+    /// Drop keys whose limiter cell has fully replenished, bounding memory. Called
+    /// periodically from the maintenance task alongside [`RateLimiters::retain_recent`].
+    pub fn retain_recent(&self) {
+        self.general.retain_recent();
+        self.import.retain_recent();
+    }
+}
+
+/// Pull the authenticated user id out of a request's `Authorization: Bearer` access
+/// token, decoding (but deliberately *not* DB-loading) it — the rate check must be
+/// cheap and run before any query. Returns `None` for an unauthenticated request or
+/// an invalid/expired token: either way there's no user to key on, so the per-user
+/// limiter is skipped.
+fn bearer_user_id(request: &Request, config: &Config) -> Option<i32> {
+    let value = request.headers().get(header::AUTHORIZATION)?.to_str().ok()?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+        .filter(|t| !t.is_empty())?;
+    decode_token(token, config).ok()?.sub.parse::<i32>().ok()
+}
+
+/// Axum middleware: enforce the per-user limit for an authenticated request's class.
+/// An unauthenticated request (no/invalid bearer token) or a disabled limiter passes
+/// through untouched. A limited request is a `429` carrying `Retry-After` and the
+/// standard `{ "error": … }` body — mirroring [`rate_limit`], and layered inside
+/// `no_store_layer` so the `429` is never shared-cached.
+pub async fn user_rate_limit(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !state.config.rate_limit_enabled {
+        return next.run(request).await;
+    }
+    let Some(user_id) = bearer_user_id(&request, &state.config) else {
+        // No authenticated user to key on: nothing to limit here.
+        return next.run(request).await;
+    };
+
+    let route = UserRoute::from_path(request.uri().path());
+    match state.user_rate_limiters.check(route, user_id) {
+        Ok(()) => next.run(request).await,
+        Err(retry_after) => {
+            tracing::info!(
+                user_id,
+                path = %request.uri().path(),
+                "authenticated request rate-limited per user"
+            );
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.as_secs().to_string())],
+                axum::Json(json!({ "error": "too many requests; please slow down" })),
+            )
+                .into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,5 +407,93 @@ mod tests {
         assert!(limiters.check(AuthRoute::Register, b).is_ok());
         // ...and a different route for the same IP has its own budget.
         assert!(limiters.check(AuthRoute::Login, a).is_ok());
+    }
+
+    // ----- Per-user limiting -----
+
+    #[test]
+    fn user_import_class_allows_its_burst_then_blocks() {
+        let limiters = UserRateLimiters::default();
+        let user = 7;
+
+        // The import class allows a burst of 10, then the 11th is limited.
+        for i in 0..10 {
+            assert!(
+                limiters.check(UserRoute::Import, user).is_ok(),
+                "import {i} within the burst should pass"
+            );
+        }
+        let retry = limiters
+            .check(UserRoute::Import, user)
+            .expect_err("the 11th import is limited");
+        assert!(retry.as_secs() >= 1);
+    }
+
+    #[test]
+    fn user_limits_are_per_user() {
+        let limiters = UserRateLimiters::default();
+
+        // Exhaust the import burst for user 1.
+        for _ in 0..10 {
+            let _ = limiters.check(UserRoute::Import, 1);
+        }
+        assert!(limiters.check(UserRoute::Import, 1).is_err());
+
+        // A different user has its own budget and is unaffected.
+        assert!(limiters.check(UserRoute::Import, 2).is_ok());
+    }
+
+    #[test]
+    fn user_route_classes_are_independent() {
+        let limiters = UserRateLimiters::default();
+        let user = 42;
+
+        // Exhaust the tight import class for the user...
+        for _ in 0..10 {
+            let _ = limiters.check(UserRoute::Import, user);
+        }
+        assert!(limiters.check(UserRoute::Import, user).is_err());
+
+        // ...the general class is a separate, far larger budget — well past the
+        // import burst (10), a browse session keeps flowing.
+        for i in 0..50 {
+            assert!(
+                limiters.check(UserRoute::General, user).is_ok(),
+                "general request {i} should pass while imports are exhausted"
+            );
+        }
+    }
+
+    #[test]
+    fn user_route_classifies_expensive_endpoints() {
+        // The import / sync / CSV-upload endpoints are the tight class.
+        assert_eq!(
+            UserRoute::from_path("/api/collection/mtg/import"),
+            UserRoute::Import
+        );
+        assert_eq!(
+            UserRoute::from_path("/api/collection/mtg/import/csv"),
+            UserRoute::Import
+        );
+        assert_eq!(
+            UserRoute::from_path("/api/collection/mtg/sync"),
+            UserRoute::Import
+        );
+
+        // Reads, edits, job polling, and non-collection authenticated routes are general.
+        for general in [
+            "/api/collection/mtg",
+            "/api/collection/mtg/summary",
+            "/api/collection/mtg/sets",
+            "/api/collection/mtg/cards/some-external-id",
+            "/api/collection/mtg/import/jobs/1",
+            "/api/auth/me",
+        ] {
+            assert_eq!(
+                UserRoute::from_path(general),
+                UserRoute::General,
+                "{general} should be the general class"
+            );
+        }
     }
 }

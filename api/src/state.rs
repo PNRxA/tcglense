@@ -10,7 +10,7 @@ use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
 use crate::email::Emailer;
 use crate::error::AppError;
-use crate::ratelimit::RateLimiters;
+use crate::ratelimit::{RateLimiters, UserRateLimiters};
 
 /// The fixed plaintext whose Argon2 hash backs the login timing-equalizer (see
 /// `dummy_password_hash`). Its value is irrelevant to security — only the cost of
@@ -44,6 +44,9 @@ pub struct AppState {
     pub captcha: Arc<Captcha>,
     /// Per-IP rate limiters for the auth endpoints.
     pub rate_limiters: Arc<RateLimiters>,
+    /// Per-user rate limiters for the authenticated API surface (collection + `me`),
+    /// keyed by the access-token user id (see [`crate::ratelimit::UserRateLimiters`]).
+    pub user_rate_limiters: Arc<UserRateLimiters>,
 }
 
 impl AppState {
@@ -80,6 +83,7 @@ impl AppState {
         // the same shared client; the per-IP auth limiters are in-memory.
         let captcha = Arc::new(Captcha::from_config(&config, http.clone()));
         let rate_limiters = Arc::new(RateLimiters::default());
+        let user_rate_limiters = Arc::new(UserRateLimiters::default());
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -90,6 +94,7 @@ impl AppState {
             email,
             captcha,
             rate_limiters,
+            user_rate_limiters,
         })
     }
 }

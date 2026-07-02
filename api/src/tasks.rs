@@ -12,7 +12,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 use crate::{
     catalog,
     entities::{prelude::User, user},
-    ratelimit::RateLimiters,
+    ratelimit::{RateLimiters, UserRateLimiters},
     state::AppState,
 };
 
@@ -67,9 +67,14 @@ async fn seed_dev_user(db: &DatabaseConnection) {
 }
 
 /// Periodic maintenance: prune expired refresh + email tokens so those tables
-/// can't grow unbounded, and drop replenished rate-limiter keys so that keyspace
-/// can't either. The first tick fires immediately, then every 6 hours.
-fn spawn_maintenance(db: DatabaseConnection, rate_limiters: Arc<RateLimiters>) {
+/// can't grow unbounded, and drop replenished rate-limiter keys (both the per-IP
+/// and the per-user sets) so those keyspaces can't either. The first tick fires
+/// immediately, then every 6 hours.
+fn spawn_maintenance(
+    db: DatabaseConnection,
+    rate_limiters: Arc<RateLimiters>,
+    user_rate_limiters: Arc<UserRateLimiters>,
+) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));
         loop {
@@ -89,6 +94,7 @@ fn spawn_maintenance(db: DatabaseConnection, rate_limiters: Arc<RateLimiters>) {
                 }
             }
             rate_limiters.retain_recent();
+            user_rate_limiters.retain_recent();
         }
     });
 }
@@ -138,7 +144,11 @@ fn spawn_card_sync(db: DatabaseConnection, http: Client, sync_interval_hours: u6
 /// present before the first request (handy for CI/e2e). A seed error is logged but
 /// does not abort startup. Never enable this outside dev/CI/test.
 pub async fn start(state: &AppState, http: &Client) {
-    spawn_maintenance(state.db.clone(), state.rate_limiters.clone());
+    spawn_maintenance(
+        state.db.clone(),
+        state.rate_limiters.clone(),
+        state.user_rate_limiters.clone(),
+    );
 
     if state.config.seed_dummy_data {
         tracing::warn!(

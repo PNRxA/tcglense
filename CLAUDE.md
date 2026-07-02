@@ -168,8 +168,10 @@ the field is ignored (dev/tests). Independently, a **per-IP rate limiter** guard
 these endpoints (login/register/email-send/token classes, each its own quota);
 over-limit is `429` + `Retry-After`. The client IP is the socket peer by default,
 or the `X-Forwarded-For`/`Forwarded` client when `TRUST_PROXY_HEADERS=true` (set
-only behind a trusted proxy). `refresh`/`logout`/`me` are neither CAPTCHA- nor
-rate-limited (legitimate high-frequency session ops).
+only behind a trusted proxy). `refresh`/`logout`/`me` are neither CAPTCHA-gated nor
+*per-IP* rate-limited (legitimate high-frequency session ops); `me`, being an
+authenticated (bearer) route, does still carry the generous **per-user** general
+limit (~300/min) — see the per-user rate-limiting note under "Known trade-offs".
 
 Security rules baked in: emails trimmed + lowercased (case-insensitive accounts,
 also enforced at the DB via `COLLATE NOCASE`); password 8–1024 chars, email must
@@ -327,7 +329,11 @@ shared-cached). Ownership is always scoped to the token's user id, so one user c
 neither read nor mutate another's collection. Card ids in the path are the **external**
 card id (the same id the public catalog exposes); the handler resolves it to the
 internal `cards.id` before storage (so a holding survives a catalog re-import). A
-missing token is `401`; an unknown game/card is `404`.
+missing token is `401`; an unknown game/card is `404`. These endpoints are **per-user
+rate limited** (issue #168, `ratelimit::user_rate_limit`, keyed by the token's user
+id): a generous `general` quota covers reads/edits/batch lookups, and a tighter
+`import` quota covers the expensive import/sync/CSV endpoints; over-limit is `429` +
+`Retry-After` (and, being per-user, `no-store`).
 
 A "holding" is `(user, game, card) → { quantity, foil_quantity }`; there is no row for
 a card you don't own (setting both counts to zero deletes the row), so the table holds
@@ -450,13 +456,13 @@ runs smart instead of mirror/replace).
 ```
 main.rs            bootstrap: env → tracing → DB connect → migrate → AppState::new → tasks::start → build_router → serve
 router.rs          build_router(): every route + the shared middleware stack (CORS, cache layers, body limits) — kept out of main so the security tests drive the exact same router in-process
-tasks.rs           background startup tasks: 6h maintenance loop (prune expired refresh- + email-tokens; retain_recent on the rate limiters) + either the awaited offline dummy-catalog seed (SEED_DUMMY_DATA — which also seeds the verified `e2e@tcglense.test`/`password123` dev account, since offline runs can't receive verification email) or the spawned startup/periodic card-data sync
+tasks.rs           background startup tasks: 6h maintenance loop (prune expired refresh- + email-tokens; retain_recent on the per-IP + per-user rate limiters) + either the awaited offline dummy-catalog seed (SEED_DUMMY_DATA — which also seeds the verified `e2e@tcglense.test`/`password123` dev account, since offline runs can't receive verification email) or the spawned startup/periodic card-data sync
 config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, MOXFIELD_USER_AGENT, RESEND_API_KEY, EMAIL_FROM, TURNSTILE_SECRET_KEY, TRUST_PROXY_HEADERS, RATE_LIMIT_ENABLED, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secrets
 captcha.rs         CAPTCHA verification: Captcha enum (Turnstile via the shared client + per-request timeout / Disabled when TURNSTILE_SECRET_KEY unset / test-only ExpectToken) — enum dispatch like email.rs; a missing/rejected token is a 400, checked before any account work
 client_ip.rs       resolve the client IP for rate limiting (socket-peer default; X-Forwarded-For/Forwarded only when TRUST_PROXY_HEADERS) + a ClientIp extractor; None when unresolvable (the in-process test harness) so the limiter fails open
-ratelimit.rs       per-IP auth rate limiting: RateLimiters (one governor keyed limiter per auth class — login/register/email-send/token) + the `rate_limit` middleware (429 + Retry-After; no-ops for non-auth paths, a disabled limiter, or an unresolvable IP); retain_recent bounds the keyspace
+ratelimit.rs       rate limiting, two flavours: per-IP for the auth endpoints — RateLimiters (one governor keyed limiter per auth class — login/register/email-send/token) + the `rate_limit` middleware (429 + Retry-After; no-ops for non-auth paths, a disabled limiter, or an unresolvable IP) — and per-user for the authenticated surface (issue #168) — UserRateLimiters (general/import classes, keyed by the access-token user id) + the `user_rate_limit` middleware (skips a request with no valid bearer); both retain_recent bound their keyspace
 db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000) + a registered REGEXP function (sqlx `regexp` feature, for the search `/regex/` syntax), applied to every pooled connection
-state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue>, email: Arc<Emailer>, captcha: Arc<Captcha>, rate_limiters: Arc<RateLimiters> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + per-provider rate limiters; `email` is the transactional-email sender; `captcha` is the auth CAPTCHA verifier; `rate_limiters` are the per-IP auth limiters); AppState::new is the one construction site, shared with the security-test harness
+state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue>, email: Arc<Emailer>, captcha: Arc<Captcha>, rate_limiters: Arc<RateLimiters>, user_rate_limiters: Arc<UserRateLimiters> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + per-provider rate limiters; `email` is the transactional-email sender; `captcha` is the auth CAPTCHA verifier; `rate_limiters` are the per-IP auth limiters, `user_rate_limiters` the per-user limiters for the authenticated surface); AppState::new is the one construction site, shared with the security-test harness
 email.rs           outbound transactional email: Emailer enum (Resend via the shared client + per-request timeout / Disabled when RESEND_API_KEY unset, logging the message / test-only Capture mailbox) + the verification/reset message builders — enum dispatch, mirroring collection_import's Provider
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. Forbidden → 403 for the unverified-email login gate, TooManyRequests → 429 for rate limiting, BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
@@ -694,6 +700,21 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   isn't fully mitigated; the token cooldown (`issue_with_cooldown`, an atomic
   conditional insert) remains the per-user email-issue brake underneath the per-IP
   limit.
+- **Per-user rate limiting (issue #168):** the *authenticated* API surface (the
+  `/api/collection/*` endpoints + `GET /api/auth/me`) also carries a per-user limit
+  (`ratelimit.rs`'s `UserRateLimiters` + the `user_rate_limit` middleware), keyed by
+  the access-token user id rather than the IP, so it caps what a single account can
+  do no matter how many IPs it comes from — the per-user complement to the per-IP
+  auth limits above. Two classes: a generous `general` bucket (reads/edits/batch
+  lookups, ~300/min) and a tight `import` bucket (the expensive import/sync/CSV
+  endpoints, ~10/min); over-limit is `429` + `Retry-After` + `no-store`. It gates on
+  the same `RATE_LIMIT_ENABLED` switch and shares the per-IP limiter's caveats:
+  **in-memory / per-process** (a multi-instance deploy would want a shared store),
+  and it only engages for a request carrying a *valid* bearer token (an
+  unauthenticated / bad-token request has no user to key on and is left to the
+  handler's own `401`, so it is **not** an IP-level DoS guard for those routes —
+  that would still need the per-IP/WAF layer). The public catalog + image routes
+  remain unthrottled (same open posture noted under image caching).
 - **Transactional email (Resend):** sends ride the shared reqwest client with a
   10s per-request timeout; there is no retry/queue — a failed registration send is
   logged and the user recovers via resend-verification, and the anti-enumeration
