@@ -88,9 +88,9 @@ const features: Feature[] = [
 ]
 
 // The wish-list selling points, kept truthful: each maps to a shipped behaviour of the
-// /wishlist views (ghosts default on; summary + per-set values; the three add surfaces).
+// /wishlist views (the ghosts toggle; summary + per-set values; the three add surfaces).
 const wishlistPoints = [
-  'Browse every set with your wanted cards bright and the rest dimmed — ghosts are on by default',
+  'Flip on ghosts to browse whole sets with your wanted cards bright and the rest dimmed',
   'A live USD total of what is on your list, overall or per set',
   'Add cards from any wish-list grid, the card page, or quick-add by name',
 ]
@@ -166,9 +166,9 @@ const wishlistPoints = [
             </p>
             <p class="text-muted-foreground mt-3 text-pretty">
               A wish list works just like your collection — regular and foil counts per card — but
-              for the cards you are still hunting. Browse any set and the cards on your list stay
-              bright while everything else dims to a ghost, with a running USD total of what buying
-              the list would cost.
+              for the cards you are still hunting. Flip on ghost mode to browse any set with the
+              cards on your list bright and everything else dimmed, with a running USD total of what
+              buying the list would cost.
             </p>
             <ul class="mt-5 space-y-2.5">
               <li v-for="point in wishlistPoints" :key="point" class="flex items-start gap-2.5">

@@ -58,10 +58,10 @@ import { useAuthStore } from '@/stores/auth'
 // view; `code` is the only difference (undefined = all cards).
 //
 // The same three view controls compose on top ({list, ghost} × {flat, by-drop}, with
-// include-related a flat scope expansion) — but here **show-ghosts defaults ON for the
-// all-cards view** (a wish list is mostly gaps by definition, so game-wide browsing
-// leads with the whole catalog, dimming what isn't wanted yet; `?ghosts=0` opts out)
-// while a set-scoped page defaults OFF like the collection (`?ghosts=1` opts in).
+// include-related a flat scope expansion). Show-ghosts defaults OFF like the
+// collection (`?ghosts=1` opts in): the bare URL lists just your wishlisted cards,
+// and the toggle swaps in the whole catalog in scope with non-wishlisted cards dimmed
+// — the add-in-place browse mode, whose count controls write to the wish list.
 const props = defineProps<{ game: string; code?: string }>()
 const game = toRef(props, 'game')
 const code = toRef(props, 'code')
@@ -76,23 +76,16 @@ const router = useRouter()
 const gameName = useGameName(game)
 const auth = useAuthStore()
 
-// Show-ghosts mode. The default depends on the scope: the unscoped all-cards view
-// defaults ON (the whole catalog with non-wishlisted cards dimmed — a wish list is
-// mostly gaps, so game-wide browsing leads with everything addable); a set-scoped page
-// defaults OFF (you opened a set from the landing to see what you've wishlisted in it —
-// `?ghosts=1` flips to the set's full card list). The bare URL is always the default,
-// so the explicit param is `0` where on is the default and `1` where off is. Composes
-// with by-drop and include-related either way.
-const ghostsDefaultOn = computed(() => !scoped.value)
-const showGhosts = computed(() =>
-  ghostsDefaultOn.value ? route.query.ghosts !== '0' : route.query.ghosts === '1',
-)
+// Show-ghosts mode, default OFF like the collection view: the bare URL lists just the
+// wishlisted cards; `?ghosts=1` swaps in the whole catalog in scope with
+// non-wishlisted cards dimmed. Composes with by-drop and include-related.
+const showGhosts = computed(() => route.query.ghosts === '1')
 
 function setShowGhosts(on: boolean) {
   const next = { ...route.query }
-  // The default is the bare URL; only the non-default state carries the param.
-  if (on === ghostsDefaultOn.value) delete next.ghosts
-  else next.ghosts = on ? '1' : '0'
+  // Off is the default, so it's the bare URL; on is the explicit `?ghosts=1`.
+  if (on) next.ghosts = '1'
+  else delete next.ghosts
   // The two modes list different cards and sort differently, so a page number and a
   // mode-specific sort don't carry across the toggle — drop both so the target mode
   // starts on page 1 at its own default order (list = recency; ghosts = catalog order).
