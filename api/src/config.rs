@@ -42,6 +42,14 @@ pub struct Config {
     /// the server inserts deterministic fake sets/cards on boot and performs NO
     /// network sync. For offline dev, CI, and tests; never enable in production.
     pub seed_dummy_data: bool,
+    /// Run the image proxy in "CDN mode": don't cache card images / set icons on
+    /// local disk. The origin still fetches each asset from the provider on demand
+    /// and serves it with the same `immutable` cache headers, but skips persisting
+    /// it — meant for deployments fronted by a CDN that caches those responses, so
+    /// the origin needs no writable image directory and is only hit on a CDN cache
+    /// miss. Leave false when no CDN sits in front, or every view re-fetches
+    /// upstream. See [`crate::catalog::images`].
+    pub cdn_mode: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -70,6 +78,7 @@ impl std::fmt::Debug for Config {
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)
+            .field("cdn_mode", &self.cdn_mode)
             .finish()
     }
 }
@@ -221,6 +230,9 @@ impl Config {
         // other boolean flags; main.rs gives it precedence over the sync settings.
         let seed_dummy_data = env_bool("SEED_DUMMY_DATA", false);
 
+        // Skip on-disk image caching when a CDN fronts the origin (see the field docs).
+        let cdn_mode = env_bool("CDN_MODE", false);
+
         Config {
             database_url,
             jwt_secret,
@@ -236,6 +248,7 @@ impl Config {
             sync_on_startup,
             sync_interval_hours,
             seed_dummy_data,
+            cdn_mode,
         }
     }
 }
