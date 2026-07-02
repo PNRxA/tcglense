@@ -30,7 +30,7 @@ use reqwest::{StatusCode, header};
 use serde::Deserialize;
 
 use super::archidekt::backoff_after;
-use super::{FetchedHolding, ImportError, MAX_IMPORT_ROWS, ProviderContext};
+use super::{FetchedHolding, ImportError, MAX_IMPORT_ROWS, Provider, ProviderContext};
 
 const API_BASE: &str = "https://api2.moxfield.com/v1/collections/search";
 const ACCEPT_JSON: &str = "application/json";
@@ -291,9 +291,9 @@ fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportErr
     Ok(())
 }
 
-/// Fetch and parse one collection page, throttled by the shared limiter and transparently
-/// retrying past a `429` (backing off the whole limiter so every import waits).
-/// `order_recent` adds the smart sync's most-recently-edited-first sort. Sends the
+/// Fetch and parse one collection page, throttled by Moxfield's own limiter and
+/// transparently retrying past a `429` (backing off that limiter so every Moxfield import
+/// waits). `order_recent` adds the smart sync's most-recently-edited-first sort. Sends the
 /// configured approved `User-Agent` when present. Maps a missing/private collection
 /// (`400`/`404`) to `CollectionNotFound`, and a `403` (Moxfield's bot wall rejecting our
 /// client) to a clear "needs an approved User-Agent" error.
@@ -304,9 +304,10 @@ async fn get_page(
     order_recent: bool,
     rate_limit_retries: &mut u32,
 ) -> Result<CollectionPage, ImportError> {
+    let limiter = ctx.limiters.for_provider(Provider::Moxfield);
     loop {
-        // Respect the provider's request cap across all imports before every request.
-        ctx.limiter.acquire().await;
+        // Respect Moxfield's request cap across all its imports before every request.
+        limiter.acquire().await;
 
         let mut url = format!("{API_BASE}/{collection_id}?pageNumber={page}&pageSize={PAGE_SIZE}");
         if order_recent {
@@ -329,8 +330,9 @@ async fn get_page(
 
         let status = response.status();
 
-        // Rate-limited: back off (globally, so every import waits) and retry the *same*
-        // page; give up after a few tries so a persistent 429 doesn't hang the import.
+        // Rate-limited: back off Moxfield's limiter (so every Moxfield import waits, not
+        // other providers) and retry the *same* page; give up after a few tries so a
+        // persistent 429 doesn't hang the import.
         if status == StatusCode::TOO_MANY_REQUESTS {
             if *rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
                 return Err(ImportError::RateLimited);
@@ -342,7 +344,7 @@ async fn get_page(
                 wait_secs = wait.as_secs(),
                 "Moxfield rate-limited us (429); backing off before retrying"
             );
-            ctx.limiter.back_off(wait).await;
+            limiter.back_off(wait).await;
             continue; // retry the same page; the next `acquire()` waits out the backoff
         }
 

@@ -49,11 +49,11 @@ const UNMATCHED_SAMPLE_CAP: usize = 20;
 const IN_CHUNK: usize = 900;
 
 /// Everything a provider fetch needs beyond the collection id: the shared HTTP client,
-/// the process-wide provider rate limiter, and deployment-level provider settings.
+/// the per-provider rate limiters, and deployment-level provider settings.
 /// Borrowed for the duration of one import.
 pub struct ProviderContext<'a> {
     pub http: &'a reqwest::Client,
-    pub limiter: &'a rate_limit::RateLimiter,
+    pub limiters: &'a rate_limit::ProviderLimiters,
     pub settings: &'a ProviderSettings,
 }
 
@@ -73,15 +73,17 @@ pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportErr
     })
 }
 
-/// Fetch every holding for a provider collection id, throttled by the shared provider
-/// rate limiter.
+/// Fetch every holding for a provider collection id, throttled by that provider's rate
+/// limiter.
 async fn fetch_holdings(
     provider: Provider,
     ctx: &ProviderContext<'_>,
     collection_id: &str,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
     match provider {
-        Provider::Archidekt => archidekt::fetch(ctx.http, ctx.limiter, collection_id).await,
+        Provider::Archidekt => {
+            archidekt::fetch(ctx.http, ctx.limiters.for_provider(provider), collection_id).await
+        }
         Provider::Moxfield => moxfield::fetch(ctx, collection_id).await,
     }
 }
@@ -99,7 +101,8 @@ async fn fetch_holdings_smart(
 ) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
     match provider {
         Provider::Archidekt => {
-            archidekt::fetch_smart(ctx.http, ctx.limiter, collection_id, local).await
+            let limiter = ctx.limiters.for_provider(provider);
+            archidekt::fetch_smart(ctx.http, limiter, collection_id, local).await
         }
         Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local).await,
     }

@@ -6,8 +6,9 @@
 //! polls the job's status (`queued` → `running` → `complete`/`error`).
 //!
 //! Concurrency is capped at one import at a time ([`MAX_CONCURRENT_IMPORTS`]) so imports
-//! form a simple global queue — a job waiting for the slot reports `queued`. The shared
-//! [`RateLimiter`] additionally bounds the request rate across everything.
+//! form a simple global queue — a job waiting for the slot reports `queued`. The
+//! per-provider [`ProviderLimiters`] additionally bound each provider's request rate
+//! across every import that talks to it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,7 +22,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
-use super::rate_limit::RateLimiter;
+use super::rate_limit::ProviderLimiters;
 use super::{
     ImportSummary, Provider, ProviderContext, ProviderSettings, ReconcileMode, execute_import,
 };
@@ -35,8 +36,6 @@ const MAX_TRACKED_JOBS: usize = 200;
 /// Imports that run at once. One keeps them a simple global queue; with the provider
 /// rate limit, more concurrency wouldn't finish faster (they'd share one request budget).
 const MAX_CONCURRENT_IMPORTS: usize = 1;
-/// Requests/minute we allow to the collection provider, across all imports.
-pub const PROVIDER_REQUESTS_PER_MINUTE: u32 = 20;
 
 /// A job's lifecycle status. Cloned out under the lock for the status endpoint.
 #[derive(Clone)]
@@ -58,12 +57,12 @@ struct Job {
     updated_at: Instant,
 }
 
-/// The process-wide import queue: the job registry, the id counter, the shared provider
-/// rate limiter, and the concurrency slots. Held in `AppState` behind an `Arc`.
+/// The process-wide import queue: the job registry, the id counter, the per-provider
+/// rate limiters, and the concurrency slots. Held in `AppState` behind an `Arc`.
 pub struct ImportQueue {
     jobs: Mutex<HashMap<u64, Job>>,
     next_id: AtomicU64,
-    limiter: RateLimiter,
+    limiters: ProviderLimiters,
     permits: Arc<Semaphore>,
     /// Deployment-level provider settings (e.g. Moxfield's approved User-Agent),
     /// captured at startup so background workers don't need the full app config.
@@ -72,17 +71,17 @@ pub struct ImportQueue {
 
 impl Default for ImportQueue {
     fn default() -> Self {
-        Self::new(PROVIDER_REQUESTS_PER_MINUTE)
+        Self::new(ProviderLimiters::default())
     }
 }
 
 impl ImportQueue {
-    /// Build a queue whose provider requests are capped at `requests_per_minute`.
-    pub fn new(requests_per_minute: u32) -> Self {
+    /// Build a queue whose provider requests are governed by the given per-provider limiters.
+    pub fn new(limiters: ProviderLimiters) -> Self {
         Self {
             jobs: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
-            limiter: RateLimiter::per_minute(requests_per_minute),
+            limiters,
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT_IMPORTS)),
             settings: ProviderSettings::default(),
         }
@@ -156,7 +155,8 @@ pub struct ImportRequest {
 
 /// Queue an import and spawn its background worker; returns the job id immediately. The
 /// worker waits for the concurrency slot (reporting `queued`), then fetches + reconciles
-/// throttled by the shared provider rate limiter, recording the outcome on the job.
+/// throttled by the provider's own rate limiter (from `ProviderLimiters`), recording the
+/// outcome on the job.
 pub fn spawn_import_job(
     db: DatabaseConnection,
     http: reqwest::Client,
@@ -176,7 +176,7 @@ pub fn spawn_import_job(
 
         let ctx = ProviderContext {
             http: &http,
-            limiter: &imports.limiter,
+            limiters: &imports.limiters,
             settings: &imports.settings,
         };
         let result = execute_import(

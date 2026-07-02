@@ -247,9 +247,9 @@ fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportErr
     Ok(())
 }
 
-/// Fetch and parse one collection page, throttled by the shared limiter and transparently
-/// retrying past a `429` (backing off the whole limiter so every import waits). `order_by`
-/// sets Archidekt's `orderBy` when present (e.g. [`ORDER_RECENT`]); `None` uses the
+/// Fetch and parse one collection page, throttled by Archidekt's limiter and transparently
+/// retrying past a `429` (backing off that limiter so every Archidekt import waits).
+/// `order_by` sets Archidekt's `orderBy` when present (e.g. [`ORDER_RECENT`]); `None` uses the
 /// default order. Maps a missing/private collection (`400`/`404`) to `CollectionNotFound`.
 ///
 /// `rate_limit_retries` is the caller's cumulative-across-the-import 429 counter: it's
@@ -280,9 +280,10 @@ async fn get_page(
 
         let status = response.status();
 
-        // Rate-limited: back off (globally, so every import waits) and retry the *same*
-        // page. Wait at least the provider's window (honoring a larger `Retry-After`);
-        // give up after a few tries so a persistent 429 doesn't hang the import forever.
+        // Rate-limited: back off Archidekt's limiter (so every Archidekt import waits, not
+        // other providers) and retry the *same* page. Wait at least the provider's window
+        // (honoring a larger `Retry-After`); give up after a few tries so a persistent 429
+        // doesn't hang the import forever.
         if status == StatusCode::TOO_MANY_REQUESTS {
             if *rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
                 return Err(ImportError::RateLimited);
