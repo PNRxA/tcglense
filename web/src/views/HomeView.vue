@@ -4,9 +4,8 @@ import {
   ArrowRight,
   ChevronRight,
   CloudDownload,
-  Eye,
-  EyeOff,
   Ghost,
+  Heart,
   LibraryBig,
   Sparkles,
   TrendingUp,
@@ -24,7 +23,7 @@ const auth = useAuthStore()
 usePageMeta({
   description:
     'Browse trading-card games, sets, and cards, follow singles prices over time, and track ' +
-    'your collection — with ghost mode showing exactly which cards you are missing.',
+    'your collection and wish list — with ghost mode showing exactly which cards you are missing.',
   canonicalPath: '/',
 })
 
@@ -78,13 +77,22 @@ const features: Feature[] = [
     description: 'Signed in, every card you already own is badged as you browse the catalog.',
     to: '/cards',
   },
+  {
+    icon: Ghost,
+    title: 'Collection ghost mode',
+    description:
+      'Flip “Show ghosts” on any collection grid to dim the cards you are missing — with a ' +
+      'live “X/Y owned” count — and quick-add them right where they sit.',
+    to: '/collection',
+  },
 ]
 
-// The ghost-mode selling points, kept truthful: it is a toggle inside a collection grid.
-const ghostPoints = [
-  'A “Show ghosts” toggle on any collection card grid',
-  'A live “X/Y owned” count as you scan a set',
-  'Quick-add a missing card right where it sits',
+// The wish-list selling points, kept truthful: each maps to a shipped behaviour of the
+// /wishlist views (ghosts default on; summary + per-set values; the three add surfaces).
+const wishlistPoints = [
+  'Browse every set with your wanted cards bright and the rest dimmed — ghosts are on by default',
+  'A live USD total of what is on your list, overall or per set',
+  'Add cards from any wish-list grid, the card page, or quick-add by name',
 ]
 </script>
 
@@ -95,16 +103,16 @@ const ghostPoints = [
       <span
         class="border-border bg-muted text-muted-foreground mb-6 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
       >
-        <Ghost class="size-3.5" aria-hidden="true" />
-        New — collection ghost mode
+        <Heart class="size-3.5" aria-hidden="true" />
+        New — wish lists
       </span>
       <h1 class="max-w-2xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
         Track every card. Watch every price.
       </h1>
       <p class="text-muted-foreground mt-4 max-w-xl text-base text-pretty sm:text-lg">
         Browse games, sets, and cards, follow real singles prices as they move, and track your
-        collection down to the last foil — then flip on ghost mode to see exactly which cards you
-        are missing.
+        collection down to the last foil — then keep a wish list of the cards you want to buy next,
+        priced as you go.
       </p>
 
       <div class="mt-8 flex flex-col items-center gap-3 sm:flex-row">
@@ -140,37 +148,38 @@ const ghostPoints = [
       </p>
     </section>
 
-    <!-- Ghost mode spotlight: the headline new feature (issue #112), placed first. -->
+    <!-- Wish-list spotlight: the headline new feature (issue #167), placed first. Ghost
+         mode (the previous spotlight, issue #112) graduated into the feature grid below. -->
     <section class="mt-16 sm:mt-20">
-      <h2 class="sr-only">Collection ghost mode</h2>
+      <h2 class="sr-only">Wish lists</h2>
       <Card class="border-primary/30 bg-primary/5 gap-0 overflow-hidden rounded-3xl py-0">
         <div class="grid gap-8 p-6 sm:p-10 md:grid-cols-2 md:items-center">
           <div>
             <span
               class="border-primary/30 bg-primary/10 text-primary inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
             >
-              <Ghost class="size-3.5" aria-hidden="true" />
-              New — ghost mode
+              <Heart class="size-3.5" aria-hidden="true" />
+              New — wish lists
             </span>
             <p class="mt-4 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              See the gaps in your collection
+              Keep a list of the cards you want next
             </p>
             <p class="text-muted-foreground mt-3 text-pretty">
-              Flip the <span class="text-foreground font-medium">Show ghosts</span> toggle on any
-              collection grid and the cards you do not own appear dimmed as ghosts beside the ones
-              you do — so a set’s holes read at a glance, and you can quick-add a missing card right
-              in place.
+              A wish list works just like your collection — regular and foil counts per card — but
+              for the cards you are still hunting. Browse any set and the cards on your list stay
+              bright while everything else dims to a ghost, with a running USD total of what buying
+              the list would cost.
             </p>
             <ul class="mt-5 space-y-2.5">
-              <li v-for="point in ghostPoints" :key="point" class="flex items-start gap-2.5">
+              <li v-for="point in wishlistPoints" :key="point" class="flex items-start gap-2.5">
                 <ChevronRight class="text-primary mt-0.5 size-4 shrink-0" aria-hidden="true" />
                 <span class="text-muted-foreground text-sm text-pretty">{{ point }}</span>
               </li>
             </ul>
             <div class="mt-6">
-              <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
-                <Ghost aria-hidden="true" />
-                {{ auth.isAuthenticated ? 'Open your collection' : 'Try ghost mode' }}
+              <RouterLink to="/wishlist" :class="buttonVariants({ size: 'lg' })">
+                <Heart aria-hidden="true" />
+                {{ auth.isAuthenticated ? 'Open your wish list' : 'Start a wish list' }}
               </RouterLink>
               <p v-if="!auth.isAuthenticated" class="text-muted-foreground mt-2 text-sm">
                 Sign-in required — it is free to create an account.
@@ -178,7 +187,7 @@ const ghostPoints = [
             </div>
           </div>
 
-          <!-- Visual demo: one owned card beside two dimmed "ghosts". Decorative. -->
+          <!-- Visual demo: one wanted card beside two dimmed "ghosts". Decorative. -->
           <div
             class="bg-background/60 flex flex-col items-center gap-3 rounded-2xl border p-6"
             aria-hidden="true"
@@ -188,9 +197,9 @@ const ghostPoints = [
                 <div
                   class="bg-card ring-primary/30 flex size-16 items-center justify-center rounded-xl sm:size-20 border shadow-sm ring-1"
                 >
-                  <Eye class="text-primary size-9" />
+                  <Heart class="text-primary size-9" />
                 </div>
-                <span class="text-foreground text-xs font-medium">Owned</span>
+                <span class="text-foreground text-xs font-medium">Wanted</span>
               </div>
               <div class="flex flex-col items-center gap-2 opacity-40">
                 <div
@@ -204,12 +213,12 @@ const ghostPoints = [
                 <div
                   class="flex size-16 items-center justify-center rounded-xl sm:size-20 border border-dashed"
                 >
-                  <EyeOff class="text-muted-foreground size-9" />
+                  <Ghost class="text-muted-foreground size-9" />
                 </div>
                 <span class="text-muted-foreground text-xs font-medium">Ghost</span>
               </div>
             </div>
-            <p class="text-muted-foreground text-xs">1/3 owned</p>
+            <p class="text-muted-foreground text-xs">1 wanted · ghosts dimmed</p>
           </div>
         </div>
       </Card>
@@ -274,8 +283,8 @@ const ghostPoints = [
           Jump back into your collection and see what you are still chasing.
         </p>
         <p v-else class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty">
-          Create a free account to start tracking your collection, or keep browsing the catalog — no
-          sign-up needed.
+          Create a free account to start tracking your collection and wish list, or keep browsing
+          the catalog — no sign-up needed.
         </p>
         <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <template v-if="auth.isAuthenticated">
