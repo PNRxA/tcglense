@@ -115,19 +115,58 @@ Pin a release across the whole stack with `IMAGE_TAG=vX.Y.Z` (defaults to `lates
 
 #### Behind a CDN (Cloudflare)
 
-The public catalog (`/api/games/*`) and the image/icon proxy already emit CDN-friendly
-`Cache-Control` (`s-maxage` / `immutable`), so a CDN caches them with no code change.
-To put Cloudflare in front:
+The public catalog (`/api/games/*`), its image/icon proxy, and the XML sitemaps
+(`/api/sitemap.xml`, `/api/sitemaps/*`) already emit CDN-friendly `Cache-Control`
+(`s-maxage` / `immutable`), so a CDN caches them with no code change. To put Cloudflare
+in front:
 
 - Set **`CDN_MODE=true`** on the `api` service — the origin then skips caching card
   images to disk (the CDN absorbs the repeats), so it needs no writable image dir.
   Leave it off if no CDN sits in front, or every view re-fetches upstream.
-- Add a **cache rule** — Cloudflare doesn't cache API paths by default; add a rule to
-  cache eligible responses (honoring the origin `Cache-Control`) for `/api/games/*` and
-  the image/icon routes. Keep `/api/auth/*` uncached (they're already `no-store`).
+- **Create the two Cache Rules below** — Cloudflare doesn't cache `/api/*` paths by
+  default, so you have to tell it which responses are cacheable. The origin already
+  sends the right `Cache-Control` on every response, so the rules only make Cloudflare
+  **honor the origin header** — there are no per-route TTLs to keep in sync.
 - **TLS:** set Cloudflare SSL/TLS to **Full (strict)** and give Caddy a valid origin
   cert — a Cloudflare Origin CA cert, or Let's Encrypt via the DNS-01 challenge (the
   HTTP-01 challenge can be interfered with by Cloudflare's proxy).
+
+Add both under *Caching → Cache Rules* (included on the free plan). Because each is set
+to honor the origin, Cloudflare gives every response the exact lifetime the API already
+chose — catalog reads their hour at the edge (`s-maxage=3600`), the image/icon proxy its
+30 days (`immutable`), the sitemaps their day — and caches **no** `no-store` response
+(auth, the live `status` route, per-user collection/wishlist data, and every error), so
+you never have to enumerate those to keep them out.
+
+1. **Cache the public catalog, images, and sitemaps.** *Cache eligibility* →
+   **Eligible for cache**; *Edge TTL* → **Use cache-control header if present, bypass
+   cache if not** (the honor-the-origin option — pick the *bypass*-if-absent one, not
+   *…use default Cloudflare caching…*); *Browser TTL* → **Respect origin**. When
+   incoming requests match:
+
+   ```
+   (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
+   or http.request.uri.path eq "/api/sitemap.xml"
+   or starts_with(http.request.uri.path, "/api/sitemaps/")
+   ```
+
+2. **Bypass everything per-user or live.** *Cache eligibility* → **Bypass cache**. This
+   is belt-and-braces — these routes are already `no-store` at the origin, so rule 1
+   would never cache them — but an explicit bypass documents the intent. When incoming
+   requests match:
+
+   ```
+   starts_with(http.request.uri.path, "/api/auth/")
+   or starts_with(http.request.uri.path, "/api/collection/")
+   or starts_with(http.request.uri.path, "/api/wishlist/")
+   or (starts_with(http.request.uri.path, "/api/games") and ends_with(http.request.uri.path, "/status"))
+   ```
+
+The two expressions are mutually exclusive (rule 1 excludes `/status`; rule 2 matches
+only auth / collection / wishlist / status), so their order doesn't matter. If you ever
+add *overlapping* cache rules, note that Cloudflare applies **all** that match and the
+**last** one wins per setting — put a bypass rule *below* the rule it should override,
+not above.
 
 > **Real client IP (important).** With Cloudflare in front, the edge Caddy's immediate
 > peer is *Cloudflare*, so the default `edge.Caddyfile` line
