@@ -3,8 +3,10 @@
 
 use sea_orm::Condition;
 use sea_orm::Value;
-use sea_orm::sea_query::Expr;
+use sea_orm::sea_query::SimpleExpr;
 
+use crate::db::Dialect;
+use super::common::cust_vals;
 use super::super::MAX_MANA_SYMBOLS;
 use super::super::WUBRG;
 use super::super::error::{SearchError, invalid, unsupported_op};
@@ -72,7 +74,7 @@ fn mana_tokens(value: &str) -> Result<Vec<String>, SearchError> {
     Ok(out)
 }
 
-pub(super) fn mana(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn mana(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     let tokens = mana_tokens(value)?;
     if tokens.is_empty() {
         return Err(invalid("mana", value, "no mana symbols"));
@@ -80,17 +82,18 @@ pub(super) fn mana(op: Op, value: &str) -> Result<Condition, SearchError> {
     if tokens.len() > MAX_MANA_SYMBOLS {
         return Err(invalid("mana", value, "too many mana symbols"));
     }
+    let count = tokens.len() as i64;
     match op {
-        Op::Colon | Op::Ge => Ok(mana_contains(&tokens)),
+        Op::Colon | Op::Ge => Ok(mana_contains(dialect, &tokens)),
         // Exact multiset: contains every symbol with its multiplicity AND no others
         // (equal total symbol count). Multiset comparison makes `=` order-independent
         // (e.g. `m=WW2` == `m=2WW`), matching Scryfall.
-        Op::Eq => Ok(mana_contains(&tokens).add(mana_total_count("=", tokens.len() as i64))),
+        Op::Eq => Ok(mana_contains(dialect, &tokens).add(mana_total_count(dialect, "=", count))),
         // Strict superset: contains all query symbols AND strictly more in total.
-        Op::Gt => Ok(mana_contains(&tokens).add(mana_total_count(">", tokens.len() as i64))),
+        Op::Gt => Ok(mana_contains(dialect, &tokens).add(mana_total_count(dialect, ">", count))),
         // Anything but the exact multiset.
-        Op::Ne => Ok(mana_contains(&tokens)
-            .add(mana_total_count("=", tokens.len() as i64))
+        Op::Ne => Ok(mana_contains(dialect, &tokens)
+            .add(mana_total_count(dialect, "=", count))
             .not()),
         // Subset (`<`, `<=`) needs the cost's own symbol set — not supported yet.
         _ => Err(unsupported_op("mana", op)),
@@ -98,10 +101,11 @@ pub(super) fn mana(op: Op, value: &str) -> Result<Condition, SearchError> {
 }
 
 /// Compare the total mana-symbol count of `mana_cost` (the number of `}`) to `n`.
-fn mana_total_count(op_sql: &str, n: i64) -> sea_orm::sea_query::SimpleExpr {
-    Expr::cust_with_values(
+fn mana_total_count(dialect: Dialect, op_sql: &str, n: i64) -> SimpleExpr {
+    cust_vals(
+        dialect,
         format!(
-            "(LENGTH(IFNULL(mana_cost, '')) - LENGTH(REPLACE(IFNULL(mana_cost, ''), '}}', ''))) {op_sql} ?"
+            "(LENGTH(COALESCE(mana_cost, '')) - LENGTH(REPLACE(COALESCE(mana_cost, ''), '}}', ''))) {op_sql} ?"
         ),
         [n],
     )
@@ -109,7 +113,7 @@ fn mana_total_count(op_sql: &str, n: i64) -> sea_orm::sea_query::SimpleExpr {
 
 /// Per-symbol multiplicity containment: each distinct symbol must appear at least
 /// its query count (occurrences derived from the `REPLACE` length delta).
-fn mana_contains(tokens: &[String]) -> Condition {
+fn mana_contains(dialect: Dialect, tokens: &[String]) -> Condition {
     let mut counts: Vec<(&str, i64)> = Vec::new();
     for tok in tokens {
         if let Some(entry) = counts.iter_mut().find(|(t, _)| *t == tok.as_str()) {
@@ -121,8 +125,9 @@ fn mana_contains(tokens: &[String]) -> Condition {
     let mut cond = Condition::all();
     for (tok, n) in counts {
         let tlen = tok.chars().count() as i64;
-        cond = cond.add(Expr::cust_with_values(
-            "(LENGTH(IFNULL(mana_cost, '')) - LENGTH(REPLACE(IFNULL(mana_cost, ''), ?, ''))) >= ?"
+        cond = cond.add(cust_vals(
+            dialect,
+            "(LENGTH(COALESCE(mana_cost, '')) - LENGTH(REPLACE(COALESCE(mana_cost, ''), ?, ''))) >= ?"
                 .to_string(),
             [Value::from(tok.to_string()), Value::from(n * tlen)],
         ));

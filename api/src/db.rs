@@ -1,12 +1,24 @@
 //! Database connection setup.
 //!
-//! Builds the SeaORM connect options, applying SQLite performance pragmas to every
-//! pooled connection. Tuned for the read-heavy price/collection workloads this app
-//! is built for (issue #11).
+//! Builds the SeaORM connect options. The backend is selected at runtime by the
+//! `DATABASE_URL` scheme (`sqlite://` — the default — or `postgres://`); sea-orm's
+//! `Database::connect` dispatches on the scheme, so both drivers are compiled in and
+//! no cargo feature gate is involved.
+//!
+//! - **SQLite** (incl. `sqlite::memory:`): WAL journal mode + a ~20 MB per-connection
+//!   page cache + a registered REGEXP function (the Scryfall `/regex/` search filters).
+//!   Byte-identical to the pre-Postgres tuning (issue #11); sea-orm force-pins the
+//!   SQLite pool to a single connection.
+//! - **Postgres**: an explicit connection pool (sizes/timeouts from `DB_*` env vars,
+//!   with hard defaults), since sea-orm does not force a default there. The SQLite
+//!   pragmas do not apply (and would be a runtime no-op) so they are skipped.
 
-use sea_orm::{ConnectOptions, sqlx::sqlite::SqliteJournalMode};
+use std::borrow::Cow;
+use std::time::Duration;
 
-/// Build [`ConnectOptions`] for `database_url` with SQLite performance pragmas.
+use sea_orm::{ConnectOptions, DatabaseBackend, sqlx::sqlite::SqliteJournalMode};
+
+/// Build [`ConnectOptions`] for `database_url`, branching on the URL scheme.
 ///
 /// - **WAL journal mode** (`journal_mode=WAL`) stops reads and writes from blocking
 ///   each other at the SQLite layer: commits append to a `-wal` file instead of
@@ -22,24 +34,176 @@ use sea_orm::{ConnectOptions, sqlx::sqlite::SqliteJournalMode};
 ///   the database file, so it must be applied to the options used for every
 ///   connection in the pool — which is exactly what `map_sqlx_sqlite_opts` does.
 ///
-/// These pragmas are a no-op or harmless on a `:memory:` database (which stays in
-/// `MEMORY` journal mode), so the same options work for tests and production.
+/// The SQLite arm is a no-op or harmless on a `:memory:` database (which stays in
+/// `MEMORY` journal mode), so the same options work for tests and production. The
+/// Postgres arm leaves the SQLite closure unused, so `map_sqlx_sqlite_opts` never
+/// runs on a Postgres connection.
 pub fn connect_options(database_url: impl Into<String>) -> ConnectOptions {
-    let mut options = ConnectOptions::new(database_url);
-    options.map_sqlx_sqlite_opts(|opts| {
-        opts.journal_mode(SqliteJournalMode::Wal)
-            .pragma("cache_size", "-20000")
-            // Register a REGEXP function (sqlx `regexp` feature) on every connection
-            // so the Scryfall regex filters (`o:/…/`, `name:/…/`, …) resolve.
-            .with_regexp()
-    });
+    let url: String = database_url.into();
+    let mut options = ConnectOptions::new(url.clone());
+
+    if is_postgres_url(&url) {
+        apply_postgres_pool(&mut options);
+    } else {
+        // SQLite (incl. `sqlite::memory:`). Byte-identical to the original tuning:
+        // this closure only runs on the SQLite connect path.
+        options.map_sqlx_sqlite_opts(|opts| {
+            opts.journal_mode(SqliteJournalMode::Wal)
+                .pragma("cache_size", "-20000")
+                // Register a REGEXP function (sqlx `regexp` feature) on every connection
+                // so the Scryfall regex filters (`o:/…/`, `name:/…/`, …) resolve.
+                .with_regexp()
+        });
+    }
     options
+}
+
+/// Whether `url` selects the Postgres backend (matches sea-orm's own prefixing).
+fn is_postgres_url(url: &str) -> bool {
+    url.starts_with("postgres://") || url.starts_with("postgresql://")
+}
+
+/// Apply explicit pool sizing/timeouts for the Postgres backend from `DB_*` env vars
+/// (hard defaults when unset/blank/unparseable). SQLite is left at sea-orm's forced
+/// single-connection default, so this is never called on that arm.
+fn apply_postgres_pool(options: &mut ConnectOptions) {
+    use crate::config::env_parse;
+    options
+        .max_connections(env_parse::<u32>("DB_MAX_CONNECTIONS").unwrap_or(10))
+        .min_connections(env_parse::<u32>("DB_MIN_CONNECTIONS").unwrap_or(0))
+        .connect_timeout(Duration::from_secs(
+            env_parse::<u64>("DB_CONNECT_TIMEOUT_SECS").unwrap_or(15),
+        ))
+        .acquire_timeout(Duration::from_secs(
+            env_parse::<u64>("DB_ACQUIRE_TIMEOUT_SECS").unwrap_or(30),
+        ));
+}
+
+/// Which SQL dialect a compiled fragment targets. `Copy`, so it threads cheaply.
+/// Derived once per request from `state.db.get_database_backend()`. Kept here (the DB
+/// module already owns connection concerns) so both the search compiler and the shared
+/// sort helper can import `crate::db::Dialect`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dialect {
+    Sqlite,
+    Postgres,
+}
+
+impl Dialect {
+    /// SeaORM only ever hands us Sqlite or Postgres here (MySql is not compiled in);
+    /// map anything non-Postgres to the SQLite-shaped fragments.
+    pub fn from_backend(backend: DatabaseBackend) -> Self {
+        match backend {
+            DatabaseBackend::Postgres => Dialect::Postgres,
+            _ => Dialect::Sqlite,
+        }
+    }
+
+    // ---- placeholder normalisation (see §0.2) ----
+
+    /// Rewrite a `?`-placeholder cust template to the backend's placeholder syntax.
+    /// SQLite keeps `?`; Postgres gets `$1..$N` left-to-right. `?` inside single-quoted
+    /// SQL string literals is left alone. Our templates never contain a literal `$`, so
+    /// no `$$` escaping is needed. Apply this to EVERY value-binding cust fragment.
+    pub fn placeholders<'a>(self, template: &'a str) -> Cow<'a, str> {
+        if self != Dialect::Postgres {
+            return Cow::Borrowed(template);
+        }
+        let mut out = String::with_capacity(template.len() + 8);
+        let mut in_str = false;
+        let mut n = 0usize;
+        for c in template.chars() {
+            match c {
+                '\'' => {
+                    in_str = !in_str;
+                    out.push(c);
+                } // '' escape: toggles twice, harmless
+                '?' if !in_str => {
+                    n += 1;
+                    out.push('$');
+                    out.push_str(&n.to_string());
+                }
+                _ => out.push(c),
+            }
+        }
+        Cow::Owned(out)
+    }
+
+    // ---- SQL-function / operator divergences ----
+
+    /// True iff text `col` holds a plain non-negative integer string (`^[0-9]+$`).
+    pub fn integer_string_guard(self, col: &str) -> String {
+        match self {
+            // Unchanged from today's numeric_guard — identical semantics to `^[0-9]+$`.
+            Dialect::Sqlite => {
+                format!("{col} IS NOT NULL AND {col} GLOB '[0-9]*' AND {col} NOT GLOB '*[^0-9]*'")
+            }
+            Dialect::Postgres => format!("{col} IS NOT NULL AND {col} ~ '^[0-9]+$'"),
+        }
+    }
+
+    /// Guard for CASTing a TEXT price column to REAL. SQLite keeps the historical
+    /// null/empty check (its CAST coerces junk to 0.0, and behaviour must not change);
+    /// Postgres additionally requires a decimal shape, because its CAST hard-errors on
+    /// a non-numeric string and would 500 the whole request.
+    pub fn decimal_string_guard(self, col: &str) -> String {
+        match self {
+            Dialect::Sqlite => format!("{col} IS NOT NULL AND {col} <> ''"),
+            Dialect::Postgres => {
+                format!("{col} IS NOT NULL AND {col} <> '' AND {col} ~ '^[0-9]+(\\.[0-9]+)?$'")
+            }
+        }
+    }
+
+    /// Case-insensitive regex-match infix operator.
+    pub fn regex_operator(self) -> &'static str {
+        match self {
+            Dialect::Sqlite => "REGEXP",
+            Dialect::Postgres => "~*",
+        }
+    }
+
+    /// The bound pattern for a case-insensitive regex match.
+    pub fn regex_pattern(self, pattern: &str) -> String {
+        match self {
+            Dialect::Sqlite => format!("(?i){pattern}"), // Rust-regex UDF: force CI
+            Dialect::Postgres => pattern.to_string(),    // `~*` is already CI
+        }
+    }
+
+    /// 1-based substring position of `needle_sql` in `hay_sql` (0 when absent).
+    /// Args are already-rendered SQL fragments (column names / quoted literals).
+    pub fn strpos(self, hay_sql: &str, needle_sql: &str) -> String {
+        match self {
+            Dialect::Sqlite => format!("INSTR({hay_sql}, {needle_sql})"),
+            Dialect::Postgres => format!("STRPOS({hay_sql}, {needle_sql})"),
+        }
+    }
+
+    /// Expression giving a format's legality status text ('' when absent). Contains a
+    /// single `?` for the json key, renumbered by `placeholders`.
+    pub fn legality_status_expr(self) -> &'static str {
+        match self {
+            Dialect::Sqlite => "COALESCE(json_extract(legalities, ?), '')",
+            // NULLIF guards NULL/'' legalities so the ::jsonb cast can't error; CAST(? AS
+            // text) disambiguates the `jsonb ->> text` operator from `jsonb ->> int`.
+            Dialect::Postgres => "COALESCE(NULLIF(legalities, '')::jsonb ->> CAST(? AS text), '')",
+        }
+    }
+
+    /// The bound json-key value for `legality_status_expr` (SQLite JSONPath vs bare key).
+    pub fn legality_key(self, fmt: &str) -> String {
+        match self {
+            Dialect::Sqlite => format!("$.{fmt}"),
+            Dialect::Postgres => fmt.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement};
+    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
 
     /// Run a one-column `PRAGMA` and return the row, or panic with context.
     async fn pragma_row(db: &DatabaseConnection, pragma: &str) -> sea_orm::QueryResult {

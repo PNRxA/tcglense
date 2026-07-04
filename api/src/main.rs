@@ -19,6 +19,8 @@ mod tasks;
 mod tcgcsv;
 
 #[cfg(test)]
+mod integration_pg;
+#[cfg(test)]
 mod security_tests;
 #[cfg(test)]
 mod test_support;
@@ -26,7 +28,7 @@ mod test_support;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use sea_orm::Database;
+use sea_orm::{ConnectionTrait, Database};
 use sea_orm_migration::MigratorTrait;
 use tokio::net::TcpListener;
 use tracing_indicatif::IndicatifLayer;
@@ -79,6 +81,15 @@ async fn main() {
     let db = Database::connect(db::connect_options(database_url))
         .await
         .expect("failed to connect to the database");
+    // Report the backend the DATABASE_URL scheme selected (both sqlx-sqlite and
+    // sqlx-postgres are compiled in; sea-orm dispatched on the scheme). MySQL isn't
+    // compiled in, but the enum is non-exhaustive so it's matched for completeness.
+    let backend = match db.get_database_backend() {
+        sea_orm::DatabaseBackend::Postgres => "PostgreSQL",
+        sea_orm::DatabaseBackend::Sqlite => "SQLite",
+        sea_orm::DatabaseBackend::MySql => "MySQL",
+    };
+    tracing::info!("connected to {backend} database");
     Migrator::up(&db, None)
         .await
         .expect("failed to run database migrations");
@@ -104,10 +115,32 @@ async fn main() {
         .build()
         .expect("failed to build the image HTTP client");
 
+    // Optional Redis backing the rate limiters. When REDIS_URL is set but Redis is
+    // unreachable at boot we start DEGRADED (in-memory) with a warning rather than
+    // crash-looping a rolling deploy — rate limiting is abuse protection, not
+    // integrity, so it fails open (ConnectionManager also auto-reconnects once up).
+    let redis = match config.redis_url.as_deref() {
+        Some(url) => match ratelimit::connect_redis(url).await {
+            Ok(conn) => {
+                tracing::info!("connected to Redis; rate limiters are distributed");
+                Some(conn)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "REDIS_URL is set but connecting to Redis failed at startup; \
+                     rate limiting will run in-memory (per-process) until restart"
+                );
+                None
+            }
+        },
+        None => None,
+    };
+
     // Precomputing the timing-equalization dummy hash can fail; panicking here at
     // startup is acceptable (a request-path hash failure must never silently disable
     // it), so `.expect` stays at this call site per the "expect only in main.rs" rule.
-    let state = AppState::new(config, db, http.clone(), image_http)
+    let state = AppState::new(config, db, http.clone(), image_http, redis)
         .expect("failed to assemble application state");
 
     // Spawn background maintenance (refresh-token pruning) and either the offline

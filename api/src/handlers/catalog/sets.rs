@@ -7,7 +7,10 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    sea_query::NullOrdering,
+};
 use serde::Serialize;
 
 use crate::entities::prelude::{Card, CardSet};
@@ -77,7 +80,9 @@ pub async fn list_sets(
     require_game(&game)?;
     let sets = CardSet::find()
         .filter(card_set::Column::Game.eq(game.as_str()))
-        .order_by_desc(card_set::Column::ReleasedAt)
+        // Explicit NULLS LAST so a NULL release date sorts last under DESC on Postgres
+        // too (SQLite's DESC already parks NULL last, so this is a no-op there).
+        .order_by_with_nulls(card_set::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
         .order_by_asc(card_set::Column::Name)
         .all(&state.db)
         .await?;
@@ -150,6 +155,7 @@ pub async fn list_set_cards(
     let set = load_set(&state, &game, &code).await?;
     let (page, page_size) = params.page_and_size();
     let include_related = params.include_related.unwrap_or(false);
+    let dialect = state.dialect();
 
     let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
     query = if include_related {
@@ -161,7 +167,7 @@ pub async fn list_set_cards(
     } else {
         query.filter(card::Column::SetCode.eq(set.code.as_str()))
     };
-    let (query, shape) = apply_search(query, game_meta, &params)?;
+    let (query, shape) = apply_search(query, game_meta, &params, dialect)?;
 
     let (sort, dir) = params.sort_spec_with(SortField::Number, shape.order, shape.direction)?;
     // For the default collector-number order, the related-sets view keeps each
@@ -169,8 +175,9 @@ pub async fn list_set_cards(
     // per-card released_at). Any other sort spans the whole group by the chosen
     // field instead — grouping by set there would fight the sort.
     let group_by_set = include_related && sort == SortField::Number;
-    let query = apply_unique(query, shape.unique);
-    let paginator = apply_card_sort(query, sort, dir, group_by_set).paginate(&state.db, page_size);
+    let query = apply_unique(query, shape.unique, dialect);
+    let paginator =
+        apply_card_sort(query, sort, dir, group_by_set, dialect).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -196,6 +203,7 @@ pub async fn list_set_drops(
     let game_meta = require_game(&game)?;
     let set = load_set(&state, &game, &code).await?;
     let table = require_drop_table(&game, &set.code)?;
+    let dialect = state.dialect();
 
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete
@@ -203,8 +211,8 @@ pub async fn list_set_drops(
     let query = Card::find()
         .filter(card::Column::Game.eq(game.as_str()))
         .filter(card::Column::SetCode.eq(set.code.as_str()));
-    let (query, _shape) = apply_search(query, game_meta, &params)?;
-    let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false)
+    let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
+    let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)
         .await?;
 

@@ -2,6 +2,7 @@
 
 use sea_orm::Condition;
 
+use crate::db::Dialect;
 use super::common::{raw, raw_vals, text_eq, text_ne};
 use super::super::error::{SearchError, unsupported_op};
 use super::super::lexer::Op;
@@ -24,22 +25,22 @@ fn lang_code(lower: &str) -> String {
     .to_string()
 }
 
-pub(super) fn lang(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn lang(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
         Op::Colon | Op::Eq => {
             let lower = value.to_lowercase();
             if lower == "any" || lower == "*" {
                 return Ok(Condition::all());
             }
-            Ok(raw_vals("lang = ?".to_string(), [lang_code(&lower)]))
+            Ok(raw_vals(dialect, "lang = ?".to_string(), [lang_code(&lower)]))
         }
         _ => Err(unsupported_op("lang", op)),
     }
 }
 
-pub(super) fn layout(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn layout(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => Ok(text_eq("layout", &value.to_lowercase())),
+        Op::Colon | Op::Eq => Ok(text_eq(dialect, "layout", &value.to_lowercase())),
         _ => Err(unsupported_op("layout", op)),
     }
 }
@@ -55,10 +56,10 @@ pub(super) fn game(op: Op, value: &str) -> Result<Condition, SearchError> {
     }
 }
 
-pub(super) fn oracleid(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn oracleid(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => Ok(text_eq("oracle_id", value)),
-        Op::Ne => Ok(text_ne("oracle_id", value)),
+        Op::Colon | Op::Eq => Ok(text_eq(dialect, "oracle_id", value)),
+        Op::Ne => Ok(text_ne(dialect, "oracle_id", value)),
         _ => Err(unsupported_op("oracleid", op)),
     }
 }

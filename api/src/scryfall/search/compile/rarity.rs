@@ -2,6 +2,7 @@
 
 use sea_orm::Condition;
 
+use crate::db::Dialect;
 use super::common::{raw, raw_vals, text_eq, text_ne};
 use super::super::RARITIES;
 use super::super::error::{SearchError, invalid};
@@ -19,11 +20,11 @@ fn normalize_rarity(v: &str) -> Option<&'static str> {
     }
 }
 
-pub(super) fn rarity(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn rarity(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     let name = normalize_rarity(value).ok_or_else(|| invalid("rarity", value, "unknown rarity"))?;
     match op {
-        Op::Colon | Op::Eq => Ok(text_eq("rarity", name)),
-        Op::Ne => Ok(text_ne("rarity", name)),
+        Op::Colon | Op::Eq => Ok(text_eq(dialect, "rarity", name)),
+        Op::Ne => Ok(text_ne(dialect, "rarity", name)),
         Op::Gt | Op::Ge | Op::Lt | Op::Le => {
             let target = RARITIES.iter().position(|r| *r == name).unwrap();
             let names: Vec<String> = RARITIES
@@ -36,7 +37,7 @@ pub(super) fn rarity(op: Op, value: &str) -> Result<Condition, SearchError> {
                 return Ok(raw("1 = 0"));
             }
             let placeholders = vec!["?"; names.len()].join(", ");
-            Ok(raw_vals(format!("IFNULL(rarity, '') IN ({placeholders})"), names))
+            Ok(raw_vals(dialect, format!("COALESCE(rarity, '') IN ({placeholders})"), names))
         }
     }
 }

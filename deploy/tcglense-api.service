@@ -11,7 +11,8 @@ After=network.target
 Type=simple
 User=tcglense
 WorkingDirectory=/srv/tcglense
-# Production env (JWT_SECRET, COOKIE_SECURE=true, HOST=127.0.0.1, DATABASE_URL, ...).
+# Production env (JWT_SECRET, COOKIE_SECURE=true, HOST=127.0.0.1, DATABASE_URL —
+# sqlite:// or postgres://, optional REDIS_URL + DB_* pool vars, ...).
 # KEY=VALUE per line; start from api/.env.example.
 EnvironmentFile=/srv/tcglense/api.env
 ExecStart=/srv/tcglense/tcglense-api

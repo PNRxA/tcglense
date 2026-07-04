@@ -58,6 +58,17 @@ impl EmailTokenPurpose {
             Self::ResetPassword => Duration::hours(1),
         }
     }
+
+    /// A distinct small integer per purpose, used with `user_id` as the key of the
+    /// Postgres `pg_advisory_xact_lock` that serialises same-(user, purpose) cooldown
+    /// checks (see [`issue_with_cooldown`]). Unused on SQLite.
+    fn advisory_ordinal(self) -> i32 {
+        match self {
+            Self::CompleteRegistration => 0,
+            Self::VerifyEmail => 1,
+            Self::ResetPassword => 2,
+        }
+    }
 }
 
 /// Generate a new opaque email token: 32 CSPRNG bytes, hex-encoded.
@@ -125,40 +136,73 @@ pub async fn issue(
 /// rotation/[`consume`] claims): a plain read-then-insert would let a burst of
 /// concurrent requests all pass the check before any row committed and each send
 /// an email, defeating the very mail-bombing brake this exists to be.
+///
+/// Two backend concerns: (a) `from_sql_and_values` passes the SQL string verbatim,
+/// so the `?` placeholders are renumbered to `$1..$8` on Postgres through the shared
+/// [`crate::db::Dialect::placeholders`] seam; (b) the bare
+/// `INSERT … SELECT … WHERE NOT EXISTS` is atomic under SQLite's single writer but
+/// **not** under Postgres READ COMMITTED (two concurrent inserts can both see
+/// `NOT EXISTS` true before either commits, inserting two rows). On Postgres the
+/// insert therefore runs inside a short transaction that first takes a
+/// `pg_advisory_xact_lock(user_id, purpose_ord)`, serialising same-(user, purpose)
+/// checks — reproducing SQLite's single-writer atomicity exactly (different keys
+/// don't contend; the lock releases at commit).
 pub async fn issue_with_cooldown(
     db: &DatabaseConnection,
     user_id: i32,
     purpose: EmailTokenPurpose,
 ) -> Result<Option<String>, AppError> {
+    use sea_orm::{DatabaseBackend, TransactionTrait};
+
     let plaintext = generate_token();
     let now = Utc::now();
     let cutoff = now - Duration::seconds(ISSUE_COOLDOWN_SECONDS);
+    let backend = db.get_database_backend();
 
-    // The datetime values bind as chrono `Value`s (same encoding SeaORM uses to
-    // store `created_at`), so the `created_at > cutoff` text comparison lines up.
-    // All values are bound parameters — nothing is interpolated into the SQL.
-    let stmt = Statement::from_sql_and_values(
-        db.get_database_backend(),
+    // One conditional insert, written once with `?` placeholders and renumbered to
+    // `$1..$8` on Postgres by the shared quote-aware Dialect seam (a no-op on SQLite).
+    // The template has exactly 8 `?` and no literal '?' inside a string literal, so the
+    // renumber is exact. The datetime values bind as chrono `Value`s (same encoding
+    // SeaORM uses to store `created_at`), so the `created_at > cutoff` comparison lines
+    // up. All values are bound parameters — nothing is interpolated into the SQL.
+    let insert_sql = crate::db::Dialect::from_backend(backend).placeholders(
         "INSERT INTO email_tokens \
              (user_id, purpose, token_hash, expires_at, consumed_at, created_at) \
          SELECT ?, ?, ?, ?, NULL, ? \
          WHERE NOT EXISTS ( \
              SELECT 1 FROM email_tokens \
-             WHERE user_id = ? AND purpose = ? AND created_at > ? \
-         )",
-        [
-            user_id.into(),
-            purpose.as_str().into(),
-            hash_token(&plaintext).into(),
-            (now + purpose.expiry()).into(),
-            now.into(),
-            user_id.into(),
-            purpose.as_str().into(),
-            cutoff.into(),
-        ],
+             WHERE user_id = ? AND purpose = ? AND created_at > ? )",
     );
+    let vals = [
+        user_id.into(),
+        purpose.as_str().into(),
+        hash_token(&plaintext).into(),
+        (now + purpose.expiry()).into(),
+        now.into(),
+        user_id.into(),
+        purpose.as_str().into(),
+        cutoff.into(),
+    ];
+    let insert = Statement::from_sql_and_values(backend, insert_sql, vals);
 
-    let result = db.execute(stmt).await?;
+    let result = match backend {
+        DatabaseBackend::Postgres => {
+            // Serialise concurrent same-(user, purpose) checks so READ COMMITTED can't
+            // let a burst insert two rows before either commit is visible.
+            let txn = db.begin().await?;
+            txn.execute(Statement::from_sql_and_values(
+                backend,
+                "SELECT pg_advisory_xact_lock($1, $2)",
+                [user_id.into(), purpose.advisory_ordinal().into()],
+            ))
+            .await?;
+            let r = txn.execute(insert).await?;
+            txn.commit().await?; // releases the xact lock
+            r
+        }
+        // SQLite: the single writer already serialises, so the bare insert suffices.
+        _ => db.execute(insert).await?,
+    };
     Ok((result.rows_affected() > 0).then_some(plaintext))
 }
 

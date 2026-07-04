@@ -41,6 +41,7 @@ mod tests;
 
 use sea_orm::Condition;
 
+use crate::db::Dialect;
 use compile::compile;
 use lexer::{Token, lex};
 use parser::Parser;
@@ -114,22 +115,26 @@ pub(crate) const RARITIES: [&str; 6] = ["common", "uncommon", "rare", "special",
 
 /// Parse a Scryfall-style query into just its row `Condition`, discarding any
 /// result-shaping directives. An empty / whitespace-only query yields
-/// `Condition::all()` (no filter).
-pub fn parse(input: &str) -> Result<Condition, SearchError> {
-    parse_query(input).map(|q| q.condition)
+/// `Condition::all()` (no filter). `dialect` selects the SQL flavour of the
+/// compiled fragments (SQLite vs Postgres); the SQLite output is byte-identical to
+/// the pre-Postgres compiler.
+pub fn parse(input: &str, dialect: Dialect) -> Result<Condition, SearchError> {
+    parse_query(input, dialect).map(|q| q.condition)
 }
 
 /// Parse a Scryfall-style query into its row filter plus any `order:` /
 /// `direction:` / `unique:` directives. The directives are global (not boolean
 /// operands), so they are pulled out of the token stream before the boolean
-/// grammar runs — keeping every compiled leaf total/NULL-safe.
-pub fn parse_query(input: &str) -> Result<ParsedQuery, SearchError> {
+/// grammar runs — keeping every compiled leaf total/NULL-safe. `dialect` is
+/// threaded down into the compiler so every backend-divergent fragment picks the
+/// right SQL for the connection's backend.
+pub fn parse_query(input: &str, dialect: Dialect) -> Result<ParsedQuery, SearchError> {
     let tokens = lex(input)?;
     let (tokens, directives) = extract_directives(tokens)?;
     let condition = if tokens.is_empty() {
         Condition::all()
     } else {
-        compile(&Parser::new(tokens).parse_query()?)?
+        compile(&Parser::new(tokens).parse_query()?, dialect)?
     };
     Ok(ParsedQuery {
         condition,

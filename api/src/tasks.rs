@@ -12,7 +12,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 use crate::{
     catalog,
     entities::{prelude::User, user},
-    ratelimit::{RateLimiters, UserRateLimiters},
+    ratelimit::{AuthRateLimiter, UserRateLimiter},
     state::AppState,
 };
 
@@ -70,12 +70,14 @@ async fn seed_dev_user(db: &DatabaseConnection) {
 
 /// Periodic maintenance: prune expired refresh + email tokens so those tables
 /// can't grow unbounded, and drop replenished rate-limiter keys (both the per-IP
-/// and the per-user sets) so those keyspaces can't either. The first tick fires
-/// immediately, then every 6 hours.
+/// and the per-user sets) so those keyspaces can't either. When a limiter is
+/// Redis-backed its keys self-evict via `PEXPIRE`, so `retain_recent` there only
+/// sweeps the in-memory fail-open fallback (cheap and harmless). The first tick
+/// fires immediately, then every 6 hours.
 fn spawn_maintenance(
     db: DatabaseConnection,
-    rate_limiters: Arc<RateLimiters>,
-    user_rate_limiters: Arc<UserRateLimiters>,
+    rate_limiters: Arc<AuthRateLimiter>,
+    user_rate_limiters: Arc<UserRateLimiter>,
 ) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));

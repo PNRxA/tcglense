@@ -7,6 +7,7 @@ use sea_orm::{
     sea_query::{Expr, NullOrdering, SimpleExpr},
 };
 
+use crate::db::Dialect;
 use crate::entities::card;
 use crate::error::AppError;
 use crate::scryfall::search::{Direction, RARITIES, SortKey};
@@ -158,6 +159,7 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
     field: SortField,
     dir: SortDir,
     group_by_set: bool,
+    dialect: Dialect,
 ) -> Q {
     let mut query = if group_by_set {
         query.order_by_asc(card::Column::SetCode)
@@ -188,7 +190,7 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
         // parked as unpriced (matches the browse tiles' displayed price).
         SortField::Price => query
             .order_by_with_nulls(
-                price_real_expr(&["price_usd", "price_usd_foil"]),
+                price_real_expr(&["price_usd", "price_usd_foil"], dialect),
                 dir.order(),
                 NullOrdering::Last,
             )
@@ -200,19 +202,31 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
             .order_by_with_nulls(color_rank_expr(), dir.order(), NullOrdering::Last)
             .order_by_asc(card::Column::Name),
         SortField::Power => query
-            .order_by_with_nulls(numeric_col_expr("power"), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(numeric_col_expr("power", dialect), dir.order(), NullOrdering::Last)
             .order_by_asc(card::Column::Name),
         SortField::Toughness => query
-            .order_by_with_nulls(numeric_col_expr("toughness"), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(
+                numeric_col_expr("toughness", dialect),
+                dir.order(),
+                NullOrdering::Last,
+            )
             .order_by_asc(card::Column::Name),
         SortField::Edhrec => query
             .order_by_with_nulls(card::Column::EdhrecRank, dir.order(), NullOrdering::Last)
             .order_by_asc(card::Column::Name),
         SortField::Eur => query
-            .order_by_with_nulls(price_real_expr(&["price_eur"]), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(
+                price_real_expr(&["price_eur"], dialect),
+                dir.order(),
+                NullOrdering::Last,
+            )
             .order_by_asc(card::Column::Name),
         SortField::Tix => query
-            .order_by_with_nulls(price_real_expr(&["price_tix"]), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(
+                price_real_expr(&["price_tix"], dialect),
+                dir.order(),
+                NullOrdering::Last,
+            )
             .order_by_asc(card::Column::Name),
         SortField::Artist => query
             .order_by_with_nulls(card::Column::Artist, dir.order(), NullOrdering::Last)
@@ -233,7 +247,7 @@ fn rarity_rank_expr() -> SimpleExpr {
         .map(|(rank, name)| format!("WHEN '{name}' THEN {rank}"))
         .collect::<Vec<_>>()
         .join(" ");
-    Expr::cust(format!("CASE IFNULL(rarity, '') {arms} ELSE NULL END"))
+    Expr::cust(format!("CASE COALESCE(rarity, '') {arms} ELSE NULL END"))
 }
 
 /// SQL expression giving a card's sort price: the first non-empty value among
@@ -244,11 +258,22 @@ fn rarity_rank_expr() -> SimpleExpr {
 /// When every column is NULL/empty the result is NULL, so `NULLS LAST` keeps
 /// truly-unpriced cards at the end in either direction. `cols` are fixed column
 /// names, never user input.
-fn price_real_expr(cols: &[&str]) -> SimpleExpr {
+///
+/// SQLite's CAST coerces junk to `0.0`, so it keeps its historical inverse
+/// null/empty guard (byte-identical output); Postgres's CAST hard-errors on a
+/// non-decimal string, so its arm guards the value with the decimal-shape check
+/// (`Dialect::decimal_string_guard`) before casting.
+fn price_real_expr(cols: &[&str], dialect: Dialect) -> SimpleExpr {
     let arms: Vec<String> = cols
         .iter()
-        .map(|col| {
-            format!("CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END")
+        .map(|col| match dialect {
+            Dialect::Sqlite => {
+                format!("CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END")
+            }
+            Dialect::Postgres => format!(
+                "CASE WHEN {} THEN CAST({col} AS REAL) ELSE NULL END",
+                dialect.decimal_string_guard(col)
+            ),
         })
         .collect();
     // SQLite's COALESCE needs ≥2 arguments; a single column is emitted bare.
@@ -270,11 +295,13 @@ fn color_rank_expr() -> SimpleExpr {
 
 /// Numeric value of a power/toughness-style text column for sorting, or NULL when
 /// non-numeric (so `NULLS LAST` parks `*`/`X`/absent values at the end). `col` is a
-/// fixed, cards-only column name — never user input.
-fn numeric_col_expr(col: &str) -> SimpleExpr {
+/// fixed, cards-only column name — never user input. The integer-string guard is
+/// backend-branched (SQLite `GLOB` vs Postgres POSIX `~`), so the CAST only ever
+/// runs on a plain-integer value on both backends.
+fn numeric_col_expr(col: &str, dialect: Dialect) -> SimpleExpr {
     Expr::cust(format!(
-        "CASE WHEN {col} GLOB '[0-9]*' AND {col} NOT GLOB '*[^0-9]*' \
-         THEN CAST({col} AS REAL) ELSE NULL END"
+        "CASE WHEN {} THEN CAST({col} AS REAL) ELSE NULL END",
+        dialect.integer_string_guard(col)
     ))
 }
 
@@ -323,17 +350,29 @@ mod tests {
         // 5($8 via foil), 1($5), 3($1), then the unpriced 4 last. Card 1 sorts on
         // its $5 regular price, not its $50 foil — the fallback only applies when
         // the regular price is missing or empty.
-        let desc = apply_card_sort(card::Entity::find(), SortField::Price, SortDir::Desc, false)
-            .all(&db)
-            .await
-            .expect("query desc");
+        let desc = apply_card_sort(
+            card::Entity::find(),
+            SortField::Price,
+            SortDir::Desc,
+            false,
+            Dialect::Sqlite,
+        )
+        .all(&db)
+        .await
+        .expect("query desc");
         assert_eq!(ids(desc), vec![2, 5, 1, 3, 4]);
 
         // Asc mirrors it, with the unpriced card still parked last (NULLS LAST).
-        let asc = apply_card_sort(card::Entity::find(), SortField::Price, SortDir::Asc, false)
-            .all(&db)
-            .await
-            .expect("query asc");
+        let asc = apply_card_sort(
+            card::Entity::find(),
+            SortField::Price,
+            SortDir::Asc,
+            false,
+            Dialect::Sqlite,
+        )
+        .all(&db)
+        .await
+        .expect("query asc");
         assert_eq!(ids(asc), vec![3, 1, 5, 2, 4]);
     }
 }

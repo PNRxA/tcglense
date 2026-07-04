@@ -18,7 +18,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
-use sea_orm::{EntityTrait, PaginatorTrait, QueryOrder, QuerySelect};
+use sea_orm::{EntityTrait, Order, PaginatorTrait, QueryOrder, QuerySelect, sea_query::NullOrdering};
 
 use crate::catalog;
 use crate::entities::prelude::{Card, CardSet, IngestState};
@@ -173,13 +173,14 @@ fn chunk_count(total: u64) -> u64 {
 
 /// The most recent card-data sync completion across games, as an RFC 3339 string,
 /// or `None` if nothing has finished importing yet. Used as the sitemaps'
-/// `<lastmod>`. Ordered descending with NULLs last (SQLite parks NULL below any
-/// value in `DESC`), so the first row is the greatest real `finished_at` if any.
+/// `<lastmod>`. Ordered descending with an explicit `NULLS LAST` so the first row is
+/// the greatest real `finished_at` if any — a no-op on SQLite (its DESC already parks
+/// NULL last) and correct on Postgres (which otherwise puts NULLs first under DESC).
 async fn latest_ingest_lastmod(
     db: &sea_orm::DatabaseConnection,
 ) -> Result<Option<String>, AppError> {
     let row = IngestState::find()
-        .order_by_desc(ingest_state::Column::FinishedAt)
+        .order_by_with_nulls(ingest_state::Column::FinishedAt, Order::Desc, NullOrdering::Last)
         .one(db)
         .await?;
     Ok(row.and_then(|r| r.finished_at).map(|t| t.to_rfc3339()))

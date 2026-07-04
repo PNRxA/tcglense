@@ -22,6 +22,7 @@ mod text;
 
 use sea_orm::Condition;
 
+use crate::db::Dialect;
 use super::error::SearchError;
 use super::lexer::Op;
 use super::parser::{Leaf, Node};
@@ -39,85 +40,89 @@ use text::{exact, text_field, text_pattern};
 
 pub(crate) use common::escape_like;
 
-pub(super) fn compile(node: &Node) -> Result<Condition, SearchError> {
+pub(super) fn compile(node: &Node, dialect: Dialect) -> Result<Condition, SearchError> {
     match node {
         Node::And(parts) => {
             let mut cond = Condition::all();
             for part in parts {
-                cond = cond.add(compile(part)?);
+                cond = cond.add(compile(part, dialect)?);
             }
             Ok(cond)
         }
         Node::Or(parts) => {
             let mut cond = Condition::any();
             for part in parts {
-                cond = cond.add(compile(part)?);
+                cond = cond.add(compile(part, dialect)?);
             }
             Ok(cond)
         }
         // Leaves are total (0/1), so a plain NOT is exact and NULL-safe.
-        Node::Not(inner) => Ok(compile(inner)?.not()),
-        Node::Leaf(leaf) => compile_leaf(leaf),
+        Node::Not(inner) => Ok(compile(inner, dialect)?.not()),
+        Node::Leaf(leaf) => compile_leaf(leaf, dialect),
     }
 }
 
-fn compile_leaf(leaf: &Leaf) -> Result<Condition, SearchError> {
+fn compile_leaf(leaf: &Leaf, dialect: Dialect) -> Result<Condition, SearchError> {
     match leaf {
-        Leaf::Name(s) => Ok(cond_one(text_pattern("name", s)?)),
-        Leaf::ExactName(s) => Ok(cond_one(exact("name", s))),
-        Leaf::Filter { key, op, value } => compile_filter(key, *op, value),
+        Leaf::Name(s) => Ok(cond_one(text_pattern(dialect, "name", s)?)),
+        Leaf::ExactName(s) => Ok(cond_one(exact(dialect, "name", s))),
+        Leaf::Filter { key, op, value } => compile_filter(key, *op, value, dialect),
     }
 }
 
-fn compile_filter(key: &str, op: Op, value: &str) -> Result<Condition, SearchError> {
+fn compile_filter(key: &str, op: Op, value: &str, dialect: Dialect) -> Result<Condition, SearchError> {
     match key {
-        "name" | "n" => Ok(cond_one(text_pattern("name", value)?)),
-        "t" | "type" => text_field("type_line", "type", op, value),
-        "o" | "oracle" | "fo" | "fulloracle" => text_field("oracle_text", "oracle", op, value),
-        "m" | "mana" => mana(op, value),
-        "c" | "color" | "colors" => color("colors", "c", op, value),
-        "id" | "identity" | "ci" | "commander" | "cmdr" => {
-            color("color_identity", "id", op, value)
+        "name" | "n" => Ok(cond_one(text_pattern(dialect, "name", value)?)),
+        "t" | "type" => text_field(dialect, "type_line", "type", op, value),
+        "o" | "oracle" | "fo" | "fulloracle" => {
+            text_field(dialect, "oracle_text", "oracle", op, value)
         }
-        "cmc" | "mv" | "manavalue" => cmc(op, value),
-        "pow" | "power" => ptl("power", "pow", op, value),
-        "tou" | "toughness" => ptl("toughness", "tou", op, value),
-        "loy" | "loyalty" => ptl("loyalty", "loy", op, value),
-        "pt" | "powtou" => pt(op, value),
-        "def" | "defense" => ptl("defense", "defense", op, value),
-        "usd" => price("price_usd", "usd", op, value),
-        "usdfoil" => price("price_usd_foil", "usdfoil", op, value),
-        "eur" => price("price_eur", "eur", op, value),
-        "tix" => price("price_tix", "tix", op, value),
-        "year" => year(op, value),
-        "date" | "released_at" => date(op, value),
-        "r" | "rarity" => rarity(op, value),
-        "s" | "set" | "e" | "edition" => set(op, value),
-        "st" | "settype" => set_type(op, value),
-        "cn" | "number" => collector_number(op, value),
-        "lang" | "language" => lang(op, value),
-        "layout" => layout(op, value),
-        "is" => is_predicate(value, false),
-        "not" => is_predicate(value, true),
+        "m" | "mana" => mana(dialect, op, value),
+        "c" | "color" | "colors" => color(dialect, "colors", "c", op, value),
+        "id" | "identity" | "ci" | "commander" | "cmdr" => {
+            color(dialect, "color_identity", "id", op, value)
+        }
+        "cmc" | "mv" | "manavalue" => cmc(dialect, op, value),
+        "pow" | "power" => ptl(dialect, "power", "pow", op, value),
+        "tou" | "toughness" => ptl(dialect, "toughness", "tou", op, value),
+        "loy" | "loyalty" => ptl(dialect, "loyalty", "loy", op, value),
+        "pt" | "powtou" => pt(dialect, op, value),
+        "def" | "defense" => ptl(dialect, "defense", "defense", op, value),
+        "usd" => price(dialect, "price_usd", "usd", op, value),
+        "usdfoil" => price(dialect, "price_usd_foil", "usdfoil", op, value),
+        "eur" => price(dialect, "price_eur", "eur", op, value),
+        "tix" => price(dialect, "price_tix", "tix", op, value),
+        "year" => year(dialect, op, value),
+        "date" | "released_at" => date(dialect, op, value),
+        "r" | "rarity" => rarity(dialect, op, value),
+        "s" | "set" | "e" | "edition" => set(dialect, op, value),
+        "st" | "settype" => set_type(dialect, op, value),
+        "cn" | "number" => collector_number(dialect, op, value),
+        "lang" | "language" => lang(dialect, op, value),
+        "layout" => layout(dialect, op, value),
+        "is" => is_predicate(value, false, dialect),
+        "not" => is_predicate(value, true, dialect),
         "game" => game(op, value),
-        "oracleid" => oracleid(op, value),
+        "oracleid" => oracleid(dialect, op, value),
         // Column-backed filters (Scryfall search parity).
-        "f" | "format" | "legal" => legality(op, value, &["legal", "restricted"]),
-        "banned" => legality(op, value, &["banned"]),
-        "restricted" => legality(op, value, &["restricted"]),
-        "kw" | "keyword" => keyword(op, value),
-        "a" | "artist" => text_field("artist", "artist", op, value),
-        "artists" => artists_count(op, value),
-        "ft" | "flavor" | "flavour" | "flavortext" => text_field("flavor_text", "flavor", op, value),
-        "wm" | "watermark" => text_field("watermark", "watermark", op, value),
-        "border" => str_eq("border_color", "border", op, value),
-        "frame" => frame(op, value),
-        "stamp" => str_eq("security_stamp", "stamp", op, value),
-        "produces" => color("produced_mana", "produces", op, value),
+        "f" | "format" | "legal" => legality(dialect, op, value, &["legal", "restricted"]),
+        "banned" => legality(dialect, op, value, &["banned"]),
+        "restricted" => legality(dialect, op, value, &["restricted"]),
+        "kw" | "keyword" => keyword(dialect, op, value),
+        "a" | "artist" => text_field(dialect, "artist", "artist", op, value),
+        "artists" => artists_count(dialect, op, value),
+        "ft" | "flavor" | "flavour" | "flavortext" => {
+            text_field(dialect, "flavor_text", "flavor", op, value)
+        }
+        "wm" | "watermark" => text_field(dialect, "watermark", "watermark", op, value),
+        "border" => str_eq(dialect, "border_color", "border", op, value),
+        "frame" => frame(dialect, op, value),
+        "stamp" => str_eq(dialect, "security_stamp", "stamp", op, value),
+        "produces" => color(dialect, "produced_mana", "produces", op, value),
         "has" => has_predicate(value),
         // Sibling-print aggregates: counts over a card's other printings.
-        "prints" => prints_filter(op, value),
-        "sets" | "papersets" => sets_filter(op, value),
+        "prints" => prints_filter(dialect, op, value),
+        "sets" | "papersets" => sets_filter(dialect, op, value),
         // Recognised Scryfall filters we can't back yet: dataset-derived — Tagger
         // tags (#140) and cube (#141) — plus block/in/devotion/cheapest, and the
         // order:/direction:/unique: directives (handled before compile).

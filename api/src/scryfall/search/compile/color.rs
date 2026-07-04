@@ -1,9 +1,10 @@
 //! Colour and colour-identity filters (`c:` / `id:`).
 
 use sea_orm::Condition;
-use sea_orm::sea_query::{Expr, SimpleExpr};
+use sea_orm::sea_query::SimpleExpr;
 
-use super::common::{cmp_sql, raw, raw_vals};
+use crate::db::Dialect;
+use super::common::{cmp_sql, cust_vals, raw, raw_vals};
 use super::super::WUBRG;
 use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
@@ -100,36 +101,46 @@ fn parse_color_operand(key: &str, value: &str) -> Result<ColorOperand, SearchErr
     Ok(ColorOperand::Letters(order_wubrg(&q)))
 }
 
-/// `(',' || IFNULL(col, '') || ',') LIKE '%,X,%'` — true iff colour X is present.
-fn has(col: &str, letter: char) -> SimpleExpr {
-    Expr::cust_with_values(
-        format!("(',' || IFNULL({col}, '') || ',') LIKE ?"),
+/// `(',' || COALESCE(col, '') || ',') LIKE '%,X,%'` — true iff colour X is present.
+/// The colour letters are stored uppercase and the pattern is uppercase, so no case
+/// fold is needed.
+fn has(dialect: Dialect, col: &str, letter: char) -> SimpleExpr {
+    cust_vals(
+        dialect,
+        format!("(',' || COALESCE({col}, '') || ',') LIKE ?"),
         [format!("%,{letter},%")],
     )
 }
 
-fn lacks(col: &str, letter: char) -> SimpleExpr {
-    Expr::cust_with_values(
-        format!("(',' || IFNULL({col}, '') || ',') NOT LIKE ?"),
+fn lacks(dialect: Dialect, col: &str, letter: char) -> SimpleExpr {
+    cust_vals(
+        dialect,
+        format!("(',' || COALESCE({col}, '') || ',') NOT LIKE ?"),
         [format!("%,{letter},%")],
     )
 }
 
-fn all_has(col: &str, q: &[char]) -> Condition {
+fn all_has(dialect: Dialect, col: &str, q: &[char]) -> Condition {
     q.iter()
-        .fold(Condition::all(), |cond, &x| cond.add(has(col, x)))
+        .fold(Condition::all(), |cond, &x| cond.add(has(dialect, col, x)))
 }
 
 /// The exact-set condition: has every colour in Q and lacks every other.
-fn exact_color(col: &str, q: &[char]) -> Condition {
-    let mut cond = all_has(col, q);
+fn exact_color(dialect: Dialect, col: &str, q: &[char]) -> Condition {
+    let mut cond = all_has(dialect, col, q);
     for x in complement(q) {
-        cond = cond.add(lacks(col, x));
+        cond = cond.add(lacks(dialect, col, x));
     }
     cond
 }
 
-pub(super) fn color(col: &str, key: &str, op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn color(
+    dialect: Dialect,
+    col: &str,
+    key: &str,
+    op: Op,
+    value: &str,
+) -> Result<Condition, SearchError> {
     match parse_color_operand(key, value)? {
         ColorOperand::Colorless => Ok(match op {
             Op::Colon | Op::Eq | Op::Le => raw(format!("{col} IS NULL")),
@@ -138,7 +149,7 @@ pub(super) fn color(col: &str, key: &str, op: Op, value: &str) -> Result<Conditi
             Op::Lt => raw("1 = 0"),
         }),
         ColorOperand::Multicolor => match op {
-            Op::Colon | Op::Ge | Op::Eq => Ok(raw(format!("IFNULL({col}, '') LIKE '%,%'"))),
+            Op::Colon | Op::Ge | Op::Eq => Ok(raw(format!("COALESCE({col}, '') LIKE '%,%'"))),
             _ => Err(unsupported_op(key, op)),
         },
         ColorOperand::Count(n) => {
@@ -147,38 +158,38 @@ pub(super) fn color(col: &str, key: &str, op: Op, value: &str) -> Result<Conditi
                  ELSE LENGTH({col}) - LENGTH(REPLACE({col}, ',', '')) + 1 END) {} ?",
                 cmp_sql(op),
             );
-            Ok(raw_vals(sql, [n]))
+            Ok(raw_vals(dialect, sql, [n]))
         }
-        ColorOperand::Letters(q) => Ok(color_letters(col, op, &q)),
+        ColorOperand::Letters(q) => Ok(color_letters(dialect, col, op, &q)),
     }
 }
 
-fn color_letters(col: &str, op: Op, q: &[char]) -> Condition {
+fn color_letters(dialect: Dialect, col: &str, op: Op, q: &[char]) -> Condition {
     let comp = complement(q);
     match op {
-        Op::Colon | Op::Ge => all_has(col, q),
-        Op::Eq => exact_color(col, q),
-        Op::Ne => exact_color(col, q).not(),
+        Op::Colon | Op::Ge => all_has(dialect, col, q),
+        Op::Eq => exact_color(dialect, col, q),
+        Op::Ne => exact_color(dialect, col, q).not(),
         Op::Gt => {
-            let mut cond = all_has(col, q);
+            let mut cond = all_has(dialect, col, q);
             if comp.is_empty() {
-                cond = cond.add(Expr::cust("1 = 0"));
+                cond = cond.add(raw("1 = 0"));
             } else {
                 let extra = comp
                     .iter()
-                    .fold(Condition::any(), |c, &x| c.add(has(col, x)));
+                    .fold(Condition::any(), |c, &x| c.add(has(dialect, col, x)));
                 cond = cond.add(extra);
             }
             cond
         }
         Op::Le => comp
             .iter()
-            .fold(Condition::all(), |c, &x| c.add(lacks(col, x))),
+            .fold(Condition::all(), |c, &x| c.add(lacks(dialect, col, x))),
         Op::Lt => {
             let subset = comp
                 .iter()
-                .fold(Condition::all(), |c, &x| c.add(lacks(col, x)));
-            subset.add(all_has(col, q).not())
+                .fold(Condition::all(), |c, &x| c.add(lacks(dialect, col, x)));
+            subset.add(all_has(dialect, col, q).not())
         }
     }
 }

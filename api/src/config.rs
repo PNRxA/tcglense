@@ -67,6 +67,15 @@ pub struct Config {
     /// Master switch for the per-IP auth rate limiting. Default `true`; set
     /// `false` to defer entirely to an upstream WAF/proxy limiter.
     pub rate_limit_enabled: bool,
+    /// Connection URL for a Redis backing the rate limiters (per-IP + per-user),
+    /// e.g. `redis://127.0.0.1:6379`. Unset = the limiters run in-memory /
+    /// per-process (single-instance posture). Set it so a multi-instance deploy
+    /// shares one limiter state. Only plain `redis://` is supported (this build
+    /// links the no-TLS `redis` feature set); a `rediss://` URL degrades to
+    /// in-memory. The URL may embed a password — redacted in `Debug`. If it's set
+    /// but Redis is unreachable at boot, the server starts degraded (in-memory)
+    /// with a warning rather than failing (see [`crate::ratelimit::AuthRateLimiter`]).
+    pub redis_url: Option<String>,
     /// Whether to import card data from providers on startup (disable in tests).
     pub sync_on_startup: bool,
     /// How often to re-import card data after the startup import, in hours.
@@ -127,6 +136,8 @@ impl std::fmt::Debug for Config {
             )
             .field("trust_proxy_headers", &self.trust_proxy_headers)
             .field("rate_limit_enabled", &self.rate_limit_enabled)
+            // A Redis URL may embed a password; print only whether one is configured.
+            .field("redis_url", &self.redis_url.as_ref().map(|_| "[redacted]"))
             .field("sync_on_startup", &self.sync_on_startup)
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)
@@ -213,7 +224,9 @@ fn env_trimmed(key: &str) -> Option<String> {
 }
 
 /// Parse an env var into `T`, returning `None` if unset, blank, or unparseable.
-fn env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
+/// `pub(crate)` so the DB pool sizing in [`crate::db`] reuses the same trim/blank
+/// semantics instead of hand-rolling its own numeric env parsing.
+pub(crate) fn env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
     env_trimmed(key).and_then(|v| v.trim().parse::<T>().ok())
 }
 
@@ -294,6 +307,9 @@ impl Config {
         let trust_proxy_headers = env_bool("TRUST_PROXY_HEADERS", false);
         let rate_limit_enabled = env_bool("RATE_LIMIT_ENABLED", true);
 
+        // Unset = the rate limiters run in-memory / per-process (see the field).
+        let redis_url = env_trimmed("REDIS_URL");
+
         // Importing card data is the default; tests and offline runs disable it.
         let sync_on_startup = env_bool("SYNC_ON_STARTUP", true);
 
@@ -329,6 +345,7 @@ impl Config {
             turnstile_secret_key,
             trust_proxy_headers,
             rate_limit_enabled,
+            redis_url,
             sync_on_startup,
             sync_interval_hours,
             seed_dummy_data,

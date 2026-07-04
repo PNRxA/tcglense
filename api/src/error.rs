@@ -103,6 +103,18 @@ impl IntoResponse for AppError {
 
 impl From<sea_orm::DbErr> for AppError {
     fn from(err: sea_orm::DbErr) -> Self {
+        use sea_orm::{DbErr, RuntimeErr};
+        // Postgres raises SQLSTATE 2201B (invalid_regular_expression) when a user's
+        // `/regex/` search filter is a valid Rust-regex (so it passed our pre-validation)
+        // but invalid POSIX ARE — e.g. `\p{L}` or a named group. Classify it as the same
+        // 422 the SQLite path returns for a bad pattern rather than leaking a 500 from
+        // the public, unauthenticated search box. (The SQLite REGEXP UDF never raises
+        // 2201B, so this only ever fires on Postgres.)
+        if let DbErr::Query(RuntimeErr::SqlxError(e)) = &err
+            && e.as_database_error().and_then(|d| d.code()).as_deref() == Some("2201B")
+        {
+            return AppError::Validation("invalid regular expression".to_string());
+        }
         AppError::Internal(format!("database error: {err}"))
     }
 }

@@ -51,7 +51,9 @@ pub(super) async fn test_state() -> AppState {
     let http = reqwest::Client::builder().build().expect("build http client");
     let image_http = reqwest::Client::builder().build().expect("build image client");
 
-    AppState::new(config, db, http, image_http).expect("assemble test app state")
+    // No Redis in the in-process security tests: the in-memory limiter is exercised
+    // (identical behaviour), so the per-IP rate-limit test passes unchanged.
+    AppState::new(config, db, http, image_http, None).expect("assemble test app state")
 }
 
 /// The router plus the state and captured outbox behind it. Tests that only
@@ -110,7 +112,8 @@ pub(super) async fn test_app_trusting_proxy() -> TestApp {
     };
     let http = reqwest::Client::builder().build().expect("build http client");
     let image_http = reqwest::Client::builder().build().expect("build image client");
-    let state = AppState::new(config, db, http, image_http).expect("assemble test app state");
+    let state =
+        AppState::new(config, db, http, image_http, None).expect("assemble test app state");
     test_app_over(state)
 }
 

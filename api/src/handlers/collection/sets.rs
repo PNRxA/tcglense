@@ -66,12 +66,13 @@ pub async fn collection_set_drops(
     // Canonicalise the set (and 404 an unknown one) exactly as the catalog does.
     let set = load_set(&state, &game, &code).await?;
     let table = require_drop_table(&game, &set.code)?;
+    let dialect = state.dialect();
 
     // Parse the optional Scryfall-syntax query up front so a malformed one 422s before
     // we touch the DB (mirrors the list handler).
     let search = params
         .search()
-        .map(|s| search_condition(game_meta, s))
+        .map(|s| search_condition(game_meta, s, dialect))
         .transpose()?;
 
     // The user's owned cards in this set, in collector-number order (with their
@@ -85,6 +86,7 @@ pub async fn collection_set_drops(
         search,
         CollectionSort::Card(SortField::Number),
         SortDir::Asc,
+        dialect,
     )
     .all(&state.db)
     .await?;

@@ -2,11 +2,12 @@
 
 use sea_orm::Condition;
 
+use crate::db::Dialect;
 use super::common::{cmp_sql, raw_vals};
 use super::super::error::{SearchError, invalid};
 use super::super::lexer::Op;
 
-pub(super) fn year(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn year(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     if value.len() != 4 || !value.chars().all(|c| c.is_ascii_digit()) {
         return Err(invalid("year", value, "expected a 4-digit year"));
     }
@@ -15,7 +16,7 @@ pub(super) fn year(op: Op, value: &str) -> Result<Condition, SearchError> {
         "(released_at IS NOT NULL AND CAST(substr(released_at, 1, 4) AS INTEGER) {} ?)",
         cmp_sql(op)
     );
-    Ok(raw_vals(sql, [y]))
+    Ok(raw_vals(dialect, sql, [y]))
 }
 
 fn is_iso_date(v: &str) -> bool {
@@ -27,17 +28,18 @@ fn is_iso_date(v: &str) -> bool {
             .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
-pub(super) fn date(op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn date(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     if is_iso_date(value) {
         let sql = format!(
             "(released_at IS NOT NULL AND released_at {} ?)",
             cmp_sql(op)
         );
-        return Ok(raw_vals(sql, [value.to_string()]));
+        return Ok(raw_vals(dialect, sql, [value.to_string()]));
     }
     if value.len() == 4 && value.chars().all(|c| c.is_ascii_digit()) {
         let bound = |sym: &str, b: String| {
             raw_vals(
+                dialect,
                 format!("(released_at IS NOT NULL AND released_at {sym} ?)"),
                 [b],
             )
@@ -48,10 +50,12 @@ pub(super) fn date(op: Op, value: &str) -> Result<Condition, SearchError> {
             Op::Gt => bound(">", format!("{value}-12-31")),
             Op::Ge => bound(">=", format!("{value}-01-01")),
             Op::Colon | Op::Eq => raw_vals(
+                dialect,
                 "(released_at IS NOT NULL AND released_at LIKE ? ESCAPE '\\')".to_string(),
                 [format!("{value}-%")],
             ),
             Op::Ne => raw_vals(
+                dialect,
                 "(released_at IS NOT NULL AND released_at NOT LIKE ? ESCAPE '\\')".to_string(),
                 [format!("{value}-%")],
             ),

@@ -9,10 +9,12 @@ use axum::{
     extract::{Path, Query, State},
 };
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, SelectTwo,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    SelectTwo,
 };
 
 use crate::auth::extractor::AuthUser;
+use crate::db::Dialect;
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 use crate::error::AppError;
@@ -40,11 +42,12 @@ pub async fn list_collection(
     let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
     let (sort, dir) = params.sort_spec()?;
+    let dialect = state.dialect();
     // Parse the optional Scryfall-syntax query up front so a malformed one 422s
     // before we touch the DB (mirrors the catalog card lists).
     let search = params
         .search()
-        .map(|s| search_condition(game_meta, s))
+        .map(|s| search_condition(game_meta, s, dialect))
         .transpose()?;
 
     // Resolve the (optional) set scope: a single set, or — with `include_related` — the
@@ -53,8 +56,9 @@ pub async fn list_collection(
     let set_codes =
         resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
 
-    let paginator = collection_query(user.id, &game, set_codes.as_deref(), search, sort, dir)
-        .paginate(&state.db, page_size);
+    let paginator =
+        collection_query(user.id, &game, set_codes.as_deref(), search, sort, dir, dialect)
+            .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
 
@@ -115,6 +119,7 @@ pub(super) fn collection_query(
     search: Option<Condition>,
     sort: CollectionSort,
     dir: SortDir,
+    dialect: Dialect,
 ) -> SelectTwo<collection_item::Entity, card::Entity> {
     let mut query = owned_with_cards(user_id, game, set_codes);
     if let Some(condition) = search {
@@ -126,7 +131,7 @@ pub(super) fn collection_query(
         CollectionSort::Recent => query
             .order_by(collection_item::Column::UpdatedAt, dir.order())
             .order_by(collection_item::Column::Id, dir.order()),
-        CollectionSort::Card(field) => apply_card_sort(query, field, dir, false),
+        CollectionSort::Card(field) => apply_card_sort(query, field, dir, false, dialect),
     }
 }
 
