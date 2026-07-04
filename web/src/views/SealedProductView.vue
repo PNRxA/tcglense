@@ -1,21 +1,22 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { ArrowLeft, ExternalLink } from '@lucide/vue'
+import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProductImage from '@/components/products/ProductImage.vue'
+import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import { Button } from '@/components/ui/button'
 import { useProductQuery } from '@/composables/useProducts'
 import { getProductPrices, productImageUrl } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { productTypeLabel } from '@/lib/productType'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
 
-// The sealed-product detail page: image, name, set + type, current prices, an outbound
-// TCGplayer buy-link, and the shared price-history chart. Mirrors CardDetailView's
-// shape (per-URL meta/JSON-LD + an in-app back link), but a product has its own page
-// only (no browse-grid modal), so the query + body live here directly.
+// The sealed-product detail page: image, name, set + type, current prices, the shared
+// price-history chart, and a "Where to buy" section of outbound store links (US /
+// Australia, issue #175 idiom). Mirrors CardDetailView's shape (per-URL meta/JSON-LD +
+// an in-app back link), but a product has its own page only (no browse-grid modal), so
+// the query + body live here directly.
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -142,14 +143,6 @@ usePageMeta({
             </dl>
           </div>
           <p v-else class="text-muted-foreground mt-6 text-sm">No current price.</p>
-
-          <!-- Outbound buy-link to the product's TCGplayer page (issue #175 idiom). -->
-          <Button v-if="product.url" as-child variant="outline" size="sm" class="mt-6">
-            <a :href="product.url" target="_blank" rel="noopener noreferrer">
-              View on TCGplayer
-              <ExternalLink class="size-4" />
-            </a>
-          </Button>
         </div>
       </div>
 
@@ -158,6 +151,10 @@ usePageMeta({
         :query-key="['product-prices', game, id]"
         :fetcher="(range) => getProductPrices(game, id, range)"
       />
+
+      <!-- Outbound "where to buy" links, grouped by region (issue #175). The
+        TCGplayer entry deep-links to product.url (the exact page) when we have it. -->
+      <ProductBuyLinks :game="game" :product="product" />
     </template>
   </div>
 </template>
