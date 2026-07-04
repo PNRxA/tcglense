@@ -149,11 +149,24 @@ const MTG_PRODUCT_SECTIONS: BuySection[] = [
   {
     title: 'Australia',
     stores: [
-      { name: 'Good Games', template: 'https://tcg.goodgames.com.au/search?q={name}' },
+      // Sealed product lives on Good Games' main storefront (www), not the
+      // tcg.goodgames.com.au singles marketplace the card links point at.
+      { name: 'Good Games', template: 'https://www.goodgames.com.au/search?q={name}' },
       { name: 'Guf', template: 'https://guf.com.au/search?q={name}' },
       { name: 'The Games Cube', template: 'https://www.thegamescube.com/products/search?q={name}' },
       { name: 'Games Portal', template: 'https://gamesportal.com.au/search?q={name}' },
       { name: 'Ronin Games', template: 'https://roningames.com.au/search?q={name}' },
+      // Dice Arcade runs on Neto/Maropost: its site search is the store root with
+      // rf=kw (keyword-refinement mode) + kw=<phrase>, not a /search path.
+      { name: 'Dice Arcade', template: 'https://www.dicearcade.com.au/?rf=kw&kw={name}' },
+      { name: 'RNR Hobbies', template: 'https://www.rnrhobbies.com.au/search?q={name}' },
+      // Mind Games is WooCommerce: WordPress search with post_type=product to
+      // scope results to products (not blog posts / pages).
+      { name: 'Mind Games', template: 'https://www.m-g.com.au/?s={name}&post_type=product' },
+      {
+        name: 'Collectible Madness',
+        template: 'https://collectiblemadness.com.au/search?q={name}',
+      },
     ],
   },
 ]
