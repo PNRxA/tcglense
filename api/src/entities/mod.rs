@@ -6,6 +6,8 @@ pub mod collection_source;
 pub mod email_token;
 pub mod ingest_state;
 pub mod prelude;
+pub mod product;
+pub mod product_price_history;
 pub mod refresh_token;
 pub mod user;
 pub mod wishlist_item;

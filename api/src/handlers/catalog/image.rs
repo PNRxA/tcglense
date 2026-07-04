@@ -78,16 +78,19 @@ pub async fn card_image(
         .into_response())
 }
 
-/// Whether the image proxy is allowed to fetch a URL: HTTPS on a provider CDN.
-/// Stored image URLs all come from Scryfall ingestion; this guards against a bad
+/// Whether the image proxy is allowed to fetch a URL: HTTPS on a known provider CDN
+/// (Scryfall for card art / set icons, the TCGplayer CDN for sealed-product images).
+/// Stored/derived image URLs all come from those providers; this guards against a bad
 /// value ever turning the proxy into an SSRF.
 pub(super) fn is_allowed_image_url(url: &str) -> bool {
     match reqwest::Url::parse(url) {
         Ok(parsed) => {
             parsed.scheme() == "https"
-                && parsed
-                    .host_str()
-                    .is_some_and(|host| host == "scryfall.io" || host.ends_with(".scryfall.io"))
+                && parsed.host_str().is_some_and(|host| {
+                    host == "scryfall.io"
+                        || host.ends_with(".scryfall.io")
+                        || host == "tcgplayer-cdn.tcgplayer.com"
+                })
         }
         Err(_) => false,
     }

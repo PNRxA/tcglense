@@ -11,6 +11,73 @@ use reqwest::{Client, StatusCode, header};
 
 use super::BASE_URL;
 use super::BackfillError;
+use super::model::{GroupsFile, PriceFile, ProductsFile};
+
+/// Fetch TCGCSV's `last-updated.txt` — a plain-text timestamp bumped once a day when
+/// the daily data refresh completes. Used to version-gate the whole products sweep so
+/// an unchanged day is a single cheap request (their documented pattern).
+pub async fn last_updated(client: &Client, user_agent: &str) -> Result<String, BackfillError> {
+    let text = client
+        .get(format!("{BASE_URL}/last-updated.txt"))
+        .header(header::USER_AGENT, user_agent)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    Ok(text.trim().to_string())
+}
+
+/// Fetch all groups (roughly sets/expansions) for a category — one unpaginated call.
+pub async fn fetch_groups(
+    client: &Client,
+    user_agent: &str,
+    category_id: u32,
+) -> Result<GroupsFile, BackfillError> {
+    Ok(client
+        .get(format!("{BASE_URL}/tcgplayer/{category_id}/groups"))
+        .header(header::USER_AGENT, user_agent)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+/// Fetch every product in a group (cards + sealed; the caller filters to sealed).
+pub async fn fetch_products(
+    client: &Client,
+    user_agent: &str,
+    category_id: u32,
+    group_id: i64,
+) -> Result<ProductsFile, BackfillError> {
+    Ok(client
+        .get(format!("{BASE_URL}/tcgplayer/{category_id}/{group_id}/products"))
+        .header(header::USER_AGENT, user_agent)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+/// Fetch a group's live prices (same shape as the archive `prices` files). Only
+/// products with active listings appear, so absence is normal.
+pub async fn fetch_prices(
+    client: &Client,
+    user_agent: &str,
+    category_id: u32,
+    group_id: i64,
+) -> Result<PriceFile, BackfillError> {
+    Ok(client
+        .get(format!("{BASE_URL}/tcgplayer/{category_id}/{group_id}/prices"))
+        .header(header::USER_AGENT, user_agent)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
 
 /// The archive URL for a given day's prices, e.g.
 /// `https://tcgcsv.com/archive/tcgplayer/prices-2024-02-08.ppmd.7z`.

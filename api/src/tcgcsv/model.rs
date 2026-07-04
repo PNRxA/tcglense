@@ -12,6 +12,84 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+// ----- Catalog sweep (part 2: sealed products) -----
+//
+// The groups + products feeds share TCGplayer's `{"success":…,"results":[…]}`
+// envelope. We consume only the handful of fields the products feature needs; every
+// other column (sealed flags, pricing tiers we don't ingest, etc.) is ignored.
+
+/// One TCGCSV `/{category}/groups` file: the `results` array of group rows.
+#[derive(Debug, Deserialize)]
+pub struct GroupsFile {
+    #[serde(default)]
+    pub results: Vec<Group>,
+}
+
+/// A TCGplayer "group" (roughly a set/expansion) within a category.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Group {
+    pub group_id: i64,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Short code that mostly matches our `card_sets.code` for mainline sets. Stored
+    /// lowercased as the product's `set_code` so products join to sets like cards do.
+    #[serde(default)]
+    pub abbreviation: Option<String>,
+    /// Release/publish timestamp (e.g. `"2024-02-02T00:00:00"`), when present.
+    #[serde(default)]
+    pub published_on: Option<String>,
+}
+
+/// One TCGCSV `/{category}/{group}/products` file: the `results` array of products.
+#[derive(Debug, Deserialize)]
+pub struct ProductsFile {
+    #[serde(default)]
+    pub results: Vec<Product>,
+}
+
+/// A TCGplayer product row. Only the fields the sealed-product catalog needs are
+/// deserialized; the classification of sealed-vs-card is derived from `extended_data`
+/// (see [`super::classify`]).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Product {
+    pub product_id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub clean_name: Option<String>,
+    #[serde(default)]
+    pub image_url: Option<String>,
+    /// The tcgplayer.com product page URL (kept for a future buy-links feature).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Free-form key/value attributes. A `Rarity` or `Number` entry marks the product
+    /// as a single card (so sealed = neither) — see [`super::classify::is_sealed`].
+    #[serde(default)]
+    pub extended_data: Vec<ExtendedData>,
+}
+
+/// One `extendedData` attribute. Only `name` is consumed (to tell sealed from cards).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtendedData {
+    #[serde(default)]
+    pub name: String,
+}
+
+/// Normalise a group's `publishedOn` into the `"YYYY-MM-DD"` string we store in
+/// `released_at` (matching how card/set release dates are stored). A datetime like
+/// `"2024-02-02T00:00:00"` keeps only its date part; a blank value is `None`.
+pub fn published_on_to_date(published_on: Option<&str>) -> Option<String> {
+    let raw = published_on?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // Split off any time component ("T" for ISO, a space for "date time" forms).
+    let date = raw.split(['T', ' ']).next().unwrap_or(raw);
+    (!date.is_empty()).then(|| date.to_string())
+}
+
 /// One TCGCSV `prices` file: the `results` array of per-product/subtype rows.
 #[derive(Debug, Deserialize)]
 pub struct PriceFile {
@@ -126,5 +204,83 @@ mod tests {
         );
         // Product 300: only an ignored etched subtype → absent entirely.
         assert!(!agg.contains_key(&300));
+    }
+
+    #[test]
+    fn published_on_keeps_only_the_date() {
+        assert_eq!(published_on_to_date(None), None);
+        assert_eq!(published_on_to_date(Some("")), None);
+        assert_eq!(published_on_to_date(Some("   ")), None);
+        assert_eq!(
+            published_on_to_date(Some("2024-02-02T00:00:00")),
+            Some("2024-02-02".to_string())
+        );
+        assert_eq!(
+            published_on_to_date(Some("2024-02-02 12:00:00")),
+            Some("2024-02-02".to_string())
+        );
+        assert_eq!(
+            published_on_to_date(Some("2024-02-02")),
+            Some("2024-02-02".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_a_groups_file() {
+        let json = r#"{
+            "success": true,
+            "errors": [],
+            "results": [
+                {"groupId": 2377, "name": "Murders at Karlov Manor", "abbreviation": "MKM", "publishedOn": "2024-02-09T00:00:00"},
+                {"groupId": 2378, "name": "No Abbrev Group", "abbreviation": null, "publishedOn": null}
+            ]
+        }"#;
+        let file: GroupsFile = serde_json::from_str(json).unwrap();
+        assert_eq!(file.results.len(), 2);
+        assert_eq!(file.results[0].group_id, 2377);
+        assert_eq!(file.results[0].abbreviation.as_deref(), Some("MKM"));
+        assert_eq!(
+            file.results[0].published_on.as_deref(),
+            Some("2024-02-09T00:00:00")
+        );
+        assert!(file.results[1].abbreviation.is_none());
+    }
+
+    #[test]
+    fn parses_a_products_file_with_extended_data() {
+        let json = r#"{
+            "success": true,
+            "errors": [],
+            "results": [
+                {
+                    "productId": 100,
+                    "name": "Murders at Karlov Manor Collector Booster Box",
+                    "cleanName": "Murders at Karlov Manor Collector Booster Box",
+                    "imageUrl": "https://tcgplayer-cdn.tcgplayer.com/product/100_200w.jpg",
+                    "categoryId": 1,
+                    "groupId": 2377,
+                    "url": "https://www.tcgplayer.com/product/100",
+                    "extendedData": [{"name": "UPC", "displayName": "UPC", "value": "1234"}]
+                },
+                {
+                    "productId": 200,
+                    "name": "Some Single Card",
+                    "extendedData": [
+                        {"name": "Rarity", "displayName": "Rarity", "value": "Mythic"},
+                        {"name": "Number", "displayName": "Number", "value": "123"}
+                    ]
+                }
+            ]
+        }"#;
+        let file: ProductsFile = serde_json::from_str(json).unwrap();
+        assert_eq!(file.results.len(), 2);
+        let sealed = &file.results[0];
+        assert_eq!(sealed.product_id, 100);
+        assert_eq!(sealed.clean_name.as_deref(), Some("Murders at Karlov Manor Collector Booster Box"));
+        assert_eq!(sealed.url.as_deref(), Some("https://www.tcgplayer.com/product/100"));
+        assert_eq!(sealed.extended_data.len(), 1);
+        assert_eq!(sealed.extended_data[0].name, "UPC");
+        let card = &file.results[1];
+        assert_eq!(card.extended_data.len(), 2);
     }
 }

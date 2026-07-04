@@ -23,6 +23,7 @@ mod email_verification;
 mod login;
 mod pagination;
 mod password_reset;
+mod products;
 mod rate_limit;
 mod refresh;
 mod registration;

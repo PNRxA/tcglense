@@ -1,6 +1,7 @@
 use super::*;
 use super::image::{is_allowed_image_url, normalize_size};
-use super::prices::{PricePoint, PriceRange, cutoff_date, downsample};
+use super::prices::PricePoint;
+use super::pricing::{PriceRange, cutoff_date, downsample_rows};
 use crate::entities::card_price_history;
 use crate::scryfall::search::escape_like;
 use chrono::NaiveDate;
@@ -78,6 +79,14 @@ fn cutoff_date_windows_relative_to_today() {
     assert_eq!(cutoff_date(today, PriceRange::Y3).as_deref(), Some("2023-07-02"));
     // "all" has no lower bound.
     assert_eq!(cutoff_date(today, PriceRange::All), None);
+}
+
+/// Downsample the card history rows, then map to points (the handler's pipeline).
+fn downsample(rows: Vec<card_price_history::Model>, bucket_days: i64) -> Vec<PricePoint> {
+    downsample_rows(rows, bucket_days, |r| r.as_of_date.as_str())
+        .into_iter()
+        .map(PricePoint::from)
+        .collect()
 }
 
 #[test]

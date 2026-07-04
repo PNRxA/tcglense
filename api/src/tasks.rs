@@ -136,13 +136,14 @@ fn spawn_card_sync(
     db: DatabaseConnection,
     http: Client,
     sync_interval_hours: u64,
+    tcgcsv_user_agent: String,
     mut backfill: Option<BackfillConfig>,
 ) {
     tokio::spawn(async move {
         if sync_interval_hours == 0 {
             // Periodic refresh disabled: import once on startup only.
-            catalog::refresh_all(&db, &http).await;
-            // Capture today's snapshot from the freshly-imported cards.
+            catalog::refresh_all(&db, &http, &tcgcsv_user_agent).await;
+            // Capture today's snapshot from the freshly-imported cards + products.
             catalog::snapshot_all(&db).await;
             if let Some(cfg) = backfill.take() {
                 spawn_price_backfill(db.clone(), http.clone(), cfg);
@@ -162,7 +163,7 @@ fn spawn_card_sync(
             // The first tick fires immediately (the startup import), then every
             // `sync_interval_hours` thereafter.
             ticker.tick().await;
-            catalog::refresh_all(&db, &http).await;
+            catalog::refresh_all(&db, &http, &tcgcsv_user_agent).await;
             // Always capture a daily snapshot, even when the import above was
             // version-gated and skipped — keeps the price series continuous.
             catalog::snapshot_all(&db).await;
@@ -210,6 +211,7 @@ pub async fn start(state: &AppState, http: &Client) {
             state.db.clone(),
             http.clone(),
             state.config.sync_interval_hours,
+            state.config.tcgcsv_user_agent.clone(),
             backfill,
         );
     } else {

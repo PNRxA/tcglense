@@ -29,6 +29,8 @@ use crate::scryfall::search::escape_like;
 mod cards;
 mod image;
 mod prices;
+mod pricing;
+mod products;
 mod sets;
 mod status;
 
@@ -38,6 +40,9 @@ mod tests;
 pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use image::card_image;
 pub use prices::card_prices;
+pub use products::{
+    get_product, list_products, product_facets, product_image, product_prices,
+};
 pub use sets::{get_set, list_set_cards, list_set_drops, list_sets, set_icon};
 pub use status::{ingest_status, list_games};
 

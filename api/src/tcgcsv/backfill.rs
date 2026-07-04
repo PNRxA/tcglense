@@ -25,8 +25,10 @@ use sevenz_rust2::{ArchiveReader, Password};
 use super::BackfillError;
 use super::model::{DayPrice, PriceFile, aggregate_prices};
 use super::{DATASET, GAME, MTG_CATEGORY_ID};
-use crate::entities::prelude::{Card, CardPriceHistory, IngestState};
-use crate::entities::{card, card_price_history, ingest_state};
+use crate::entities::prelude::{
+    Card, CardPriceHistory, IngestState, Product, ProductPriceHistory,
+};
+use crate::entities::{card, card_price_history, ingest_state, product, product_price_history};
 
 /// First day TCGCSV published a price archive.
 fn first_archive_date() -> NaiveDate {
@@ -83,7 +85,16 @@ async fn run_inner(
         tracing::warn!("tcgcsv backfill: no cards with a tcgplayer_id yet; deferring");
         return Ok(());
     }
-    tracing::info!(cards = map.len(), "tcgcsv backfill: built tcgplayer_id map");
+    // The parallel join key for sealed products: `productId -> products.id`. Empty when
+    // products haven't been synced yet (the backfill runs once, and tasks.rs orders the
+    // first product sync before it, so normally it's populated) — an empty map just
+    // means no product rows are backfilled, which is fine.
+    let product_map = load_product_map(db).await?;
+    tracing::info!(
+        cards = map.len(),
+        products = product_map.len(),
+        "tcgcsv backfill: built tcgplayer_id maps"
+    );
 
     let today = Utc::now().date_naive();
     // Candidate window: [start, today]. `days_cap` bounds it to the most recent N
@@ -118,7 +129,7 @@ async fn run_inner(
 
         match super::client::fetch_archive(http, user_agent, date).await {
             Ok(Some(bytes)) => {
-                let rows_written = process_day(db, bytes.to_vec(), date, &map).await?;
+                let rows_written = process_day(db, bytes.to_vec(), date, &map, &product_map).await?;
                 total_rows = total_rows.saturating_add(rows_written as i64);
                 tracing::debug!(date = %date, rows = rows_written, "tcgcsv day backfilled");
             }
@@ -153,25 +164,29 @@ async fn run_inner(
 }
 
 /// Decompress one day's archive (blocking CPU work → `spawn_blocking`), join its
-/// prices onto our cards, and insert the new history rows. Returns rows inserted.
+/// prices onto our cards **and** sealed products, and insert the new history rows into
+/// both `card_price_history` and `product_price_history`. Returns total rows inserted.
 async fn process_day(
     db: &DatabaseConnection,
     bytes: Vec<u8>,
     date: NaiveDate,
     map: &HashMap<i64, i32>,
+    product_map: &HashMap<i64, i32>,
 ) -> Result<u64, BackfillError> {
     // PPMd decompression + JSON parsing is synchronous and CPU-bound; keep it off
-    // the async runtime. Returns the per-product aggregate for the day.
+    // the async runtime. Returns the per-product aggregate for the day. The same
+    // `productId`-keyed aggregate feeds both the card and product joins.
     let aggregate =
         tokio::task::spawn_blocking(move || extract_and_aggregate(&bytes, MTG_CATEGORY_ID))
             .await??;
 
     let now = Utc::now();
     let date_str = date.format("%Y-%m-%d").to_string();
-    let rows = build_day_rows(map, aggregate, &date_str, now);
 
+    // Cards.
+    let card_rows = build_day_rows(map, &aggregate, &date_str, now);
     let mut written: u64 = 0;
-    let mut iter = rows.into_iter();
+    let mut iter = card_rows.into_iter();
     loop {
         let chunk: Vec<card_price_history::ActiveModel> =
             iter.by_ref().take(INSERT_CHUNK).collect();
@@ -180,22 +195,35 @@ async fn process_day(
         }
         written += insert_history(db, chunk).await?;
     }
+
+    // Sealed products (empty when no products are synced yet).
+    let product_rows = build_product_day_rows(product_map, &aggregate, &date_str, now);
+    let mut iter = product_rows.into_iter();
+    loop {
+        let chunk: Vec<product_price_history::ActiveModel> =
+            iter.by_ref().take(INSERT_CHUNK).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        written += insert_product_history(db, chunk).await?;
+    }
+
     Ok(written)
 }
 
-/// Turn a day's per-product aggregate into history `ActiveModel`s for the products
-/// we actually own (present in `map`) that carry at least one price. `eur`/`tix`
-/// stay `NULL` — TCGCSV is USD-only.
+/// Turn a day's per-product aggregate into card-history `ActiveModel`s for the cards
+/// we actually hold (whose `tcgplayer_id` is present in `map`) that carry at least one
+/// price. `eur`/`tix` stay `NULL` — TCGCSV is USD-only.
 fn build_day_rows(
     map: &HashMap<i64, i32>,
-    aggregate: HashMap<i64, DayPrice>,
+    aggregate: &HashMap<i64, DayPrice>,
     date_str: &str,
     now: DateTimeUtc,
 ) -> Vec<card_price_history::ActiveModel> {
     aggregate
-        .into_iter()
+        .iter()
         .filter_map(|(product_id, day)| {
-            let card_id = *map.get(&product_id)?;
+            let card_id = *map.get(product_id)?;
             if day.usd.is_none() && day.usd_foil.is_none() {
                 return None;
             }
@@ -204,10 +232,38 @@ fn build_day_rows(
                 game: Set(GAME.to_string()),
                 card_id: Set(card_id),
                 as_of_date: Set(date_str.to_string()),
-                price_usd: Set(day.usd),
-                price_usd_foil: Set(day.usd_foil),
+                price_usd: Set(day.usd.clone()),
+                price_usd_foil: Set(day.usd_foil.clone()),
                 price_eur: Set(None),
                 price_tix: Set(None),
+                created_at: Set(now),
+            })
+        })
+        .collect()
+}
+
+/// The sealed-product mirror of [`build_day_rows`]: a day's aggregate joined onto our
+/// `products` rows by `productId`, into `product_price_history` `ActiveModel`s.
+fn build_product_day_rows(
+    product_map: &HashMap<i64, i32>,
+    aggregate: &HashMap<i64, DayPrice>,
+    date_str: &str,
+    now: DateTimeUtc,
+) -> Vec<product_price_history::ActiveModel> {
+    aggregate
+        .iter()
+        .filter_map(|(product_id, day)| {
+            let internal_id = *product_map.get(product_id)?;
+            if day.usd.is_none() && day.usd_foil.is_none() {
+                return None;
+            }
+            Some(product_price_history::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                product_id: Set(internal_id),
+                as_of_date: Set(date_str.to_string()),
+                price_usd: Set(day.usd.clone()),
+                price_usd_foil: Set(day.usd_foil.clone()),
                 created_at: Set(now),
             })
         })
@@ -239,6 +295,35 @@ async fn insert_history(
     match result {
         Ok(affected) => Ok(affected),
         // Every row in the chunk conflicted (all already present) — not an error.
+        Err(DbErr::RecordNotInserted) => Ok(0),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Insert product history rows, **skipping** any `(game, product, date)` that already
+/// exists (`ON CONFLICT DO NOTHING`) so a real daily snapshot is never overwritten.
+/// Returns the number of rows actually inserted.
+async fn insert_product_history(
+    db: &DatabaseConnection,
+    rows: Vec<product_price_history::ActiveModel>,
+) -> Result<u64, BackfillError> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let result = ProductPriceHistory::insert_many(rows)
+        .on_conflict(
+            OnConflict::columns([
+                product_price_history::Column::Game,
+                product_price_history::Column::ProductId,
+                product_price_history::Column::AsOfDate,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await;
+    match result {
+        Ok(affected) => Ok(affected),
         Err(DbErr::RecordNotInserted) => Ok(0),
         Err(err) => Err(err.into()),
     }
@@ -304,6 +389,26 @@ async fn load_tcgplayer_map(
     Ok(rows
         .into_iter()
         .filter_map(|(id, tcg)| tcg.map(|t| (i64::from(t), id)))
+        .collect())
+}
+
+/// Build the `productId -> products.id` map for the game. The `products.external_id`
+/// stores the TCGplayer `productId` as a string, so this parses it back to the `i64`
+/// the archive aggregate is keyed by (skipping any unparseable id).
+async fn load_product_map(
+    db: &DatabaseConnection,
+) -> Result<HashMap<i64, i32>, BackfillError> {
+    let rows: Vec<(i32, String)> = Product::find()
+        .select_only()
+        .column(product::Column::Id)
+        .column(product::Column::ExternalId)
+        .filter(product::Column::Game.eq(GAME))
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, ext)| ext.parse::<i64>().ok().map(|pid| (pid, id)))
         .collect())
 }
 
@@ -445,7 +550,7 @@ mod tests {
             },
         );
         let now = Utc::now();
-        let rows = build_day_rows(&map, agg, "2024-02-08", now);
+        let rows = build_day_rows(&map, &agg, "2024-02-08", now);
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
         assert_eq!(row.card_id.as_ref(), &7);
@@ -453,6 +558,33 @@ mod tests {
         assert_eq!(row.price_usd.as_ref().as_deref(), Some("0.25"));
         assert_eq!(row.price_usd_foil.as_ref().as_deref(), Some("1.50"));
         assert!(row.price_eur.as_ref().is_none());
+    }
+
+    #[test]
+    fn builds_product_rows_only_for_matched_priced_products() {
+        // Product map: productId 100 -> product row 42; 200 -> 43 (owned but unpriced);
+        // 999 is priced but not in our products table.
+        let product_map: HashMap<i64, i32> = HashMap::from([(100, 42), (200, 43)]);
+        let mut agg: HashMap<i64, DayPrice> = HashMap::new();
+        agg.insert(
+            100,
+            DayPrice {
+                usd: Some("199.99".into()),
+                usd_foil: None,
+            },
+        );
+        agg.insert(200, DayPrice { usd: None, usd_foil: None });
+        agg.insert(
+            999,
+            DayPrice {
+                usd: Some("9.00".into()),
+                usd_foil: None,
+            },
+        );
+        let rows = build_product_day_rows(&product_map, &agg, "2024-02-08", Utc::now());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].product_id.as_ref(), &42);
+        assert_eq!(rows[0].price_usd.as_ref().as_deref(), Some("199.99"));
     }
 
     #[tokio::test]
