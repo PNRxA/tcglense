@@ -738,6 +738,15 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `images/`), `CDN_MODE` (`false`; when `true` the image/icon proxy skips the
   on-disk cache and only fetch-and-serves — for origins behind a caching CDN),
   `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
+  `TCGCSV_USER_AGENT` (descriptive UA for the one-time TCGCSV historic price backfill —
+  TCGCSV blocks generic UAs; defaults to the same fallback as the Scryfall UA),
+  `PRICE_BACKFILL_ENABLED` (`false`; the one-time TCGCSV historic price backfill is
+  **opt-in** — set `true` to walk TCGCSV's daily archives once and fill
+  `card_price_history` for the days before the app began capturing its own snapshots. Off
+  by default because the walk is slow and hits an external service; it's internally gated
+  by an `ingest_state` row so it only ever runs once and never overwrites an existing
+  `(card, date)` row), `PRICE_BACKFILL_DAYS` (`0` = every archive day since 2024-02-08;
+  `N` = only the most recent `N` days, to bound a first run),
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —
   email support@moxfield.com to get one approved, and treat it as a secret),
   `RESEND_API_KEY` (unset; the Resend API key for registration-completion/verification/reset email — a
