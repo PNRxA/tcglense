@@ -274,3 +274,125 @@ async fn completing_a_reset_verifies_an_unverified_account() {
     // without a separate verification step (no 403).
     login(&app, "lost@example.com", "new-password-456").await;
 }
+
+/// A password reset ends **every** existing session, not just one. `reset_password`
+/// calls `revoke_all_for_user` (a whole-family revocation keyed by user id) — this
+/// is the property that evicts an attacker's stolen session when a victim resets
+/// their password. A regression narrowing it to a single-token revoke would leave
+/// other live sessions authenticated, so pin it with several concurrent sessions.
+#[tokio::test]
+async fn reset_revokes_every_active_session() {
+    let app = test_app().await;
+    // Three concurrent sessions for one account: one from registration, two logins,
+    // each with its own distinct refresh cookie.
+    let (_, session1) = register(&app, "multi@example.com", "password123").await;
+    let (_, session2) = login(&app, "multi@example.com", "password123").await;
+    let (_, session3) = login(&app, "multi@example.com", "password123").await;
+    assert_ne!(session1, session2);
+    assert_ne!(session2, session3);
+
+    // Reset the password.
+    send(
+        &app,
+        json_post(
+            "/api/auth/forgot-password",
+            json!({ "email": "multi@example.com" }),
+        ),
+    )
+    .await;
+    let token = latest_email_token(&app, "multi@example.com").await;
+    let (status, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/reset-password",
+            json!({ "token": token, "password": "new-password-456" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "reset failed: {body:?}");
+
+    // EVERY pre-reset session is dead — not just the most recent one. Each refresh
+    // cookie is now rejected at rotation.
+    for (label, refresh) in [
+        ("registration session", &session1),
+        ("second session", &session2),
+        ("third session", &session3),
+    ] {
+        let (rotate_status, _, _) =
+            send(&app, post_with_cookie("/api/auth/refresh", refresh)).await;
+        assert_eq!(
+            rotate_status,
+            StatusCode::UNAUTHORIZED,
+            "{label} must be revoked by the reset"
+        );
+    }
+}
+
+/// A registration-completion link left outstanding when the account is later
+/// activated by a *different* path (forgot-password + reset) can no longer set a
+/// password: `complete_registration` refuses a token once the account has a password
+/// (generic 401), so an intercepted/replayed completion link can't take over an
+/// already-secured account.
+#[tokio::test]
+async fn a_completion_token_is_refused_after_the_account_is_activated_via_reset() {
+    let app = test_app().await;
+    // Start a pending email-first registration and capture the completion link, but
+    // do NOT complete it.
+    send(
+        &app,
+        json_post("/api/auth/register", json!({ "email": "revive@example.com" })),
+    )
+    .await;
+    let completion = token_for_subject(&app, "revive@example.com", "Finish creating").await;
+
+    // Activate + secure the account by a different path: forgot-password + reset sets
+    // the first password and verifies the (previously pending) account.
+    send(
+        &app,
+        json_post(
+            "/api/auth/forgot-password",
+            json!({ "email": "revive@example.com" }),
+        ),
+    )
+    .await;
+    let reset = token_for_subject(&app, "revive@example.com", "Reset your").await;
+    let (status, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/reset-password",
+            json!({ "token": reset, "password": "reset-password-1" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // The still-outstanding completion link can no longer set a password: the account
+    // now HAS one, so the password-exists gate refuses it with the same generic 401 as
+    // any dead token — a completion link never doubles as a password reset.
+    let (status, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": completion, "password": "attacker-password-9" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // The account still holds the RESET password, untouched by the refused completion:
+    // the reset password logs in, the attacker's would-be password does not.
+    login(&app, "revive@example.com", "reset-password-1").await;
+    let (attacker, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": "revive@example.com", "password": "attacker-password-9" }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        attacker,
+        StatusCode::UNAUTHORIZED,
+        "the refused completion must not have set a password"
+    );
+}

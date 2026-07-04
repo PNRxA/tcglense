@@ -326,3 +326,92 @@ async fn negative_quantity_is_rejected() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// `POST .../owned` — the batch lookup behind the browse-grid ownership badges — is
+/// scoped to the caller: it returns only the caller's own holdings, never another
+/// user's. This endpoint fires on every public browse page for a signed-in visitor,
+/// so a regression broadening its `user_id` filter would leak every user's ownership
+/// to any authenticated viewer.
+#[tokio::test]
+async fn owned_batch_is_isolated_per_user() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-owned@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-owned@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+
+    own_card(&app, &alice, id, 3).await;
+
+    // Bob asks for the very card Alice owns — he owns none, so it's absent from his
+    // map (and per-user data is never shared-cached).
+    let (status, headers, body) = send(
+        &app,
+        json_with_bearer("POST", "/api/collection/mtg/owned", &bob, json!({ "ids": [id] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owned failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert!(
+        body["data"].get(id.as_str()).is_none(),
+        "another user's holding must not leak: {body:?}"
+    );
+
+    // Alice sees her own count.
+    let (_, _, body) = send(
+        &app,
+        json_with_bearer("POST", "/api/collection/mtg/owned", &alice, json!({ "ids": [id] })),
+    )
+    .await;
+    assert_eq!(body["data"][id.as_str()]["quantity"], 3);
+}
+
+/// A write is keyed to the token's user: two users PUTting the *same* card id create
+/// two distinct rows (never a clobber), and every read aggregation — the single-entry
+/// read, the summary, and the owned-set landing — reflects only the caller's own
+/// holdings. A regression narrowing the upsert conflict key to `(game, card_id)`, or
+/// dropping the `user_id` filter from an aggregation, would silently corrupt or leak
+/// one user's collection into another's.
+#[tokio::test]
+async fn writes_and_aggregations_are_isolated_between_users() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-write@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-write@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+
+    // Both own the SAME card, different counts, via the same path (different token).
+    let (_, _, a_body) = send(
+        &app,
+        json_with_bearer("PUT", &card_path(id), &alice, json!({ "quantity": 2, "foil_quantity": 1 })),
+    )
+    .await;
+    assert_eq!(a_body["quantity"], 2);
+    let (_, _, b_body) = send(
+        &app,
+        json_with_bearer("PUT", &card_path(id), &bob, json!({ "quantity": 5, "foil_quantity": 0 })),
+    )
+    .await;
+    assert_eq!(b_body["quantity"], 5);
+
+    // Distinct rows: Bob's write did not overwrite Alice's holding, and vice versa.
+    let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &alice)).await;
+    assert_eq!(body["quantity"], 2, "alice's count is unchanged by bob's write");
+    assert_eq!(body["foil_quantity"], 1);
+    let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &bob)).await;
+    assert_eq!(body["quantity"], 5);
+    assert_eq!(body["foil_quantity"], 0);
+
+    // Summaries are per-user: Alice 2+1=3 copies, Bob 5 copies, each one unique card.
+    let (_, _, a_sum) = send(&app, get_with_bearer("/api/collection/mtg/summary", &alice)).await;
+    assert_eq!(a_sum["unique_cards"], 1);
+    assert_eq!(a_sum["total_cards"], 3);
+    let (_, _, b_sum) = send(&app, get_with_bearer("/api/collection/mtg/summary", &bob)).await;
+    assert_eq!(b_sum["unique_cards"], 1);
+    assert_eq!(b_sum["total_cards"], 5);
+
+    // The owned-set landing aggregates only the caller's copies (3 vs 5).
+    let (_, _, a_sets) = send(&app, get_with_bearer("/api/collection/mtg/sets", &alice)).await;
+    assert_eq!(a_sets["data"][0]["owned_copies"], 3);
+    let (_, _, b_sets) = send(&app, get_with_bearer("/api/collection/mtg/sets", &bob)).await;
+    assert_eq!(b_sets["data"][0]["owned_copies"], 5);
+}

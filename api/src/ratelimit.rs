@@ -791,6 +791,27 @@ mod tests {
     }
 
     #[test]
+    fn user_general_class_allows_its_burst_then_blocks() {
+        let limiters = UserRateLimiters::default();
+        let user = 9;
+
+        // The general class allows a burst of 300, then the 301st is limited — proof
+        // that the authenticated read/edit surface IS throttled per user, not just the
+        // tight import class. (At 300/min a replenished cell is ~200ms away, so the
+        // retry is a positive sub-second wait rather than the import class's >=1s.)
+        for i in 0..300 {
+            assert!(
+                limiters.check(UserRoute::General, user).is_ok(),
+                "general request {i} within the burst should pass"
+            );
+        }
+        let retry = limiters
+            .check(UserRoute::General, user)
+            .expect_err("the 301st general request is limited");
+        assert!(!retry.is_zero(), "a limited request reports a positive retry-after");
+    }
+
+    #[test]
     fn user_limits_are_per_user() {
         let limiters = UserRateLimiters::default();
 

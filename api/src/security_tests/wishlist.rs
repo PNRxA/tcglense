@@ -450,3 +450,65 @@ async fn unknown_sort_or_dir_is_rejected() {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uri}: {body:?}");
     }
 }
+
+/// `POST .../counts` — the wish-list browse-grid badge lookup — is scoped to the
+/// caller: it returns only the caller's own wanted cards, never another user's. The
+/// wish-list mirror of the collection's `owned_batch_is_isolated_per_user`.
+#[tokio::test]
+async fn counts_batch_is_isolated_per_user() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-counts@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-counts@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+
+    want_card(&app, &alice, id, 2).await;
+
+    // Bob asks for the card Alice wants — he wants none, so it's absent from his map.
+    let (status, headers, body) = send(
+        &app,
+        json_with_bearer("POST", "/api/wishlist/mtg/counts", &bob, json!({ "ids": [id] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "counts failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert!(
+        body["data"].get(id.as_str()).is_none(),
+        "another user's wanted card must not leak: {body:?}"
+    );
+
+    // Alice sees her own count.
+    let (_, _, body) = send(
+        &app,
+        json_with_bearer("POST", "/api/wishlist/mtg/counts", &alice, json!({ "ids": [id] })),
+    )
+    .await;
+    assert_eq!(body["data"][id.as_str()]["quantity"], 2);
+}
+
+/// A wish-list write is keyed to the token's user: two users PUTting the same card
+/// create distinct rows (no clobber), and the summary reflects only the caller's own
+/// wanted counts. The wish-list mirror of the collection write-isolation test.
+#[tokio::test]
+async fn wishlist_writes_are_isolated_between_users() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-wwrite@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-wwrite@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+
+    want_card(&app, &alice, id, 2).await;
+    want_card(&app, &bob, id, 5).await;
+
+    // Distinct rows: neither write overwrote the other's wanted count.
+    let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &alice)).await;
+    assert_eq!(body["quantity"], 2, "alice's wanted count is unchanged by bob's write");
+    let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &bob)).await;
+    assert_eq!(body["quantity"], 5);
+
+    // Summaries are per-user.
+    let (_, _, a_sum) = send(&app, get_with_bearer("/api/wishlist/mtg/summary", &alice)).await;
+    assert_eq!(a_sum["total_cards"], 2);
+    let (_, _, b_sum) = send(&app, get_with_bearer("/api/wishlist/mtg/summary", &bob)).await;
+    assert_eq!(b_sum["total_cards"], 5);
+}
