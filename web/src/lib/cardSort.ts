@@ -44,6 +44,20 @@ export const COLLECTION_SORT_OPTIONS: SortOption[] = [
   ...ALL_CARDS_SORT_OPTIONS,
 ]
 
+/** Options for the sealed-products browse view. The API sorts on `name`/`price`/
+ * `released` only (no rarity/mana/collector-number — sealed products have none). */
+export const PRODUCT_SORT_OPTIONS: SortOption[] = [
+  { value: 'name:asc', label: 'Name (A–Z)' },
+  { value: 'name:desc', label: 'Name (Z–A)' },
+  { value: 'price:desc', label: 'Price (high → low)' },
+  { value: 'price:asc', label: 'Price (low → high)' },
+  { value: 'released:desc', label: 'Newest first' },
+  { value: 'released:asc', label: 'Oldest first' },
+]
+
+/** Default sort for the sealed-products view — alphabetical by name. */
+export const PRODUCT_DEFAULT_SORT = 'name:asc'
+
 /** Default sort for a single set — its collector-number order. */
 export const SET_DEFAULT_SORT = 'number:asc'
 /** Default sort for the all-cards view — alphabetical by name. */

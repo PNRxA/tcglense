@@ -58,6 +58,20 @@ const router = createRouter({
       component: () => import('@/views/SetView.vue'),
       props: true,
     },
+    // Sealed products (booster boxes, bundles, decks): a browse/filter grid and a
+    // per-product detail page with a price-history chart, mirroring the card views.
+    {
+      path: '/cards/:game/sealed',
+      name: 'game-sealed',
+      component: () => import('@/views/SealedBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/cards/:game/sealed/:id',
+      name: 'sealed-product',
+      component: () => import('@/views/SealedProductView.vue'),
+      props: true,
+    },
     // Per-user collections. Public routes (no requiresAuth) so a signed-out visitor
     // can reach them; the game view prompts them to sign in / sign up rather than
     // bouncing to /login. Lazy-loaded like the catalog views.

@@ -56,6 +56,17 @@ const games = computed(() => data.value?.data ?? [])
                 <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
               </NavigationMenuLink>
             </li>
+            <!-- Sealed products (booster boxes, bundles, decks) — one entry per game. -->
+            <template v-if="games.length">
+              <li class="mt-1 border-t pt-2">
+                <p class="text-muted-foreground px-2 pb-1 text-xs font-medium">Sealed products</p>
+              </li>
+              <li v-for="game in games" :key="`sealed-${game.id}`">
+                <NavigationMenuLink as-child>
+                  <RouterLink :to="`/cards/${game.id}/sealed`">{{ game.name }}</RouterLink>
+                </NavigationMenuLink>
+              </li>
+            </template>
           </ul>
         </NavigationMenuContent>
       </NavigationMenuItem>

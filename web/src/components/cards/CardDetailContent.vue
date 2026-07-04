@@ -10,7 +10,7 @@ import CardPrints from '@/components/cards/CardPrints.vue'
 import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
-import { getCard } from '@/lib/api'
+import { getCard, getPriceHistory } from '@/lib/api'
 
 // The body of a card's detail — image(s), rules text, prices + history, collection and
 // wish-list count controls, other printings — shared verbatim by the full page
@@ -128,7 +128,10 @@ const hasSeparateFaceImages = computed(
     </div>
 
     <!-- Price history over time (full width, below the card details). -->
-    <PriceChart :game="game" :id="card.id" />
+    <PriceChart
+      :query-key="['card-prices', game, id]"
+      :fetcher="(range) => getPriceHistory(game, id, range)"
+    />
 
     <!-- Outbound "buy this card" links, grouped by region (issue #175). -->
     <CardBuyLinks :game="game" :card="card" />

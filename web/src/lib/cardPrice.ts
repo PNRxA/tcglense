@@ -4,8 +4,6 @@
 // price-sort fallback (`price_usd` then `price_usd_foil`) so the shown price and
 // the price sort agree.
 
-import type { CardPrices } from '@/lib/api'
-
 export interface DisplayPrice {
   /** USD amount, exactly as stored (a decimal string). */
   amount: string
@@ -14,9 +12,16 @@ export interface DisplayPrice {
   foil: boolean
 }
 
-/** The USD price to show for a card in a list/tile: the regular price if present,
- * otherwise the foil price; null when neither is priced. */
-export function displayUsdPrice(prices: CardPrices): DisplayPrice | null {
+/** The USD fields both `CardPrices` and `ProductPrices` carry — the only ones this
+ * picker reads, so it serves cards and sealed products alike. */
+export interface UsdPrices {
+  usd: string | null
+  usd_foil: string | null
+}
+
+/** The USD price to show for a card or product in a list/tile: the regular price if
+ * present, otherwise the foil price; null when neither is priced. */
+export function displayUsdPrice(prices: UsdPrices): DisplayPrice | null {
   if (prices.usd) return { amount: prices.usd, foil: false }
   if (prices.usd_foil) return { amount: prices.usd_foil, foil: true }
   return null

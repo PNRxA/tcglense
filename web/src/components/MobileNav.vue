@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Heart, Layers, Library, Menu } from '@lucide/vue'
+import { Heart, Layers, Library, Menu, Package } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -43,6 +43,16 @@ const games = computed(() => data.value?.data ?? [])
       <DropdownMenuItem v-for="game in games" :key="`cards-${game.id}`" as-child>
         <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
       </DropdownMenuItem>
+
+      <template v-if="games.length">
+        <DropdownMenuLabel class="flex items-center gap-2">
+          <Package class="size-4" aria-hidden="true" />
+          Sealed products
+        </DropdownMenuLabel>
+        <DropdownMenuItem v-for="game in games" :key="`sealed-${game.id}`" as-child>
+          <RouterLink :to="`/cards/${game.id}/sealed`">{{ game.name }}</RouterLink>
+        </DropdownMenuItem>
+      </template>
 
       <DropdownMenuSeparator />
 
