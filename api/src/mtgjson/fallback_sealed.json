@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "Curated sealed-product membership data, merged into `sealed_contents` ONLY for products",
+    "MTGJSON leaves with no contents. MTGJSON (AllPrintings.json) is the authoritative source;",
+    "this file fills genuine upstream gaps — products whose `contents` are un-authored so their",
+    "cards would otherwise show no sealed products at all. See api/src/mtgjson/fallback.rs and the",
+    "'Sealed-product contents' trade-off in CLAUDE.md.",
+    "",
+    "A fallback product is applied per-product only when MTGJSON emitted ZERO rows for it, so a",
+    "product MTGJSON later starts describing silently supersedes this file (no code change).",
+    "Cards are keyed by (set, number) matching cards.set_code/collector_number; `name` is",
+    "documentation only. `membership` is contains | booster | variable (the 'found in / can be",
+    "pulled from / may be in' buckets). `foil` marks a foil-only inclusion.",
+    "",
+    "Editing this file changes its content hash, which the ingest folds into its version gate so",
+    "the merge re-runs on the next sync even if MTGJSON itself is unchanged."
+  ],
+  "products": [
+    {
+      "tcgplayer_product_id": "648686",
+      "name": "Avatar: The Last Airbender - Commander's Bundle",
+      "note": [
+        "MTGJSON ships contents:null for this bundle (mtg-sealed-content TLA.yaml has no contents",
+        "block authored), so its borderless Commander-staple reprints (Avatar 'Eternal' set tle,",
+        "collector numbers 305-317) resolve to no sealed product. The bundle guarantees three",
+        "staples (Arcane Signet, Sol Ring, Swiftfoot Boots) and includes two more drawn from a pool",
+        "of ten — so the guaranteed three are `contains` and the pool is `variable`. All are the",
+        "nonfoil borderless printing. Source: Wizards 'Collecting Avatar' article + retail listings."
+      ],
+      "contents": [
+        { "set": "tle", "number": "315", "name": "Arcane Signet", "membership": "contains", "foil": false },
+        { "set": "tle", "number": "316", "name": "Sol Ring", "membership": "contains", "foil": false },
+        { "set": "tle", "number": "317", "name": "Swiftfoot Boots", "membership": "contains", "foil": false },
+        { "set": "tle", "number": "305", "name": "Enlightened Tutor", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "306", "name": "Flawless Maneuver", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "307", "name": "Fierce Guardianship", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "308", "name": "Mystical Tutor", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "309", "name": "Deadly Rollick", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "310", "name": "Entomb", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "311", "name": "Deflecting Swat", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "312", "name": "Gamble", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "313", "name": "Obscuring Haze", "membership": "variable", "foil": false },
+        { "set": "tle", "number": "314", "name": "Worldly Tutor", "membership": "variable", "foil": false }
+      ]
+    }
+  ]
+}

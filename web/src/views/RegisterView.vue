@@ -138,6 +138,16 @@ async function onResend() {
               <Loader2 v-if="loading" class="animate-spin" />
               {{ loading ? 'Sending link...' : 'Continue' }}
             </Button>
+            <p class="text-muted-foreground text-center text-xs text-pretty">
+              By creating an account, you agree to the
+              <RouterLink to="/terms" class="text-primary underline-offset-4 hover:underline">
+                Terms of Service
+              </RouterLink>
+              and
+              <RouterLink to="/privacy" class="text-primary underline-offset-4 hover:underline">
+                Privacy Policy</RouterLink
+              >.
+            </p>
           </form>
         </CardContent>
         <CardFooter class="justify-center">

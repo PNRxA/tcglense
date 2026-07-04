@@ -17,8 +17,8 @@ export const SITE_NAME = 'TCGLense'
 
 /** Fallback description for any page that doesn't set its own. */
 export const SITE_DESCRIPTION =
-  'Track trading-card prices over time, catalogue your collection, and follow your ' +
-  'set-completion progress across games.'
+  'Track trading-card prices over time, catalogue your collection and wish list, and use ' +
+  "ghost mode to see exactly which cards you're missing."
 
 /** Site-wide default social/link-preview banner (`web/public/og-image.png`, 1200×630),
  * used as the `og:image` / `twitter:image` for any page that doesn't set its own — so
