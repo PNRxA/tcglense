@@ -1,7 +1,7 @@
 # Operations: running, testing, CI, releases, deployment, env vars
 
 This is the on-demand operations reference for TCGLense. `CLAUDE.md` is the
-always-loaded core (a slim ~300-line overview); this file holds the encyclopedic
+always-loaded core (a slim overview); this file holds the encyclopedic
 detail on how to run the two apps locally, the full test/command matrix, the CI and
 release pipelines, the Docker images and deployment topologies, the `scripts/` and
 `deploy/` inventories, and the complete annotated environment-variable reference.
@@ -52,7 +52,10 @@ npm run dev               # serves http://localhost:5173
 
 The frontend calls **relative `/api/...` URLs** (routed through the Vite proxy in
 dev, same-origin in prod). Set `VITE_API_URL` only when the API lives on a
-different origin.
+different origin. The API's CORS layer deliberately allows the `:5173` origin **with
+credentials**, so the httpOnly refresh cookie also flows on *direct* cross-origin
+calls (e.g. `VITE_API_URL` pointed straight at `:8080`) — the Vite proxy merely makes
+dev same-origin; don't "tighten" that allowance away.
 
 ## Commands
 

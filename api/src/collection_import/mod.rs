@@ -15,6 +15,7 @@
 //! see [`execute_csv_import`].)
 
 mod archidekt;
+mod consolidate;
 mod csv_import;
 mod error;
 pub mod jobs;
@@ -109,13 +110,15 @@ async fn fetch_holdings_smart(
     ctx: &ProviderContext<'_>,
     collection_id: &str,
     local: &HashMap<String, (i32, i32)>,
+    remap: &HashMap<String, String>,
 ) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
     match provider {
         Provider::Archidekt => {
             let limiter = ctx.limiters.for_provider(provider);
-            archidekt::fetch_smart(ctx.http, limiter, collection_id, local, ctx.progress).await
+            archidekt::fetch_smart(ctx.http, limiter, collection_id, local, remap, ctx.progress)
+                .await
         }
-        Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local).await,
+        Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local, remap).await,
     }
 }
 
@@ -133,14 +136,25 @@ async fn fetch_holdings_smart(
 /// until its last row lands, which only *defers* the stop, never falsely triggers it, so
 /// the signal is conservative. Pure (no I/O) so the decision is unit-tested without the
 /// network.
+///
+/// `remap` folds a separately-modelled foil printing (`…★`) onto its base card as a foil
+/// copy (issue #209) **before** aggregating, so the running aggregate, the accumulated
+/// holdings, and the early-stop comparison all speak the base external id — and so the
+/// holdings this returns are already consolidated for the reconcile.
 fn smart_absorb_page(
     running: &mut HashMap<String, (i64, i64)>,
     holdings: &mut Vec<FetchedHolding>,
     local: &HashMap<String, (i32, i32)>,
+    remap: &HashMap<String, String>,
     page_rows: impl IntoIterator<Item = (String, bool, i32)>,
 ) -> bool {
     let mut touched: Vec<String> = Vec::new();
     for (uid, foil, quantity) in page_rows {
+        // Fold a foil-★ variant onto its base as foil before it enters the aggregate.
+        let (uid, foil) = match remap.get(&uid) {
+            Some(base) => (base.clone(), true),
+            None => (uid, foil),
+        };
         let entry = running.entry(uid.clone()).or_insert((0, 0));
         let q = i64::from(quantity.max(0));
         if foil {
@@ -182,16 +196,31 @@ pub async fn execute_import(
     mode: ReconcileMode,
 ) -> Result<ImportSummary, ImportError> {
     if mode == ReconcileMode::Smart {
+        // Fold separately-modelled foil printings (`…★`) onto their base card as foil
+        // copies (issue #209). Resolve the pairs once (drives both the fetch's early-stop
+        // and the reconcile); the non-smart path does the same inside `reconcile_holdings`.
+        let pairs = consolidate::load_foil_variant_pairs(db, game).await?;
+        // Fold any star row the user already holds onto its base first, so a manual/legacy
+        // star holding can't coexist with the base and double-count. Must run before the
+        // `local` snapshot below so it reflects the folded state.
+        consolidate::fold_existing_star_holdings(db, user_id, game, &pairs).await?;
+        let remap = consolidate::ext_remap(&pairs);
         // Smart needs the current collection up front to drive the early-stop (fetch
         // until a page already matches what we hold). Note this snapshot is only for the
         // stop decision — the reconcile re-reads current counts after the (minutes-long)
-        // fetch, so a concurrent edit during the fetch isn't clobbered.
-        let local = load_local_by_external(db, user_id, game).await?;
+        // fetch, so a concurrent edit during the fetch isn't clobbered. Fold it through
+        // the remap so a held foil-★ matches its re-fetched, remapped page.
+        let local = consolidate::consolidate_local(
+            load_local_by_external(db, user_id, game).await?,
+            &remap,
+        );
         let (holdings, stopped_early) =
-            fetch_holdings_smart(provider, ctx, collection_id, &local).await?;
+            fetch_holdings_smart(provider, ctx, collection_id, &local, &remap).await?;
         if holdings.is_empty() {
             return Err(ImportError::EmptyCollection);
         }
+        // `holdings` already carry base external ids (the smart fetch remapped each page),
+        // so the reconcile sees a straight 1:1 external-id→card mapping.
         return reconcile_smart(db, user_id, game, provider, holdings, stopped_early).await;
     }
 
@@ -375,6 +404,7 @@ mod tests {
             &mut running,
             &mut holdings,
             &local,
+            &HashMap::new(),
             vec![
                 ("a".to_string(), false, 2),
                 ("b".to_string(), false, 1),
@@ -395,6 +425,7 @@ mod tests {
             &mut running,
             &mut holdings,
             &local,
+            &HashMap::new(),
             vec![("a".to_string(), false, 3), ("x".to_string(), false, 1)],
         );
         assert!(!all);
@@ -410,7 +441,7 @@ mod tests {
         let local = HashMap::from([("a".to_string(), (2, 0))]);
         let mut running = HashMap::new();
         let mut holdings = Vec::new();
-        let all = smart_absorb_page(&mut running, &mut holdings, &local, Vec::new());
+        let all = smart_absorb_page(&mut running, &mut holdings, &local, &HashMap::new(), Vec::new());
         assert!(!all, "an empty page contribution must keep paging");
         assert!(holdings.is_empty());
     }
@@ -423,12 +454,50 @@ mod tests {
         let local = HashMap::from([("a".to_string(), (2, 1))]);
         let mut running = HashMap::new();
         let mut holdings = Vec::new();
-        let page1 =
-            smart_absorb_page(&mut running, &mut holdings, &local, vec![("a".to_string(), false, 2)]);
+        let page1 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("a".to_string(), false, 2)],
+        );
         assert!(!page1, "regular-only aggregate (2,0) != local (2,1)");
-        let page2 =
-            smart_absorb_page(&mut running, &mut holdings, &local, vec![("a".to_string(), true, 1)]);
+        let page2 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("a".to_string(), true, 1)],
+        );
         assert!(page2, "now (2,1) == local -> stop signal");
+    }
+
+    #[test]
+    fn smart_absorb_page_folds_a_foil_star_onto_its_base_and_matches_local() {
+        // A held foil-★ (issue #209): the local snapshot has been consolidated to the base
+        // as foil, and the re-fetched star row — even reported as a non-foil finish — folds
+        // onto the same base, so the page reads as in sync.
+        let remap = HashMap::from([("star".to_string(), "base".to_string())]);
+        let local = HashMap::from([("base".to_string(), (0, 1))]);
+        let mut running = HashMap::new();
+        let mut holdings = Vec::new();
+        let all = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &remap,
+            vec![("star".to_string(), false, 1)],
+        );
+        assert!(all, "the folded star matches the consolidated local -> stop signal");
+        assert_eq!(
+            holdings,
+            vec![FetchedHolding {
+                external_card_id: "base".to_string(),
+                foil: true,
+                quantity: 1,
+            }],
+            "the captured holding is already remapped to the base as foil"
+        );
     }
 
     #[tokio::test]

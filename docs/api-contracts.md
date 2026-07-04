@@ -264,6 +264,7 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
+| `GET /api/games/{game}/products/{id}/cards?page&page_size` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Empty page when the product has no ingested contents; `404` for an unknown game/product |
 
 `Product = { id, name, set_code, set_name: string | null, product_type, url: string |
 null, has_image, prices: { usd, usd_foil }, released_at: string | null }`. `id` is the
@@ -288,6 +289,14 @@ with the membership bucket (`"contains"` / `"booster"` / `"variable"`) and a `fo
 (true when the card appears **only** as a foil in that product). Sourced from MTGJSON via
 `sealed_contents`; the product-list/detail/price endpoints above are sourced from TCGCSV
 (`products` / `product_price_history`).
+
+`ProductCardEntry = { card: Card, membership, foil }` is the reverse wrapper (the
+`.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
+bucket and the foil-only flag. A card that is both contained in and pullable from the
+same product reports its **strongest** membership (lowest rank), so it shows once, in
+the "found in" group. The by-card-id lookups are chunked (`PRODUCT_CARDS_IN_CHUNK`,
+900) so a giant product — Secret Lair "festival" bundles reference thousands of
+cards — can't blow SQLite's per-statement bind limit.
 
 ## Collection API contract
 
@@ -412,7 +421,11 @@ stopped_early }`. Import jobs live in-memory in `AppState.imports` (lost on rest
 client just re-imports). A saved link is `entities/collection_source.rs`
 (`collection_sources`, unique on `(user_id, game)`, `user_id` FK → `users` `ON DELETE
 CASCADE`, stores `provider` + `external_id` + `last_synced_at` + `smart`). Both providers
-are MTG-only. Archidekt is fetched at `https://archidekt.com/api/collection/{id}/?page={n}`
+are MTG-only. **Moxfield's live URL import is currently disabled**
+(`Provider::network_import_enabled()` returns `false` pending an approved
+`MOXFIELD_USER_AGENT`): the handlers reject a Moxfield URL import, saved-link save, or
+re-sync with a `422` pointing at the CSV upload, and the web import dialog greys
+Moxfield out in the link picker — see `docs/tradeoffs.md`. Archidekt is fetched at `https://archidekt.com/api/collection/{id}/?page={n}`
 (25 rows/page, capped at `MAX_IMPORT_ROWS`); the id is validated all-digits. Moxfield is
 fetched at `https://api2.moxfield.com/v1/collections/search/{id}?pageNumber={n}&pageSize=100`
 (paged on the envelope's `totalPages`, same row cap; `isProxy` rows skipped); the id is

@@ -1,7 +1,7 @@
 # Known trade-offs & future work
 
 This is the on-demand detail companion to `CLAUDE.md`. `CLAUDE.md` is the always-loaded
-core (kept to ~300 lines); this file is the full rationale reference for every deliberate
+core (kept deliberately slim); this file is the full rationale reference for every deliberate
 trade-off, residual edge case, and "why it's built this way" essay that used to live in
 `CLAUDE.md`'s "Known trade-offs / future work" section. Read it when you need the *why*
 behind a design decision, the exact failure modes a feature tolerates, or the caveats a
@@ -186,6 +186,42 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   wipe a collection. The 16 MB cap is generous for either export (Moxfield's full export
   is ~100 KB per 1000 rows) but can reject a huge *all-columns* Archidekt export — its
   user is told to export only the three needed columns.
+- **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
+  the **foil** of a card as a *separate* Scryfall object whose collector number is the
+  nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing
+  the `741★` printing lands as its own owned card *beside* the `741` you already track —
+  two rows for one card. Our model tracks regular **and** foil per card, so
+  `collection_import::consolidate` folds a foil-★ holding onto its base as a **foil copy**.
+  Two folds run before every reconcile (full network import, CSV upload, and smart
+  re-sync — smart remaps per page so its early-stop still fires): the **incoming** import is
+  remapped onto the base (`apply_foil_remap`/`consolidate_local`), and any star row the user
+  **already holds** — a legacy pre-#209 import, or a manual add of the `…★` catalog card
+  (which is still a distinct, addable card) — is folded onto its base and deleted first
+  (`fold_existing_star_holdings`), so a star holding never coexists with the base and
+  double-counts. The rule is deliberately **conservative**: only a `finishes="foil"` star
+  with a `finishes="nonfoil"` sibling (same set, oracle id, and collector number sans the
+  star) is folded — the case where the base genuinely can't be foil on its own. An
+  **ambiguous** star (base itself `nonfoil,foil`, ~8 old Invasion-block/STX cases), an
+  **etched** star, or a star with **no base** (a standalone promo) keeps its own holding —
+  those are genuinely distinct printings. **Pricing:** Scryfall keeps the foil price only on
+  the `…★` object, so `scryfall::enrich_foil_variant_prices` copies it onto the nonfoil base
+  each sync tick (before the price snapshot, so it's captured into history too); without
+  this a folded foil would value at $0 against the base's empty foil price (~94% of pairs).
+  The base card then carries **both** prices, so the public catalog shows a foil price on it
+  as well. When the periodic sync is off (`SYNC_ON_STARTUP=false`), `tasks::start` still runs
+  the enrichment once at boot, so a holding folded by the migration doesn't sit at $0. One
+  consequence of folding to a single dual-finish card: an **Overwrite** import that lists the
+  base's nonfoil but not the foil-★ sets the base's *absolute* counts (foil → 0) — the same
+  authoritative behavior Overwrite already applies to any card owned in both finishes (the
+  provider models the foil separately, so a full import that omits the `…★` means "no foil");
+  Merge adds and Smart preserves the unobserved foil, so a user tracking a foil their import
+  omits should use those modes. Legacy duplicate rows that predate the fix are also folded
+  once by the `m…023_consolidate_foil_star_holdings` **migration** (the same rule in
+  cross-backend SQL, wrapped in a transaction so a crash-interrupted boot re-runs cleanly;
+  irreversible, so `down` is a no-op) — belt-and-braces for a user who never re-imports; a
+  re-import folds them anyway via `fold_existing_star_holdings`. The star (`…★`) card stays
+  a browsable catalog entry — only the *holding* is consolidated, so a set's owned-card
+  badges show the count on the base card, not the star.
 
 ## Data ingest & datasets
 

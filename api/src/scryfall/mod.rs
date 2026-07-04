@@ -7,6 +7,7 @@
 pub mod client;
 pub mod drops;
 mod dummy;
+mod foil_variants;
 pub mod ingest;
 mod map;
 pub mod model;
@@ -15,6 +16,9 @@ mod progress;
 pub mod search;
 
 pub use dummy::seed;
+/// Copy each foil-★ variant's foil price onto its nonfoil base card (issue #209), so a
+/// consolidated foil holding values correctly; run every sync tick before the snapshot.
+pub(crate) use foil_variants::enrich_foil_variant_prices;
 pub use ingest::refresh;
 /// Daily price-history capture, re-exported at the provider level so callers use
 /// `scryfall::snapshot_prices` / `scryfall::format_date` without reaching into the

@@ -104,6 +104,22 @@ fn spawn_maintenance(
     });
 }
 
+/// Enrich the foil-variant base prices once, off the startup path. Normally
+/// [`catalog::refresh_all`] does this every sync tick, but when the periodic sync is
+/// disabled (`SYNC_ON_STARTUP=false`) it never runs — yet the `m..023` migration may have
+/// folded legacy foil-★ holdings onto their nonfoil base, whose foil price would then stay
+/// empty and value those copies at $0 (issue #209). This closes that gap against the
+/// already-synced catalog. A no-op on a fresh/dummy catalog with no such pairs.
+fn spawn_foil_price_enrichment(db: DatabaseConnection) {
+    tokio::spawn(async move {
+        match crate::scryfall::enrich_foil_variant_prices(&db).await {
+            Ok(rows) if rows > 0 => tracing::info!(rows, "enriched foil-variant base prices"),
+            Ok(_) => {}
+            Err(err) => tracing::error!(error = %err, "foil-variant price enrichment failed"),
+        }
+    });
+}
+
 /// Parameters for the one-time TCGCSV historic price backfill, when enabled. `None`
 /// disables it. Passed into the card-sync task so the backfill can start once the
 /// first card sync has populated `cards.tcgplayer_id` (its join key).
@@ -226,5 +242,9 @@ pub async fn start(state: &AppState, http: &Client) {
         );
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
+        // No sync will run enrich_foil_variant_prices per tick, so do it once here against
+        // the existing catalog — otherwise a foil-★ holding folded by the m..023 migration
+        // values at $0 (issue #209).
+        spawn_foil_price_enrichment(state.db.clone());
     }
 }

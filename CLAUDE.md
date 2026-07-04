@@ -72,7 +72,7 @@ mtgjson/               card→sealed-product contents (AllPrintings.json)
 collection_import/     Archidekt + Moxfield + CSV → one aggregate/resolve/reconcile engine; in-memory job queue
 handlers/              auth · cache · catalog/ (incl. products.rs + pricing.rs) · collection/ · wishlist/ · shared/ (cross-cutting DTOs + the holdings core) · sitemap · mirror · health
 entities/ migrator/    SeaORM entities · one migration per file + the migrations() registry
-security_tests/        19 HTTP-level suites driving build_router in-process; Postgres/Redis tests env-gated behind --ignored
+security_tests/        HTTP-level suites driving build_router in-process; Postgres/Redis tests env-gated behind --ignored
 ```
 
 ### Adding a backend feature
@@ -113,7 +113,8 @@ test/              vitest fixtures (the Playwright e2e specs live one level up, 
 ### Adding a frontend feature
 
 - **Wire types are generated:** derive `ts_rs::TS` on the Rust DTO, run `cargo test`
-  from `api/` (only `cargo test` regenerates — not check/build). Never hand-edit
+  from `api/` (only `cargo test` regenerates — not check/build; config in
+  `api/.cargo/config.toml`). Never hand-edit
   `lib/api/generated/*.ts` — **except** `generated/index.ts`, a hand-maintained
   barrel: add an export line per new DTO (as is `lib/api/index.ts`).
 - **Server state → vue-query** via `useAuthedQuery`/`useAuthedMutation` (public pages
@@ -148,6 +149,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Holdings use **external** card ids; both counts zero deletes the row.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
+  Moxfield **URL** import is deliberately disabled
+  (`Provider::network_import_enabled()` is the switch; CSV upload is the supported
+  path) — a 422 there is not a regression.
 - Card images are cached lazily on first view — **never bulk-download** (Scryfall
   guideline); image fetches are host-allow-listed with redirects disabled.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.

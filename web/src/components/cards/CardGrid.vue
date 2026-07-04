@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { Card, OwnedCountsMap } from '@/lib/api'
 import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
+import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
@@ -26,8 +27,14 @@ const props = withDefaults(
     // Which list the quick-add controls read/write (issue #167): the collection (default)
     // or the wish list — where the `ownership` map means wish-list membership instead.
     list?: CardListTarget
+    // Collection-ownership counts keyed by card id (issue #213): a card present here with a
+    // positive count gets an "Owned" marker overlaid, flagging cards you already own in your
+    // *collection*. Used by the wish-list browse grids under the ghost button's "Show owned"
+    // setting — distinct from `ownership`, which on those grids means wish-list membership.
+    // Absent (undefined) everywhere else, so no marker renders.
+    ownedMarks?: OwnedCountsMap
   }>(),
-  { ownership: undefined, ghostUnowned: false, list: 'collection' },
+  { ownership: undefined, ghostUnowned: false, list: 'collection', ownedMarks: undefined },
 )
 
 // A card is owned when the ownership map holds a positive count for it; in show-ghosts
@@ -36,6 +43,13 @@ function isGhost(card: Card): boolean {
   if (!props.ghostUnowned) return false
   const owned = props.ownership?.[card.id]
   return !owned || owned.quantity + owned.foil_quantity <= 0
+}
+
+// Whether to flag this card as owned-in-collection (issue #213): present in `ownedMarks`
+// with a positive count. Off unless the wish-list "Show owned" setting passed the marks in.
+function isOwnedMark(card: Card): boolean {
+  const owned = props.ownedMarks?.[card.id]
+  return !!owned && owned.quantity + owned.foil_quantity > 0
 }
 
 // The grid's column count follows the user's persisted size preference (set via
@@ -52,6 +66,7 @@ const auth = useAuthStore()
   <div class="grid gap-x-4 gap-y-6" :class="gridClass">
     <CardTile v-for="card in cards" :key="card.id" :game="game" :card="card" :ghost="isGhost(card)">
       <template #badge>
+        <OwnedMarkBadge v-if="isOwnedMark(card)" />
         <OwnedCountControl
           v-if="auth.isAuthenticated"
           :game="game"

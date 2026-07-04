@@ -197,6 +197,7 @@ pub async fn fetch_smart(
     limiter: &RateLimiter,
     collection_id: &str,
     local: &HashMap<String, (i32, i32)>,
+    remap: &HashMap<String, String>,
     progress: &ProgressReporter,
 ) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
     let max_pages = MAX_IMPORT_ROWS / PAGE_SIZE + 1;
@@ -227,7 +228,7 @@ pub async fn fetch_smart(
             (row.card.uid, foil, row.quantity)
         });
         // Fold the page into the running aggregate; `all_match` is the stop signal.
-        let all_match = super::smart_absorb_page(&mut running, &mut holdings, local, rows);
+        let all_match = super::smart_absorb_page(&mut running, &mut holdings, local, remap, rows);
 
         if last_page || holdings.len() >= MAX_IMPORT_ROWS {
             break;

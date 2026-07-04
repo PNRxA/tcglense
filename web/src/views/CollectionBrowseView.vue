@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { Ghost } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import GhostToggle from '@/components/cards/GhostToggle.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
@@ -48,7 +48,6 @@ import { type Card } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { formatCompletion, formatCopies } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 
 // Owned cards for a game, either the whole collection (`/collection/:game/cards`) or
@@ -438,23 +437,7 @@ const errorMessage = computed(() =>
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
             <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setDropView" />
-            <button
-              type="button"
-              :class="
-                cn(
-                  'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                  showGhosts
-                    ? 'border-primary bg-primary/10 text-foreground'
-                    : 'text-muted-foreground hover:text-foreground',
-                )
-              "
-              :aria-pressed="showGhosts"
-              title="Also show cards you don't own, dimmed, to see the gaps"
-              @click="setShowGhosts(!showGhosts)"
-            >
-              <Ghost class="size-4" aria-hidden="true" />
-              Show ghosts
-            </button>
+            <GhostToggle :show-ghosts="showGhosts" @toggle="setShowGhosts" />
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <CardSizeMenu />

@@ -22,6 +22,10 @@ mod m20240101_000019_create_products_table;
 mod m20240101_000020_create_product_price_history_table;
 mod m20240101_000021_create_sealed_contents_table;
 mod m20240101_000022_add_recency_and_prune_indexes;
+mod m20240101_000023_consolidate_foil_star_holdings;
+
+#[cfg(test)]
+pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
 
 pub struct Migrator;
 
@@ -51,6 +55,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000020_create_product_price_history_table::Migration),
             Box::new(m20240101_000021_create_sealed_contents_table::Migration),
             Box::new(m20240101_000022_add_recency_and_prune_indexes::Migration),
+            Box::new(m20240101_000023_consolidate_foil_star_holdings::Migration),
         ]
     }
 }
