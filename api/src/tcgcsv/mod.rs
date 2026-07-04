@@ -26,8 +26,12 @@ mod error;
 pub mod ingest;
 pub mod model;
 pub mod price_history;
+mod progress;
 
 pub use error::BackfillError;
+/// Name of the sync progress span; `main.rs` scopes the `IndicatifLayer` to it
+/// (alongside the Scryfall import span).
+pub(crate) use progress::SPAN_NAME as PROGRESS_SPAN_NAME;
 
 /// Base URL of the TCGCSV service.
 pub const BASE_URL: &str = "https://tcgcsv.com";

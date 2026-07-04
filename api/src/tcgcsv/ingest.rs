@@ -26,6 +26,7 @@ use sea_orm::{
 };
 
 use super::model::{Group, aggregate_prices, published_on_to_date};
+use super::progress::SyncProgress;
 use super::{BackfillError, GAME, MTG_CATEGORY_ID, PRODUCTS_DATASET};
 use crate::entities::prelude::{IngestState, Product};
 use crate::entities::{ingest_state, product};
@@ -86,6 +87,10 @@ async fn refresh_inner(
     let now = Utc::now();
     let mut total_products: i32 = 0;
     let groups_total = groups.len() as i32;
+    // Live terminal progress: a determinate bar over the groups being swept, with a
+    // running sealed-product tally (see `super::progress`). Dropping it (incl. on any
+    // `?` below) closes the span and clears the bar.
+    let progress = SyncProgress::start_products(groups_total as u64);
     for (i, group) in groups.iter().enumerate() {
         tokio::time::sleep(REQUEST_SPACING).await;
         let products = super::client::fetch_products(http, user_agent, MTG_CATEGORY_ID, group.group_id)
@@ -102,6 +107,8 @@ async fn refresh_inner(
         let models = build_group_products(group, products, &prices, now);
         let sealed = models.len();
         total_products += upsert_products(db, models).await? as i32;
+        progress.inc();
+        progress.set_count(total_products as u64);
         tracing::debug!(
             group = group.group_id,
             name = group.name.as_deref().unwrap_or(""),
@@ -126,6 +133,8 @@ async fn refresh_inner(
         }
     }
 
+    // Clear the progress bar before the completion line so it prints cleanly.
+    drop(progress);
     put_state(
         db,
         "complete",
