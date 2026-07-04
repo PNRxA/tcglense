@@ -23,13 +23,13 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 
 use crate::db::Dialect;
-use crate::entities::prelude::{CardSet, Product, ProductPriceHistory, SealedContent};
+use crate::entities::prelude::{Card, CardSet, Product, ProductPriceHistory, SealedContent};
 use crate::entities::sealed_content::Membership;
-use crate::entities::{card_set, product, product_price_history, sealed_content};
+use crate::entities::{card, card_set, product, product_price_history, sealed_content};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, build_page, load_card, require_game,
-    resolve_page, trim_query,
+    CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, build_page, load_card,
+    require_game, resolve_page, trim_query,
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
@@ -123,6 +123,26 @@ pub(crate) struct SealedProductRef {
     pub foil: bool,
 }
 
+/// A card found in — or pullable from — a sealed product, plus how it relates. The
+/// **reverse** of [`SealedProductRef`]: wraps the shared [`CardResponse`] (so the SPA
+/// reuses the card tile/grid) with the membership bucket and a foil flag, so the
+/// sealed-product page can render the "in the box / can be pulled from / may be in"
+/// groups over the product's cards.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductCardEntry"))]
+pub(crate) struct ProductCardEntry {
+    pub card: CardResponse,
+    /// `"contains"` (definitely in), `"booster"` (can be pulled from a booster), or
+    /// `"variable"` (may be in a randomized product) — see
+    /// [`crate::entities::sealed_content::Membership`]. A card that both is contained
+    /// in and can be pulled from the same product reports its **strongest** membership
+    /// (lowest [`Membership::rank`]), so it shows once, in the "found in" group.
+    pub membership: String,
+    /// Whether the card appears **only** as a foil in this product (a foil-only
+    /// inclusion), at the reported membership.
+    pub foil: bool,
+}
+
 // ---------- Query params ----------
 
 /// A sealed-product sort key. Maps to a product column (price via a numeric cast so it
@@ -202,6 +222,12 @@ pub struct ProductImageParams {
 pub struct ProductPriceParams {
     #[serde(default)]
     pub range: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProductCardsParams {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
 }
 
 // ---------- Handlers ----------
@@ -455,7 +481,165 @@ pub async fn card_sealed(
     Ok(Json(DataBody { data }))
 }
 
+/// SQLite caps host parameters per statement (as few as 999 on old builds), so the
+/// by-card-id lookups are chunked — a huge product (Secret Lair "festival" bundles
+/// reference thousands of cards) can't blow the bind limit.
+const PRODUCT_CARDS_IN_CHUNK: usize = 900;
+
+/// `GET /api/games/{game}/products/{id}/cards?page=&page_size=` -> a page of the cards
+/// this sealed product is found to contain (or can be pulled from), the **reverse** of
+/// `cards/{id}/sealed`. Ordered by membership (`contains` → `booster` → `variable`, so
+/// the guaranteed/"exclusive" cards lead and the wider booster pool follows), then by
+/// set code and collector number. Each card is deduped to its strongest membership and
+/// carries a `foil`-only flag. Empty page when the product has no ingested contents;
+/// `404` for an unknown game/product.
+pub async fn product_cards(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+    Query(params): Query<ProductCardsParams>,
+) -> Result<Json<Page<ProductCardEntry>>, AppError> {
+    require_game(&game)?;
+    let product = load_product(&state, &game, &id).await?;
+    let (page, page_size) =
+        resolve_page(params.page, params.page_size, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+
+    // Every membership row for this product (hits the (game, product_id) prefix of
+    // idx_sealed_contents_unique), selecting only the three fields the dedup folds —
+    // a giant product's contents run to thousands of rows, so the timestamps + game
+    // column of the full model aren't worth deserializing.
+    let rows: Vec<(i32, String, bool)> = SealedContent::find()
+        .select_only()
+        .column(sealed_content::Column::CardId)
+        .column(sealed_content::Column::Membership)
+        .column(sealed_content::Column::Foil)
+        .filter(sealed_content::Column::Game.eq(game.as_str()))
+        .filter(sealed_content::Column::ProductId.eq(product.id))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    if rows.is_empty() {
+        return Ok(Json(build_page(Vec::new(), page, page_size, 0)));
+    }
+
+    // Collapse to one entry per card at its strongest (lowest-rank) membership, foil
+    // ANDed among that membership's rows (foil-only when every contributing row is foil).
+    let best = best_memberships(&rows);
+
+    // Load the sort keys for every distinct card so the full list can be ordered before
+    // it's paged; chunked under the bind limit. A card whose row vanished mid-reimport
+    // simply drops out (it's excluded from the ordered list and so from `total`).
+    let card_ids: Vec<i32> = best.keys().copied().collect();
+    let mut ordered: Vec<(u8, String, Option<i32>, String, i32)> =
+        Vec::with_capacity(card_ids.len());
+    for chunk in card_ids.chunks(PRODUCT_CARDS_IN_CHUNK) {
+        let keys: Vec<(i32, String, Option<i32>, String)> = Card::find()
+            .select_only()
+            .column(card::Column::Id)
+            .column(card::Column::SetCode)
+            .column(card::Column::CollectorNumberInt)
+            .column(card::Column::CollectorNumber)
+            .filter(card::Column::Game.eq(game.as_str()))
+            .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .into_tuple()
+            .all(&state.db)
+            .await?;
+        for (cid, set_code, cn_int, cn) in keys {
+            let rank = best.get(&cid).map_or(u8::MAX, |entry| entry.0);
+            ordered.push((rank, set_code, cn_int, cn, cid));
+        }
+    }
+
+    // Membership first (guaranteed cards lead), then set code, then numeric-run-first
+    // collector number (NULLs last), with `id` as a stable tiebreak so paging is
+    // deterministic — the same order the catalog's set listing uses within a set.
+    ordered.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| cn_int_key(a.2).cmp(&cn_int_key(b.2)))
+            .then_with(|| a.3.cmp(&b.3))
+            .then_with(|| a.4.cmp(&b.4))
+    });
+
+    let total = ordered.len() as u64;
+    let start = (page - 1).saturating_mul(page_size) as usize;
+    let page_ids: Vec<i32> = ordered
+        .iter()
+        .skip(start)
+        .take(page_size as usize)
+        .map(|entry| entry.4)
+        .collect();
+
+    // Only the page's cards are loaded in full + mapped to the (heavier) card DTO.
+    let mut models: HashMap<i32, card::Model> = Card::find()
+        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::Id.is_in(page_ids.iter().copied()))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|m| (m.id, m))
+        .collect();
+
+    let data: Vec<ProductCardEntry> = page_ids
+        .into_iter()
+        .filter_map(|cid| {
+            let model = models.remove(&cid)?;
+            let (_, membership, foil) = best.get(&cid)?;
+            Some(ProductCardEntry {
+                card: model.into(),
+                membership: membership.clone(),
+                foil: *foil,
+            })
+        })
+        .collect();
+
+    Ok(Json(build_page(data, page, page_size, total)))
+}
+
 // ---------- Helpers ----------
+
+/// Collapse a product's raw membership rows `(card_id, membership, foil)` to one entry
+/// per card at its strongest (lowest-[`Membership::rank`]) membership, foil ANDed among
+/// the rows of that chosen membership (so `foil` is true only when every contributing row
+/// is foil — a foil-only inclusion). Returns `card_id -> (rank, membership, foil)`.
+///
+/// A card can carry several rows for one product: split finishes (foil + non-foil) and
+/// even distinct memberships (e.g. a set booster box that also guarantees a promo). The
+/// stronger membership wins and resets the foil accumulator, so a "contains" non-foil
+/// row correctly overrides a "booster" foil row.
+fn best_memberships(rows: &[(i32, String, bool)]) -> HashMap<i32, (u8, String, bool)> {
+    use std::collections::hash_map::Entry;
+    let mut best: HashMap<i32, (u8, String, bool)> = HashMap::new();
+    for (card_id, membership, foil) in rows {
+        let rank = Membership::rank(membership);
+        match best.entry(*card_id) {
+            Entry::Vacant(slot) => {
+                slot.insert((rank, membership.clone(), *foil));
+            }
+            Entry::Occupied(mut slot) => {
+                let entry = slot.get_mut();
+                if rank < entry.0 {
+                    // A stronger membership: take over and reset the foil accumulator.
+                    *entry = (rank, membership.clone(), *foil);
+                } else if rank == entry.0 {
+                    // Same membership (rank maps 1:1 to the three known values): a
+                    // non-foil row downgrades the foil-only flag.
+                    entry.2 = entry.2 && *foil;
+                }
+                // A weaker membership than one already recorded: ignore.
+            }
+        }
+    }
+    best
+}
+
+/// Collator key for a card's numeric collector number that parks `NULL` (a non-numeric
+/// collector number) last in ascending order, matching the catalog's `NULLS LAST`.
+fn cn_int_key(value: Option<i32>) -> (bool, i32) {
+    match value {
+        Some(n) => (false, n),
+        None => (true, 0),
+    }
+}
 
 /// Resolve a product by its external (TCGplayer) id within a game, 404 if unknown.
 async fn load_product(
@@ -601,5 +785,47 @@ mod tests {
         assert_eq!(normalize_product_size(Some("small")), "small");
         assert_eq!(normalize_product_size(Some("../x")), "normal");
         assert_eq!(normalize_product_size(None), "normal");
+    }
+
+    fn sealed_row(card_id: i32, membership: &str, foil: bool) -> (i32, String, bool) {
+        (card_id, membership.to_string(), foil)
+    }
+
+    #[test]
+    fn best_memberships_picks_strongest_and_ands_foil() {
+        // Card 1: a non-foil "contains" outranks a foil "booster" (guaranteed wins, and
+        // the non-foil resets the foil flag). Card 2: two foil "booster" rows stay
+        // foil-only. Card 3: one foil + one non-foil "booster" is not foil-only.
+        let rows = [
+            sealed_row(1, "booster", true),
+            sealed_row(1, "contains", false),
+            sealed_row(2, "booster", true),
+            sealed_row(2, "booster", true),
+            sealed_row(3, "booster", true),
+            sealed_row(3, "booster", false),
+        ];
+        let best = best_memberships(&rows);
+        assert_eq!(best[&1], (0, "contains".to_string(), false));
+        assert_eq!(best[&2], (1, "booster".to_string(), true));
+        assert_eq!(best[&3], (1, "booster".to_string(), false));
+    }
+
+    #[test]
+    fn best_memberships_is_order_independent_for_the_chosen_bucket() {
+        // Same facts as card 1 above but with the stronger row seen first: the result is
+        // identical (the foil accumulator is reset when the stronger membership arrives,
+        // then ANDed across its own rows regardless of visitation order).
+        let a = best_memberships(&[
+            sealed_row(1, "contains", true),
+            sealed_row(1, "booster", false),
+            sealed_row(1, "contains", false),
+        ]);
+        assert_eq!(a[&1], (0, "contains".to_string(), false));
+    }
+
+    #[test]
+    fn cn_int_key_parks_nulls_last() {
+        assert!(cn_int_key(Some(5)) < cn_int_key(None));
+        assert!(cn_int_key(Some(2)) < cn_int_key(Some(10)));
     }
 }

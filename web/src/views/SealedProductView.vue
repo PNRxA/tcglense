@@ -4,6 +4,7 @@ import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProductImage from '@/components/products/ProductImage.vue'
 import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
+import ProductCards from '@/components/products/ProductCards.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useProductQuery } from '@/composables/useProducts'
@@ -160,6 +161,10 @@ usePageMeta({
       <!-- Outbound "where to buy" links, grouped by region (issue #175). The
         TCGplayer entry deep-links to product.url (the exact page) when we have it. -->
       <ProductBuyLinks :game="game" :product="product" />
+
+      <!-- The cards this product contains / can be pulled from — the reverse of the
+        card page's "Sealed products" section, guaranteed cards first (issue #204). -->
+      <ProductCards :game="game" :id="product.id" />
     </template>
   </div>
 </template>
