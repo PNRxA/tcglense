@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test'
 test('shows the public welcome page to everyone', async ({ page }) => {
   await page.goto('/')
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole('heading', { name: /track every card/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /priced every day/i })).toBeVisible()
   // Signed out, the top-bar profile selector collapses to a sign-in link that carries
   // a ?redirect= back to the current page (so login returns the user here).
   await expect(page.locator('header a[href^="/login"]')).toBeVisible()
