@@ -48,7 +48,8 @@ pub struct SetData {
 /// our catalog.
 #[derive(Debug, Deserialize)]
 pub struct CardEntry {
-    pub uuid: String,
+    #[serde(default)]
+    pub uuid: Option<String>,
     #[serde(default)]
     pub identifiers: CardIdentifiers,
     #[serde(default, rename = "setCode")]
@@ -112,21 +113,26 @@ pub struct ContentCard {
 /// A precon-deck reference, resolved against the set's `decks[]` by `name`.
 #[derive(Debug, Deserialize)]
 pub struct ContentDeck {
-    pub name: String,
-    pub set: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub set: Option<String>,
 }
 
 /// A booster-pack reference, resolved against `set.booster[code].sheets`.
 #[derive(Debug, Deserialize)]
 pub struct ContentPack {
-    pub code: String,
-    pub set: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub set: Option<String>,
 }
 
 /// A nested sealed product (e.g. a box of packs), resolved by `uuid` and recursed into.
 #[derive(Debug, Deserialize)]
 pub struct ContentSealed {
-    pub uuid: String,
+    #[serde(default)]
+    pub uuid: Option<String>,
 }
 
 /// A randomized ("one of these") configuration; every option is surfaced as `may be in`.
@@ -167,7 +173,8 @@ pub struct Sheet {
 /// A precon decklist: its main board + commander cards (each by `uuid`, with a foil flag).
 #[derive(Debug, Deserialize)]
 pub struct Deck {
-    pub name: String,
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default, rename = "mainBoard")]
     pub main_board: Vec<DeckCard>,
     #[serde(default)]
@@ -176,7 +183,8 @@ pub struct Deck {
 
 #[derive(Debug, Deserialize)]
 pub struct DeckCard {
-    pub uuid: String,
+    #[serde(default)]
+    pub uuid: Option<String>,
     #[serde(default, rename = "isFoil")]
     pub is_foil: bool,
 }
@@ -225,7 +233,9 @@ pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
             let Some(scryfall) = card.identifiers.scryfall_id.as_deref() else {
                 continue;
             };
-            uuid_to_scryfall.insert(card.uuid.as_str(), scryfall);
+            if let Some(uuid) = card.uuid.as_deref() {
+                uuid_to_scryfall.insert(uuid, scryfall);
+            }
             if let (Some(set), Some(number)) = (&card.set_code, &card.number) {
                 setnum_to_scryfall.insert((set.to_lowercase(), number.clone()), scryfall);
             }
@@ -311,26 +321,36 @@ impl Resolver<'_> {
     /// Resolve a deck reference to its main-board + commander cards as
     /// `(card_uuid, is_foil)`.
     fn deck_cards(&self, dr: &ContentDeck) -> Vec<(&str, bool)> {
-        let Some(set) = self.sets.get(&dr.set.to_lowercase()) else {
+        let (Some(set_code), Some(name)) = (&dr.set, &dr.name) else {
             return Vec::new();
         };
-        let Some(deck) = set.decks.iter().find(|d| d.name == dr.name) else {
+        let Some(set) = self.sets.get(&set_code.to_lowercase()) else {
+            return Vec::new();
+        };
+        let Some(deck) = set
+            .decks
+            .iter()
+            .find(|d| d.name.as_deref() == Some(name.as_str()))
+        else {
             return Vec::new();
         };
         deck.main_board
             .iter()
             .chain(deck.commander.iter())
-            .map(|dc| (dc.uuid.as_str(), dc.is_foil))
+            .filter_map(|dc| dc.uuid.as_deref().map(|uuid| (uuid, dc.is_foil)))
             .collect()
     }
 
     /// Resolve a booster-pack reference to `(card_uuid, sheet_is_foil)` for every card on
     /// any sheet the pack draws from.
     fn pack_cards(&self, pr: &ContentPack) -> Vec<(&str, bool)> {
-        let Some(set) = self.sets.get(&pr.set.to_lowercase()) else {
+        let (Some(set_code), Some(code)) = (&pr.set, &pr.code) else {
             return Vec::new();
         };
-        let Some(config) = set.booster.get(&pr.code) else {
+        let Some(set) = self.sets.get(&set_code.to_lowercase()) else {
+            return Vec::new();
+        };
+        let Some(config) = set.booster.get(code) else {
             return Vec::new();
         };
         let mut cards = Vec::new();
@@ -397,10 +417,13 @@ impl Resolver<'_> {
         // Nested sealed products: recurse, attributing leaves to the outer product.
         if depth < MAX_SEALED_DEPTH {
             for sr in &contents.sealed {
-                if !visited.insert(sr.uuid.clone()) {
+                let Some(uuid) = sr.uuid.as_deref() else {
+                    continue;
+                };
+                if !visited.insert(uuid.to_string()) {
                     continue; // cycle guard
                 }
-                if let Some(sub) = self.product_by_uuid.get(sr.uuid.as_str())
+                if let Some(sub) = self.product_by_uuid.get(uuid)
                     && let Some(sub_contents) = &sub.contents
                 {
                     self.walk_inner(
@@ -570,5 +593,41 @@ mod tests {
                 "duplicate membership row: {r:?}"
             );
         }
+    }
+
+    /// AllPrintings is a ~600 MB third-party document; a single object missing an
+    /// expected field must never abort the whole parse. Every reference field is
+    /// optional, and a card with no `uuid` still resolves by `(set, number)`, while a
+    /// sealed/deck/pack reference missing its key is skipped rather than fatal.
+    #[test]
+    fn tolerates_missing_optional_fields() {
+        let json = serde_json::json!({
+            "data": { "SET": {
+                // A card with NO uuid — resolvable only by (set, number).
+                "cards": [
+                    { "number": "5", "setCode": "SET", "identifiers": { "scryfallId": "sf-x" } }
+                ],
+                "sealedProduct": [
+                    { "identifiers": { "tcgplayerProductId": "2001" },
+                      "contents": {
+                        "card": [ { "set": "set", "number": "5" } ],
+                        // References missing their uuid / code — skipped, not fatal.
+                        "sealed": [ { "name": "no uuid here" } ],
+                        "deck": [ { "set": "set" } ],
+                        "pack": [ { "set": "set" } ]
+                      } }
+                ]
+            } }
+        });
+        let all: AllPrintings = serde_json::from_value(json).expect("parses despite missing fields");
+        let rows = build_memberships(&all);
+        // The uuid-less card still resolves by (set, number).
+        assert!(rows.iter().any(|r| {
+            r.tcgplayer_product_id == "2001"
+                && r.scryfall_id == "sf-x"
+                && r.membership == "contains"
+        }));
+        // The malformed sealed/deck/pack references contributed nothing but didn't panic.
+        assert_eq!(rows.len(), 1);
     }
 }
