@@ -19,6 +19,12 @@
 //! cards and products both exist to join against), and version-gated on the file's HTTP
 //! `ETag` so an unchanged file costs one conditional request.
 //!
+//! MTGJSON's contents are hand-curated upstream and lag: some products ship with
+//! `contents: null` (e.g. Avatar's "Commander's Bundle"), so the cards physically inside
+//! them would show no sealed product at all. [`fallback`] holds a small committed snapshot
+//! of curated memberships that the ingest merges in **only for products MTGJSON left
+//! empty**, so upstream stays authoritative and the fallback self-retires as gaps fill.
+//!
 //! Trade-off: `AllPrintings.json` is one ~600 MB document. We fetch the ~160 MB gzip and
 //! parse only the trimmed structs, but the fetch still buffers the compressed body and
 //! the resolved membership set is large (a normal set's booster sheets span ~its whole
@@ -28,6 +34,7 @@
 
 pub mod client;
 mod error;
+mod fallback;
 pub mod ingest;
 pub mod model;
 mod progress;

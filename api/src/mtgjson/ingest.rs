@@ -13,8 +13,14 @@
 //! that resolve to our `cards` table (by Scryfall id) get rows; the rest are skipped and
 //! tallied. Cross-set references whose card isn't in our catalog, and any product not on
 //! TCGplayer, simply don't appear.
+//!
+//! After the MTGJSON pass, curated [`fallback`](super::fallback) memberships are merged in
+//! for any product MTGJSON left empty (its cards would otherwise show no sealed product),
+//! and the stored version couples the file's `ETag` with the fallback snapshot's content
+//! hash (see [`compose_version`]) so editing the fallback data rebuilds on the next sync
+//! even when `AllPrintings.json` is byte-identical.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use reqwest::Client;
@@ -27,6 +33,7 @@ use sea_orm::{
 };
 
 use super::client::{FetchOutcome, fetch_all_printings};
+use super::fallback::{self, FallbackData};
 use super::model::{self, RawMembership};
 use super::progress::SyncProgress;
 use super::{DATASET, GAME, MtgjsonError};
@@ -38,6 +45,16 @@ const IN_CHUNK: usize = 900;
 
 /// Rows per membership insert. Eight columns, so ~2000 rows ≈ 16k binds — under the limit.
 const INSERT_BATCH: usize = 2000;
+
+/// A resolved-to-internal-ids membership row: `(product_id, card_id, membership, foil)`.
+/// Both the MTGJSON pass and the fallback merge accumulate into a `HashSet<Row>`, which
+/// deduplicates across the two sources for free.
+type Row = (i32, i32, &'static str, bool);
+
+/// Separator between MTGJSON's `ETag` and the fallback content hash in the stored
+/// `ingest_state.source_updated_at`. A US control byte can't occur in an HTTP `ETag`
+/// (RFC 9110 `etagc` excludes control chars), so splitting on it is unambiguous.
+const VERSION_SEP: char = '\u{1f}';
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
@@ -54,15 +71,24 @@ pub async fn refresh(db: &DatabaseConnection, http: &Client) -> Result<(), Mtgjs
 
 async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), MtgjsonError> {
     let existing = load_state(db).await?;
-    let prior_etag = existing
+    // The stored version couples MTGJSON's ETag with the committed fallback file's hash
+    // (see `compose_version`), so a fallback-data edit forces a rebuild even when
+    // AllPrintings is byte-identical.
+    let stored = existing
         .as_ref()
         .filter(|s| s.status == "complete")
         .and_then(|s| s.source_updated_at.clone());
+    let (prior_etag, prior_fallback) = stored.as_deref().map(split_version).unwrap_or((None, None));
+    let fallback_version = fallback::version();
+    let fallback_changed = prior_fallback != Some(fallback_version);
 
     let progress = SyncProgress::start("checking for updates");
 
-    // Conditional fetch: a 304 (unchanged file) short-circuits the whole rebuild.
-    let (etag, all) = match fetch_all_printings(http, prior_etag.as_deref()).await? {
+    // Conditional fetch: a 304 (unchanged file) short-circuits the whole rebuild — but
+    // only when the fallback data is also unchanged. If the fallback file changed we must
+    // re-fetch AllPrintings to rebuild the merged table, so skip the conditional request.
+    let conditional = if fallback_changed { None } else { prior_etag };
+    let (etag, all) = match fetch_all_printings(http, conditional).await? {
         FetchOutcome::Unchanged => {
             drop(progress);
             tracing::info!("mtgjson sealed contents already up to date");
@@ -95,28 +121,28 @@ async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), Mtg
     let products = resolve_products(db, &product_ext).await?;
     let cards = resolve_cards(db, &card_ext).await?;
 
-    // Build rows for memberships whose product AND card are both in our catalog.
-    let now = Utc::now();
-    let mut models: Vec<sealed_content::ActiveModel> = Vec::new();
+    // Resolve MTGJSON memberships whose product AND card are both in our catalog into a
+    // deduplicated row set, tracking which products MTGJSON actually described.
+    let mut rows: HashSet<Row> = HashSet::new();
+    let mut mtgjson_products: HashSet<i32> = HashSet::new();
     for m in &memberships {
-        let (Some(&product_id), Some(&card_id)) = (
-            products.get(&m.tcgplayer_product_id),
-            cards.get(&m.scryfall_id),
-        ) else {
-            continue;
-        };
-        models.push(sealed_content::ActiveModel {
-            id: NotSet,
-            game: Set(GAME.to_string()),
-            product_id: Set(product_id),
-            card_id: Set(card_id),
-            membership: Set(m.membership.to_string()),
-            foil: Set(m.foil),
-            created_at: Set(now),
-            updated_at: Set(now),
-        });
+        if let (Some(&product_id), Some(&card_id)) =
+            (products.get(&m.tcgplayer_product_id), cards.get(&m.scryfall_id))
+        {
+            rows.insert((product_id, card_id, m.membership, m.foil));
+            mtgjson_products.insert(product_id);
+        }
     }
+    let from_mtgjson = rows.len();
+
+    // Fill products MTGJSON left empty with curated fallback memberships.
+    let from_fallback = merge_fallback(db, fallback::data(), &mtgjson_products, &mut rows).await?;
+
+    // Materialise the merged row set as models.
+    let now = Utc::now();
+    let models = rows_to_models(&rows, now);
     let matched = models.len();
+    let product_count = rows.iter().map(|&(pid, ..)| pid).collect::<HashSet<i32>>().len();
     progress.set_rows("writing", matched as u64);
 
     // Replace the game's rows in one transaction so a reader never sees a half-rebuilt
@@ -152,28 +178,129 @@ async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), Mtg
     txn.commit().await?;
 
     drop(progress);
+    let version = compose_version(etag.as_deref(), fallback_version);
     let detail = format!(
-        "{matched} memberships across {} products (from {} resolved rows)",
-        products.len(),
-        memberships.len()
+        "{matched} memberships across {product_count} products \
+         ({from_mtgjson} from mtgjson, {from_fallback} from fallback)"
     );
     put_state(
         db,
         "complete",
-        etag.as_deref(),
+        Some(&version),
         &detail,
         started,
         Some(Utc::now()),
-        products.len() as i32,
+        product_count as i32,
         matched as i32,
     )
     .await?;
     tracing::info!(
         memberships = matched,
-        products = products.len(),
+        products = product_count,
+        fallback = from_fallback,
         "mtgjson sealed contents sync complete"
     );
     Ok(())
+}
+
+/// Materialise a resolved row set as insertable models, all stamped `now`.
+fn rows_to_models(rows: &HashSet<Row>, now: DateTimeUtc) -> Vec<sealed_content::ActiveModel> {
+    rows.iter()
+        .map(|&(product_id, card_id, membership, foil)| sealed_content::ActiveModel {
+            id: NotSet,
+            game: Set(GAME.to_string()),
+            product_id: Set(product_id),
+            card_id: Set(card_id),
+            membership: Set(membership.to_string()),
+            foil: Set(foil),
+            created_at: Set(now),
+            updated_at: Set(now),
+        })
+        .collect()
+}
+
+/// Merge curated [`fallback`] memberships into `rows`, returning the number of new rows
+/// added. A fallback product is applied **only when MTGJSON emitted no rows for it**
+/// (`mtgjson_products`), so upstream stays authoritative and the fallback fills genuine
+/// gaps (e.g. Avatar's `contents: null` Commander's Bundle). A fallback product or card
+/// absent from our catalog, or carrying an unknown membership, is skipped and logged.
+async fn merge_fallback(
+    db: &DatabaseConnection,
+    data: &FallbackData,
+    mtgjson_products: &HashSet<i32>,
+    rows: &mut HashSet<Row>,
+) -> Result<usize, MtgjsonError> {
+    if data.products.is_empty() {
+        return Ok(0);
+    }
+    // Resolve fallback products (TCGplayer id) and cards ((set, number)) to internal ids.
+    let product_ext: Vec<String> = distinct(data.products.iter().map(|p| &p.tcgplayer_product_id));
+    let products = resolve_products(db, &product_ext).await?;
+    let card_keys: Vec<(String, String)> = data
+        .products
+        .iter()
+        .flat_map(|p| &p.contents)
+        .map(|c| (c.set.to_lowercase(), c.number.clone()))
+        .collect();
+    let cards = resolve_cards_by_setnum(db, &card_keys).await?;
+
+    let mut added = 0;
+    for product in &data.products {
+        let Some(&product_id) = products.get(&product.tcgplayer_product_id) else {
+            tracing::debug!(
+                product = %product.name,
+                tcgplayer_id = %product.tcgplayer_product_id,
+                "mtgjson fallback: product not in catalog, skipping"
+            );
+            continue;
+        };
+        // MTGJSON already describes this product — it wins, skip the whole fallback entry.
+        if mtgjson_products.contains(&product_id) {
+            continue;
+        }
+        for card in &product.contents {
+            let Some(&card_id) = cards.get(&(card.set.to_lowercase(), card.number.clone())) else {
+                tracing::debug!(
+                    card = %card.name, set = %card.set, number = %card.number,
+                    "mtgjson fallback: card not in catalog, skipping"
+                );
+                continue;
+            };
+            let Some(membership) = card.parsed_membership() else {
+                tracing::warn!(
+                    membership = %card.membership, card = %card.name,
+                    "mtgjson fallback: unknown membership, skipping"
+                );
+                continue;
+            };
+            if rows.insert((product_id, card_id, membership.as_str(), card.foil)) {
+                added += 1;
+            }
+        }
+    }
+    if added > 0 {
+        tracing::info!(rows = added, "mtgjson: merged curated fallback memberships");
+    }
+    Ok(added)
+}
+
+/// Compose the stored version string from MTGJSON's `ETag` and the fallback content hash.
+fn compose_version(etag: Option<&str>, fallback: &str) -> String {
+    format!("{}{VERSION_SEP}{fallback}", etag.unwrap_or(""))
+}
+
+/// Split a stored version back into `(mtgjson_etag, fallback_hash)`. A value written
+/// before this feature (a bare ETag, no separator) parses as `(Some(etag), None)`, so the
+/// first sync after upgrade sees a fallback change and rebuilds.
+fn split_version(stored: &str) -> (Option<&str>, Option<&str>) {
+    match stored.split_once(VERSION_SEP) {
+        Some((etag, fallback)) => (non_empty(etag), non_empty(fallback)),
+        None => (non_empty(stored), None),
+    }
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    (!value.is_empty()).then_some(value)
 }
 
 /// Collect the distinct owned strings from an iterator of `&String`.
@@ -222,6 +349,34 @@ async fn resolve_cards(
             .all(db)
             .await?;
         map.extend(rows);
+    }
+    Ok(map)
+}
+
+/// Resolve `(set_code, collector_number)` pairs -> internal `cards.id` for the game (the
+/// fallback data keys cards this way rather than by Scryfall id). Fetches by the distinct
+/// set codes and indexes in memory — the fallback is a handful of cards, so this is a few
+/// small queries. Keys are lowercased set codes; the returned map's keys match.
+async fn resolve_cards_by_setnum(
+    db: &DatabaseConnection,
+    keys: &[(String, String)],
+) -> Result<HashMap<(String, String), i32>, MtgjsonError> {
+    let set_codes: Vec<String> = distinct(keys.iter().map(|(set, _)| set));
+    let mut map = HashMap::new();
+    for chunk in set_codes.chunks(IN_CHUNK) {
+        let rows: Vec<(String, String, i32)> = Card::find()
+            .select_only()
+            .column(card::Column::SetCode)
+            .column(card::Column::CollectorNumber)
+            .column(card::Column::Id)
+            .filter(card::Column::Game.eq(GAME))
+            .filter(card::Column::SetCode.is_in(chunk.iter().cloned()))
+            .into_tuple()
+            .all(db)
+            .await?;
+        for (set, number, id) in rows {
+            map.insert((set.to_lowercase(), number), id);
+        }
     }
     Ok(map)
 }
@@ -292,6 +447,7 @@ async fn mark_error(db: &DatabaseConnection, message: &str) -> Result<(), Mtgjso
 
 #[cfg(test)]
 mod tests {
+    use super::super::fallback::{FallbackCard, FallbackProduct};
     use super::*;
     use crate::entities::prelude::SealedContent;
     use crate::test_support::{insert_card, migrated_memory_db};
@@ -321,6 +477,122 @@ mod tests {
             .await
             .unwrap()
             .last_insert_id
+    }
+
+    /// Insert a card at a specific `(set_code, collector_number)` and return its id (the
+    /// fallback path resolves by set + number, not by Scryfall id).
+    async fn insert_card_at(db: &DatabaseConnection, ext: &str, set: &str, number: &str) -> i32 {
+        let now = Utc::now();
+        let model = card::ActiveModel {
+            game: Set(GAME.to_string()),
+            external_id: Set(ext.to_string()),
+            name: Set(format!("Card {ext}")),
+            set_code: Set(set.to_string()),
+            set_name: Set(set.to_uppercase()),
+            collector_number: Set(number.to_string()),
+            lang: Set("en".to_string()),
+            digital: Set(false),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        card::Entity::insert(model).exec(db).await.unwrap().last_insert_id
+    }
+
+    /// Build a one-product fallback dataset for the merge tests.
+    fn one_product(tcg: &str, contents: Vec<FallbackCard>) -> FallbackData {
+        FallbackData {
+            products: vec![FallbackProduct {
+                tcgplayer_product_id: tcg.to_string(),
+                name: format!("Product {tcg}"),
+                contents,
+            }],
+        }
+    }
+
+    fn fb_card(set: &str, number: &str, membership: &str, foil: bool) -> FallbackCard {
+        FallbackCard {
+            set: set.to_string(),
+            number: number.to_string(),
+            name: format!("{set} {number}"),
+            membership: membership.to_string(),
+            foil,
+        }
+    }
+
+    /// `resolve_cards_by_setnum` indexes `(set, number)` -> id, lowercasing the set key.
+    #[tokio::test]
+    async fn resolve_cards_by_setnum_indexes_pairs() {
+        let db = migrated_memory_db().await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        insert_card_at(&db, "sf-swat", "tle", "311").await;
+        let map = resolve_cards_by_setnum(&db, &[("tle".into(), "316".into())]).await.unwrap();
+        assert_eq!(map.get(&("tle".to_string(), "316".to_string())), Some(&sol));
+    }
+
+    /// A fallback product MTGJSON left empty is merged in (resolving product + card).
+    #[tokio::test]
+    async fn merge_fallback_fills_empty_product() {
+        let db = migrated_memory_db().await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let swat = insert_card_at(&db, "sf-swat", "tle", "311").await;
+        let product = insert_product(&db, "648686").await;
+        let data = one_product(
+            "648686",
+            vec![
+                fb_card("tle", "316", "contains", false),
+                fb_card("tle", "311", "variable", false),
+            ],
+        );
+
+        let mut rows = HashSet::new();
+        let added = merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap();
+        assert_eq!(added, 2);
+        assert!(rows.contains(&(product, sol, "contains", false)));
+        assert!(rows.contains(&(product, swat, "variable", false)));
+    }
+
+    /// MTGJSON stays authoritative: a product it already described takes no fallback rows.
+    #[tokio::test]
+    async fn merge_fallback_skips_covered_product() {
+        let db = migrated_memory_db().await;
+        insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let product = insert_product(&db, "648686").await;
+        let data = one_product("648686", vec![fb_card("tle", "316", "contains", false)]);
+
+        let mut rows = HashSet::new();
+        let covered = HashSet::from([product]);
+        let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
+        assert_eq!(added, 0);
+        assert!(rows.is_empty());
+    }
+
+    /// An unresolved product or card (not in our catalog) is skipped, not fatal.
+    #[tokio::test]
+    async fn merge_fallback_skips_unresolved() {
+        let db = migrated_memory_db().await;
+        // Product exists but the card is absent from the catalog.
+        insert_product(&db, "648686").await;
+        let data = one_product("648686", vec![fb_card("tle", "316", "contains", false)]);
+        let mut rows = HashSet::new();
+        assert_eq!(merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap(), 0);
+        assert!(rows.is_empty());
+
+        // Card exists but the product is not on TCGplayer / not in the catalog.
+        insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let data = one_product("999999", vec![fb_card("tle", "316", "contains", false)]);
+        assert_eq!(merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap(), 0);
+        assert!(rows.is_empty());
+    }
+
+    /// The composite version round-trips, and a bare (pre-feature) ETag reads as
+    /// "no fallback recorded" so the first post-upgrade sync rebuilds.
+    #[test]
+    fn version_composition_round_trips() {
+        let composed = compose_version(Some("\"etag-123\""), "fbhash");
+        assert_eq!(split_version(&composed), (Some("\"etag-123\""), Some("fbhash")));
+        assert_eq!(split_version("\"legacy-etag\""), (Some("\"legacy-etag\""), None));
+        assert_eq!(split_version(&compose_version(None, "fb")), (None, Some("fb")));
     }
 
     /// The resolve + write path: memberships whose product AND card resolve are written;
