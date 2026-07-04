@@ -825,8 +825,8 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   locally against docker (`deploy/docker-compose.yml`) and in the `postgres-redis-tests`
   CI job. Three deliberate cross-backend divergences, all a consequence of keeping SQLite
   byte-identical rather than forcing a shared behaviour: (1) text **sort order**
-  (`order:name`/`set`/`artist` and the `card-names` alphabetical tiebreak) follows each
-  backend's default collation — SQLite `BINARY` (byte order) vs Postgres's DB locale — a
+  (`order:name`/`set`/`artist`, the sealed-**products** name sort, and the `card-names`
+  alphabetical tiebreak) follows each backend's default collation — SQLite `BINARY` (byte order) vs Postgres's DB locale — a
   cosmetic display-order difference only, no pagination impact; (2) the `/regex/` filter
   runs the Rust-regex `REGEXP` UDF on SQLite vs POSIX ARE `~*` on Postgres, which parse
   exotic constructs (`\d`, `\b`, lookaround, lazy quantifiers) differently, so a given

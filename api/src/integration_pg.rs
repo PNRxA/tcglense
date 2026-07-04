@@ -754,3 +754,82 @@ async fn set_list_nulls_last_on_pg() {
 
     db.teardown().await;
 }
+
+// ---------------------------------------------------------------------------
+// Sealed products (public catalog) — the PR #184 surface. Seeds the dummy catalog
+// (which seeds products + their price history through the same ON CONFLICT upsert
+// paths, so this also proves those arbiters resolve on PG) and exercises the two
+// backend-aware fragments in the product handler: the case-folded `q` name search
+// (LOWER-both) and the nullable, decimal-guarded price sort (CAST + NULLS LAST).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn products_list_search_and_price_sort_on_pg() {
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    catalog::seed_all(db.conn()).await;
+    let router = pg_router(db.conn().clone());
+
+    // The full list comes back (the dummy catalog seeds several sealed products).
+    let (status, body) = get(&router, "/api/games/mtg/products?page_size=200").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(data_len(&body) >= 4, "seeded catalog has sealed products");
+
+    // A lowercase `q` must match the title-cased product names (the LOWER-both fold —
+    // silent-wrong on raw PG, whose LIKE is case-sensitive).
+    let (status, body) = get(
+        &router,
+        &format!("/api/games/mtg/products?q={}", enc("commander")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        data_len(&body) > 0 && any_name_contains(&body, "Commander"),
+        "case-insensitive product search matches the Commander deck: {body:?}"
+    );
+
+    // Price sort asc: the numeric CAST (decimal-shape-guarded on PG, so a non-decimal
+    // price string can't error the CAST) must compile, the effective price must be
+    // non-decreasing, and the unpriced product parks last (NULLS LAST — Postgres
+    // defaults DESC/ASC NULL placement such that a bare order_by would misplace it).
+    let (status, body) = get(
+        &router,
+        "/api/games/mtg/products?sort=price&dir=asc&page_size=200",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "product price CAST sort compiles");
+    let data = body["data"].as_array().expect("data array");
+    assert!(!data.is_empty(), "the seeded catalog has priced products");
+
+    let effective = |p: &Value| -> Option<f64> {
+        for key in ["usd", "usd_foil"] {
+            if let Some(v) = p["prices"][key].as_str().and_then(|s| s.parse::<f64>().ok()) {
+                return Some(v);
+            }
+        }
+        None
+    };
+    let mut prev: Option<f64> = None;
+    let mut seen_null = false;
+    for p in data {
+        match effective(p) {
+            Some(v) => {
+                assert!(!seen_null, "a priced product sorted after an unpriced one");
+                if let Some(prev) = prev {
+                    assert!(v >= prev - 1e-9, "price asc not non-decreasing: {prev} then {v}");
+                }
+                prev = Some(v);
+            }
+            None => seen_null = true,
+        }
+    }
+    assert!(
+        seen_null,
+        "the null-priced dummy product is present and parked last (NULLS LAST)"
+    );
+
+    db.teardown().await;
+}

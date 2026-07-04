@@ -18,10 +18,11 @@ use axum::{
 use chrono::Utc;
 use sea_orm::{
     ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
-    sea_query::{Expr, LikeExpr, NullOrdering, SimpleExpr},
+    sea_query::{Expr, Func, LikeExpr, NullOrdering, SimpleExpr},
 };
 use serde::{Deserialize, Serialize};
 
+use crate::db::Dialect;
 use crate::entities::prelude::{CardSet, Product, ProductPriceHistory};
 use crate::entities::{card_set, product, product_price_history};
 use crate::error::AppError;
@@ -200,10 +201,13 @@ pub async fn list_products(
 
     let mut query = Product::find().filter(product::Column::Game.eq(game.as_str()));
     if let Some(term) = trim_query(params.q.as_deref()) {
-        let escaped = escape_like(term);
+        // LOWER both sides (ASCII fold) so the substring match is case-insensitive on
+        // Postgres too; `to_ascii_lowercase` matches SQLite's ASCII-only `LOWER()`, so
+        // the SQLite result set stays byte-identical. Mirrors `handlers::shared::name_like`.
+        let pattern = format!("%{}%", escape_like(term).to_ascii_lowercase());
         query = query.filter(
-            Expr::col((product::Entity, product::Column::Name))
-                .like(LikeExpr::new(format!("%{escaped}%")).escape('\\')),
+            Expr::expr(Func::lower(Expr::col((product::Entity, product::Column::Name))))
+                .like(LikeExpr::new(pattern).escape('\\')),
         );
     }
     if let Some(set) = trim_query(params.set.as_deref()) {
@@ -214,7 +218,8 @@ pub async fn list_products(
     }
 
     let (sort, dir) = params.sort_spec()?;
-    let paginator = apply_product_sort(query, sort, dir).paginate(&state.db, page_size);
+    let paginator =
+        apply_product_sort(query, sort, dir, state.dialect()).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -432,11 +437,12 @@ fn apply_product_sort(
     query: Select<product::Entity>,
     field: ProductSort,
     dir: SortDir,
+    dialect: Dialect,
 ) -> Select<product::Entity> {
     let query = match field {
         ProductSort::Name => query.order_by(product::Column::Name, dir.order()),
         ProductSort::Price => query
-            .order_by_with_nulls(product_price_expr(), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(product_price_expr(dialect), dir.order(), NullOrdering::Last)
             .order_by_asc(product::Column::Name),
         ProductSort::Released => query
             .order_by_with_nulls(product::Column::ReleasedAt, dir.order(), NullOrdering::Last)
@@ -449,13 +455,26 @@ fn apply_product_sort(
 /// price, each NULL/empty-guarded so `''` isn't treated as `0` and truly-unpriced
 /// products resolve to NULL (parked last by `NULLS LAST`). Column names are fixed —
 /// never user input.
-fn product_price_expr() -> SimpleExpr {
-    Expr::cust(
-        "COALESCE(\
-           CASE WHEN price_usd IS NULL OR price_usd = '' THEN NULL ELSE CAST(price_usd AS REAL) END, \
-           CASE WHEN price_usd_foil IS NULL OR price_usd_foil = '' THEN NULL ELSE CAST(price_usd_foil AS REAL) END\
-         )",
-    )
+///
+/// Mirrors [`crate::handlers::shared::sort::price_real_expr`]: SQLite's CAST coerces
+/// junk to `0.0`, so it keeps the historical inverse null/empty guard (byte-identical
+/// output); Postgres's CAST hard-errors on a non-decimal string, so its arm guards the
+/// value with the decimal-shape check (`Dialect::decimal_string_guard`) before casting.
+fn product_price_expr(dialect: Dialect) -> SimpleExpr {
+    let arm = |col: &str| match dialect {
+        Dialect::Sqlite => {
+            format!("CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END")
+        }
+        Dialect::Postgres => format!(
+            "CASE WHEN {} THEN CAST({col} AS REAL) ELSE NULL END",
+            dialect.decimal_string_guard(col)
+        ),
+    };
+    Expr::cust(format!(
+        "COALESCE({}, {})",
+        arm("price_usd"),
+        arm("price_usd_foil")
+    ))
 }
 
 #[cfg(test)]
