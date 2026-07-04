@@ -100,7 +100,13 @@ usePageMeta({
     <section class="space-y-3">
       <h2 class="text-xl font-semibold tracking-tight">9. Contact</h2>
       <p class="text-muted-foreground leading-7 text-pretty">
-        Questions, problems, or account requests: open an issue on the GitHub repository at
+        Questions, problems, or account requests: email
+        <a
+          href="mailto:contact@tcglense.com"
+          class="text-primary underline-offset-4 hover:underline"
+        >
+          contact@tcglense.com</a
+        >, or open an issue on the GitHub repository at
         <a
           href="https://github.com/PNRxA/tcglense"
           target="_blank"
