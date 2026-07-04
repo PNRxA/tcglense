@@ -113,6 +113,36 @@ Point DNS for `SITE_ADDRESS` at the host with ports 80+443 reachable and Caddy
 obtains a Let's Encrypt certificate on first boot; the API runs migrations on start.
 Pin a release across the whole stack with `IMAGE_TAG=vX.Y.Z` (defaults to `latest`).
 
+#### Behind a CDN (Cloudflare)
+
+The public catalog (`/api/games/*`) and the image/icon proxy already emit CDN-friendly
+`Cache-Control` (`s-maxage` / `immutable`), so a CDN caches them with no code change.
+To put Cloudflare in front:
+
+- Set **`CDN_MODE=true`** on the `api` service — the origin then skips caching card
+  images to disk (the CDN absorbs the repeats), so it needs no writable image dir.
+  Leave it off if no CDN sits in front, or every view re-fetches upstream.
+- Add a **cache rule** — Cloudflare doesn't cache API paths by default; add a rule to
+  cache eligible responses (honoring the origin `Cache-Control`) for `/api/games/*` and
+  the image/icon routes. Keep `/api/auth/*` uncached (they're already `no-store`).
+- **TLS:** set Cloudflare SSL/TLS to **Full (strict)** and give Caddy a valid origin
+  cert — a Cloudflare Origin CA cert, or Let's Encrypt via the DNS-01 challenge (the
+  HTTP-01 challenge can be interfered with by Cloudflare's proxy).
+
+> **Real client IP (important).** With Cloudflare in front, the edge Caddy's immediate
+> peer is *Cloudflare*, so the default `edge.Caddyfile` line
+> `header_up X-Forwarded-For {http.request.remote.host}` makes **every** request key to
+> a Cloudflare IP — collapsing per-IP auth rate limiting. Switch it to Cloudflare's
+> real-client header **and restrict origin ingress to Cloudflare's IP ranges** (a
+> firewall allowlist or a Cloudflare Tunnel) so it can't be spoofed by hitting the
+> origin directly:
+>
+> ```caddyfile
+> reverse_proxy web:80 {
+> 	header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+> }
+> ```
+
 ### Bare metal (systemd + Caddy)
 
 <details>

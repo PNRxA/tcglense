@@ -53,6 +53,10 @@ services:
       PUBLIC_SITE_URL: https://${SITE_ADDRESS:-localhost}
       DATABASE_URL: postgres://tcglense:${POSTGRES_PASSWORD:-tcglense}@db:5432/tcglense
       REDIS_URL: redis://cache:6379
+      # If a CDN (e.g. Cloudflare) fronts this stack and caches the image/icon proxy,
+      # uncomment so the origin doesn't also cache images to disk. See the "Behind a
+      # CDN (Cloudflare)" note in the README — mind the real-client-IP caveat there.
+      # CDN_MODE: "true"
     volumes:
       - tcglense_data:/data     # cached card images (the DB lives in Postgres)
     depends_on:
