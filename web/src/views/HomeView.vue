@@ -3,17 +3,26 @@ import { computed, type Component } from 'vue'
 import {
   ArrowRight,
   ChevronRight,
-  CloudDownload,
+  CircleCheck,
+  ExternalLink,
   Ghost,
   Heart,
+  Import,
+  Layers,
+  LayoutGrid,
+  Library,
   LibraryBig,
+  Lock,
+  Package,
+  PackageOpen,
+  Plus,
+  Search,
   Sparkles,
   TrendingUp,
-  Wallet,
 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
+import GitHubMark from '@/components/GitHubMark.vue'
 import { buttonVariants } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -22,215 +31,709 @@ const auth = useAuthStore()
 
 usePageMeta({
   description:
-    'Browse trading-card games, sets, and cards, follow singles prices over time, and track ' +
-    'your collection and wish list — with ghost mode showing exactly which cards you are missing.',
+    'Browse trading-card games, sets, cards, and sealed products, chart daily prices, and ' +
+    'track your collection and wish list — with ghost mode showing exactly which cards you ' +
+    'are missing.',
   canonicalPath: '/',
 })
 
-// Optional, resilient to an empty/loading list: lets a visitor jump straight into a
-// real game's public catalog from the homepage.
+// Optional, resilient to an empty/loading list: lets a visitor jump straight into a real
+// game's public catalog from the homepage.
 const gamesQuery = useGamesQuery()
 const games = computed(() => gamesQuery.data.value?.data ?? [])
 
-interface Feature {
+interface FeatureLink {
   icon: Component
   title: string
   description: string
   to: string
 }
 
-// Only real, shipped features — each links to where it actually lives. Descriptions
-// carry concrete, verifiable specifics (price windows, the reconcile-mode names) so the
-// claims stay honest and checkable.
-const features: Feature[] = [
+// The compact "everything else" grid — only shipped features, each linking to where it
+// lives. The sixth card (Open source, external) is rendered on its own in the template.
+const otherFeatures: FeatureLink[] = [
   {
-    icon: LibraryBig,
-    title: 'Card catalog',
-    description: 'Browse games, sets, and cards, with Scryfall-style search on every list.',
+    icon: Search,
+    title: 'Scryfall-style search',
+    description:
+      'Full search syntax on every card list — colors, types, oracle text, prices, even regex.',
     to: '/cards',
   },
   {
-    icon: TrendingUp,
-    title: 'Singles price history',
+    icon: Layers,
+    title: 'Secret Lair by-drop views',
     description:
-      'Daily USD, EUR, and foil prices charted on every card — windowed from the last 7 days ' +
-      'to the full history.',
+      'Drop-grouped sets break into their real drops, in the catalog, your collection, and ' +
+      'your wish list.',
     to: '/cards',
   },
   {
-    icon: Wallet,
-    title: 'Your collection',
-    description: 'Track regular and foil copies per game, with a live value and count summary.',
-    to: '/collection',
-  },
-  {
-    icon: CloudDownload,
-    title: 'Import and sync',
+    icon: PackageOpen,
+    title: 'Cards to sealed',
     description:
-      'Pull in from Archidekt by link (overwrite, replace, merge, or smart), or upload a ' +
-      'CSV export from Archidekt or Moxfield, then re-sync a saved link on demand.',
-    to: '/collection',
-  },
-  {
-    icon: Sparkles,
-    title: 'Owned-count badges',
-    description: 'Signed in, every card you already own is badged as you browse the catalog.',
+      "Every card page lists the sealed products it's found in, can be pulled from, or may be in.",
     to: '/cards',
   },
   {
-    icon: Ghost,
-    title: 'Collection ghost mode',
-    description:
-      'Flip “Show ghosts” on any collection grid to dim the cards you are missing — with a ' +
-      'live “X/Y owned” count — and quick-add them right where they sit.',
+    icon: LayoutGrid,
+    title: 'Set-by-set browsing',
+    description: 'Browse what you own set by set, with per-set counts and value.',
     to: '/collection',
+  },
+  {
+    icon: Lock,
+    title: 'Free accounts',
+    description:
+      'Register with just an email address — free to track your collection and wish list.',
+    to: '/register',
   },
 ]
 
-// The wish-list selling points, kept truthful: each maps to a shipped behaviour of the
-// /wishlist views (the ghosts toggle; summary + per-set values; the three add surfaces).
-const wishlistPoints = [
-  'Flip on ghosts to browse whole sets with your wanted cards bright and the rest dimmed',
-  'A live USD total of what is on your list, overall or per set',
-  'Add cards from any wish-list grid, the card page, or quick-add by name',
-]
+// The owned-count / quick-add chip style, verbatim from OwnedCountBadge.vue so the demo
+// badges match the real ones.
+const badgeChipClass =
+  'bg-primary text-primary-foreground inline-flex items-center gap-0.5 rounded-md px-1.5 ' +
+  'py-0.5 text-xs font-semibold shadow tabular-nums'
+
+// Text-link CTA style under each feature demo row (buttons stay reserved for the hero and
+// the closing band).
+const rowLinkClass =
+  'text-primary inline-flex items-center gap-1 text-sm font-medium underline-offset-4 ' +
+  'hover:underline'
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-4 py-16 sm:py-24">
-    <!-- Hero: conversion-first value prop + primary/secondary CTAs, auth-branched. -->
-    <section class="flex flex-col items-center text-center">
-      <span
-        class="border-border bg-muted text-muted-foreground mb-6 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
-      >
-        <Heart class="size-3.5" aria-hidden="true" />
-        New — wish lists
-      </span>
-      <h1 class="max-w-2xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-        Track every card. Watch every price.
-      </h1>
-      <p class="text-muted-foreground mt-4 max-w-xl text-base text-pretty sm:text-lg">
-        Browse games, sets, and cards, follow real singles prices as they move, and track your
-        collection down to the last foil — then keep a wish list of the cards you want to buy next,
-        priced as you go.
-      </p>
+  <div class="mx-auto max-w-6xl px-4 pt-14 pb-20 sm:pt-20">
+    <!-- Hero: value prop + auth-branched CTAs, beside a decorative "show the product" vignette. -->
+    <section class="grid items-center gap-10 lg:grid-cols-[1fr_minmax(0,30rem)] lg:gap-14">
+      <div>
+        <span
+          class="border-border bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
+        >
+          <Package class="size-3.5" aria-hidden="true" />
+          New — sealed products, priced daily
+        </span>
+        <h1 class="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+          Your collection, priced every day.
+        </h1>
+        <p class="text-muted-foreground mt-4 max-w-xl text-base text-pretty sm:text-lg">
+          TCGLense is a free, open-source tracker for trading-card games: browse every set, chart
+          singles and sealed prices day by day, and see exactly which cards you own — and which ones
+          you're still missing.
+        </p>
 
-      <div class="mt-8 flex flex-col items-center gap-3 sm:flex-row">
-        <template v-if="auth.isAuthenticated">
-          <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
-            Open your collection
-            <ArrowRight aria-hidden="true" />
+        <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+          <template v-if="auth.isAuthenticated">
+            <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
+              Open your collection
+              <ArrowRight aria-hidden="true" />
+            </RouterLink>
+            <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
+              Browse cards
+            </RouterLink>
+          </template>
+          <template v-else>
+            <RouterLink to="/register" :class="buttonVariants({ size: 'lg' })">
+              Create a free account
+              <ArrowRight aria-hidden="true" />
+            </RouterLink>
+            <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
+              Browse the catalog
+            </RouterLink>
+          </template>
+        </div>
+
+        <p v-if="!auth.isAuthenticated" class="text-muted-foreground mt-4 text-sm text-pretty">
+          No account needed to browse cards, sets, sealed products, and prices. Already have an
+          account?
+          <RouterLink to="/login" class="text-primary underline-offset-4 hover:underline">
+            Sign in
           </RouterLink>
-          <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
-            Browse cards
-          </RouterLink>
-        </template>
-        <template v-else>
-          <RouterLink to="/register" :class="buttonVariants({ size: 'lg' })">
-            Create your account
-            <ArrowRight aria-hidden="true" />
-          </RouterLink>
-          <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
-            Browse cards — no account needed
-          </RouterLink>
-        </template>
+        </p>
       </div>
 
-      <p v-if="!auth.isAuthenticated" class="text-muted-foreground mt-4 text-sm text-pretty">
-        Just looking?
-        <RouterLink to="/cards" class="text-primary underline-offset-4 hover:underline">
-          Browse the catalog
-        </RouterLink>
-        — no account needed. Already have an account?
-        <RouterLink to="/login" class="text-primary underline-offset-4 hover:underline">
-          Sign in
-        </RouterLink>
-      </p>
-    </section>
+      <!-- Decorative vignette: a mini set grid with owned badges + ghosts, a completion chip,
+           and a price sparkline. Illustrative only, hidden from assistive tech. -->
+      <div class="relative mx-auto w-full max-w-md sm:pb-6 lg:max-w-none" aria-hidden="true">
+        <!-- Decorative mock UI — illustrative values, not real market data. -->
+        <div
+          class="bg-background absolute -top-3 right-6 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium shadow-sm"
+        >
+          <CircleCheck class="text-primary size-3.5" />
+          4 / 6 owned
+        </div>
 
-    <!-- Wish-list spotlight: the headline new feature (issue #167), placed first. Ghost
-         mode (the previous spotlight, issue #112) graduated into the feature grid below. -->
-    <section class="mt-16 sm:mt-20">
-      <h2 class="sr-only">Wish lists</h2>
-      <Card class="border-primary/30 bg-primary/5 gap-0 overflow-hidden rounded-3xl py-0">
-        <div class="grid gap-8 p-6 sm:p-10 md:grid-cols-2 md:items-center">
-          <div>
-            <span
-              class="border-primary/30 bg-primary/10 text-primary inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
-            >
-              <Heart class="size-3.5" aria-hidden="true" />
-              New — wish lists
-            </span>
-            <p class="mt-4 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              Keep a list of the cards you want next
-            </p>
-            <p class="text-muted-foreground mt-3 text-pretty">
-              A wish list works just like your collection — regular and foil counts per card — but
-              for the cards you are still hunting. Flip on ghost mode to browse any set with the
-              cards on your list bright and everything else dimmed, with a running USD total of what
-              buying the list would cost.
-            </p>
-            <ul class="mt-5 space-y-2.5">
-              <li v-for="point in wishlistPoints" :key="point" class="flex items-start gap-2.5">
-                <ChevronRight class="text-primary mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                <span class="text-muted-foreground text-sm text-pretty">{{ point }}</span>
-              </li>
-            </ul>
-            <div class="mt-6">
-              <RouterLink to="/wishlist" :class="buttonVariants({ size: 'lg' })">
-                <Heart aria-hidden="true" />
-                {{ auth.isAuthenticated ? 'Open your wish list' : 'Start a wish list' }}
-              </RouterLink>
-              <p v-if="!auth.isAuthenticated" class="text-muted-foreground mt-2 text-sm">
-                Sign-in required — it is free to create an account.
-              </p>
-            </div>
-          </div>
-
-          <!-- Visual demo: one wanted card beside two dimmed "ghosts". Decorative. -->
-          <div
-            class="bg-background/60 flex flex-col items-center gap-3 rounded-2xl border p-6"
-            aria-hidden="true"
-          >
-            <div class="flex items-end justify-center gap-3 sm:gap-4">
-              <div class="flex flex-col items-center gap-2">
+        <div class="bg-card rounded-2xl border p-4 shadow-sm sm:p-5">
+          <div class="grid grid-cols-3 gap-3">
+            <!-- Tile 1: owned (badge: 3 + 1 foil). -->
+            <div class="relative">
+              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
                 <div
-                  class="bg-card ring-primary/30 flex size-16 items-center justify-center rounded-xl sm:size-20 border shadow-sm ring-1"
-                >
-                  <Heart class="text-primary size-9" />
+                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                ></div>
+                <div class="space-y-1.5 p-2">
+                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
                 </div>
-                <span class="text-foreground text-xs font-medium">Wanted</span>
               </div>
-              <div class="flex flex-col items-center gap-2 opacity-40">
-                <div
-                  class="flex size-16 items-center justify-center rounded-xl sm:size-20 border border-dashed"
-                >
-                  <Ghost class="text-muted-foreground size-9" />
-                </div>
-                <span class="text-muted-foreground text-xs font-medium">Ghost</span>
-              </div>
-              <div class="flex flex-col items-center gap-2 opacity-40">
-                <div
-                  class="flex size-16 items-center justify-center rounded-xl sm:size-20 border border-dashed"
-                >
-                  <Ghost class="text-muted-foreground size-9" />
-                </div>
-                <span class="text-muted-foreground text-xs font-medium">Ghost</span>
+              <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
+                <span :class="badgeChipClass">
+                  <Layers class="size-3" aria-hidden="true" />
+                  3
+                </span>
+                <span :class="badgeChipClass">
+                  <Sparkles class="size-3" aria-hidden="true" />
+                  1
+                </span>
               </div>
             </div>
-            <p class="text-muted-foreground text-xs">1 wanted · ghosts dimmed</p>
+            <!-- Tile 2. -->
+            <div class="relative">
+              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                <div
+                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
+                ></div>
+                <div class="space-y-1.5 p-2">
+                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Tile 3. -->
+            <div class="relative">
+              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                <div
+                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
+                ></div>
+                <div class="space-y-1.5 p-2">
+                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Tile 4. -->
+            <div class="relative">
+              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                <div
+                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                ></div>
+                <div class="space-y-1.5 p-2">
+                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Tile 5: ghost (missing). -->
+            <div class="relative">
+              <div
+                class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
+              >
+                <div
+                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
+                ></div>
+                <div class="space-y-1.5 p-2">
+                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Tile 6: ghost with a crisp quick-add chip (not dimmed). -->
+            <div class="relative">
+              <div
+                class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
+              >
+                <div
+                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                ></div>
+                <div class="space-y-1.5 p-2">
+                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                </div>
+              </div>
+              <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
+                <span :class="badgeChipClass">
+                  <Plus class="size-3" aria-hidden="true" />
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </Card>
+
+        <div
+          class="bg-card mt-4 w-48 rounded-xl border p-3 shadow-sm sm:absolute sm:-bottom-6 sm:-left-4 sm:mt-0"
+        >
+          <div class="flex items-baseline justify-between">
+            <span class="text-muted-foreground text-xs font-medium">Price history</span>
+            <span class="text-xs font-semibold tabular-nums">$18.40</span>
+          </div>
+          <svg
+            viewBox="0 0 128 40"
+            class="mt-1.5 h-10 w-full"
+            fill="none"
+            preserveAspectRatio="none"
+          >
+            <polyline
+              points="0,30 16,28 32,31 48,24 64,26 80,18 96,20 112,12 128,14"
+              stroke="var(--chart-1)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <polyline
+              points="0,22 16,24 32,20 48,18 64,21 80,12 96,15 112,8 128,10"
+              class="opacity-80"
+              stroke="var(--chart-2)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <div class="text-muted-foreground mt-1.5 flex items-center gap-3 text-[10px]">
+            <span class="flex items-center gap-1">
+              <span class="size-1.5 rounded-full" style="background: var(--chart-1)"></span>
+              USD
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="size-1.5 rounded-full" style="background: var(--chart-2)"></span>
+              USD foil
+            </span>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <!-- Feature grid: the real, live features, each a link to where it lives. -->
-    <section class="mt-16">
-      <h2 class="text-xl font-semibold tracking-tight">Everything you can do today</h2>
-      <p class="text-muted-foreground mt-1 text-sm">Every feature here is live right now.</p>
+    <!-- Feature demo rows: each pairs a text column with a decorative mock panel, alternating
+         sides at md+. -->
+    <section class="mt-20 sm:mt-24">
+      <div class="space-y-20 sm:space-y-24">
+        <!-- Row A — Prices (demo right). -->
+        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
+          <div>
+            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
+              <TrendingUp class="size-4" aria-hidden="true" />
+              Price history
+            </p>
+            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+              Every price, charted every day
+            </h2>
+            <p class="text-muted-foreground mt-3 text-pretty">
+              TCGLense captures singles prices daily — USD, EUR, and foil — and charts USD and foil
+              on every card, windowed from the last 7 days to the full history. Sealed products get
+              the same treatment: current prices and price history for booster boxes, bundles, and
+              decks.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
+              <RouterLink to="/cards" :class="rowLinkClass">
+                Browse cards
+                <ArrowRight class="size-4" aria-hidden="true" />
+              </RouterLink>
+              <RouterLink to="/sealed" :class="rowLinkClass">
+                Browse sealed products
+                <ArrowRight class="size-4" aria-hidden="true" />
+              </RouterLink>
+            </div>
+          </div>
+          <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
+            <!-- Decorative mock UI — illustrative values, not real market data. -->
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-semibold">Price history</span>
+              <div class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5">
+                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">7D</span>
+                <span
+                  class="bg-background text-foreground rounded px-2 py-1 text-xs font-medium shadow-sm"
+                  >30D</span
+                >
+                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">1Y</span>
+                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">3Y</span>
+                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">All</span>
+              </div>
+            </div>
+            <svg
+              viewBox="0 0 320 96"
+              class="mt-4 h-28 w-full"
+              fill="none"
+              preserveAspectRatio="none"
+            >
+              <line x1="0" y1="24" x2="320" y2="24" stroke="var(--border)" stroke-width="1" />
+              <line x1="0" y1="48" x2="320" y2="48" stroke="var(--border)" stroke-width="1" />
+              <line x1="0" y1="72" x2="320" y2="72" stroke="var(--border)" stroke-width="1" />
+              <polyline
+                points="0,74 40,70 80,76 120,58 160,62 200,44 240,48 280,30 320,34"
+                stroke="var(--chart-1)"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <polyline
+                points="0,54 40,58 80,50 120,46 160,52 200,30 240,36 280,20 320,24"
+                class="opacity-80"
+                stroke="var(--chart-2)"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <div class="text-muted-foreground mt-2 flex justify-between text-[10px]">
+              <span>Jun 5</span>
+              <span>Jun 19</span>
+              <span>Jul 3</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row B — Collection (demo left at md+). -->
+        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
+          <div>
+            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
+              <Library class="size-4" aria-hidden="true" />
+              Collection
+            </p>
+            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+              Know exactly what you own
+            </h2>
+            <p class="text-muted-foreground mt-3 text-pretty">
+              Count regular and foil copies per game and watch the totals move — unique cards, total
+              copies, and a live estimated value. As you browse the catalog, owned-count badges mark
+              the cards already in your collection, and quick-add drops a card in by name without
+              leaving the page.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
+              <RouterLink to="/collection" :class="rowLinkClass">
+                {{ auth.isAuthenticated ? 'Open your collection' : 'Start a collection' }}
+                <ArrowRight class="size-4" aria-hidden="true" />
+              </RouterLink>
+            </div>
+          </div>
+          <div class="bg-card rounded-2xl border p-5 sm:p-6 md:order-first" aria-hidden="true">
+            <!-- Decorative mock UI — illustrative values, not real market data. -->
+            <dl class="flex flex-wrap gap-x-8 gap-y-3">
+              <div>
+                <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
+                <dd class="text-xl font-semibold tabular-nums">1,204</dd>
+              </div>
+              <div>
+                <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
+                <dd class="text-xl font-semibold tabular-nums">3,418</dd>
+              </div>
+              <div>
+                <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
+                <dd class="text-xl font-semibold tabular-nums">$2,148.32</dd>
+              </div>
+            </dl>
+            <div class="mt-5 grid grid-cols-3 gap-3">
+              <!-- Tile 1: 4 owned. -->
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                  <div class="space-y-1.5 p-2">
+                    <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                    <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                  </div>
+                </div>
+                <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
+                  <span :class="badgeChipClass">
+                    <Layers class="size-3" aria-hidden="true" />
+                    4
+                  </span>
+                </div>
+              </div>
+              <!-- Tile 2: 2 + 1 foil. -->
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                  <div class="space-y-1.5 p-2">
+                    <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                    <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                  </div>
+                </div>
+                <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
+                  <span :class="badgeChipClass">
+                    <Layers class="size-3" aria-hidden="true" />
+                    2
+                  </span>
+                  <span :class="badgeChipClass">
+                    <Sparkles class="size-3" aria-hidden="true" />
+                    1
+                  </span>
+                </div>
+              </div>
+              <!-- Tile 3: unbadged. -->
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                  <div class="space-y-1.5 p-2">
+                    <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
+                    <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row C — Ghost mode (demo right). -->
+        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
+          <div>
+            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
+              <Ghost class="size-4" aria-hidden="true" />
+              Ghost mode
+            </p>
+            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+              See the gaps in every set
+            </h2>
+            <p class="text-muted-foreground mt-3 text-pretty">
+              Flip on "Show ghosts" in any set to dim the cards you're missing, with a live "X of Y
+              owned" count. The gaps read at a glance — and every ghost carries a quick-add button
+              right where it sits. It works across your collection and your wish list, including
+              Secret Lair by-drop views.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
+              <template v-if="auth.isAuthenticated">
+                <RouterLink to="/collection" :class="rowLinkClass">
+                  See your set gaps
+                  <ArrowRight class="size-4" aria-hidden="true" />
+                </RouterLink>
+              </template>
+              <template v-else>
+                <RouterLink to="/register" :class="rowLinkClass">
+                  Create a free account to try it
+                  <ArrowRight class="size-4" aria-hidden="true" />
+                </RouterLink>
+              </template>
+            </div>
+          </div>
+          <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
+            <!-- Decorative mock UI — illustrative values, not real market data. -->
+            <div class="flex items-center justify-between">
+              <div
+                class="bg-background inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium shadow-sm"
+              >
+                <CircleCheck class="text-primary size-3.5" aria-hidden="true" />
+                5 / 8 owned
+              </div>
+              <div class="text-muted-foreground inline-flex items-center gap-2 text-xs font-medium">
+                Show ghosts
+                <span class="bg-primary inline-flex h-4 w-7 items-center rounded-full">
+                  <span class="bg-primary-foreground size-3 translate-x-3.5 rounded-full"></span>
+                </span>
+              </div>
+            </div>
+            <div class="mt-4 grid grid-cols-4 gap-2.5">
+              <!-- 5 owned. -->
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+              <div class="relative">
+                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+              <!-- Ghost with a crisp quick-add chip. -->
+              <div class="relative">
+                <div
+                  class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
+                >
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+                <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
+                  <span :class="badgeChipClass">
+                    <Plus class="size-3" aria-hidden="true" />
+                  </span>
+                </div>
+              </div>
+              <!-- 2 more ghosts. -->
+              <div class="relative">
+                <div
+                  class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
+                >
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+              <div class="relative">
+                <div
+                  class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
+                >
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row D — Import & sync (demo left at md+). -->
+        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
+          <div>
+            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
+              <Import class="size-4" aria-hidden="true" />
+              Import &amp; sync
+            </p>
+            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+              Bring your collection with you
+            </h2>
+            <p class="text-muted-foreground mt-3 text-pretty">
+              Import from Archidekt by link and pick how it reconciles — overwrite matched cards,
+              mirror-replace, add-merge, or a smart incremental sync — then save the link and
+              re-sync on demand. Prefer a file? Upload a CSV export from Archidekt or Moxfield and
+              it reconciles on the spot.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
+              <RouterLink to="/collection" :class="rowLinkClass">
+                Import into your collection
+                <ArrowRight class="size-4" aria-hidden="true" />
+              </RouterLink>
+            </div>
+          </div>
+          <div class="bg-card rounded-2xl border p-5 sm:p-6 md:order-first" aria-hidden="true">
+            <!-- Decorative mock UI — illustrative values, not real market data. -->
+            <div
+              class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-xs font-medium"
+            >
+              <span class="bg-background text-foreground rounded px-2.5 py-1 shadow-sm">
+                Paste a link
+              </span>
+              <span class="px-2.5 py-1">Upload a CSV</span>
+            </div>
+            <div
+              class="text-muted-foreground bg-background mt-3 flex h-8 items-center truncate rounded-md border px-2.5 text-xs"
+            >
+              archidekt.com/collection/…
+            </div>
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
+                Overwrite
+              </span>
+              <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
+                Replace
+              </span>
+              <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
+                Merge
+              </span>
+              <span
+                class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2.5 py-0.5 text-xs font-medium"
+              >
+                Smart
+              </span>
+            </div>
+            <div class="text-muted-foreground mt-4 flex items-center gap-1.5 text-xs">
+              <CircleCheck class="text-primary size-3.5" aria-hidden="true" />
+              Matched 1,204 cards · 96 foil
+            </div>
+          </div>
+        </div>
+
+        <!-- Row E — Wish list (demo right). -->
+        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
+          <div>
+            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
+              <Heart class="size-4" aria-hidden="true" />
+              Wish lists
+            </p>
+            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+              Price the cards you want next
+            </h2>
+            <p class="text-muted-foreground mt-3 text-pretty">
+              A wish list works just like your collection — regular and foil counts, per-set views,
+              ghosts across whole sets — but for the cards you're still hunting. It keeps a running
+              USD total, so you always know what buying the list would cost.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
+              <RouterLink to="/wishlist" :class="rowLinkClass">
+                {{ auth.isAuthenticated ? 'Open your wish list' : 'Start a wish list' }}
+                <ArrowRight class="size-4" aria-hidden="true" />
+              </RouterLink>
+            </div>
+          </div>
+          <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
+            <!-- Decorative mock UI — illustrative values, not real market data. -->
+            <span class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Your wish list
+            </span>
+            <div class="mt-3 space-y-2.5">
+              <div class="flex items-center gap-3">
+                <div class="bg-muted h-10 w-7 shrink-0 overflow-hidden rounded border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+                <div class="bg-foreground/15 h-1.5 w-full max-w-32 rounded-full"></div>
+                <span class="text-muted-foreground ml-auto text-xs tabular-nums">$4.10</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <div class="bg-muted h-10 w-7 shrink-0 overflow-hidden rounded border">
+                  <div
+                    class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
+                  ></div>
+                </div>
+                <div class="bg-foreground/15 h-1.5 w-full max-w-24 rounded-full"></div>
+                <span class="text-muted-foreground ml-auto text-xs tabular-nums">$12.25</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <div class="bg-muted h-10 w-7 shrink-0 overflow-hidden rounded border">
+                  <div
+                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                  ></div>
+                </div>
+                <div class="bg-foreground/15 h-1.5 w-full max-w-28 rounded-full"></div>
+                <span class="text-muted-foreground ml-auto text-xs tabular-nums">$69.85</span>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center justify-between border-t pt-3">
+              <span class="text-sm font-medium">List total</span>
+              <span class="text-sm font-semibold tabular-nums">$86.20</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Everything else: a compact grid of shipped features, each a link to where it lives. -->
+    <section class="mt-20 sm:mt-24">
+      <h2 class="text-xl font-semibold tracking-tight">Everything else that's live today</h2>
+      <p class="text-muted-foreground mt-1 text-sm">
+        No roadmap padding — every line here is a shipped feature.
+      </p>
       <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <RouterLink
-          v-for="feature in features"
+          v-for="feature in otherFeatures"
           :key="feature.title"
           :to="feature.to"
           class="bg-card hover:border-ring/60 hover:bg-accent/40 group flex items-center gap-4 rounded-xl border p-5 transition-colors"
@@ -249,13 +752,150 @@ const wishlistPoints = [
             aria-hidden="true"
           />
         </RouterLink>
+        <a
+          href="https://github.com/PNRxA/tcglense"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 group flex items-center gap-4 rounded-xl border p-5 transition-colors"
+        >
+          <span class="bg-muted flex size-12 shrink-0 items-center justify-center rounded-lg">
+            <GitHubMark class="text-primary size-6" />
+          </span>
+          <span class="min-w-0">
+            <span class="text-foreground block font-medium">Open source</span>
+            <span class="text-muted-foreground mt-0.5 block text-sm text-pretty">
+              The whole app — the API and this site — is public on GitHub.
+            </span>
+          </span>
+          <ExternalLink
+            class="text-muted-foreground ml-auto size-5 shrink-0 transition-transform group-hover:translate-x-0.5"
+            aria-hidden="true"
+          />
+        </a>
       </div>
     </section>
 
-    <!-- Games strip: jump straight into a real game's catalog (public, no account). -->
-    <section v-if="games.length" class="mt-16">
+    <!-- Built on open data: prominent credits for the three open data projects behind TCGLense. -->
+    <section class="mt-20 sm:mt-24">
+      <h2 class="text-xl font-semibold tracking-tight">Built on open data</h2>
+      <p class="text-muted-foreground mt-1 text-sm text-pretty">
+        Every price, card, and box on TCGLense traces back to three open data projects.
+      </p>
+      <div class="mt-6 grid gap-3 sm:grid-cols-3">
+        <a
+          href="https://scryfall.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 group block rounded-xl border p-5 transition-colors"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold">Scryfall</span>
+            <ExternalLink
+              class="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors"
+              aria-hidden="true"
+            />
+          </div>
+          <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
+            Card data &amp; images
+          </p>
+          <p class="text-muted-foreground mt-2 text-sm text-pretty">
+            The entire card catalog — sets, cards, and the daily singles prices behind every chart —
+            is built from Scryfall's bulk data. Card images are served courtesy of Scryfall.
+          </p>
+          <p class="text-muted-foreground mt-3 text-xs">scryfall.com</p>
+        </a>
+        <a
+          href="https://tcgcsv.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 group block rounded-xl border p-5 transition-colors"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold">TCGCSV</span>
+            <ExternalLink
+              class="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors"
+              aria-hidden="true"
+            />
+          </div>
+          <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
+            Sealed product pricing
+          </p>
+          <p class="text-muted-foreground mt-2 text-sm text-pretty">
+            Current sealed prices and the daily history behind every booster box, bundle, and deck
+            chart.
+          </p>
+          <p class="text-muted-foreground mt-3 text-xs">tcgcsv.com</p>
+        </a>
+        <a
+          href="https://mtgjson.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 group block rounded-xl border p-5 transition-colors"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold">MTGJSON</span>
+            <ExternalLink
+              class="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors"
+              aria-hidden="true"
+            />
+          </div>
+          <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
+            Sealed product contents
+          </p>
+          <p class="text-muted-foreground mt-2 text-sm text-pretty">
+            Which cards live inside which sealed products — the data behind 'found in' on every card
+            page.
+          </p>
+          <p class="text-muted-foreground mt-3 text-xs">mtgjson.com</p>
+        </a>
+      </div>
+      <p class="text-muted-foreground mt-3 text-xs text-pretty">
+        All three are independent projects. None of them produces, endorses, or is affiliated with
+        TCGLense.
+      </p>
+
+      <!-- Open-source strip (#195): the GitHub call-out. -->
+      <div class="border-primary/30 bg-primary/5 mt-6 rounded-2xl border p-6 sm:p-8">
+        <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex items-start gap-4">
+            <GitHubMark class="text-foreground mt-0.5 size-8 shrink-0" />
+            <div>
+              <h3 class="text-lg font-semibold tracking-tight">TCGLense is open source</h3>
+              <p class="text-muted-foreground mt-1 text-sm text-pretty">
+                The whole project — the Rust API and this web app — is public on GitHub. Browse the
+                code, open an issue, or send a PR.
+              </p>
+            </div>
+          </div>
+          <div class="flex shrink-0 flex-wrap gap-3">
+            <a
+              href="https://github.com/PNRxA/tcglense"
+              target="_blank"
+              rel="noopener noreferrer"
+              :class="buttonVariants({ variant: 'outline' })"
+            >
+              View on GitHub
+              <ExternalLink aria-hidden="true" />
+            </a>
+            <a
+              href="https://github.com/PNRxA/tcglense/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-primary inline-flex items-center self-center text-sm font-medium underline-offset-4 hover:underline"
+            >
+              Report an issue
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Games strip: jump straight into a real game's catalog or sealed products (public). -->
+    <section v-if="games.length" class="mt-20 sm:mt-24">
       <h2 class="text-xl font-semibold tracking-tight">Start with your game</h2>
-      <p class="text-muted-foreground mt-1 text-sm">Browse the full catalog, no account needed.</p>
+      <p class="text-muted-foreground mt-1 text-sm">
+        Browse the full catalog and sealed products — no account needed.
+      </p>
       <div class="mt-4 flex flex-wrap gap-2">
         <RouterLink
           v-for="game in games"
@@ -267,27 +907,32 @@ const wishlistPoints = [
           {{ game.name }}
           <ChevronRight class="text-muted-foreground size-4" aria-hidden="true" />
         </RouterLink>
+        <RouterLink
+          to="/sealed"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors"
+        >
+          <Package class="text-muted-foreground size-4" aria-hidden="true" />
+          Sealed products
+          <ChevronRight class="text-muted-foreground size-4" aria-hidden="true" />
+        </RouterLink>
       </div>
+      <p class="text-muted-foreground mt-3 text-sm text-pretty">
+        Magic: The Gathering is the first game on TCGLense — the catalog is built game-agnostic, so
+        more can follow.
+      </p>
     </section>
 
     <!-- Closing CTA band: repeat the primary conversion ask, auth-branched. -->
-    <section class="mt-16 sm:mt-20">
+    <section class="mt-20 sm:mt-24">
       <div class="bg-card rounded-2xl border p-8 text-center sm:p-12">
-        <h2 class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-          {{ auth.isAuthenticated ? 'Pick up where you left off' : 'Start tracking in minutes' }}
-        </h2>
-        <p
-          v-if="auth.isAuthenticated"
-          class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty"
-        >
-          Jump back into your collection and see what you are still chasing.
-        </p>
-        <p v-else class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty">
-          Create a free account to start tracking your collection and wish list, or keep browsing
-          the catalog — no sign-up needed.
-        </p>
-        <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <template v-if="auth.isAuthenticated">
+        <template v-if="auth.isAuthenticated">
+          <h2 class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+            Pick up where you left off
+          </h2>
+          <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty">
+            Jump back into your collection and see what you're still chasing.
+          </p>
+          <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
               Open your collection
               <ArrowRight aria-hidden="true" />
@@ -295,24 +940,27 @@ const wishlistPoints = [
             <RouterLink to="/cards" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
               Browse cards
             </RouterLink>
-          </template>
-          <template v-else>
+          </div>
+        </template>
+        <template v-else>
+          <h2 class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+            Start tracking in minutes
+          </h2>
+          <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty">
+            Create a free account to track your collection and wish list — or keep browsing cards,
+            sealed products, and prices with no sign-up at all.
+          </p>
+          <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <RouterLink to="/register" :class="buttonVariants({ size: 'lg' })">
-              Create your account
+              Create a free account
               <ArrowRight aria-hidden="true" />
             </RouterLink>
             <RouterLink to="/login" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
               Sign in
             </RouterLink>
-          </template>
-        </div>
+          </div>
+        </template>
       </div>
     </section>
-
-    <!-- Honest roadmap footnote: unbuilt work is clearly future-tense. -->
-    <p class="text-muted-foreground mt-12 text-center text-sm text-pretty">
-      Singles pricing is live today. Sealed-product pricing and full set-completion tracking are on
-      the way.
-    </p>
   </div>
 </template>

@@ -135,6 +135,9 @@ const router = createRouter({
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
     },
+    // Legal pages, linked from the site footer. Public and indexable.
+    { path: '/terms', name: 'terms', component: () => import('@/views/TermsView.vue') },
+    { path: '/privacy', name: 'privacy', component: () => import('@/views/PrivacyPolicyView.vue') },
     {
       path: '/profile',
       name: 'profile',
