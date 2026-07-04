@@ -6,8 +6,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Card, OwnedCountsMap } from '@/lib/api'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
+import type { GhostStyle } from '@/lib/ghostDisplay'
 import CardGrid from '../CardGrid.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 function makeCard(id: string): Card {
   return {
@@ -45,6 +47,7 @@ function mountGrid(
   authenticated = true,
   ghostUnowned = false,
   list: CardListTarget = 'collection',
+  opts: { ownedMarks?: OwnedCountsMap; ghostStyle?: GhostStyle } = {},
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -53,11 +56,14 @@ function mountGrid(
   const pinia = createPinia()
   setActivePinia(pinia)
   if (authenticated) useAuthStore().accessToken = 'test-token'
+  // The ghost desaturation style (grayscale default / full colour) is a Pinia preference the
+  // tile reads at setup, so set it before mounting (issue #213).
+  if (opts.ghostStyle) useGhostDisplayStore().setStyle(opts.ghostStyle)
   // CardTile renders a RouterLink, CardGrid reads the card-size preference from a Pinia
   // store, and the quick-add control uses vue-query, so the tree needs all three.
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(CardGrid, {
-    props: { game: 'mtg', cards, ownership, ghostUnowned, list },
+    props: { game: 'mtg', cards, ownership, ghostUnowned, list, ownedMarks: opts.ownedMarks },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
 }
@@ -159,5 +165,53 @@ describe('CardGrid show-ghosts mode (issue #112)', () => {
     // The stretched-link overlay must stay on the link: a `filter` there would collapse it.
     // Guard that the link itself never carries grayscale (it lives on the image instead).
     expect(cardLink(wrapper, 'b').classes()).not.toContain('grayscale')
+  })
+})
+
+describe('CardGrid ghost desaturation style (issue #213)', () => {
+  // The desaturation lives on the CardImage root; both modes dim it (opacity-45), and only
+  // grayscale mode drains the colour.
+  it('drains a ghost image of colour by default (grayscale mode)', () => {
+    const wrapper = mountGrid([makeCard('b')], {}, true, true)
+    expect(wrapper.find('.grayscale').exists()).toBe(true)
+    expect(wrapper.find('.opacity-45').exists()).toBe(true)
+  })
+
+  it('keeps a ghost image in colour (dim only) in colour mode', () => {
+    const wrapper = mountGrid([makeCard('b')], {}, true, true, 'collection', {
+      ghostStyle: 'color',
+    })
+    expect(wrapper.find('.grayscale').exists()).toBe(false)
+    // Still dimmed, so owned cards keep standing out.
+    expect(wrapper.find('.opacity-45').exists()).toBe(true)
+  })
+
+  it('never desaturates or dims when ghost mode is off', () => {
+    const wrapper = mountGrid([makeCard('b')], {}, true, false)
+    expect(wrapper.find('.grayscale').exists()).toBe(false)
+    expect(wrapper.find('.opacity-45').exists()).toBe(false)
+  })
+})
+
+describe('CardGrid owned-in-collection marks (issue #213)', () => {
+  // On the wish-list browse grids, "Show owned (in collection)" overlays an "Owned" marker on
+  // cards the viewer owns in their collection (passed in as `ownedMarks`).
+  it('marks a card present in ownedMarks with a positive count', () => {
+    const wrapper = mountGrid([makeCard('a'), makeCard('b')], undefined, true, false, 'wishlist', {
+      ownedMarks: { a: { quantity: 1, foil_quantity: 0 } },
+    })
+    expect(wrapper.findAll('[aria-label="Owned in your collection"]')).toHaveLength(1)
+  })
+
+  it('treats a zero-count owned mark as not owned', () => {
+    const wrapper = mountGrid([makeCard('a')], undefined, true, false, 'wishlist', {
+      ownedMarks: { a: { quantity: 0, foil_quantity: 0 } },
+    })
+    expect(wrapper.find('[aria-label="Owned in your collection"]').exists()).toBe(false)
+  })
+
+  it('shows no marks without an ownedMarks map', () => {
+    const wrapper = mountGrid([makeCard('a')], undefined, true, false, 'wishlist')
+    expect(wrapper.find('[aria-label="Owned in your collection"]').exists()).toBe(false)
   })
 })

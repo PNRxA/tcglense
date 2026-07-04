@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { Ghost } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import GhostToggle from '@/components/cards/GhostToggle.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
@@ -35,6 +35,7 @@ import {
   useWishlistQuery,
   useWishlistSummaryQuery,
 } from '@/composables/useWishlist'
+import { useOwnedCounts } from '@/composables/useCollection'
 import { useSetGrouping } from '@/composables/useSetGrouping'
 import {
   ALL_CARDS_DEFAULT_SORT,
@@ -48,8 +49,8 @@ import { type Card } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { formatCompletion, formatCopies } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
+import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 // Wishlisted cards for a game, either the whole wish list (`/wishlist/:game/cards`) or
 // scoped to one set (`/wishlist/:game/sets/:code`) — CollectionBrowseView's twin (issue
@@ -241,6 +242,27 @@ const ghostVisibleCards = computed<Card[]>(() =>
   byDrop.value ? ghostDropGroups.value.flatMap((drop) => drop.cards) : ghostCards.value,
 )
 const { ownership, ready: ownershipReady } = useWishlistCounts(game, ghostVisibleCards)
+
+// "Show owned (in collection)" (issue #213): a persisted setting on the ghost button's
+// dropdown that flags which cards on the page you already own in your *collection* while you
+// shop the wish list. Distinct data from the wish-list counts above (`ownership`) — it's the
+// collection's holdings — so it needs its own lookup, over whatever cards the active mode
+// renders (any of the four {list,ghost}×{flat,by-drop} shapes). Fetched only when the setting
+// is on and signed in; the marks pass to the grids as `ownedMarks` (undefined = no markers).
+const ghostDisplay = useGhostDisplayStore()
+const showOwnedMarks = computed(() => auth.isAuthenticated && ghostDisplay.showOwned)
+const markableCards = computed<Card[]>(() => {
+  // Ghost mode renders the same cards `ghostVisibleCards` already derives; the listed-only
+  // modes render the wishlisted holdings' cards.
+  if (showGhosts.value) return ghostVisibleCards.value
+  return byDrop.value
+    ? listedDropGroups.value.flatMap((drop) => drop.cards.map((entry) => entry.card))
+    : listedEntries.value.map((entry) => entry.card)
+})
+const { ownership: collectionOwnership } = useOwnedCounts(game, markableCards, {
+  enabled: showOwnedMarks,
+})
+const ownedMarks = computed(() => (showOwnedMarks.value ? collectionOwnership.value : undefined))
 
 // The wish-list stats for the current scope (all cards / a set / a set + its related
 // group, tracking `includeRelated`), unfiltered by the search box. Fetched in every mode:
@@ -435,23 +457,7 @@ const errorMessage = computed(() =>
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
             <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setDropView" />
-            <button
-              type="button"
-              :class="
-                cn(
-                  'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                  showGhosts
-                    ? 'border-primary bg-primary/10 text-foreground'
-                    : 'text-muted-foreground hover:text-foreground',
-                )
-              "
-              :aria-pressed="showGhosts"
-              title="Also show cards not on your wish list, dimmed, to see what you could add"
-              @click="setShowGhosts(!showGhosts)"
-            >
-              <Ghost class="size-4" aria-hidden="true" />
-              Show ghosts
-            </button>
+            <GhostToggle :show-ghosts="showGhosts" list="wishlist" @toggle="setShowGhosts" />
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <CardSizeMenu />
@@ -512,7 +518,12 @@ const errorMessage = computed(() =>
               :key="drop.slug ?? drop.title"
               :drop="drop"
             >
-              <CollectionGrid :game="game" :entries="drop.cards" list="wishlist" />
+              <CollectionGrid
+                :game="game"
+                :entries="drop.cards"
+                list="wishlist"
+                :owned-marks="ownedMarks"
+              />
             </DropSection>
           </template>
           <template v-else>
@@ -527,6 +538,7 @@ const errorMessage = computed(() =>
                 :ownership="ownership"
                 :ghost-unowned="ownershipReady"
                 list="wishlist"
+                :owned-marks="ownedMarks"
               />
             </DropSection>
           </template>
@@ -545,6 +557,7 @@ const errorMessage = computed(() =>
             :game="game"
             :entries="listedEntries"
             list="wishlist"
+            :owned-marks="ownedMarks"
           />
           <CardGrid
             v-else
@@ -553,6 +566,7 @@ const errorMessage = computed(() =>
             :ownership="ownership"
             :ghost-unowned="ownershipReady"
             list="wishlist"
+            :owned-marks="ownedMarks"
           />
           <div class="mt-10">
             <CardPagination v-model:page="page" :page-size="CARD_PAGE_SIZE" :total="total" />

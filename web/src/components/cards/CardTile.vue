@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import CardImage from '@/components/cards/CardImage.vue'
+import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 const props = defineProps<{
   game: string
@@ -38,17 +39,22 @@ function onClick(event: MouseEvent) {
   void router.push({ query: { ...route.query, card: props.card.id } })
 }
 
-// The image dims + desaturates; the text block dims with opacity only. Crucially the
-// grayscale goes on the IMAGE, never on the RouterLink below: a `filter` other than `none`
-// makes an element the containing block for its abs-positioned descendants, which would
-// collapse the link's stretched `after:inset-0` overlay onto just the text box and stop a
-// click on the artwork from navigating. Opacity creates no containing block, so the text
+// The image dims + (optionally) desaturates; the text block dims with opacity only.
+// Crucially any grayscale goes on the IMAGE, never on the RouterLink below: a `filter` other
+// than `none` makes an element the containing block for its abs-positioned descendants, which
+// would collapse the link's stretched `after:inset-0` overlay onto just the text box and stop
+// a click on the artwork from navigating. Opacity creates no containing block, so the text
 // link can dim safely (and the #badge slot is never dimmed — its "+" stays crisp).
-const ghostImageClass = computed(() =>
-  props.ghost
-    ? 'opacity-45 grayscale transition group-hover:opacity-100 group-hover:grayscale-0 motion-reduce:transition-none'
-    : '',
-)
+//
+// The desaturation is a display preference (issue #213): 'grayscale' (default) drains the
+// colour and restores it on hover; 'color' keeps the artwork's colour and only dims. Both
+// modes always dim, so owned cards still stand out against the ghosts either way.
+const ghostDisplay = useGhostDisplayStore()
+const ghostImageClass = computed(() => {
+  if (!props.ghost) return ''
+  const base = 'opacity-45 transition group-hover:opacity-100 motion-reduce:transition-none'
+  return ghostDisplay.style === 'grayscale' ? `${base} grayscale group-hover:grayscale-0` : base
+})
 const ghostTextClass = computed(() =>
   props.ghost ? 'opacity-60 transition group-hover:opacity-100 motion-reduce:transition-none' : '',
 )
