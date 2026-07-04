@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { Ghost } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
@@ -473,7 +473,9 @@ const errorMessage = computed(() =>
         </p>
 
         <!-- Nothing to show. In show-ghosts mode that means the catalog has no cards in
-             scope; otherwise it's an empty (sub-)collection, so point at the catalog. -->
+             scope; otherwise it's an empty (sub-)collection, so offer to switch ghosts
+             on — the full card list in scope with unowned cards dimmed, whose add-in-place
+             controls write to the collection (mirrors the wish-list browse view). -->
         <div v-else-if="!hasCards" class="py-16 text-center">
           <template v-if="showGhosts">
             <p class="text-muted-foreground">
@@ -486,13 +488,14 @@ const errorMessage = computed(() =>
               <template v-if="scoped">You don't own any cards from {{ heading }} yet.</template>
               <template v-else>Your {{ gameName }} collection is empty.</template>
             </p>
-            <RouterLink
-              :to="scoped ? `/cards/${game}/sets/${code}` : `/cards/${game}`"
+            <button
+              type="button"
               :class="buttonVariants({ variant: 'default' })"
               class="mt-4 inline-flex"
+              @click="setShowGhosts(true)"
             >
-              Browse cards to add some
-            </RouterLink>
+              Show all cards to add some
+            </button>
           </template>
         </div>
 
