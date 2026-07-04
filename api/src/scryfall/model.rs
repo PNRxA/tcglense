@@ -100,6 +100,13 @@ pub struct ScryfallCard {
     pub card_faces: Option<Vec<CardFace>>,
     #[serde(default)]
     pub prices: Option<Prices>,
+    /// TCGplayer product id for the regular/foil printing — the join key onto
+    /// TCGCSV's `productId` for the historic price backfill (see `crate::tcgcsv`).
+    #[serde(default)]
+    pub tcgplayer_id: Option<i32>,
+    /// TCGplayer product id for the etched printing, when Scryfall distinguishes one.
+    #[serde(default)]
+    pub tcgplayer_etched_id: Option<i32>,
     // --- Additional fields ingested for Scryfall search parity. ---
     /// Keyword abilities (Flying, Trample, …). Comma-joined on storage.
     #[serde(default)]

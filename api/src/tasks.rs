@@ -101,18 +101,52 @@ fn spawn_maintenance(
     });
 }
 
+/// Parameters for the one-time TCGCSV historic price backfill, when enabled. `None`
+/// disables it. Passed into the card-sync task so the backfill can start once the
+/// first card sync has populated `cards.tcgplayer_id` (its join key).
+struct BackfillConfig {
+    user_agent: String,
+    days: u32,
+}
+
+/// Kick off the one-time historic price backfill (once cards exist) as its own
+/// detached task, so a long walk over TCGCSV's daily archives never blocks the
+/// periodic card-sync ticker. The backfill is internally gated (an `ingest_state`
+/// row), so re-invoking it after it has completed is a cheap no-op. Errors are
+/// logged, never fatal.
+fn spawn_price_backfill(db: DatabaseConnection, http: Client, cfg: BackfillConfig) {
+    tokio::spawn(async move {
+        if let Err(err) =
+            crate::tcgcsv::backfill::run(&db, &http, &cfg.user_agent, cfg.days).await
+        {
+            tracing::error!(error = %err, "tcgcsv price backfill failed");
+        }
+    });
+}
+
 /// Import card data from each provider in the background so the server is available
 /// immediately (the SPA shows import progress via the status route), then re-import
 /// on a fixed interval to pick up Scryfall's newer prices/sets. The import is
 /// idempotent and version-gated, so a tick with no upstream change is cheap (a small
 /// bulk-data catalog check, no ~500 MB download).
-fn spawn_card_sync(db: DatabaseConnection, http: Client, sync_interval_hours: u64) {
+///
+/// After the first sync completes (so `cards.tcgplayer_id` is populated), the
+/// one-time TCGCSV historic price backfill is spawned if `backfill` is `Some`.
+fn spawn_card_sync(
+    db: DatabaseConnection,
+    http: Client,
+    sync_interval_hours: u64,
+    mut backfill: Option<BackfillConfig>,
+) {
     tokio::spawn(async move {
         if sync_interval_hours == 0 {
             // Periodic refresh disabled: import once on startup only.
             catalog::refresh_all(&db, &http).await;
             // Capture today's snapshot from the freshly-imported cards.
             catalog::snapshot_all(&db).await;
+            if let Some(cfg) = backfill.take() {
+                spawn_price_backfill(db.clone(), http.clone(), cfg);
+            }
             return;
         }
         // saturating_mul so an absurd SYNC_INTERVAL_HOURS can't overflow the
@@ -132,6 +166,12 @@ fn spawn_card_sync(db: DatabaseConnection, http: Client, sync_interval_hours: u6
             // Always capture a daily snapshot, even when the import above was
             // version-gated and skipped — keeps the price series continuous.
             catalog::snapshot_all(&db).await;
+            // After the first successful sync, cards carry their tcgplayer_id, so
+            // the one-time historic backfill can join against them. `take` ensures
+            // it's only spawned once.
+            if let Some(cfg) = backfill.take() {
+                spawn_price_backfill(db.clone(), http.clone(), cfg);
+            }
         }
     });
 }
@@ -160,10 +200,17 @@ pub async fn start(state: &AppState, http: &Client) {
         catalog::seed_all(&state.db).await;
         seed_dev_user(&state.db).await;
     } else if state.config.sync_on_startup {
+        // The historic price backfill runs only outside dummy mode (real cards must
+        // exist to join against) and when enabled.
+        let backfill = state.config.price_backfill_enabled.then(|| BackfillConfig {
+            user_agent: state.config.tcgcsv_user_agent.clone(),
+            days: state.config.price_backfill_days,
+        });
         spawn_card_sync(
             state.db.clone(),
             http.clone(),
             state.config.sync_interval_hours,
+            backfill,
         );
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");

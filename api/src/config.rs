@@ -26,6 +26,17 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// `User-Agent` sent to Scryfall (their API guidelines require a descriptive one).
     pub scryfall_user_agent: String,
+    /// `User-Agent` sent to TCGCSV (https://tcgcsv.com) on the one-time historic
+    /// price backfill. TCGCSV blocks generic/unset User-Agents, so a descriptive one
+    /// (with a contact URL/email) is required. Not a secret.
+    pub tcgcsv_user_agent: String,
+    /// Master switch for the one-time TCGCSV historic price backfill (see
+    /// [`crate::tcgcsv`]). Default `true`; set `false` to skip it entirely.
+    pub price_backfill_enabled: bool,
+    /// Cap on how many of the most recent archive days the price backfill downloads.
+    /// `0` (the default) = every archive day since TCGCSV's first (2024-02-08); `N` =
+    /// only the most recent `N` days. Useful to bound a first run.
+    pub price_backfill_days: u32,
     /// `User-Agent` sent to Moxfield, when set. Moxfield's API sits behind bot
     /// protection that rejects unknown clients; they approve specific User-Agent
     /// strings on request (email support@moxfield.com). Unset = requests go out with
@@ -94,6 +105,9 @@ impl std::fmt::Debug for Config {
             .field("public_site_url", &self.public_site_url)
             .field("data_dir", &self.data_dir)
             .field("scryfall_user_agent", &self.scryfall_user_agent)
+            .field("tcgcsv_user_agent", &self.tcgcsv_user_agent)
+            .field("price_backfill_enabled", &self.price_backfill_enabled)
+            .field("price_backfill_days", &self.price_backfill_days)
             // The Moxfield-approved UA is a credential (it's what their allow-list
             // keys on), so print only whether one is configured.
             .field(
@@ -253,6 +267,14 @@ impl Config {
         let scryfall_user_agent = env_trimmed("SCRYFALL_USER_AGENT")
             .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
 
+        // TCGCSV blocks generic UAs; reuse the Scryfall default's shape as a fallback.
+        let tcgcsv_user_agent = env_trimmed("TCGCSV_USER_AGENT")
+            .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
+
+        // The one-time historic price backfill runs by default; `0` days = all archives.
+        let price_backfill_enabled = env_bool("PRICE_BACKFILL_ENABLED", true);
+        let price_backfill_days = env_parse::<u32>("PRICE_BACKFILL_DAYS").unwrap_or(0);
+
         // Moxfield only serves approved User-Agents (see the struct field); no default.
         let moxfield_user_agent = env_trimmed("MOXFIELD_USER_AGENT");
 
@@ -298,6 +320,9 @@ impl Config {
             public_site_url,
             data_dir,
             scryfall_user_agent,
+            tcgcsv_user_agent,
+            price_backfill_enabled,
+            price_backfill_days,
             moxfield_user_agent,
             resend_api_key,
             email_from,
