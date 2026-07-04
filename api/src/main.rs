@@ -4,6 +4,7 @@ mod catalog;
 mod client_ip;
 mod collection_import;
 mod config;
+mod datasets;
 mod db;
 mod email;
 mod entities;

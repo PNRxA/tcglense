@@ -35,6 +35,9 @@ use crate::{
             save_collection_source, set_collection_entry, sync_collection_source,
         },
         health::health,
+        mirror::{
+            mtgjson_all_printings, scryfall_bulk_data, scryfall_file, scryfall_sets, tcgcsv_proxy,
+        },
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
@@ -212,6 +215,28 @@ pub fn build_router(state: AppState) -> Router {
         .layer(from_fn(conditional_request_layer));
 
     let mut app = Router::new().merge(private).merge(public);
+
+    // Optional dataset mirror (see `Config::mirror_enabled` + `handlers::mirror`). When
+    // enabled, this instance re-serves the raw provider datasets so other TCGLense
+    // instances can pull them from here (offloading Scryfall / MTGJSON / TCGCSV and
+    // riding this origin's CDN). Off by default so an ordinary self-host isn't an open
+    // proxy to the upstreams. Each handler sets its own CDN-cacheable `Cache-Control`,
+    // which `public_cache_layer` preserves (and it marks any error `no-store`). Merged
+    // before the `web_root` catch-all below so the mirror routes win over the SPA
+    // fallback.
+    if state.config.mirror_enabled {
+        let mirror = Router::new()
+            .route("/api/mirror/scryfall/bulk-data", get(scryfall_bulk_data))
+            .route("/api/mirror/scryfall/sets", get(scryfall_sets))
+            .route("/api/mirror/scryfall/file/{kind}", get(scryfall_file))
+            .route(
+                "/api/mirror/mtgjson/AllPrintings.json.gz",
+                get(mtgjson_all_printings),
+            )
+            .route("/api/mirror/tcgcsv/{*path}", get(tcgcsv_proxy))
+            .layer(map_response(public_cache_layer));
+        app = app.merge(mirror);
+    }
 
     // Optional static-SPA fallback (see `Config::web_root`). When `WEB_ROOT` is set,
     // any request the `/api/...` routes above didn't match is served from that

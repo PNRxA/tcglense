@@ -588,7 +588,8 @@ same way the catalog's come from `/owned`.
 main.rs            bootstrap: env → tracing → DB connect → migrate → AppState::new → tasks::start → build_router → serve
 router.rs          build_router(): every route + the shared middleware stack (CORS, cache layers, body limits) — kept out of main so the security tests drive the exact same router in-process
 tasks.rs           background startup tasks: 6h maintenance loop (prune expired refresh- + email-tokens; retain_recent on the per-IP + per-user rate limiters) + either the awaited offline dummy-catalog seed (SEED_DUMMY_DATA — which also seeds the verified `e2e@tcglense.test`/`password123` dev account; offline registration is itself completable via the returned completion token, but the seeded account keeps the e2e login/session tests independent of the registration flow) or the spawned startup/periodic card-data sync
-config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, MOXFIELD_USER_AGENT, RESEND_API_KEY, EMAIL_FROM, TURNSTILE_SECRET_KEY, TRUST_PROXY_HEADERS, RATE_LIMIT_ENABLED, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA); Debug redacts the secrets
+config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGENT, MOXFIELD_USER_AGENT, RESEND_API_KEY, EMAIL_FROM, TURNSTILE_SECRET_KEY, TRUST_PROXY_HEADERS, RATE_LIMIT_ENABLED, SYNC_ON_STARTUP, SYNC_INTERVAL_HOURS, SEED_DUMMY_DATA, SYNC_FROM_UPSTREAM, DATASET_MIRROR_URL, MIRROR_ENABLED); Debug redacts the secrets
+datasets.rs        dataset-source seam: SyncSource resolves each provider's base URLs to either the real upstream (Scryfall/MTGJSON/TCGCSV) or a TCGLense mirror (SYNC_FROM_UPSTREAM / DATASET_MIRROR_URL); the one place the sync path knows about the mirror, imported by the three provider clients
 captcha.rs         CAPTCHA verification: Captcha enum (Turnstile via the shared client + per-request timeout / Disabled when TURNSTILE_SECRET_KEY unset / test-only ExpectToken) — enum dispatch like email.rs; a missing/rejected token is a 400, checked before any account work
 client_ip.rs       resolve the client IP for rate limiting (socket-peer default; X-Forwarded-For/Forwarded only when TRUST_PROXY_HEADERS) + a ClientIp extractor; None when unresolvable (the in-process test harness) so the limiter fails open
 ratelimit.rs       rate limiting, two flavours: per-IP for the auth endpoints — RateLimiters (one governor keyed limiter per auth class — login/register/email-send/token) + the `rate_limit` middleware (429 + Retry-After; no-ops for non-auth paths, a disabled limiter, or an unresolvable IP) — and per-user for the authenticated surface (issue #168) — UserRateLimiters (general/import classes, keyed by the access-token user id) + the `user_rate_limit` middleware (skips a request with no valid bearer); both retain_recent bound their keyspace
@@ -610,7 +611,7 @@ auth/
   email_token.rs   single-use emailed-token service (registration-completion 24h / verification 24h / password reset 1h): issue / issue_with_cooldown (60s, atomic conditional INSERT gated on rows_affected so a concurrent burst can't bypass it) / consume (atomic claim, purpose-scoped) / prune_expired — same storage design as refresh.rs, no rotation lineage
   cookie.rs        build + clear the tcglense_refresh httpOnly cookie
   extractor.rs     AuthUser: FromRequestParts that validates the Bearer access token + loads the user
-catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all()/seed_all() (dispatch per game to its provider / offline dummy seeder)
+catalog/           game-agnostic catalog: GAMES registry + find() + refresh_all()/seed_all() (dispatch per game to its provider / offline dummy seeder; refresh_all threads the datasets::SyncSource so each provider fetches from upstream or the mirror)
   images.rs        ImageCache: lazy on-disk image cache/downloader (<DATA_DIR>/images/<game>/<size>/<key>.<ext>), path-sanitised, fetch-concurrency-limited; CDN_MODE bypasses disk (fetch-and-serve only, no persistence)
 scryfall/          MTG provider (the first game)
   model.rs         serde structs for the Scryfall card/set/bulk-data shapes we consume
@@ -632,6 +633,7 @@ handlers/
   collection/      authenticated per-user collection, one file per concern: read.rs (owned list [optional `?set` scope + `?include_related` group span] / summary / single + batch owned counts [POST .../owned, for browse-grid badges]), sets.rs (owned-set landing tiles via build_collection_sets, each carrying owned value; owned cards by Secret Lair drop, paginated by drop), write.rs (PUT absolute owned counts — ON CONFLICT upsert, both-zero deletes), import.rs (one-off URL import + CSV upload [POST .../import/csv, synchronous, body-limited] + saved-source CRUD + sync via the `collection_import` module); mod.rs holds the import-specific DTOs and re-exports the shared wire types/params from shared/holdings.rs; reuses shared's CardResponse/`group_into_drops`/`group_set_codes`/`load_set`
   wishlist/        authenticated per-user wish list (issue #167) — the collection's read/write surface minus import/sync, one file per concern over `wishlist_items`: read.rs (list / summary / single + batch counts [POST .../counts]), sets.rs (wishlisted-set aggregates; wishlisted cards by Secret Lair drop), write.rs (PUT absolute counts); wire shapes + params + helpers come from shared/holdings.rs (never from handlers::collection)
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
+  mirror.rs        dataset mirror (issue #192): re-serve the raw provider datasets — scryfall bulk-data/sets/file, mtgjson AllPrintings.json.gz, tcgcsv {*path} — by streaming each from upstream on demand with CDN-cacheable headers (no disk, like CDN_MODE). Routes wired only when MIRROR_ENABLED; path/kind inputs sanitised (host-locked, no traversal). The file cache TTL is deliberately shorter than the catalog's so a consumer never pairs a fresh updated_at with a stale file
   health.rs        health
 ```
 
@@ -819,7 +821,15 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   is on), `SEED_DUMMY_DATA` (`false`; seed a deterministic offline dummy catalog
   instead of importing real data — **takes precedence** over `SYNC_ON_STARTUP`/
   `SYNC_INTERVAL_HOURS`, does no network sync, upsert-only so point it at a
-  fresh/dedicated DB). See `api/.env.example`.
+  fresh/dedicated DB),
+  `SYNC_FROM_UPSTREAM` (`false`; fetch the raw datasets straight from
+  Scryfall/MTGJSON/TCGCSV — the mirror host's posture — instead of from the mirror at
+  `DATASET_MIRROR_URL`), `DATASET_MIRROR_URL` (`https://tcglense.com`; the TCGLense
+  mirror a self-host reads datasets from by default; trailing slash trimmed),
+  `MIRROR_ENABLED` (`false`; serve the `/api/mirror/*` dataset endpoints so other
+  instances can pull the datasets from this one — off by default so a self-host isn't
+  an open proxy to the upstreams; the public mirror sets it with
+  `SYNC_FROM_UPSTREAM=true`). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
   `VITE_TURNSTILE_SITE_KEY` (public Cloudflare Turnstile site key; unset → the
   CAPTCHA widget isn't rendered and no token is sent — pair it with the API's
@@ -1022,6 +1032,32 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   The parser assumes Scryfall's one-object-per-line bulk format; per-line length
   isn't capped, so a format change to a single-line array would not be parsed safely
   (it'd hit the zero-card guard but only after buffering).
+- **Dataset mirror (issue #192):** by default a self-host pulls the three big dataset
+  files (Scryfall bulk cards + sets, MTGJSON `AllPrintings`, TCGCSV catalog/prices/
+  archives) from a **TCGLense mirror** (`DATASET_MIRROR_URL`, default
+  `https://tcglense.com`) rather than from the upstream services — it offloads those
+  providers, rides the mirror's CDN, and needs none of the bot-walled providers'
+  User-Agents. The `datasets::SyncSource` seam is the single place that decides
+  upstream-vs-mirror; set `SYNC_FROM_UPSTREAM=true` to fetch from the real services (the
+  mirror host's posture). Serving the mirror is separate: `MIRROR_ENABLED=true` exposes
+  `/api/mirror/*` (`handlers::mirror`), which **streams each file from upstream on
+  demand** (no disk persistence — the same fetch-and-serve model as `CDN_MODE`) and sets
+  CDN-cacheable headers so a fronting CDN absorbs the repeats. It's off by default so an
+  ordinary self-host doesn't become an open proxy to the upstreams; the public mirror
+  runs `MIRROR_ENABLED=true` + `SYNC_FROM_UPSTREAM=true`. Trade-offs: (1) the mirror
+  fetches on the shared gzip-decoding client, so the Scryfall/TCGCSV JSON is re-served
+  **decompressed** (a CDN re-compresses egress; MTGJSON's `.gz` + TCGCSV's `.7z` pass
+  through as opaque bytes) — bounded-memory streamed, but the origin→CDN fill transfers
+  the uncompressed size once per cache period; (2) the bulk-**file** cache TTL is
+  deliberately **shorter** than the bulk-data **catalog** TTL, so a consumer can never
+  read a fresh `updated_at` while the CDN still holds a stale file (which it would then
+  stamp as current and never re-pull); (3) MTGJSON stays ETag-gated end-to-end — the
+  mirror forwards `If-None-Match` and relays the upstream `304` (its cache is
+  `must-revalidate`), so an unchanged file is still a cheap conditional; (4) the mirror
+  is a public read proxy to fixed upstream hosts with `kind`/path inputs sanitised
+  (host-locked, no traversal), but — like the image proxy — has no per-IP rate limit or
+  bandwidth budget yet, so it carries the same open-proxy abuse posture noted under
+  "Image caching".
 - **Dummy catalog seed:** `SEED_DUMMY_DATA=true` makes `tasks::start` **await**
   `catalog::seed_all` (no network, no images) before serving, populating a small
   deterministic fake catalog (a few MTG-flavoured sets — including a parent/child

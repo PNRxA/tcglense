@@ -106,6 +106,25 @@ pub struct Config {
     /// and SPA in one container); the split deployment (Caddy serving the SPA and
     /// proxying `/api`) leaves it unset. See [`crate::router`].
     pub web_root: Option<PathBuf>,
+    /// Fetch the raw provider datasets (Scryfall bulk cards + sets, MTGJSON
+    /// `AllPrintings`, TCGCSV catalog/prices) **directly from the upstream services**
+    /// rather than from a TCGLense mirror. Default `false`: a self-host reads from the
+    /// mirror at [`Self::dataset_mirror_url`] instead, offloading the upstreams and
+    /// riding the mirror's CDN. The mirror host itself sets this `true` (it's the one
+    /// origin that must talk to the real services). See [`crate::datasets`].
+    pub sync_from_upstream: bool,
+    /// Base origin of the TCGLense mirror the sync reads datasets from when
+    /// [`Self::sync_from_upstream`] is false (the default). Defaults to the public site
+    /// (`https://tcglense.com`). Trailing slashes are trimmed so URL joins never double
+    /// up. Ignored when syncing from upstream.
+    pub dataset_mirror_url: String,
+    /// Whether this instance **serves** the dataset mirror endpoints (`/api/mirror/*`)
+    /// so other TCGLense instances can pull the datasets from it. Default `false` — an
+    /// ordinary self-host is a mirror *consumer*, not a provider; only the public site
+    /// enables this (alongside `SYNC_FROM_UPSTREAM=true`). Off by default so a self-host
+    /// doesn't become an open proxy to the upstream services. See
+    /// [`crate::handlers::mirror`].
+    pub mirror_enabled: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -154,6 +173,9 @@ impl std::fmt::Debug for Config {
             .field("seed_dummy_data", &self.seed_dummy_data)
             .field("cdn_mode", &self.cdn_mode)
             .field("web_root", &self.web_root)
+            .field("sync_from_upstream", &self.sync_from_upstream)
+            .field("dataset_mirror_url", &self.dataset_mirror_url)
+            .field("mirror_enabled", &self.mirror_enabled)
             .finish()
     }
 }
@@ -354,6 +376,18 @@ impl Config {
         // combined image); unset = the API serves only /api (see the field docs).
         let web_root = env_trimmed("WEB_ROOT").map(PathBuf::from);
 
+        // Dataset source: a self-host reads the big provider files from the TCGLense
+        // mirror by default (offloading the upstreams / riding the mirror CDN). The
+        // mirror host sets SYNC_FROM_UPSTREAM=true to talk to the real services.
+        let sync_from_upstream = env_bool("SYNC_FROM_UPSTREAM", false);
+        let dataset_mirror_url = env_trimmed("DATASET_MIRROR_URL")
+            .map(|v| v.trim().trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://tcglense.com".to_string());
+        // Serving the mirror is off by default so a self-host isn't an open proxy; the
+        // public site turns it on (paired with SYNC_FROM_UPSTREAM=true).
+        let mirror_enabled = env_bool("MIRROR_ENABLED", false);
+
         Config {
             database_url,
             jwt_secret,
@@ -380,6 +414,9 @@ impl Config {
             seed_dummy_data,
             cdn_mode,
             web_root,
+            sync_from_upstream,
+            dataset_mirror_url,
+            mirror_enabled,
         }
     }
 

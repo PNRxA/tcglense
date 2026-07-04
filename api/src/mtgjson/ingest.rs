@@ -59,8 +59,12 @@ const VERSION_SEP: char = '\u{1f}';
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
 /// the error is returned for the caller to log.
-pub async fn refresh(db: &DatabaseConnection, http: &Client) -> Result<(), MtgjsonError> {
-    match refresh_inner(db, http).await {
+pub async fn refresh(
+    db: &DatabaseConnection,
+    http: &Client,
+    source: &crate::datasets::SyncSource,
+) -> Result<(), MtgjsonError> {
+    match refresh_inner(db, http, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = mark_error(db, &err.to_string()).await;
@@ -69,7 +73,11 @@ pub async fn refresh(db: &DatabaseConnection, http: &Client) -> Result<(), Mtgjs
     }
 }
 
-async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), MtgjsonError> {
+async fn refresh_inner(
+    db: &DatabaseConnection,
+    http: &Client,
+    source: &crate::datasets::SyncSource,
+) -> Result<(), MtgjsonError> {
     let existing = load_state(db).await?;
     // The stored version couples MTGJSON's ETag with the committed fallback file's hash
     // (see `compose_version`), so a fallback-data edit forces a rebuild even when
@@ -87,8 +95,10 @@ async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), Mtg
     // Conditional fetch: a 304 (unchanged file) short-circuits the whole rebuild — but
     // only when the fallback data is also unchanged. If the fallback file changed we must
     // re-fetch AllPrintings to rebuild the merged table, so skip the conditional request.
+    // In mirror mode the file streams from the mirror; upstream mode hits MTGJSON directly.
+    let base_url = source.mtgjson_base_url();
     let conditional = if fallback_changed { None } else { prior_etag };
-    let (etag, all) = match fetch_all_printings(http, conditional).await? {
+    let (etag, all) = match fetch_all_printings(http, &base_url, conditional).await? {
         FetchOutcome::Unchanged => {
             drop(progress);
             tracing::info!("mtgjson sealed contents already up to date");

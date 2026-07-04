@@ -11,6 +11,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 
 use crate::{
     catalog,
+    datasets::SyncSource,
     entities::{prelude::User, user},
     ratelimit::{AuthRateLimiter, UserRateLimiter},
     state::AppState,
@@ -116,10 +117,15 @@ struct BackfillConfig {
 /// periodic card-sync ticker. The backfill is internally gated (an `ingest_state`
 /// row), so re-invoking it after it has completed is a cheap no-op. Errors are
 /// logged, never fatal.
-fn spawn_price_backfill(db: DatabaseConnection, http: Client, cfg: BackfillConfig) {
+fn spawn_price_backfill(
+    db: DatabaseConnection,
+    http: Client,
+    cfg: BackfillConfig,
+    source: SyncSource,
+) {
     tokio::spawn(async move {
         if let Err(err) =
-            crate::tcgcsv::backfill::run(&db, &http, &cfg.user_agent, cfg.days).await
+            crate::tcgcsv::backfill::run(&db, &http, &cfg.user_agent, cfg.days, &source).await
         {
             tracing::error!(error = %err, "tcgcsv price backfill failed");
         }
@@ -140,15 +146,16 @@ fn spawn_card_sync(
     sync_interval_hours: u64,
     tcgcsv_user_agent: String,
     mut backfill: Option<BackfillConfig>,
+    source: SyncSource,
 ) {
     tokio::spawn(async move {
         if sync_interval_hours == 0 {
             // Periodic refresh disabled: import once on startup only.
-            catalog::refresh_all(&db, &http, &tcgcsv_user_agent).await;
+            catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Capture today's snapshot from the freshly-imported cards + products.
             catalog::snapshot_all(&db).await;
             if let Some(cfg) = backfill.take() {
-                spawn_price_backfill(db.clone(), http.clone(), cfg);
+                spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone());
             }
             return;
         }
@@ -165,7 +172,7 @@ fn spawn_card_sync(
             // The first tick fires immediately (the startup import), then every
             // `sync_interval_hours` thereafter.
             ticker.tick().await;
-            catalog::refresh_all(&db, &http, &tcgcsv_user_agent).await;
+            catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Always capture a daily snapshot, even when the import above was
             // version-gated and skipped — keeps the price series continuous.
             catalog::snapshot_all(&db).await;
@@ -173,7 +180,7 @@ fn spawn_card_sync(
             // the one-time historic backfill can join against them. `take` ensures
             // it's only spawned once.
             if let Some(cfg) = backfill.take() {
-                spawn_price_backfill(db.clone(), http.clone(), cfg);
+                spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone());
             }
         }
     });
@@ -215,6 +222,7 @@ pub async fn start(state: &AppState, http: &Client) {
             state.config.sync_interval_hours,
             state.config.tcgcsv_user_agent.clone(),
             backfill,
+            SyncSource::from_config(&state.config),
         );
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
