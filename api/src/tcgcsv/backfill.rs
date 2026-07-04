@@ -24,6 +24,7 @@ use sevenz_rust2::{ArchiveReader, Password};
 
 use super::BackfillError;
 use super::model::{DayPrice, PriceFile, aggregate_prices};
+use super::progress::SyncProgress;
 use super::{DATASET, GAME, MTG_CATEGORY_ID};
 use crate::entities::prelude::{
     Card, CardPriceHistory, IngestState, Product, ProductPriceHistory,
@@ -122,6 +123,13 @@ async fn run_inner(
     tracing::info!(from = %start, to = %today, "tcgcsv backfill: walking price archives");
     put_running(db, started, None, &format!("starting at {start}"), 0).await?;
 
+    // Live terminal progress: a determinate bar over every candidate archive day in
+    // `[start, today]` (incl. the days with no archive, which still count as one step),
+    // with a running backfilled-row tally (see `super::progress`). `start <= today` is
+    // guaranteed by the guard above, so the length is at least 1.
+    let total_days = (today - start).num_days().max(0) as u64 + 1;
+    let progress = SyncProgress::start_backfill(total_days);
+
     let mut total_rows: i64 = 0;
     let mut date = start;
     while date <= today {
@@ -149,9 +157,13 @@ async fn run_inner(
             total_rows,
         )
         .await?;
+        progress.inc();
+        progress.set_count(total_rows.max(0) as u64);
         date += chrono::Duration::days(1);
     }
 
+    // Clear the progress bar before the completion line so it prints cleanly.
+    drop(progress);
     finish(
         db,
         started,
