@@ -130,3 +130,35 @@ async fn email_endpoints_require_captcha_before_any_account_lookup() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path} without a captcha token");
     }
 }
+
+/// The remaining two of the seven auth mutation endpoints — reset-password and
+/// verify-email — are CAPTCHA-gated too. Both carry a `token` (not an email), so the
+/// body must be well-formed for the extractor before the handler's captcha check
+/// runs; a well-formed body missing the `captcha_token` is a uniform 400, before the
+/// token is consumed or any account work happens. reset-password is the most
+/// sensitive of the set (it re-hashes the password and revokes every refresh token),
+/// so a dropped captcha check there would silently remove the abuse gate.
+#[tokio::test]
+async fn reset_and_verify_endpoints_require_captcha() {
+    let app = test_app_requiring_captcha().await;
+
+    // reset-password: a well-formed {token, password} body with no captcha_token -> 400
+    // (not a 401 for the bogus token — the captcha gate fires first).
+    let (reset, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/reset-password",
+            json!({ "token": "deadbeef", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(reset, StatusCode::BAD_REQUEST);
+
+    // verify-email: a well-formed {token} body with no captcha_token -> 400.
+    let (verify, _, _) = send(
+        &app,
+        json_post("/api/auth/verify-email", json!({ "token": "deadbeef" })),
+    )
+    .await;
+    assert_eq!(verify, StatusCode::BAD_REQUEST);
+}

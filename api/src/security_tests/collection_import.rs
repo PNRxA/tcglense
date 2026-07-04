@@ -133,6 +133,58 @@ async fn saved_source_lifecycle() {
     assert!(body.is_null());
 }
 
+/// The saved collection link is per-user: one user can neither read, overwrite, nor
+/// delete another's. The link stores an external collection id and drives
+/// server-side fetches on that user's behalf, so a broadened `user_id` filter would
+/// leak the linked identity or let one user hijack/wipe another's sync source.
+#[tokio::test]
+async fn saved_source_is_isolated_per_user() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-src@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-src@example.com", "password123").await;
+
+    // Alice saves a link.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/source",
+            &alice,
+            json!({ "provider": "archidekt", "source": "111" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Bob has no saved link of his own — Alice's is invisible to him.
+    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &bob)).await;
+    assert!(body.is_null(), "another user's saved link must not leak: {body:?}");
+
+    // Bob saving his own link creates a separate row; it must not overwrite Alice's.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/source",
+            &bob,
+            json!({ "provider": "archidekt", "source": "222" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["external_id"], "222");
+    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &alice)).await;
+    assert_eq!(body["external_id"], "111", "bob's save must not overwrite alice's link");
+
+    // Bob deleting his link leaves Alice's intact (delete is scoped to his own row).
+    let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &bob)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &alice)).await;
+    assert_eq!(body["external_id"], "111", "bob's delete must not remove alice's link");
+    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &bob)).await;
+    assert!(body.is_null(), "bob's own link is gone");
+}
+
 #[tokio::test]
 async fn save_and_import_reject_bad_provider_and_source() {
     let app = test_app_with_catalog().await;

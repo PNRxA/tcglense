@@ -242,6 +242,19 @@ pub(crate) fn env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
     env_trimmed(key).and_then(|v| v.trim().parse::<T>().ok())
 }
 
+/// Whether this looks like an internet-facing deployment rather than local dev —
+/// used *only* to decide whether to emit the production-posture startup warnings
+/// (it never changes behaviour). The signal is a non-local `PUBLIC_SITE_URL` (which
+/// a real deploy must set for correct sitemap/email links) or a concrete
+/// non-loopback bind host. The dev-common `0.0.0.0` wildcard is treated as local so
+/// container dev doesn't trip the warnings.
+fn looks_like_production(host: &str, public_site_url: &str) -> bool {
+    let site_is_local =
+        public_site_url.contains("localhost") || public_site_url.contains("127.0.0.1");
+    let host_is_local = matches!(host, "127.0.0.1" | "::1" | "localhost" | "0.0.0.0");
+    !site_is_local || !host_is_local
+}
+
 impl Config {
     /// Build a [`Config`] from the process environment, applying sane defaults.
     pub fn from_env() -> Self {
@@ -369,6 +382,65 @@ impl Config {
             web_root,
         }
     }
+
+    /// The set of insecure-production-posture warnings that apply to this config.
+    ///
+    /// These are hardening gaps that are *fine* in local dev (which is why they are
+    /// defaults) but risky on an internet-facing deploy, and nothing forces the
+    /// operator to close them. Returned as a list (empty in a normal local-dev
+    /// posture) so the triggered set is unit-testable without capturing log output;
+    /// [`Self::warn_insecure_production_posture`] is the thin logging wrapper `main`
+    /// calls. Each warning is advisory only — it never changes behaviour.
+    fn production_posture_warnings(&self) -> Vec<&'static str> {
+        if !looks_like_production(&self.host, &self.public_site_url) {
+            return Vec::new();
+        }
+
+        let mut warnings = Vec::new();
+
+        // Finding 1: an un-`Secure` refresh cookie rides plaintext HTTP.
+        if !self.cookie_secure {
+            warnings.push(
+                "COOKIE_SECURE is false but this looks like a production deployment: the \
+                 long-lived refresh-token cookie will be sent over plaintext HTTP and can be \
+                 intercepted (session takeover). Set COOKIE_SECURE=true and serve the API over \
+                 HTTPS.",
+            );
+        }
+
+        // Finding 2: no CAPTCHA on the auth endpoints (per-IP limit only, no account
+        // lockout) — distributed credential-stuffing across many IPs isn't capped.
+        if self.rate_limit_enabled && self.turnstile_secret_key.is_none() {
+            warnings.push(
+                "TURNSTILE_SECRET_KEY is not set but this looks like a production deployment: the \
+                 auth endpoints have no CAPTCHA, so login/registration are guarded only by the \
+                 per-IP rate limit (distributed credential-stuffing across many IPs is not capped \
+                 per account). Set TURNSTILE_SECRET_KEY (and the web VITE_TURNSTILE_SITE_KEY).",
+            );
+        }
+
+        // Finding 3: the in-memory limiter's per-IP keyspace is only swept every 6h,
+        // so a flood from many source IPs can grow memory unboundedly between sweeps.
+        if self.rate_limit_enabled && self.redis_url.is_none() {
+            warnings.push(
+                "REDIS_URL is not set but this looks like a production deployment: the rate \
+                 limiters run in-memory and their per-IP keyspace is only swept every 6 hours, so \
+                 a flood from many source IPs can grow memory unboundedly between sweeps. Set \
+                 REDIS_URL (its keys self-evict) for any internet-facing deploy, or front the API \
+                 with a WAF.",
+            );
+        }
+
+        warnings
+    }
+
+    /// Emit a loud startup warning for each insecure-production-posture gap (see
+    /// [`Self::production_posture_warnings`]). No-op in a normal local-dev posture.
+    pub fn warn_insecure_production_posture(&self) {
+        for message in self.production_posture_warnings() {
+            tracing::warn!("{message}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -434,5 +506,87 @@ mod tests {
             resolve_jwt_secret(Some("   "), true).as_deref(),
             Ok(DEV_ONLY_JWT_SECRET)
         );
+    }
+
+    // ----- Insecure-production-posture startup warnings -----
+
+    #[test]
+    fn production_detection_treats_local_dev_as_non_production() {
+        // The shipped dev defaults (loopback host, localhost site URL) are not prod.
+        assert!(!looks_like_production("127.0.0.1", "http://localhost:5173"));
+        // A container binding 0.0.0.0 with a still-local site URL isn't flagged.
+        assert!(!looks_like_production("0.0.0.0", "http://localhost:5173"));
+        assert!(!looks_like_production("::1", "http://127.0.0.1:8080"));
+        // A real public site URL, or a concrete non-loopback bind host, is prod.
+        assert!(looks_like_production("0.0.0.0", "https://tcglense.app"));
+        assert!(looks_like_production("10.0.0.5", "http://localhost:5173"));
+    }
+
+    #[test]
+    fn a_local_dev_posture_emits_no_posture_warnings() {
+        // Dev defaults: insecure cookie / no CAPTCHA / no Redis are all fine locally,
+        // so nothing is warned about (the warnings would just train operators to
+        // ignore them).
+        let config = Config {
+            host: "127.0.0.1".to_string(),
+            public_site_url: "http://localhost:5173".to_string(),
+            cookie_secure: false,
+            turnstile_secret_key: None,
+            redis_url: None,
+            rate_limit_enabled: true,
+            ..crate::test_support::test_config()
+        };
+        assert!(config.production_posture_warnings().is_empty());
+    }
+
+    #[test]
+    fn a_production_posture_with_every_gap_warns_about_all_three() {
+        let config = Config {
+            host: "0.0.0.0".to_string(),
+            public_site_url: "https://tcglense.app".to_string(),
+            cookie_secure: false,
+            turnstile_secret_key: None,
+            redis_url: None,
+            rate_limit_enabled: true,
+            ..crate::test_support::test_config()
+        };
+        let warnings = config.production_posture_warnings();
+        assert_eq!(warnings.len(), 3, "cookie + captcha + redis: {warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("COOKIE_SECURE")));
+        assert!(warnings.iter().any(|w| w.contains("TURNSTILE_SECRET_KEY")));
+        assert!(warnings.iter().any(|w| w.contains("REDIS_URL")));
+    }
+
+    #[test]
+    fn a_hardened_production_posture_emits_no_warnings() {
+        let config = Config {
+            host: "0.0.0.0".to_string(),
+            public_site_url: "https://tcglense.app".to_string(),
+            cookie_secure: true,
+            turnstile_secret_key: Some("turnstile-secret".to_string()),
+            redis_url: Some("redis://127.0.0.1:6379".to_string()),
+            rate_limit_enabled: true,
+            ..crate::test_support::test_config()
+        };
+        assert!(config.production_posture_warnings().is_empty());
+    }
+
+    #[test]
+    fn disabling_rate_limiting_suppresses_the_captcha_and_redis_warnings() {
+        // With RATE_LIMIT_ENABLED=false the operator has deferred to an upstream
+        // WAF, so the CAPTCHA/Redis warnings (which are about that layer) don't
+        // apply — but the cookie warning, which is transport-level, still does.
+        let config = Config {
+            host: "0.0.0.0".to_string(),
+            public_site_url: "https://tcglense.app".to_string(),
+            cookie_secure: false,
+            turnstile_secret_key: None,
+            redis_url: None,
+            rate_limit_enabled: false,
+            ..crate::test_support::test_config()
+        };
+        let warnings = config.production_posture_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("COOKIE_SECURE"));
     }
 }

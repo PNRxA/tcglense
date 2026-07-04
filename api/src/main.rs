@@ -75,6 +75,10 @@ async fn main() {
         .init();
 
     let config = Config::from_env();
+    // Loud startup warnings for an insecure production posture (plaintext refresh
+    // cookie / no CAPTCHA / in-memory rate limiter on an internet-facing deploy).
+    // Advisory only — never changes behaviour; no-op in a local-dev posture.
+    config.warn_insecure_production_posture();
     let host = config.host.clone();
     let port = config.port;
     let database_url = config.database_url.clone();

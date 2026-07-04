@@ -72,3 +72,85 @@ async fn me_requires_a_valid_bearer_token() {
     let (garbage, _, _) = send(&app, get_with_bearer("/api/auth/me", "not.a.jwt")).await;
     assert_eq!(garbage, StatusCode::UNAUTHORIZED);
 }
+
+/// A cryptographically-valid, unexpired access token stops working the instant its
+/// account is deleted: the `AuthUser` extractor re-loads the user by the token's
+/// subject on every request and rejects a token whose user no longer exists. This is
+/// the only server-side check that a deleted/deactivated account can't keep acting on
+/// authenticated per-user data for the token's remaining lifetime.
+#[tokio::test]
+async fn a_deleted_users_access_token_is_rejected() {
+    use crate::entities::{prelude::User, user};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let app = test_app().await;
+    let (access, _) = register(&app, "gone@example.com", "password123").await;
+
+    // The token authenticates while the account exists.
+    let (ok, _, _) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(ok, StatusCode::OK);
+
+    // Delete the account (its collection/wishlist/token rows cascade).
+    let uid = User::find()
+        .filter(user::Column::Email.eq("gone@example.com"))
+        .one(&app.state.db)
+        .await
+        .expect("query user")
+        .expect("user exists")
+        .id;
+    User::delete_by_id(uid)
+        .exec(&app.state.db)
+        .await
+        .expect("delete user");
+
+    // The still-unexpired token no longer authenticates — not to `/me`, nor to the
+    // authenticated per-user data surface (the extractor gates both).
+    let (me, _, _) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(me, StatusCode::UNAUTHORIZED, "a deleted user's token must not authenticate");
+    let (collection, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &access)).await;
+    assert_eq!(collection, StatusCode::UNAUTHORIZED);
+}
+
+/// An expired-but-correctly-signed access token is rejected by the extractor on a
+/// real protected route — pinning that the request path actually enforces `exp`
+/// (the jwt unit test proves only the primitive rejects it). The token is forged for
+/// the real user with the harness signing secret so its ONLY defect is the past
+/// expiry: rejection can't be a bad signature or a missing user.
+#[tokio::test]
+async fn an_expired_access_token_is_rejected_by_a_protected_route() {
+    use crate::auth::jwt::Claims;
+    use crate::entities::{prelude::User, user};
+    use chrono::{Duration, Utc};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let app = test_app().await;
+    register(&app, "stale@example.com", "password123").await;
+
+    let uid = User::find()
+        .filter(user::Column::Email.eq("stale@example.com"))
+        .one(&app.state.db)
+        .await
+        .expect("query user")
+        .expect("user exists")
+        .id;
+
+    let past = (Utc::now() - Duration::hours(1)).timestamp() as usize;
+    let claims = Claims {
+        sub: uid.to_string(),
+        email: "stale@example.com".to_string(),
+        iat: past - 60,
+        exp: past,
+    };
+    let expired = encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(app.state.config.jwt_secret.as_bytes()),
+    )
+    .expect("encode expired token");
+
+    let (me, _, _) = send(&app, get_with_bearer("/api/auth/me", &expired)).await;
+    assert_eq!(me, StatusCode::UNAUTHORIZED, "an expired token must not authenticate");
+    let (collection, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &expired)).await;
+    assert_eq!(collection, StatusCode::UNAUTHORIZED);
+}
