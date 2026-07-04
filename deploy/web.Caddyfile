@@ -1,0 +1,21 @@
+# Caddy config baked into the `tcglense-web` image: serve the built SPA and
+# reverse-proxy /api/* to the API. The upstream defaults to the compose service
+# name `api:8080`; override it with the API_UPSTREAM env var, e.g.
+# `-e API_UPSTREAM=10.0.0.5:8080`. Terminate TLS in front of this container.
+:80 {
+	encode zstd gzip
+
+	# Forward the API to the backend, preserving the /api prefix the API expects
+	# (`handle`, not `handle_path`).
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# SPA: serve the static build, falling back to index.html so client-side routes
+	# (/login, /cards, ...) resolve.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -45,6 +45,7 @@ pub(crate) fn test_config() -> Config {
         sync_interval_hours: 24,
         seed_dummy_data: false,
         cdn_mode: false,
+        web_root: None,
     }
 }
 

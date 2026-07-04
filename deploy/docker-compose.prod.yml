@@ -1,0 +1,96 @@
+# TCGLense — production stack (Docker): Caddy + web + api + Postgres + Redis.
+#
+# Topology:
+#   internet ──443──▶ caddy (TLS) ──▶ web (Caddy: SPA + /api proxy) ──▶ api
+#                                                                      ├─▶ db     (Postgres)
+#                                                                      └─▶ cache  (Redis)
+#
+# Bring it up:
+#   export SITE_ADDRESS=tcglense.example.com          # your domain (HTTPS via Let's Encrypt)
+#   export JWT_SECRET=$(openssl rand -hex 32)         # required
+#   export POSTGRES_PASSWORD=$(openssl rand -hex 24)  # required in prod
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+#
+# Pin a release with IMAGE_TAG=vX.Y.Z (defaults to :latest). Images are on GHCR
+# (ghcr.io/pnrxa/…, no login needed) and Docker Hub (docker.io/pnrxa/…).
+services:
+  # Edge reverse proxy: terminates TLS and forwards to web (see deploy/edge.Caddyfile).
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - ./edge.Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # provisioned TLS certs (persist across restarts)
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  # Serves the built SPA and reverse-proxies /api to the api service.
+  web:
+    image: ghcr.io/pnrxa/tcglense-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: api:8080
+    depends_on:
+      - api
+
+  # The Rust API, backed by Postgres + Redis.
+  api:
+    image: ghcr.io/pnrxa/tcglense-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, e.g. openssl rand -hex 32}
+      COOKIE_SECURE: "true"     # TLS terminates at caddy, so the refresh cookie is HTTPS-only
+      # The api sees the web/caddy container as its peer, so per-IP auth rate limiting
+      # must key on X-Forwarded-For. The edge Caddy overwrites XFF with the real client
+      # IP (see deploy/edge.Caddyfile), so trusting it here is safe (not spoofable).
+      TRUST_PROXY_HEADERS: "true"
+      PUBLIC_SITE_URL: https://${SITE_ADDRESS:-localhost}
+      DATABASE_URL: postgres://tcglense:${POSTGRES_PASSWORD:-tcglense}@db:5432/tcglense
+      REDIS_URL: redis://cache:6379
+      # If a CDN (e.g. Cloudflare) fronts this stack and caches the image/icon proxy,
+      # uncomment so the origin doesn't also cache images to disk. See the "Behind a
+      # CDN (Cloudflare)" note in the README — mind the real-client-IP caveat there.
+      # CDN_MODE: "true"
+    volumes:
+      - tcglense_data:/data     # cached card images (the DB lives in Postgres)
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tcglense
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tcglense}
+      POSTGRES_DB: tcglense
+    volumes:
+      - tcglense_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tcglense"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cache:
+    image: redis:7
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  caddy_data:
+  caddy_config:
+  tcglense_data:
+  tcglense_pgdata:
