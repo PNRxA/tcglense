@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
+import AppFooter from '@/components/AppFooter.vue'
 import CardDetailDialog from '@/components/cards/CardDetailDialog.vue'
 import MainNav from '@/components/MainNav.vue'
 import MobileNav from '@/components/MobileNav.vue'
@@ -15,7 +16,7 @@ useAuthCacheReset()
 </script>
 
 <template>
-  <div class="bg-background text-foreground min-h-screen overflow-x-hidden">
+  <div class="bg-background text-foreground flex min-h-screen flex-col overflow-x-hidden">
     <header class="border-b">
       <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
         <div class="flex min-w-0 items-center gap-1">
@@ -38,9 +39,12 @@ useAuthCacheReset()
         </div>
       </div>
     </header>
-    <main>
+    <main class="flex-1">
       <RouterView />
     </main>
+    <!-- Site-wide footer (data-source credits, GitHub, Terms/Privacy, WotC disclaimer). The
+         flex-1 main above pins it to the viewport bottom on short pages. -->
+    <AppFooter />
     <!-- The card-detail modal any browse grid opens via `?card=<id>` (see CardTile /
          CardDetailDialog) — mounted once here so it overlays whichever page is up. -->
     <CardDetailDialog />
