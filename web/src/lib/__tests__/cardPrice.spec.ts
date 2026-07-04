@@ -37,4 +37,12 @@ describe('displayUsdPrice', () => {
   it('returns null when neither USD price is set', () => {
     expect(displayUsdPrice(prices({}))).toBeNull()
   })
+
+  it('also accepts the bare USD shape a sealed product carries (no eur/tix)', () => {
+    expect(displayUsdPrice({ usd: '99.99', usd_foil: null })).toEqual({
+      amount: '99.99',
+      foil: false,
+    })
+    expect(displayUsdPrice({ usd: null, usd_foil: null })).toBeNull()
+  })
 })

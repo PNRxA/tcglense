@@ -1,0 +1,174 @@
+<script setup lang="ts">
+import { computed, toRef } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import ProductGrid from '@/components/products/ProductGrid.vue'
+import CardPagination from '@/components/cards/CardPagination.vue'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
+import StickySearchBar from '@/components/cards/StickySearchBar.vue'
+import LoadingRow from '@/components/cards/LoadingRow.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { useCardSearch } from '@/composables/useCardSearch'
+import { useGameName } from '@/composables/useCatalog'
+import {
+  PRODUCT_PAGE_SIZE,
+  useProductFacetsQuery,
+  useProductsQuery,
+} from '@/composables/useProducts'
+import { useClampPage } from '@/composables/useClampPage'
+import { PRODUCT_DEFAULT_SORT, PRODUCT_SORT_OPTIONS } from '@/lib/cardSort'
+import { productTypeLabel } from '@/lib/productType'
+import { usePageMeta } from '@/lib/seo'
+
+const props = defineProps<{ game: string }>()
+const game = toRef(props, 'game')
+
+// Page, name search and sort live in the URL (shared with useCardSearch, same as the
+// card browse views). Note `q` here is a plain name substring, not Scryfall syntax.
+const { page, searchInput, query, sort } = useCardSearch(
+  PRODUCT_DEFAULT_SORT,
+  PRODUCT_SORT_OPTIONS.map((option) => option.value),
+)
+
+// The set + type filters also live in the URL. reka's Select can't hold '' as a value
+// (it reserves it for "no selection"), so an `all` sentinel means "no filter". Writes
+// merge into the existing query, reset paging, and drop the key when cleared.
+const route = useRoute()
+const router = useRouter()
+const ALL = 'all'
+function patchFilter(key: 'set' | 'type', value: string) {
+  const next: LocationQueryRaw = { ...route.query }
+  if (value === ALL) delete next[key]
+  else next[key] = value
+  delete next.page
+  router.replace({ query: next })
+}
+function readFilter(key: 'set' | 'type'): string {
+  const raw = route.query[key]
+  return typeof raw === 'string' && raw ? raw : ''
+}
+const setFilter = computed(() => readFilter('set'))
+const typeFilter = computed(() => readFilter('type'))
+const setSelect = computed({
+  get: () => setFilter.value || ALL,
+  set: (value: string) => patchFilter('set', value),
+})
+const typeSelect = computed({
+  get: () => typeFilter.value || ALL,
+  set: (value: string) => patchFilter('type', value),
+})
+
+const gameName = useGameName(game)
+
+usePageMeta({
+  title: () => `${gameName.value} sealed products`,
+  description: () =>
+    `Browse and filter sealed ${gameName.value} products — booster boxes, bundles and ` +
+    `decks — with current prices and price history on TCGLense.`,
+  canonicalPath: () => `/cards/${game.value}/sealed`,
+})
+
+const facetsQuery = useProductFacetsQuery(game)
+const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
+const setOptions = computed(() => facetsQuery.data.value?.data.sets ?? [])
+
+const productsQuery = useProductsQuery(game, {
+  page,
+  query,
+  set: setFilter,
+  type: typeFilter,
+  sort,
+  defaultSort: PRODUCT_DEFAULT_SORT,
+})
+
+const products = computed(() => productsQuery.data.value?.data ?? [])
+const total = computed(() => productsQuery.data.value?.total ?? 0)
+
+useClampPage(page, () => ({
+  ready: productsQuery.isSuccess.value,
+  total: total.value,
+  pageSize: PRODUCT_PAGE_SIZE,
+}))
+</script>
+
+<template>
+  <div class="mx-auto max-w-6xl px-4 py-10">
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Cards', to: '/cards' },
+        { label: gameName, to: `/cards/${game}` },
+        { label: 'Sealed products' },
+      ]"
+    />
+
+    <h1 class="mb-4 text-3xl font-semibold tracking-tight">Sealed products</h1>
+
+    <StickySearchBar>
+      <div class="flex flex-wrap items-center gap-2">
+        <CardSearchBox
+          v-model="searchInput"
+          placeholder="Search sealed products…"
+          aria-label="Search sealed products"
+          class="min-w-48 flex-1"
+        />
+        <Select v-model="setSelect">
+          <SelectTrigger size="sm" class="w-40" aria-label="Filter by set">
+            <SelectValue placeholder="All sets" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem :value="ALL">All sets</SelectItem>
+            <SelectItem v-for="s in setOptions" :key="s.code" :value="s.code">
+              {{ s.name ?? s.code.toUpperCase() }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <Select v-model="typeSelect">
+          <SelectTrigger size="sm" class="w-44" aria-label="Filter by product type">
+            <SelectValue placeholder="All types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem :value="ALL">All types</SelectItem>
+            <SelectItem v-for="t in typeOptions" :key="t" :value="t">
+              {{ productTypeLabel(t) }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </StickySearchBar>
+
+    <p class="text-muted-foreground mt-4 mb-6 text-sm">
+      <template v-if="productsQuery.isFetching.value && !products.length">Searching…</template>
+      <template v-else
+        >{{ total.toLocaleString() }} {{ total === 1 ? 'product' : 'products' }}</template
+      >
+      <template v-if="query"> matching “{{ query }}”</template>
+    </p>
+
+    <LoadingRow v-if="productsQuery.isPending.value" label="Loading products…" />
+    <p v-else-if="productsQuery.isError.value" class="text-destructive py-12">
+      Couldn't load sealed products. Please retry.
+    </p>
+    <p v-else-if="!products.length" class="text-muted-foreground py-12">
+      No sealed products found.
+    </p>
+
+    <template v-else>
+      <div class="mb-4 flex flex-wrap justify-end gap-2">
+        <CardSizeMenu />
+        <CardSortMenu v-model="sort" :options="PRODUCT_SORT_OPTIONS" />
+      </div>
+      <ProductGrid :game="game" :products="products" />
+      <div class="mt-10">
+        <CardPagination v-model:page="page" :page-size="PRODUCT_PAGE_SIZE" :total="total" />
+      </div>
+    </template>
+  </div>
+</template>

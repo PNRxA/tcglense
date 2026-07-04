@@ -37,19 +37,29 @@ pub fn find(id: &str) -> Option<&'static Game> {
     GAMES.iter().find(|game| game.id == id)
 }
 
-/// Refresh card data for every supported game from its provider. A failure for
-/// one game is logged and does not abort the others.
-pub async fn refresh_all(db: &DatabaseConnection, client: &Client) {
+/// Refresh catalog data for every supported game from its provider. For MTG this
+/// covers the Scryfall card sync and, on top of it, the TCGCSV sealed-product sweep
+/// (both version-gated, so an unchanged tick is cheap). `tcgcsv_user_agent` is the
+/// descriptive UA TCGCSV requires. A failure for one game/source is logged and does
+/// not abort the others.
+pub async fn refresh_all(db: &DatabaseConnection, client: &Client, tcgcsv_user_agent: &str) {
     for game in GAMES {
-        let result = match game.id {
-            crate::scryfall::GAME => crate::scryfall::refresh(db, client).await,
+        match game.id {
+            crate::scryfall::GAME => {
+                if let Err(err) = crate::scryfall::refresh(db, client).await {
+                    tracing::error!(game = game.id, error = %err, "card data refresh failed");
+                }
+                // Sealed products (TCGCSV). Runs after the card sync so cards exist for
+                // the later historic price backfill to join against.
+                if let Err(err) =
+                    crate::tcgcsv::ingest::refresh(db, client, tcgcsv_user_agent).await
+                {
+                    tracing::error!(game = game.id, error = %err, "product data refresh failed");
+                }
+            }
             other => {
                 tracing::warn!(game = other, "no data provider wired for game; skipping");
-                continue;
             }
-        };
-        if let Err(err) = result {
-            tracing::error!(game = game.id, error = %err, "card data refresh failed");
         }
     }
 }
@@ -64,24 +74,36 @@ pub async fn refresh_all(db: &DatabaseConnection, client: &Client) {
 pub async fn snapshot_all(db: &DatabaseConnection) {
     let as_of_date = crate::scryfall::format_date(chrono::Utc::now().date_naive());
     for game in GAMES {
-        let result = match game.id {
+        match game.id {
             crate::scryfall::GAME => {
-                crate::scryfall::snapshot_prices(db, game.id, &as_of_date).await
+                // Cards.
+                match crate::scryfall::snapshot_prices(db, game.id, &as_of_date).await {
+                    Ok(rows) => tracing::info!(
+                        game = game.id,
+                        rows,
+                        as_of = %as_of_date,
+                        "captured daily card price snapshot"
+                    ),
+                    Err(err) => {
+                        tracing::error!(game = game.id, error = %err, "card price snapshot failed")
+                    }
+                }
+                // Sealed products.
+                match crate::tcgcsv::price_history::snapshot_prices(db, game.id, &as_of_date).await
+                {
+                    Ok(rows) => tracing::info!(
+                        game = game.id,
+                        rows,
+                        as_of = %as_of_date,
+                        "captured daily product price snapshot"
+                    ),
+                    Err(err) => {
+                        tracing::error!(game = game.id, error = %err, "product price snapshot failed")
+                    }
+                }
             }
             other => {
                 tracing::warn!(game = other, "no price snapshot wired for game; skipping");
-                continue;
-            }
-        };
-        match result {
-            Ok(rows) => tracing::info!(
-                game = game.id,
-                rows,
-                as_of = %as_of_date,
-                "captured daily price snapshot"
-            ),
-            Err(err) => {
-                tracing::error!(game = game.id, error = %err, "price snapshot failed")
             }
         }
     }

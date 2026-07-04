@@ -61,6 +61,13 @@ pub struct Model {
     pub price_usd_etched: Option<String>,
     pub price_eur: Option<String>,
     pub price_tix: Option<String>,
+    /// TCGplayer product id for the regular/foil printing (Scryfall `tcgplayer_id`).
+    /// The join key onto TCGplayer's `productId` for the historic price backfill
+    /// (see `crate::tcgcsv`). `None` when Scryfall has no TCGplayer mapping.
+    pub tcgplayer_id: Option<i32>,
+    /// TCGplayer product id for the etched printing, when distinct
+    /// (Scryfall `tcgplayer_etched_id`). Stored for completeness/future use.
+    pub tcgplayer_etched_id: Option<i32>,
     // --- Fields ingested for Scryfall search parity (see scryfall::search). ---
     /// Comma-joined keyword abilities, e.g. `"Flying,Trample"`.
     pub keywords: Option<String>,

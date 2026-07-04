@@ -24,6 +24,9 @@ sea-orm = { version = "1.1.20", features = ["sqlx-sqlite", "runtime-tokio-rustls
 sea-orm-migration = { version = "1.1.20", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+# Only the PPMd decoder is needed to read TCGCSV's price archives (solid PPMd 7z);
+# default features (aes256/bzip2/compress-encoder) are off to keep the build lean.
+sevenz-rust2 = { version = "0.21.2", default-features = false, features = ["ppmd"] }
 sha2 = "0.11.0"
 # Direct dep so the `regexp` feature is enabled on the (feature-unified) sqlx-sqlite
 # that SeaORM already uses — registers a REGEXP function on every connection for the

@@ -21,13 +21,15 @@
 
 mod catalog;
 mod prices;
+mod products;
 
 use chrono::{Duration, Utc};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    DatabaseConnection,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect,
+    sea_query::OnConflict,
 };
 
 use super::GAME;
@@ -35,8 +37,10 @@ use super::ingest::{self, IngestError};
 use super::map;
 use super::price_history;
 use catalog::{dummy_cards, dummy_sets};
-use crate::entities::{card, card_price_history};
+use crate::entities::prelude::{Product, ProductPriceHistory};
+use crate::entities::{card, card_price_history, product, product_price_history};
 use prices::price_walk;
+use products::dummy_products;
 
 /// Synthetic `ingest_state.source_updated_at` recorded for a dummy seed. It never
 /// equals a real Scryfall RFC3339 timestamp, so a later real sync's version gate
@@ -107,6 +111,99 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
     Ok(total)
 }
 
+/// Seed the fabricated sealed products (upsert on `(game, external_id)`), returning
+/// the number written. Idempotent like the card seed.
+async fn seed_products(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    let models = dummy_products();
+    let total = models.len() as u64;
+    Product::insert_many(models)
+        .on_conflict(
+            OnConflict::columns([product::Column::Game, product::Column::ExternalId])
+                .update_columns([
+                    product::Column::Name,
+                    product::Column::CleanName,
+                    product::Column::SetCode,
+                    product::Column::ProductType,
+                    product::Column::Url,
+                    product::Column::ImageUrl,
+                    product::Column::PriceUsd,
+                    product::Column::PriceUsdFoil,
+                    product::Column::ReleasedAt,
+                    product::Column::UpdatedAt,
+                ])
+                .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    Ok(total)
+}
+
+/// Seed a year of fabricated daily price history per seeded product, mirroring
+/// [`seed_price_history`] over the `products` rows (USD + foil only). Reads the
+/// just-seeded products for their ids + base prices, walks each per-product seeded
+/// series, and upserts on `(game, product_id, as_of_date)`.
+async fn seed_product_price_history(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    let products: Vec<(i32, Option<String>, Option<String>)> = Product::find()
+        .select_only()
+        .column(product::Column::Id)
+        .column(product::Column::PriceUsd)
+        .column(product::Column::PriceUsdFoil)
+        .filter(product::Column::Game.eq(GAME))
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    let today = Utc::now().date_naive();
+    let now = Utc::now();
+    let days = PRICE_HISTORY_DAYS as usize;
+    let mut models: Vec<product_price_history::ActiveModel> =
+        Vec::with_capacity(products.len() * days);
+    for (product_id, usd, usd_foil) in &products {
+        // Seed off the product id (offset so it doesn't collide with a card id's walk).
+        let mut rng = StdRng::seed_from_u64(*product_id as u64 ^ 0x5EA1ED);
+        let usd_series = price_walk(usd, &mut rng, days);
+        let foil_series = price_walk(usd_foil, &mut rng, days);
+        for d in 0..days {
+            let as_of = price_history::format_date(today - Duration::days(d as i64));
+            models.push(product_price_history::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                product_id: Set(*product_id),
+                as_of_date: Set(as_of),
+                price_usd: Set(usd_series[d].clone()),
+                price_usd_foil: Set(foil_series[d].clone()),
+                created_at: Set(now),
+            });
+        }
+    }
+
+    let total = models.len() as u64;
+    let mut iter = models.into_iter();
+    loop {
+        let chunk: Vec<product_price_history::ActiveModel> =
+            iter.by_ref().take(price_history::PRICE_HISTORY_BATCH).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        ProductPriceHistory::insert_many(chunk)
+            .on_conflict(
+                OnConflict::columns([
+                    product_price_history::Column::Game,
+                    product_price_history::Column::ProductId,
+                    product_price_history::Column::AsOfDate,
+                ])
+                .update_columns([
+                    product_price_history::Column::PriceUsd,
+                    product_price_history::Column::PriceUsdFoil,
+                ])
+                .to_owned(),
+            )
+            .exec_without_returning(db)
+            .await?;
+    }
+    Ok(total)
+}
+
 /// Seed the dummy MTG catalog, recording status in `ingest_state`. On failure the
 /// state row is best-effort marked `"error"` (mirroring `super::ingest::refresh`) so
 /// `GET /status` stays honest, and the error is returned for the caller to log.
@@ -161,6 +258,15 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     // Seed a year of price history so the chart shows a real trend offline.
     let history_rows = seed_price_history(db).await?;
     tracing::info!(rows = history_rows, "seeded dummy price history");
+
+    // Sealed products + their year of price history, so the product routes have data.
+    let products_seeded = seed_products(db).await?;
+    let product_history_rows = seed_product_price_history(db).await?;
+    tracing::info!(
+        products = products_seeded,
+        rows = product_history_rows,
+        "seeded dummy sealed products"
+    );
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not

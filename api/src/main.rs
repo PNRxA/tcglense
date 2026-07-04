@@ -16,6 +16,7 @@ mod router;
 mod scryfall;
 mod state;
 mod tasks;
+mod tcgcsv;
 
 #[cfg(test)]
 mod security_tests;

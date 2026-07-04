@@ -184,6 +184,8 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         price_usd_etched: Set(price_usd_etched),
         price_eur: Set(price_eur),
         price_tix: Set(price_tix),
+        tcgplayer_id: Set(card.tcgplayer_id),
+        tcgplayer_etched_id: Set(card.tcgplayer_etched_id),
         keywords: Set(keywords),
         produced_mana: Set(produced_mana),
         color_indicator: Set(color_indicator),
@@ -252,7 +254,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    const SAMPLE_CARD: &str = r#"{"object":"card","id":"abc-123","oracle_id":"ora-1","name":"Llanowar Elves","lang":"en","released_at":"2018-07-13","set":"M19","set_name":"Core Set 2019","collector_number":"314","rarity":"common","layout":"normal","mana_cost":"{G}","cmc":1.0,"type_line":"Creature — Elf Druid","oracle_text":"{T}: Add {G}.","power":"1","toughness":"1","color_identity":["G"],"colors":["G"],"digital":false,"games":["paper","mtgo"],"image_uris":{"small":"https://img/small.jpg","normal":"https://img/normal.jpg","large":"https://img/large.jpg","png":"https://img/card.png","art_crop":"https://img/art.jpg"},"prices":{"usd":"0.25","usd_foil":"1.50","eur":"0.10","tix":"0.03"}}"#;
+    const SAMPLE_CARD: &str = r#"{"object":"card","id":"abc-123","oracle_id":"ora-1","name":"Llanowar Elves","lang":"en","released_at":"2018-07-13","set":"M19","set_name":"Core Set 2019","collector_number":"314","rarity":"common","layout":"normal","mana_cost":"{G}","cmc":1.0,"type_line":"Creature — Elf Druid","oracle_text":"{T}: Add {G}.","power":"1","toughness":"1","color_identity":["G"],"colors":["G"],"digital":false,"games":["paper","mtgo"],"tcgplayer_id":179421,"tcgplayer_etched_id":250123,"image_uris":{"small":"https://img/small.jpg","normal":"https://img/normal.jpg","large":"https://img/large.jpg","png":"https://img/card.png","art_crop":"https://img/art.jpg"},"prices":{"usd":"0.25","usd_foil":"1.50","eur":"0.10","tix":"0.03"}}"#;
 
     #[test]
     fn maps_a_simple_card() {
@@ -269,6 +271,9 @@ mod tests {
             Some("https://img/normal.jpg")
         );
         assert_eq!(model.price_usd.as_ref().as_deref(), Some("0.25"));
+        // TCGplayer product ids are picked up for the historic price backfill join.
+        assert_eq!(model.tcgplayer_id.as_ref(), &Some(179421));
+        assert_eq!(model.tcgplayer_etched_id.as_ref(), &Some(250123));
         assert_eq!(model.oracle_text.as_ref().as_deref(), Some("{T}: Add {G}."));
         assert_eq!(model.power.as_ref().as_deref(), Some("1"));
         assert_eq!(model.toughness.as_ref().as_deref(), Some("1"));

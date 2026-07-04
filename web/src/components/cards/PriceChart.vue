@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
+import { computed, ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { VisAxis, VisLine, VisScatter, VisXYContainer } from '@unovis/vue'
 import {
@@ -12,11 +12,25 @@ import {
 } from '@/components/ui/chart'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getPriceHistory, type PriceRange } from '@/lib/api'
+import { type PriceRange } from '@/lib/api'
 
-const props = defineProps<{ game: string; id: string }>()
-const game = toRef(props, 'game')
-const id = toRef(props, 'id')
+// The shared price-history chart + range picker, used by both card and sealed-product
+// detail pages. It's fed a `fetcher` (which takes the selected range and returns the
+// USD series) and a base `queryKey`; the range is appended to that key so a range
+// change refetches under a distinct cache entry. The two USD fields (`usd`/`usd_foil`)
+// are all it reads, so any series carrying them — a card's `PricePoint` (with unused
+// eur/tix) or a product's `ProductPricePoint` — satisfies it.
+interface PricePointLike {
+  date: string
+  usd: string | null
+  usd_foil: string | null
+}
+const props = defineProps<{
+  /** Base cache key (without the range); the selected range is appended. */
+  queryKey: readonly unknown[]
+  /** Fetch the USD price series for the given range. */
+  fetcher: (range: PriceRange) => Promise<{ data: PricePointLike[] }>
+}>()
 
 // Selectable time window; longer ranges come back downsampled from the API. We
 // default to 30 days — a daily (un-downsampled) window — so a young series shows
@@ -41,8 +55,8 @@ function selectRange(value: PriceRange) {
 // refetches; keepPreviousData holds the current chart on screen while the next
 // range loads instead of flashing the loading skeleton.
 const query = useQuery({
-  queryKey: ['card-prices', game, id, range],
-  queryFn: () => getPriceHistory(game.value, id.value, range.value),
+  queryKey: computed(() => [...props.queryKey, range.value]),
+  queryFn: () => props.fetcher(range.value),
   placeholderData: keepPreviousData,
 })
 

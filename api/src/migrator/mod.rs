@@ -17,6 +17,9 @@ mod m20240101_000014_add_user_email_verified_at;
 mod m20240101_000015_create_email_tokens_table;
 mod m20240101_000016_create_wishlist_items_table;
 mod m20240101_000017_make_user_password_hash_nullable;
+mod m20240101_000018_add_tcgplayer_ids_to_cards;
+mod m20240101_000019_create_products_table;
+mod m20240101_000020_create_product_price_history_table;
 
 pub struct Migrator;
 
@@ -41,6 +44,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000015_create_email_tokens_table::Migration),
             Box::new(m20240101_000016_create_wishlist_items_table::Migration),
             Box::new(m20240101_000017_make_user_password_hash_nullable::Migration),
+            Box::new(m20240101_000018_add_tcgplayer_ids_to_cards::Migration),
+            Box::new(m20240101_000019_create_products_table::Migration),
+            Box::new(m20240101_000020_create_product_price_history_table::Migration),
         ]
     }
 }

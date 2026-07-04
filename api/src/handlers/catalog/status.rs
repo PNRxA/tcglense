@@ -38,8 +38,13 @@ pub async fn ingest_status(
     Path(game): Path<String>,
 ) -> Result<Json<StatusResponse>, AppError> {
     require_game(&game)?;
+    // Pin to the card-data dataset: a game can now carry several `ingest_state` rows
+    // (the `default_cards` import plus the one-off `tcgcsv_price_backfill`), so a
+    // game-only filter would be ambiguous for `.one()`. The status route only ever
+    // reports the card-data import.
     let row = IngestState::find()
         .filter(ingest_state::Column::Game.eq(game.as_str()))
+        .filter(ingest_state::Column::Dataset.eq(crate::scryfall::DATASET))
         .one(&state.db)
         .await?;
     Ok(Json(match row {

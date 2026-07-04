@@ -12,7 +12,7 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 
 use crate::entities::prelude::CollectionItem;
-use crate::entities::{card, card_set, collection_item, user};
+use crate::entities::{card, card_set, collection_item, product, user};
 use crate::{config::Config, migrator::Migrator};
 
 /// A canonical, fully-populated [`Config`] for tests. Every field carries a sane,
@@ -31,6 +31,9 @@ pub(crate) fn test_config() -> Config {
         public_site_url: "https://tcglense.example".to_string(),
         data_dir: std::path::PathBuf::from("./data"),
         scryfall_user_agent: "TCGLense/test".to_string(),
+        tcgcsv_user_agent: "TCGLense/test".to_string(),
+        price_backfill_enabled: false,
+        price_backfill_days: 0,
         moxfield_user_agent: None,
         resend_api_key: None,
         email_from: "TCGLense <test@tcglense.example>".to_string(),
@@ -101,6 +104,8 @@ pub(crate) fn card_model(id: i32) -> card::Model {
         price_usd_etched: None,
         price_eur: None,
         price_tix: None,
+        tcgplayer_id: None,
+        tcgplayer_etched_id: None,
         keywords: None,
         produced_mana: None,
         color_indicator: None,
@@ -194,6 +199,42 @@ pub(crate) async fn insert_card(db: &DatabaseConnection, external_id: &str) -> i
         ..Default::default()
     };
     card.insert(db).await.expect("insert card").id
+}
+
+/// Insert a sealed product and return its internal id. Mirrors [`insert_card`] for the
+/// products catalog: fixed defaults, per-test tweaks passed as arguments.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_product(
+    db: &DatabaseConnection,
+    external_id: &str,
+    name: &str,
+    set_code: &str,
+    product_type: &str,
+    usd: Option<&str>,
+) -> i32 {
+    let now = Utc::now();
+    product::ActiveModel {
+        game: Set(crate::scryfall::GAME.to_string()),
+        external_id: Set(external_id.to_string()),
+        name: Set(name.to_string()),
+        clean_name: Set(Some(name.to_string())),
+        set_code: Set(set_code.to_string()),
+        product_type: Set(product_type.to_string()),
+        url: Set(Some(format!("https://www.tcgplayer.com/product/{external_id}"))),
+        image_url: Set(Some(format!(
+            "https://tcgplayer-cdn.tcgplayer.com/product/{external_id}_200w.jpg"
+        ))),
+        price_usd: Set(usd.map(str::to_string)),
+        price_usd_foil: Set(None),
+        released_at: Set(Some("2024-02-09".to_string())),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert product")
+    .id
 }
 
 /// Insert an owned-card holding for `(user, card)` with the given counts.

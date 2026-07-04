@@ -1,0 +1,494 @@
+//! Public catalog endpoints for **sealed products** (booster boxes, bundles, decks, …)
+//! sourced from TCGCSV: the paginated list (with name / set / type filters + sorting),
+//! one product's detail, its price history, its image proxy, and the filter facets.
+//!
+//! Products aren't cards, so these deliberately do **not** wire the Scryfall search
+//! compiler — `q` is a plain case-insensitive name substring. Set names are resolved
+//! against `card_sets` (falling back to `None` when a product's group has no matching
+//! set), mirroring how the collection set builder degrades gracefully.
+
+use std::collections::HashMap;
+
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::header,
+    response::{IntoResponse, Response},
+};
+use chrono::Utc;
+use sea_orm::{
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    sea_query::{Expr, LikeExpr, NullOrdering, SimpleExpr},
+};
+use serde::{Deserialize, Serialize};
+
+use crate::entities::prelude::{CardSet, Product, ProductPriceHistory};
+use crate::entities::{card_set, product, product_price_history};
+use crate::error::AppError;
+use crate::handlers::shared::{
+    DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, build_page, require_game,
+    resolve_page, trim_query,
+};
+use crate::scryfall::search::escape_like;
+use crate::state::AppState;
+
+use super::IMAGE_CACHE_CONTROL;
+use super::image::is_allowed_image_url;
+use super::pricing::{PriceRange, cutoff_date, downsample_rows};
+
+// ---------- Wire DTOs ----------
+
+/// A sealed product's market prices (USD only — TCGCSV carries no eur/tix).
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPrices"))]
+pub(crate) struct ProductPricesResponse {
+    pub usd: Option<String>,
+    pub usd_foil: Option<String>,
+}
+
+/// A sealed product, as the SPA sees it. Mirrors the `Card` DTO idioms: the provider
+/// id is exposed as a string `id`, prices are nested, and images are fetched through
+/// the proxy (`has_image` says whether one is available).
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Product"))]
+pub(crate) struct ProductResponse {
+    pub id: String,
+    pub name: String,
+    pub set_code: String,
+    /// The set's display name (resolved via `card_sets`), or `None` when the
+    /// product's group has no matching catalog set.
+    pub set_name: Option<String>,
+    pub product_type: String,
+    /// The tcgplayer.com product page URL (for buy-links).
+    pub url: Option<String>,
+    /// Whether an image is available through the product image proxy.
+    pub has_image: bool,
+    pub prices: ProductPricesResponse,
+    pub released_at: Option<String>,
+}
+
+/// One day's price snapshot in a product's price-over-time series (USD only).
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPricePoint"))]
+pub struct ProductPricePoint {
+    pub date: String,
+    pub usd: Option<String>,
+    pub usd_foil: Option<String>,
+}
+
+impl From<product_price_history::Model> for ProductPricePoint {
+    fn from(m: product_price_history::Model) -> Self {
+        ProductPricePoint {
+            date: m.as_of_date,
+            usd: m.price_usd,
+            usd_foil: m.price_usd_foil,
+        }
+    }
+}
+
+/// A set that actually has products, for building filter dropdowns.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductSetRef"))]
+pub(crate) struct ProductSetRef {
+    pub code: String,
+    pub name: Option<String>,
+}
+
+/// The distinct filter values that actually occur among a game's products, so the SPA
+/// can build the type + set dropdowns without hardcoding them.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductFacets"))]
+pub(crate) struct ProductFacets {
+    /// Distinct `product_type` values, alphabetical.
+    pub types: Vec<String>,
+    /// Distinct sets that have products (code + resolved name), name-then-code order.
+    pub sets: Vec<ProductSetRef>,
+}
+
+// ---------- Query params ----------
+
+/// A sealed-product sort key. Maps to a product column (price via a numeric cast so it
+/// orders meaningfully rather than lexically).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProductSort {
+    Name,
+    Price,
+    Released,
+}
+
+impl ProductSort {
+    fn parse(value: &str) -> Result<Self, AppError> {
+        Ok(match value {
+            "name" => ProductSort::Name,
+            "price" | "usd" => ProductSort::Price,
+            "released" | "date" => ProductSort::Released,
+            other => return Err(AppError::Validation(format!("unknown sort '{other}'"))),
+        })
+    }
+
+    /// Natural direction when a field is named without a `dir` (priciest / newest
+    /// first read better than ascending for those).
+    fn default_dir(self) -> SortDir {
+        match self {
+            ProductSort::Name => SortDir::Asc,
+            ProductSort::Price | ProductSort::Released => SortDir::Desc,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProductListParams {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+    /// Case-insensitive product-name substring (not Scryfall syntax).
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Filter to one set code (matched case-insensitively).
+    #[serde(default)]
+    pub set: Option<String>,
+    /// Filter to one product type (see [`crate::tcgcsv::classify`]).
+    #[serde(default, rename = "type")]
+    pub type_filter: Option<String>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+impl ProductListParams {
+    fn page_and_size(&self) -> (u64, u64) {
+        resolve_page(self.page, self.page_size, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+    }
+
+    /// Resolve `(field, direction)` from the URL params, defaulting to name-ascending.
+    /// Unknown values are a 422 (consistent with the card lists).
+    fn sort_spec(&self) -> Result<(ProductSort, SortDir), AppError> {
+        let field = match trim_query(self.sort.as_deref()) {
+            Some(value) => ProductSort::parse(value)?,
+            None => ProductSort::Name,
+        };
+        let dir = match trim_query(self.dir.as_deref()) {
+            Some(value) => SortDir::parse(value)?,
+            None => field.default_dir(),
+        };
+        Ok((field, dir))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProductImageParams {
+    pub size: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProductPriceParams {
+    #[serde(default)]
+    pub range: Option<String>,
+}
+
+// ---------- Handlers ----------
+
+/// `GET /api/games/{game}/products` -> a page of sealed products, filtered by
+/// `q`/`set`/`type` and ordered by `sort`/`dir` (default name-ascending).
+pub async fn list_products(
+    State(state): State<AppState>,
+    Path(game): Path<String>,
+    Query(params): Query<ProductListParams>,
+) -> Result<Json<Page<ProductResponse>>, AppError> {
+    require_game(&game)?;
+    let (page, page_size) = params.page_and_size();
+
+    let mut query = Product::find().filter(product::Column::Game.eq(game.as_str()));
+    if let Some(term) = trim_query(params.q.as_deref()) {
+        let escaped = escape_like(term);
+        query = query.filter(
+            Expr::col((product::Entity, product::Column::Name))
+                .like(LikeExpr::new(format!("%{escaped}%")).escape('\\')),
+        );
+    }
+    if let Some(set) = trim_query(params.set.as_deref()) {
+        query = query.filter(product::Column::SetCode.eq(set.to_lowercase()));
+    }
+    if let Some(ptype) = trim_query(params.type_filter.as_deref()) {
+        query = query.filter(product::Column::ProductType.eq(ptype));
+    }
+
+    let (sort, dir) = params.sort_spec()?;
+    let paginator = apply_product_sort(query, sort, dir).paginate(&state.db, page_size);
+
+    let total = paginator.num_items().await?;
+    let rows = paginator.fetch_page(page - 1).await?;
+
+    let names = set_name_map(&state, &game).await?;
+    let data: Vec<ProductResponse> = rows
+        .into_iter()
+        .map(|p| into_response(p, &names))
+        .collect();
+    Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// `GET /api/games/{game}/products/{id}` -> one product's detail.
+pub async fn get_product(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<ProductResponse>, AppError> {
+    require_game(&game)?;
+    let product = load_product(&state, &game, &id).await?;
+    let names = set_name_map(&state, &game).await?;
+    Ok(Json(into_response(product, &names)))
+}
+
+/// `GET /api/games/{game}/products/{id}/prices?range=` -> a product's price history,
+/// oldest first, reusing the exact windowing/downsampling of the card price endpoint.
+pub async fn product_prices(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+    Query(params): Query<ProductPriceParams>,
+) -> Result<Json<DataBody<Vec<ProductPricePoint>>>, AppError> {
+    require_game(&game)?;
+    let product = load_product(&state, &game, &id).await?;
+
+    let range = match trim_query(params.range.as_deref()) {
+        None => None,
+        Some(value) => Some(PriceRange::parse(value)?),
+    };
+
+    let mut query = ProductPriceHistory::find()
+        .filter(product_price_history::Column::Game.eq(game.as_str()))
+        .filter(product_price_history::Column::ProductId.eq(product.id));
+    if let Some(cutoff) = range.and_then(|r| cutoff_date(Utc::now().date_naive(), r)) {
+        query = query.filter(product_price_history::Column::AsOfDate.gte(cutoff));
+    }
+    let rows = query
+        .order_by_asc(product_price_history::Column::AsOfDate)
+        .all(&state.db)
+        .await?;
+
+    let kept = downsample_rows(rows, range.map_or(1, PriceRange::bucket_days), |r| {
+        r.as_of_date.as_str()
+    });
+    let data: Vec<ProductPricePoint> = kept.into_iter().map(ProductPricePoint::from).collect();
+    Ok(Json(DataBody { data }))
+}
+
+/// `GET /api/games/{game}/products/{id}/image?size=` -> the product image, proxied +
+/// cached from the TCGplayer CDN. `size` ∈ `normal` (1000×1000) / `small` (200w).
+pub async fn product_image(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+    Query(params): Query<ProductImageParams>,
+) -> Result<Response, AppError> {
+    require_game(&game)?;
+    // 404 an unknown product (its id also validates the CDN key we build below).
+    let product = load_product(&state, &game, &id).await?;
+    let size = normalize_product_size(params.size.as_deref());
+    let source_url = product_cdn_url(&product.external_id, size);
+
+    if !is_allowed_image_url(&source_url) {
+        tracing::warn!(product = %id, url = %source_url, "refusing to proxy non-allowlisted product image");
+        return Err(AppError::NotFound("no image available".to_string()));
+    }
+
+    let image = state
+        .images
+        .get("products", size, &product.external_id, &source_url)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, product = %id, "failed to cache product image");
+            AppError::Internal(format!("image cache error: {err}"))
+        })?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, image.content_type),
+            (header::CACHE_CONTROL, IMAGE_CACHE_CONTROL),
+        ],
+        image.bytes,
+    )
+        .into_response())
+}
+
+/// `GET /api/games/{game}/products/facets` -> the distinct product types + the sets
+/// that actually have products, so the SPA can build filter dropdowns.
+pub async fn product_facets(
+    State(state): State<AppState>,
+    Path(game): Path<String>,
+) -> Result<Json<DataBody<ProductFacets>>, AppError> {
+    require_game(&game)?;
+
+    let mut types: Vec<String> = Product::find()
+        .select_only()
+        .column(product::Column::ProductType)
+        .distinct()
+        .filter(product::Column::Game.eq(game.as_str()))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    types.sort();
+
+    let mut codes: Vec<String> = Product::find()
+        .select_only()
+        .column(product::Column::SetCode)
+        .distinct()
+        .filter(product::Column::Game.eq(game.as_str()))
+        // A blank set_code (a group with no abbreviation) isn't a usable filter value.
+        .filter(product::Column::SetCode.ne(""))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+
+    let names = set_name_map(&state, &game).await?;
+    codes.sort_by(|a, b| {
+        // Sort by resolved name (code as fallback), then code, so the dropdown reads
+        // in set-name order.
+        let an = names.get(a).map_or(a.as_str(), String::as_str);
+        let bn = names.get(b).map_or(b.as_str(), String::as_str);
+        an.cmp(bn).then_with(|| a.cmp(b))
+    });
+    let sets: Vec<ProductSetRef> = codes
+        .into_iter()
+        .map(|code| {
+            let name = names.get(&code).cloned();
+            ProductSetRef { code, name }
+        })
+        .collect();
+
+    Ok(Json(DataBody {
+        data: ProductFacets { types, sets },
+    }))
+}
+
+// ---------- Helpers ----------
+
+/// Resolve a product by its external (TCGplayer) id within a game, 404 if unknown.
+async fn load_product(
+    state: &AppState,
+    game: &str,
+    id: &str,
+) -> Result<product::Model, AppError> {
+    Product::find()
+        .filter(product::Column::Game.eq(game))
+        .filter(product::Column::ExternalId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("product '{id}' not found")))
+}
+
+/// The game's `set_code -> set_name` map, for dressing products with their set name.
+async fn set_name_map(state: &AppState, game: &str) -> Result<HashMap<String, String>, AppError> {
+    let rows: Vec<(String, String)> = CardSet::find()
+        .select_only()
+        .column(card_set::Column::Code)
+        .column(card_set::Column::Name)
+        .filter(card_set::Column::Game.eq(game))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Build the wire DTO, resolving the set name from `names` (falling back to `None`).
+fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductResponse {
+    let set_name = names.get(&p.set_code).cloned();
+    ProductResponse {
+        id: p.external_id,
+        name: p.name,
+        set_name,
+        set_code: p.set_code,
+        product_type: p.product_type,
+        url: p.url,
+        // A sealed product image lives at the deterministic CDN URL keyed on its id;
+        // the provider `image_url` presence is a good proxy for "has an image".
+        has_image: p.image_url.is_some(),
+        prices: ProductPricesResponse {
+            usd: p.price_usd,
+            usd_foil: p.price_usd_foil,
+        },
+        released_at: p.released_at,
+    }
+}
+
+/// The TCGplayer CDN URL for a product image at the requested size.
+fn product_cdn_url(product_id: &str, size: &str) -> String {
+    let variant = match size {
+        "small" => "200w",
+        _ => "in_1000x1000",
+    };
+    format!("https://tcgplayer-cdn.tcgplayer.com/product/{product_id}_{variant}.jpg")
+}
+
+/// Map a requested product image size to an allow-listed one (default `normal`).
+pub(super) fn normalize_product_size(requested: Option<&str>) -> &'static str {
+    match requested {
+        Some("small") => "small",
+        _ => "normal",
+    }
+}
+
+/// Apply the requested ordering, ending with a stable `id` tiebreaker so pagination is
+/// deterministic. Price sorts on a numeric cast (falling back to the foil price) with
+/// unpriced products parked last regardless of direction.
+fn apply_product_sort(
+    query: Select<product::Entity>,
+    field: ProductSort,
+    dir: SortDir,
+) -> Select<product::Entity> {
+    let query = match field {
+        ProductSort::Name => query.order_by(product::Column::Name, dir.order()),
+        ProductSort::Price => query
+            .order_by_with_nulls(product_price_expr(), dir.order(), NullOrdering::Last)
+            .order_by_asc(product::Column::Name),
+        ProductSort::Released => query
+            .order_by_with_nulls(product::Column::ReleasedAt, dir.order(), NullOrdering::Last)
+            .order_by_asc(product::Column::Name),
+    };
+    query.order_by_asc(product::Column::Id)
+}
+
+/// A product's numeric sort price: the regular USD price, falling back to the foil
+/// price, each NULL/empty-guarded so `''` isn't treated as `0` and truly-unpriced
+/// products resolve to NULL (parked last by `NULLS LAST`). Column names are fixed —
+/// never user input.
+fn product_price_expr() -> SimpleExpr {
+    Expr::cust(
+        "COALESCE(\
+           CASE WHEN price_usd IS NULL OR price_usd = '' THEN NULL ELSE CAST(price_usd AS REAL) END, \
+           CASE WHEN price_usd_foil IS NULL OR price_usd_foil = '' THEN NULL ELSE CAST(price_usd_foil AS REAL) END\
+         )",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_sort_parses_and_defaults() {
+        assert_eq!(ProductSort::parse("name").unwrap(), ProductSort::Name);
+        assert_eq!(ProductSort::parse("price").unwrap(), ProductSort::Price);
+        assert_eq!(ProductSort::parse("released").unwrap(), ProductSort::Released);
+        assert!(ProductSort::parse("nope").is_err());
+        assert_eq!(ProductSort::Name.default_dir(), SortDir::Asc);
+        assert_eq!(ProductSort::Price.default_dir(), SortDir::Desc);
+    }
+
+    #[test]
+    fn cdn_url_maps_sizes() {
+        assert_eq!(
+            product_cdn_url("12345", "normal"),
+            "https://tcgplayer-cdn.tcgplayer.com/product/12345_in_1000x1000.jpg"
+        );
+        assert_eq!(
+            product_cdn_url("12345", "small"),
+            "https://tcgplayer-cdn.tcgplayer.com/product/12345_200w.jpg"
+        );
+        assert!(is_allowed_image_url(&product_cdn_url("12345", "normal")));
+    }
+
+    #[test]
+    fn normalize_size_allowlists() {
+        assert_eq!(normalize_product_size(Some("small")), "small");
+        assert_eq!(normalize_product_size(Some("../x")), "normal");
+        assert_eq!(normalize_product_size(None), "normal");
+    }
+}

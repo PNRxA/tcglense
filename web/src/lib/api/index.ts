@@ -5,6 +5,7 @@
 export { ApiError } from './client'
 export * from './auth'
 export * from './catalog'
+export * from './products'
 export * from './collection'
 export * from './collection-import'
 export * from './wishlist'
