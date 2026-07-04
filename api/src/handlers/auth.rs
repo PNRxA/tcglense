@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{
         cookie::{REFRESH_COOKIE_NAME, build_refresh_cookie, removal_cookie},
-        email_token::{EmailTokenPurpose, consume, issue, issue_with_cooldown},
+        email_token::{EmailTokenPurpose, consume, issue_with_cooldown},
         extractor::AuthUser,
         jwt::encode_token,
         password::{hash_password, verify_password},
         refresh::{issue_refresh_token, revoke_all_for_user, revoke_one, rotate},
     },
     client_ip::ClientIp,
-    email::{OutgoingEmail, password_reset_email, verification_email},
+    email::{OutgoingEmail, password_reset_email, registration_email, verification_email},
     entities::{prelude::User, user},
     error::AppError,
     extract::JsonBody,
@@ -33,11 +33,18 @@ use crate::{
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
     pub email: String,
+    /// CAPTCHA token from the browser widget (required only when a verifier is
+    /// configured; absent/ignored in dev/test where CAPTCHA is disabled).
+    #[serde(default)]
+    pub captcha_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompleteRegistrationRequest {
+    pub token: String,
     pub password: String,
     #[serde(default)]
     pub display_name: Option<String>,
-    /// CAPTCHA token from the browser widget (required only when a verifier is
-    /// configured; absent/ignored in dev/test where CAPTCHA is disabled).
     #[serde(default)]
     pub captcha_token: Option<String>,
 }
@@ -107,16 +114,18 @@ pub struct AuthResponse {
     pub user: UserResponse,
 }
 
-/// Body returned by `/api/auth/register`: the created account. Normally there is
-/// **no session** — signing in requires the emailed verification link first — so
-/// `access_token` is `null`. But when email verification is bypassed (no email
-/// provider configured — dev), the account is created already-verified and signed
-/// in, and `access_token` carries the session (with the refresh cookie set).
+/// Body returned by `/api/auth/register`. Deliberately account-agnostic: the
+/// same generic body comes back whether the address was new, mid-registration,
+/// or already registered — the endpoint is no enumeration oracle, and the next
+/// step (the completion link) always arrives by email. `completion_token` is
+/// **always `null` when a real email provider is configured**; only when email
+/// sending is disabled (no provider — dev/e2e) does it carry the
+/// registration-completion token, so the SPA can drive straight to the
+/// set-password step the undeliverable email would have linked to.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct RegisterResponse {
-    pub user: UserResponse,
-    pub access_token: Option<String>,
+    pub completion_token: Option<String>,
 }
 
 /// Body returned by `/api/auth/refresh` (the rotated refresh token rides in the
@@ -192,10 +201,17 @@ fn spawn_send(state: &AppState, email: OutgoingEmail) {
 }
 
 /// `POST /api/auth/register`
+///
+/// Email-first (issue #176): the visitor submits ONLY their address. A new
+/// address gets a pending (password-less) account row and a completion link by
+/// email; a pending one gets the link re-sent (60s cooldown); an
+/// already-registered one gets nothing. Whichever case, the response is the
+/// same generic 200 and the send runs off the request path — registering
+/// reveals nothing about which accounts exist (the pre-#176 duplicate `409`
+/// was an enumeration oracle).
 pub async fn register(
     State(state): State<AppState>,
     ClientIp(client_ip): ClientIp,
-    jar: CookieJar,
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     state
@@ -205,86 +221,133 @@ pub async fn register(
     // Canonicalise the email so look-alike casings map to a single account.
     let email = payload.email.trim().to_lowercase();
     validate_email(&email)?;
-    validate_password(&payload.password)?;
 
     let existing = User::find()
         .filter(user::Column::Email.eq(&email))
         .one(&state.db)
         .await?;
-    if existing.is_some() {
-        return Err(AppError::Conflict("email already registered".to_string()));
+
+    let user = match existing {
+        Some(user) => user,
+        None => {
+            let now = Utc::now();
+            let new_user = user::ActiveModel {
+                email: Set(email.clone()),
+                password_hash: Set(None),
+                display_name: Set(None),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            };
+            match new_user.insert(&state.db).await {
+                Ok(model) => model,
+                // A concurrent registration can race past the lookup above; the
+                // unique index is the source of truth. Fall through to the row
+                // that won rather than answering differently (no 409 here — an
+                // existing account must be indistinguishable from a new one).
+                Err(err) if matches!(err.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => {
+                    match User::find()
+                        .filter(user::Column::Email.eq(&email))
+                        .one(&state.db)
+                        .await?
+                    {
+                        Some(user) => user,
+                        None => return Err(err.into()),
+                    }
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    };
+
+    // Only a pending (password-less) account gets a completion link; the
+    // cooldown collapses repeat requests, and an already-registered address
+    // gets no mail at all — all unobservable from outside, since the send is
+    // fire-and-forget off the request path.
+    let mut completion_token = None;
+    if user.password_hash.is_none()
+        && let Some(token) =
+            issue_with_cooldown(&state.db, user.id, EmailTokenPurpose::CompleteRegistration).await?
+    {
+        let link = spa_link(&state, "complete-registration", &token);
+        spawn_send(&state, registration_email(&user.email, &link));
+        // No-email posture (dev/e2e): the link above was only logged, so hand
+        // the token to the SPA directly — it drives straight to the
+        // set-password page and the offline registration journey stays
+        // completable. With a real provider this stays null: the token only
+        // ever travels by email.
+        if !state.email.is_enabled() {
+            completion_token = Some(token);
+        }
     }
 
-    let password_hash = hash_password(&payload.password)?;
+    Ok((StatusCode::OK, Json(RegisterResponse { completion_token })))
+}
+
+/// `POST /api/auth/complete-registration`
+///
+/// Consumes an emailed registration-completion token (single-use, 24h expiry),
+/// sets the account's first password (+ optional display name), stamps the
+/// email verified (using the link proves mailbox ownership), and signs the
+/// user in. Only a pending (password-less) account qualifies: once a password
+/// exists the token is refused, so a completion link can never double as a
+/// password reset.
+pub async fn complete_registration(
+    State(state): State<AppState>,
+    ClientIp(client_ip): ClientIp,
+    jar: CookieJar,
+    JsonBody(payload): JsonBody<CompleteRegistrationRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    state
+        .captcha
+        .verify(payload.captcha_token.as_deref(), client_ip)
+        .await?;
+    // Validate BEFORE consuming the token, so a weak password doesn't burn the
+    // single-use link (mirrors reset_password).
+    validate_password(&payload.password)?;
+
+    let row = consume(
+        &state.db,
+        &payload.token,
+        EmailTokenPurpose::CompleteRegistration,
+    )
+    .await?;
+
+    let invalid = || AppError::Unauthorized("invalid or expired token".to_string());
+    let user = User::find_by_id(row.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(invalid)?;
+    // Already completed (the password arrived via an earlier completion or a
+    // reset): refuse generically, like any other dead token.
+    if user.password_hash.is_some() {
+        return Err(invalid());
+    }
+
     let display_name = payload
         .display_name
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let now = Utc::now();
+    let mut active: user::ActiveModel = user.into();
+    active.password_hash = Set(Some(hash_password(&payload.password)?));
+    active.display_name = Set(display_name);
+    active.email_verified_at = Set(Some(now));
+    active.updated_at = Set(now);
+    let user = active.update(&state.db).await?;
 
-    let new_user = user::ActiveModel {
-        email: Set(email),
-        password_hash: Set(password_hash),
-        display_name: Set(display_name),
-        created_at: Set(now),
-        updated_at: Set(now),
-        ..Default::default()
-    };
-
-    // The pre-check above handles the common case, but the unique index is the
-    // real source of truth: a concurrent registration can race past it, so map
-    // a unique-constraint violation to 409 rather than letting it become a 500.
-    let model = match new_user.insert(&state.db).await {
-        Ok(model) => model,
-        Err(err) => {
-            if matches!(err.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
-                return Err(AppError::Conflict("email already registered".to_string()));
-            }
-            return Err(err.into());
-        }
-    };
-    // The response's user shape is verification-agnostic, so build it up front
-    // (the DB row may be stamped verified just below).
-    let user = UserResponse::from(model.clone());
-
-    let (access_token, jar) = if state.email.is_enabled() {
-        // Verify-first: registration does NOT start a session — the account must
-        // prove it owns the address (the emailed link) before login accepts it.
-        let token = issue(&state.db, model.id, EmailTokenPurpose::VerifyEmail).await?;
-        let link = spa_link(&state, "verify-email", &token);
-        // Await the send so the mail is normally on its way before we answer, but
-        // don't fail the registration over it: the account exists either way, and
-        // the sign-in screen offers a fresh link (resend-verification) at any time.
-        if let Err(err) = state
-            .email
-            .send(verification_email(&model.email, &link))
-            .await
-        {
-            tracing::error!(error = %err, "failed to send the verification email");
-        }
-        (None, jar)
-    } else {
-        // No email provider (dev): there is no way to deliver a verification link,
-        // so bypass verification entirely — mark the account verified and sign it
-        // in immediately, so a dev can register and use it in one step.
-        user::ActiveModel {
-            id: Set(model.id),
-            email_verified_at: Set(Some(now)),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .update(&state.db)
-        .await?;
-        let access = encode_token(&model, &state.config)?;
-        let refresh =
-            issue_refresh_token(&state.db, model.id, state.config.refresh_token_expiry_days).await?;
-        (Some(access), jar.add(build_refresh_cookie(refresh, &state.config)))
-    };
+    let access_token = encode_token(&user, &state.config)?;
+    let refresh_plaintext =
+        issue_refresh_token(&state.db, user.id, state.config.refresh_token_expiry_days).await?;
+    let jar = jar.add(build_refresh_cookie(refresh_plaintext, &state.config));
 
     Ok((
-        StatusCode::CREATED,
+        StatusCode::OK,
         jar,
-        Json(RegisterResponse { user, access_token }),
+        Json(AuthResponse {
+            access_token,
+            user: user.into(),
+        }),
     ))
 }
 
@@ -327,7 +390,15 @@ pub async fn login(
         }
     };
 
-    if !verify_password(&user.password_hash, &payload.password) {
+    // A pending registration (email-first, no password chosen yet) has no
+    // credential to check: keep the timing comparable (same dummy verify as an
+    // unknown address) and fail with the same generic 401.
+    let Some(password_hash) = user.password_hash.as_deref() else {
+        let _ = verify_password(&state.dummy_password_hash, &payload.password);
+        return Err(AppError::InvalidCredentials);
+    };
+
+    if !verify_password(password_hash, &payload.password) {
         return Err(AppError::InvalidCredentials);
     }
 
@@ -470,7 +541,11 @@ pub async fn resend_verification(
         .one(&state.db)
         .await?;
 
+    // Only an account that HAS a password gets a verification link: a
+    // password-less row is a pending email-first registration, whose link is
+    // re-sent by POSTing /register again (same address, same generic 204 here).
     if let Some(user) = user
+        && user.password_hash.is_some()
         && user.email_verified_at.is_none()
         && let Some(token) =
             issue_with_cooldown(&state.db, user.id, EmailTokenPurpose::VerifyEmail).await?
@@ -544,7 +619,7 @@ pub async fn reset_password(
     let now = Utc::now();
     let was_verified = user.email_verified_at.is_some();
     let mut active: user::ActiveModel = user.into();
-    active.password_hash = Set(hash_password(&payload.password)?);
+    active.password_hash = Set(Some(hash_password(&payload.password)?));
     active.updated_at = Set(now);
     if !was_verified {
         active.email_verified_at = Set(Some(now));

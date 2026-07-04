@@ -65,17 +65,42 @@ async fn auth_responses_are_never_cached() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(cache_control(&headers), Some("no-store"));
 
-    // A successful login carries an access token + Set-Cookie: also no-store.
+    // Registration is a generic 200 (email-first): still no-store, since even the
+    // generic body carries per-request state a shared cache must never retain.
     let email = "cache-nostore@example.com";
     let (status, headers, _) = send(
         &app,
+        json_post("/api/auth/register", json!({ "email": email })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // Completing the registration is a 200 that mints a session (access token +
+    // refresh cookie) — the very kind of per-user response a shared cache must
+    // never store.
+    let token = latest_email_token(&app, email).await;
+    let (status, headers, _) = send(
+        &app,
         json_post(
-            "/api/auth/register",
-            json!({ "email": email, "password": "correct horse battery" }),
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": "password123" }),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // And a successful login (now that the account exists) is likewise no-store.
+    let (status, headers, _) = send(
+        &app,
+        json_post(
+            "/api/auth/login",
+            json!({ "email": email, "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
 }
 

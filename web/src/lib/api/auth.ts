@@ -8,8 +8,17 @@ export type { AuthResponse, RefreshResponse, RegisterResponse, User } from './ge
 // `captcha_token` is the Cloudflare Turnstile token from the widget; optional
 // here because it's only produced/required when a Turnstile site key is set (the
 // server verifies it, and treats it as absent when CAPTCHA is disabled).
+//
+// Registration is email-first: the first step takes only the address (the server
+// emails a link to finish); the password + display name are chosen in the second
+// step (`completeRegistration`), keyed by the emailed token.
 export interface RegisterPayload {
   email: string
+  captcha_token?: string
+}
+
+export interface CompleteRegistrationPayload {
+  token: string
   password: string
   display_name?: string | null
   captcha_token?: string
@@ -42,10 +51,24 @@ export interface ResetPasswordPayload {
   captcha_token?: string
 }
 
-// Registration mints no session (the account must verify its email first), so it
-// returns only the created user — signing in happens after the emailed link.
+// Step one of registration. The response is deliberately generic — the same body
+// comes back whether the address was new, mid-registration, or already taken (no
+// enumeration oracle), and the completion link always arrives by email.
+// `completion_token` is `null` when a real email provider is configured; it is
+// only non-null when email sending is disabled (dev/e2e), carrying the token so
+// the SPA can drive straight to the set-password step. Mints no session.
 export function register(payload: RegisterPayload): Promise<RegisterResponse> {
   return request<RegisterResponse>('/api/auth/register', { method: 'POST', body: payload })
+}
+
+// Step two: spend the emailed (or dev-bypass) token on a password + optional
+// display name. Returns a session (access token + refresh cookie), signing the
+// new account in.
+export function completeRegistration(payload: CompleteRegistrationPayload): Promise<AuthResponse> {
+  return request<AuthResponse>('/api/auth/complete-registration', {
+    method: 'POST',
+    body: payload,
+  })
 }
 
 export function login(payload: LoginPayload): Promise<AuthResponse> {

@@ -8,13 +8,10 @@ use super::harness::*;
 async fn register_requires_a_valid_captcha_when_enabled() {
     let app = test_app_requiring_captcha().await;
 
-    // No token -> 400, before any account is created.
+    // No token -> 400, before any account is touched.
     let (missing, _, body) = send(
         &app,
-        json_post(
-            "/api/auth/register",
-            json!({ "email": "cap@example.com", "password": "password123" }),
-        ),
+        json_post("/api/auth/register", json!({ "email": "cap@example.com" })),
     )
     .await;
     assert_eq!(missing, StatusCode::BAD_REQUEST);
@@ -25,23 +22,79 @@ async fn register_requires_a_valid_captcha_when_enabled() {
         &app,
         json_post(
             "/api/auth/register",
-            json!({ "email": "cap@example.com", "password": "password123", "captcha_token": "nope" }),
+            json!({ "email": "cap@example.com", "captcha_token": "nope" }),
         ),
     )
     .await;
     assert_eq!(wrong, StatusCode::BAD_REQUEST);
 
-    // Valid token -> the account is created (no session, per the verify-first flow).
+    // The captcha gate fires BEFORE any account work: neither rejected attempt
+    // above may have mailed a completion link or created a user row (the gate is
+    // the first thing the handler does, so a failed captcha leaks nothing and
+    // leaves no side effect).
+    {
+        use crate::entities::{prelude::User, user};
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+        assert!(
+            delivered_emails(&app).await.is_empty(),
+            "a rejected captcha must not send any email"
+        );
+        let planted = User::find()
+            .filter(user::Column::Email.eq("cap@example.com"))
+            .one(&app.state.db)
+            .await
+            .expect("query");
+        assert!(
+            planted.is_none(),
+            "a rejected captcha must not create an account"
+        );
+    }
+
+    // Valid token -> the generic email-first 200 with no account echo (the
+    // completion link rides only in the email, never the response body).
     let (ok, _, ok_body) = send(
         &app,
         json_post(
             "/api/auth/register",
-            json!({ "email": "cap@example.com", "password": "password123", "captcha_token": "good-token" }),
+            json!({ "email": "cap@example.com", "captcha_token": "good-token" }),
         ),
     )
     .await;
-    assert_eq!(ok, StatusCode::CREATED, "valid captcha registers: {ok_body:?}");
-    assert_eq!(ok_body["user"]["email"], "cap@example.com");
+    assert_eq!(ok, StatusCode::OK, "valid captcha registers: {ok_body:?}");
+    assert!(ok_body["completion_token"].is_null());
+    assert!(ok_body.get("user").is_none(), "no user echo: {ok_body}");
+}
+
+#[tokio::test]
+async fn complete_registration_requires_a_valid_captcha_when_enabled() {
+    let app = test_app_requiring_captcha().await;
+
+    // The captcha check precedes ALL of the completion work — password
+    // validation, consuming the single-use token, setting the credential — so a
+    // missing/wrong token is a uniform 400 regardless of whether the completion
+    // token would have been valid (here it's garbage; the captcha gate fires
+    // first, so the token is never even looked at).
+    let (missing, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": "deadbeef", "password": "password123" }),
+        ),
+    )
+    .await;
+    assert_eq!(missing, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().is_some());
+
+    let (wrong, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": "deadbeef", "password": "password123", "captcha_token": "nope" }),
+        ),
+    )
+    .await;
+    assert_eq!(wrong, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

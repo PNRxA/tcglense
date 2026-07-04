@@ -201,7 +201,7 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
         crate::entities::user::ActiveModel {
             id: Set(uid),
             email: Set(format!("u{uid}@example.test")),
-            password_hash: Set("x".into()),
+            password_hash: Set(Some("x".into())),
             display_name: Set(None),
             created_at: Set(at("2024-01-01T00:00:00Z")),
             updated_at: Set(at("2024-01-01T00:00:00Z")),
@@ -295,7 +295,7 @@ async fn summary_skips_holdings_whose_card_row_is_missing() {
     crate::entities::user::ActiveModel {
         id: Set(1),
         email: Set("u1@example.test".into()),
-        password_hash: Set("x".into()),
+        password_hash: Set(Some("x".into())),
         display_name: Set(None),
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
@@ -353,7 +353,7 @@ async fn collection_query_scopes_to_a_set() {
     crate::entities::user::ActiveModel {
         id: Set(1),
         email: Set("u1@example.test".into()),
-        password_hash: Set("x".into()),
+        password_hash: Set(Some("x".into())),
         display_name: Set(None),
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
@@ -450,7 +450,7 @@ async fn owned_cards_group_into_drops_with_counts() {
     crate::entities::user::ActiveModel {
         id: Set(1),
         email: Set("d@example.test".into()),
-        password_hash: Set("x".into()),
+        password_hash: Set(Some("x".into())),
         display_name: Set(None),
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),

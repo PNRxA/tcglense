@@ -23,14 +23,14 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = response.user
   }
 
-  // NOTE: there is deliberately no `register` action. Registration normally mints
-  // no session (the account must verify its email before it can sign in), so the
-  // view calls the API fn directly; writing the returned user into this store
-  // would flip `isAuthenticated` and bounce the visitor off the guest routes.
-  // The one exception is the no-email dev bypass, where register DOES return a
-  // session — the view then calls `setSession` to adopt it.
+  // NOTE: there is deliberately no `register` action. Registration is email-first
+  // and never mints a session (register only sends the completion link; the
+  // session is minted by POST /api/auth/complete-registration), so the views call
+  // the API fns directly — CompleteRegistrationView then adopts the returned
+  // session via `setSession`. A register action writing into this store would
+  // flip `isAuthenticated` and bounce the visitor off the guest routes.
 
-  /** Adopt a session obtained outside `login` (the no-email register bypass): the
+  /** Adopt a session obtained outside `login` (registration completion): the
    * access token lives in memory, the refresh cookie was set by the server. */
   function setSession(token: string, u: User) {
     accessToken.value = token
