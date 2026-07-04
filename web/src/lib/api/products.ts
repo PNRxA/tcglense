@@ -1,6 +1,6 @@
 import { API_URL, request } from './client'
 import type { PriceRange } from './catalog'
-import type { Page, Product, ProductFacets, ProductPricePoint } from './generated'
+import type { Page, Product, ProductCardEntry, ProductFacets, ProductPricePoint } from './generated'
 
 // ---------- Sealed products (public, game-agnostic) ----------
 //
@@ -11,6 +11,7 @@ import type { Page, Product, ProductFacets, ProductPricePoint } from './generate
 
 export type {
   Product,
+  ProductCardEntry,
   ProductFacets,
   ProductPricePoint,
   ProductPrices,
@@ -77,13 +78,35 @@ export function getProduct(game: string, id: string): Promise<Product> {
  * "found in / can be in / may be in" split) and a `foil` flag. Ordered `contains` →
  * `booster` → `variable`, then by product name. Empty when the card is in none.
  */
-export function getCardSealed(
-  game: string,
-  id: string,
-): Promise<{ data: SealedProductRef[] }> {
+export function getCardSealed(game: string, id: string): Promise<{ data: SealedProductRef[] }> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<{ data: SealedProductRef[] }>(`/api/games/${g}/cards/${i}/sealed`)
+}
+
+/** A page of the cards a sealed product contains / can be pulled from, plus cursors. */
+export type ProductCardsPage = Page<ProductCardEntry>
+
+/**
+ * The cards a sealed product is found to contain — or can be pulled from — the reverse
+ * of {@link getCardSealed}. Each entry carries the card plus its `membership` bucket
+ * (`contains` / `booster` / `variable`) and a `foil`-only flag. Ordered `contains` →
+ * `booster` → `variable` (guaranteed cards lead), then by set + collector number, and
+ * paginated by card. Empty page when the product has no ingested contents.
+ */
+export function getProductCards(
+  game: string,
+  id: string,
+  page = 1,
+  pageSize?: number,
+): Promise<ProductCardsPage> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  const search = new URLSearchParams()
+  if (page > 1) search.set('page', String(page))
+  if (pageSize) search.set('page_size', String(pageSize))
+  const qs = search.toString()
+  return request<ProductCardsPage>(`/api/games/${g}/products/${i}/cards${qs ? `?${qs}` : ''}`)
 }
 
 /** The distinct product types + sets that actually have products, for filter dropdowns. */

@@ -1,6 +1,12 @@
 import { type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getCardSealed, getProduct, getProductFacets, listProducts } from '@/lib/api'
+import {
+  getCardSealed,
+  getProduct,
+  getProductCards,
+  getProductFacets,
+  listProducts,
+} from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 
 /**
@@ -11,6 +17,9 @@ import { toSortParam } from '@/lib/cardSort'
 
 /** Sealed products per page in the browse grid. */
 export const PRODUCT_PAGE_SIZE = 60
+
+/** Cards per page in a product's "cards in this product" section. */
+export const PRODUCT_CARDS_PAGE_SIZE = 60
 
 /** Reactive controls for the product-list query, all carried in the key so a change
  * refetches; `defaultSort` backs an empty sort. */
@@ -46,6 +55,17 @@ export function useProductQuery(game: Ref<string>, id: Ref<string>) {
   return useQuery({
     queryKey: ['product', game, id],
     queryFn: () => getProduct(game.value, id.value),
+  })
+}
+
+/** A page of the cards a sealed product contains / can be pulled from (the sealed-detail
+ * "Cards in this product" section). Public read, so a plain `useQuery`; `keepPreviousData`
+ * holds the current grid up while the next page loads. */
+export function useProductCardsQuery(game: Ref<string>, id: Ref<string>, page: Ref<number>) {
+  return useQuery({
+    queryKey: ['product-cards', game, id, page],
+    queryFn: () => getProductCards(game.value, id.value, page.value, PRODUCT_CARDS_PAGE_SIZE),
+    placeholderData: keepPreviousData,
   })
 }
 
