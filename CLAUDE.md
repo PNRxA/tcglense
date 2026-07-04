@@ -316,6 +316,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
 | `GET /api/games/{game}/cards/{id}/prints` | `{ data: Card[] }` — the card's **other** printings (same `oracle_id`), **newest printing first**, capped at 200 (`[]` if none, or the card has no `oracle_id`) |
+| `GET /api/games/{game}/cards/{id}/sealed` | `{ data: SealedProductRef[] }` — the **sealed products** this card is found in / can be pulled from, sourced from MTGJSON (see `crate::mtgjson`). `SealedProductRef = { product: Product, membership, foil }`; `membership` is `"contains"` (definitely in — decks/promos/Secret Lair), `"booster"` (can be pulled from a booster sheet), or `"variable"` (may be in a randomized product) — the "found in / can be in / may be in" split. Ordered `contains` → `booster` → `variable`, then by product name; `[]` if in none |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
@@ -599,7 +600,7 @@ extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, n
 test_support.rs    shared #[cfg(test)] fixtures: test_config(), a migrated in-memory SQLite DB, canonical card/set/user/holding rows (per-test tweaks via struct-update)
 security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, email-first registration + completion, email verification + password reset (via the harness's capturing mailbox), cookie/CORS/caching contracts, request bodies, search, collection + import, wishlist (incl. wishlist↔collection independence)
 integration_pg.rs  opt-in Postgres integration tests (`#[cfg(test)]`, `#[ignore]` + env-gated on `TCGLENSE_TEST_POSTGRES_URL`): each carves an isolated database off the base URL, runs the real migrations, and asserts the SQL seam / branched migrations on live Postgres (migration chain + down/up, case-insensitive email index, `issue_with_cooldown` 20-way concurrency, refresh rotation, collection upsert, price snapshot, the search battery incl. unique:cards / NULLS-last set order). The Redis limiter tests live in `ratelimit.rs` (same `cargo test -- --ignored` run, `TCGLENSE_TEST_REDIS_URL`)
-entities/          SeaORM entities (user [incl. email_verified_at], refresh_token, email_token = `email_tokens`; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`, wishlist_item = `wishlist_items`)
+entities/          SeaORM entities (user [incl. email_verified_at], refresh_token, email_token = `email_tokens`; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`, wishlist_item = `wishlist_items`, product = `products`, product_price_history = `product_price_history`, sealed_content = `sealed_contents` [card→sealed-product membership])
 collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution], parse_source, ProviderContext, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + ProviderSettings + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (per-provider RateLimiters via ProviderLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
@@ -622,6 +623,7 @@ scryfall/          MTG provider (the first game)
   drops.rs         Secret Lair drop grouping: loads sld_drops.json once → (game,set)→{ordered drops, collector#→drop}; table()/has_drops()/drop_for()
   sld_drops.json   committed snapshot of Scryfall's curated Secret Lair drop titles + collector numbers (regenerate via scripts/gen-sld-drops.mjs)
   dummy/           seed(): deterministic offline dummy catalog (no network/images) reusing ingest's map/upsert path — catalog.rs (the fabricated sets/cards), prices.rs (the year of per-card seeded random-walk price history)
+mtgjson/           MTGJSON provider for sealed-product **contents** (which sealed products a card is found in / can be pulled from): client.rs (conditional fetch + gzip-decode of AllPrintings.json, ETag-gated), model.rs (trimmed serde shapes + the pure `build_memberships` resolver: contents.card/deck/sealed → `contains`, booster sheets → `booster`, variable → `variable`; unit-tested), ingest.rs (resolve tcgplayerProductId→products / scryfallId→cards, wipe+rebuild `sealed_contents` in one txn, version-gated on the file ETag), progress.rs (a spinner span), error.rs. Wired into `catalog::refresh_all` after Scryfall + TCGCSV
 handlers/
   auth.rs          register (email-first: generic 200, a pending account + emailed completion link; OR, when email is disabled, returns the completion token — the dev bypass) / complete-registration (consume the link → set first password + verify + sign in; refused once a password exists) / login (403 gate on unverified email, skipped when email is disabled; a pending password-less account fails the generic 401) / refresh / logout / me / verify-email / resend-verification / forgot-password / reset-password (the lookup-by-email pair answer generically + send off the request path). Each mutation endpoint takes a ClientIp + verifies the request's `captcha_token` (state.captcha) before any work; per-IP rate limiting is applied as router middleware, not here
   cache.rs         Cache-Control response middleware: public catalog reads → CDN-cacheable; auth/status/errors → no-store; plus conditional_request_layer (weak ETag + If-None-Match → 304) on cacheable public reads
@@ -1056,6 +1058,27 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `drop_*` fields and `/drops` endpoint derive it live from the embedded table), so
   no migration/re-import is needed to update it. A unit test guards that the shipped
   JSON parses and covers `sld`.
+- **Sealed-product contents (MTGJSON):** the card-detail "which sealed products is this
+  card in?" feature (`crate::mtgjson` → `sealed_contents`) is fed from MTGJSON's
+  `AllPrintings.json` (MIT-licensed), the only open source that carries sealed-product
+  contents *and* the join keys we need (`sealedProduct.identifiers.tcgplayerProductId` →
+  `products.external_id`; card `identifiers.scryfallId` → `cards.external_id`). It runs
+  in `catalog::refresh_all` after the Scryfall + TCGCSV syncs (so both tables exist to
+  resolve against) and is **version-gated on the file's HTTP `ETag`** (`Meta.json` bumps
+  daily from price rebuilds, so it's useless as a gate). Trade-offs: (1) `AllPrintings`
+  is one ~600 MB document; we fetch the ~160 MB gzip and parse only trimmed structs, but
+  a rebuild still transiently uses a few hundred MB (the fetch buffers the compressed
+  body and a normal set's booster sheets span ~its whole card list) — acceptable for a
+  daily, ETag-gated background task; per-set streaming to bound that is future work.
+  (2) The `booster` bucket ("can be pulled from") is inherently the whole set, so a
+  common card lists ~its set's booster products — honest but low-signal; the UI groups it
+  as a distinct "Can be pulled from" section so it doesn't masquerade as a guaranteed
+  "Found in". (3) Contents reference cards by MTGJSON `uuid` / `(set, number)`; the ingest
+  resolves them via the same file's `cards[]`, so a **cross-set** reference whose card
+  isn't in the ref's own set (a rare bonus-sheet / The-List case) can go unresolved and be
+  skipped. (4) The table is **rebuilt wholesale** each run (delete-then-insert in one txn),
+  so a product whose contents changed never leaves a stale row. The offline dummy seed
+  fabricates a handful of memberships so the feature renders without a live pull.
 - **Image caching:** card images download lazily on first view to `<DATA_DIR>/images`
   and are served from disk after — deliberately *not* a bulk image download (that
   would be hundreds of GB and against Scryfall's guidelines). Fetches go through a

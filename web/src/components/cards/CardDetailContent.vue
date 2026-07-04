@@ -7,6 +7,7 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/collection/CollectionControls.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
+import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
 import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
@@ -139,5 +140,9 @@ const hasSeparateFaceImages = computed(
     <!-- This card's other printings (same gameplay object, issue #63). Renders
       nothing when there are none. -->
     <CardPrints :game="game" :id="card.id" />
+
+    <!-- Which sealed products this card is found in / can be pulled from / may be in.
+      Renders nothing when the card is in no ingested product. -->
+    <CardSealedProducts :game="game" :id="card.id" />
   </template>
 </template>

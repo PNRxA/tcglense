@@ -20,6 +20,7 @@ mod m20240101_000017_make_user_password_hash_nullable;
 mod m20240101_000018_add_tcgplayer_ids_to_cards;
 mod m20240101_000019_create_products_table;
 mod m20240101_000020_create_product_price_history_table;
+mod m20240101_000021_create_sealed_contents_table;
 
 pub struct Migrator;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000018_add_tcgplayer_ids_to_cards::Migration),
             Box::new(m20240101_000019_create_products_table::Migration),
             Box::new(m20240101_000020_create_product_price_history_table::Migration),
+            Box::new(m20240101_000021_create_sealed_contents_table::Migration),
         ]
     }
 }

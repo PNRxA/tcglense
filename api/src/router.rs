@@ -24,9 +24,9 @@ use crate::{
         },
         cache::{conditional_request_layer, no_store_layer, public_cache_layer},
         catalog::{
-            card_image, card_names, card_prices, card_prints, get_card, get_product, get_set,
-            ingest_status, list_cards, list_games, list_products, list_set_cards, list_set_drops,
-            list_sets, product_facets, product_image, product_prices, set_icon,
+            card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
+            get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
+            list_set_drops, list_sets, product_facets, product_image, product_prices, set_icon,
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
@@ -191,6 +191,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
         .route("/api/games/{game}/cards/{id}/prints", get(card_prints))
+        // The sealed products this card is found in / can be pulled from (issue: card
+        // sealed-product membership). A static-suffix sibling of `/prices` + `/prints`.
+        .route("/api/games/{game}/cards/{id}/sealed", get(card_sealed))
         // Sealed products (booster boxes, bundles, decks, …) from TCGCSV. `facets`
         // is a static sibling of `/products/{id}` (static segments win in axum), so
         // it never collides with a product id.

@@ -4,8 +4,8 @@
 //! product fixtures straight into the harness DB.
 
 use super::harness::*;
-use crate::entities::product_price_history;
-use crate::test_support::insert_product;
+use crate::entities::{product_price_history, sealed_content};
+use crate::test_support::{insert_card, insert_product};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, NotSet};
 
@@ -163,4 +163,79 @@ async fn facets_expose_the_types_and_sets_in_use() {
         .collect();
     assert!(set_codes.contains(&"mkm"));
     assert!(set_codes.contains(&"blb"));
+}
+
+/// Insert one `sealed_contents` membership row for `(product, card)`.
+async fn insert_sealed(
+    db: &sea_orm::DatabaseConnection,
+    product_id: i32,
+    card_id: i32,
+    membership: &str,
+    foil: bool,
+) {
+    let now = Utc::now();
+    sealed_content::ActiveModel {
+        id: NotSet,
+        game: Set("mtg".to_string()),
+        product_id: Set(product_id),
+        card_id: Set(card_id),
+        membership: Set(membership.to_string()),
+        foil: Set(foil),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .expect("insert sealed content");
+}
+
+#[tokio::test]
+async fn card_sealed_endpoint_groups_products_by_membership() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    let card = insert_card(db, "sf-card").await;
+    let _other = insert_card(db, "sf-other").await;
+    let box_id =
+        insert_product(db, "100", "Collector Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    let deck_id = insert_product(db, "300", "Commander Deck", "blb", "commander_deck", Some("44.99")).await;
+    let sld_id = insert_product(db, "500", "Secret Lair Drop", "sld", "secret_lair", Some("29.99")).await;
+
+    // The card is definitely in the deck, can be pulled (as a foil) from the box, and may
+    // be in the Secret Lair.
+    insert_sealed(db, deck_id, card, "contains", false).await;
+    insert_sealed(db, box_id, card, "booster", true).await;
+    insert_sealed(db, sld_id, card, "variable", true).await;
+
+    let (status, headers, body) = send(&app, get("/api/games/mtg/cards/sf-card/sealed")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "the card-sealed read must be browser + CDN cacheable"
+    );
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 3);
+    // Ordered contains -> booster -> variable (the "found in / can be in / may be in" split).
+    assert_eq!(data[0]["membership"], "contains");
+    assert_eq!(data[0]["product"]["id"], "300");
+    assert_eq!(data[0]["foil"], false);
+    assert_eq!(data[1]["membership"], "booster");
+    assert_eq!(data[1]["product"]["id"], "100");
+    assert_eq!(data[1]["foil"], true, "a foil-only booster pull is flagged");
+    assert_eq!(data[2]["membership"], "variable");
+    assert_eq!(data[2]["product"]["id"], "500");
+    // The nested product reuses the shared Product wire shape.
+    assert!(data[0]["product"]["prices"].is_object());
+
+    // A card in no product -> a clean, cacheable empty list.
+    let (status, headers, body) = send(&app, get("/api/games/mtg/cards/sf-other/sealed")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE));
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+    // An unknown card is a no-store 404.
+    let (status, headers, _) = send(&app, get("/api/games/mtg/cards/nope/sealed")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
 }
