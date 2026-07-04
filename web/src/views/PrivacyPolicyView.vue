@@ -69,16 +69,14 @@ usePageMeta({
       <h2 class="text-xl font-semibold tracking-tight">6. Retention and deletion</h2>
       <p class="text-muted-foreground leading-7 text-pretty">
         Account data is kept while your account exists. To have your account and its data deleted,
-        open an issue on the GitHub repository at
+        email
         <a
-          href="https://github.com/PNRxA/tcglense"
-          target="_blank"
-          rel="noopener noreferrer"
+          href="mailto:privacy@tcglense.com"
           class="text-primary underline-offset-4 hover:underline"
         >
-          github.com/PNRxA/tcglense</a
+          privacy@tcglense.com</a
         >
-        and we will action it.
+        from the account's email address and we will action it.
       </p>
     </section>
 
@@ -95,6 +93,19 @@ usePageMeta({
       <h2 class="text-xl font-semibold tracking-tight">8. Changes</h2>
       <p class="text-muted-foreground leading-7 text-pretty">
         If this policy changes, the "Last updated" date above will change with it.
+      </p>
+    </section>
+
+    <section class="space-y-3">
+      <h2 class="text-xl font-semibold tracking-tight">9. Contact</h2>
+      <p class="text-muted-foreground leading-7 text-pretty">
+        Questions about this policy or your data: email
+        <a
+          href="mailto:privacy@tcglense.com"
+          class="text-primary underline-offset-4 hover:underline"
+        >
+          privacy@tcglense.com</a
+        >.
       </p>
     </section>
   </LegalPageLayout>
