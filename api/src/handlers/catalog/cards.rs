@@ -32,9 +32,10 @@ pub async fn list_cards(
 ) -> Result<Json<Page<CardResponse>>, AppError> {
     let game_meta = require_game(&game)?;
     let (page, page_size) = params.page_and_size();
+    let dialect = state.dialect();
 
     let query = Card::find().filter(card::Column::Game.eq(game.as_str()));
-    let (mut query, shape) = apply_search(query, game_meta, &params)?;
+    let (mut query, shape) = apply_search(query, game_meta, &params, dialect)?;
     // Optional exact-name scope (the quick-add "printings of this name" step): an
     // equality bind, so a name full of punctuation/quotes matches literally and
     // there's no injection surface. ANDed with any `q`.
@@ -42,8 +43,8 @@ pub async fn list_cards(
         query = query.filter(card::Column::Name.eq(name));
     }
     let (sort, dir) = params.sort_spec_with(SortField::Name, shape.order, shape.direction)?;
-    let query = apply_unique(query, shape.unique);
-    let paginator = apply_card_sort(query, sort, dir, false).paginate(&state.db, page_size);
+    let query = apply_unique(query, shape.unique, dialect);
+    let paginator = apply_card_sort(query, sort, dir, false, dialect).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;

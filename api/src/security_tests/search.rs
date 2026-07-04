@@ -1,6 +1,7 @@
 //! Public search route — injection-safe, malformed -> 422 (not 500).
 
 use super::harness::*;
+use crate::test_support::url_encode;
 
 #[tokio::test]
 async fn search_is_injection_safe_and_maps_bad_queries_to_422() {
@@ -134,18 +135,4 @@ async fn set_drops_color_search_succeeds() {
     assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
     assert_eq!(groups[0]["title"].as_str(), Some("Wild in Bloom"));
     assert_eq!(groups[0]["card_count"].as_u64(), Some(1));
-}
-
-/// Percent-encode a query value (only what these tests need: the injection chars).
-fn url_encode(input: &str) -> String {
-    let mut out = String::new();
-    for byte in input.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
 }

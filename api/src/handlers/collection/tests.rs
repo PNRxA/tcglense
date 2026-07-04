@@ -3,6 +3,7 @@ use super::import::parse_reconcile_mode;
 use super::read::{collection_query, summary};
 
 use crate::catalog;
+use crate::db::Dialect;
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::{card, card_set};
 use crate::handlers::shared::{
@@ -251,7 +252,7 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
         sort: CollectionSort,
         dir: SortDir,
     ) -> Vec<String> {
-        collection_query(1, "mtg", set_codes, search, sort, dir)
+        collection_query(1, "mtg", set_codes, search, sort, dir, Dialect::Sqlite)
             .all(db)
             .await
             .expect("run collection query")
@@ -268,7 +269,7 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
 
     // The shared Scryfall grammar runs over the joined card columns: `t:goblin`
     // keeps only user 1's two Goblins (Forest dropped; user 2's Goblin out of scope).
-    let goblins = search_condition(mtg, "t:goblin").unwrap();
+    let goblins = search_condition(mtg, "t:goblin", Dialect::Sqlite).unwrap();
     assert_eq!(
         names(&db, None, Some(goblins), CollectionSort::Recent, SortDir::Desc).await,
         ["Goblin King", "Goblin Guide"]
@@ -406,6 +407,7 @@ async fn collection_query_scopes_to_a_set() {
             search,
             CollectionSort::Card(SortField::Name),
             SortDir::Asc,
+            Dialect::Sqlite,
         )
         .all(db)
         .await
@@ -421,7 +423,7 @@ async fn collection_query_scopes_to_a_set() {
     // Scoped to set "aaa": only its two cards, not the other sets' Goblins.
     assert_eq!(names(&db, Some(&aaa), None).await, ["Forest", "Goblin Guide"]);
     // Set scope ANDs with the search: goblins in "aaa" only.
-    let goblins = search_condition(mtg, "t:goblin").unwrap();
+    let goblins = search_condition(mtg, "t:goblin", Dialect::Sqlite).unwrap();
     assert_eq!(names(&db, Some(&aaa), Some(goblins)).await, ["Goblin Guide"]);
     // A multi-code scope (the include-related group view) spans exactly its sets —
     // "aaa" + "bbb", excluding "ccc"'s Goblin Piker.
@@ -502,6 +504,7 @@ async fn owned_cards_group_into_drops_with_counts() {
         None,
         CollectionSort::Card(SortField::Number),
         SortDir::Asc,
+        Dialect::Sqlite,
     )
     .all(&db)
     .await

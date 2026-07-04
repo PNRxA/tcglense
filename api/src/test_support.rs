@@ -40,6 +40,7 @@ pub(crate) fn test_config() -> Config {
         turnstile_secret_key: None,
         trust_proxy_headers: false,
         rate_limit_enabled: true,
+        redis_url: None,
         sync_on_startup: false,
         sync_interval_hours: 24,
         seed_dummy_data: false,
@@ -259,6 +260,23 @@ pub(crate) async fn insert_holding(
     .insert(db)
     .await
     .expect("insert holding");
+}
+
+/// Percent-encode a query value for a hand-built test request URI: everything
+/// outside the RFC 3986 unreserved set (spaces, quotes, and the Scryfall operators
+/// `!"…"`, `/…/`, `:`, `>`) is `%`-escaped. Shared by the search security tests and
+/// the Postgres integration harness so both build request URIs the same way.
+pub(crate) fn url_encode(input: &str) -> String {
+    let mut out = String::new();
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 /// The stored `(quantity, foil_quantity)` for one holding, `None` if unowned.

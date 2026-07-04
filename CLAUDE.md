@@ -64,7 +64,7 @@ A monorepo with two independent apps:
 
 | Dir    | App           | Stack |
 |--------|---------------|-------|
-| `api/` | Backend (HTTP JSON API) | Rust 2024 · axum 0.8 · SeaORM 1.1 over SQLite · JWT (HS256) · Argon2 |
+| `api/` | Backend (HTTP JSON API) | Rust 2024 · axum 0.8 · SeaORM 1.1 over SQLite (Postgres optional) · JWT (HS256) · Argon2 |
 | `web/` | Frontend (SPA) | Vue 3.5 · Vite 8 · Pinia · TanStack Query (vue-query) · vue-router · Tailwind 4 · shadcn-vue (new-york) · TypeScript |
 
 The two talk over HTTP. In dev the API runs on `:8080` and the web app on
@@ -95,6 +95,17 @@ insecure secret (logged as a warning) — never set that outside local dev. The 
 `.env.example` includes a placeholder `JWT_SECRET`, so `cp .env.example .env` then
 `cargo run` works out of the box. The server binds `127.0.0.1` by default (set
 `HOST=0.0.0.0` for containers/LAN).
+
+**Optional Postgres.** Point `DATABASE_URL` at a `postgres://…` URL and the same
+`Database::connect` picks the Postgres driver at runtime (both `sqlx-sqlite` and
+`sqlx-postgres` are compiled in — no cargo feature). Migrations run on boot against
+either backend (the two backend-coupled migrations, m001's case-insensitive email index
+and m017's nullable `password_hash`, branch on `manager.get_database_backend()`).
+Postgres pool sizing comes from `DB_MAX_CONNECTIONS`/`DB_MIN_CONNECTIONS`/
+`DB_CONNECT_TIMEOUT_SECS`/`DB_ACQUIRE_TIMEOUT_SECS` (defaults 10/0/15/30); SQLite stays
+single-connection with WAL + the REGEXP function. The startup log line reports the
+selected backend. SQLite remains the default — nothing to install. (`deploy/docker-compose.yml`
+brings up Postgres + Redis for local parity / the gated integration tests.)
 
 **Web** (from `web/`):
 
@@ -281,8 +292,13 @@ day is always included; the underlying `card_price_history` rows are untouched.
 [Scryfall syntax](https://scryfall.com/docs/syntax) (`api/src/scryfall/search/`).
 Bare words / `"quoted phrases"` are card-name substrings (ANDed); `!"exact name"`
 is an exact match; `/regex/` (on `name`/`t`/`o`/`ft`) runs a case-insensitive
-regular expression via a registered SQLite `REGEXP` function (sqlx's `regexp`
-feature, enabled by `with_regexp()` in `db.rs`). Supported filters: `name`/`n`,
+regular expression — on SQLite via the registered `REGEXP` UDF (Rust `regex` crate;
+sqlx's `regexp` feature, enabled by `with_regexp()` in `db.rs`), on Postgres via POSIX
+`~*`, chosen by the `db::Dialect` seam. The pattern is pre-validated by the `regex`
+crate on both backends (a bad pattern → 422); a Rust-valid but POSIX-invalid pattern
+is a 422 on Postgres too (its `~*` raises SQLSTATE `2201B`, mapped to the same 422 in
+`error.rs`). The two engines parse exotic constructs differently, so a given regex can
+match different rows per backend. Supported filters: `name`/`n`,
 `t`/`type`, `o`/`oracle`/`fulloracle`, `m`/`mana` (incl. `>`/`!=`; subset `<`/`<=`
 still 422), `c`/`color` and `id`/`identity`/`commander` (set comparison, `:` means
 `>=`, colour names + guild/shard nicknames), `produces`, `cmc`/`mv` (incl.
@@ -528,13 +544,14 @@ config.rs          Config from env (…auth vars…, DATA_DIR, SCRYFALL_USER_AGE
 captcha.rs         CAPTCHA verification: Captcha enum (Turnstile via the shared client + per-request timeout / Disabled when TURNSTILE_SECRET_KEY unset / test-only ExpectToken) — enum dispatch like email.rs; a missing/rejected token is a 400, checked before any account work
 client_ip.rs       resolve the client IP for rate limiting (socket-peer default; X-Forwarded-For/Forwarded only when TRUST_PROXY_HEADERS) + a ClientIp extractor; None when unresolvable (the in-process test harness) so the limiter fails open
 ratelimit.rs       rate limiting, two flavours: per-IP for the auth endpoints — RateLimiters (one governor keyed limiter per auth class — login/register/email-send/token) + the `rate_limit` middleware (429 + Retry-After; no-ops for non-auth paths, a disabled limiter, or an unresolvable IP) — and per-user for the authenticated surface (issue #168) — UserRateLimiters (general/import classes, keyed by the access-token user id) + the `user_rate_limit` middleware (skips a request with no valid bearer); both retain_recent bound their keyspace
-db.rs              SeaORM connect options with SQLite perf pragmas (WAL journal mode + cache_size=-20000) + a registered REGEXP function (sqlx `regexp` feature, for the search `/regex/` syntax), applied to every pooled connection
+db.rs              SeaORM connect options, branched on the DATABASE_URL scheme: SQLite (WAL journal mode + cache_size=-20000 + a registered REGEXP function [sqlx `regexp` feature, for the search `/regex/` syntax], byte-identical to before) or Postgres (explicit DB_* pool sizing). Backend selected at runtime — both drivers compiled in. Also holds the `Dialect` enum (the per-request SQLite/Postgres SQL-fragment seam the search compiler + sort helper import)
 state.rs           AppState { db, config: Arc<Config>, dummy_password_hash, images: Arc<ImageCache>, http: reqwest::Client, imports: Arc<ImportQueue>, email: Arc<Emailer>, captcha: Arc<Captcha>, rate_limiters: Arc<RateLimiters>, user_rate_limiters: Arc<UserRateLimiters> } (cloned into handlers; `http` is the request-path provider client; `imports` is the background collection-import queue + per-provider rate limiters; `email` is the transactional-email sender; `captcha` is the auth CAPTCHA verifier; `rate_limiters` are the per-IP auth limiters, `user_rate_limiters` the per-user limiters for the authenticated surface); AppState::new is the one construction site, shared with the security-test harness
 email.rs           outbound transactional email: Emailer enum (Resend via the shared client + per-request timeout / Disabled when RESEND_API_KEY unset, logging the message / test-only Capture mailbox) + the registration-completion/verification/reset message builders — enum dispatch, mirroring collection_import's Provider
 error.rs           AppError enum + IntoResponse → JSON { error }, correct status codes (incl. Forbidden → 403 for the unverified-email login gate, TooManyRequests → 429 for rate limiting, BadGateway → 502 for a failed upstream provider)
 extract.rs         JsonBody<T>: JSON body extractor whose rejections are JSON, not text/plain
 test_support.rs    shared #[cfg(test)] fixtures: test_config(), a migrated in-memory SQLite DB, canonical card/set/user/holding rows (per-test tweaks via struct-update)
 security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, email-first registration + completion, email verification + password reset (via the harness's capturing mailbox), cookie/CORS/caching contracts, request bodies, search, collection + import, wishlist (incl. wishlist↔collection independence)
+integration_pg.rs  opt-in Postgres integration tests (`#[cfg(test)]`, `#[ignore]` + env-gated on `TCGLENSE_TEST_POSTGRES_URL`): each carves an isolated database off the base URL, runs the real migrations, and asserts the SQL seam / branched migrations on live Postgres (migration chain + down/up, case-insensitive email index, `issue_with_cooldown` 20-way concurrency, refresh rotation, collection upsert, price snapshot, the search battery incl. unique:cards / NULLS-last set order). The Redis limiter tests live in `ratelimit.rs` (same `cargo test -- --ignored` run, `TCGLENSE_TEST_REDIS_URL`)
 entities/          SeaORM entities (user [incl. email_verified_at], refresh_token, email_token = `email_tokens`; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`, wishlist_item = `wishlist_items`)
 collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution], parse_source, ProviderContext, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + ProviderSettings + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (per-provider RateLimiters via ProviderLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
@@ -702,7 +719,15 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
 
 ## Environment variables
 
-- **API:** `DATABASE_URL` (default `sqlite://tcglense.db?mode=rwc`), `JWT_SECRET`
+- **API:** `DATABASE_URL` (default `sqlite://tcglense.db?mode=rwc`; the scheme selects
+  the backend at runtime — `sqlite://` or `postgres://`, both drivers compiled in),
+  `DB_MAX_CONNECTIONS` (10) / `DB_MIN_CONNECTIONS` (0) / `DB_CONNECT_TIMEOUT_SECS` (15) /
+  `DB_ACQUIRE_TIMEOUT_SECS` (30) — Postgres connection-pool sizing, ignored on SQLite,
+  `REDIS_URL` (unset; a plain `redis://` URL backing the per-IP + per-user rate limiters
+  — shared across instances when set, in-memory otherwise; fails open on outage; a secret
+  if it embeds a password; a `rediss://` TLS URL is unsupported by this build and degrades
+  to in-memory; requires **Redis 5.0+** — the limiter Lua script uses server `TIME` +
+  `SET`, rejected by older Redis's script effect replication), `JWT_SECRET`
   (**required**, ≥ 32 bytes, not the dev constant), `ALLOW_INSECURE_DEV_SECRET`
   (false; opt-in to the insecure compiled-in secret for local dev only),
   `ACCESS_TOKEN_EXPIRY_MINUTES` (15), `REFRESH_TOKEN_EXPIRY_DAYS` (30),
@@ -751,9 +776,11 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   web + API same-origin (or configure cross-origin CORS credentials).
 - **Auth anti-abuse (CAPTCHA + rate limiting):** the auth mutation endpoints are
   guarded by Cloudflare Turnstile (`captcha.rs`) and per-IP rate limiting
-  (`ratelimit.rs`, `governor`). Both are **in-memory / per-process**: the rate
-  limiter's keyspace isn't shared across instances, so a multi-instance deploy
-  would want a shared store (Redis) or an edge/WAF limiter — and the client-IP
+  (`ratelimit.rs`, `governor`). The rate limiters are **in-memory by default**; set
+  `REDIS_URL` to back them with Redis so the keyspace is **shared across instances** (a
+  multi-instance deploy then enforces one global quota). On a Redis outage the limiter
+  **fails open**, degrading to in-memory for that check (rate limiting is abuse
+  protection, not authn — CAPTCHA still fails closed). The client-IP
   resolution trusts proxy headers only when `TRUST_PROXY_HEADERS=true`, so behind
   a proxy that env **must** be set or every client keys as the proxy's IP. When it
   IS set, the left-most `X-Forwarded-For` is used, which is only safe if the proxy
@@ -778,12 +805,38 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   lookups, ~300/min) and a tight `import` bucket (the expensive import/sync/CSV
   endpoints, ~10/min); over-limit is `429` + `Retry-After` + `no-store`. It gates on
   the same `RATE_LIMIT_ENABLED` switch and shares the per-IP limiter's caveats:
-  **in-memory / per-process** (a multi-instance deploy would want a shared store),
-  and it only engages for a request carrying a *valid* bearer token (an
+  in-memory by default, or Redis-backed via `REDIS_URL` (shared across instances, same
+  fail-open posture), and it only engages for a request carrying a *valid* bearer token (an
   unauthenticated / bad-token request has no user to key on and is left to the
   handler's own `401`, so it is **not** an IP-level DoS guard for those routes —
   that would still need the per-IP/WAF layer). The public catalog + image routes
   remain unthrottled (same open posture noted under image caching).
+- **Optional Postgres (dual-backend).** `DATABASE_URL`'s scheme picks SQLite (default)
+  or Postgres at runtime — both drivers compile in, no cargo feature. SQLite behaviour is
+  unchanged. The whole non-search backend is SeaORM query-builder (portable); the search
+  compiler, `auth::email_token::issue_with_cooldown` (raw SQL — placeholder renumbering
+  plus a PG `pg_advisory_xact_lock` to reproduce SQLite's single-writer atomicity), and
+  two migrations (m001's case-insensitive email index, m017's nullable `password_hash`)
+  were made backend-aware via a `db::Dialect` seam. Postgres pool sizing
+  is `DB_*` env vars (SQLite stays sea-orm's forced single connection). The default test
+  suite + CI stay on in-memory SQLite; Postgres/Redis correctness is covered by opt-in
+  `#[ignore]` integration tests (`src/integration_pg.rs` + the Redis tests in
+  `ratelimit.rs`, gated on `TCGLENSE_TEST_POSTGRES_URL` / `TCGLENSE_TEST_REDIS_URL`) run
+  locally against docker (`deploy/docker-compose.yml`) and in the `postgres-redis-tests`
+  CI job. Three deliberate cross-backend divergences, all a consequence of keeping SQLite
+  byte-identical rather than forcing a shared behaviour: (1) text **sort order**
+  (`order:name`/`set`/`artist`, the sealed-**products** name sort, and the `card-names`
+  alphabetical tiebreak) follows each backend's default collation — SQLite `BINARY` (byte order) vs Postgres's DB locale — a
+  cosmetic display-order difference only, no pagination impact; (2) the `/regex/` filter
+  runs the Rust-regex `REGEXP` UDF on SQLite vs POSIX ARE `~*` on Postgres, which parse
+  exotic constructs (`\d`, `\b`, lookaround, lazy quantifiers) differently, so a given
+  regex can match different rows per backend (a Rust-valid pattern POSIX rejects is a 422,
+  same as any bad pattern — via the SQLSTATE `2201B` mapping in `error.rs`); and (3)
+  case-insensitive matching folds the column with the backend's `LOWER()` while the
+  pattern is only ASCII-lowercased, so Postgres's locale-aware fold matches non-ASCII case
+  (é↔É) that SQLite's ASCII-only fold does not. (2) and (3) are narrow result-set
+  differences confined to exotic-regex and non-ASCII inputs; ordinary ASCII searches are
+  identical across backends.
 - **Transactional email (Resend):** sends ride the shared reqwest client with a
   10s per-request timeout; there is no retry/queue — every account-lookup endpoint
   (register / resend / forgot) **spawns** its send off the request path and swallows
@@ -795,7 +848,10 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   posture, so don't run prod without a key (there the token stays out of the response,
   so an unverified/unowned address can never complete registration). `onboarding@resend.dev`
   (the default From) only delivers to the Resend account owner's address; production
-  needs a verified domain + `EMAIL_FROM`.
+  needs a verified domain + `EMAIL_FROM`. The 60s registration/resend/forgot mail
+  cooldown stays **DB-backed** (the atomic `issue_with_cooldown` insert — on Postgres a
+  `pg_advisory_xact_lock` keeps it exactly-once under a pooled writer), not Redis, so it
+  holds across instances regardless of the rate-limiter backend.
 - **Collection import (Archidekt / Moxfield):** the import/sync endpoints fetch a public
   collection **server-side** and reconcile it. Archidekt caps requests (≈20/min) and
   pages 25 rows at a time with no page-size override, so a large collection takes minutes.
@@ -814,7 +870,12 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `last_synced_at`, but there's **no automatic background sync** — re-sync is
   user-triggered. Cards not in our catalog are skipped (surfaced in the summary's
   `unmatched_*`). The layer is provider-generic: another service is a new `Provider`
-  variant + module.
+  variant + module. The import **job queue + per-provider rate limiters remain
+  per-process** even with `REDIS_URL` set (Redis backs only the auth/user rate limiters):
+  a multi-instance deploy's job polling can 404 when `GET …/import/jobs/{id}` lands on a
+  different instance than ran the job (jobs live in `AppState.imports`, lost on restart).
+  This is intentionally out of scope — imports are rare, single-slot, and the client just
+  re-imports.
 - **Moxfield link import is temporarily disabled:** because we don't yet have an approved
   User-Agent (below), Moxfield's *live* import — the one-off link import and saved-link
   re-sync — is turned off for now. `Provider::network_import_enabled()` is the single

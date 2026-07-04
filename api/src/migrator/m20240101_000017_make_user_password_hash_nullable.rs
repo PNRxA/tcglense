@@ -1,4 +1,4 @@
-use sea_orm::TransactionTrait;
+use sea_orm::{ConnectionTrait, DatabaseBackend, TransactionTrait};
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -16,59 +16,81 @@ pub struct Migration;
 /// itself, and four independently-committed statements would leave a
 /// crash-interrupted boot with a half-renamed column that the re-run (the
 /// version row is only written after `up` returns) could never repair.
+///
+/// Postgres has `ALTER COLUMN` and transactional DDL, so it drops/re-imposes the
+/// NOT NULL directly — no dance, no manual transaction.
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .get_connection()
-            .transaction::<_, (), DbErr>(|txn| {
-                Box::pin(async move {
-                    txn.execute_unprepared(
-                        "ALTER TABLE users ADD COLUMN password_hash_nullable TEXT",
-                    )
+        let conn = manager.get_connection();
+        if manager.get_database_backend() == DatabaseBackend::Postgres {
+            conn.execute_unprepared(
+                r#"ALTER TABLE "users" ALTER COLUMN "password_hash" DROP NOT NULL"#,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        // SQLite: no ALTER COLUMN. Add-copy-drop-rename, in ONE transaction.
+        conn.transaction::<_, (), DbErr>(|txn| {
+            Box::pin(async move {
+                txn.execute_unprepared("ALTER TABLE users ADD COLUMN password_hash_nullable TEXT")
                     .await?;
-                    txn.execute_unprepared("UPDATE users SET password_hash_nullable = password_hash")
-                        .await?;
-                    txn.execute_unprepared("ALTER TABLE users DROP COLUMN password_hash")
-                        .await?;
-                    txn.execute_unprepared(
-                        "ALTER TABLE users RENAME COLUMN password_hash_nullable TO password_hash",
-                    )
+                txn.execute_unprepared("UPDATE users SET password_hash_nullable = password_hash")
                     .await?;
-                    Ok(())
-                })
+                txn.execute_unprepared("ALTER TABLE users DROP COLUMN password_hash")
+                    .await?;
+                txn.execute_unprepared(
+                    "ALTER TABLE users RENAME COLUMN password_hash_nullable TO password_hash",
+                )
+                .await?;
+                Ok(())
             })
-            .await
-            .map_err(flatten_transaction_error)
+        })
+        .await
+        .map_err(flatten_transaction_error)
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .get_connection()
-            .transaction::<_, (), DbErr>(|txn| {
-                Box::pin(async move {
-                    // Reverse dance. Pending (password-less) registrations cannot
-                    // be represented under NOT NULL; they are deleted — they hold
-                    // no password, no sessions, and re-registering recreates them.
-                    txn.execute_unprepared("DELETE FROM users WHERE password_hash IS NULL")
-                        .await?;
-                    txn.execute_unprepared(
-                        "ALTER TABLE users ADD COLUMN password_hash_not_null TEXT NOT NULL DEFAULT ''",
-                    )
+        let conn = manager.get_connection();
+        if manager.get_database_backend() == DatabaseBackend::Postgres {
+            // Pending (password-less) registrations can't survive under NOT NULL; drop
+            // them (they hold no password/sessions; re-registering recreates them),
+            // then re-impose the constraint.
+            conn.execute_unprepared(r#"DELETE FROM "users" WHERE "password_hash" IS NULL"#)
+                .await?;
+            conn.execute_unprepared(
+                r#"ALTER TABLE "users" ALTER COLUMN "password_hash" SET NOT NULL"#,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        // SQLite reverse dance.
+        conn.transaction::<_, (), DbErr>(|txn| {
+            Box::pin(async move {
+                // Reverse dance. Pending (password-less) registrations cannot
+                // be represented under NOT NULL; they are deleted — they hold
+                // no password, no sessions, and re-registering recreates them.
+                txn.execute_unprepared("DELETE FROM users WHERE password_hash IS NULL")
                     .await?;
-                    txn.execute_unprepared("UPDATE users SET password_hash_not_null = password_hash")
-                        .await?;
-                    txn.execute_unprepared("ALTER TABLE users DROP COLUMN password_hash")
-                        .await?;
-                    txn.execute_unprepared(
-                        "ALTER TABLE users RENAME COLUMN password_hash_not_null TO password_hash",
-                    )
+                txn.execute_unprepared(
+                    "ALTER TABLE users ADD COLUMN password_hash_not_null TEXT NOT NULL DEFAULT ''",
+                )
+                .await?;
+                txn.execute_unprepared("UPDATE users SET password_hash_not_null = password_hash")
                     .await?;
-                    Ok(())
-                })
+                txn.execute_unprepared("ALTER TABLE users DROP COLUMN password_hash")
+                    .await?;
+                txn.execute_unprepared(
+                    "ALTER TABLE users RENAME COLUMN password_hash_not_null TO password_hash",
+                )
+                .await?;
+                Ok(())
             })
-            .await
-            .map_err(flatten_transaction_error)
+        })
+        .await
+        .map_err(flatten_transaction_error)
     }
 }
 

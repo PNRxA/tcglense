@@ -48,6 +48,58 @@ jobs:
             exit 1
           fi
 
+  postgres-redis-tests:
+    name: Postgres + Redis integration tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TCGLENSE_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
+      TCGLENSE_TEST_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
+
+      # Runs ONLY the #[ignore] gated integration tests: the src/integration_pg.rs
+      # Postgres suite and ratelimit.rs's Redis suite (the only ignored tests in the
+      # crate); the env vars above point them at the service containers. The default
+      # SQLite suite + the ts-rs drift check live in the untouched `backend-tests` job
+      # (the ts-rs export only fires for the non-ignored DTO tests, which this job
+      # doesn't run, so it stays owned there).
+      - name: Run gated integration tests
+        run: cargo test --locked -- --ignored
+
   web-unit-tests:
     name: Frontend unit tests (vitest)
     runs-on: ubuntu-latest

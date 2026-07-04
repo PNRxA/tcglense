@@ -11,12 +11,14 @@
 //! proxy) — with the shared query params and card helpers kept here.
 
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Select,
-    sea_query::{Expr, LikeExpr, NullOrdering},
+    ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+    Select,
+    sea_query::{Expr, Func, LikeExpr, NullOrdering, SimpleExpr},
 };
 use serde::Deserialize;
 
 use crate::catalog::Game;
+use crate::db::Dialect;
 use crate::entities::card;
 use crate::entities::prelude::Card;
 use crate::error::AppError;
@@ -179,27 +181,40 @@ fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::En
 }
 
 /// Query the game's **distinct** card names whose name contains `term`
-/// (case-insensitively, via SQLite's ASCII-case-insensitive `LIKE`), capped at
-/// `limit`. Names that *start* with `term` are ordered first (a boolean
-/// "starts-with" expression sorted descending — SQLite puts the `1`s before the
-/// `0`s), then alphabetically. `term`'s LIKE metacharacters are escaped so they
-/// match literally. Selects the `name` column only, so callers finish with
+/// (case-insensitively), capped at `limit`. Names that *start* with `term` are
+/// ordered first, then alphabetically. `term`'s LIKE metacharacters are escaped so
+/// they match literally. Selects the `name` column only, so callers finish with
 /// `.into_tuple::<String>()`. Powers the collection quick-add autocomplete.
+///
+/// Portable across SQLite and Postgres without a dialect param: distinct names come
+/// from `GROUP BY name` (Postgres rejects `ORDER BY <expr>` alongside `SELECT
+/// DISTINCT` when the expr isn't in the select list); case-folding is LOWER-both
+/// (`to_ascii_lowercase` matches SQLite's ASCII `LOWER()` → byte-identical results);
+/// and the starts-with-first rank is `MAX(CASE … THEN 1 ELSE 0 END)` (an integer, so
+/// it works on Postgres, which has no `max(boolean)`). All name-group rows share the
+/// rank, so `MAX` equals the rank and the ordering matches the old DISTINCT form.
 fn name_suggestions_query(game: &str, term: &str, limit: u64) -> Select<card::Entity> {
-    let escaped = escape_like(term);
-    let name_col = Expr::col((card::Entity, card::Column::Name));
-    let contains = name_col
+    let escaped = escape_like(term).to_ascii_lowercase();
+    let name_lower = Expr::expr(Func::lower(Expr::col((card::Entity, card::Column::Name))));
+
+    let contains = name_lower
         .clone()
         .like(LikeExpr::new(format!("%{escaped}%")).escape('\\'));
-    let starts_with = name_col.like(LikeExpr::new(format!("{escaped}%")).escape('\\'));
+    // 0/1 rank so MAX() is valid on Postgres (no max(boolean)).
+    let starts_with_rank = Expr::case(
+        name_lower.like(LikeExpr::new(format!("{escaped}%")).escape('\\')),
+        1,
+    )
+    .finally(0);
+    let starts_with_rank = SimpleExpr::from(Func::max(starts_with_rank));
 
     Card::find()
         .filter(card::Column::Game.eq(game))
         .filter(contains)
         .select_only()
         .column(card::Column::Name)
-        .distinct()
-        .order_by(starts_with, Order::Desc)
+        .group_by(card::Column::Name)
+        .order_by(starts_with_rank, Order::Desc)
         .order_by_asc(card::Column::Name)
         .limit(limit)
 }
@@ -220,10 +235,11 @@ fn apply_search(
     query: Select<card::Entity>,
     game: &Game,
     params: &ListParams,
+    dialect: Dialect,
 ) -> Result<(Select<card::Entity>, SearchShape), AppError> {
     match params.search() {
         Some(search) => {
-            let (condition, shape) = parse_search(game, search)?;
+            let (condition, shape) = parse_search(game, search, dialect)?;
             Ok((query.filter(condition), shape))
         }
         None => Ok((query, SearchShape::default())),
@@ -232,10 +248,14 @@ fn apply_search(
 
 /// Parse an MTG `q` into its row condition plus result-shaping directives; other
 /// games fall back to a plain name substring with no directives.
-fn parse_search(game: &Game, search: &str) -> Result<(Condition, SearchShape), AppError> {
+fn parse_search(
+    game: &Game,
+    search: &str,
+    dialect: Dialect,
+) -> Result<(Condition, SearchShape), AppError> {
     match game.id {
         crate::scryfall::GAME => {
-            let q = crate::scryfall::search::parse_query(search)?;
+            let q = crate::scryfall::search::parse_query(search, dialect)?;
             Ok((
                 q.condition,
                 SearchShape {
@@ -245,25 +265,51 @@ fn parse_search(game: &Game, search: &str) -> Result<(Condition, SearchShape), A
                 },
             ))
         }
-        _ => Ok((search_condition(game, search)?, SearchShape::default())),
+        _ => Ok((search_condition(game, search, dialect)?, SearchShape::default())),
     }
 }
 
-/// Apply a `unique:` de-duplication mode by grouping on a null-safe key (`'#'||id`
-/// keeps NULL-key rows distinct so they don't collapse together). `prints`/absent
-/// leaves the per-printing rows untouched.
+/// Apply a `unique:` de-duplication mode by collapsing to one row per de-dup key
+/// (`'#'||id` keeps NULL-key rows distinct so they don't collapse together).
+/// `prints`/absent leaves the per-printing rows untouched.
+///
+/// Per-backend: SQLite keeps its exact `GROUP BY` (an arbitrary representative row
+/// per group — its historical, unpinned behaviour, preserved byte-for-byte).
+/// Postgres — which rejects a bare `GROUP BY` over `SELECT *` — instead filters to
+/// each group's `MIN(id)` member via an `IN`-subquery. The subquery is built by
+/// cloning the fully-filtered query (it already carries every WHERE filter: game,
+/// search, exact-name, set-scope, include-related), so no group whose min-id row
+/// fails a filter can wrongly vanish. `apply_unique` runs *before* sort/pagination,
+/// so the clone captures only the row filters. Pagination `COUNT(*)` wraps the outer
+/// query on both arms, yielding the group count.
 fn apply_unique(
     query: Select<card::Entity>,
     unique: Option<crate::scryfall::search::UniqueMode>,
+    dialect: Dialect,
 ) -> Select<card::Entity> {
     use crate::scryfall::search::UniqueMode;
-    match unique {
-        Some(UniqueMode::Cards) => {
-            query.group_by(Expr::cust("COALESCE(cards.oracle_id, '#' || cards.id)"))
+    let key_col = match unique {
+        Some(UniqueMode::Cards) => "oracle_id",
+        Some(UniqueMode::Art) => "illustration_id",
+        // prints / absent: no de-duplication.
+        _ => return query,
+    };
+    match dialect {
+        // Unchanged from the pre-Postgres compiler — SQLite picks an arbitrary row
+        // per group.
+        Dialect::Sqlite => {
+            query.group_by(Expr::cust(format!("COALESCE(cards.{key_col}, '#' || cards.id)")))
         }
-        Some(UniqueMode::Art) => {
-            query.group_by(Expr::cust("COALESCE(cards.illustration_id, '#' || cards.id)"))
+        Dialect::Postgres => {
+            let group_key =
+                Expr::cust(format!("COALESCE(cards.{key_col}, '#' || CAST(cards.id AS TEXT))"));
+            let min_ids = query
+                .clone()
+                .select_only()
+                .expr(Func::min(Expr::col((card::Entity, card::Column::Id))))
+                .group_by(group_key)
+                .into_query();
+            query.filter(Expr::col((card::Entity, card::Column::Id)).in_subquery(min_ids))
         }
-        _ => query,
     }
 }

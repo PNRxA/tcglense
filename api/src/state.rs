@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection};
 
 use crate::auth::password::hash_password;
 use crate::captcha::Captcha;
@@ -10,7 +10,7 @@ use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
 use crate::email::Emailer;
 use crate::error::AppError;
-use crate::ratelimit::{RateLimiters, UserRateLimiters};
+use crate::ratelimit::{AuthRateLimiter, UserRateLimiter};
 
 /// The fixed plaintext whose Argon2 hash backs the login timing-equalizer (see
 /// `dummy_password_hash`). Its value is irrelevant to security — only the cost of
@@ -42,11 +42,13 @@ pub struct AppState {
     pub email: Arc<Emailer>,
     /// CAPTCHA verifier for the auth endpoints; a pass-through when no key is set.
     pub captcha: Arc<Captcha>,
-    /// Per-IP rate limiters for the auth endpoints.
-    pub rate_limiters: Arc<RateLimiters>,
+    /// Per-IP rate limiters for the auth endpoints (in-memory, or Redis-backed when
+    /// `REDIS_URL` is configured; see [`crate::ratelimit::AuthRateLimiter`]).
+    pub rate_limiters: Arc<AuthRateLimiter>,
     /// Per-user rate limiters for the authenticated API surface (collection + `me`),
-    /// keyed by the access-token user id (see [`crate::ratelimit::UserRateLimiters`]).
-    pub user_rate_limiters: Arc<UserRateLimiters>,
+    /// keyed by the access-token user id (in-memory, or Redis-backed; see
+    /// [`crate::ratelimit::UserRateLimiter`]).
+    pub user_rate_limiters: Arc<UserRateLimiter>,
 }
 
 impl AppState {
@@ -56,14 +58,17 @@ impl AppState {
     /// image cache rooted at `DATA_DIR/images`, and the background import queue.
     ///
     /// `http` follows redirects (provider data/import calls); `image_http` disables
-    /// them (the image proxy). Returns `Err` only if hashing the timing-equalizer
-    /// constant fails, so callers `.expect` it at startup rather than degrade the
-    /// timing defense to a fast no-op.
+    /// them (the image proxy). `redis` is the optional shared Redis connection
+    /// backing the rate limiters (`Some` only when `REDIS_URL` is set and Redis was
+    /// reachable at boot; `None` = in-memory / per-process). Returns `Err` only if
+    /// hashing the timing-equalizer constant fails, so callers `.expect` it at
+    /// startup rather than degrade the timing defense to a fast no-op.
     pub fn new(
         config: Config,
         db: DatabaseConnection,
         http: reqwest::Client,
         image_http: reqwest::Client,
+        redis: Option<redis::aio::ConnectionManager>,
     ) -> Result<Self, AppError> {
         let dummy_password_hash: Arc<str> = hash_password(TIMING_EQUALIZER_PLAINTEXT)?.into();
         let images = Arc::new(ImageCache::new(
@@ -82,8 +87,11 @@ impl AppState {
         // CAPTCHA verifier (Turnstile, or a pass-through when unconfigured) rides
         // the same shared client; the per-IP auth limiters are in-memory.
         let captcha = Arc::new(Captcha::from_config(&config, http.clone()));
-        let rate_limiters = Arc::new(RateLimiters::default());
-        let user_rate_limiters = Arc::new(UserRateLimiters::default());
+        // Redis-backed when a connection was established at boot, else in-memory.
+        // `ConnectionManager: Clone`, so both limiter sets share the one multiplexed
+        // connection.
+        let rate_limiters = Arc::new(AuthRateLimiter::new(redis.clone()));
+        let user_rate_limiters = Arc::new(UserRateLimiter::new(redis));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -96,5 +104,11 @@ impl AppState {
             rate_limiters,
             user_rate_limiters,
         })
+    }
+
+    /// The SQL [`Dialect`] of the live connection, for handlers compiling
+    /// backend-specific SQL.
+    pub fn dialect(&self) -> crate::db::Dialect {
+        crate::db::Dialect::from_backend(self.db.get_database_backend())
     }
 }

@@ -2,6 +2,7 @@ use super::*;
 use super::image::{is_allowed_image_url, normalize_size};
 use super::prices::PricePoint;
 use super::pricing::{PriceRange, cutoff_date, downsample_rows};
+use crate::db::Dialect;
 use crate::entities::card_price_history;
 use crate::scryfall::search::escape_like;
 use chrono::NaiveDate;
@@ -297,8 +298,9 @@ async fn unique_cards_groups_by_oracle_id() {
     assert_eq!(base().all(&db).await.unwrap().len(), 4, "4 printings total");
     // unique:cards collapses the two o1 printings; the null-oracle card stays
     // distinct (grouped on '#'||id). So o1 + o2 + C = 3.
-    let grouped = apply_unique(base(), Some(crate::scryfall::search::UniqueMode::Cards));
-    let paginator = apply_card_sort(grouped, SortField::Name, SortDir::Asc, false).paginate(&db, 60);
+    let grouped = apply_unique(base(), Some(crate::scryfall::search::UniqueMode::Cards), Dialect::Sqlite);
+    let paginator =
+        apply_card_sort(grouped, SortField::Name, SortDir::Asc, false, Dialect::Sqlite).paginate(&db, 60);
     assert_eq!(paginator.num_items().await.unwrap(), 3, "distinct cards");
     assert_eq!(paginator.fetch_page(0).await.unwrap().len(), 3, "one row per group");
 }

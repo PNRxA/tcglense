@@ -7,12 +7,12 @@ your personal collection, and set-completion progress.
 
 ## Stack
 
-- **`api/`** — Rust API: [axum](https://github.com/tokio-rs/axum) · [SeaORM](https://www.sea-ql.org/SeaORM/) over SQLite · JWT access tokens + httpOnly refresh cookies · Argon2
+- **`api/`** — Rust API: [axum](https://github.com/tokio-rs/axum) · [SeaORM](https://www.sea-ql.org/SeaORM/) over SQLite (Postgres optional) · JWT access tokens + httpOnly refresh cookies · Argon2
 - **`web/`** — Vue 3 SPA: Vite · Pinia · Vue Router · Tailwind 4 · shadcn-vue · TypeScript
 
 ## Getting started
 
-**Prerequisites:** [Rust](https://rustup.rs/) (cargo) and [Node](https://nodejs.org/) 22.18+ / 24.12+. SQLite is embedded — nothing to install.
+**Prerequisites:** [Rust](https://rustup.rs/) (cargo) and [Node](https://nodejs.org/) 22.18+ / 24.12+. SQLite is embedded — nothing to install. Postgres is optionally supported (set `DATABASE_URL=postgres://…`); a `deploy/docker-compose.yml` brings up Postgres + Redis for local parity.
 
 Run both servers (API on `:8080`, web on `:5173`) with one command:
 
@@ -79,6 +79,9 @@ origin (keeping the httpOnly refresh cookie first-party). Config lives in
    HOST=127.0.0.1          # API listens on localhost; only Caddy reaches it
    DATABASE_URL=sqlite:///var/lib/tcglense/tcglense.db?mode=rwc   # dir must exist + be writable
    DATA_DIR=/var/lib/tcglense/data   # persistent + writable; holds cached card images
+   # Optional Postgres instead of SQLite (multi-instance / managed DB):
+   # DATABASE_URL=postgres://tcglense:tcglense@localhost:5432/tcglense
+   # REDIS_URL=redis://localhost:6379   # shared rate-limiter state across instances
    ```
    On first boot the API imports MTG card data from Scryfall in the background
    (~100k paper cards, a one-off ~30s); card images are then cached to `DATA_DIR`
