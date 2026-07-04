@@ -31,7 +31,9 @@ pub struct Config {
     /// (with a contact URL/email) is required. Not a secret.
     pub tcgcsv_user_agent: String,
     /// Master switch for the one-time TCGCSV historic price backfill (see
-    /// [`crate::tcgcsv`]). Default `true`; set `false` to skip it entirely.
+    /// [`crate::tcgcsv`]). Default `false` (opt-in): the walk over TCGCSV's daily
+    /// archives can take a while and hit an external service, so it never runs unless
+    /// explicitly enabled. Set `true` to run it.
     pub price_backfill_enabled: bool,
     /// Cap on how many of the most recent archive days the price backfill downloads.
     /// `0` (the default) = every archive day since TCGCSV's first (2024-02-08); `N` =
@@ -294,8 +296,8 @@ impl Config {
         let tcgcsv_user_agent = env_trimmed("TCGCSV_USER_AGENT")
             .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
 
-        // The one-time historic price backfill runs by default; `0` days = all archives.
-        let price_backfill_enabled = env_bool("PRICE_BACKFILL_ENABLED", true);
+        // The one-time historic price backfill is opt-in (off by default); `0` days = all archives.
+        let price_backfill_enabled = env_bool("PRICE_BACKFILL_ENABLED", false);
         let price_backfill_days = env_parse::<u32>("PRICE_BACKFILL_DAYS").unwrap_or(0);
 
         // Moxfield only serves approved User-Agents (see the struct field); no default.
