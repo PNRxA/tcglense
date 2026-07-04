@@ -163,8 +163,9 @@ usePageMeta({
       <ProductBuyLinks :game="game" :product="product" />
 
       <!-- The cards this product contains / can be pulled from — the reverse of the
-        card page's "Sealed products" section, guaranteed cards first (issue #204). -->
-      <ProductCards :game="game" :id="product.id" />
+        card page's "Sealed products" section, guaranteed cards first, then this booster
+        family's exclusive cards ahead of the shared pool (issue #204). -->
+      <ProductCards :game="game" :id="product.id" :product-type="product.product_type" />
     </template>
   </div>
 </template>
