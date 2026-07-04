@@ -602,7 +602,7 @@ test_support.rs    shared #[cfg(test)] fixtures: test_config(), a migrated in-me
 security_tests/    HTTP-level security tests driving the real build_router in-process (tower oneshot): refresh rotation/reuse, generic login failures, email-first registration + completion, email verification + password reset (via the harness's capturing mailbox), cookie/CORS/caching contracts, request bodies, search, collection + import, wishlist (incl. wishlist↔collection independence)
 integration_pg.rs  opt-in Postgres integration tests (`#[cfg(test)]`, `#[ignore]` + env-gated on `TCGLENSE_TEST_POSTGRES_URL`): each carves an isolated database off the base URL, runs the real migrations, and asserts the SQL seam / branched migrations on live Postgres (migration chain + down/up, case-insensitive email index, `issue_with_cooldown` 20-way concurrency, refresh rotation, collection upsert, price snapshot, the search battery incl. unique:cards / NULLS-last set order). The Redis limiter tests live in `ratelimit.rs` (same `cargo test -- --ignored` run, `TCGLENSE_TEST_REDIS_URL`)
 entities/          SeaORM entities (user [incl. email_verified_at], refresh_token, email_token = `email_tokens`; card = `cards`, card_set = `card_sets`, ingest_state = `ingest_state`, card_price_history = `card_price_history`, collection_item = `collection_items`, collection_source = `collection_sources`, wishlist_item = `wishlist_items`, product = `products`, product_price_history = `product_price_history`, sealed_content = `sealed_contents` [card→sealed-product membership])
-collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution], parse_source, ProviderContext, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + ProviderSettings + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (per-provider RateLimiters via ProviderLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
+collection_import/ provider-agnostic collection import/sync: mod.rs (execute_import/execute_csv_import orchestration [CSV shape dispatch + moxfield_rows_to_holdings set/number resolution], parse_source, ProviderContext, the incremental smart-fetch path [smart_absorb_page/load_local_by_external]), types.rs (Provider enum + ReconcileMode incl. Smart + ProviderSettings + FetchedHolding + ImportSummary), error.rs (ImportError → AppError), reconcile.rs (provider-independent engine: aggregate/plan_reconcile/atomic apply + reconcile_smart), consolidate.rs (foil-★ variant folding, issue #209: load_foil_variant_pairs resolves star↔base cards, apply_foil_remap/consolidate_local fold an **incoming** foil printing onto its nonfoil base as foil, fold_existing_star_holdings folds an **already-held** star row onto its base + deletes it so a manual/legacy star holding can't coexist and double-count — both run before reconcile), archidekt.rs (parse collection id from URL/id, rate-limited paginated fetch [get_page] → normalized holdings; fetch_smart pages newest-updated-first with early stop; shared is_foil_finish + backoff_after), moxfield.rs (parse collection id from URL/id [base64url charset], paginated fetch on totalPages with the approved MOXFIELD_USER_AGENT + 403→"needs an approved User-Agent"; fetch_smart via sortType=lastUpdated; skips isProxy rows), csv_import.rs (sniff + parse an uploaded Archidekt or Moxfield CSV export → normalized rows; bounded + defensive), rate_limit.rs (per-provider RateLimiters via ProviderLimiters: 20 req/min spacing each + back_off on 429), jobs.rs (ImportQueue: background jobs, single-slot queue, status registry, provider settings, spawn_import_job). Another provider = add a Provider variant + a module
 migrator/          MigratorTrait impl + one migration per file (m<date>_<n>_<name>.rs)
 auth/
   password.rs      Argon2 hash / verify (PHC strings, random salt)
@@ -619,6 +619,7 @@ scryfall/          MTG provider (the first game)
   ingest.rs        refresh(): stream `default_cards` line-by-line, paper-only filter, batched upserts (update-column lists derived from the entity columns), ingest_state bookkeeping
   map.rs           pure Scryfall JSON → ActiveModel shaping, kept out of ingest so it (and its tests) stand alone
   price_history.rs snapshot_prices(): daily per-card price-history capture from the committed cards rows (also used by the dummy seeder)
+  foil_variants.rs enrich_foil_variant_prices(): copy each foil-★ variant's foil price onto its nonfoil base card (issue #209) so a consolidated foil holding values correctly; runs in refresh_all every tick, before the snapshot
   progress.rs      live terminal progress for the bulk import (tracing-indicatif; renders nothing when stderr isn't a TTY)
   search/          Scryfall-style query compiler: lexer.rs → parser.rs (recursive descent: and/or/-/parens/quotes/regex `/…/` → Node AST) → compile/ (one submodule per filter family → sea_orm::Condition; legality via json_extract, prints/sets via oracle_id-sibling subqueries) + order:/direction:/unique: directives (parse_query); error.rs (SearchError → 422); values always parameterised
   drops.rs         Secret Lair drop grouping: loads sld_drops.json once → (game,set)→{ordered drops, collector#→drop}; table()/has_drops()/drop_for()
@@ -1001,6 +1002,42 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   16 MB cap is generous for either export (Moxfield's full export is ~100 KB per 1000
   rows) but can reject a huge *all-columns* Archidekt export — its user is told to export
   only the three needed columns.
+- **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
+  the **foil** of a card as a *separate* Scryfall object whose collector number is the
+  nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing
+  the `741★` printing lands as its own owned card *beside* the `741` you already track —
+  two rows for one card. Our model tracks regular **and** foil per card, so
+  `collection_import::consolidate` folds a foil-★ holding onto its base as a **foil copy**.
+  Two folds run before every reconcile (full network import, CSV upload, and smart
+  re-sync — smart remaps per page so its early-stop still fires): the **incoming** import is
+  remapped onto the base (`apply_foil_remap`/`consolidate_local`), and any star row the user
+  **already holds** — a legacy pre-#209 import, or a manual add of the `…★` catalog card
+  (which is still a distinct, addable card) — is folded onto its base and deleted first
+  (`fold_existing_star_holdings`), so a star holding never coexists with the base and
+  double-counts. The rule is deliberately **conservative**: only a `finishes="foil"` star
+  with a `finishes="nonfoil"` sibling (same set, oracle id, and collector number sans the
+  star) is folded — the case where the base genuinely can't be foil on its own. An
+  **ambiguous** star (base itself `nonfoil,foil`, ~8 old Invasion-block/STX cases), an
+  **etched** star, or a star with **no base** (a standalone promo) keeps its own holding —
+  those are genuinely distinct printings. **Pricing:** Scryfall keeps the foil price only on
+  the `…★` object, so `scryfall::enrich_foil_variant_prices` copies it onto the nonfoil base
+  each sync tick (before the price snapshot, so it's captured into history too); without
+  this a folded foil would value at $0 against the base's empty foil price (~94% of pairs).
+  The base card then carries **both** prices, so the public catalog shows a foil price on it
+  as well. When the periodic sync is off (`SYNC_ON_STARTUP=false`), `tasks::start` still runs
+  the enrichment once at boot, so a holding folded by the migration doesn't sit at $0. One
+  consequence of folding to a single dual-finish card: an **Overwrite** import that lists the
+  base's nonfoil but not the foil-★ sets the base's *absolute* counts (foil → 0) — the same
+  authoritative behavior Overwrite already applies to any card owned in both finishes (the
+  provider models the foil separately, so a full import that omits the `…★` means "no foil");
+  Merge adds and Smart preserves the unobserved foil, so a user tracking a foil their import
+  omits should use those modes. Legacy duplicate rows that predate the fix are also folded once by the
+  `m…023_consolidate_foil_star_holdings` **migration** (the same rule in cross-backend SQL,
+  wrapped in a transaction so a crash-interrupted boot re-runs cleanly; irreversible, so
+  `down` is a no-op) — belt-and-braces for a user who never re-imports; a re-import folds
+  them anyway via `fold_existing_star_holdings`. The star (`…★`) card stays a browsable
+  catalog entry — only the *holding* is consolidated, so a set's owned-card badges show the
+  count on the base card, not the star.
 - **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
   gated on `rows_affected`, so it's race-safe across connections. The
   revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation

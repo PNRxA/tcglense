@@ -10,6 +10,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, Tr
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 
+use super::consolidate;
 use super::{FetchedHolding, ImportError, ImportSummary, Provider, ReconcileMode};
 use super::{IN_CHUNK, UNMATCHED_SAMPLE_CAP};
 
@@ -159,6 +160,16 @@ pub(super) async fn reconcile_holdings(
     mode: ReconcileMode,
     holdings: Vec<FetchedHolding>,
 ) -> Result<ImportSummary, ImportError> {
+    // Fold separately-modelled foil printings (`…★`) onto their base card as foil copies
+    // (issue #209), so aggregation, id resolution, and reconcile all see a straight 1:1
+    // external-id→card mapping. Remap the incoming holdings up front (pure, no DB); the
+    // existing-star fold is a DB mutation, so it's deferred until *after* the zero-match
+    // guard below so a refused import leaves the collection untouched. Covers the full
+    // network import and the CSV upload (both land here); the smart path does the same
+    // during its fetch.
+    let pairs = consolidate::load_foil_variant_pairs(db, game).await?;
+    let holdings = consolidate::apply_foil_remap(holdings, &consolidate::ext_remap(&pairs));
+
     let total_rows = holdings.len();
     let aggregated = aggregate(&holdings);
     let distinct_cards = aggregated.len();
@@ -191,10 +202,17 @@ pub(super) async fn reconcile_holdings(
     let matched_cards = imported.len();
 
     // A mirror/replace that matched nothing is almost always a catalog mismatch, not an
-    // intent to wipe the collection — refuse before we delete everything.
+    // intent to wipe the collection — refuse before we delete (or fold) anything.
     if imported.is_empty() && mode == ReconcileMode::Replace {
         return Err(ImportError::NoMatchingCards);
     }
+
+    // Fold any star row the user already holds (a manual add of the `…★` card, or a legacy
+    // pre-#209 import) onto its base first, so it can't coexist with — and double-count
+    // against — the base holding this import writes. Runs after the guard (so a refused
+    // import doesn't mutate) and before the current-counts read below (so `merge`/`replace`
+    // plan against the folded state).
+    consolidate::fold_existing_star_holdings(db, user_id, game, &pairs).await?;
 
     // Current holdings for (user, game): the counts feed `merge` planning.
     let existing_counts = existing_counts_by_card(db, user_id, game).await?;
@@ -660,6 +678,186 @@ mod tests {
             owned_counts(&db, user_id, a).await,
             Some((2, 6)),
             "regular preserved from the live count, foil overwritten"
+        );
+    }
+
+    // ---- Foil-variant consolidation (issue #209) ----
+
+    /// Insert a card with explicit set/number/finishes/oracle id — the fields the
+    /// foil-★ consolidation keys off — reusing the canonical all-defaults row.
+    async fn insert_variant(
+        db: &DatabaseConnection,
+        id: i32,
+        external_id: &str,
+        collector_number: &str,
+        finishes: &str,
+        oracle_id: &str,
+    ) -> i32 {
+        use crate::test_support::card_model;
+        use sea_orm::{ActiveModelTrait, IntoActiveModel};
+        card::Model {
+            external_id: external_id.into(),
+            set_code: "sld".into(),
+            collector_number: collector_number.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle_id.into()),
+            ..card_model(id)
+        }
+        .into_active_model()
+        .insert(db)
+        .await
+        .expect("insert card");
+        id
+    }
+
+    #[tokio::test]
+    async fn reconcile_folds_a_foil_star_holding_onto_its_base_as_foil() {
+        // The issue's exact case: importing the foil `741★` printing (even reported as a
+        // non-foil finish, as Archidekt does) lands on the base `741` as a foil copy — no
+        // separate `741★` holding is created.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let base = insert_variant(&db, 1, "ext-741", "741", "nonfoil", "ora-chaos").await;
+        let star = insert_variant(&db, 2, "ext-741-star", "741★", "foil", "ora-chaos").await;
+
+        let holdings = vec![holding("ext-741-star", false, 3)];
+        let summary = reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Overwrite,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
+
+        assert_eq!(owned_counts(&db, user_id, base).await, Some((0, 3)), "base owns 3 foil");
+        assert_eq!(owned_counts(&db, user_id, star).await, None, "no separate star holding");
+        assert_eq!(summary.matched_cards, 1);
+        assert_eq!(summary.foil_copies, 3);
+        assert_eq!(summary.regular_copies, 0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_merges_base_and_star_rows_onto_one_card() {
+        // Owning both the nonfoil `741` and the foil `741★` collapses to a single base
+        // holding carrying both counts.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let base = insert_variant(&db, 1, "ext-741", "741", "nonfoil", "ora-chaos").await;
+        insert_variant(&db, 2, "ext-741-star", "741★", "foil", "ora-chaos").await;
+
+        // The base reported as two regular rows, plus the foil star.
+        let holdings = vec![
+            holding("ext-741", false, 1),
+            holding("ext-741", false, 1),
+            holding("ext-741-star", true, 2),
+        ];
+        let summary = reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Overwrite,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
+
+        assert_eq!(owned_counts(&db, user_id, base).await, Some((2, 2)), "2 regular + 2 foil");
+        assert_eq!(summary.distinct_cards, 1, "star + base count as one card");
+        assert_eq!(summary.matched_cards, 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_leaves_an_ambiguous_star_as_its_own_card() {
+        // A foil star whose base is itself foilable (`nonfoil,foil`) is left separate — it
+        // is a genuinely distinct printing, not a nonfoil card's foil counterpart.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        insert_variant(&db, 1, "ext-33", "33", "nonfoil,foil", "ora-proctor").await;
+        let star = insert_variant(&db, 2, "ext-33-star", "33★", "foil", "ora-proctor").await;
+
+        let holdings = vec![holding("ext-33-star", true, 1)];
+        reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Overwrite,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
+
+        assert_eq!(
+            owned_counts(&db, user_id, star).await,
+            Some((0, 1)),
+            "the ambiguous star keeps its own holding"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_folds_a_pre_existing_star_holding_so_the_import_never_double_counts() {
+        // The review's core case: the user already holds the `741★` card directly (a manual
+        // add, or a legacy pre-#209 import), AND an import brings `741★`. Both must land on
+        // the single base `741` foil — no second row, no doubled count.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let base = insert_variant(&db, 1, "ext-741", "741", "nonfoil", "ora-chaos").await;
+        let star = insert_variant(&db, 2, "ext-741-star", "741★", "foil", "ora-chaos").await;
+        // Pre-existing holding on the star card itself (stored as regular, pre-fix).
+        insert_holding(&db, user_id, star, 1, 0).await;
+
+        // Overwrite is the non-mirroring mode most exposed to the double-count.
+        let holdings = vec![holding("ext-741-star", false, 1)];
+        reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Overwrite,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
+
+        assert_eq!(owned_counts(&db, user_id, base).await, Some((0, 1)), "one foil on the base");
+        assert_eq!(owned_counts(&db, user_id, star).await, None, "no leftover star holding");
+    }
+
+    #[tokio::test]
+    async fn overwrite_of_only_the_nonfoil_sets_the_consolidated_foil_per_the_import() {
+        // Once a foil-★ folds onto its base, the base is one dual-finish card, so an
+        // Overwrite import that lists the base's nonfoil but not the foil-★ sets the base to
+        // the import's *absolute* counts (foil = 0) — the same authoritative-overwrite
+        // behavior Overwrite already applies to any card owned in both finishes. (Merge
+        // adds; Smart preserves the unobserved foil — a user who tracks a foil their import
+        // omits should use those modes.) Pinned so this stays intentional, not accidental.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "importer@test.example").await;
+        let base = insert_variant(&db, 1, "ext-741", "741", "nonfoil", "ora-chaos").await;
+        insert_variant(&db, 2, "ext-741-star", "741★", "foil", "ora-chaos").await;
+        // Already consolidated: the base holds 2 foil, no separate star holding.
+        insert_holding(&db, user_id, base, 0, 2).await;
+
+        let holdings = vec![holding("ext-741", false, 3)]; // the import lists only the nonfoil
+        reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Overwrite,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
+
+        assert_eq!(
+            owned_counts(&db, user_id, base).await,
+            Some((3, 0)),
+            "Overwrite sets the base's absolute counts from the import"
         );
     }
 }

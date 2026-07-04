@@ -55,6 +55,21 @@ pub async fn refresh_all(
                 if let Err(err) = crate::scryfall::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "card data refresh failed");
                 }
+                // Copy each foil-★ variant's foil price onto its nonfoil base card (issue
+                // #209), so a consolidated foil holding values correctly. Runs every tick —
+                // even when the version-gated import above was skipped — before the daily
+                // snapshot (`snapshot_all`), so the enriched price lands in history too.
+                match crate::scryfall::enrich_foil_variant_prices(db).await {
+                    Ok(rows) if rows > 0 => {
+                        tracing::info!(game = game.id, rows, "enriched foil-variant base prices")
+                    }
+                    Ok(_) => {}
+                    Err(err) => tracing::error!(
+                        game = game.id,
+                        error = %err,
+                        "foil-variant price enrichment failed"
+                    ),
+                }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
                 if let Err(err) =

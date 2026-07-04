@@ -443,6 +443,66 @@ async fn collection_upsert_on_pg() {
 
 #[tokio::test]
 #[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn foil_star_consolidation_folds_on_pg() {
+    // The issue #209 legacy fold on live Postgres: exercises the correlated-subquery UPDATE,
+    // the insert-missing-base SELECT, and `REPLACE`/`LIKE` over the multibyte `★` — all of
+    // which the SQLite unit tests cover, but the SQL runs on both backends unbranched.
+    use crate::entities::card;
+    use sea_orm::IntoActiveModel;
+
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    // A nonfoil base and its separately-modelled foil `★` sibling (share an oracle id).
+    let insert = |id: i32, number: &'static str, finishes: &'static str| async move {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: "sld".into(),
+            collector_number: number.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some("ora-1".into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(conn)
+        .await
+        .expect("insert card")
+        .id
+    };
+    let base_id = insert(1, "741", "nonfoil").await;
+    let star_id = insert(2, "741★", "foil").await;
+
+    let uid = insert_user(conn, "foilstar@x.test").await;
+    // A legacy star holding (stored as regular, pre-#209) and no base holding yet.
+    CollectionItem::insert(collection_item::ActiveModel {
+        user_id: Set(uid),
+        game: Set(GAME.to_string()),
+        card_id: Set(star_id),
+        quantity: Set(2),
+        foil_quantity: Set(0),
+        created_at: Set(Utc::now()),
+        updated_at: Set(Utc::now()),
+        ..Default::default()
+    })
+    .exec(conn)
+    .await
+    .expect("insert star holding");
+
+    crate::migrator::consolidate_foil_star_holdings(conn)
+        .await
+        .expect("fold");
+
+    assert_eq!(owned_counts(conn, uid, base_id).await, Some((0, 2)), "folded to base foil");
+    assert_eq!(owned_counts(conn, uid, star_id).await, None, "star holding removed");
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
 async fn price_snapshot_upsert_on_pg() {
     let Some(base) = test_pg_url() else {
         return;
