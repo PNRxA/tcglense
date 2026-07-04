@@ -26,6 +26,8 @@ function makeRouter() {
       { path: '/', component: { template: '<div />' } },
       { path: '/cards', component: { template: '<div />' } },
       { path: '/cards/:game', component: { template: '<div />' } },
+      { path: '/sealed', component: { template: '<div />' } },
+      { path: '/sealed/:game', component: { template: '<div />' } },
       { path: '/collection', component: { template: '<div />' } },
       { path: '/collection/:game', component: { template: '<div />' } },
       { path: '/wishlist', component: { template: '<div />' } },
@@ -61,22 +63,27 @@ function trigger(wrapper: Awaited<ReturnType<typeof mountNav>>, label: string) {
 }
 
 describe('MainNav', () => {
-  it('renders the Cards, Collection and Wish list triggers in one menu', async () => {
+  it('renders the Products, Collection and Wish list triggers in one menu', async () => {
     const wrapper = await mountNav()
-    expect(trigger(wrapper, 'Cards').exists()).toBe(true)
+    expect(trigger(wrapper, 'Products').exists()).toBe(true)
     expect(trigger(wrapper, 'Collection').exists()).toBe(true)
     expect(trigger(wrapper, 'Wish list').exists()).toBe(true)
   })
 
-  it('reveals catalog links when the Cards menu is opened', async () => {
+  it('reveals both catalog and sealed links when the Products menu is opened', async () => {
     const wrapper = await mountNav([MTG])
-    await trigger(wrapper, 'Cards').trigger('click')
+    await trigger(wrapper, 'Products').trigger('click')
     await flushPromises()
 
-    const browseAll = wrapper.find('a[href="/cards"]')
-    expect(browseAll.exists()).toBe(true)
-    expect(browseAll.text()).toContain('Browse all games')
+    // Cards group.
+    const browseCards = wrapper.find('a[href="/cards"]')
+    expect(browseCards.exists()).toBe(true)
+    expect(browseCards.text()).toContain('Browse all games')
     expect(wrapper.find('a[href="/cards/mtg"]').exists()).toBe(true)
+
+    // Sealed group.
+    expect(wrapper.find('a[href="/sealed"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/sealed/mtg"]').exists()).toBe(true)
   })
 
   it('reveals collection links when the Collection menu is opened', async () => {

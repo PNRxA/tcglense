@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Heart, Layers, Library } from '@lucide/vue'
+import { Heart, Layers, Library, Package } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import {
   NavigationMenu,
@@ -12,8 +12,8 @@ import {
 } from '@/components/ui/navigation-menu'
 import { useGamesQuery } from '@/composables/useCatalog'
 
-// The top-bar primary nav: "Cards" (public catalog), "Collection" and "Wish list"
-// (per-user).
+// The top-bar primary nav: "Products" (the public catalog — Cards + Sealed products,
+// grouped in one dropdown), "Collection" and "Wish list" (per-user).
 //
 // All items live under ONE NavigationMenu / NavigationMenuList on purpose: reka-ui
 // computes the swipe direction (data-motion=from-start/from-end) only between siblings
@@ -33,14 +33,20 @@ const games = computed(() => data.value?.data ?? [])
 <template>
   <NavigationMenu :viewport="false">
     <NavigationMenuList>
-      <!-- Cards: the public catalog. -->
+      <!-- Products: the public catalog, split into Cards + Sealed products. Both share
+           one dropdown so they read as one catalog; each group has a "browse all games"
+           landing plus one entry per game. -->
       <NavigationMenuItem>
         <NavigationMenuTrigger>
           <Layers class="mr-1.5 size-4" aria-hidden="true" />
-          Cards
+          Products
         </NavigationMenuTrigger>
         <NavigationMenuContent>
           <ul class="grid w-56 gap-1">
+            <!-- Cards -->
+            <li>
+              <p class="text-muted-foreground px-2 pb-1 text-xs font-medium">Cards</p>
+            </li>
             <li>
               <!-- Override on the wrapper so cn()/tailwind-merge resolves the
                    flex-col→flex-row + gap conflict deterministically (not via CSS order). -->
@@ -51,22 +57,28 @@ const games = computed(() => data.value?.data ?? [])
                 </RouterLink>
               </NavigationMenuLink>
             </li>
-            <li v-for="game in games" :key="game.id">
+            <li v-for="game in games" :key="`cards-${game.id}`">
               <NavigationMenuLink as-child>
                 <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
               </NavigationMenuLink>
             </li>
-            <!-- Sealed products (booster boxes, bundles, decks) — one entry per game. -->
-            <template v-if="games.length">
-              <li class="mt-1 border-t pt-2">
-                <p class="text-muted-foreground px-2 pb-1 text-xs font-medium">Sealed products</p>
-              </li>
-              <li v-for="game in games" :key="`sealed-${game.id}`">
-                <NavigationMenuLink as-child>
-                  <RouterLink :to="`/cards/${game.id}/sealed`">{{ game.name }}</RouterLink>
-                </NavigationMenuLink>
-              </li>
-            </template>
+            <!-- Sealed products (booster boxes, bundles, decks). -->
+            <li class="mt-1 border-t pt-2">
+              <p class="text-muted-foreground px-2 pb-1 text-xs font-medium">Sealed</p>
+            </li>
+            <li>
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/sealed">
+                  <Package aria-hidden="true" />
+                  Browse all games
+                </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <li v-for="game in games" :key="`sealed-${game.id}`">
+              <NavigationMenuLink as-child>
+                <RouterLink :to="`/sealed/${game.id}`">{{ game.name }}</RouterLink>
+              </NavigationMenuLink>
+            </li>
           </ul>
         </NavigationMenuContent>
       </NavigationMenuItem>

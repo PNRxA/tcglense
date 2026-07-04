@@ -58,16 +58,23 @@ const router = createRouter({
       component: () => import('@/views/SetView.vue'),
       props: true,
     },
-    // Sealed products (booster boxes, bundles, decks): a browse/filter grid and a
-    // per-product detail page with a price-history chart, mirroring the card views.
+    // Sealed products (booster boxes, bundles, decks): a top-level section of its own
+    // (sibling to /cards, /collection, /wishlist) — an all-games landing, a per-game
+    // browse/filter grid, and a per-product detail page with a price-history chart,
+    // mirroring the card views. Public, like the catalog.
     {
-      path: '/cards/:game/sealed',
+      path: '/sealed',
+      name: 'sealed',
+      component: () => import('@/views/SealedGamesView.vue'),
+    },
+    {
+      path: '/sealed/:game',
       name: 'game-sealed',
       component: () => import('@/views/SealedBrowseView.vue'),
       props: true,
     },
     {
-      path: '/cards/:game/sealed/:id',
+      path: '/sealed/:game/:id',
       name: 'sealed-product',
       component: () => import('@/views/SealedProductView.vue'),
       props: true,

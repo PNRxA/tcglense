@@ -26,6 +26,8 @@ function makeRouter() {
       { path: '/', component: { template: '<div />' } },
       { path: '/cards', component: { template: '<div />' } },
       { path: '/cards/:game', component: { template: '<div />' } },
+      { path: '/sealed', component: { template: '<div />' } },
+      { path: '/sealed/:game', component: { template: '<div />' } },
       { path: '/collection', component: { template: '<div />' } },
       { path: '/collection/:game', component: { template: '<div />' } },
       { path: '/wishlist', component: { template: '<div />' } },
@@ -63,7 +65,7 @@ describe('MobileNav', () => {
     wrapper.unmount()
   })
 
-  it('reveals catalog, collection and wish-list links when opened', async () => {
+  it('reveals catalog, sealed, collection and wish-list links when opened', async () => {
     const wrapper = await mountNav([MTG])
     await wrapper.find('button[aria-label="Open navigation menu"]').trigger('click')
     await flushPromises()
@@ -72,6 +74,8 @@ describe('MobileNav', () => {
     const hrefs = Array.from(document.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(hrefs).toContain('/cards')
     expect(hrefs).toContain('/cards/mtg')
+    expect(hrefs).toContain('/sealed')
+    expect(hrefs).toContain('/sealed/mtg')
     expect(hrefs).toContain('/collection')
     expect(hrefs).toContain('/collection/mtg')
     expect(hrefs).toContain('/wishlist')
