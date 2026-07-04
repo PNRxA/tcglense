@@ -16,7 +16,7 @@ use reqwest::{
 };
 
 use super::model::AllPrintings;
-use super::{BASE_URL, MtgjsonError};
+use super::MtgjsonError;
 
 /// The result of a conditional fetch: either the server said "unchanged" (`304`) or we
 /// downloaded + parsed a fresh copy (with its new `ETag`, when present).
@@ -36,9 +36,10 @@ pub enum FetchOutcome {
 /// blocking task), and returns the trimmed structs plus the response `ETag`.
 pub async fn fetch_all_printings(
     client: &Client,
+    base_url: &str,
     etag: Option<&str>,
 ) -> Result<FetchOutcome, MtgjsonError> {
-    let url = format!("{BASE_URL}/AllPrintings.json.gz");
+    let url = format!("{base_url}/AllPrintings.json.gz");
     let mut request = client.get(&url);
     if let Some(tag) = etag {
         request = request.header(IF_NONE_MATCH, tag);

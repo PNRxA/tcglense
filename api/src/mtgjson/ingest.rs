@@ -42,8 +42,12 @@ const INSERT_BATCH: usize = 2000;
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
 /// the error is returned for the caller to log.
-pub async fn refresh(db: &DatabaseConnection, http: &Client) -> Result<(), MtgjsonError> {
-    match refresh_inner(db, http).await {
+pub async fn refresh(
+    db: &DatabaseConnection,
+    http: &Client,
+    source: &crate::datasets::SyncSource,
+) -> Result<(), MtgjsonError> {
+    match refresh_inner(db, http, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = mark_error(db, &err.to_string()).await;
@@ -52,7 +56,11 @@ pub async fn refresh(db: &DatabaseConnection, http: &Client) -> Result<(), Mtgjs
     }
 }
 
-async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), MtgjsonError> {
+async fn refresh_inner(
+    db: &DatabaseConnection,
+    http: &Client,
+    source: &crate::datasets::SyncSource,
+) -> Result<(), MtgjsonError> {
     let existing = load_state(db).await?;
     let prior_etag = existing
         .as_ref()
@@ -62,7 +70,8 @@ async fn refresh_inner(db: &DatabaseConnection, http: &Client) -> Result<(), Mtg
     let progress = SyncProgress::start("checking for updates");
 
     // Conditional fetch: a 304 (unchanged file) short-circuits the whole rebuild.
-    let (etag, all) = match fetch_all_printings(http, prior_etag.as_deref()).await? {
+    let base_url = source.mtgjson_base_url();
+    let (etag, all) = match fetch_all_printings(http, &base_url, prior_etag.as_deref()).await? {
         FetchOutcome::Unchanged => {
             drop(progress);
             tracing::info!("mtgjson sealed contents already up to date");

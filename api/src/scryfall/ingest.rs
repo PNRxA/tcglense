@@ -26,6 +26,7 @@ use super::map;
 use super::model::{ScryfallCard, ScryfallSet};
 use super::progress::ImportProgress;
 use super::{DATASET, GAME, GAME_NAME};
+use crate::datasets::SyncSource;
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
@@ -89,8 +90,12 @@ pub(super) struct IngestStateUpdate {
 ///
 /// On error the state row is best-effort marked `"error"` so the next boot
 /// retries, and the error is returned for logging by the caller.
-pub async fn refresh(db: &DatabaseConnection, client: &Client) -> Result<(), IngestError> {
-    match refresh_inner(db, client).await {
+pub async fn refresh(
+    db: &DatabaseConnection,
+    client: &Client,
+    source: &SyncSource,
+) -> Result<(), IngestError> {
+    match refresh_inner(db, client, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = put_state(
@@ -108,8 +113,12 @@ pub async fn refresh(db: &DatabaseConnection, client: &Client) -> Result<(), Ing
     }
 }
 
-async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), IngestError> {
-    let entry = client::bulk_data(client)
+async fn refresh_inner(
+    db: &DatabaseConnection,
+    client: &Client,
+    source: &SyncSource,
+) -> Result<(), IngestError> {
+    let entry = client::bulk_data(client, &source.scryfall_bulk_data_url())
         .await?
         .into_iter()
         .find(|b| b.kind == DATASET)
@@ -154,7 +163,7 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
     .await?;
 
     // Sets first, so cards can reference stored sets.
-    let sets = client::all_sets(client).await?;
+    let sets = client::all_sets(client, &source.scryfall_sets_url()).await?;
     let paper_codes: HashSet<String> = sets
         .iter()
         .filter(|s| !s.digital.unwrap_or(false))
@@ -176,10 +185,16 @@ async fn refresh_inner(db: &DatabaseConnection, client: &Client) -> Result<(), I
 
     // Switch the bar to its determinate phase now that the byte length is known.
     progress.begin_cards(entry.size);
+    // In mirror mode the bulk file streams from the mirror (overriding the catalog's
+    // embedded upstream `download_uri`, which points at Scryfall's own CDN); upstream
+    // mode follows that `download_uri` directly.
+    let download_url = source
+        .scryfall_file_url(DATASET)
+        .unwrap_or_else(|| entry.download_uri.clone());
     let cards_imported = import_cards(
         db,
         client,
-        &entry.download_uri,
+        &download_url,
         &paper_codes,
         &entry.updated_at,
         sets_imported,

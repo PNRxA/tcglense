@@ -1,0 +1,329 @@
+//! Dataset **mirror**: re-serve the raw provider datasets so other TCGLense instances
+//! can pull them from here instead of hammering the upstream services.
+//!
+//! By default a self-host reads the big dataset files (Scryfall's `default_cards` bulk
+//! file + set list, MTGJSON's `AllPrintings.json.gz`, TCGCSV's catalog / prices /
+//! archives) from a mirror rather than from the upstreams (see [`crate::datasets`]). The
+//! public site runs these endpoints so it is that mirror: each handler streams the
+//! corresponding file straight from the upstream service on demand and re-serves it with
+//! **CDN-cacheable** headers, so a fronting CDN absorbs the repeat downloads and the
+//! upstream is hit at most about once per cache period. Nothing is persisted on disk —
+//! the same fetch-and-serve posture as the image proxy's [`CDN_MODE`](crate::config::Config::cdn_mode).
+//!
+//! Serving is gated on [`Config::mirror_enabled`](crate::config::Config) (off by default,
+//! so an ordinary self-host isn't an open proxy to the upstreams). The routes are wired
+//! only when it is set; see [`crate::router`].
+//!
+//! **Consistency note.** The bulk *file* endpoints are given a strictly shorter shared
+//! TTL than the *catalog* endpoint that advertises the version, so a consumer can never
+//! read a fresh `updated_at` while the CDN still holds a stale file (which it would then
+//! stamp as up-to-date and never re-fetch). See [`MIRROR_FILE_CACHE`].
+
+use axum::{
+    Json,
+    body::Body,
+    extract::{Path, State},
+    http::{
+        HeaderMap, HeaderValue, StatusCode,
+        header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH, USER_AGENT},
+    },
+    response::{IntoResponse, Response},
+};
+
+use crate::{error::AppError, state::AppState};
+
+/// `Cache-Control` for the small mirror **metadata** (the Scryfall bulk-data catalog and
+/// set list, and every TCGCSV JSON / `last-updated.txt`). Shared-cacheable for an hour —
+/// these change at most daily — served stale-while-revalidate so a CDN miss never blocks.
+const MIRROR_META_CACHE: &str = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400";
+
+/// `Cache-Control` for the big dataset **file** (the streamed Scryfall bulk card file).
+///
+/// Deliberately a **shorter** shared TTL (`s-maxage`) than [`MIRROR_META_CACHE`]: the
+/// catalog advertises an `updated_at` the consumer version-gates on, so the file must
+/// never be *staler* than the catalog. With a shorter file TTL, whenever the catalog
+/// re-fetches a new version the file cache has already expired and is re-fetched with it
+/// — otherwise a consumer could pair a new `updated_at` with a stale file, import the old
+/// data, stamp it as current, and never pull the real new file.
+const MIRROR_FILE_CACHE: &str = "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400";
+
+/// `Cache-Control` for MTGJSON's `AllPrintings.json.gz`. That file is version-gated on
+/// its HTTP `ETag`, so the win is the conditional `304` (the consumer only re-ingests a
+/// changed file), not caching the ~160 MB body. Tell shared caches to revalidate every
+/// time so the `If-None-Match` is forwarded and the upstream `304` is relayed through.
+const MIRROR_REVALIDATE_CACHE: &str = "public, max-age=0, must-revalidate";
+
+/// Whether `kind` is a safe bulk-dataset slug (defence in depth — it selects a catalog
+/// entry, never touches the filesystem): non-empty, lowercase ASCII + underscores only.
+fn is_safe_dataset_kind(kind: &str) -> bool {
+    !kind.is_empty() && kind.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+}
+
+/// Validate + normalise an arbitrary TCGCSV sub-path (from the `{*path}` capture) so it
+/// can only ever address a resource *under* `https://tcgcsv.com/` — no host escape, no
+/// traversal. Every `/`-separated segment must be non-empty and match `[A-Za-z0-9._-]+`
+/// (which excludes `.`/`..` dot-segments, `:`, and empty segments that could form `//`
+/// or a scheme). Returns the cleaned path (identical to the input when valid).
+fn sanitize_tcgcsv_path(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.split('/').collect();
+    for seg in &segments {
+        if seg.is_empty()
+            || *seg == "."
+            || *seg == ".."
+            || !seg
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
+            return None;
+        }
+    }
+    Some(segments.join("/"))
+}
+
+/// Map a request-path upstream failure to a `502`, tagged with which mirror hop failed.
+fn bad_gateway(context: &str, err: impl std::fmt::Display) -> AppError {
+    AppError::BadGateway(format!("mirror: {context}: {err}"))
+}
+
+/// Stream an upstream `GET` through as the response, forwarding the upstream
+/// `Content-Type` (+ `ETag`) and stamping `cache_control`. The body streams, so memory
+/// stays bounded regardless of file size. A `304` (MTGJSON conditional) is relayed
+/// bodyless with its `ETag`; a `404` (a missing TCGCSV archive day) is relayed as `404`
+/// so the consumer treats it as "no archive"; any other non-success is a `502`.
+async fn proxy_stream(
+    state: &AppState,
+    context: &str,
+    url: &str,
+    user_agent: Option<&str>,
+    if_none_match: Option<&str>,
+    cache_control: &'static str,
+) -> Result<Response, AppError> {
+    let mut request = state.http.get(url);
+    if let Some(ua) = user_agent {
+        request = request.header(USER_AGENT, ua);
+    }
+    if let Some(inm) = if_none_match {
+        request = request.header(IF_NONE_MATCH, inm);
+    }
+    let upstream = request
+        .send()
+        .await
+        .map_err(|err| bad_gateway(context, err))?;
+    let status = upstream.status();
+
+    // Relay a conditional 304 bodyless, carrying the ETag + our cache policy.
+    if status == StatusCode::NOT_MODIFIED {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        if let Some(etag) = upstream.headers().get(ETAG).cloned() {
+            response.headers_mut().insert(ETAG, etag);
+        }
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+        return Ok(response);
+    }
+    // A missing upstream resource (e.g. a day with no TCGCSV archive) stays a 404 so the
+    // consumer's own not-found handling kicks in, rather than a misleading 502.
+    if status == StatusCode::NOT_FOUND {
+        return Err(AppError::NotFound(format!(
+            "mirror: {context}: upstream 404"
+        )));
+    }
+    let upstream = upstream
+        .error_for_status()
+        .map_err(|err| bad_gateway(context, err))?;
+
+    // Capture the headers worth forwarding before the response is consumed into a stream.
+    let content_type = upstream.headers().get(CONTENT_TYPE).cloned();
+    let etag = upstream.headers().get(ETAG).cloned();
+
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+    let headers = response.headers_mut();
+    if let Some(ct) = content_type {
+        headers.insert(CONTENT_TYPE, ct);
+    }
+    if let Some(tag) = etag {
+        headers.insert(ETAG, tag);
+    }
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    Ok(response)
+}
+
+/// `GET /api/mirror/scryfall/bulk-data` — the Scryfall bulk-data catalog (small JSON
+/// describing each downloadable file). The consumer reads `updated_at`/`size` from it and
+/// builds the file URL from the mirror, so the embedded upstream `download_uri` is
+/// re-served verbatim but never followed by a mirror consumer.
+pub async fn scryfall_bulk_data(State(state): State<AppState>) -> Result<Response, AppError> {
+    proxy_stream(
+        &state,
+        "scryfall bulk-data",
+        crate::scryfall::BULK_DATA_URL,
+        None,
+        None,
+        MIRROR_META_CACHE,
+    )
+    .await
+}
+
+/// `GET /api/mirror/scryfall/sets` — the full Scryfall set list, every upstream page
+/// folded into one `{ has_more: false, data: [...] }` so the consumer's pagination loop
+/// terminates after a single request. The set objects are passed through untouched.
+pub async fn scryfall_sets(State(state): State<AppState>) -> Result<Response, AppError> {
+    let mut data: Vec<serde_json::Value> = Vec::new();
+    let mut url = crate::scryfall::SETS_URL.to_string();
+    loop {
+        let page: serde_json::Value = state
+            .http
+            .get(&url)
+            .header(ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|err| bad_gateway("scryfall sets", err))?
+            .error_for_status()
+            .map_err(|err| bad_gateway("scryfall sets", err))?
+            .json()
+            .await
+            .map_err(|err| bad_gateway("scryfall sets", err))?;
+        if let Some(arr) = page.get("data").and_then(|v| v.as_array()) {
+            data.extend(arr.iter().cloned());
+        }
+        match (
+            page.get("has_more")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            page.get("next_page").and_then(|v| v.as_str()),
+        ) {
+            (true, Some(next)) => url = next.to_string(),
+            _ => break,
+        }
+    }
+    let body = serde_json::json!({ "object": "list", "has_more": false, "data": data });
+    Ok((
+        [(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE))],
+        Json(body),
+    )
+        .into_response())
+}
+
+/// `GET /api/mirror/scryfall/file/{kind}` — stream the current bulk file for `kind`
+/// (e.g. `default_cards`). Resolves the live download URL from the catalog, then streams
+/// its bytes through (bounded memory).
+pub async fn scryfall_file(
+    Path(kind): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    if !is_safe_dataset_kind(&kind) {
+        return Err(AppError::NotFound(
+            "mirror: unknown bulk dataset".to_string(),
+        ));
+    }
+    let entry = crate::scryfall::client::bulk_data(&state.http, crate::scryfall::BULK_DATA_URL)
+        .await
+        .map_err(|err| bad_gateway("scryfall catalog", err))?
+        .into_iter()
+        .find(|b| b.kind == kind)
+        .ok_or_else(|| AppError::NotFound(format!("mirror: bulk dataset '{kind}' not found")))?;
+    proxy_stream(
+        &state,
+        "scryfall file",
+        &entry.download_uri,
+        None,
+        None,
+        MIRROR_FILE_CACHE,
+    )
+    .await
+}
+
+/// `GET /api/mirror/mtgjson/AllPrintings.json.gz` — MTGJSON's sealed-contents dump,
+/// forwarding `If-None-Match`/`ETag` so the consumer's ETag version-gate (its cheap
+/// unchanged-file `304`) still works through the mirror.
+pub async fn mtgjson_all_printings(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let if_none_match = headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok());
+    let url = format!("{}/AllPrintings.json.gz", crate::mtgjson::BASE_URL);
+    proxy_stream(
+        &state,
+        "mtgjson AllPrintings",
+        &url,
+        None,
+        if_none_match,
+        MIRROR_REVALIDATE_CACHE,
+    )
+    .await
+}
+
+/// `GET /api/mirror/tcgcsv/{*path}` — proxy an arbitrary TCGCSV path (`last-updated.txt`,
+/// `tcgplayer/{cat}/groups`, `.../products`, `.../prices`, `archive/...`), host-locked
+/// and path-sanitised. Carries the configured TCGCSV User-Agent, since TCGCSV blocks
+/// generic ones.
+pub async fn tcgcsv_proxy(
+    Path(path): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let clean = sanitize_tcgcsv_path(&path)
+        .ok_or_else(|| AppError::NotFound("mirror: invalid tcgcsv path".to_string()))?;
+    let url = format!("{}/{clean}", crate::tcgcsv::BASE_URL);
+    proxy_stream(
+        &state,
+        "tcgcsv",
+        &url,
+        Some(state.config.tcgcsv_user_agent.as_str()),
+        None,
+        MIRROR_META_CACHE,
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dataset_kind_slug_is_strict() {
+        assert!(is_safe_dataset_kind("default_cards"));
+        assert!(is_safe_dataset_kind("oracle_cards"));
+        assert!(!is_safe_dataset_kind(""));
+        assert!(!is_safe_dataset_kind("Default")); // uppercase
+        assert!(!is_safe_dataset_kind("../etc")); // traversal chars
+        assert!(!is_safe_dataset_kind("a b")); // space
+        assert!(!is_safe_dataset_kind("all-cards")); // hyphen not allowed here
+    }
+
+    #[test]
+    fn tcgcsv_path_accepts_the_real_endpoints() {
+        for p in [
+            "last-updated.txt",
+            "tcgplayer/1/groups",
+            "tcgplayer/1/2649/products",
+            "tcgplayer/1/2649/prices",
+            "archive/tcgplayer/prices-2024-02-08.ppmd.7z",
+        ] {
+            assert_eq!(
+                sanitize_tcgcsv_path(p).as_deref(),
+                Some(p),
+                "should accept {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn tcgcsv_path_rejects_traversal_and_host_escape() {
+        // Dot-segments, empty segments (`//`), backslashes, and anything that could
+        // change the host or scheme are refused.
+        for p in [
+            "..",
+            "../secret",
+            "tcgplayer/../../etc/passwd",
+            "tcgplayer//groups", // empty segment
+            "",                  // empty capture
+            "a b/groups",        // space
+            "http:/evil.com",    // colon
+            "tcgplayer/@evil",   // stray symbol
+        ] {
+            assert_eq!(sanitize_tcgcsv_path(p), None, "should reject {p:?}");
+        }
+    }
+}

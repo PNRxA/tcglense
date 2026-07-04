@@ -9,16 +9,20 @@ use bytes::Bytes;
 use chrono::NaiveDate;
 use reqwest::{Client, StatusCode, header};
 
-use super::BASE_URL;
 use super::BackfillError;
 use super::model::{GroupsFile, PriceFile, ProductsFile};
 
 /// Fetch TCGCSV's `last-updated.txt` — a plain-text timestamp bumped once a day when
 /// the daily data refresh completes. Used to version-gate the whole products sweep so
-/// an unchanged day is a single cheap request (their documented pattern).
-pub async fn last_updated(client: &Client, user_agent: &str) -> Result<String, BackfillError> {
+/// an unchanged day is a single cheap request (their documented pattern). `base_url`
+/// is the upstream host or its TCGLense mirror, per the dataset source.
+pub async fn last_updated(
+    client: &Client,
+    base_url: &str,
+    user_agent: &str,
+) -> Result<String, BackfillError> {
     let text = client
-        .get(format!("{BASE_URL}/last-updated.txt"))
+        .get(format!("{base_url}/last-updated.txt"))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await?
@@ -31,11 +35,12 @@ pub async fn last_updated(client: &Client, user_agent: &str) -> Result<String, B
 /// Fetch all groups (roughly sets/expansions) for a category — one unpaginated call.
 pub async fn fetch_groups(
     client: &Client,
+    base_url: &str,
     user_agent: &str,
     category_id: u32,
 ) -> Result<GroupsFile, BackfillError> {
     Ok(client
-        .get(format!("{BASE_URL}/tcgplayer/{category_id}/groups"))
+        .get(format!("{base_url}/tcgplayer/{category_id}/groups"))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await?
@@ -47,12 +52,13 @@ pub async fn fetch_groups(
 /// Fetch every product in a group (cards + sealed; the caller filters to sealed).
 pub async fn fetch_products(
     client: &Client,
+    base_url: &str,
     user_agent: &str,
     category_id: u32,
     group_id: i64,
 ) -> Result<ProductsFile, BackfillError> {
     Ok(client
-        .get(format!("{BASE_URL}/tcgplayer/{category_id}/{group_id}/products"))
+        .get(format!("{base_url}/tcgplayer/{category_id}/{group_id}/products"))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await?
@@ -65,12 +71,13 @@ pub async fn fetch_products(
 /// products with active listings appear, so absence is normal.
 pub async fn fetch_prices(
     client: &Client,
+    base_url: &str,
     user_agent: &str,
     category_id: u32,
     group_id: i64,
 ) -> Result<PriceFile, BackfillError> {
     Ok(client
-        .get(format!("{BASE_URL}/tcgplayer/{category_id}/{group_id}/prices"))
+        .get(format!("{base_url}/tcgplayer/{category_id}/{group_id}/prices"))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await?
@@ -79,11 +86,11 @@ pub async fn fetch_prices(
         .await?)
 }
 
-/// The archive URL for a given day's prices, e.g.
+/// The archive URL for a given day's prices under `base_url`, e.g.
 /// `https://tcgcsv.com/archive/tcgplayer/prices-2024-02-08.ppmd.7z`.
-pub fn archive_url(date: NaiveDate) -> String {
+pub fn archive_url(base_url: &str, date: NaiveDate) -> String {
     format!(
-        "{BASE_URL}/archive/tcgplayer/prices-{}.ppmd.7z",
+        "{base_url}/archive/tcgplayer/prices-{}.ppmd.7z",
         date.format("%Y-%m-%d")
     )
 }
@@ -95,11 +102,12 @@ pub fn archive_url(date: NaiveDate) -> String {
 /// Any other non-success status is an error.
 pub async fn fetch_archive(
     client: &Client,
+    base_url: &str,
     user_agent: &str,
     date: NaiveDate,
 ) -> Result<Option<Bytes>, BackfillError> {
     let response = client
-        .get(archive_url(date))
+        .get(archive_url(base_url, date))
         // Overrides the client's default UA (TCGCSV rejects generic ones).
         .header(header::USER_AGENT, user_agent)
         .send()
@@ -119,8 +127,13 @@ mod tests {
     fn archive_url_is_dated() {
         let d = NaiveDate::from_ymd_opt(2024, 2, 8).unwrap();
         assert_eq!(
-            archive_url(d),
+            archive_url(super::super::BASE_URL, d),
             "https://tcgcsv.com/archive/tcgplayer/prices-2024-02-08.ppmd.7z"
+        );
+        // The mirror base flows straight through the same join.
+        assert_eq!(
+            archive_url("https://tcglense.com/api/mirror/tcgcsv", d),
+            "https://tcglense.com/api/mirror/tcgcsv/archive/tcgplayer/prices-2024-02-08.ppmd.7z"
         );
     }
 }

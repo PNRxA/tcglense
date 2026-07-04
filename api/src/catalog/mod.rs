@@ -40,26 +40,32 @@ pub fn find(id: &str) -> Option<&'static Game> {
 /// Refresh catalog data for every supported game from its provider. For MTG this
 /// covers the Scryfall card sync and, on top of it, the TCGCSV sealed-product sweep
 /// (both version-gated, so an unchanged tick is cheap). `tcgcsv_user_agent` is the
-/// descriptive UA TCGCSV requires. A failure for one game/source is logged and does
-/// not abort the others.
-pub async fn refresh_all(db: &DatabaseConnection, client: &Client, tcgcsv_user_agent: &str) {
+/// descriptive UA TCGCSV requires; `source` decides whether each provider's dataset is
+/// pulled from the upstream service or a TCGLense mirror (see [`crate::datasets`]). A
+/// failure for one game/source is logged and does not abort the others.
+pub async fn refresh_all(
+    db: &DatabaseConnection,
+    client: &Client,
+    tcgcsv_user_agent: &str,
+    source: &crate::datasets::SyncSource,
+) {
     for game in GAMES {
         match game.id {
             crate::scryfall::GAME => {
-                if let Err(err) = crate::scryfall::refresh(db, client).await {
+                if let Err(err) = crate::scryfall::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "card data refresh failed");
                 }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
                 if let Err(err) =
-                    crate::tcgcsv::ingest::refresh(db, client, tcgcsv_user_agent).await
+                    crate::tcgcsv::ingest::refresh(db, client, tcgcsv_user_agent, source).await
                 {
                     tracing::error!(game = game.id, error = %err, "product data refresh failed");
                 }
                 // Sealed-product contents (MTGJSON): which sealed products each card is
                 // found in / can be pulled from. Runs last, after both cards + products
                 // exist to resolve its Scryfall-id / TCGplayer-id references against.
-                if let Err(err) = crate::mtgjson::ingest::refresh(db, client).await {
+                if let Err(err) = crate::mtgjson::ingest::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "sealed-contents refresh failed");
                 }
             }

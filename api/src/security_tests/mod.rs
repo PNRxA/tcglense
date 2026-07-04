@@ -21,6 +21,7 @@ mod collection_import;
 mod cors;
 mod email_verification;
 mod login;
+mod mirror;
 mod pagination;
 mod password_reset;
 mod products;

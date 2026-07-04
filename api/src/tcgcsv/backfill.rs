@@ -55,8 +55,9 @@ pub async fn run(
     http: &Client,
     user_agent: &str,
     days_cap: u32,
+    source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
-    match run_inner(db, http, user_agent, days_cap).await {
+    match run_inner(db, http, user_agent, days_cap, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = mark_error(db, &err.to_string()).await;
@@ -70,7 +71,9 @@ async fn run_inner(
     http: &Client,
     user_agent: &str,
     days_cap: u32,
+    source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
+    let base_url = source.tcgcsv_base_url();
     let existing = load_state(db).await?;
     if existing.as_ref().map(|s| s.status.as_str()) == Some("complete") {
         tracing::info!("tcgcsv price backfill already complete; skipping");
@@ -135,7 +138,7 @@ async fn run_inner(
     while date <= today {
         tokio::time::sleep(REQUEST_SPACING).await;
 
-        match super::client::fetch_archive(http, user_agent, date).await {
+        match super::client::fetch_archive(http, &base_url, user_agent, date).await {
             Ok(Some(bytes)) => {
                 let rows_written = process_day(db, bytes.to_vec(), date, &map, &product_map).await?;
                 total_rows = total_rows.saturating_add(rows_written as i64);

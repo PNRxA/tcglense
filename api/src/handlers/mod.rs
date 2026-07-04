@@ -3,6 +3,7 @@ pub mod cache;
 pub mod catalog;
 pub mod collection;
 pub mod health;
+pub mod mirror;
 pub mod shared;
 pub mod sitemap;
 pub mod wishlist;

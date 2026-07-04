@@ -30,5 +30,8 @@ pub(crate) const GAME_NAME: &str = "Magic: The Gathering";
 /// Bulk dataset we ingest: one card object per English (or sole-language) print.
 pub const DATASET: &str = "default_cards";
 
-const BULK_DATA_URL: &str = "https://api.scryfall.com/bulk-data";
-const SETS_URL: &str = "https://api.scryfall.com/sets";
+/// Upstream bulk-data catalog. `pub` so the dataset-source seam ([`crate::datasets`])
+/// and the mirror handler ([`crate::handlers::mirror`]) can resolve/re-serve it.
+pub const BULK_DATA_URL: &str = "https://api.scryfall.com/bulk-data";
+/// Upstream set list. `pub` for the same reason as [`BULK_DATA_URL`].
+pub const SETS_URL: &str = "https://api.scryfall.com/sets";

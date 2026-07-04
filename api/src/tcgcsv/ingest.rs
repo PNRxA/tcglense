@@ -46,8 +46,9 @@ pub async fn refresh(
     db: &DatabaseConnection,
     http: &Client,
     user_agent: &str,
+    source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
-    match refresh_inner(db, http, user_agent).await {
+    match refresh_inner(db, http, user_agent, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = mark_error(db, &err.to_string()).await;
@@ -60,10 +61,12 @@ async fn refresh_inner(
     db: &DatabaseConnection,
     http: &Client,
     user_agent: &str,
+    source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
+    let base_url = source.tcgcsv_base_url();
     // Version gate: one cheap request. Skip the whole sweep if TCGCSV hasn't refreshed
     // since our last complete sync.
-    let remote_version = super::client::last_updated(http, user_agent).await?;
+    let remote_version = super::client::last_updated(http, &base_url, user_agent).await?;
     let existing = load_state(db).await?;
     if let Some(state) = &existing
         && state.status == "complete"
@@ -79,7 +82,7 @@ async fn refresh_inner(
         .unwrap_or_else(Utc::now);
     put_state(db, "running", None, "fetching groups", started, None, 0, 0).await?;
 
-    let groups = super::client::fetch_groups(http, user_agent, MTG_CATEGORY_ID)
+    let groups = super::client::fetch_groups(http, &base_url, user_agent, MTG_CATEGORY_ID)
         .await?
         .results;
     tracing::info!(groups = groups.len(), "tcgcsv products: sweeping groups");
@@ -93,13 +96,14 @@ async fn refresh_inner(
     let progress = SyncProgress::start_products(groups_total as u64);
     for (i, group) in groups.iter().enumerate() {
         tokio::time::sleep(REQUEST_SPACING).await;
-        let products = super::client::fetch_products(http, user_agent, MTG_CATEGORY_ID, group.group_id)
-            .await?
-            .results;
+        let products =
+            super::client::fetch_products(http, &base_url, user_agent, MTG_CATEGORY_ID, group.group_id)
+                .await?
+                .results;
 
         tokio::time::sleep(REQUEST_SPACING).await;
         let prices = aggregate_prices(
-            super::client::fetch_prices(http, user_agent, MTG_CATEGORY_ID, group.group_id)
+            super::client::fetch_prices(http, &base_url, user_agent, MTG_CATEGORY_ID, group.group_id)
                 .await?
                 .results,
         );

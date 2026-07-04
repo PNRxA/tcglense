@@ -11,14 +11,14 @@ use reqwest::{Client, header};
 
 use super::ingest::IngestError;
 use super::model::{BulkData, BulkDataList, ScryfallSet, SetList};
-use super::{BULK_DATA_URL, SETS_URL};
 
 const ACCEPT_JSON: &str = "application/json";
 
-/// Fetch the bulk-data catalog (small JSON describing each downloadable file).
-pub async fn bulk_data(client: &Client) -> Result<Vec<BulkData>, IngestError> {
+/// Fetch the bulk-data catalog (small JSON describing each downloadable file) from
+/// `url` — the upstream catalog or its mirror, per the dataset source.
+pub async fn bulk_data(client: &Client, url: &str) -> Result<Vec<BulkData>, IngestError> {
     let list: BulkDataList = client
-        .get(BULK_DATA_URL)
+        .get(url)
         .header(header::ACCEPT, ACCEPT_JSON)
         .send()
         .await?
@@ -28,10 +28,12 @@ pub async fn bulk_data(client: &Client) -> Result<Vec<BulkData>, IngestError> {
     Ok(list.data)
 }
 
-/// Fetch every set, following pagination (`has_more` / `next_page`).
-pub async fn all_sets(client: &Client) -> Result<Vec<ScryfallSet>, IngestError> {
+/// Fetch every set, following pagination (`has_more` / `next_page`) from the first
+/// page at `url`. The mirror folds all pages into one `has_more: false` response, so
+/// this loop runs exactly once against it.
+pub async fn all_sets(client: &Client, url: &str) -> Result<Vec<ScryfallSet>, IngestError> {
     let mut sets = Vec::new();
-    let mut url = SETS_URL.to_string();
+    let mut url = url.to_string();
     loop {
         let page: SetList = client
             .get(&url)

@@ -46,6 +46,9 @@ pub(crate) fn test_config() -> Config {
         seed_dummy_data: false,
         cdn_mode: false,
         web_root: None,
+        sync_from_upstream: false,
+        dataset_mirror_url: "https://tcglense.example".to_string(),
+        mirror_enabled: false,
     }
 }
 
