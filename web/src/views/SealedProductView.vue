@@ -81,8 +81,7 @@ const jsonLd = computed<Record<string, unknown> | undefined>(() => {
 usePageMeta({
   title: () => product.value?.name,
   description: metaDescription,
-  canonicalPath: () =>
-    product.value ? `/cards/${game.value}/sealed/${product.value.id}` : undefined,
+  canonicalPath: () => (product.value ? `/sealed/${game.value}/${product.value.id}` : undefined),
   image: productImage,
   type: 'product',
   jsonLd,
@@ -92,7 +91,7 @@ usePageMeta({
 <template>
   <div class="mx-auto max-w-5xl px-4 py-10">
     <RouterLink
-      :to="`/cards/${game}/sealed`"
+      :to="`/sealed/${game}`"
       class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
     >
       <ArrowLeft class="size-4" />

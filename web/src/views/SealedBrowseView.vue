@@ -73,7 +73,7 @@ usePageMeta({
   description: () =>
     `Browse and filter sealed ${gameName.value} products — booster boxes, bundles and ` +
     `decks — with current prices and price history on TCGLense.`,
-  canonicalPath: () => `/cards/${game.value}/sealed`,
+  canonicalPath: () => `/sealed/${game.value}`,
 })
 
 const facetsQuery = useProductFacetsQuery(game)
@@ -101,13 +101,7 @@ useClampPage(page, () => ({
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <PageBreadcrumbs
-      :items="[
-        { label: 'Cards', to: '/cards' },
-        { label: gameName, to: `/cards/${game}` },
-        { label: 'Sealed products' },
-      ]"
-    />
+    <PageBreadcrumbs :items="[{ label: 'Sealed', to: '/sealed' }, { label: gameName }]" />
 
     <h1 class="mb-4 text-3xl font-semibold tracking-tight">Sealed products</h1>
 

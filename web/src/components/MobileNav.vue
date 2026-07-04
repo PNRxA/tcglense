@@ -16,8 +16,9 @@ import { useGamesQuery } from '@/composables/useCatalog'
 // The mobile counterpart to MainNav: the top-bar's Cards/Collection/Wish list
 // dropdowns don't fit alongside the brand + theme + account controls at phone width,
 // so below `sm` they collapse into this single hamburger. It reuses the DropdownMenu
-// primitives (which open on tap) and folds the nav sections — Cards, Collection and
-// Wish list — into one flat menu, driven by the same cached games registry as MainNav
+// primitives (which open on tap) and folds the nav sections — Cards + Sealed (the
+// desktop "Products" menu, grouped together here), Collection and Wish list — into one
+// flat menu, driven by the same cached games registry as MainNav
 // so a new TCG shows up here automatically. Real <RouterLink> anchors (via as-child)
 // keep the links keyboard- and middle-click-friendly, and reka closes the menu on
 // navigation.
@@ -44,15 +45,16 @@ const games = computed(() => data.value?.data ?? [])
         <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
       </DropdownMenuItem>
 
-      <template v-if="games.length">
-        <DropdownMenuLabel class="flex items-center gap-2">
-          <Package class="size-4" aria-hidden="true" />
-          Sealed products
-        </DropdownMenuLabel>
-        <DropdownMenuItem v-for="game in games" :key="`sealed-${game.id}`" as-child>
-          <RouterLink :to="`/cards/${game.id}/sealed`">{{ game.name }}</RouterLink>
-        </DropdownMenuItem>
-      </template>
+      <DropdownMenuLabel class="flex items-center gap-2">
+        <Package class="size-4" aria-hidden="true" />
+        Sealed
+      </DropdownMenuLabel>
+      <DropdownMenuItem as-child>
+        <RouterLink to="/sealed">Browse all games</RouterLink>
+      </DropdownMenuItem>
+      <DropdownMenuItem v-for="game in games" :key="`sealed-${game.id}`" as-child>
+        <RouterLink :to="`/sealed/${game.id}`">{{ game.name }}</RouterLink>
+      </DropdownMenuItem>
 
       <DropdownMenuSeparator />
 

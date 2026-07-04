@@ -19,7 +19,7 @@ const price = computed(() => {
   return pick ? { text: formatUsd(pick.amount), foil: pick.foil } : null
 })
 const typeLabel = computed(() => productTypeLabel(props.product.product_type))
-const to = computed(() => `/cards/${props.game}/sealed/${props.product.id}`)
+const to = computed(() => `/sealed/${props.game}/${props.product.id}`)
 </script>
 
 <template>
