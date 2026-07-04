@@ -7,6 +7,7 @@ import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useProductQuery } from '@/composables/useProducts'
+import { useProductBackLink } from '@/composables/useProductBackLink'
 import { getProductPrices, productImageUrl } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { productTypeLabel } from '@/lib/productType'
@@ -23,6 +24,10 @@ const id = toRef(props, 'id')
 
 const productQuery = useProductQuery(game, id)
 const product = computed(() => productQuery.data.value)
+
+// The in-app "back" link, mirroring the page the user arrived by — a card's "Sealed
+// products" section or the sealed browse — rather than always the browse (issue #203).
+const backLink = useProductBackLink(game)
 
 const typeLabel = computed(() =>
   product.value ? productTypeLabel(product.value.product_type) : '',
@@ -92,11 +97,11 @@ usePageMeta({
 <template>
   <div class="mx-auto max-w-5xl px-4 py-10">
     <RouterLink
-      :to="`/sealed/${game}`"
+      :to="backLink.to"
       class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
     >
       <ArrowLeft class="size-4" />
-      Sealed products
+      {{ backLink.label }}
     </RouterLink>
 
     <LoadingRow v-if="productQuery.isPending.value" label="Loading product…" />
