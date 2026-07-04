@@ -44,7 +44,9 @@ time = "0.3.51"
 tokio = { version = "1.52.3", features = ["full", "test-util"] }
 tokio-util = { version = "0.7.18", features = ["io"] }
 tower = "0.5.3"
-tower-http = { version = "0.7.0", features = ["cors", "trace"] }
+# `fs` gates ServeDir/ServeFile — the optional static-SPA fallback served when
+# WEB_ROOT is set (the single-process "combined" Docker image; see router.rs).
+tower-http = { version = "0.7.0", features = ["cors", "trace", "fs"] }
 tracing = "0.1.44"
 tracing-indicatif = "0.3"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

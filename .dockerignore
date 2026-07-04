@@ -1,0 +1,30 @@
+# Keep the build context small and deterministic: exclude anything not needed to
+# build the API binary or the web bundle (both are compiled inside the image).
+
+# Rust build output (rebuilt in the api-builder stage)
+**/target
+
+# Node deps + build output (rebuilt in the web-builder stage)
+**/node_modules
+web/dist
+
+# Local databases + downloaded/cached data
+**/*.db
+**/*.db-shm
+**/*.db-wal
+/data
+api/data
+
+# VCS, CI, tooling, editor, and local env (never baked into an image)
+.git
+.gitignore
+.github
+.claude
+**/.env
+**/*.log
+web/playwright-report
+web/test-results
+web/coverage
+
+# Docs — not consumed by any build stage
+*.md

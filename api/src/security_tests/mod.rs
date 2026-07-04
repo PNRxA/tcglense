@@ -30,4 +30,5 @@ mod registration;
 mod request_body;
 mod search;
 mod sitemap;
+mod web_root;
 mod wishlist;

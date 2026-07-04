@@ -145,6 +145,53 @@ different origin.
 Before calling a change done, run `cargo check`/`cargo test` for `api/` work and
 `npm run type-check && npm run lint && npm run test:unit -- --run` for `web/` work.
 
+## Docker images & releases
+
+One multi-stage [`Dockerfile`](./Dockerfile) at the repo root builds **three**
+images via named targets (shared `web-builder` [node → `web/dist`] and `api-builder`
+[`cargo build --release --locked`; the Rust stage installs `cmake` + `nasm` for
+`aws-lc-sys`, everything else — bundled SQLite, the RustCrypto stack — is vendored;
+the runtime is `debian:bookworm-slim` + `ca-certificates` + `tini`, non-root, `/data`
+volume] stages):
+
+| Target | Image | What it is |
+|--------|-------|------------|
+| `api` | `tcglense-api` | the Rust API only (serves `/api`) |
+| `web` | `tcglense-web` | the built SPA served by Caddy (`deploy/web.Caddyfile`: SPA + `/api` reverse-proxy to `{$API_UPSTREAM:api:8080}`) |
+| `combined` | `tcglense` | the API **and** SPA in one process — the API serves the SPA from `WEB_ROOT=/srv/web` (see the `WEB_ROOT` config field + the `fallback_service` in `router.rs`) |
+
+The **`WEB_ROOT` static-SPA fallback** is the one code seam the combined image needs:
+when set, `build_router` adds a `tower-http` `ServeDir` fallback so any non-`/api`
+request serves the SPA — a real file directly, and an unknown path via
+`ServeDir::fallback(ServeFile(index.html))` (**not** `not_found_service`, which would
+force a 404), so a deep-linked SPA route returns `index.html` with a **200**. A
+lowest-priority `/api/{*rest}` catch-all keeps an *unknown* API path a JSON 404
+(registered routes + their handler 404s still win). Unset leaves the API `/api`-only,
+so the split (Caddy) deployment and existing installs are untouched. Pinned by the
+`security_tests::web_root` suite.
+
+**Release CD** ([`.github/workflows/release.yml`](./.github/workflows/release.yml)):
+`on: release: published` (+ manual `workflow_dispatch`, tagged `:edge`) builds all
+three images in a matrix and pushes them to **GHCR** (`ghcr.io/pnrxa/…`, via the
+built-in `GITHUB_TOKEN`) and, when the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repo
+secrets are set, **Docker Hub** (`docker.io/pnrxa/…`; the Docker Hub push is gated on
+the secret's presence, so GHCR-only works out of the box; the first GHCR push creates
+each package **private** — make it Public once to allow anonymous pulls).
+`docker/metadata-action` derives the image tags from the release tag: the exact tag
+(`vX.Y.Z`) plus the semver-normalized `X.Y.Z` + `X.Y`, and `latest` only on a
+non-pre-release (a manual `workflow_dispatch` is tagged `:edge`). Builds are `linux/amd64` (multi-arch is future work — Rust under
+QEMU is slow). Two compose files run the published images:
+`deploy/docker-compose.homelab.yml` (the combined image + SQLite, one container) and
+`deploy/docker-compose.prod.yml` (the full split: edge Caddy [`deploy/edge.Caddyfile`]
++ web + api + Postgres + Redis).
+
+**Cutting a release:** `./scripts/release.sh` prompts for the version, bumps it in
+`api/Cargo.toml` (+ `Cargo.lock` via `cargo update -p tcglense-api`) and
+`web/package.json` (+ lock via `npm version`), commits, tags `vX.Y.Z`, pushes, and
+`gh release create`s the GitHub Release that triggers the workflow. The workflow file
+must already be on the default branch for the release to fire it, so land it on `main`
+before the first release.
+
 ## Auth API contract
 
 Base URL `http://localhost:8080`, all routes under `/api`. Every response —
@@ -735,7 +782,11 @@ transparently refreshes once on a 401 and retries, logging out if that still fai
   `PUBLIC_SITE_URL` (`http://localhost:5173`; public SPA origin for the sitemap
   `<loc>`s — set to the real site origin in prod), `RUST_LOG` (`info`),
   `DATA_DIR` (`./data`; holds cached card images under
-  `images/`), `CDN_MODE` (`false`; when `true` the image/icon proxy skips the
+  `images/`), `WEB_ROOT` (unset; when set, the API also serves the built SPA static
+  files from this dir with an `index.html` fallback for client-side routes — the
+  single-process "combined" Docker image sets `WEB_ROOT=/srv/web`; unset = the API
+  serves only `/api`, so existing deployments are unaffected — see `router.rs`),
+  `CDN_MODE` (`false`; when `true` the image/icon proxy skips the
   on-disk cache and only fetch-and-serves — for origins behind a caching CDN),
   `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —

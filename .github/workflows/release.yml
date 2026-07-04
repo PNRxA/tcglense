@@ -1,0 +1,145 @@
+name: Release images
+
+# Build the TCGLense container images and push them to GitHub Container Registry
+# (GHCR) and Docker Hub whenever a GitHub Release is published. Three images are
+# built from the one multi-stage Dockerfile (see ./Dockerfile):
+#
+#   tcglense-api   the Rust API only            (--target api)
+#   tcglense-web   the SPA served by Caddy       (--target web)
+#   tcglense       the API + SPA in one image    (--target combined)
+#
+# Cut a release with `scripts/release.sh` (bumps the version, tags, and publishes
+# the GitHub Release that triggers this workflow).
+#
+# GHCR needs no setup to PUSH (it uses the built-in GITHUB_TOKEN) — but the first
+# push creates each package PRIVATE. To allow anonymous `docker pull`, do a one-time
+# step per package in GitHub → Packages → package settings: set visibility to Public
+# (and link it to this repo). Docker Hub is optional:
+# add repo secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (a Docker Hub access
+# token) and the Docker Hub push turns on automatically; until then only GHCR is
+# pushed. Optional build-time public web config comes from repo variables
+# VITE_SITE_URL and VITE_TURNSTILE_SITE_KEY.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (tag/branch/SHA) to build. Defaults to the triggering ref; manual builds are tagged :edge."
+        required: false
+        type: string
+
+# Don't run two builds for the same release at once; let an in-flight one finish.
+concurrency:
+  group: release-images-${{ github.event.release.tag_name || inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    name: ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: tcglense-api
+            target: api
+          - name: tcglense-web
+            target: web
+          - name: tcglense
+            target: combined
+    env:
+      # Job-level env so the steps below can branch on the Docker Hub secret's
+      # presence (secrets can't be referenced directly in step `if:` conditions).
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref || github.ref }}
+
+      - name: Resolve registry namespaces
+        id: ns
+        run: |
+          # GHCR requires a lowercase image path; the org/user login may be mixed case.
+          echo "ghcr_owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          if [ -n "${DOCKERHUB_USERNAME}" ] && [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "dockerhub_enabled=true" >> "$GITHUB_OUTPUT"
+            echo "dockerhub_user=$(printf '%s' "${DOCKERHUB_USERNAME}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          else
+            echo "dockerhub_enabled=false" >> "$GITHUB_OUTPUT"
+            # A placeholder name kept out of the tag set via enable=false below.
+            echo "dockerhub_user=disabled" >> "$GITHUB_OUTPUT"
+            echo "::notice::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not set — pushing to GHCR only."
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.ns.outputs.dockerhub_enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            name=ghcr.io/${{ steps.ns.outputs.ghcr_owner }}/${{ matrix.image.name }}
+            name=docker.io/${{ steps.ns.outputs.dockerhub_user }}/${{ matrix.image.name }},enable=${{ steps.ns.outputs.dockerhub_enabled }}
+          # Version tags for a release `vX.Y.Z`: the exact git tag (`vX.Y.Z`, so a pin
+          # matching the release name works) plus the semver-normalized `X.Y.Z` + `X.Y`.
+          # `latest` only moves on a non-prerelease release; a manual dispatch is tagged
+          # `:edge`. The raw tag line also guarantees the tag set is never empty (a
+          # hand-cut non-semver release would otherwise produce no tag → build failure).
+          tags: |
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
+          flavor: |
+            latest=false
+
+      - name: Build & push ${{ matrix.image.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: ${{ matrix.image.target }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VITE_API_URL=
+            VITE_SITE_URL=${{ vars.VITE_SITE_URL }}
+            VITE_TURNSTILE_SITE_KEY=${{ vars.VITE_TURNSTILE_SITE_KEY }}
+          # Per-target layer cache in the GitHub Actions cache, so a re-run only
+          # recompiles what changed (Rust + web builds are the slow part). `combined`
+          # also reads the `api`/`web` scopes so, across runs, it reuses the shared
+          # builder stages instead of recompiling them (within a single run the three
+          # matrix jobs are cold + parallel, so the shared stages still build once each
+          # — an accepted release-cadence trade-off for the clean parallel matrix).
+          cache-from: |
+            type=gha,scope=${{ matrix.image.target }}
+            type=gha,scope=api
+            type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.target }}

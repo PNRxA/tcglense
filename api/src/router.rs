@@ -7,11 +7,16 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
     middleware::{from_fn, from_fn_with_state, map_response},
-    routing::{get, post},
+    routing::{any, get, post},
 };
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{
+    cors::CorsLayer,
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 
 use crate::{
+    error::AppError,
     handlers::{
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
@@ -203,10 +208,37 @@ pub fn build_router(state: AppState) -> Router {
         .layer(map_response(public_cache_layer))
         .layer(from_fn(conditional_request_layer));
 
-    Router::new()
-        .merge(private)
-        .merge(public)
-        .layer(cors_layer())
+    let mut app = Router::new().merge(private).merge(public);
+
+    // Optional static-SPA fallback (see `Config::web_root`). When `WEB_ROOT` is set,
+    // any request the `/api/...` routes above didn't match is served from that
+    // directory: a real file (e.g. `/assets/index-abc.js`) is returned directly, and
+    // any unknown path falls back to `index.html` so client-side SPA routes resolve.
+    // This is what lets the single-process "combined" Docker image serve both the API
+    // and the SPA from one binary. Unset (the default) adds no fallback, so the API
+    // keeps returning its normal JSON 404 for unmatched routes (existing API-only
+    // deployments are untouched).
+    //
+    // `ServeDir::fallback` (not `not_found_service`, which force-overrides the status
+    // to 404) so a deep-linked SPA route like `/collection/mtg` serves `index.html`
+    // with a real `200` — a 404 would break crawlers, CDN caching, and monitoring.
+    // Both `ServeDir`/`ServeFile` are infallible, so they slot in as the fallback.
+    if let Some(web_root) = state.config.web_root.clone() {
+        // A lowest-priority `/api/*` catch-all so an *unknown* API path stays a real
+        // JSON 404 instead of being swallowed by the SPA fallback below (matching the
+        // split deployment). Registered API routes — and their handler-level 404s
+        // (unknown game/set/card) — are more specific and still take precedence.
+        let serve_spa =
+            ServeDir::new(&web_root).fallback(ServeFile::new(web_root.join("index.html")));
+        app = app
+            .route(
+                "/api/{*rest}",
+                any(|| async { AppError::NotFound("resource not found".to_string()) }),
+            )
+            .fallback_service(serve_spa);
+    }
+
+    app.layer(cors_layer())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

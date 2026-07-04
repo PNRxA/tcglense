@@ -95,6 +95,15 @@ pub struct Config {
     /// miss. Leave false when no CDN sits in front, or every view re-fetches
     /// upstream. See [`crate::catalog::images`].
     pub cdn_mode: bool,
+    /// Optional directory of static web assets (the built SPA) for the API to serve
+    /// itself. When set, any request not matched by an `/api/...` route falls back to
+    /// this directory, and unknown paths resolve to its `index.html` so client-side
+    /// SPA routes work. Unset (the default) = the API serves only `/api` and returns
+    /// its normal 404 for everything else, so existing API-only deployments are
+    /// unaffected. This powers the single-process "combined" Docker image (the API
+    /// and SPA in one container); the split deployment (Caddy serving the SPA and
+    /// proxying `/api`) leaves it unset. See [`crate::router`].
+    pub web_root: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Config {
@@ -142,6 +151,7 @@ impl std::fmt::Debug for Config {
             .field("sync_interval_hours", &self.sync_interval_hours)
             .field("seed_dummy_data", &self.seed_dummy_data)
             .field("cdn_mode", &self.cdn_mode)
+            .field("web_root", &self.web_root)
             .finish()
     }
 }
@@ -325,6 +335,10 @@ impl Config {
         // Skip on-disk image caching when a CDN fronts the origin (see the field docs).
         let cdn_mode = env_bool("CDN_MODE", false);
 
+        // Optional static-SPA directory the API serves itself (the single-process
+        // combined image); unset = the API serves only /api (see the field docs).
+        let web_root = env_trimmed("WEB_ROOT").map(PathBuf::from);
+
         Config {
             database_url,
             jwt_secret,
@@ -350,6 +364,7 @@ impl Config {
             sync_interval_hours,
             seed_dummy_data,
             cdn_mode,
+            web_root,
         }
     }
 }

@@ -1,0 +1,17 @@
+# Edge reverse proxy for the production compose stack (deploy/docker-compose.prod.yml).
+#
+# Terminates TLS for your domain and forwards everything to the `web` container,
+# which serves the SPA and reverse-proxies /api to the `api` container. Set
+# SITE_ADDRESS to your domain and Caddy provisions HTTPS automatically (ports 80+443
+# must be reachable and DNS must point here). The default `localhost` issues a local
+# CA cert for testing the stack on your machine.
+{$SITE_ADDRESS:localhost} {
+	encode zstd gzip
+	reverse_proxy web:80 {
+		# Overwrite (not append) X-Forwarded-For with the real client IP, discarding
+		# any client-supplied value. This is the trusted TLS boundary, so the api can
+		# safely key its per-IP auth rate limiting on the left-most XFF entry
+		# (TRUST_PROXY_HEADERS=true) without a client being able to spoof it.
+		header_up X-Forwarded-For {http.request.remote.host}
+	}
+}

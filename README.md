@@ -38,11 +38,12 @@ cd web && npm install && npm run dev
 ## Layout
 
 ```
-api/        Rust HTTP JSON API (auth, database, migrations)
-web/        Vue single-page app
-scripts/    dev helpers (dev.sh runs both servers)
-deploy/     production config (Caddyfile, systemd unit)
-CLAUDE.md   architecture, conventions, and how to add features
+api/         Rust HTTP JSON API (auth, database, migrations)
+web/         Vue single-page app
+scripts/     dev + release helpers (dev.sh runs both servers, release.sh cuts a release)
+deploy/      production config (Caddyfile, systemd unit, docker-compose)
+Dockerfile   multi-stage build for the api / web / combined images
+CLAUDE.md    architecture, conventions, and how to add features
 ```
 
 ## Common commands
@@ -54,12 +55,68 @@ CLAUDE.md   architecture, conventions, and how to add features
 | Lint | `cargo clippy` | `npm run lint` |
 | Build | `cargo build --release` | `npm run build` |
 
-## Production (Caddy)
+## Deployment
 
-The frontend builds to static files; in production a [Caddy](https://caddyserver.com/)
-reverse proxy serves them **and** forwards `/api/*` to the Rust API on the same
-origin (keeping the httpOnly refresh cookie first-party). Config lives in
-[`deploy/`](./deploy).
+Two supported Docker topologies (plus a bare-metal option). Both need a `JWT_SECRET`
+— the API refuses to boot without one (generate with `openssl rand -hex 32`). Images
+are published to GHCR + Docker Hub on every release (see [Docker images](#docker-images--releases)).
+
+### Homelab — one container + SQLite
+
+The **combined** image runs the API and SPA together (the API serves the SPA via
+`WEB_ROOT`), backed by embedded SQLite. The database and cached card images persist
+in one volume — nothing else to run.
+
+```sh
+export JWT_SECRET=$(openssl rand -hex 32)
+docker compose -f deploy/docker-compose.homelab.yml up -d
+# then open http://<host>:8080
+```
+
+<details>
+<summary>…or a plain <code>docker run</code></summary>
+
+```sh
+docker run -d --name tcglense -p 8080:8080 \
+  -e JWT_SECRET="$(openssl rand -hex 32)" \
+  -v tcglense_data:/data \
+  ghcr.io/pnrxa/tcglense:latest
+```
+</details>
+
+On first boot the API imports MTG card data from Scryfall in the background (a
+one-off ~30s; set `SYNC_ON_STARTUP=false` to skip, or `SEED_DUMMY_DATA=true` for an
+offline catalog). For HTTPS, put a reverse proxy / tunnel in front and set
+`COOKIE_SECURE=true` + `PUBLIC_SITE_URL=https://your-host`.
+
+### Production — Caddy + web + api + Postgres + Redis
+
+The scalable split: an edge **Caddy** terminates TLS and forwards to the **web**
+container (serves the SPA, proxies `/api`), which talks to the **api** container,
+backed by **Postgres** and **Redis** (shared rate-limiter state across instances).
+Config lives in [`deploy/docker-compose.prod.yml`](./deploy/docker-compose.prod.yml)
++ [`deploy/edge.Caddyfile`](./deploy/edge.Caddyfile).
+
+```
+internet ──443──▶ caddy (TLS) ──▶ web (SPA + /api proxy) ──▶ api ──▶ db    (Postgres)
+                                                                 └──▶ cache (Redis)
+```
+
+```sh
+export SITE_ADDRESS=tcglense.example.com          # your domain — Caddy auto-provisions HTTPS
+export JWT_SECRET=$(openssl rand -hex 32)
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
+docker compose -f deploy/docker-compose.prod.yml up -d
+```
+
+Point DNS for `SITE_ADDRESS` at the host with ports 80+443 reachable and Caddy
+obtains a Let's Encrypt certificate on first boot; the API runs migrations on start.
+Pin a release across the whole stack with `IMAGE_TAG=vX.Y.Z` (defaults to `latest`).
+
+### Bare metal (systemd + Caddy)
+
+<details>
+<summary>Run the binary + static SPA directly, no containers</summary>
 
 1. **Build both:**
    ```sh
@@ -74,31 +131,63 @@ origin (keeping the httpOnly refresh cookie first-party). Config lives in
 3. **Configure** `/srv/tcglense/api.env` (start from `api/.env.example`) with
    production values — at minimum:
    ```sh
-   JWT_SECRET=...          # openssl rand -hex 32 — required (API won't boot without it when COOKIE_SECURE=true)
+   JWT_SECRET=...          # openssl rand -hex 32 — required
    COOKIE_SECURE=true      # HTTPS-only refresh cookie
    HOST=127.0.0.1          # API listens on localhost; only Caddy reaches it
    DATABASE_URL=sqlite:///var/lib/tcglense/tcglense.db?mode=rwc   # dir must exist + be writable
    DATA_DIR=/var/lib/tcglense/data   # persistent + writable; holds cached card images
-   # Optional Postgres instead of SQLite (multi-instance / managed DB):
-   # DATABASE_URL=postgres://tcglense:tcglense@localhost:5432/tcglense
-   # REDIS_URL=redis://localhost:6379   # shared rate-limiter state across instances
    ```
-   On first boot the API imports MTG card data from Scryfall in the background
-   (~100k paper cards, a one-off ~30s); card images are then cached to `DATA_DIR`
-   on first view. Both are skippable/relocatable via `SYNC_ON_STARTUP` / `DATA_DIR`.
 4. **Run the API as a service** (Linux/systemd): copy
    `deploy/tcglense-api.service` to `/etc/systemd/system/`, adjust paths/user, then
    ```sh
    sudo systemctl daemon-reload && sudo systemctl enable --now tcglense-api
    ```
 5. **Run Caddy:** set your domain and site root in `deploy/Caddyfile`, then
-   ```sh
-   caddy run --config deploy/Caddyfile
-   ```
-   Caddy provisions HTTPS automatically for a real domain. Visit your domain — done.
+   `caddy run --config deploy/Caddyfile` (HTTPS is automatic for a real domain).
 
 To ship an update: rebuild, copy the new `tcglense-api` + `web/dist`, then
-`sudo systemctl restart tcglense-api` (Caddy serves the new static files at once).
+`sudo systemctl restart tcglense-api`.
+</details>
+
+## Docker images & releases
+
+The three images are built from one multi-stage [`Dockerfile`](./Dockerfile)
+(`linux/amd64`) and published to **GHCR** (`ghcr.io/pnrxa/…`) and **Docker Hub**
+(`docker.io/pnrxa/…`) on every release:
+
+| Image | Target | What it is |
+|-------|--------|------------|
+| `tcglense-api` | `api` | the Rust API only (serves `/api`) |
+| `tcglense-web` | `web` | the built SPA served by Caddy (proxies `/api`) |
+| `tcglense` | `combined` | the API **and** SPA in one image (API serves the SPA via `WEB_ROOT`) |
+
+Pull any of them by tag (`vX.Y.Z`, `X.Y`, or `latest`):
+
+```sh
+docker pull ghcr.io/pnrxa/tcglense:latest
+docker pull docker.io/pnrxa/tcglense-api:latest
+```
+
+**Cutting a release:**
+
+```sh
+./scripts/release.sh          # prompts for the version, then bumps + tags + publishes
+```
+
+It bumps `api/Cargo.toml` + `web/package.json` (and the lockfiles), commits, tags
+`vX.Y.Z`, pushes, and publishes a GitHub Release — which triggers the **Release
+images** workflow ([`.github/workflows/release.yml`](./.github/workflows/release.yml))
+to build and push all three images. A pre-release version (`X.Y.Z-rc.1`) is flagged
+as a GitHub pre-release and does **not** move the `latest` tag.
+
+**Registry auth:** GHCR needs nothing to *push* (the built-in `GITHUB_TOKEN`), but the
+first push creates each package **private** — to allow the anonymous `docker pull`s
+above, set each package's visibility to Public once (GitHub → your profile → Packages →
+the package → settings). For Docker Hub, add repo secrets `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` (a Docker Hub [access token](https://hub.docker.com/settings/security))
+— the Docker Hub push then turns on automatically; until then only GHCR is pushed.
+Optional build-time web config (`VITE_SITE_URL`, `VITE_TURNSTILE_SITE_KEY`) comes from
+repo **variables** of the same name.
 
 ## Docs
 
