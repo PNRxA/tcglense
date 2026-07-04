@@ -15,7 +15,10 @@ export type {
   ProductPricePoint,
   ProductPrices,
   ProductSetRef,
+  SealedProductRef,
 } from './generated'
+
+import type { SealedProductRef } from './generated'
 
 /** A page of sealed products plus pagination cursors. */
 export type ProductPage = Page<Product>
@@ -66,6 +69,21 @@ export function getProduct(game: string, id: string): Promise<Product> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<Product>(`/api/games/${g}/products/${i}`)
+}
+
+/**
+ * The sealed products a card is found in / can be pulled from — each entry carries the
+ * product plus its `membership` bucket (`contains` / `booster` / `variable`, the
+ * "found in / can be in / may be in" split) and a `foil` flag. Ordered `contains` →
+ * `booster` → `variable`, then by product name. Empty when the card is in none.
+ */
+export function getCardSealed(
+  game: string,
+  id: string,
+): Promise<{ data: SealedProductRef[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: SealedProductRef[] }>(`/api/games/${g}/cards/${i}/sealed`)
 }
 
 /** The distinct product types + sets that actually have products, for filter dropdowns. */

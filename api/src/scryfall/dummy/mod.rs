@@ -37,8 +37,11 @@ use super::ingest::{self, IngestError};
 use super::map;
 use super::price_history;
 use catalog::{dummy_cards, dummy_sets};
-use crate::entities::prelude::{Product, ProductPriceHistory};
-use crate::entities::{card, card_price_history, product, product_price_history};
+use crate::entities::prelude::{Card, Product, ProductPriceHistory, SealedContent};
+use crate::entities::sealed_content::Membership;
+use crate::entities::{
+    card, card_price_history, product, product_price_history, sealed_content,
+};
 use prices::price_walk;
 use products::dummy_products;
 
@@ -204,6 +207,103 @@ async fn seed_product_price_history(db: &DatabaseConnection) -> Result<u64, Inge
     Ok(total)
 }
 
+/// Seed a handful of card -> sealed-product memberships across the dummy catalog, so
+/// the card-detail "Sealed products" section (found in / can be pulled from / may be
+/// in) has data to render fully offline. Resolves the fabricated card/product external
+/// ids to the internal `cards.id` / `products.id` the just-seeded rows carry (so it
+/// must run after both are seeded), wipes the game's rows, then inserts fresh —
+/// mirroring the real ingest's wholesale rebuild, so a reseed is idempotent. Returns
+/// the number of rows written.
+async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    // (card external id, product external id, membership, foil-only). Product ids match
+    // `dummy::products` (900001 collector box, 900002 play pack, 900003 bundle, 900004
+    // commander deck, 900005 draft box); card ids match `dummy::catalog`.
+    let mut seed: Vec<(String, &'static str, Membership, bool)> = Vec::new();
+    // Found in: the reprinted relic + the prerelease promo ship in the base-set bundle;
+    // a few cards make up the Universe commander deck.
+    for card_ext in ["dummy-dmb-0080", "dummy-dmb-0078"] {
+        seed.push((card_ext.to_string(), "900003", Membership::Contains, false));
+    }
+    for card_ext in ["dummy-dmu-0001", "dummy-dmu-0002", "dummy-dmu-0013"] {
+        seed.push((card_ext.to_string(), "900004", Membership::Contains, false));
+    }
+    // Can be pulled from: base-set boosters (collector box + play pack) and the Universe
+    // draft box. The foil-only showcase is a foil pull from the collector box.
+    for n in 1..=10 {
+        seed.push((format!("dummy-dmb-{n:04}"), "900001", Membership::Booster, false));
+    }
+    for n in 1..=5 {
+        seed.push((format!("dummy-dmb-{n:04}"), "900002", Membership::Booster, false));
+    }
+    for n in 1..=8 {
+        seed.push((format!("dummy-dmu-{n:04}"), "900005", Membership::Booster, false));
+    }
+    seed.push(("dummy-dmb-0079".to_string(), "900001", Membership::Booster, true));
+    // May be in: the starlit promo is a randomized foil box insert; the werewolf a
+    // randomized bundle insert.
+    seed.push(("dummy-dmb-0077".to_string(), "900001", Membership::Variable, true));
+    seed.push(("dummy-dmb-0076".to_string(), "900003", Membership::Variable, false));
+
+    // Resolve external ids -> internal ids from the just-seeded rows.
+    let card_exts: Vec<String> = seed.iter().map(|(c, ..)| c.clone()).collect();
+    let card_ids: std::collections::HashMap<String, i32> = Card::find()
+        .select_only()
+        .column(card::Column::ExternalId)
+        .column(card::Column::Id)
+        .filter(card::Column::Game.eq(GAME))
+        .filter(card::Column::ExternalId.is_in(card_exts))
+        .into_tuple::<(String, i32)>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+    let product_exts: Vec<String> = seed.iter().map(|(_, p, ..)| p.to_string()).collect();
+    let product_ids: std::collections::HashMap<String, i32> = Product::find()
+        .select_only()
+        .column(product::Column::ExternalId)
+        .column(product::Column::Id)
+        .filter(product::Column::Game.eq(GAME))
+        .filter(product::Column::ExternalId.is_in(product_exts))
+        .into_tuple::<(String, i32)>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+
+    let now = Utc::now();
+    let models: Vec<sealed_content::ActiveModel> = seed
+        .into_iter()
+        .filter_map(|(card_ext, product_ext, membership, foil)| {
+            let card_id = *card_ids.get(&card_ext)?;
+            let product_id = *product_ids.get(product_ext)?;
+            Some(sealed_content::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                product_id: Set(product_id),
+                card_id: Set(card_id),
+                membership: Set(membership.as_str().to_string()),
+                foil: Set(foil),
+                created_at: Set(now),
+                updated_at: Set(now),
+            })
+        })
+        .collect();
+
+    // Wholesale rebuild (delete-then-insert) keeps a reseed idempotent, matching the
+    // real ingest's semantics.
+    SealedContent::delete_many()
+        .filter(sealed_content::Column::Game.eq(GAME))
+        .exec(db)
+        .await?;
+    let total = models.len() as u64;
+    if !models.is_empty() {
+        SealedContent::insert_many(models)
+            .exec_without_returning(db)
+            .await?;
+    }
+    Ok(total)
+}
+
 /// Seed the dummy MTG catalog, recording status in `ingest_state`. On failure the
 /// state row is best-effort marked `"error"` (mirroring `super::ingest::refresh`) so
 /// `GET /status` stays honest, and the error is returned for the caller to log.
@@ -267,6 +367,11 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         rows = product_history_rows,
         "seeded dummy sealed products"
     );
+
+    // Card -> sealed-product memberships, so the card-detail "Sealed products" section
+    // has data offline. Runs after both cards and products are seeded (it joins them).
+    let membership_rows = seed_sealed_contents(db).await?;
+    tracing::info!(rows = membership_rows, "seeded dummy sealed-product memberships");
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not

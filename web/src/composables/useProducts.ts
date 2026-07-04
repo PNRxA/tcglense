@@ -1,6 +1,6 @@
 import { type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getProduct, getProductFacets, listProducts } from '@/lib/api'
+import { getCardSealed, getProduct, getProductFacets, listProducts } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 
 /**
@@ -56,5 +56,15 @@ export function useProductFacetsQuery(game: Ref<string>) {
     queryKey: ['product-facets', game],
     queryFn: () => getProductFacets(game.value),
     staleTime: 60 * 60 * 1000,
+  })
+}
+
+/** The sealed products a card is found in / can be pulled from (the card-detail
+ * "Sealed products" section). Public read, so a plain `useQuery`; refs go in the key so a
+ * card-to-card navigation refetches. */
+export function useCardSealedQuery(game: Ref<string>, id: Ref<string>) {
+  return useQuery({
+    queryKey: ['card-sealed', game, id],
+    queryFn: () => getCardSealed(game.value, id.value),
   })
 }

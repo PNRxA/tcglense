@@ -11,6 +11,7 @@ mod error;
 mod extract;
 mod handlers;
 mod migrator;
+mod mtgjson;
 mod ratelimit;
 mod router;
 mod scryfall;
@@ -71,6 +72,7 @@ async fn main() {
             let name = meta.name();
             name == crate::scryfall::PROGRESS_SPAN_NAME
                 || name == crate::tcgcsv::PROGRESS_SPAN_NAME
+                || name == crate::mtgjson::PROGRESS_SPAN_NAME
         })))
         .init();
 

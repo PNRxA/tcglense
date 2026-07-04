@@ -56,6 +56,12 @@ pub async fn refresh_all(db: &DatabaseConnection, client: &Client, tcgcsv_user_a
                 {
                     tracing::error!(game = game.id, error = %err, "product data refresh failed");
                 }
+                // Sealed-product contents (MTGJSON): which sealed products each card is
+                // found in / can be pulled from. Runs last, after both cards + products
+                // exist to resolve its Scryfall-id / TCGplayer-id references against.
+                if let Err(err) = crate::mtgjson::ingest::refresh(db, client).await {
+                    tracing::error!(game = game.id, error = %err, "sealed-contents refresh failed");
+                }
             }
             other => {
                 tracing::warn!(game = other, "no data provider wired for game; skipping");

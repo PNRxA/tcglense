@@ -9,5 +9,6 @@ pub mod prelude;
 pub mod product;
 pub mod product_price_history;
 pub mod refresh_token;
+pub mod sealed_content;
 pub mod user;
 pub mod wishlist_item;

@@ -23,11 +23,12 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 
 use crate::db::Dialect;
-use crate::entities::prelude::{CardSet, Product, ProductPriceHistory};
-use crate::entities::{card_set, product, product_price_history};
+use crate::entities::prelude::{CardSet, Product, ProductPriceHistory, SealedContent};
+use crate::entities::sealed_content::Membership;
+use crate::entities::{card_set, product, product_price_history, sealed_content};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, build_page, require_game,
+    DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, build_page, load_card, require_game,
     resolve_page, trim_query,
 };
 use crate::scryfall::search::escape_like;
@@ -104,6 +105,22 @@ pub(crate) struct ProductFacets {
     pub types: Vec<String>,
     /// Distinct sets that have products (code + resolved name), name-then-code order.
     pub sets: Vec<ProductSetRef>,
+}
+
+/// A sealed product a card is found in — or can be pulled from — plus how it relates.
+/// Wraps the shared [`ProductResponse`] (so the SPA reuses the product tile/grid) with
+/// the membership bucket and a foil flag (the "found in / can be in / may be in" split).
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "SealedProductRef"))]
+pub(crate) struct SealedProductRef {
+    pub product: ProductResponse,
+    /// `"contains"` (definitely in), `"booster"` (can be pulled from a booster), or
+    /// `"variable"` (may be in a randomized product) — see
+    /// [`crate::entities::sealed_content::Membership`].
+    pub membership: String,
+    /// Whether the card appears **only** as a foil in this product (a foil-only
+    /// inclusion, e.g. a foil Secret Lair printing).
+    pub foil: bool,
 }
 
 // ---------- Query params ----------
@@ -361,6 +378,81 @@ pub async fn product_facets(
     Ok(Json(DataBody {
         data: ProductFacets { types, sets },
     }))
+}
+
+/// `GET /api/games/{game}/cards/{id}/sealed` -> the sealed products this card is found
+/// in (or can be pulled from). Ordered `contains` → `booster` → `variable`, then by
+/// product name, so the SPA can render the three "found in / can be in / may be in"
+/// groups in place. Empty `{ "data": [] }` when the card is in no ingested product (or
+/// no contents have been ingested at all). `404` for an unknown game/card.
+pub async fn card_sealed(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<DataBody<Vec<SealedProductRef>>>, AppError> {
+    require_game(&game)?;
+    let card = load_card(&state, &game, &id).await?;
+
+    // Every membership row for this card (hits idx_sealed_contents_game_card).
+    let rows = SealedContent::find()
+        .filter(sealed_content::Column::Game.eq(game.as_str()))
+        .filter(sealed_content::Column::CardId.eq(card.id))
+        .all(&state.db)
+        .await?;
+    if rows.is_empty() {
+        return Ok(Json(DataBody { data: Vec::new() }));
+    }
+
+    // Collapse to one entry per (product, membership): a product holding both a foil and
+    // a non-foil printing in the same bucket shows once, flagged `foil` only when *every*
+    // contributing row is foil (a foil-only inclusion). `foil_only` starts true and is
+    // ANDed down as soon as any non-foil row is seen.
+    let mut groups: HashMap<(i32, String), bool> = HashMap::new();
+    for row in &rows {
+        let foil_only = groups
+            .entry((row.product_id, row.membership.clone()))
+            .or_insert(true);
+        *foil_only = *foil_only && row.foil;
+    }
+
+    // Load the referenced products in one query (a card is in a bounded number of
+    // products), then dress each with its set name like the other product responses.
+    let product_ids: Vec<i32> = {
+        let mut ids: Vec<i32> = groups.keys().map(|(pid, _)| *pid).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let products: HashMap<i32, product::Model> = Product::find()
+        .filter(product::Column::Game.eq(game.as_str()))
+        .filter(product::Column::Id.is_in(product_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|p| (p.id, p))
+        .collect();
+
+    let names = set_name_map(&state, &game).await?;
+    let mut data: Vec<SealedProductRef> = groups
+        .into_iter()
+        .filter_map(|((product_id, membership), foil)| {
+            // A membership row whose product row vanished (e.g. mid-reimport) is skipped.
+            products.get(&product_id).map(|p| SealedProductRef {
+                product: into_response(p.clone(), &names),
+                membership: membership.to_string(),
+                foil,
+            })
+        })
+        .collect();
+
+    // Definitely-in first, then boosters, then maybe; product name as the tiebreak so
+    // the order is stable across requests.
+    data.sort_by(|a, b| {
+        Membership::rank(&a.membership)
+            .cmp(&Membership::rank(&b.membership))
+            .then_with(|| a.product.name.cmp(&b.product.name))
+    });
+
+    Ok(Json(DataBody { data }))
 }
 
 // ---------- Helpers ----------

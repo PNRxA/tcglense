@@ -3648,6 +3648,7 @@ dependencies = [
  "chrono",
  "csv",
  "dotenvy",
+ "flate2",
  "futures-util",
  "governor",
  "hex",
