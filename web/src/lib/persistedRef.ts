@@ -35,3 +35,33 @@ export function persistedRef<T>(
 
   return state
 }
+
+/**
+ * The boolean flavour of {@link persistedRef} — a toggle preference persisted to
+ * localStorage as `'1'`/`'0'`. `persistedRef` returns the raw stored *string*, so it only
+ * fits string-valued preferences; a boolean toggle needs to parse the stored value back to
+ * a `boolean`. Same guarded read (blocked storage falls back to `fallback`) and best-effort
+ * write (a storage failure still honours the choice for the session).
+ */
+export function persistedBoolRef(key: string, fallback: boolean): Ref<boolean> {
+  function read(): boolean {
+    try {
+      const stored = localStorage.getItem(key)
+      return stored === null ? fallback : stored === '1'
+    } catch {
+      return fallback
+    }
+  }
+
+  const state = ref(read())
+
+  watch(state, (value) => {
+    try {
+      localStorage.setItem(key, value ? '1' : '0')
+    } catch {
+      // Storage unavailable: still honour the choice for this session.
+    }
+  })
+
+  return state
+}
