@@ -34,13 +34,17 @@ export const ALL_CARDS_SORT_OPTIONS: SortOption[] = SET_SORT_OPTIONS.filter(
   (o) => !o.value.startsWith('number:'),
 )
 
-/** Options for the collection view: the collection's recency order first (its
- * natural default — how it has always sorted), then the same card sorts the
- * all-cards view offers. `updated:*` maps to the backend's collection-only
- * `updated` sort key. */
+/** Options for the collection view — also reused by the wish list (its "want" twin) for
+ * its list-only mode. The holdings-specific sorts lead: the recency order (the natural
+ * default — how it has always sorted) and a total-copies-held sort (issue #228), then the
+ * same card sorts the all-cards view offers. `updated:*` and `quantity:*` map to the
+ * backend's holdings-only `updated` / `quantity` sort keys (the latter ordering by regular
+ * + foil copies). */
 export const COLLECTION_SORT_OPTIONS: SortOption[] = [
   { value: 'updated:desc', label: 'Recently updated' },
   { value: 'updated:asc', label: 'Least recently updated' },
+  { value: 'quantity:desc', label: 'Quantity (high → low)' },
+  { value: 'quantity:asc', label: 'Quantity (low → high)' },
   ...ALL_CARDS_SORT_OPTIONS,
 ]
 

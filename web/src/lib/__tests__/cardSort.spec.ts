@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest'
 import {
   ALL_CARDS_DEFAULT_SORT,
   ALL_CARDS_SORT_OPTIONS,
+  COLLECTION_DEFAULT_SORT,
+  COLLECTION_SORT_OPTIONS,
   SET_DEFAULT_SORT,
   SET_SORT_OPTIONS,
   toSortParam,
@@ -39,6 +41,26 @@ describe('sort option lists', () => {
   it('parse every option value into a valid sort param', () => {
     for (const option of SET_SORT_OPTIONS) {
       const { sort, dir } = toSortParam(option.value, SET_DEFAULT_SORT)
+      expect(sort).toBeTruthy()
+      expect(['asc', 'desc']).toContain(dir)
+    }
+  })
+
+  it('offer a total-copies quantity sort on the collection/wish-list view (issue #228)', () => {
+    // Both directions are selectable and map to the backend's holdings-only `quantity` key.
+    expect(toSortParam('quantity:desc', COLLECTION_DEFAULT_SORT)).toEqual({
+      sort: 'quantity',
+      dir: 'desc',
+    })
+    expect(toSortParam('quantity:asc', COLLECTION_DEFAULT_SORT)).toEqual({
+      sort: 'quantity',
+      dir: 'asc',
+    })
+    expect(COLLECTION_SORT_OPTIONS.filter((o) => o.value.startsWith('quantity:'))).toHaveLength(2)
+    // The default stays recency, and every option still parses cleanly.
+    expect(COLLECTION_SORT_OPTIONS.some((o) => o.value === COLLECTION_DEFAULT_SORT)).toBe(true)
+    for (const option of COLLECTION_SORT_OPTIONS) {
+      const { sort, dir } = toSortParam(option.value, COLLECTION_DEFAULT_SORT)
       expect(sort).toBeTruthy()
       expect(['asc', 'desc']).toContain(dir)
     }

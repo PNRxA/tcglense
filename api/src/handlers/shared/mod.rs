@@ -22,8 +22,8 @@ pub(crate) use grouping::{group_into_drops, paginate_buckets, require_drop_table
 pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
     CollectionSort, CollectionSummary, ListParams, MAX_OWNED_IDS, OwnedCountsRequest,
-    OwnedCountsResponse, SetQuantitiesRequest, SummaryParams, build_collection_sets, dedupe_ids,
-    resolve_set_scope, summarize_holdings, validate_quantity,
+    OwnedCountsResponse, SetQuantitiesRequest, SummaryParams, build_collection_sets, copies_expr,
+    dedupe_ids, resolve_set_scope, summarize_holdings, validate_quantity,
 };
 pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};
 pub(crate) use pagination::{

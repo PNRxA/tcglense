@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use sea_orm::sea_query::{Expr, SimpleExpr};
 use serde::{Deserialize, Serialize};
 
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
@@ -180,9 +181,10 @@ pub struct ListParams {
     /// is a 422. Absent/blank means no filter.
     #[serde(default)]
     pub q: Option<String>,
-    /// Sort key. `updated` (the default) orders by most-recently-changed; every other
-    /// key (`name`/`rarity`/`released`/`cmc`/`price`) reuses the catalog card sorts.
-    /// An unknown value is a 422.
+    /// Sort key. `updated` (the default) orders by most-recently-changed; `quantity`
+    /// orders by total copies held (regular + foil); every other key
+    /// (`name`/`rarity`/`released`/`cmc`/`price`) reuses the catalog card sorts. An
+    /// unknown value is a 422.
     #[serde(default)]
     pub sort: Option<String>,
     /// Sort direction (`asc`/`desc`); absent = the sort key's natural direction. An
@@ -221,8 +223,21 @@ pub struct SummaryParams {
 pub(crate) enum CollectionSort {
     /// Most-recently added/updated first (by the holdings row's `updated_at`).
     Recent,
+    /// Total copies held (regular + foil) first — a holdings-only sort with no catalog
+    /// card equivalent (issue #228).
+    Quantity,
     /// A card-column sort shared with the catalog card lists.
     Card(SortField),
+}
+
+/// SQL ordering expression for a holding's **total copies** (regular + foil) — the key
+/// the `quantity` sort orders on. Both holdings tables (`collection_items`,
+/// `wishlist_items`) name these columns identically and neither is a `cards` column, so
+/// the bare names stay unambiguous under the list queries' card join (matching the other
+/// `Expr::cust` sort expressions in [`super::sort`]). Both counts are `NOT NULL`, so the
+/// sum is never NULL and needs no null handling.
+pub(crate) fn copies_expr() -> SimpleExpr {
+    Expr::cust("quantity + foil_quantity")
 }
 
 impl ListParams {
@@ -266,6 +281,10 @@ impl ListParams {
         {
             // The holdings lists' natural default (and its explicit key) is recency.
             None | Some("updated" | "recent") => (CollectionSort::Recent, SortDir::Desc),
+            // Total copies held (regular + foil), most first — a holdings-only sort, so
+            // it's intercepted here before the catalog card-field fallback (which would
+            // reject it, `quantity` being no card column).
+            Some("quantity" | "copies") => (CollectionSort::Quantity, SortDir::Desc),
             Some(value) => {
                 let field = SortField::parse(value)?;
                 (CollectionSort::Card(field), field.default_dir())

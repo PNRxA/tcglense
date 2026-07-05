@@ -22,7 +22,7 @@ use crate::extract::JsonBody;
 use crate::handlers::shared::{
     CardResponse, CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary,
     ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page, SortDir,
-    SummaryParams, apply_card_sort, build_page, dedupe_ids, load_card, require_game,
+    SummaryParams, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card, require_game,
     resolve_set_scope, search_condition, summarize_holdings,
 };
 use crate::state::AppState;
@@ -129,6 +129,12 @@ pub(super) fn wishlist_query(
         // for deterministic paging.
         CollectionSort::Recent => query
             .order_by(wishlist_item::Column::UpdatedAt, dir.order())
+            .order_by(wishlist_item::Column::Id, dir.order()),
+        // Total copies wanted (regular + foil), with a stable id tiebreaker for
+        // deterministic paging. The copies expression names holdings-only columns, so
+        // it stays unambiguous under the card join.
+        CollectionSort::Quantity => query
+            .order_by(copies_expr(), dir.order())
             .order_by(wishlist_item::Column::Id, dir.order()),
         CollectionSort::Card(field) => apply_card_sort(query, field, dir, false, dialect),
     }

@@ -123,6 +123,77 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
     );
 }
 
+/// The `quantity` sort orders wish-list rows by their **total copies** wanted (regular +
+/// foil), most first (or fewest, reversed) — the wish-list side of the holdings-only sort
+/// (issue #228). Mirrors the collection's `collection_query_orders_by_total_copies` since
+/// `wishlist_query` applies the sort against its own entity.
+#[tokio::test]
+async fn wishlist_query_orders_by_total_copies() {
+    use sea_orm::{IntoActiveModel, prelude::DateTimeUtc};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        display_name: Set(None),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    for c in [
+        seed_card(1, "Two Total", "Creature", None),
+        seed_card(2, "Five Total", "Creature", None),
+        seed_card(3, "Three Total", "Creature", None),
+    ] {
+        c.into_active_model().insert(&db).await.expect("insert card");
+    }
+
+    // Total copies = quantity + foil_quantity: card 1 = 2 (2+0), card 2 = 5 (1+4),
+    // card 3 = 3 (0+3). The regular-only counts (2, 1, 0) rank differently, so ordering
+    // by the total proves the foils are folded in.
+    let want = |id: i32, card_id: i32, q: i32, f: i32| wishlist_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        card_id: Set(card_id),
+        quantity: Set(q),
+        foil_quantity: Set(f),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+    };
+    for w in [want(1, 1, 2, 0), want(2, 2, 1, 4), want(3, 3, 0, 3)] {
+        w.insert(&db).await.expect("insert wishlist row");
+    }
+
+    async fn ordered(db: &sea_orm::DatabaseConnection, dir: SortDir) -> Vec<String> {
+        wishlist_query(1, "mtg", None, None, CollectionSort::Quantity, dir, Dialect::Sqlite)
+            .all(db)
+            .await
+            .expect("run wishlist query")
+            .into_iter()
+            .filter_map(|(_, card)| card.map(|c| c.name))
+            .collect()
+    }
+
+    // Most copies first: 5, 3, 2.
+    assert_eq!(
+        ordered(&db, SortDir::Desc).await,
+        ["Five Total", "Three Total", "Two Total"]
+    );
+    // Fewest first reverses it.
+    assert_eq!(
+        ordered(&db, SortDir::Asc).await,
+        ["Two Total", "Three Total", "Five Total"]
+    );
+}
+
 /// `summary` left-joins each wish-list row to its card, so a row whose card is gone
 /// (a catalog re-import dropped it) is excluded from **all three** stats — matching
 /// the wish-list list, via the same shared aggregation core the collection uses.
