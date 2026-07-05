@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Heart, Layers, Library, Package } from '@lucide/vue'
+import { Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import {
   NavigationMenu,
@@ -102,6 +102,16 @@ const games = computed(() => data.value?.data ?? [])
             <li v-for="game in games" :key="game.id">
               <NavigationMenuLink as-child>
                 <RouterLink :to="`/collection/${game.id}`">{{ game.name }}</RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <!-- Scan cards: rapid-add via the phone/webcam camera. A distinct action, so
+                 it sits below the per-game links behind a divider. -->
+            <li class="mt-1 border-t pt-2">
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/scan">
+                  <ScanLine aria-hidden="true" />
+                  Scan cards
+                </RouterLink>
               </NavigationMenuLink>
             </li>
           </ul>

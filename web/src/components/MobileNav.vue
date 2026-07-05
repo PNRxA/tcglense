@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Heart, Layers, Library, Menu, Package } from '@lucide/vue'
+import { Heart, Layers, Library, Menu, Package, ScanLine } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -67,6 +67,12 @@ const games = computed(() => data.value?.data ?? [])
       </DropdownMenuItem>
       <DropdownMenuItem v-for="game in games" :key="`collection-${game.id}`" as-child>
         <RouterLink :to="`/collection/${game.id}`">{{ game.name }}</RouterLink>
+      </DropdownMenuItem>
+      <DropdownMenuItem as-child>
+        <RouterLink to="/scan">
+          <ScanLine class="size-4" aria-hidden="true" />
+          Scan cards
+        </RouterLink>
       </DropdownMenuItem>
 
       <DropdownMenuSeparator />

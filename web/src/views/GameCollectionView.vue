@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { LayoutGrid } from '@lucide/vue'
+import { LayoutGrid, ScanLine } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
@@ -187,6 +187,15 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
             Quick add a card
           </p>
           <QuickAddBox :game="game" />
+          <!-- Or bulk-add with the camera: OCR a physical card and drop it straight in. -->
+          <RouterLink
+            to="/scan"
+            :class="buttonVariants({ variant: 'outline', size: 'sm' })"
+            class="mt-2 inline-flex"
+          >
+            <ScanLine />
+            Scan cards with your camera
+          </RouterLink>
         </div>
 
         <CollectionSyncControls :game="game" />
