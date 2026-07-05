@@ -92,7 +92,7 @@ const MTG_SECTIONS: BuySection[] = [
   {
     title: 'Australia',
     stores: [
-      { name: 'MTG Mate', template: 'https://www.mtgmate.com.au/cards/{name}' },
+      { name: 'MTG Mate', template: 'https://www.mtgmate.com.au/cards/search?q={name}' },
       { name: 'Good Games', template: 'https://tcg.goodgames.com.au/search?q={name}' },
       {
         name: 'MTG Singles Australia',
