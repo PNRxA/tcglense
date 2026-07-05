@@ -168,6 +168,10 @@ jobs:
       # Start the API (offline dummy catalog), wait for it to be healthy, then
       # run Playwright. Playwright's own webServer config serves the built SPA
       # via `npm run preview` on :4173, which proxies /api to the API on :8080.
+      # RATE_LIMIT_ENABLED=false: every browser request originates from the same
+      # localhost IP, so the per-IP auth limiter (login is 10/min) throttles the
+      # suite and flakes the UI sign-in flows with a 429. The limiter itself is
+      # covered by the Rust security_tests; no e2e spec asserts on it.
       - name: Run Playwright tests
         working-directory: web
         env:
@@ -178,6 +182,7 @@ jobs:
           JWT_SECRET=ci-not-a-real-secret-please-rotate-0123456789abcdef \
           SEED_DUMMY_DATA=true \
           SYNC_ON_STARTUP=false \
+          RATE_LIMIT_ENABLED=false \
           DATABASE_URL="sqlite://$RUNNER_TEMP/tcglense-ci.db?mode=rwc" \
           DATA_DIR="$RUNNER_TEMP/api-data" \
           HOST=127.0.0.1 \
