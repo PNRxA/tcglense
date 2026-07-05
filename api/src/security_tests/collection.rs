@@ -452,3 +452,91 @@ async fn quantity_sort_orders_the_owned_list_by_copies() {
     assert_eq!(status, StatusCode::OK, "quantity asc sort failed: {body:?}");
     assert_eq!(quantities(&body), vec![1, 3, 5]);
 }
+
+/// The `content-disposition` header value as a string, or `""` if absent.
+fn content_disposition(headers: &HeaderMap) -> &str {
+    headers
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+}
+
+/// The CSV export requires auth, emits a `no-store` text/csv download per shape, and
+/// round-trips a holding's finishes into one row each. Bad shapes are a 422.
+#[tokio::test]
+async fn export_requires_auth_and_produces_provider_csv() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "exporter@example.com", "password123").await;
+
+    // Own one card in both finishes (2 regular + 1 foil) and another regular-only.
+    let ids = sample_card_ids(&app, 2).await;
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &card_path(&ids[0]),
+            &token,
+            json!({ "quantity": 2, "foil_quantity": 1 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+    own_card(&app, &token, &ids[1], 3).await;
+
+    // Unauthenticated -> 401, and per-user data must never be shared-cached.
+    let (status, headers, _) = send_text(&app, get("/api/collection/mtg/export")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // Archidekt (the default shape): a no-store text/csv download with the 23-column
+    // header and one row per non-empty finish bucket, each carrying its Scryfall id.
+    let (status, headers, body) =
+        send_text(&app, get_with_bearer("/api/collection/mtg/export", &token)).await;
+    assert_eq!(status, StatusCode::OK, "export failed: {body}");
+    assert_eq!(content_type(&headers), Some("text/csv; charset=utf-8"));
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let disposition = content_disposition(&headers);
+    assert!(disposition.contains("attachment"), "disposition: {disposition}");
+    assert!(
+        disposition.contains("tcglense-mtg-collection-archidekt.csv"),
+        "disposition: {disposition}"
+    );
+    let mut lines = body.lines();
+    assert_eq!(
+        lines.next().unwrap(),
+        "Quantity,Name,Finish,Condition,Date Added,Language,Purchase Price,Tags,Edition Name,\
+         Edition Code,Multiverse Id,Scryfall ID,MTGO ID,Collector Number,Mana Value,Colors,\
+         Identities,Mana cost,Types,Sub-types,Super-types,Rarity,Scryfall Oracle ID"
+    );
+    let data: Vec<&str> = lines.collect();
+    assert_eq!(data.len(), 3, "regular + foil + regular rows: {data:?}");
+    assert!(data.iter().any(|r| r.contains(&ids[0])), "card A id missing: {data:?}");
+    assert!(data.iter().any(|r| r.contains(&ids[1])), "card B id missing: {data:?}");
+    assert!(data.iter().any(|r| r.contains(",Foil,")), "no foil row: {data:?}");
+
+    // Moxfield shape: quote-every-field, its own 13-column header + filename.
+    let (status, headers, body) = send_text(
+        &app,
+        get_with_bearer("/api/collection/mtg/export?format=moxfield", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "moxfield export failed: {body}");
+    assert!(
+        content_disposition(&headers).contains("tcglense-mtg-collection-moxfield.csv"),
+        "disposition: {}",
+        content_disposition(&headers)
+    );
+    assert_eq!(
+        body.lines().next().unwrap(),
+        "\"Count\",\"Tradelist Count\",\"Name\",\"Edition\",\"Condition\",\"Language\",\"Foil\",\
+         \"Tags\",\"Last Modified\",\"Collector Number\",\"Alter\",\"Proxy\",\"Purchase Price\""
+    );
+
+    // An unknown shape is a 422 (never a silent default to some other format).
+    let (status, _, _) = send_text(
+        &app,
+        get_with_bearer("/api/collection/mtg/export?format=deckbox", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

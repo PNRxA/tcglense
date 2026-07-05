@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { RefreshCw, Settings } from '@lucide/vue'
+import { FileDown, RefreshCw, Settings } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -22,7 +23,15 @@ import {
   useSaveCollectionSourceMutation,
   useSyncCollectionSourceMutation,
 } from '@/composables/useCollectionImport'
-import { ApiError, providerLabel as providerName, type CollectionProvider } from '@/lib/api'
+import {
+  ApiError,
+  type CollectionExportFormat,
+  type CollectionProvider,
+  exportCollectionCsv,
+  providerLabel as providerName,
+} from '@/lib/api'
+import { downloadBlob } from '@/lib/download'
+import { useAuthStore } from '@/stores/auth'
 
 // The import / re-sync surface for the per-game collection landing: the import dialog, a
 // re-sync button for a saved link, and the live job status. Keyed only off the game;
@@ -30,6 +39,26 @@ import { ApiError, providerLabel as providerName, type CollectionProvider } from
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
+
+// Export the collection to a provider-shaped CSV (Archidekt or Moxfield). The download
+// needs the access token, so it goes through the auth store's authFetch (which refreshes
+// once on a 401) rather than a plain link; the blob is then saved client-side.
+const auth = useAuthStore()
+const exporting = ref(false)
+const exportMessage = ref<string | null>(null)
+async function exportCollection(format: CollectionExportFormat) {
+  if (exporting.value) return
+  exporting.value = true
+  exportMessage.value = null
+  try {
+    const blob = await auth.authFetch((token) => exportCollectionCsv(token, game.value, format))
+    downloadBlob(blob, `tcglense-${game.value}-collection-${format}.csv`)
+  } catch (err) {
+    exportMessage.value = err instanceof ApiError ? err.message : 'Export failed. Please try again.'
+  } finally {
+    exporting.value = false
+  }
+}
 
 // Import / sync from an external collection provider (Archidekt or Moxfield).
 const qc = useQueryClient()
@@ -143,6 +172,21 @@ async function resync() {
   <!-- Import / re-sync from an external collection provider. -->
   <div class="mt-5 flex flex-wrap items-center gap-3">
     <ImportCollectionDialog :game="game" :source="source" />
+    <!-- Export the collection to a provider-shaped CSV (Archidekt or Moxfield). -->
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <Button variant="outline" size="sm" :disabled="exporting">
+          <FileDown />
+          Export
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" class="w-56">
+        <DropdownMenuLabel>Export collection</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem @select="exportCollection('archidekt')">Archidekt CSV</DropdownMenuItem>
+        <DropdownMenuItem @select="exportCollection('moxfield')">Moxfield CSV</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
     <template v-if="source">
       <div class="flex items-center gap-1">
         <Button variant="secondary" size="sm" :disabled="syncing" @click="resync">
@@ -188,4 +232,7 @@ async function resync() {
     <p class="text-muted-foreground text-sm" aria-live="polite">{{ syncMessage }}</p>
     <ImportProgressBar v-if="syncJob.progress.value" :progress="syncJob.progress.value" />
   </div>
+  <p v-if="exportMessage" class="text-destructive mt-2 text-sm" aria-live="polite">
+    {{ exportMessage }}
+  </p>
 </template>
