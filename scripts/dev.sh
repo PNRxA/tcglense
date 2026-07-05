@@ -6,8 +6,46 @@
 #
 # Both servers stream their output to this terminal (colors/HMR intact).
 # Press Ctrl+C to stop both; if either server exits, the other is stopped too.
+#
+# By default both servers bind to localhost only. Pass --host to bind them to all
+# interfaces (0.0.0.0) so you can open the app from another device on the same
+# network (e.g. a phone at http://<this-machine-ip>:5173). See --help.
 
 set -uo pipefail
+
+# --- Argument parsing -------------------------------------------------------
+# EXPOSE=true binds the servers to the LAN instead of localhost (see --host).
+EXPOSE=false
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/dev.sh [--host] [--help]
+
+Run the TCGLense dev servers together (API on :8080, web on :5173).
+
+Options:
+  --host      Expose both servers on your LAN (bind 0.0.0.0) so another device on
+              the same network can reach them. Open the web app on the other
+              device at http://<this-machine-ip>:5173. Default is localhost-only.
+  -h, --help  Show this help and exit.
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --host | --lan | --expose) EXPOSE=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown argument: $arg" >&2
+      echo >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Resolve the repo root from this script's own location, so it works from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,15 +96,61 @@ for port in 8080 5173; do
   fi
 done
 
-echo "Starting TCGLense dev servers (Ctrl+C to stop both):"
-echo "  API  -> http://localhost:8080"
-echo "  Web  -> http://localhost:5173"
+# Best-effort LAN IP so the --host banner can print a URL other devices can use.
+# Tries macOS (ipconfig) then Linux (hostname -I); prints nothing if it can't tell.
+lan_ip() {
+  local ip=
+  if command -v ipconfig >/dev/null 2>&1; then # macOS
+    for iface in en0 en1 en2 en3; do
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null)" || ip=
+      [ -n "$ip" ] && { printf '%s\n' "$ip"; return 0; }
+    done
+  fi
+  if command -v hostname >/dev/null 2>&1; then # Linux
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')" || ip=
+    [ -n "$ip" ] && { printf '%s\n' "$ip"; return 0; }
+  fi
+  return 1
+}
+
+if [ "$EXPOSE" = true ]; then
+  ip="$(lan_ip || true)"
+  echo "Starting TCGLense dev servers on your LAN (Ctrl+C to stop both):"
+  if [ -n "$ip" ]; then
+    echo "  API  -> http://$ip:8080   (also http://localhost:8080)"
+    echo "  Web  -> http://$ip:5173   (also http://localhost:5173)   <- open this on your other device"
+  else
+    echo "  API  -> http://0.0.0.0:8080   (also http://localhost:8080)"
+    echo "  Web  -> http://0.0.0.0:5173   (also http://localhost:5173)"
+    echo "  (couldn't auto-detect this machine's LAN IP; try 'ipconfig getifaddr en0')"
+  fi
+  echo "  Both devices must be on the same network; allow the macOS firewall prompt if it appears."
+else
+  echo "Starting TCGLense dev servers (Ctrl+C to stop both):"
+  echo "  API  -> http://localhost:8080"
+  echo "  Web  -> http://localhost:5173"
+fi
 echo
 
+# With --host, bind both servers to every interface. HOST is read by the API
+# (see api/src/config.rs); --host is Vite's flag. The web server is the one you
+# browse to — it proxies /api to the API over localhost — so exposing the API too
+# is only needed to hit it directly from another device. These are fixed literals,
+# so the unquoted expansion below is intentional word-splitting (and stays empty,
+# adding no argument, in the default localhost mode — required for bash 3.2).
+API_HOST_ENV=
+WEB_HOST_ARGS=
+if [ "$EXPOSE" = true ]; then
+  API_HOST_ENV="HOST=0.0.0.0"
+  WEB_HOST_ARGS="-- --host"
+fi
+
 # Start both in the background; exec so $! is the real server process.
-(cd "$API_DIR" && exec cargo run) &
+# shellcheck disable=SC2086  # intentional word-splitting of the host flags above
+(cd "$API_DIR" && exec env $API_HOST_ENV cargo run) &
 API_PID=$!
-(cd "$WEB_DIR" && exec npm run dev) &
+# shellcheck disable=SC2086
+(cd "$WEB_DIR" && exec npm run dev $WEB_HOST_ARGS) &
 WEB_PID=$!
 
 # Stay up while both are alive; as soon as either stops, fall through to cleanup.
