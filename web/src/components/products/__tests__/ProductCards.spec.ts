@@ -1,44 +1,50 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import type { ProductCardEntry } from '@/lib/api'
+import type { ProductCardSection } from '@/lib/api'
 import ProductCards from '../ProductCards.vue'
+import ProductCardsSection from '../ProductCardsSection.vue'
 
-// Drive the component off a controlled page of entries, stubbing the vue-query read and the
-// owned-count lookup so no QueryClient / Pinia is needed — the unit under test is the
-// membership + exclusivity section split, not the data fetching.
-const state = vi.hoisted(() => ({ entries: [] as ProductCardEntry[], total: 0 }))
+// Drive the parent off a controlled sections manifest, stubbing the manifest query so no
+// QueryClient / Pinia is needed — the unit under test is which section blocks render, in what
+// order, with what heading (issue #224). The per-section pagination lives in the stubbed
+// ProductCardsSection child, so it never runs its own query here.
+const state = vi.hoisted(() => ({ manifest: [] as ProductCardSection[] }))
 
 vi.mock('@/composables/useProducts', () => ({
   PRODUCT_CARDS_PAGE_SIZE: 60,
-  useProductCardsQuery: () => ({ data: { value: { data: state.entries, total: state.total } } }),
-}))
-vi.mock('@/composables/useCollection', () => ({
-  useOwnedCounts: () => ({ ownership: {} }),
+  useProductCardSectionsQuery: () => ({ data: { value: { data: state.manifest } } }),
+  useProductCardsQuery: () => ({ data: { value: { data: [], total: 0 } } }),
 }))
 
-function entry(membership: string, exclusive = false, id = membership): ProductCardEntry {
-  return { card: { id } as ProductCardEntry['card'], membership, foil: false, exclusive }
+function section(key: string, total = 1): ProductCardSection {
+  return { key, total }
 }
 
-function headings(entries: ProductCardEntry[], productType: string): string[] {
-  state.entries = entries
-  state.total = entries.length
+// Mount over a manifest and return the section blocks the parent rendered — each block's
+// section key, heading, and (manifest) card count, in render order.
+function blocks(manifest: ProductCardSection[], productType: string) {
+  state.manifest = manifest
   const wrapper = mount(ProductCards, {
     props: { game: 'mtg', id: '100', productType },
-    global: { stubs: { CardGrid: true, CardPagination: true } },
+    global: { stubs: { ProductCardsSection: true } },
   })
-  return wrapper.findAll('h3').map((h) => h.text())
+  return {
+    wrapper,
+    sections: wrapper.findAllComponents(ProductCardsSection).map((c) => ({
+      key: c.props('sectionKey') as string,
+      title: c.props('title') as string,
+    })),
+  }
 }
 
 describe('ProductCards sections', () => {
-  it('splits the booster pool, exclusives ahead of the shared pool, family-labelled', () => {
-    const entries = [
-      entry('contains', false, 'g'),
-      entry('booster', true, 'x'),
-      entry('booster', false, 's'),
-      entry('variable', false, 'v'),
-    ]
-    expect(headings(entries, 'collector_pack')).toEqual([
+  it('renders one block per manifest section, in order, with the right headings', () => {
+    const { sections } = blocks(
+      [section('contains'), section('exclusive'), section('booster'), section('variable')],
+      'collector_pack',
+    )
+    expect(sections.map((s) => s.key)).toEqual(['contains', 'exclusive', 'booster', 'variable'])
+    expect(sections.map((s) => s.title)).toEqual([
       'In the box',
       'Collector Booster exclusives',
       'Can be pulled from boosters',
@@ -46,16 +52,29 @@ describe('ProductCards sections', () => {
     ])
   })
 
-  it('labels the exclusives section by the product’s own booster family', () => {
-    const entries = [entry('booster', true), entry('booster', false)]
-    expect(headings(entries, 'play_pack')).toEqual([
+  it('labels the exclusives block by the product’s own booster family', () => {
+    const { sections } = blocks([section('exclusive'), section('booster')], 'play_pack')
+    expect(sections.map((s) => s.title)).toEqual([
       'Play Booster exclusives',
       'Can be pulled from boosters',
     ])
   })
 
-  it('shows no exclusives section when nothing is flagged exclusive', () => {
-    const entries = [entry('booster', false), entry('contains', false, 'g')]
-    expect(headings(entries, 'bundle')).toEqual(['In the box', 'Can be pulled from boosters'])
+  it('falls back to a generic exclusives label with no booster family', () => {
+    const { sections } = blocks([section('exclusive')], 'bundle')
+    expect(sections.map((s) => s.title)).toEqual(['Booster exclusives'])
+  })
+
+  it('sums the section counts into the heading total', () => {
+    const { wrapper, sections } = blocks([section('contains', 2), section('booster', 3)], 'bundle')
+    expect(sections.map((s) => s.key)).toEqual(['contains', 'booster'])
+    // "Cards in this product (5)" — the grand total across sections (from the manifest).
+    expect(wrapper.find('h2').text()).toContain('5')
+  })
+
+  it('renders nothing when the product has no card sections', () => {
+    const { wrapper, sections } = blocks([], 'bundle')
+    expect(sections).toHaveLength(0)
+    expect(wrapper.find('section').exists()).toBe(false)
   })
 })

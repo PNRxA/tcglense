@@ -4,9 +4,11 @@ import {
   getCardSealed,
   getProduct,
   getProductCards,
+  getProductCardSections,
   getProductFacets,
   listProducts,
 } from '@/lib/api'
+import type { ProductCardSectionKey } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 
 /**
@@ -58,14 +60,32 @@ export function useProductQuery(game: Ref<string>, id: Ref<string>) {
   })
 }
 
-/** A page of the cards a sealed product contains / can be pulled from (the sealed-detail
- * "Cards in this product" section). Public read, so a plain `useQuery`; `keepPreviousData`
- * holds the current grid up while the next page loads. */
-export function useProductCardsQuery(game: Ref<string>, id: Ref<string>, page: Ref<number>) {
+/** A page of one display section of the cards a sealed product contains / can be pulled
+ * from (the sealed-detail "Cards in this product" blocks — each section paginates on its
+ * own, issue #224). Public read, so a plain `useQuery`; `keepPreviousData` holds the
+ * current grid up while the next page loads. The `section` is fixed per block, so it sits
+ * in the key as a plain value alongside the reactive `game`/`id`/`page`. */
+export function useProductCardsQuery(
+  game: Ref<string>,
+  id: Ref<string>,
+  page: Ref<number>,
+  section: ProductCardSectionKey,
+) {
   return useQuery({
-    queryKey: ['product-cards', game, id, page],
-    queryFn: () => getProductCards(game.value, id.value, page.value, PRODUCT_CARDS_PAGE_SIZE),
+    queryKey: ['product-cards', game, id, section, page],
+    queryFn: () =>
+      getProductCards(game.value, id.value, page.value, PRODUCT_CARDS_PAGE_SIZE, section),
     placeholderData: keepPreviousData,
+  })
+}
+
+/** The non-empty display sections (+ counts) of a sealed product's cards — the manifest
+ * driving which "Cards in this product" blocks to render (issue #224). Public read, so a
+ * plain `useQuery`; refs go in the key so a product-to-product navigation refetches. */
+export function useProductCardSectionsQuery(game: Ref<string>, id: Ref<string>) {
+  return useQuery({
+    queryKey: ['product-card-sections', game, id],
+    queryFn: () => getProductCardSections(game.value, id.value),
   })
 }
 

@@ -1,6 +1,13 @@
 import { API_URL, request } from './client'
 import type { PriceRange } from './catalog'
-import type { Page, Product, ProductCardEntry, ProductFacets, ProductPricePoint } from './generated'
+import type {
+  Page,
+  Product,
+  ProductCardEntry,
+  ProductCardSection,
+  ProductFacets,
+  ProductPricePoint,
+} from './generated'
 
 // ---------- Sealed products (public, game-agnostic) ----------
 //
@@ -12,6 +19,7 @@ import type { Page, Product, ProductCardEntry, ProductFacets, ProductPricePoint 
 export type {
   Product,
   ProductCardEntry,
+  ProductCardSection,
   ProductFacets,
   ProductPricePoint,
   ProductPrices,
@@ -87,26 +95,52 @@ export function getCardSealed(game: string, id: string): Promise<{ data: SealedP
 /** A page of the cards a sealed product contains / can be pulled from, plus cursors. */
 export type ProductCardsPage = Page<ProductCardEntry>
 
+/** A display section a product's cards split into (`contains` / `exclusive` / `booster` /
+ * `variable`) — the `?section=` filter value {@link getProductCards} pages within. */
+export type ProductCardSectionKey = 'contains' | 'exclusive' | 'booster' | 'variable'
+
 /**
  * The cards a sealed product is found to contain — or can be pulled from — the reverse
  * of {@link getCardSealed}. Each entry carries the card plus its `membership` bucket
  * (`contains` / `booster` / `variable`) and a `foil`-only flag. Ordered `contains` →
  * `booster` → `variable` (guaranteed cards lead), then by set + collector number, and
  * paginated by card. Empty page when the product has no ingested contents.
+ *
+ * Pass `section` to page just one display section (each rendered with its own pagination,
+ * issue #224); omit it for the whole ordered list. `total`/`has_more` then describe the
+ * selected section.
  */
 export function getProductCards(
   game: string,
   id: string,
   page = 1,
   pageSize?: number,
+  section?: ProductCardSectionKey,
 ): Promise<ProductCardsPage> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   const search = new URLSearchParams()
   if (page > 1) search.set('page', String(page))
   if (pageSize) search.set('page_size', String(pageSize))
+  if (section) search.set('section', section)
   const qs = search.toString()
   return request<ProductCardsPage>(`/api/games/${g}/products/${i}/cards${qs ? `?${qs}` : ''}`)
+}
+
+/**
+ * The non-empty display sections of a product's cards, in display order (`contains` →
+ * `exclusive` → `booster` → `variable`), each with its card count — the manifest the SPA
+ * reads first to know which sections exist (and how big) before paginating each on its own
+ * with {@link getProductCards}'s `section` param (issue #224). Empty when the product has
+ * no ingested contents.
+ */
+export function getProductCardSections(
+  game: string,
+  id: string,
+): Promise<{ data: ProductCardSection[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: ProductCardSection[] }>(`/api/games/${g}/products/${i}/cards/sections`)
 }
 
 /** The distinct product types + sets that actually have products, for filter dropdowns. */

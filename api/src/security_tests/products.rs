@@ -448,3 +448,128 @@ async fn product_cards_no_exclusives_without_a_comparison_family() {
     let (_, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
     assert_eq!(body["data"][0]["exclusive"], false);
 }
+
+/// Seed one collector booster (100) with a card in every display section, plus a play booster
+/// (200) that shares the non-exclusive booster cards — so the collector-only ones read as
+/// family-exclusive. Product 100 ends up with 1 guaranteed, 3 exclusive-booster, 2 shared-
+/// booster, and 1 variable card (7 distinct), spanning all four display sections.
+async fn seed_sectioned_collector(db: &sea_orm::DatabaseConnection) {
+    let collector =
+        insert_product(db, "100", "Collector Booster Pack", "mkm", "collector_pack", Some("24.99")).await;
+    let play = insert_product(db, "200", "Play Booster Pack", "mkm", "play_pack", Some("4.99")).await;
+
+    let guaranteed = insert_card(db, "sf-guar").await;
+    insert_sealed(db, collector, guaranteed, "contains", false).await;
+
+    // Collector-only booster cards (in no other family's booster) -> exclusive.
+    for ext in ["sf-excl-1", "sf-excl-2", "sf-excl-3"] {
+        let cid = insert_card(db, ext).await;
+        insert_sealed(db, collector, cid, "booster", false).await;
+    }
+    // Booster cards the play booster also pulls -> shared, not exclusive.
+    for ext in ["sf-shared-1", "sf-shared-2"] {
+        let cid = insert_card(db, ext).await;
+        insert_sealed(db, collector, cid, "booster", false).await;
+        insert_sealed(db, play, cid, "booster", false).await;
+    }
+    let variable = insert_card(db, "sf-var").await;
+    insert_sealed(db, collector, variable, "variable", false).await;
+}
+
+#[tokio::test]
+async fn product_card_sections_lists_nonempty_sections_in_display_order() {
+    let app = test_app().await;
+    seed_sectioned_collector(&app.state.db).await;
+
+    let (status, headers, body) =
+        send(&app, get("/api/games/mtg/products/100/cards/sections")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "the sections manifest must be browser + CDN cacheable"
+    );
+    // Non-empty sections only, in display order: contains, exclusive, booster (shared),
+    // variable — each with its own card count.
+    let got: Vec<(&str, u64)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["key"].as_str().unwrap(), s["total"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![("contains", 1), ("exclusive", 3), ("booster", 2), ("variable", 1)]
+    );
+
+    // A product with no ingested contents -> a clean, cacheable empty manifest (no sections).
+    insert_product(&app.state.db, "900", "Empty Bundle", "mkm", "bundle", Some("9.99")).await;
+    let (status, headers, body) =
+        send(&app, get("/api/games/mtg/products/900/cards/sections")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE));
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+    // Unknown game / product are no-store 404s.
+    for uri in [
+        "/api/games/nope/products/100/cards/sections",
+        "/api/games/mtg/products/999999/cards/sections",
+    ] {
+        let (status, headers, _) = send(&app, get(uri)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} should 404");
+        assert_eq!(cache_control(&headers), Some("no-store"), "{uri} 404 must be no-store");
+    }
+}
+
+#[tokio::test]
+async fn product_cards_section_filter_pages_within_one_section() {
+    let app = test_app().await;
+    seed_sectioned_collector(&app.state.db).await;
+
+    // `?section=exclusive` pages only the 3 family-exclusive booster cards, reporting the
+    // section's own total (not the product's), and every entry is a flagged booster card.
+    let (status, _, body) =
+        send(&app, get("/api/games/mtg/products/100/cards?section=exclusive&page_size=2")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 3, "the section total, not the whole product's");
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2);
+    assert_eq!(body["has_more"], true);
+    for entry in data {
+        assert_eq!(entry["membership"], "booster");
+        assert_eq!(entry["exclusive"], true);
+    }
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/100/cards?section=exclusive&page=2&page_size=2"),
+    )
+    .await;
+    assert_eq!(body["data"].as_array().unwrap().len(), 1, "the exclusive section's last page");
+    assert_eq!(body["has_more"], false);
+
+    // `?section=booster` pages only the shared (non-exclusive) booster cards.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards?section=booster")).await;
+    assert_eq!(body["total"], 2);
+    for entry in body["data"].as_array().unwrap() {
+        assert_eq!(entry["membership"], "booster");
+        assert_eq!(entry["exclusive"], false, "the shared pool is not exclusive");
+    }
+
+    // `contains` / `variable` each surface their single card.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards?section=contains")).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["membership"], "contains");
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards?section=variable")).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["membership"], "variable");
+
+    // No `section` still returns the whole ordered list (the back-compatible default).
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards")).await;
+    assert_eq!(body["total"], 7, "1 contains + 3 exclusive + 2 shared + 1 variable");
+
+    // An unknown section is a no-store 422 (rejected before it matters).
+    let (status, headers, _) =
+        send(&app, get("/api/games/mtg/products/100/cards?section=nope")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+}
