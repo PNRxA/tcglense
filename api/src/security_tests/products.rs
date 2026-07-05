@@ -573,3 +573,89 @@ async fn product_cards_section_filter_pages_within_one_section() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(cache_control(&headers), Some("no-store"));
 }
+
+#[tokio::test]
+async fn product_cards_q_filters_cards_and_sections_by_search() {
+    let app = test_app().await;
+    seed_sectioned_collector(&app.state.db).await;
+    // Seeded card names are "Card sf-guar" / "Card sf-excl-{1..3}" / "Card sf-shared-{1,2}" /
+    // "Card sf-var", so a bare `q` word matches by name substring (the Scryfall compiler,
+    // reused because these rows are cards — issue #222).
+
+    // `?q=excl` matches only the three exclusive cards: the paged read reports the *filtered*
+    // total, every entry is a flagged booster card, and it stays browser + CDN cacheable.
+    let (status, headers, body) = send(&app, get("/api/games/mtg/products/100/cards?q=excl")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "a filtered card page is still shared-cacheable"
+    );
+    assert_eq!(body["total"], 3, "only the 3 cards whose name matches 'excl'");
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 3);
+    for entry in data {
+        assert_eq!(entry["membership"], "booster");
+        assert_eq!(entry["exclusive"], true);
+    }
+
+    // The manifest agrees under the same `q`: it collapses to the sections that still have
+    // matches, with filtered counts and no empty sections — so the SPA renders exactly the
+    // blocks the paged reads will fill.
+    let (status, headers, body) =
+        send(&app, get("/api/games/mtg/products/100/cards/sections?q=excl")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE));
+    let got: Vec<(&str, u64)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["key"].as_str().unwrap(), s["total"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(got, vec![("exclusive", 3)], "only the exclusive section survives 'excl'");
+
+    // A `q` that spans every section keeps them all, in display order.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards/sections?q=sf")).await;
+    let keys: Vec<&str> =
+        body["data"].as_array().unwrap().iter().map(|s| s["key"].as_str().unwrap()).collect();
+    assert_eq!(
+        keys,
+        vec!["contains", "exclusive", "booster", "variable"],
+        "'sf' is in every seeded card name"
+    );
+
+    // `q` composes with `section`: the search applies on top of the section filter.
+    let (_, _, body) =
+        send(&app, get("/api/games/mtg/products/100/cards?section=booster&q=shared")).await;
+    assert_eq!(body["total"], 2, "the 2 shared booster cards named '…shared…'");
+    for entry in body["data"].as_array().unwrap() {
+        assert_eq!(entry["exclusive"], false);
+    }
+    // A section + q with no overlap is an empty page (the exclusive cards aren't named 'shared').
+    let (_, _, body) =
+        send(&app, get("/api/games/mtg/products/100/cards?section=exclusive&q=shared")).await;
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+    // A `q` matching nothing is a clean, cacheable empty page + empty manifest (not an error),
+    // so the SPA can keep the search box up and show a "no matches" note.
+    let (status, _, body) = send(&app, get("/api/games/mtg/products/100/cards?q=zzzznope")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+    let (status, _, body) =
+        send(&app, get("/api/games/mtg/products/100/cards/sections?q=zzzznope")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+    // A malformed query is a no-store 422 on both endpoints (rejected before the page loads),
+    // exactly like the card catalog's search.
+    for uri in [
+        "/api/games/mtg/products/100/cards?q=boguskey:1",
+        "/api/games/mtg/products/100/cards/sections?q=boguskey:1",
+    ] {
+        let (status, headers, _) = send(&app, get(uri)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uri} should 422");
+        assert_eq!(cache_control(&headers), Some("no-store"), "{uri} 422 must be no-store");
+    }
+}

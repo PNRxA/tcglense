@@ -226,7 +226,12 @@ const searchError = computed(() => searchErrorMessage(listError.value))
             <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
           </DropSection>
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="DROP_PAGE_SIZE" :total="dropTotal" />
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="dropTotal"
+              :loading="dropsQuery.isPlaceholderData.value"
+            />
           </div>
         </template>
 
@@ -234,7 +239,12 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         <template v-else>
           <CardGrid :game="game" :cards="cards" :ownership="ownership" />
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="CARD_PAGE_SIZE" :total="total" />
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :loading="cardsQuery.isPlaceholderData.value"
+            />
           </div>
         </template>
       </template>

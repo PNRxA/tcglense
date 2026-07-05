@@ -2,8 +2,10 @@
 //! sourced from TCGCSV: the paginated list (with name / set / type filters + sorting),
 //! one product's detail, its price history, its image proxy, and the filter facets.
 //!
-//! Products aren't cards, so these deliberately do **not** wire the Scryfall search
-//! compiler — `q` is a plain case-insensitive name substring. Set names are resolved
+//! Products aren't cards, so the product *list* deliberately does **not** wire the
+//! Scryfall search compiler — its `q` is a plain case-insensitive name substring. The
+//! "cards in this product" endpoints are the exception: those rows *are* cards, so their
+//! optional `q` reuses the card catalog's compiler (issue #222). Set names are resolved
 //! against `card_sets` (falling back to `None` when a product's group has no matching
 //! set), mirroring how the collection set builder degrades gracefully.
 
@@ -22,6 +24,7 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::catalog::Game;
 use crate::db::Dialect;
 use crate::entities::prelude::{Card, CardSet, Product, ProductPriceHistory, SealedContent};
 use crate::entities::sealed_content::Membership;
@@ -256,6 +259,22 @@ pub struct ProductCardsParams {
     /// back-compatible behaviour). An unknown value is a 422.
     #[serde(default)]
     pub section: Option<String>,
+    /// Optional card search (the same Scryfall-style grammar the card catalog accepts —
+    /// name substrings plus `c:r`, `t:goblin`, `r:mythic`, …) restricting this page to the
+    /// product's cards that match, on top of any `section` filter. `total`/`has_more` then
+    /// describe the filtered result. A malformed query is a 422 (issue #222).
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProductCardSectionsParams {
+    /// Optional card search (see [`ProductCardsParams::q`]) that filters the manifest to the
+    /// sections — and per-section counts — whose cards match, so the section list, its
+    /// counts, and each section's paged cards all agree under the same `q` (issue #222). A
+    /// malformed query is a 422.
+    #[serde(default)]
+    pub q: Option<String>,
 }
 
 /// A display section of a sealed product's cards — its membership bucket, with the booster
@@ -593,7 +612,7 @@ pub async fn product_cards(
     Path((game, id)): Path<(String, String)>,
     Query(params): Query<ProductCardsParams>,
 ) -> Result<Json<Page<ProductCardEntry>>, AppError> {
-    require_game(&game)?;
+    let game_meta = require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
     let (page, page_size) =
         resolve_page(params.page, params.page_size, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
@@ -617,6 +636,10 @@ pub async fn product_cards(
             .collect(),
         None => index.ordered.clone(),
     };
+    // Narrow to the cards matching the optional `q` search (issue #222), still in display
+    // order; a malformed query 422s here before the page is loaded.
+    let selected = filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &selected)
+        .await?;
 
     let total = selected.len() as u64;
     let start = (page - 1).saturating_mul(page_size) as usize;
@@ -658,21 +681,28 @@ pub async fn product_cards(
 /// `variable`), each with its card count. The reverse-companion of `product_cards`: the SPA
 /// reads this first to know which sections exist and how big each is, then renders one
 /// independently-paginated block per section, pulling each with `?section=` (issue #224).
-/// `{ "data": [] }` when the product has no ingested contents; `404` for an unknown
-/// game/product.
+/// An optional `?q=` filters the manifest to the sections (and counts) whose cards match
+/// that search, so it agrees with the filtered `product_cards` pages (issue #222).
+/// `{ "data": [] }` when the product has no ingested contents (or nothing matches `q`);
+/// `404` for an unknown game/product, `422` for a malformed `q`.
 pub async fn product_card_sections(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
+    Query(params): Query<ProductCardSectionsParams>,
 ) -> Result<Json<DataBody<Vec<ProductCardSection>>>, AppError> {
-    require_game(&game)?;
+    let game_meta = require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
     let index = build_product_card_index(&state, &game, &product).await?;
+    // Restrict the counted ids to those matching the optional `q` search, still in display
+    // order (issue #222) — so a section with no matches drops out of the manifest.
+    let ordered = filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &index.ordered)
+        .await?;
 
     // Count per section by walking the already-ordered ids: first appearance fixes the
     // section's slot, so the manifest comes out in the same display order the list uses. A
     // Vec (≤ 4 sections) keeps that order — a HashMap wouldn't — and the linear find is trivial.
     let mut sections: Vec<ProductCardSection> = Vec::new();
-    for &cid in &index.ordered {
+    for &cid in &ordered {
         let Some(section) = index.section_of(cid) else {
             continue;
         };
@@ -800,6 +830,50 @@ async fn build_product_card_index(
         exclusive,
         ordered: ordered.into_iter().map(|entry| entry.5).collect(),
     })
+}
+
+/// Restrict a product's ordered card ids to those also matching an optional `q` search,
+/// **preserving display order** — the shared filter behind the sealed-product card search
+/// (issue #222). A `None`/blank query leaves the list untouched; a malformed query is a
+/// 422 (surfaced before any DB work, mirroring the section-filter parse). The search reuses
+/// the card catalog's compiler (`c:r`, `t:goblin`, `r:mythic`, name substrings, …) via
+/// [`super::parse_search`], run as a membership test over just this product's cards: the
+/// compiled condition ANDed with a chunked `IN (ordered ids)`, so even a giant booster pool
+/// stays within the SQL bind limit. Both `product_cards` and `product_card_sections` route
+/// through here so the paged cards, the section list, and its counts all agree.
+async fn filter_ordered_by_search(
+    state: &AppState,
+    game: &Game,
+    q: Option<&str>,
+    ordered: &[i32],
+) -> Result<Vec<i32>, AppError> {
+    let Some(search) = trim_query(q) else {
+        return Ok(ordered.to_vec());
+    };
+    // Compile up front so a malformed query 422s before the per-chunk lookups run.
+    let (condition, _shape) = super::parse_search(game, search, state.dialect())?;
+    if ordered.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Which of this product's cards satisfy the search: the compiled condition intersected
+    // with each chunk of the ordered ids (the game filter matches the paged read's).
+    let mut matched: HashSet<i32> = HashSet::with_capacity(ordered.len());
+    for chunk in ordered.chunks(PRODUCT_CARDS_IN_CHUNK) {
+        let ids: Vec<i32> = Card::find()
+            .select_only()
+            .column(card::Column::Id)
+            .filter(card::Column::Game.eq(game.id))
+            .filter(condition.clone())
+            .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .into_tuple()
+            .all(&state.db)
+            .await?;
+        matched.extend(ids);
+    }
+
+    // Keep the product's display order; drop everything the search didn't match.
+    Ok(ordered.iter().copied().filter(|cid| matched.contains(cid)).collect())
 }
 
 /// Collapse a product's raw membership rows `(card_id, membership, foil)` to one entry
