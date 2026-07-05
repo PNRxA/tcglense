@@ -885,10 +885,19 @@ async fn booster_exclusive_card_ids(
 
     // Every card those other-family boosters can pull; one of ours not in this pool is
     // exclusive to our family.
+    //
+    // No `SELECT DISTINCT`: we collect straight into a `HashSet`, so the DB-side dedup is
+    // redundant — and worse, it's a performance trap. With no `ANALYZE` statistics (this
+    // schema never runs `ANALYZE`), SQLite serves a `DISTINCT card_id` by scanning the
+    // `(game, card_id)` index to get pre-sorted ids, which for `game = 'mtg'` walks the
+    // *whole* ~1M-row partition plus a table lookup per row (~0.9s) — and this runs on
+    // every product-cards / sections request, i.e. every page turn through a collector
+    // booster. Dropping `DISTINCT` lets the planner use the covering
+    // `idx_sealed_contents_unique` with tight `(game, product_id)` seeks over the small
+    // comparison list instead (~1ms). The `HashSet` handles the duplicate ids.
     let comparison_cards: HashSet<i32> = SealedContent::find()
         .select_only()
         .column(sealed_content::Column::CardId)
-        .distinct()
         .filter(sealed_content::Column::Game.eq(game))
         .filter(sealed_content::Column::Membership.eq(booster))
         .filter(sealed_content::Column::ProductId.is_in(comparison_products))
