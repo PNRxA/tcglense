@@ -161,7 +161,12 @@ useClampPage(page, () => ({
       </div>
       <ProductGrid :game="game" :products="products" />
       <div class="mt-10">
-        <CardPagination v-model:page="page" :page-size="PRODUCT_PAGE_SIZE" :total="total" />
+        <CardPagination
+          v-model:page="page"
+          :page-size="PRODUCT_PAGE_SIZE"
+          :total="total"
+          :loading="productsQuery.isPlaceholderData.value"
+        />
       </div>
     </template>
   </div>

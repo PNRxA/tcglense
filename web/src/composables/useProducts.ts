@@ -64,28 +64,43 @@ export function useProductQuery(game: Ref<string>, id: Ref<string>) {
  * from (the sealed-detail "Cards in this product" blocks — each section paginates on its
  * own, issue #224). Public read, so a plain `useQuery`; `keepPreviousData` holds the
  * current grid up while the next page loads. The `section` is fixed per block, so it sits
- * in the key as a plain value alongside the reactive `game`/`id`/`page`. */
+ * in the key as a plain value alongside the reactive `game`/`id`/`page`. `q` is the shared
+ * card search (issue #222); it goes in the key (as a ref) so committing a search refetches,
+ * and the caller resets `page` to 1 alongside it. */
 export function useProductCardsQuery(
   game: Ref<string>,
   id: Ref<string>,
   page: Ref<number>,
   section: ProductCardSectionKey,
+  q: Ref<string>,
 ) {
   return useQuery({
-    queryKey: ['product-cards', game, id, section, page],
+    queryKey: ['product-cards', game, id, section, q, page],
     queryFn: () =>
-      getProductCards(game.value, id.value, page.value, PRODUCT_CARDS_PAGE_SIZE, section),
+      getProductCards(
+        game.value,
+        id.value,
+        page.value,
+        PRODUCT_CARDS_PAGE_SIZE,
+        section,
+        q.value || undefined,
+      ),
     placeholderData: keepPreviousData,
   })
 }
 
 /** The non-empty display sections (+ counts) of a sealed product's cards — the manifest
  * driving which "Cards in this product" blocks to render (issue #224). Public read, so a
- * plain `useQuery`; refs go in the key so a product-to-product navigation refetches. */
-export function useProductCardSectionsQuery(game: Ref<string>, id: Ref<string>) {
+ * plain `useQuery`; refs go in the key so a product-to-product navigation refetches. `q` is
+ * the shared card search (issue #222): with it in the key, committing a search refetches
+ * the filtered manifest (fewer sections + recomputed counts). `keepPreviousData` holds the
+ * current sections up while the filtered manifest loads, so committing a search doesn't
+ * flash an empty "no matches" state mid-fetch. */
+export function useProductCardSectionsQuery(game: Ref<string>, id: Ref<string>, q: Ref<string>) {
   return useQuery({
-    queryKey: ['product-card-sections', game, id],
-    queryFn: () => getProductCardSections(game.value, id.value),
+    queryKey: ['product-card-sections', game, id, q],
+    queryFn: () => getProductCardSections(game.value, id.value, q.value || undefined),
+    placeholderData: keepPreviousData,
   })
 }
 

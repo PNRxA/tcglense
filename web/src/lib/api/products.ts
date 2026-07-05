@@ -108,7 +108,9 @@ export type ProductCardSectionKey = 'contains' | 'exclusive' | 'booster' | 'vari
  *
  * Pass `section` to page just one display section (each rendered with its own pagination,
  * issue #224); omit it for the whole ordered list. `total`/`has_more` then describe the
- * selected section.
+ * selected section. Pass `q` to narrow the page to the product's cards matching a
+ * Scryfall-style search (the same grammar the card catalog accepts — name substrings plus
+ * `c:r`, `t:goblin`, `r:mythic`, …), applied on top of `section` (issue #222).
  */
 export function getProductCards(
   game: string,
@@ -116,6 +118,7 @@ export function getProductCards(
   page = 1,
   pageSize?: number,
   section?: ProductCardSectionKey,
+  q?: string,
 ): Promise<ProductCardsPage> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
@@ -123,6 +126,7 @@ export function getProductCards(
   if (page > 1) search.set('page', String(page))
   if (pageSize) search.set('page_size', String(pageSize))
   if (section) search.set('section', section)
+  if (q) search.set('q', q)
   const qs = search.toString()
   return request<ProductCardsPage>(`/api/games/${g}/products/${i}/cards${qs ? `?${qs}` : ''}`)
 }
@@ -132,15 +136,21 @@ export function getProductCards(
  * `exclusive` → `booster` → `variable`), each with its card count — the manifest the SPA
  * reads first to know which sections exist (and how big) before paginating each on its own
  * with {@link getProductCards}'s `section` param (issue #224). Empty when the product has
- * no ingested contents.
+ * no ingested contents. Pass the same `q` search as {@link getProductCards} to get the
+ * filtered manifest — only the sections (with recomputed counts) whose cards match, so the
+ * blocks the SPA renders line up with the filtered pages (issue #222).
  */
 export function getProductCardSections(
   game: string,
   id: string,
+  q?: string,
 ): Promise<{ data: ProductCardSection[] }> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
-  return request<{ data: ProductCardSection[] }>(`/api/games/${g}/products/${i}/cards/sections`)
+  const qs = q ? `?q=${encodeURIComponent(q)}` : ''
+  return request<{ data: ProductCardSection[] }>(
+    `/api/games/${g}/products/${i}/cards/sections${qs}`,
+  )
 }
 
 /** The distinct product types + sets that actually have products, for filter dropdowns. */
