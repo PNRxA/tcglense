@@ -23,6 +23,15 @@ Run both servers (API on `:8080`, web on `:5173`) with one command:
 It auto-creates `api/.env` (from `api/.env.example`) and installs web deps on first run.
 Then open http://localhost:5173.
 
+> **Editing `api/.env`:** any value containing spaces must be wrapped in double quotes —
+> this includes the User-Agent strings sent to Scryfall / TCGCSV / Moxfield and the
+> `EMAIL_FROM` address. Format the User-Agent as a quoted `product/version (+contact)`
+> string, e.g.
+> `SCRYFALL_USER_AGENT="TCGLense/0.1 (+https://github.com/you/app)"`.
+> An unquoted space is a parse error that makes the env loader silently skip every variable
+> defined **after** it (they fall back to their defaults), which fails in confusing ways —
+> e.g. card sync quietly falling back to the dataset mirror instead of the source you set.
+
 <details>
 <summary>Run them manually instead</summary>
 
