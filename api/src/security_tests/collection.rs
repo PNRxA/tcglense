@@ -415,3 +415,40 @@ async fn writes_and_aggregations_are_isolated_between_users() {
     let (_, _, b_sets) = send(&app, get_with_bearer("/api/collection/mtg/sets", &bob)).await;
     assert_eq!(b_sets["data"][0]["owned_copies"], 5);
 }
+
+/// The `quantity` sort orders the owned-card list by total copies through the full HTTP
+/// path — most first by default, fewest first when reversed (issue #228). The query-level
+/// ordering (incl. folding in foils) is unit-tested in `handlers::collection::tests`; this
+/// pins the `sort`/`dir` param plumbing end to end.
+#[tokio::test]
+async fn quantity_sort_orders_the_owned_list_by_copies() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "sort-qty@example.com", "password123").await;
+
+    // Three distinct cards owned at distinct copy counts (1, 5, 3).
+    let ids = sample_card_ids(&app, 3).await;
+    own_card(&app, &token, &ids[0], 1).await;
+    own_card(&app, &token, &ids[1], 5).await;
+    own_card(&app, &token, &ids[2], 3).await;
+
+    fn quantities(body: &serde_json::Value) -> Vec<i64> {
+        body["data"]
+            .as_array()
+            .expect("collection data array")
+            .iter()
+            .map(|e| e["quantity"].as_i64().expect("quantity"))
+            .collect()
+    }
+
+    // Default direction is most copies first.
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg?sort=quantity", &token)).await;
+    assert_eq!(status, StatusCode::OK, "quantity sort failed: {body:?}");
+    assert_eq!(quantities(&body), vec![5, 3, 1]);
+
+    // An explicit ascending direction reverses it (fewest copies first).
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg?sort=quantity&dir=asc", &token)).await;
+    assert_eq!(status, StatusCode::OK, "quantity asc sort failed: {body:?}");
+    assert_eq!(quantities(&body), vec![1, 3, 5]);
+}

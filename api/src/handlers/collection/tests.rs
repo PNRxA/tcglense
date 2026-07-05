@@ -101,6 +101,34 @@ fn sort_spec_defaults_to_recent_and_reuses_card_sorts() {
 }
 
 #[test]
+fn sort_spec_maps_quantity_to_total_copies() {
+    // Both spellings resolve to the holdings-only quantity sort, most copies first by
+    // default (a card-field sort can't express this, so it's matched before the fallback).
+    for key in ["quantity", "copies"] {
+        assert_eq!(
+            ListParams {
+                sort: Some(key.into()),
+                ..params(None, None)
+            }
+            .sort_spec()
+            .unwrap(),
+            (CollectionSort::Quantity, SortDir::Desc)
+        );
+    }
+    // An explicit ascending direction reverses it (fewest copies first).
+    assert_eq!(
+        ListParams {
+            sort: Some("quantity".into()),
+            dir: Some("asc".into()),
+            ..params(None, None)
+        }
+        .sort_spec()
+        .unwrap(),
+        (CollectionSort::Quantity, SortDir::Asc)
+    );
+}
+
+#[test]
 fn sort_spec_rejects_unknown_values() {
     assert!(matches!(
         ListParams {
@@ -279,6 +307,77 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
     assert_eq!(
         names(&db, None, None, CollectionSort::Card(SortField::Price), SortDir::Desc).await,
         ["Goblin Guide", "Goblin King", "Forest"]
+    );
+}
+
+/// The `quantity` sort orders holdings by their **total copies** (regular + foil), most
+/// first (or fewest, reversed) — a holdings-only sort the catalog card sorts can't
+/// express. Foils count toward the total, so the regular-only counts are not the key
+/// (issue #228).
+#[tokio::test]
+async fn collection_query_orders_by_total_copies() {
+    use sea_orm::{IntoActiveModel, prelude::DateTimeUtc};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        display_name: Set(None),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    for c in [
+        seed_card(1, "Two Total", "Creature", None),
+        seed_card(2, "Five Total", "Creature", None),
+        seed_card(3, "Three Total", "Creature", None),
+    ] {
+        c.into_active_model().insert(&db).await.expect("insert card");
+    }
+
+    // Total copies = quantity + foil_quantity: card 1 = 2 (2+0), card 2 = 5 (1+4),
+    // card 3 = 3 (0+3). The regular-only counts (2, 1, 0) rank the cards differently, so
+    // an ordering by total copies proves the foils are folded in.
+    let hold = |id: i32, card_id: i32, q: i32, f: i32| collection_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        card_id: Set(card_id),
+        quantity: Set(q),
+        foil_quantity: Set(f),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+    };
+    for h in [hold(1, 1, 2, 0), hold(2, 2, 1, 4), hold(3, 3, 0, 3)] {
+        h.insert(&db).await.expect("insert holding");
+    }
+
+    async fn ordered(db: &sea_orm::DatabaseConnection, dir: SortDir) -> Vec<String> {
+        collection_query(1, "mtg", None, None, CollectionSort::Quantity, dir, Dialect::Sqlite)
+            .all(db)
+            .await
+            .expect("run collection query")
+            .into_iter()
+            .filter_map(|(_, card)| card.map(|c| c.name))
+            .collect()
+    }
+
+    // Most copies first: 5, 3, 2.
+    assert_eq!(
+        ordered(&db, SortDir::Desc).await,
+        ["Five Total", "Three Total", "Two Total"]
+    );
+    // Fewest first reverses it.
+    assert_eq!(
+        ordered(&db, SortDir::Asc).await,
+        ["Two Total", "Three Total", "Five Total"]
     );
 }
 
