@@ -13,7 +13,7 @@ use crate::handlers::shared::{load_card, require_game, stored_faces};
 use crate::scryfall::model::StoredFace;
 use crate::state::AppState;
 
-use super::{IMAGE_CACHE_CONTROL, ImageParams};
+use super::{IMAGE_CACHE_CONTROL, ImageParams, image_error_response};
 
 /// `GET /api/games/{game}/cards/{id}/image?size=normal&face=0`
 ///
@@ -63,10 +63,7 @@ pub async fn card_image(
         .images
         .get(&game, size, &cache_key, &source_url)
         .await
-        .map_err(|err| {
-            tracing::error!(error = %err, card = %id, "failed to cache card image");
-            AppError::Internal(format!("image cache error: {err}"))
-        })?;
+        .map_err(|err| image_error_response(err, "card", &id))?;
 
     Ok((
         [

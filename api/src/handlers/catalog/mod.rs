@@ -18,6 +18,7 @@ use sea_orm::{
 use serde::Deserialize;
 
 use crate::catalog::Game;
+use crate::catalog::images::ImageError;
 use crate::db::Dialect;
 use crate::entities::card;
 use crate::entities::prelude::Card;
@@ -51,6 +52,36 @@ pub use status::{ingest_status, list_games};
 
 /// Card art for a given id is immutable, so it is safe to cache aggressively.
 const IMAGE_CACHE_CONTROL: &str = "public, max-age=2592000, immutable";
+
+/// Map an image-cache error to the right HTTP response for the two image proxies
+/// (card art and sealed-product images), logging at a level that matches the cause.
+///
+/// - [`ImageError::Unavailable`] — the provider says this asset has no image (a
+///   definitive `4xx`, e.g. the TCGplayer CDN `403`ing a product with no art). A routine
+///   **404** logged at debug: the frontend already falls back to a placeholder, and the
+///   miss is negatively cached (see [`crate::catalog::images`]) so it isn't re-fetched or
+///   re-logged on the next view — the fix for the 500-per-view log spam of issue #214.
+/// - [`ImageError::Http`] — a transient upstream fetch failure (`5xx` / rate-limit /
+///   network). A **502** at warn; not cached, so it's retried next request.
+/// - [`ImageError::Io`] — our own cache disk write failed. A **500** at error.
+///
+/// `subject` (`"product"` / `"card"`) and `id` name the asset in the log line.
+pub(super) fn image_error_response(err: ImageError, subject: &str, id: &str) -> AppError {
+    match err {
+        ImageError::Unavailable(status) => {
+            tracing::debug!(subject = %subject, id = %id, status = %status, "image unavailable upstream");
+            AppError::NotFound("no image available".to_string())
+        }
+        ImageError::Http(source) => {
+            tracing::warn!(subject = %subject, id = %id, error = %source, "image upstream fetch failed");
+            AppError::BadGateway("image temporarily unavailable".to_string())
+        }
+        ImageError::Io(source) => {
+            tracing::error!(subject = %subject, id = %id, error = %source, "image cache io error");
+            AppError::Internal(format!("image cache error: {source}"))
+        }
+    }
+}
 
 // ---------- Query params ----------
 
