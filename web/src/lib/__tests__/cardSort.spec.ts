@@ -33,9 +33,15 @@ describe('sort option lists', () => {
     expect(ALL_CARDS_SORT_OPTIONS.some((o) => o.value === ALL_CARDS_DEFAULT_SORT)).toBe(true)
   })
 
-  it('omit collector number from the all-cards view (not meaningful across sets)', () => {
-    expect(ALL_CARDS_SORT_OPTIONS.some((o) => o.value.startsWith('number:'))).toBe(false)
+  it('offer collector number in every card sort dropdown, whatever the ghost state', () => {
+    // Collector number is a selectable sort everywhere a card list sorts, so it no longer
+    // disappears when the collection / wish-list ghost toggle swaps the option set. It stays
+    // a non-default option outside a single set (name / recency remain the defaults there).
     expect(SET_SORT_OPTIONS.some((o) => o.value.startsWith('number:'))).toBe(true)
+    expect(ALL_CARDS_SORT_OPTIONS.some((o) => o.value.startsWith('number:'))).toBe(true)
+    expect(COLLECTION_SORT_OPTIONS.some((o) => o.value.startsWith('number:'))).toBe(true)
+    expect(ALL_CARDS_DEFAULT_SORT.startsWith('number:')).toBe(false)
+    expect(COLLECTION_DEFAULT_SORT.startsWith('number:')).toBe(false)
   })
 
   it('parse every option value into a valid sort param', () => {

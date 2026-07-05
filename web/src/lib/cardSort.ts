@@ -28,11 +28,12 @@ export const SET_SORT_OPTIONS: SortOption[] = [
   { value: 'price:asc', label: 'Price (low → high)' },
 ]
 
-/** Options for the all-cards view: same as a set's, minus collector number
- * (which isn't meaningful across sets). */
-export const ALL_CARDS_SORT_OPTIONS: SortOption[] = SET_SORT_OPTIONS.filter(
-  (o) => !o.value.startsWith('number:'),
-)
+/** Options for the all-cards view — the same card sorts a single set offers, collector
+ * number included. Across sets it groups each set's run together (numeric run first, then
+ * the raw string); `name` stays the *default* here, but the option is always offered so a
+ * collector-number sort never vanishes when the collection / wish-list ghost toggle swaps
+ * this list in for `COLLECTION_SORT_OPTIONS` (or vice-versa). */
+export const ALL_CARDS_SORT_OPTIONS: SortOption[] = [...SET_SORT_OPTIONS]
 
 /** Options for the collection view — also reused by the wish list (its "want" twin) for
  * its list-only mode. The holdings-specific sorts lead: the recency order (the natural
