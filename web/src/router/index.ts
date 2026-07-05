@@ -107,6 +107,16 @@ const router = createRouter({
       component: () => import('@/views/CollectionBrowseView.vue'),
       props: true,
     },
+    // Camera/webcam card scanner — OCRs a physical card and rapid-adds it to the
+    // collection. Auth-gated (it writes holdings) and lazy-loaded: the on-device OCR
+    // engine (tesseract.js) is a heavy payload that must not weigh down the app bundle,
+    // so it only loads when this view — and then only when a scan starts — is reached.
+    {
+      path: '/scan',
+      name: 'scan',
+      component: () => import('@/views/ScanView.vue'),
+      meta: { requiresAuth: true },
+    },
     // Per-user wish lists (issue #167) — the collection's twin for cards the user wants
     // to buy. Same public-route pattern: signed-out visitors get an in-view sign-in
     // prompt rather than a bounce to /login.
