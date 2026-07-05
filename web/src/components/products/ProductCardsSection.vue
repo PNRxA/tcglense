@@ -23,21 +23,27 @@ const props = defineProps<{
   // only renders sections the filtered manifest still lists, but a search change races the
   // manifest refetch, so the block also self-hides when it resolves to zero matches (below).
   search: string
+  // The committed card sort shared across the product's sections (a `field:dir` option value,
+  // or the `default` sentinel for the product's natural order). Threaded into this block's
+  // query so every section re-orders together; the manifest is sort-independent (a sort never
+  // changes which sections exist or their counts), so only the paged cards move.
+  sort: string
 }>()
 
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 const search = toRef(props, 'search')
+const sort = toRef(props, 'sort')
 
 const page = ref(1)
 // The block is reused across product-to-product navigation (its `sectionKey` is held fixed by
-// the parent's `:key`) and across search changes, so reset to page 1 whenever the product or
-// the search changes — otherwise page 3 of the old list would carry into the new one.
-watch([id, search], () => {
+// the parent's `:key`) and across search/sort changes, so reset to page 1 whenever the product,
+// the search, or the sort changes — otherwise page 3 of the old list would carry into the new.
+watch([id, search, sort], () => {
   page.value = 1
 })
 
-const query = useProductCardsQuery(game, id, page, props.sectionKey, search)
+const query = useProductCardsQuery(game, id, page, props.sectionKey, search, sort)
 const cards = computed<Card[]>(() => (query.data.value?.data ?? []).map((entry) => entry.card))
 // This section's own card count drives the page count — always the total of the very page set
 // being shown, so pagination can never point past the data (keepPreviousData holds the prior

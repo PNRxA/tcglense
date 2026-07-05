@@ -63,6 +63,32 @@ export const PRODUCT_SORT_OPTIONS: SortOption[] = [
 /** Default sort for the sealed-products view — alphabetical by name. */
 export const PRODUCT_DEFAULT_SORT = 'name:asc'
 
+/** Sort options for the cards **inside** a sealed product (distinct from the sealed-products
+ * browse's `PRODUCT_SORT_OPTIONS` above, which sorts the products themselves). A product's
+ * cards are a curated group like a set's, so this mirrors a set's card sorts — but the default
+ * keeps the product's own membership / exclusive / set-number order: the `default` sentinel
+ * maps to the API's natural order (no `sort` param sent), so the section split and the
+ * exclusives-first ordering stay intact. Every other option re-orders the cards *within* each
+ * section. */
+export const PRODUCT_CARDS_SORT_OPTIONS: SortOption[] = [
+  { value: 'default', label: 'Default order' },
+  { value: 'name:asc', label: 'Name (A–Z)' },
+  { value: 'name:desc', label: 'Name (Z–A)' },
+  { value: 'rarity:desc', label: 'Rarity (high → low)' },
+  { value: 'rarity:asc', label: 'Rarity (low → high)' },
+  { value: 'released:desc', label: 'Newest first' },
+  { value: 'released:asc', label: 'Oldest first' },
+  { value: 'cmc:asc', label: 'Mana value (low → high)' },
+  { value: 'cmc:desc', label: 'Mana value (high → low)' },
+  { value: 'price:desc', label: 'Price (high → low)' },
+  { value: 'price:asc', label: 'Price (low → high)' },
+]
+
+/** Default sort for a sealed product's cards — the product's natural membership / set-number
+ * order. A sentinel that maps to *no* `sort` param, so it is never sent to the API (and never
+ * passed to `toSortParam`); an unknown `?sort=` in the URL clamps back to it. */
+export const PRODUCT_CARDS_DEFAULT_SORT = 'default'
+
 /** Default sort for a single set — its collector-number order. */
 export const SET_DEFAULT_SORT = 'number:asc'
 /** Default sort for the all-cards view — alphabetical by name. */
