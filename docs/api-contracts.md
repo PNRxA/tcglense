@@ -264,7 +264,8 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
-| `GET /api/games/{game}/products/{id}/cards?page&page_size` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Empty page when the product has no ingested contents; `404` for an unknown game/product |
+| `GET /api/games/{game}/products/{id}/cards?page&page_size&section` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead) and, within the booster pool, **family-exclusive cards first** (a collector booster's special printings no other booster in the set can pull — each flagged `exclusive`, PR #221), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Optional `?section` (`contains`/`exclusive`/`booster`/`variable`) pages just one display section so the SPA paginates each on its own (issue #224); omit it for the whole ordered list — `total`/`has_more` then describe the selected section. Empty page when the product has no ingested contents; `404` for an unknown game/product, `422` for an unknown section |
+| `GET /api/games/{game}/products/{id}/cards/sections` | `{ data: ProductCardSection[] }` — the **non-empty** display sections of the cards above, in display order (`contains` → `exclusive` → `booster` → `variable`) with per-section counts, so the SPA knows which independently-paginated blocks to render (issue #224) before fetching any card. `[]` when the product has no ingested contents; `404` for an unknown game/product |
 
 `Product = { id, name, set_code, set_name: string | null, product_type, url: string |
 null, has_image, prices: { usd, usd_foil }, released_at: string | null }`. `id` is the
@@ -290,13 +291,22 @@ with the membership bucket (`"contains"` / `"booster"` / `"variable"`) and a `fo
 `sealed_contents`; the product-list/detail/price endpoints above are sourced from TCGCSV
 (`products` / `product_price_history`).
 
-`ProductCardEntry = { card: Card, membership, foil }` is the reverse wrapper (the
-`.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
-bucket and the foil-only flag. A card that is both contained in and pullable from the
-same product reports its **strongest** membership (lowest rank), so it shows once, in
-the "found in" group. The by-card-id lookups are chunked (`PRODUCT_CARDS_IN_CHUNK`,
-900) so a giant product — Secret Lair "festival" bundles reference thousands of
-cards — can't blow SQLite's per-statement bind limit.
+`ProductCardEntry = { card: Card, membership, foil, exclusive }` is the reverse wrapper
+(the `.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
+bucket, the foil-only flag, and `exclusive` (a `booster` card pullable from this product's
+booster family but from no *other* booster family in the set — `false` for any non-`booster`
+card, a non-booster product, or a set with no other booster family to compare against). A
+card that is both contained in and pullable from the same product reports its **strongest**
+membership (lowest rank), so it shows once, in the "found in" group. The by-card-id lookups
+are chunked (`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival"
+bundles reference thousands of cards — can't blow SQLite's per-statement bind limit.
+
+`ProductCardSection = { key, total }` (the `.../cards/sections` endpoint) is the display-
+section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the value the
+`?section` filter takes), `total` its card count. Only non-empty sections are returned, in
+display order — so the SPA renders one independently-paginated block per section (issue #224)
+and knows each's size without fetching its cards. The four sections are the membership buckets
+with the `booster` pool split by `exclusive`; their combined `total` is the whole card count.
 
 ## Collection API contract
 
