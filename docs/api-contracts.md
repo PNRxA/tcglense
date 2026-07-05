@@ -242,6 +242,14 @@ headers, but never persists it — for deployments fronted by a CDN that caches 
 responses, so the origin needs no writable image dir and is only hit on a CDN cache miss
 (leave it off when no CDN sits in front, or every view re-fetches upstream).
 
+Not every id has an image upstream — the TCGplayer product CDN, for one, `403`s the URL
+for a product with no art (its `has_image` flag is only a best-effort hint). When the
+provider says an asset isn't there (a definitive `4xx`), the proxy returns **404** and
+remembers the miss in-process for 6h (the negative cache), so a dead URL isn't re-fetched
+or re-logged on every view; a *transient* upstream failure (`5xx` / rate-limit / network)
+is a **502** and isn't cached, so it retries next request. The SPA falls back to a
+placeholder on any non-2xx either way.
+
 ## Sealed products API contract
 
 Public (no auth), game-namespaced reads under `/api/games/{game}/products`, sourced from

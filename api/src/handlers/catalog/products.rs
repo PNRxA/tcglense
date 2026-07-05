@@ -39,9 +39,9 @@ use crate::scryfall::search::escape_like;
 use crate::state::AppState;
 use crate::tcgcsv::classify::booster_family;
 
-use super::IMAGE_CACHE_CONTROL;
 use super::image::is_allowed_image_url;
 use super::pricing::{PriceRange, cutoff_date, downsample_rows};
+use super::{IMAGE_CACHE_CONTROL, image_error_response};
 
 // ---------- Wire DTOs ----------
 
@@ -475,10 +475,7 @@ pub async fn product_image(
         .images
         .get("products", size, &product.external_id, &source_url)
         .await
-        .map_err(|err| {
-            tracing::error!(error = %err, product = %id, "failed to cache product image");
-            AppError::Internal(format!("image cache error: {err}"))
-        })?;
+        .map_err(|err| image_error_response(err, "product", &id))?;
 
     Ok((
         [

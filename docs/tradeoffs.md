@@ -404,6 +404,18 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   once per asset rather than hotlinked on every view. `CDN_MODE=true` (fetch-and-serve
   only, no persistence) only makes sense behind a caching CDN — without one every view
   re-fetches upstream, so it's off by default.
+- **Negative cache (issue #214):** a positive cache-miss persists to disk, but a
+  *failure* has nowhere to live — so a URL the provider `403`s (the TCGplayer product CDN
+  does this for products with no art; `has_image` is derived from the provider metadata
+  and over-reports) was re-fetched, re-logged at ERROR, and returned as a **500** on every
+  single page view. The proxy now treats a definitive upstream `4xx` (all but `429`/`408`,
+  which are transient) as [`ImageError::Unavailable`] → a **404**, and remembers it
+  in-process for 6h so the dead URL isn't asked again within the window (`5xx`/`429`/timeout
+  stay a retryable **502**, uncached). The cache is a plain `Mutex<HashMap>` keyed by the
+  asset's cache path, TTL-checked on read and lazily pruned at a soft cap of 8192 entries —
+  deliberately not per-deployment-tunable (a constant, not an env var) and not persisted
+  (a restart re-probes each dead URL once, which is cheap). The TTL is a compromise: too
+  long strands an image the provider adds later, too short brings the log spam back.
 - **Mana symbols (`mana-font`):** card `{…}` symbols render via the bundled `mana-font`
   icon font (`ManaSymbols.vue` + `lib/mana.ts`), so they work offline and aren't
   hotlinked from Scryfall. Two trade-offs: (1) the package's shipped `@font-face` lists

@@ -144,6 +144,34 @@ fn image_url_allowlist() {
     assert!(!is_allowed_image_url("not a url"));
 }
 
+#[test]
+fn image_error_maps_unavailable_to_404_not_500() {
+    use crate::catalog::images::ImageError;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    // The issue #214 fix: a provider "no image" (the TCGplayer CDN `403`s a product with
+    // no art) is a 404 the SPA falls back on — never the 500 that spammed the logs and
+    // re-fired on every single view.
+    let unavailable = image_error_response(
+        ImageError::Unavailable(StatusCode::FORBIDDEN),
+        "product",
+        "248193",
+    );
+    assert_eq!(unavailable.into_response().status(), StatusCode::NOT_FOUND);
+
+    // A local cache disk write failure is still a genuine 500.
+    let io = image_error_response(
+        ImageError::Io(std::io::Error::other("disk full")),
+        "product",
+        "1",
+    );
+    assert_eq!(
+        io.into_response().status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
 fn params(sort: Option<&str>, dir: Option<&str>) -> ListParams {
     ListParams {
         page: None,
