@@ -19,7 +19,8 @@ use axum::{
 };
 use chrono::Utc;
 use sea_orm::{
-    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+    Select,
     sea_query::{Expr, Func, LikeExpr, NullOrdering, SimpleExpr},
 };
 use serde::{Deserialize, Serialize};
@@ -31,8 +32,8 @@ use crate::entities::sealed_content::Membership;
 use crate::entities::{card, card_set, product, product_price_history, sealed_content};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, build_page, load_card,
-    require_game, resolve_page, trim_query,
+    CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, SortDir, SortField,
+    apply_card_sort, build_page, load_card, require_game, resolve_page, trim_query,
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
@@ -265,6 +266,33 @@ pub struct ProductCardsParams {
     /// describe the filtered result. A malformed query is a 422 (issue #222).
     #[serde(default)]
     pub q: Option<String>,
+    /// Optional card-list sort (`name`/`rarity`/`cmc`/`price`/…, the shared card-list
+    /// vocabulary the catalog browse accepts). Absent = the product's natural membership /
+    /// exclusive / set-number order. A sort re-orders the cards **within** each display
+    /// section — the section split itself is unchanged. An unknown value is a 422.
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Sort direction (`asc`/`desc`) for `sort`; absent = the field's natural direction.
+    /// Ignored without a `sort`. An unknown value is a 422.
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+impl ProductCardsParams {
+    /// The requested `(field, direction)` card sort, or `None` for the product's natural
+    /// order. A `sort` value maps to the shared card-list vocabulary; `dir` overrides its
+    /// natural direction. Unknown values are a 422, mirroring the section filter + card lists.
+    fn sort_spec(&self) -> Result<Option<(SortField, SortDir)>, AppError> {
+        let Some(field) = trim_query(self.sort.as_deref()) else {
+            return Ok(None);
+        };
+        let field = SortField::parse(field)?;
+        let dir = match trim_query(self.dir.as_deref()) {
+            Some(value) => SortDir::parse(value)?,
+            None => field.default_dir(),
+        };
+        Ok(Some((field, dir)))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -607,6 +635,12 @@ const PRODUCT_CARDS_IN_CHUNK: usize = 900;
 /// selected section (or the whole list). Empty page when the product has no ingested
 /// contents (or the section is empty); `404` for an unknown game/product, `422` for an
 /// unknown section.
+///
+/// The optional `?sort=`/`?dir=` params re-order the cards **within** each display section
+/// by the shared card-list vocabulary (`name`/`rarity`/`cmc`/`price`/…), so a product's cards
+/// sort like the same cards on the catalog browse; the section split (and its display order)
+/// is untouched — a sort only changes the order *inside* a section. Absent = the product's
+/// natural membership / exclusive / set-number order. An unknown sort/dir is a `422`.
 pub async fn product_cards(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -616,28 +650,39 @@ pub async fn product_cards(
     let product = load_product(&state, &game, &id).await?;
     let (page, page_size) =
         resolve_page(params.page, params.page_size, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
-    // Parse the optional section filter up front so a bad value 422s before any DB work.
+    // Parse the optional section + sort filters up front so a bad value 422s before any DB work.
     let section = match trim_query(params.section.as_deref()) {
         Some(value) => Some(CardSection::parse(value)?),
         None => None,
     };
+    let sort = params.sort_spec()?;
 
     // The product's cards, deduped + fully ordered, plus the membership/exclusivity lookups.
     let index = build_product_card_index(&state, &game, &product).await?;
 
-    // The ids this request pages over: the whole ordered list, or just the requested section
-    // (filtered while preserving the global display order, so section pages stay contiguous).
-    let selected: Vec<i32> = match section {
-        Some(section) => index
-            .ordered
-            .iter()
-            .copied()
+    // The base ordering the sections draw from: the product's natural membership / exclusive /
+    // set-number order (the default), or — when a `sort` is requested — every one of this
+    // product's cards in the chosen card-list order. Either way the section split below is
+    // unchanged; a sort only re-orders the cards *within* each section.
+    let base_order: Vec<i32> = match sort {
+        None => index.ordered.clone(),
+        Some((field, dir)) => sorted_product_card_ids(&state, &game, &product, field, dir).await?,
+    };
+
+    // The ids this request pages over. With `?section=`, just that section's cards (in
+    // `base_order`, so a sort carries through). Without it, the whole list — re-grouped by
+    // section (display order) when a sort is active so the section grouping survives the sort;
+    // the default `base_order` is already section-grouped, so it passes through untouched.
+    let selected: Vec<i32> = match (section, sort) {
+        (Some(section), _) => base_order
+            .into_iter()
             .filter(|&cid| index.section_of(cid) == Some(section))
             .collect(),
-        None => index.ordered.clone(),
+        (None, None) => base_order,
+        (None, Some(_)) => group_by_section(&index, &base_order),
     };
-    // Narrow to the cards matching the optional `q` search (issue #222), still in display
-    // order; a malformed query 422s here before the page is loaded.
+    // Narrow to the cards matching the optional `q` search (issue #222), still in order;
+    // a malformed query 422s here before the page is loaded.
     let selected = filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &selected)
         .await?;
 
@@ -830,6 +875,70 @@ async fn build_product_card_index(
         exclusive,
         ordered: ordered.into_iter().map(|entry| entry.5).collect(),
     })
+}
+
+/// Every one of a product's cards, ordered by the requested card-list `sort`/`dir` — the base
+/// order the paged read draws from when a caller asks for an explicit sort (the section split
+/// still buckets these afterwards, so the sort only re-orders *within* each section). Reuses
+/// the catalog's [`apply_card_sort`] so a product's cards sort byte-identically to the same
+/// cards on the catalog browse.
+///
+/// The product's card set is expressed as `cards.id IN (subquery)` over its `sealed_contents`
+/// rows rather than a bound id list, so even a giant booster pool needs no chunking and can't
+/// blow the SQL bind limit. Deliberately **no** `SELECT DISTINCT` on the subquery: the `IN`
+/// semi-join already collapses the duplicate `card_id` rows (a card with foil + non-foil, or
+/// several memberships, in one product), and a `DISTINCT card_id` would steer the planner onto
+/// the `(game, card_id)` index and scan the whole game partition — the same trap
+/// [`booster_exclusive_card_ids`] documents.
+async fn sorted_product_card_ids(
+    state: &AppState,
+    game: &str,
+    product: &product::Model,
+    field: SortField,
+    dir: SortDir,
+) -> Result<Vec<i32>, AppError> {
+    let product_card_ids = SealedContent::find()
+        .select_only()
+        .column(sealed_content::Column::CardId)
+        .filter(sealed_content::Column::Game.eq(game))
+        .filter(sealed_content::Column::ProductId.eq(product.id))
+        .into_query();
+
+    let query = Card::find()
+        .filter(card::Column::Game.eq(game))
+        .filter(Expr::col((card::Entity, card::Column::Id)).in_subquery(product_card_ids))
+        .select_only()
+        .column(card::Column::Id);
+    let ids: Vec<i32> = apply_card_sort(query, field, dir, false, state.dialect())
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(ids)
+}
+
+/// Re-group a list of a product's card ids by display section (`contains` → `exclusive` →
+/// `booster` → `variable`), preserving the incoming order *within* each section. Keeps the
+/// section grouping intact for the whole-product (`?section=` omitted) response when a `sort`
+/// has flattened the ids into a single card-order run: the sections still lead in display
+/// order, each holding its cards in the sorted order. A no-op on the already-section-grouped
+/// default order, so the unsorted whole-product response is byte-identical to before.
+fn group_by_section(index: &ProductCardIndex, order: &[i32]) -> Vec<i32> {
+    const SECTIONS: [CardSection; 4] = [
+        CardSection::Contains,
+        CardSection::Exclusive,
+        CardSection::Booster,
+        CardSection::Variable,
+    ];
+    let mut grouped = Vec::with_capacity(order.len());
+    for section in SECTIONS {
+        grouped.extend(
+            order
+                .iter()
+                .copied()
+                .filter(|&cid| index.section_of(cid) == Some(section)),
+        );
+    }
+    grouped
 }
 
 /// Restrict a product's ordered card ids to those also matching an optional `q` search,

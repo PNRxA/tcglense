@@ -7,7 +7,11 @@ import { searchErrorMessage } from '@/composables/useCardSearch'
 import { boosterFamilyLabel } from '@/lib/productType'
 import ProductCardsSection from '@/components/products/ProductCardsSection.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
+import { PRODUCT_CARDS_DEFAULT_SORT, PRODUCT_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
 
 // The reverse of the card-detail "Sealed products" section: the cards this sealed product
 // is found to contain (decks / promos / Secret Lair), can be pulled from (boosters), or
@@ -22,8 +26,13 @@ const props = defineProps<{ game: string; id: string; productType: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
-// The card search, backed by the URL `?q=` (survives opening a card + pressing Back).
-const { searchInput, query } = useProductCardsSearch()
+// The shared search + sort, backed by the URL `?q=`/`?sort=` (survives opening a card + Back).
+// The sort clamps to the known option values, falling back to the natural-order default; it's
+// threaded into every section so they re-order together (the manifest is sort-independent).
+const { searchInput, query, sort } = useProductCardsSearch(
+  PRODUCT_CARDS_DEFAULT_SORT,
+  PRODUCT_CARDS_SORT_OPTIONS.map((option) => option.value),
+)
 const searching = computed(() => query.value.length > 0)
 
 // The manifest is filtered by the committed `query`, so it lists exactly the sections that
@@ -90,14 +99,24 @@ const sections = computed(() =>
       <span class="text-muted-foreground font-normal"> ({{ total.toLocaleString() }})</span>
     </h2>
 
-    <!-- Filter the pool with the catalog's Scryfall-style grammar (issue #222). -->
-    <div class="mb-6 max-w-md">
-      <CardSearchBox
-        v-model="searchInput"
-        placeholder="Filter cards — name, c:r, t:goblin…"
-        aria-label="Filter cards in this product"
-      />
-      <SearchSyntaxHint class="mt-2" />
+    <!-- Filter the pool with the catalog's Scryfall-style grammar (issue #222), the same
+         point-and-click filter helper the catalog browse uses, plus shared size + sort. -->
+    <div class="mb-6 space-y-3">
+      <div class="flex max-w-xl items-center gap-2">
+        <CardSearchBox
+          v-model="searchInput"
+          placeholder="Filter cards — name, c:r, t:goblin…"
+          aria-label="Filter cards in this product"
+          class="flex-1"
+        />
+        <AdvancedSearchPanel v-model="searchInput" />
+      </div>
+      <SearchSyntaxHint />
+      <!-- Size + sort apply to every section (a search that matches nothing hides them). -->
+      <div v-if="sections.length" class="flex flex-wrap gap-2">
+        <CardSizeMenu />
+        <CardSortMenu v-model="sort" :options="PRODUCT_CARDS_SORT_OPTIONS" />
+      </div>
     </div>
 
     <p v-if="searchError" class="text-destructive text-sm">{{ searchError }}</p>
@@ -114,6 +133,7 @@ const sections = computed(() =>
         :title="section.title"
         :blurb="section.blurb"
         :search="query"
+        :sort="sort"
       />
     </div>
   </section>

@@ -11,6 +11,7 @@ import ProductCardsSection from '../ProductCardsSection.vue'
 const state = vi.hoisted(() => ({
   manifest: [] as ProductCardSection[],
   query: '',
+  sort: 'default',
   error: undefined as unknown,
 }))
 
@@ -36,6 +37,7 @@ vi.mock('@/composables/useProductCardsSearch', async () => {
     useProductCardsSearch: () => ({
       searchInput: ref(state.query),
       query: computed(() => state.query),
+      sort: ref(state.sort),
     }),
   }
 })
@@ -53,14 +55,24 @@ function section(key: string, total = 1): ProductCardSection {
 function mountCards(
   manifest: ProductCardSection[],
   productType: string,
-  opts: { query?: string; error?: unknown } = {},
+  opts: { query?: string; sort?: string; error?: unknown } = {},
 ) {
   state.manifest = manifest
   state.query = opts.query ?? ''
+  state.sort = opts.sort ?? 'default'
   state.error = opts.error
   const wrapper = mount(ProductCards, {
     props: { game: 'mtg', id: '100', productType },
-    global: { stubs: { ProductCardsSection: true, CardSearchBox: true, SearchSyntaxHint: true } },
+    global: {
+      stubs: {
+        ProductCardsSection: true,
+        CardSearchBox: true,
+        SearchSyntaxHint: true,
+        AdvancedSearchPanel: true,
+        CardSizeMenu: true,
+        CardSortMenu: true,
+      },
+    },
   })
   return {
     wrapper,
@@ -68,6 +80,7 @@ function mountCards(
       key: c.props('sectionKey') as string,
       title: c.props('title') as string,
       search: c.props('search') as string,
+      sort: c.props('sort') as string,
     })),
   }
 }
@@ -75,6 +88,7 @@ function mountCards(
 beforeEach(() => {
   state.manifest = []
   state.query = ''
+  state.sort = 'default'
   state.error = undefined
 })
 
@@ -125,6 +139,13 @@ describe('ProductCards sections', () => {
   it('threads the committed search into each block', () => {
     const { sections } = mountCards([section('booster')], 'bundle', { query: 't:goblin' })
     expect(sections.map((s) => s.search)).toEqual(['t:goblin'])
+  })
+
+  it('threads the committed sort into every block (so the sections re-order together)', () => {
+    const { sections } = mountCards([section('contains'), section('booster')], 'bundle', {
+      sort: 'price:desc',
+    })
+    expect(sections.map((s) => s.sort)).toEqual(['price:desc', 'price:desc'])
   })
 
   it('keeps the search box up and shows a no-match note when a search matches nothing', () => {

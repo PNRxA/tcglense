@@ -70,6 +70,7 @@ function mountSection(
       title: 'Collector Booster exclusives',
       blurb: 'b',
       search: '',
+      sort: 'default',
       ...opts.props,
     },
     global: { stubs: { CardGrid: true, CardPagination: true, LoadingRow: true } },
@@ -84,13 +85,14 @@ beforeEach(() => {
 })
 
 describe('ProductCardsSection', () => {
-  it('queries its own section key + the shared search (so each block pages independently)', () => {
-    mountSection({ props: { sectionKey: 'booster', search: 't:goblin' } })
-    // useProductCardsQuery(game, id, page, section, search) — the 4th arg is this block's own
-    // section, the 5th is the shared search (a ref).
+  it('queries its own section key + the shared search & sort (so each block pages independently)', () => {
+    mountSection({ props: { sectionKey: 'booster', search: 't:goblin', sort: 'price:desc' } })
+    // useProductCardsQuery(game, id, page, section, search, sort) — the 4th arg is this block's
+    // own section, the 5th the shared search (a ref), the 6th the shared sort (a ref).
     const call = state.calls[0] ?? []
     expect(call[3]).toBe('booster')
     expect((call[4] as Ref<string>).value).toBe('t:goblin')
+    expect((call[5] as Ref<string>).value).toBe('price:desc')
   })
 
   it('sizes its pagination off its own query total, not the parent', () => {
@@ -120,6 +122,14 @@ describe('ProductCardsSection', () => {
     const page = (state.calls[0] ?? [])[2] as Ref<number>
     page.value = 3
     await wrapper.setProps({ search: 'r:mythic' })
+    expect(page.value).toBe(1)
+  })
+
+  it('resets to page 1 when the sort changes', async () => {
+    const wrapper = mountSection({ data: pageData(130) })
+    const page = (state.calls[0] ?? [])[2] as Ref<number>
+    page.value = 3
+    await wrapper.setProps({ sort: 'price:desc' })
     expect(page.value).toBe(1)
   })
 

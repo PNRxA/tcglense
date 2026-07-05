@@ -5,6 +5,8 @@ import {
   ALL_CARDS_SORT_OPTIONS,
   COLLECTION_DEFAULT_SORT,
   COLLECTION_SORT_OPTIONS,
+  PRODUCT_CARDS_DEFAULT_SORT,
+  PRODUCT_CARDS_SORT_OPTIONS,
   SET_DEFAULT_SORT,
   SET_SORT_OPTIONS,
   toSortParam,
@@ -48,6 +50,26 @@ describe('sort option lists', () => {
     for (const option of SET_SORT_OPTIONS) {
       const { sort, dir } = toSortParam(option.value, SET_DEFAULT_SORT)
       expect(sort).toBeTruthy()
+      expect(['asc', 'desc']).toContain(dir)
+    }
+  })
+
+  it('offers a natural-order sentinel plus real card sorts for a product’s cards', () => {
+    // The `default` sentinel is a selectable option but is NOT a backend sort key: the query
+    // layer maps it to *no* sort param, so it must never be handed to `toSortParam` (which
+    // would emit {sort:'default'} → the API rejects it as an unknown sort). It's the default.
+    expect(PRODUCT_CARDS_DEFAULT_SORT).toBe('default')
+    expect(PRODUCT_CARDS_SORT_OPTIONS.some((o) => o.value === PRODUCT_CARDS_DEFAULT_SORT)).toBe(true)
+
+    // Every *other* option is a real `field:dir` that parses to a valid, non-sentinel param.
+    const realOptions = PRODUCT_CARDS_SORT_OPTIONS.filter(
+      (o) => o.value !== PRODUCT_CARDS_DEFAULT_SORT,
+    )
+    expect(realOptions.length).toBeGreaterThan(0)
+    for (const option of realOptions) {
+      const { sort, dir } = toSortParam(option.value, ALL_CARDS_DEFAULT_SORT)
+      expect(sort).toBeTruthy()
+      expect(sort).not.toBe('default')
       expect(['asc', 'desc']).toContain(dir)
     }
   })

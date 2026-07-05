@@ -659,3 +659,111 @@ async fn product_cards_q_filters_cards_and_sections_by_search() {
         assert_eq!(cache_control(&headers), Some("no-store"), "{uri} 422 must be no-store");
     }
 }
+
+#[tokio::test]
+async fn product_cards_sort_reorders_and_rejects_a_bad_sort() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // Two guaranteed cards whose collector-number order (the default) is the reverse of their
+    // name order, so a name sort visibly reorders them. `insert_card_at` names them
+    // "Card zed" / "Card ace".
+    let box_id = insert_product(db, "800", "Bundle", "mkm", "bundle", Some("9.99")).await;
+    let zed = insert_card_at(db, "zed", "mkm", "1", Some(1)).await;
+    let ace = insert_card_at(db, "ace", "mkm", "2", Some(2)).await;
+    for cid in [zed, ace] {
+        insert_sealed(db, box_id, cid, "contains", false).await;
+    }
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["card"]["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Default: the product's natural set+collector order — cn 1 (zed) then cn 2 (ace).
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/800/cards")).await;
+    assert_eq!(ids(&body), vec!["zed", "ace"]);
+
+    // `?sort=name&dir=asc`: "Card ace" before "Card zed", overriding the collector order — and
+    // a sorted page is still browser + CDN cacheable.
+    let (status, headers, body) =
+        send(&app, get("/api/games/mtg/products/800/cards?sort=name&dir=asc")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "a sorted card page is still shared-cacheable"
+    );
+    assert_eq!(ids(&body), vec!["ace", "zed"]);
+
+    // Descending name reverses it.
+    let (_, _, body) =
+        send(&app, get("/api/games/mtg/products/800/cards?sort=name&dir=desc")).await;
+    assert_eq!(ids(&body), vec!["zed", "ace"]);
+
+    // An unknown sort (or dir) is a no-store 422, consistent with the section filter + the
+    // card lists — rejected before any card is loaded.
+    for uri in [
+        "/api/games/mtg/products/800/cards?sort=nonsense",
+        "/api/games/mtg/products/800/cards?sort=name&dir=sideways",
+    ] {
+        let (status, headers, _) = send(&app, get(uri)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uri} should 422");
+        assert_eq!(cache_control(&headers), Some("no-store"), "{uri} 422 must be no-store");
+    }
+}
+
+#[tokio::test]
+async fn product_cards_sort_reorders_within_sections_not_across_them() {
+    let app = test_app().await;
+    seed_sectioned_collector(&app.state.db).await;
+    // Seeded names: "Card sf-guar" (contains), "Card sf-excl-{1..3}" (exclusive), "Card
+    // sf-shared-{1,2}" (shared booster), "Card sf-var" (variable).
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["card"]["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Whole product, `?sort=name&dir=desc`: the sections still lead in display order
+    // (contains → exclusive → booster → variable), and each section's own cards come out
+    // name-descending — the sort re-orders *within* a section, never merges sections.
+    let (status, _, body) =
+        send(&app, get("/api/games/mtg/products/100/cards?sort=name&dir=desc")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        ids(&body),
+        vec![
+            "sf-guar",
+            "sf-excl-3",
+            "sf-excl-2",
+            "sf-excl-1",
+            "sf-shared-2",
+            "sf-shared-1",
+            "sf-var",
+        ]
+    );
+
+    // `sort` composes with `section`: just the exclusive section, name-descending.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/100/cards?section=exclusive&sort=name&dir=desc"),
+    )
+    .await;
+    assert_eq!(body["total"], 3);
+    assert_eq!(ids(&body), vec!["sf-excl-3", "sf-excl-2", "sf-excl-1"]);
+
+    // `sort` also composes with a `q` search (the sort → group → search-filter path): the
+    // search narrows to the three exclusive cards and they stay in the sorted (name-desc)
+    // order, proving the search filter preserves the sorted order rather than resetting it.
+    let (_, _, body) =
+        send(&app, get("/api/games/mtg/products/100/cards?sort=name&dir=desc&q=excl")).await;
+    assert_eq!(body["total"], 3, "only the 3 cards named '…excl…'");
+    assert_eq!(ids(&body), vec!["sf-excl-3", "sf-excl-2", "sf-excl-1"]);
+}

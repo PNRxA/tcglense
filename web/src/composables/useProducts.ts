@@ -9,7 +9,7 @@ import {
   listProducts,
 } from '@/lib/api'
 import type { ProductCardSectionKey } from '@/lib/api'
-import { toSortParam } from '@/lib/cardSort'
+import { PRODUCT_CARDS_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 
 /**
  * Shared reads for the sealed-products section. These are PUBLIC catalog endpoints
@@ -66,25 +66,37 @@ export function useProductQuery(game: Ref<string>, id: Ref<string>) {
  * current grid up while the next page loads. The `section` is fixed per block, so it sits
  * in the key as a plain value alongside the reactive `game`/`id`/`page`. `q` is the shared
  * card search (issue #222); it goes in the key (as a ref) so committing a search refetches,
- * and the caller resets `page` to 1 alongside it. */
+ * and the caller resets `page` to 1 alongside it. `sort` is the shared card sort (a
+ * `field:dir` option, or the `default` sentinel for the product's natural order): it too
+ * goes in the key so changing it refetches, with the caller resetting `page` to 1. */
 export function useProductCardsQuery(
   game: Ref<string>,
   id: Ref<string>,
   page: Ref<number>,
   section: ProductCardSectionKey,
   q: Ref<string>,
+  sort: Ref<string>,
 ) {
   return useQuery({
-    queryKey: ['product-cards', game, id, section, q, page],
-    queryFn: () =>
-      getProductCards(
+    queryKey: ['product-cards', game, id, section, q, sort, page],
+    queryFn: () => {
+      // The default sentinel maps to *no* `sort` param (the API's natural order); any other
+      // option splits into the API's orthogonal `sort`/`dir` pair.
+      const sortParam =
+        sort.value && sort.value !== PRODUCT_CARDS_DEFAULT_SORT
+          ? toSortParam(sort.value, PRODUCT_CARDS_DEFAULT_SORT)
+          : undefined
+      return getProductCards(
         game.value,
         id.value,
         page.value,
         PRODUCT_CARDS_PAGE_SIZE,
         section,
         q.value || undefined,
-      ),
+        sortParam?.sort,
+        sortParam?.dir,
+      )
+    },
     placeholderData: keepPreviousData,
   })
 }
