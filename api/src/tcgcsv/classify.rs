@@ -70,6 +70,74 @@ pub fn classify_product_type(name: &str) -> &'static str {
     "other"
 }
 
+/// A booster **family**: products of the same family draw from the same booster pool, so a
+/// card can be pulled from any product in a family iff it's on that family's sheets. The
+/// families are disjoint by card pool — a collector booster's special-treatment printings
+/// (borderless / extended-art / …) never appear on the play/set/draft/jumpstart sheets —
+/// which is exactly what makes "exclusive to the collector booster" a meaningful question:
+/// a card is exclusive to a family when *no other family in the set* can produce it.
+///
+/// Derived from the classified [`product_type`](classify_product_type). Non-booster
+/// products (decks, bundles, cases, prereleases, …) have no family: they're neither judged
+/// for exclusivity nor counted as a comparison pool (a bundle nominally *contains* boosters,
+/// but a "gift bundle" that tucks in a collector pack would wrongly mark every collector card
+/// as shared, so bundles are deliberately left out).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoosterFamily {
+    /// Collector boosters (the special-treatment sheets).
+    Collector,
+    /// Play boosters (the modern main-set booster).
+    Play,
+    /// Set boosters.
+    Set,
+    /// Draft boosters.
+    Draft,
+    /// A generic booster line with no family keyword in its name — Jumpstart, Mystery
+    /// Booster, etc. (`pack` / `display`). Distinct per set, so treated as one family.
+    Generic,
+}
+
+/// Every `product_type` slug that represents a draftable booster, i.e. the union of the
+/// [`BoosterFamily`] members. A card's booster exclusivity is judged against the booster
+/// products of a set whose type is in here but whose family differs from the viewed one.
+pub const BOOSTER_PRODUCT_TYPES: &[&str] = &[
+    "collector_pack",
+    "collector_display",
+    "play_pack",
+    "play_display",
+    "set_pack",
+    "set_display",
+    "draft_pack",
+    "draft_display",
+    "pack",
+    "display",
+];
+
+/// The booster family a `product_type` belongs to, or `None` for a non-booster product.
+pub fn booster_family(product_type: &str) -> Option<BoosterFamily> {
+    Some(match product_type {
+        "collector_pack" | "collector_display" => BoosterFamily::Collector,
+        "play_pack" | "play_display" => BoosterFamily::Play,
+        "set_pack" | "set_display" => BoosterFamily::Set,
+        "draft_pack" | "draft_display" => BoosterFamily::Draft,
+        "pack" | "display" => BoosterFamily::Generic,
+        _ => return None,
+    })
+}
+
+impl BoosterFamily {
+    /// The booster `product_type` slugs belonging to a family *other* than `self` — the
+    /// comparison pool for judging exclusivity to `self`. A card that this product's
+    /// booster can pull but none of these can is exclusive to `self`'s family.
+    pub fn other_booster_types(self) -> Vec<&'static str> {
+        BOOSTER_PRODUCT_TYPES
+            .iter()
+            .copied()
+            .filter(|pt| booster_family(pt) != Some(self))
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +216,43 @@ mod tests {
         assert_eq!(classify_product_type("Mystery Booster Pack"), "pack");
         // Fallback: nothing in the vocabulary matches.
         assert_eq!(classify_product_type("Playmat - Jace"), "other");
+    }
+
+    #[test]
+    fn booster_family_groups_the_booster_types() {
+        use BoosterFamily::*;
+        assert_eq!(booster_family("collector_pack"), Some(Collector));
+        assert_eq!(booster_family("collector_display"), Some(Collector));
+        assert_eq!(booster_family("play_pack"), Some(Play));
+        assert_eq!(booster_family("play_display"), Some(Play));
+        assert_eq!(booster_family("set_pack"), Some(Set));
+        assert_eq!(booster_family("draft_display"), Some(Draft));
+        assert_eq!(booster_family("pack"), Some(Generic));
+        assert_eq!(booster_family("display"), Some(Generic));
+        // Non-booster products have no family.
+        assert_eq!(booster_family("bundle"), None);
+        assert_eq!(booster_family("commander_deck"), None);
+        assert_eq!(booster_family("case"), None);
+        assert_eq!(booster_family("secret_lair"), None);
+        assert_eq!(booster_family("other"), None);
+        // Every listed booster type resolves to a family.
+        for pt in BOOSTER_PRODUCT_TYPES {
+            assert!(booster_family(pt).is_some(), "{pt} should have a family");
+        }
+    }
+
+    #[test]
+    fn other_booster_types_excludes_own_family() {
+        // The collector comparison pool is every non-collector booster type — pack + box
+        // forms of play/set/draft/generic — and never a collector one (so a collector
+        // display/case can't count against a collector pack's exclusivity).
+        let others = BoosterFamily::Collector.other_booster_types();
+        assert!(!others.contains(&"collector_pack"));
+        assert!(!others.contains(&"collector_display"));
+        assert!(others.contains(&"play_pack"));
+        assert!(others.contains(&"draft_display"));
+        assert!(others.contains(&"pack"));
+        // Every booster type except the two collector ones.
+        assert_eq!(others.len(), BOOSTER_PRODUCT_TYPES.len() - 2);
     }
 }

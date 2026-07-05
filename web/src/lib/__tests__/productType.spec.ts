@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { productTypeLabel } from '../productType'
+import { boosterFamilyLabel, productTypeLabel } from '../productType'
 
 describe('productTypeLabel', () => {
   it('maps known slugs to readable labels', () => {
@@ -19,5 +19,26 @@ describe('productTypeLabel', () => {
 
   it('is stable on empty input', () => {
     expect(productTypeLabel('')).toBe('')
+  })
+})
+
+describe('boosterFamilyLabel', () => {
+  it('labels booster slugs by family (pack + box share one label)', () => {
+    expect(boosterFamilyLabel('collector_pack')).toBe('Collector Booster')
+    expect(boosterFamilyLabel('collector_display')).toBe('Collector Booster')
+    expect(boosterFamilyLabel('play_pack')).toBe('Play Booster')
+    expect(boosterFamilyLabel('set_display')).toBe('Set Booster')
+    expect(boosterFamilyLabel('draft_pack')).toBe('Draft Booster')
+    // A generic booster line (Jumpstart, Mystery Booster) has no family keyword.
+    expect(boosterFamilyLabel('pack')).toBe('Booster')
+    expect(boosterFamilyLabel('display')).toBe('Booster')
+  })
+
+  it('returns null for a non-booster product (no exclusives section)', () => {
+    expect(boosterFamilyLabel('bundle')).toBeNull()
+    expect(boosterFamilyLabel('commander_deck')).toBeNull()
+    expect(boosterFamilyLabel('case')).toBeNull()
+    expect(boosterFamilyLabel('secret_lair')).toBeNull()
+    expect(boosterFamilyLabel('')).toBeNull()
   })
 })

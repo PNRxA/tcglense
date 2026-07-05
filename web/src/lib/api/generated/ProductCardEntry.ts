@@ -21,4 +21,13 @@ membership: string,
  * Whether the card appears **only** as a foil in this product (a foil-only
  * inclusion), at the reported membership.
  */
-foil: boolean, };
+foil: boolean, 
+/**
+ * Whether this card is **exclusive** to the product's booster family — a `booster`
+ * card pullable from this product's booster line but from no *other* booster family
+ * in the set (e.g. a collector-booster-only borderless printing not on the play /
+ * draft / set sheets). Always `false` for a non-`booster` membership, for a product
+ * that isn't a booster, and for a set with no other booster family to compare against.
+ * Exclusive cards are ordered ahead of the shared booster pool so they lead the list.
+ */
+exclusive: boolean, };

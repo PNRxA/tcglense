@@ -7,7 +7,7 @@
 //! against `card_sets` (falling back to `None` when a product's group has no matching
 //! set), mirroring how the collection set builder degrades gracefully.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -33,6 +33,7 @@ use crate::handlers::shared::{
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
+use crate::tcgcsv::classify::booster_family;
 
 use super::IMAGE_CACHE_CONTROL;
 use super::image::is_allowed_image_url;
@@ -141,6 +142,13 @@ pub(crate) struct ProductCardEntry {
     /// Whether the card appears **only** as a foil in this product (a foil-only
     /// inclusion), at the reported membership.
     pub foil: bool,
+    /// Whether this card is **exclusive** to the product's booster family — a `booster`
+    /// card pullable from this product's booster line but from no *other* booster family
+    /// in the set (e.g. a collector-booster-only borderless printing not on the play /
+    /// draft / set sheets). Always `false` for a non-`booster` membership, for a product
+    /// that isn't a booster, and for a set with no other booster family to compare against.
+    /// Exclusive cards are ordered ahead of the shared booster pool so they lead the list.
+    pub exclusive: bool,
 }
 
 // ---------- Query params ----------
@@ -489,8 +497,10 @@ const PRODUCT_CARDS_IN_CHUNK: usize = 900;
 /// `GET /api/games/{game}/products/{id}/cards?page=&page_size=` -> a page of the cards
 /// this sealed product is found to contain (or can be pulled from), the **reverse** of
 /// `cards/{id}/sealed`. Ordered by membership (`contains` → `booster` → `variable`, so
-/// the guaranteed/"exclusive" cards lead and the wider booster pool follows), then by
-/// set code and collector number. Each card is deduped to its strongest membership and
+/// the guaranteed cards lead and the wider booster pool follows) and, within the booster
+/// pool, **family-exclusive cards first** (a collector booster's borderless/extended-art
+/// printings that no other booster in the set can pull — each flagged `exclusive`), then
+/// by set code and collector number. Each card is deduped to its strongest membership and
 /// carries a `foil`-only flag. Empty page when the product has no ingested contents;
 /// `404` for an unknown game/product.
 pub async fn product_cards(
@@ -525,11 +535,16 @@ pub async fn product_cards(
     // ANDed among that membership's rows (foil-only when every contributing row is foil).
     let best = best_memberships(&rows);
 
+    // Which of this product's booster cards are exclusive to its booster family (a
+    // collector-booster-only printing, say) — one small cross-product lookup, empty for a
+    // non-booster product or a set with nothing to compare against.
+    let exclusive = booster_exclusive_card_ids(&state, &game, &product, &best).await?;
+
     // Load the sort keys for every distinct card so the full list can be ordered before
     // it's paged; chunked under the bind limit. A card whose row vanished mid-reimport
     // simply drops out (it's excluded from the ordered list and so from `total`).
     let card_ids: Vec<i32> = best.keys().copied().collect();
-    let mut ordered: Vec<(u8, String, Option<i32>, String, i32)> =
+    let mut ordered: Vec<(u8, u8, String, Option<i32>, String, i32)> =
         Vec::with_capacity(card_ids.len());
     for chunk in card_ids.chunks(PRODUCT_CARDS_IN_CHUNK) {
         let keys: Vec<(i32, String, Option<i32>, String)> = Card::find()
@@ -545,19 +560,24 @@ pub async fn product_cards(
             .await?;
         for (cid, set_code, cn_int, cn) in keys {
             let rank = best.get(&cid).map_or(u8::MAX, |entry| entry.0);
-            ordered.push((rank, set_code, cn_int, cn, cid));
+            // Within the booster rank, exclusive cards (0) sort ahead of the shared pool
+            // (1) so they lead. Non-booster cards are never exclusive, so they all take 1.
+            let exclusive_rank = u8::from(!exclusive.contains(&cid));
+            ordered.push((rank, exclusive_rank, set_code, cn_int, cn, cid));
         }
     }
 
-    // Membership first (guaranteed cards lead), then set code, then numeric-run-first
-    // collector number (NULLs last), with `id` as a stable tiebreak so paging is
-    // deterministic — the same order the catalog's set listing uses within a set.
+    // Membership first (guaranteed cards lead), then family-exclusive booster cards ahead
+    // of the shared pool, then set code, then numeric-run-first collector number (NULLs
+    // last), with `id` as a stable tiebreak so paging is deterministic — the same order
+    // the catalog's set listing uses within a set.
     ordered.sort_by(|a, b| {
         a.0.cmp(&b.0)
             .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| cn_int_key(a.2).cmp(&cn_int_key(b.2)))
-            .then_with(|| a.3.cmp(&b.3))
+            .then_with(|| a.2.cmp(&b.2))
+            .then_with(|| cn_int_key(a.3).cmp(&cn_int_key(b.3)))
             .then_with(|| a.4.cmp(&b.4))
+            .then_with(|| a.5.cmp(&b.5))
     });
 
     let total = ordered.len() as u64;
@@ -566,7 +586,7 @@ pub async fn product_cards(
         .iter()
         .skip(start)
         .take(page_size as usize)
-        .map(|entry| entry.4)
+        .map(|entry| entry.5)
         .collect();
 
     // Only the page's cards are loaded in full + mapped to the (heavier) card DTO.
@@ -588,6 +608,7 @@ pub async fn product_cards(
                 card: model.into(),
                 membership: membership.clone(),
                 foil: *foil,
+                exclusive: exclusive.contains(&cid),
             })
         })
         .collect();
@@ -630,6 +651,76 @@ fn best_memberships(rows: &[(i32, String, bool)]) -> HashMap<i32, (u8, String, b
         }
     }
     best
+}
+
+/// The subset of this product's `booster`-membership cards that are **exclusive** to its
+/// booster family: pullable from this product's booster line but from no booster product
+/// of a *different* family in the same set (e.g. a collector-booster-only borderless
+/// printing the play / draft / set sheets don't carry).
+///
+/// Returns an empty set — nothing flagged exclusive — when the product isn't a booster
+/// (a deck / bundle / …), when it has no booster cards, or when the set has no other
+/// booster family to compare against (a collector-only Commander release, say, where
+/// "exclusive" would be vacuously true of every card and so carries no signal). Two small
+/// indexed lookups: the set's other-family booster products, then their booster card pool.
+async fn booster_exclusive_card_ids(
+    state: &AppState,
+    game: &str,
+    product: &product::Model,
+    best: &HashMap<i32, (u8, String, bool)>,
+) -> Result<HashSet<i32>, AppError> {
+    let Some(family) = booster_family(&product.product_type) else {
+        return Ok(HashSet::new());
+    };
+
+    // This product's own booster-pullable cards — the only ones exclusivity applies to.
+    let booster = Membership::Booster.as_str();
+    let own_booster: HashSet<i32> = best
+        .iter()
+        .filter(|(_, (_, membership, _))| membership == booster)
+        .map(|(id, _)| *id)
+        .collect();
+    if own_booster.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    // The set's booster products of a *different* family — the comparison pool. (Same-set
+    // scope, so a collector display/case of the same family is excluded by the type list.)
+    let comparison_products: Vec<i32> = Product::find()
+        .select_only()
+        .column(product::Column::Id)
+        .filter(product::Column::Game.eq(game))
+        .filter(product::Column::SetCode.eq(&product.set_code))
+        .filter(product::Column::ProductType.is_in(family.other_booster_types()))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    if comparison_products.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    // Every card those other-family boosters can pull; one of ours not in this pool is
+    // exclusive to our family.
+    let comparison_cards: HashSet<i32> = SealedContent::find()
+        .select_only()
+        .column(sealed_content::Column::CardId)
+        .distinct()
+        .filter(sealed_content::Column::Game.eq(game))
+        .filter(sealed_content::Column::Membership.eq(booster))
+        .filter(sealed_content::Column::ProductId.is_in(comparison_products))
+        .into_tuple()
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
+    if comparison_cards.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    Ok(own_booster
+        .into_iter()
+        .filter(|id| !comparison_cards.contains(id))
+        .collect())
 }
 
 /// Collator key for a card's numeric collector number that parks `NULL` (a non-numeric

@@ -40,3 +40,27 @@ function humanise(slug: string): string {
 export function productTypeLabel(slug: string): string {
   return PRODUCT_TYPE_LABELS[slug] ?? humanise(slug)
 }
+
+// The booster "family" name for each booster product-type slug (pack + box forms share
+// one label). Mirrors the API's `booster_family` (see `api/src/tcgcsv/classify.rs`): a card
+// exclusive to a family can't be pulled from any other, and the API flags such cards on the
+// product-cards read — this labels the section that groups them (e.g. "Collector Booster
+// exclusives"). A non-booster slug has no family, so no exclusive section is shown.
+const BOOSTER_FAMILY_LABELS: Record<string, string> = {
+  collector_pack: 'Collector Booster',
+  collector_display: 'Collector Booster',
+  play_pack: 'Play Booster',
+  play_display: 'Play Booster',
+  set_pack: 'Set Booster',
+  set_display: 'Set Booster',
+  draft_pack: 'Draft Booster',
+  draft_display: 'Draft Booster',
+  pack: 'Booster',
+  display: 'Booster',
+}
+
+/** The booster-family label for a booster product-type slug (e.g. `collector_pack` →
+ * `Collector Booster`), or `null` for a non-booster product. */
+export function boosterFamilyLabel(slug: string): string | null {
+  return BOOSTER_FAMILY_LABELS[slug] ?? null
+}

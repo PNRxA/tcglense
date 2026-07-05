@@ -371,3 +371,80 @@ async fn product_cards_order_within_membership_by_set_then_number() {
     // aaa#2, aaa#10 (numeric), aaa#X (non-numeric last), then set bbb.
     assert_eq!(ids, vec!["aaa-2", "aaa-10", "aaa-x", "bbb-1"]);
 }
+
+#[tokio::test]
+async fn product_cards_flags_and_orders_collector_booster_exclusives() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // One set with a collector booster + a play booster. A card is shared by both booster
+    // pools; one is only on the collector sheets (an "exclusive" special printing); one is
+    // only on the play sheets. Ids ascend by insert order, but exclusivity dominates the
+    // order so that's not what's under test.
+    let shared = insert_card(db, "sf-shared").await;
+    let collector_only = insert_card(db, "sf-collector").await;
+    let play_only = insert_card(db, "sf-play").await;
+    let collector = insert_product(db, "100", "Collector Booster Pack", "mkm", "collector_pack", Some("24.99")).await;
+    let play = insert_product(db, "200", "Play Booster Pack", "mkm", "play_pack", Some("4.99")).await;
+
+    for cid in [shared, collector_only] {
+        insert_sealed(db, collector, cid, "booster", false).await;
+    }
+    for cid in [shared, play_only] {
+        insert_sealed(db, play, cid, "booster", false).await;
+    }
+
+    // The collector booster: the collector-only card is flagged exclusive and leads the
+    // list; the shared card is not exclusive; the play-only card isn't in this product.
+    let (status, _, body) = send(&app, get("/api/games/mtg/products/100/cards")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 2);
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2);
+    assert_eq!(data[0]["card"]["id"], "sf-collector", "the exclusive card leads");
+    assert_eq!(data[0]["membership"], "booster");
+    assert_eq!(data[0]["exclusive"], true);
+    assert_eq!(data[1]["card"]["id"], "sf-shared");
+    assert_eq!(data[1]["exclusive"], false, "a card in another booster family isn't exclusive");
+
+    // Symmetrically, the play booster flags its own play-only card exclusive.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/200/cards")).await;
+    assert_eq!(body["total"], 2);
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data[0]["card"]["id"], "sf-play");
+    assert_eq!(data[0]["exclusive"], true);
+    assert_eq!(data[1]["card"]["id"], "sf-shared");
+    assert_eq!(data[1]["exclusive"], false);
+}
+
+#[tokio::test]
+async fn product_cards_no_exclusives_without_a_comparison_family() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // A collector-booster-only release (no play/draft/set booster to compare against, as
+    // for a Universes-Beyond Commander set): "exclusive" would be vacuously true of every
+    // card, which is no signal, so nothing is flagged. A same-family sibling (the collector
+    // display) is also NOT a comparison pool.
+    let a = insert_card(db, "sf-a").await;
+    let b = insert_card(db, "sf-b").await;
+    let pack = insert_product(db, "100", "Collector Booster Pack", "who", "collector_pack", Some("24.99")).await;
+    let display = insert_product(db, "101", "Collector Booster Box", "who", "collector_display", Some("249.99")).await;
+    let _deck = insert_product(db, "300", "Commander Deck", "who", "commander_deck", Some("44.99")).await;
+    for cid in [a, b] {
+        insert_sealed(db, pack, cid, "booster", false).await;
+        insert_sealed(db, display, cid, "booster", false).await;
+    }
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/products/100/cards")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 2);
+    for entry in body["data"].as_array().unwrap() {
+        assert_eq!(entry["exclusive"], false, "no exclusivity without another booster family");
+    }
+
+    // A non-booster product (a deck) never flags exclusivity either.
+    insert_sealed(db, _deck, a, "contains", false).await;
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
+    assert_eq!(body["data"][0]["exclusive"], false);
+}
