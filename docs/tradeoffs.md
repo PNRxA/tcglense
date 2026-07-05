@@ -186,6 +186,20 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   wipe a collection. The 16 MB cap is generous for either export (Moxfield's full export
   is ~100 KB per 1000 rows) but can reject a huge *all-columns* Archidekt export — its
   user is told to export only the three needed columns.
+- **Collection CSV export (issue #232):** the mechanics are in `docs/api-contracts.md`.
+  The trade-off worth calling out: a holding stores only two counts (regular + foil), so
+  the export **cannot** reproduce the per-copy metadata a real Archidekt/Moxfield export
+  carries — condition, language, tags, purchase price, alter/proxy flags — and fills those
+  columns with the neutral defaults a fresh export uses (`NM`/`Near Mint`, `EN`/`English`,
+  blank, `False`) rather than inventing data. The Archidekt-only `Multiverse Id`/`MTGO ID`
+  columns are emitted as `0` because the Scryfall ingest never captures them, and
+  `Types`/`Sub-types`/`Super-types` are **derived** by splitting the stored `type_line` on
+  the em dash (front face only for double-faced cards) since we don't store them apart.
+  None of this affects the round trip: re-importing keys off the `Scryfall ID` column
+  (Archidekt) or `Edition` + `Collector Number` (Moxfield), both of which are faithful. We
+  emit the full provider header (all 23 / 13 columns) so the file re-imports cleanly into
+  the real services, not just our own uploader. Export is offered for the collection only,
+  not the wish list (the wish list has no export-shaped provider format to target).
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing

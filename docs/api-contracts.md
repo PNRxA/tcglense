@@ -344,6 +344,7 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `PUT /api/collection/{game}/source` | `{ provider, source, smart? }` | `CollectionSource` — save/upsert the link (one per user+game; validates the source resolves; does not sync). `smart` (default `false`) records whether re-syncs use smart (incremental) sync vs. a full mirror |
 | `DELETE /api/collection/{game}/source` | — | `204` — forget the saved link (idempotent) |
 | `POST /api/collection/{game}/sync` | — | **`202`** `ImportJob` — enqueues a re-sync from the saved link (the worker stamps `last_synced_at` on success). Uses **smart** sync when the saved link opted in, otherwise **mirror/replace**. `404` if no link is saved |
+| `GET /api/collection/{game}/export?format=` | — | **`text/csv`** download (`Content-Disposition: attachment; filename="tcglense-{game}-collection-{format}.csv"`) of the whole collection in a provider shape — `?format=archidekt` (default) or `moxfield`. Unpaginated; one row per non-empty finish bucket (a card owned in both finishes yields a Normal/regular row **and** a Foil row), name-sorted. The inverse of the CSV upload, and a re-importable round trip (see **Export** below). `422` for an unknown `format` |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
 the full catalog `Card` shape (reusing the shared `CardResponse`).
@@ -460,6 +461,30 @@ recently-changed cards — it will **not** remove cards deleted upstream (a full
 does). `stopped_early` reports whether the fetch stopped at the already-synced tail vs.
 scanned everything. Smart is offered in the import dialog as a mode, and on a saved link via
 its stored `smart` flag (the saved re-sync then runs smart instead of mirror/replace).
+
+### Export
+
+`GET /api/collection/{game}/export` (`handlers::collection::export`) is the inverse of the
+CSV upload: it streams the signed-in user's whole collection as a CSV shaped like a genuine
+**Archidekt** or **Moxfield** export (`?format=`, default Archidekt), so it round-trips —
+re-uploading an exported file reproduces the same holdings. It reuses the collection list's
+`owned_with_cards` base query (unpaginated — an export is the entire collection; a holding
+whose catalog card row is gone is skipped, as every other read does), name-sorts, and writes
+one row **per non-empty finish bucket** (regular `quantity` + foil `foil_quantity` become up
+to two rows per card). The `csv` crate handles quoting/escaping (Moxfield quotes every
+field, Archidekt only when needed) with RFC 4180 CRLF terminators, matching the real files.
+
+Because a holding only stores two counts, the export fills the provider columns we don't
+track with the neutral values a fresh export uses — Condition `NM`/`Near Mint`, Language
+`EN`/`English`, blank Purchase Price/Tags, `Alter`/`Proxy` `False` — and the Archidekt-only
+`Multiverse Id`/`MTGO ID` columns (which the catalog never ingests) as `0`, exactly as
+Archidekt does for a card it can't map. Card metadata comes from the joined `cards` row: the
+foil finish is `Foil`/`foil` (regular is `Normal`/blank, both of which the importer reads
+back as non-foil), the round-trip key is the `Scryfall ID` column (Archidekt) or the
+`Edition` (set code) + `Collector Number` pair (Moxfield), and the derived Archidekt columns
+map our stored data — colour letters → full names (`W` → `White`), `cmc` → an integer-when-
+whole Mana Value, and the `type_line` split into `Types`/`Sub-types`/`Super-types` on the em
+dash. See `docs/tradeoffs.md` for the field-omission rationale.
 
 ## Wish list API contract
 

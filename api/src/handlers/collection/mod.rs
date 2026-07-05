@@ -30,6 +30,7 @@ use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
 use crate::state::AppState;
 
+mod export;
 mod import;
 mod read;
 mod sets;
@@ -38,6 +39,7 @@ mod write;
 #[cfg(test)]
 mod tests;
 
+pub use export::export_collection;
 pub use import::{
     delete_collection_source, get_collection_source, get_import_job, import_collection,
     import_collection_csv, save_collection_source, sync_collection_source,

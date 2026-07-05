@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import {
+  ApiError,
   collectionEntryPath,
+  collectionExportPath,
   collectionImportCsvPath,
   collectionImportJobPath,
   collectionImportPath,
@@ -9,6 +11,7 @@ import {
   collectionSetDropsPath,
   collectionSourcePath,
   collectionSyncPath,
+  exportCollectionCsv,
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
@@ -239,6 +242,53 @@ describe('import / sync paths', () => {
       '/api/collection/mtg/import/csv?mode=overwrite',
     )
     expect(collectionImportCsvPath('a/b', 'replace')).toContain('a%2Fb')
+  })
+})
+
+describe('collectionExportPath', () => {
+  it('builds the export path with the format as a query param', () => {
+    expect(collectionExportPath('mtg', 'archidekt')).toBe(
+      '/api/collection/mtg/export?format=archidekt',
+    )
+    expect(collectionExportPath('mtg', 'moxfield')).toBe(
+      '/api/collection/mtg/export?format=moxfield',
+    )
+  })
+
+  it('encodes the game segment', () => {
+    expect(collectionExportPath('a/b', 'archidekt')).toContain('a%2Fb')
+  })
+})
+
+describe('exportCollectionCsv', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('GETs the export endpoint with the bearer token and returns the blob', async () => {
+    const csv = new Blob(['Quantity,Name\n1,Card\n'], { type: 'text/csv' })
+    type FetchInit = { headers: Record<string, string> }
+    const fetchMock = vi.fn<(url: string, init: FetchInit) => Promise<Response>>(
+      async () => ({ ok: true, status: 200, blob: async () => csv }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blob = await exportCollectionCsv('tok', 'mtg', 'moxfield')
+
+    expect(blob).toBe(csv)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toContain('/api/collection/mtg/export?format=moxfield')
+    expect(init.headers.Authorization).toBe('Bearer tok')
+  })
+
+  it('throws an ApiError carrying the status on a non-2xx response', async () => {
+    const fetchMock = vi.fn<() => Promise<Response>>(
+      async () => ({ ok: false, status: 500 }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(exportCollectionCsv('tok', 'mtg', 'archidekt')).rejects.toMatchObject({
+      status: 500,
+    })
+    await expect(exportCollectionCsv('tok', 'mtg', 'archidekt')).rejects.toBeInstanceOf(ApiError)
   })
 })
 

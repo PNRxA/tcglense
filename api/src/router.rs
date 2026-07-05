@@ -31,9 +31,10 @@ use crate::{
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
-            delete_collection_source, get_collection_entry, get_collection_source, get_import_job,
-            import_collection, import_collection_csv, list_collection, owned_counts,
-            save_collection_source, set_collection_entry, sync_collection_source,
+            delete_collection_source, export_collection, get_collection_entry,
+            get_collection_source, get_import_job, import_collection, import_collection_csv,
+            list_collection, owned_counts, save_collection_source, set_collection_entry,
+            sync_collection_source,
         },
         health::health,
         mirror::{
@@ -114,6 +115,9 @@ pub fn build_router(state: AppState) -> Router {
         // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
         // counts out). POST so a big page's id list can't blow the URL length.
         .route("/api/collection/{game}/owned", post(owned_counts))
+        // Download the whole collection as a provider-shaped CSV (Archidekt or Moxfield)
+        // — the inverse of the CSV upload, and a re-importable round trip.
+        .route("/api/collection/{game}/export", get(export_collection))
         // Import / sync a collection from an external provider (Archidekt or Moxfield):
         // a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))

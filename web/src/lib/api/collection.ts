@@ -1,4 +1,4 @@
-import { listQuery, request } from './client'
+import { API_URL, ApiError, listQuery, request } from './client'
 import type {
   CollectionDropGroup,
   CollectionEntry,
@@ -177,4 +177,34 @@ export function setCollectionEntry(
     body,
     token,
   })
+}
+
+/** Which provider-shaped CSV a collection export produces. */
+export type CollectionExportFormat = 'archidekt' | 'moxfield'
+
+/** Relative `/api/collection/{game}/export` path for a CSV export in the given shape. */
+export function collectionExportPath(game: string, format: CollectionExportFormat): string {
+  return `/api/collection/${encodeURIComponent(game)}/export?format=${format}`
+}
+
+/**
+ * Download the signed-in user's whole collection as a provider-shaped CSV (Archidekt or
+ * Moxfield). The response is a file, not JSON, so it can't go through `request` (which
+ * parses JSON and hides the raw body) — we `fetch` directly with the bearer token and read
+ * the blob. Throwing `ApiError` on a non-2xx keeps the auth store's single 401-refresh
+ * retry working (a bare `fetch` resolves on 401 and would skip the refresh).
+ */
+export async function exportCollectionCsv(
+  token: string,
+  game: string,
+  format: CollectionExportFormat,
+): Promise<Blob> {
+  const response = await fetch(`${API_URL}${collectionExportPath(game, format)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+  })
+  if (!response.ok) {
+    throw new ApiError(`Export failed with status ${response.status}`, response.status)
+  }
+  return response.blob()
 }
