@@ -4,6 +4,7 @@ import { useCardPrintingsByName } from '@/composables/useQuickAdd'
 import { useCollectionEntryQuery, useSetCollectionEntryMutation } from '@/composables/useCollection'
 import { matchPrinting } from '@/lib/scan/match'
 import { cleanCardName, nameQueryCandidates, parseSetHint, type SetHint } from '@/lib/scan/ocr'
+import { deconfuseDigits, namePoolPrefix, ocrSimilarity, rankNames } from '@/lib/scan/similarity'
 import type { ScanCapture } from '@/composables/useCardScanner'
 
 // Orchestrates one scanning session: turn an OCR capture into a confirmed catalog match,
@@ -42,6 +43,14 @@ const SCANNED_COPIES = 1
 
 /** How many name candidates to pull for the confirm/correct dropdown. */
 const NAME_CANDIDATE_LIMIT = 8
+
+/** A wider pool for the fuzzy recovery query, when no exact substring matched (the server
+ * caps this at 25). Ranking then picks the closest read out of the larger net. */
+const FUZZY_POOL_LIMIT = 25
+
+/** Lowest OCR-similarity we'll trust for a fuzzy-recovered name. Below this the closest
+ * pool entry is more likely noise than the card, so we report it unmatched instead. */
+const FUZZY_MATCH_THRESHOLD = 0.62
 
 export type CaptureOutcome = 'matched' | 'same' | 'unmatched' | 'busy'
 
@@ -173,14 +182,41 @@ export function useScanSession(game: Ref<string>) {
     clearCurrent()
   }
 
+  async function fetchNames(query: string, limit: number): Promise<string[]> {
+    try {
+      const { data } = await getCardNames(game.value, query, limit)
+      return data
+    } catch {
+      // Transient failure — the caller moves on to the next (broader) query.
+      return []
+    }
+  }
+
+  /**
+   * Resolve an OCR'd title into catalog name candidates, best match first, tolerant of a
+   * slightly wrong read. Three tiers, most-confident first:
+   *  1. Exact-substring queries — the raw read and its leading-word prefixes, then the same
+   *     with OCR digit-for-letter swaps undone (so `Lightn1ng Bolt` still finds the card).
+   *     The first that hits is a real substring match, so its pool is trusted; we only
+   *     re-rank it so the closest name is the default pick.
+   *  2. Recovery — nothing matched as a substring (a *letter* was misread). Pull a wider
+   *     pool off a short prefix and keep it only if the closest name clears the confidence
+   *     bar, so a genuine misread resolves while noise stays unmatched.
+   */
   async function resolveNames(cleaned: string): Promise<string[]> {
-    for (const query of nameQueryCandidates(cleaned)) {
-      try {
-        const { data } = await getCardNames(game.value, query, NAME_CANDIDATE_LIMIT)
-        if (data.length) return data
-      } catch {
-        // Transient failure — try the next (shorter) query before giving up.
-      }
+    const queries = new Set(nameQueryCandidates(cleaned))
+    const deconfused = deconfuseDigits(cleaned)
+    if (deconfused !== cleaned) for (const q of nameQueryCandidates(deconfused)) queries.add(q)
+    for (const query of queries) {
+      const pool = await fetchNames(query, NAME_CANDIDATE_LIMIT)
+      if (pool.length) return rankNames(cleaned, pool)
+    }
+
+    const prefix = namePoolPrefix(cleaned)
+    if (prefix) {
+      const ranked = rankNames(cleaned, await fetchNames(prefix, FUZZY_POOL_LIMIT))
+      const top = ranked[0]
+      if (top && ocrSimilarity(cleaned, top) >= FUZZY_MATCH_THRESHOLD) return ranked
     }
     return []
   }
