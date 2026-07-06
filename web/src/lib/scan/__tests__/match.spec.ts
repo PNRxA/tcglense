@@ -71,4 +71,34 @@ describe('matchPrinting', () => {
   it('returns null when the set code matches nothing (fall back to the caller default)', () => {
     expect(matchPrinting(prints, { setCode: 'zzz', collectorNumber: '133' })).toBeNull()
   })
+
+  it('rescues a set code that is one glyph off, keyed to the collector number', () => {
+    // OCR read NE0 (zero) for NEO — one confusable glyph, so it still finds neo #133.
+    expect(matchPrinting(prints, { setCode: 'NE0', collectorNumber: '133' })?.id).toBe('b')
+  })
+
+  it('rescues a one-glyph set code to the newest printing when the number is unreadable', () => {
+    expect(matchPrinting(prints, { setCode: 'ne0' })?.id).toBe('b')
+  })
+
+  it('does not rescue a set code more than one glyph off', () => {
+    expect(matchPrinting(prints, { setCode: 'nxx', collectorNumber: '133' })).toBeNull()
+  })
+
+  it('refuses to guess when two of the card’s set codes are equally close', () => {
+    const ambiguous: Card[] = [
+      print('x', { set_code: 'aaa', collector_number: '1' }),
+      print('y', { set_code: 'aab', collector_number: '1' }),
+    ]
+    // 'aac' is one glyph from both aaa and aab — too ambiguous to auto-pick.
+    expect(matchPrinting(ambiguous, { setCode: 'aac' })).toBeNull()
+  })
+
+  it('prefers an exact set code over a one-glyph neighbour', () => {
+    const both: Card[] = [
+      print('near', { set_code: 'net', collector_number: '5' }),
+      print('exact', { set_code: 'neo', collector_number: '5' }),
+    ]
+    expect(matchPrinting(both, { setCode: 'neo' })?.id).toBe('exact')
+  })
 })
