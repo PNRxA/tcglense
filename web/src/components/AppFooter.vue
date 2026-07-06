@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
+import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // Build-time app version (injected via the `define` in vite.config.ts), shown next to the
 // brand so visitors and bug reporters can tell which release is deployed (issue #250).
@@ -11,6 +12,12 @@ const version = import.meta.env.VITE_APP_VERSION
 // links, and the required WotC Fan Content disclaimer — placed wherever card data/images
 // render (nearly every page). Fully static: no queries, no auth reads, identical signed in
 // or out.
+
+// The legal pages are lazy-loaded route chunks; warm them on hover/focus so the click
+// lands on a loaded view (see lib/prefetch.ts — chunks only, never data/images). The
+// other footer links are external <a> tags (no chunk) or already-loaded routes.
+const router = useRouter()
+const warm = (to: string) => prefetchRouteChunks(router, to)
 </script>
 
 <template>
@@ -146,6 +153,8 @@ const version = import.meta.env.VITE_APP_VERSION
                 <RouterLink
                   to="/terms"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                  @pointerenter="warm('/terms')"
+                  @focusin="warm('/terms')"
                 >
                   Terms of Service
                 </RouterLink>
@@ -154,6 +163,8 @@ const version = import.meta.env.VITE_APP_VERSION
                 <RouterLink
                   to="/privacy"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                  @pointerenter="warm('/privacy')"
+                  @focusin="warm('/privacy')"
                 >
                   Privacy Policy
                 </RouterLink>

@@ -5,7 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
+import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
@@ -131,11 +131,17 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
   <div class="mx-auto max-w-6xl px-4 py-10">
     <PageBreadcrumbs :items="[{ label: 'Wish list', to: '/wishlist' }, { label: gameName }]" />
 
-    <!-- Signed out: the wish-list routes are public, so rather than bouncing to the
-         login page we prompt to sign in / sign up right here. -->
-    <CollectionSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" list="wishlist" />
+    <!-- Signed out (session resolved): the wish-list routes are public, so rather than
+         bouncing to the login page we prompt to sign in / sign up right here. While the
+         initial session is still resolving, show the pending grid instead so a signed-in
+         returning visitor never flashes the sign-in prompt. -->
+    <CollectionSignInPrompt
+      v-if="auth.sessionResolved && !auth.isAuthenticated"
+      :game-name="gameName"
+      list="wishlist"
+    />
 
-    <template v-else>
+    <template v-else-if="auth.isAuthenticated">
       <header class="mb-6">
         <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} wish list</h1>
         <!-- The active mode's set count — just the wishlisted sets by default, the whole
@@ -228,7 +234,7 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
         </RouterLink>
       </StickySearchBar>
 
-      <LoadingRow v-if="activePending" label="Loading sets…" />
+      <SetGridSkeleton v-if="activePending" />
       <p v-else-if="activeError" class="text-destructive py-12">
         Couldn't load sets. Please retry.
       </p>
@@ -291,5 +297,8 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
         count-noun="wanted"
       />
     </template>
+
+    <!-- Initial session still resolving: reserve the set grid's layout. -->
+    <SetGridSkeleton v-else />
   </div>
 </template>

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import GhostToggle from '@/components/cards/GhostToggle.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
@@ -301,6 +303,9 @@ const listIsError = computed(() => active.value.isError.value)
 const listError = computed(() => active.value.error.value)
 const listIsFetching = computed(() => active.value.isFetching.value)
 const listIsSuccess = computed(() => active.value.isSuccess.value)
+// Refetching over stale results (page/filter change held by keepPreviousData): drives an
+// honest "Updating…" cue on the count line rather than silently showing the old total.
+const updating = computed(() => listIsFetching.value && active.value.isPlaceholderData.value)
 // Derive from the active page's own `data` array (every page shape exposes one), not from
 // `total`, so a previous page held by keepPreviousData still reads as "has cards" while the
 // next loads — matching the per-mode behaviour this replaced.
@@ -373,11 +378,16 @@ const errorMessage = computed(() =>
       ]"
     />
 
-    <!-- Signed out: the collection routes are public, so prompt to sign in rather than
-         bouncing to the login page (matches the landing view, preserving ?redirect). -->
-    <CollectionSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" />
+    <!-- Signed out (session resolved): prompt to sign in rather than bouncing to the login
+         page (matches the landing view, preserving ?redirect). While the initial session is
+         still resolving, show the pending grid instead of flashing the prompt at a returning
+         signed-in visitor. -->
+    <CollectionSignInPrompt
+      v-if="auth.sessionResolved && !auth.isAuthenticated"
+      :game-name="gameName"
+    />
 
-    <template v-else>
+    <template v-else-if="auth.isAuthenticated">
       <header class="mb-4">
         <h1 class="text-3xl font-semibold tracking-tight">{{ heading }}</h1>
         <p class="text-muted-foreground mt-1 text-sm">
@@ -387,7 +397,10 @@ const errorMessage = computed(() =>
           <template v-else-if="scoped">
             <span class="uppercase">{{ code }}</span> ·
           </template>
-          {{ countLabel }}
+          <template v-if="updating">
+            <UpdatingCue />
+          </template>
+          <template v-else>{{ countLabel }}</template>
           <!-- The scope's total copies (with duplicates), shown when you own more copies
                than distinct cards (issue #125). Hidden while searching. -->
           <template v-if="scopeCopiesLabel"> · {{ scopeCopiesLabel }}</template>
@@ -426,7 +439,7 @@ const errorMessage = computed(() =>
         @select="viewSingleSet"
       />
 
-      <LoadingRow v-if="listPending" :label="loadingLabel" />
+      <CardGridSkeleton v-if="listPending" />
       <p v-else-if="listIsError" class="text-destructive py-12">
         {{ searchError ?? errorMessage }}
       </p>
@@ -535,5 +548,8 @@ const errorMessage = computed(() =>
         </template>
       </template>
     </template>
+
+    <!-- Initial session still resolving: reserve the card grid's layout. -->
+    <CardGridSkeleton v-else />
   </div>
 </template>

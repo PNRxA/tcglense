@@ -51,6 +51,15 @@ export function useAuthCacheReset() {
   const auth = useAuthStore()
   watch(
     () => auth.user?.id ?? null,
-    () => clearAuthedQueries(qc),
+    (_id, prevId) => {
+      // Only clear when the PREVIOUS id was a real identity (idA→idB switch, or id→null
+      // logout). Skip the boot transition (null→id): under the non-blocking router guard
+      // authed queries begin the moment refresh sets the token — BEFORE fetchMe resolves
+      // the user id — so the null→id flip fetchMe triggers must not wipe those freshly
+      // populated caches (that double-fetched every per-user query). A signed-out user
+      // can't populate per-user cache anyway (useAuthedQuery is disabled while signed
+      // out), so null→id never needs a wipe.
+      if (prevId !== null) clearAuthedQueries(qc)
+    },
   )
 }

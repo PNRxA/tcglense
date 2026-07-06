@@ -8,6 +8,8 @@ describe('shouldRetryQuery', () => {
     expect(shouldRetryQuery(0, new ApiError('unauthorized', 401))).toBe(false)
     expect(shouldRetryQuery(0, new ApiError('unprocessable', 422))).toBe(false)
     expect(shouldRetryQuery(0, new ApiError('not found', 404))).toBe(false)
+    // The client maps a timeout-abort to ApiError 408 precisely so this rule fires.
+    expect(shouldRetryQuery(0, new ApiError('Request timed out', 408))).toBe(false)
   })
 
   it('retries network and 5xx errors up to twice', () => {

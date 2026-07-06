@@ -11,6 +11,7 @@ import {
   NavigationMenuList,
   NavigationMenuTrigger,
 } from '@/components/ui/navigation-menu'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -34,9 +35,14 @@ async function onSignOut() {
 </script>
 
 <template>
-  <!-- Signed out: the profile selector collapses to a single sign-in action. -->
+  <!-- Session not yet resolved and no token: a neutral placeholder sized like the
+       Sign-in button, so we don't flash "Sign in" at a user who's about to resolve
+       signed in. -->
+  <Skeleton v-if="!auth.sessionResolved && !auth.isAuthenticated" class="h-8 w-24 rounded-md" />
+
+  <!-- Signed out (resolved): the profile selector collapses to a single sign-in action. -->
   <RouterLink
-    v-if="!auth.isAuthenticated"
+    v-else-if="!auth.isAuthenticated"
     :to="loginTo"
     :class="buttonVariants({ variant: 'outline', size: 'sm' })"
   >

@@ -1,9 +1,17 @@
+<script lang="ts">
+// Warm the shared card-detail dialog chunk on the first hover/focus of ANY tile (module
+// flag → once per session), so the click that opens ?card= finds the chunk already
+// fetched. import() itself dedupes, but the flag skips even the repeat call.
+let dialogWarmed = false
+</script>
+
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import CardImage from '@/components/cards/CardImage.vue'
+import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 const props = defineProps<{
@@ -39,6 +47,13 @@ function onClick(event: MouseEvent) {
   void router.push({ query: { ...route.query, card: props.card.id } })
 }
 
+// Fire-and-forget prefetch of the detail-dialog chunk on first hover/focus.
+function warmCardDetailDialog() {
+  if (dialogWarmed) return
+  dialogWarmed = true
+  void loadCardDetailDialog()
+}
+
 // The image dims + (optionally) desaturates; the text block dims with opacity only.
 // Crucially any grayscale goes on the IMAGE, never on the RouterLink below: a `filter` other
 // than `none` makes an element the containing block for its abs-positioned descendants, which
@@ -66,7 +81,7 @@ const ghostTextClass = computed(() =>
     tab stop whose accessible name is the card text. Crucially the #badge overlay is a
     SIBLING of that link — not nested inside the <a> — so an interactive control there
     (the quick-add popover trigger) is valid HTML and its clicks don't navigate. -->
-  <div class="group relative">
+  <div class="group relative" @pointerenter="warmCardDetailDialog" @focusin="warmCardDetailDialog">
     <!-- On hover the card lifts: it scales up slightly and the resting shadow deepens.
       `group-hover:z-10` raises the (already `relative`) frame above its grid neighbours so
       the enlarged card and its shadow aren't clipped by later siblings painting on top.

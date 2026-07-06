@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { CARD_PAGE_SIZE, useAllCardsQuery, useGameName } from '@/composables/useCatalog'
@@ -85,11 +86,16 @@ useClampPage(page, () => ({
 
     <p class="text-muted-foreground mt-4 mb-6 text-sm">
       <template v-if="cardsQuery.isFetching.value && !cards.length">Searching…</template>
+      <!-- Refetching over stale results (page/filter change held by keepPreviousData):
+           an honest in-flight cue rather than silently showing the old total. -->
+      <template v-else-if="cardsQuery.isFetching.value && cardsQuery.isPlaceholderData.value">
+        <UpdatingCue />
+      </template>
       <template v-else>{{ total.toLocaleString() }} {{ total === 1 ? 'card' : 'cards' }}</template>
       <template v-if="query"> matching “{{ query }}”</template>
     </p>
 
-    <LoadingRow v-if="cardsQuery.isPending.value" label="Loading cards…" />
+    <CardGridSkeleton v-if="cardsQuery.isPending.value" />
     <p v-else-if="cardsQuery.isError.value" class="text-destructive py-12">
       {{ searchError ?? "Couldn't load cards. Please retry." }}
     </p>

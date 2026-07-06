@@ -6,7 +6,7 @@ import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
+import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
@@ -134,7 +134,7 @@ const sections = computed(() => {
       </span>
     </div>
 
-    <LoadingRow v-if="setsQuery.isPending.value" label="Loading sets…" />
+    <SetGridSkeleton v-if="setsQuery.isPending.value" />
     <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
       Couldn't load sets. Please retry.
     </p>

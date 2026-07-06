@@ -1,14 +1,10 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
-import CompleteRegistrationView from '@/views/CompleteRegistrationView.vue'
-import ForgotPasswordView from '@/views/ForgotPasswordView.vue'
+// HomeView stays eager (it's the landing page — lazy-loading it just adds a chunk RTT to
+// the most common first paint). The auth/profile/email views are lazy: they're reached
+// rarely and don't belong in the initial bundle.
 import HomeView from '@/views/HomeView.vue'
-import LoginView from '@/views/LoginView.vue'
-import ProfileView from '@/views/ProfileView.vue'
-import RegisterView from '@/views/RegisterView.vue'
-import ResetPasswordView from '@/views/ResetPasswordView.vue'
-import VerifyEmailView from '@/views/VerifyEmailView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -151,19 +147,19 @@ const router = createRouter({
     {
       path: '/profile',
       name: 'profile',
-      component: ProfileView,
+      component: () => import('@/views/ProfileView.vue'),
       meta: { requiresAuth: true },
     },
     {
       path: '/login',
       name: 'login',
-      component: LoginView,
+      component: () => import('@/views/LoginView.vue'),
       meta: { requiresGuest: true },
     },
     {
       path: '/register',
       name: 'register',
-      component: RegisterView,
+      component: () => import('@/views/RegisterView.vue'),
       meta: { requiresGuest: true },
     },
     // Emailed-link + recovery routes. Deliberately public (no requiresGuest): a
@@ -175,38 +171,54 @@ const router = createRouter({
       // ?token=… to choose a password and sign in.
       path: '/complete-registration',
       name: 'complete-registration',
-      component: CompleteRegistrationView,
+      component: () => import('@/views/CompleteRegistrationView.vue'),
     },
     {
       path: '/forgot-password',
       name: 'forgot-password',
-      component: ForgotPasswordView,
+      component: () => import('@/views/ForgotPasswordView.vue'),
     },
     {
       path: '/reset-password',
       name: 'reset-password',
-      component: ResetPasswordView,
+      component: () => import('@/views/ResetPasswordView.vue'),
     },
     {
       path: '/verify-email',
       name: 'verify-email',
-      component: VerifyEmailView,
+      component: () => import('@/views/VerifyEmailView.vue'),
     },
   ],
+  // Restore the saved scroll position on back/forward; otherwise start a new page at the
+  // top. A query/hash-only change to the SAME path (pagination via router.replace, the
+  // ?card= dialog) must NOT scroll — returning false leaves the user's scroll alone.
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    if (to.path === from.path) return false
+    return { top: 0 }
+  },
 })
 
 let restorePromise: Promise<unknown> | null = null
 
-router.beforeEach(async (to) => {
+// Exported so the router-guard spec can register the real guard on a memory-history router.
+export async function authGuard(to: RouteLocationNormalized) {
   const auth = useAuthStore()
 
-  // Restore the session exactly once, before the first routing decision, so we do
-  // not briefly flash protected UI. Cache the promise (not a post-await boolean) so
-  // concurrent initial navigations share a single restore instead of racing into
-  // parallel refreshes. tryRestore() uses the httpOnly refresh cookie and never
-  // throws, so the guard is safe even when the API is unreachable.
+  // Kick off the one-time session restore on the first navigation and cache the PROMISE
+  // (not a post-await boolean): concurrent initial navigations and every later navigation
+  // then share this single restore instead of re-attempting the refresh. tryRestore()
+  // uses the httpOnly refresh cookie and never throws.
+  //
+  // Tradeoff: only BLOCK on it for auth-gated routes. A public route must paint
+  // immediately, so its chunk fetch and the session restore race in parallel rather than
+  // the restore's RTT stalling every navigation on a high-latency link. The
+  // flash-of-protected-UI this await used to prevent is now handled per component via
+  // `auth.sessionResolved` (see UserMenu / HomeView / CollectionControls).
   restorePromise ??= auth.tryRestore()
-  await restorePromise
+  if (to.meta.requiresAuth || to.meta.requiresGuest) {
+    await restorePromise
+  }
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     // Remember where they were headed so login can send them back there.
@@ -219,6 +231,8 @@ router.beforeEach(async (to) => {
   }
 
   return true
-})
+}
+
+router.beforeEach(authGuard)
 
 export default router

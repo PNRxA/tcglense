@@ -26,6 +26,13 @@ interface RequestOptions {
   rawBody?: BodyInit | null
   /** Content-Type for a `rawBody` upload (e.g. `'text/csv'`). Ignored without `rawBody`. */
   contentType?: string
+  /**
+   * Caller abort signal (e.g. a vue-query cancellation). Honored on any method; on a
+   * GET it is composed with the client's own 60s timeout. A caller-initiated abort
+   * re-throws the original `AbortError` untouched (so vue-query swallows its own
+   * cancellation); a timeout-abort surfaces as `ApiError('Request timed out', 408)`.
+   */
+  signal?: AbortSignal
 }
 
 /**
@@ -61,6 +68,7 @@ export function listQuery(params: {
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isRaw = options.rawBody != null
+  const method = options.method ?? 'GET'
   const headers: Record<string, string> = {}
   // JSON bodies default to a JSON Content-Type; a raw upload sets its own (or none).
   if (isRaw) {
@@ -72,36 +80,77 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     headers.Authorization = `Bearer ${options.token}`
   }
 
-  const response = await fetch(`${API_URL}${path}`, {
-    method: options.method ?? 'GET',
-    headers,
-    // Always send/receive the httpOnly refresh cookie (tcglense_refresh).
-    credentials: 'include',
-    body: isRaw
-      ? options.rawBody
-      : options.body === undefined
-        ? undefined
-        : JSON.stringify(options.body),
-  })
-
-  // 204 No Content and other empty bodies have nothing to parse; tolerate
-  // non-JSON bodies (e.g. a proxy error page) rather than throwing on parse.
-  const text = await response.text()
-  let data: unknown = null
-  if (text) {
-    try {
-      data = JSON.parse(text)
-    } catch {
-      data = null
+  // GET requests get a 60s ceiling composed by hand from one AbortController that fires
+  // on either the timeout or the caller's own signal — Safari <17.4 lacks
+  // AbortSignal.any/AbortSignal.timeout. Non-GET requests get no unilateral timeout (a
+  // large CSV import on a slow uplink must survive) but still honor a caller signal.
+  // The timer is always cleared in `finally`.
+  const callerSignal = options.signal
+  let signal = callerSignal
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  let onCallerAbort: (() => void) | undefined
+  let timedOut = false
+  if (method === 'GET') {
+    const controller = new AbortController()
+    signal = controller.signal
+    timeoutId = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, 60_000)
+    if (callerSignal) {
+      if (callerSignal.aborted) {
+        controller.abort()
+      } else {
+        onCallerAbort = () => controller.abort()
+        callerSignal.addEventListener('abort', onCallerAbort)
+      }
     }
   }
 
-  if (!response.ok) {
-    const error = (data as { error?: unknown } | null)?.error
-    const message =
-      typeof error === 'string' ? error : `Request failed with status ${response.status}`
-    throw new ApiError(message, response.status)
-  }
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers,
+      // Always send/receive the httpOnly refresh cookie (tcglense_refresh).
+      credentials: 'include',
+      signal,
+      body: isRaw
+        ? options.rawBody
+        : options.body === undefined
+          ? undefined
+          : JSON.stringify(options.body),
+    })
 
-  return (data ?? undefined) as T
+    // 204 No Content and other empty bodies have nothing to parse; tolerate
+    // non-JSON bodies (e.g. a proxy error page) rather than throwing on parse.
+    const text = await response.text()
+    let data: unknown = null
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch {
+        data = null
+      }
+    }
+
+    if (!response.ok) {
+      const error = (data as { error?: unknown } | null)?.error
+      const message =
+        typeof error === 'string' ? error : `Request failed with status ${response.status}`
+      throw new ApiError(message, response.status)
+    }
+
+    return (data ?? undefined) as T
+  } catch (err) {
+    // A timeout-abort becomes a non-retryable 408 (the retry policy's 4xx rule) so
+    // views surface their error state; a caller-initiated abort re-throws untouched so
+    // vue-query can swallow its own cancellation instead of seeing an ApiError.
+    if (timedOut) {
+      throw new ApiError('Request timed out', 408)
+    }
+    throw err
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    if (onCallerAbort) callerSignal?.removeEventListener('abort', onCallerAbort)
+  }
 }

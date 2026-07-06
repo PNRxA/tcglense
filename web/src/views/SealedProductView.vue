@@ -6,7 +6,7 @@ import ProductImage from '@/components/products/ProductImage.vue'
 import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useProductQuery } from '@/composables/useProducts'
 import { useProductBackLink } from '@/composables/useProductBackLink'
 import { getProductPrices, productImageUrl } from '@/lib/api'
@@ -25,6 +25,13 @@ const id = toRef(props, 'id')
 
 const productQuery = useProductQuery(game, id)
 const product = computed(() => productQuery.data.value)
+// "Not found" once the fetch has settled without a product — not merely on `isError`: a
+// 2xx with an empty body resolves to `undefined` data with `isError` false, which would
+// otherwise sit on the loading skeleton forever. `!isPending` = settled (no data + not
+// first-loading), so a pending cache-miss still shows the skeleton below.
+const notFound = computed(
+  () => productQuery.isError.value || (!product.value && !productQuery.isPending.value),
+)
 
 // The in-app "back" link, mirroring the page the user arrived by — a card's "Sealed
 // products" section or the sealed browse — rather than always the browse (issue #203).
@@ -105,13 +112,26 @@ usePageMeta({
       {{ backLink.label }}
     </RouterLink>
 
-    <LoadingRow v-if="productQuery.isPending.value" label="Loading product…" />
-    <p v-else-if="productQuery.isError.value || !product" class="text-destructive py-12">
-      Product not found.
-    </p>
+    <p v-if="notFound" class="text-destructive py-12">Product not found.</p>
 
     <template v-else>
-      <div class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
+      <!-- Product body — image + name + prices. A Skeleton stands in on a cache-miss
+        deep link until the query resolves; the chart + card sections below mount off the
+        route params immediately, so they fetch in parallel rather than waiting. -->
+      <div v-if="!product" class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
+        <Skeleton class="aspect-square w-full rounded-lg" />
+        <div class="space-y-3">
+          <Skeleton class="h-4 w-24" />
+          <Skeleton class="h-9 w-3/4" />
+          <Skeleton class="h-4 w-40" />
+          <div class="mt-6 grid grid-cols-2 gap-2">
+            <Skeleton class="h-16" />
+            <Skeleton class="h-16" />
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
         <ProductImage
           :game="game"
           :id="product.id"
@@ -152,20 +172,22 @@ usePageMeta({
         </div>
       </div>
 
-      <!-- Price history over time (full width, below the details). -->
+      <!-- Price history over time (full width, below the details). Keyed off game/id, so
+        it mounts and fetches in parallel with the product query above. -->
       <PriceChart
         :query-key="['product-prices', game, id]"
         :fetcher="(range) => getProductPrices(game, id, range)"
       />
 
-      <!-- Outbound "where to buy" links, grouped by region (issue #175). The
-        TCGplayer entry deep-links to product.url (the exact page) when we have it. -->
-      <ProductBuyLinks :game="game" :product="product" />
+      <!-- Outbound "where to buy" links, grouped by region (issue #175). Needs the full
+        product object, so it waits for the fetch (the sections below key off game/id). -->
+      <ProductBuyLinks v-if="product" :game="game" :product="product" />
 
       <!-- The cards this product contains / can be pulled from — the reverse of the
         card page's "Sealed products" section, guaranteed cards first, then this booster
-        family's exclusive cards ahead of the shared pool (issue #204). -->
-      <ProductCards :game="game" :id="product.id" :product-type="product.product_type" />
+        family's exclusive cards ahead of the shared pool (issue #204). Mounts off the
+        route id; the family label fills in once the product loads. -->
+      <ProductCards :game="game" :id="id" :product-type="product?.product_type ?? ''" />
     </template>
   </div>
 </template>

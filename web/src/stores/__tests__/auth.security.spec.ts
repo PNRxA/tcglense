@@ -138,6 +138,41 @@ describe('auth store: authFetch refresh-and-retry', () => {
   })
 })
 
+describe('auth store: sessionResolved latch', () => {
+  it('flips true once the initial restore settles', async () => {
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh' })
+    vi.mocked(me).mockResolvedValue({ user: USER })
+
+    const store = useAuthStore()
+    expect(store.sessionResolved).toBe(false)
+    await store.tryRestore()
+    expect(store.sessionResolved).toBe(true)
+  })
+
+  it('degrades to resolved via the watchdog when the restore never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      // A half-open socket: the refresh POST neither resolves nor rejects.
+      vi.mocked(refresh).mockReturnValue(new Promise(() => {}))
+
+      const store = useAuthStore()
+      store.tryRestore()
+      expect(store.sessionResolved).toBe(false)
+
+      // Before the ceiling: still waiting.
+      await vi.advanceTimersByTimeAsync(9_000)
+      expect(store.sessionResolved).toBe(false)
+
+      // Past the 10s ceiling: the watchdog un-gates the signed-out UI.
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(store.sessionResolved).toBe(true)
+      expect(store.isAuthenticated).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('auth store: logout always clears local state', () => {
   it('clears state even when the server logout call fails', async () => {
     vi.mocked(logout).mockRejectedValue(new Error('network down'))

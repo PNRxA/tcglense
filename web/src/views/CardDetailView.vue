@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
 import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import CardDetailContent from '@/components/cards/CardDetailContent.vue'
 import { useCardBackLink } from '@/composables/useCardBackLink'
-import { cardImageUrl, getCard } from '@/lib/api'
+import { useCardQuery } from '@/composables/useCatalog'
+import { cardImageUrl } from '@/lib/api'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
 
 // The full card-detail page. The detail body itself lives in CardDetailContent
@@ -16,10 +16,9 @@ const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
-const cardQuery = useQuery({
-  queryKey: ['card', game, id],
-  queryFn: () => getCard(game.value, id.value),
-})
+// Shares CardDetailContent's ['card', game, id] key + seeding (see useCardQuery), so the
+// page and an overlay never double-fetch. This view reads it only for meta/JSON-LD.
+const cardQuery = useCardQuery(game, id)
 
 const card = computed(() => cardQuery.data.value)
 

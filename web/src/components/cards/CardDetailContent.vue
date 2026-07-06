@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
 import CardImageZoom from '@/components/cards/CardImageZoom.vue'
 import CardMetaList from '@/components/cards/CardMetaList.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
@@ -9,9 +8,10 @@ import CollectionControls from '@/components/collection/CollectionControls.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
 import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
-import { getCard, getPriceHistory } from '@/lib/api'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useCardQuery } from '@/composables/useCatalog'
+import { getPriceHistory } from '@/lib/api'
 
 // The body of a card's detail — image(s), rules text, prices + history, collection and
 // wish-list count controls, other printings — shared verbatim by the full page
@@ -22,12 +22,16 @@ const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
-const cardQuery = useQuery({
-  queryKey: ['card', game, id],
-  queryFn: () => getCard(game.value, id.value),
-})
+const cardQuery = useCardQuery(game, id)
 
 const card = computed(() => cardQuery.data.value)
+// "Not found" once the fetch has settled without a card — not merely on `isError`: a 2xx
+// with an empty body resolves to `undefined` data with `isError` false, which would
+// otherwise sit on the loading skeleton forever. `!isPending` = settled, so a pending
+// cache-miss still shows the skeleton below.
+const notFound = computed(
+  () => cardQuery.isError.value || (!card.value && !cardQuery.isPending.value),
+)
 
 // Layouts whose faces carry their OWN images (so we render one image per face).
 // Split / flip / adventure / aftermath also have two faces, but only a single
@@ -47,11 +51,23 @@ const hasSeparateFaceImages = computed(
 </script>
 
 <template>
-  <LoadingRow v-if="cardQuery.isPending.value" label="Loading card…" />
-  <p v-else-if="cardQuery.isError.value || !card" class="text-destructive py-12">Card not found.</p>
+  <p v-if="notFound" class="text-destructive py-12">Card not found.</p>
 
-  <template v-else-if="card">
-    <div class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
+  <template v-else>
+    <!-- Card body — image(s) + details. On a cache-miss deep link a Skeleton stands in
+      until the query resolves; the chart, prints and sealed-product sections below mount
+      off the route params immediately, so they fetch in parallel rather than waiting. -->
+    <div v-if="!card" class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
+      <Skeleton class="aspect-[61/85] w-full rounded-[4.76%_/_3.42%]" />
+      <div class="space-y-4">
+        <Skeleton class="h-9 w-2/3" />
+        <Skeleton class="h-5 w-1/2" />
+        <Skeleton class="h-24 w-full" />
+        <Skeleton class="h-28 w-full" />
+      </div>
+    </div>
+
+    <div v-else class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
       <!-- Image(s): one per face only for layouts with separate face images.
         Each is clickable to enlarge it in a lightbox (issue #53). -->
       <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
@@ -134,15 +150,16 @@ const hasSeparateFaceImages = computed(
       :fetcher="(range) => getPriceHistory(game, id, range)"
     />
 
-    <!-- Outbound "buy this card" links, grouped by region (issue #175). -->
-    <CardBuyLinks :game="game" :card="card" />
+    <!-- Outbound "buy this card" links, grouped by region (issue #175). Needs the full
+      card object, so it waits for the fetch (the sections below key off game/id alone). -->
+    <CardBuyLinks v-if="card" :game="game" :card="card" />
 
-    <!-- This card's other printings (same gameplay object, issue #63). Renders
-      nothing when there are none. -->
-    <CardPrints :game="game" :id="card.id" />
+    <!-- This card's other printings (same gameplay object, issue #63). Keyed off the
+      route id so it mounts before the card loads; renders nothing when there are none. -->
+    <CardPrints :game="game" :id="id" />
 
     <!-- Which sealed products this card is found in / can be pulled from / may be in.
       Renders nothing when the card is in no ingested product. -->
-    <CardSealedProducts :game="game" :id="card.id" />
+    <CardSealedProducts :game="game" :id="id" />
   </template>
 </template>

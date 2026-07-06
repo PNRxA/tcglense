@@ -67,9 +67,14 @@ function productQuery(params: ProductListParams = {}): string {
 }
 
 /** A page of a game's sealed products (name search + set/type filters + sort). */
-export function listProducts(game: string, params?: ProductListParams): Promise<ProductPage> {
+export function listProducts(
+  game: string,
+  params?: ProductListParams,
+  signal?: AbortSignal,
+): Promise<ProductPage> {
   return request<ProductPage>(
     `/api/games/${encodeURIComponent(game)}/products${productQuery(params)}`,
+    { signal },
   )
 }
 
@@ -123,6 +128,7 @@ export function getProductCards(
   q?: string,
   sort?: string,
   dir?: string,
+  signal?: AbortSignal,
 ): Promise<ProductCardsPage> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
@@ -134,7 +140,9 @@ export function getProductCards(
   if (sort) search.set('sort', sort)
   if (dir) search.set('dir', dir)
   const qs = search.toString()
-  return request<ProductCardsPage>(`/api/games/${g}/products/${i}/cards${qs ? `?${qs}` : ''}`)
+  return request<ProductCardsPage>(`/api/games/${g}/products/${i}/cards${qs ? `?${qs}` : ''}`, {
+    signal,
+  })
 }
 
 /**
@@ -150,12 +158,14 @@ export function getProductCardSections(
   game: string,
   id: string,
   q?: string,
+  signal?: AbortSignal,
 ): Promise<{ data: ProductCardSection[] }> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   const qs = q ? `?q=${encodeURIComponent(q)}` : ''
   return request<{ data: ProductCardSection[] }>(
     `/api/games/${g}/products/${i}/cards/sections${qs}`,
+    { signal },
   )
 }
 

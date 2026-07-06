@@ -28,6 +28,8 @@ export function createQueryClient(): QueryClient {
         // the trailing point once it goes stale. Override per-query as needed —
         // `staleTime: Infinity` for static set definitions, shorter for live prices.
         staleTime: 5 * 60 * 1000,
+        // Keep unused entries an idle-return's worth so warm caches survive a tab away.
+        gcTime: 30 * 60 * 1000,
         retry: shouldRetryQuery,
       },
       // Mutations keep the default retry: 0 — a failed collection write should
