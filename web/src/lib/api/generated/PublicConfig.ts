@@ -14,4 +14,18 @@ export type PublicConfig = {
  * (no `TURNSTILE_SECRET_KEY`/`TURNSTILE_SITE_KEY` set) — the SPA then skips the
  * widget. The API is the source of truth for whether a token is required.
  */
-turnstile_site_key: string | null, };
+turnstile_site_key: string | null, 
+/**
+ * Whether new-account registration is currently accepted. `false` when the
+ * operator set `SIGNUPS_ENABLED=false`; the SPA then shows
+ * `signups_disabled_message` and disables the signup form. The API is the
+ * source of truth — it rejects `register` regardless of what the SPA renders.
+ * Existing users can always still sign in; this gates only registration.
+ */
+signups_enabled: boolean, 
+/**
+ * The notice to show when `signups_enabled` is `false` (the configured
+ * `SIGNUPS_DISABLED_MESSAGE`, or a generic fallback). `null` while signups are
+ * enabled, so the SPA can key purely off a non-null value.
+ */
+signups_disabled_message: string | null, };

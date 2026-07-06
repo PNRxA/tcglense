@@ -16,14 +16,31 @@ pub struct PublicConfig {
     /// (no `TURNSTILE_SECRET_KEY`/`TURNSTILE_SITE_KEY` set) — the SPA then skips the
     /// widget. The API is the source of truth for whether a token is required.
     pub turnstile_site_key: Option<String>,
+    /// Whether new-account registration is currently accepted. `false` when the
+    /// operator set `SIGNUPS_ENABLED=false`; the SPA then shows
+    /// `signups_disabled_message` and disables the signup form. The API is the
+    /// source of truth — it rejects `register` regardless of what the SPA renders.
+    /// Existing users can always still sign in; this gates only registration.
+    pub signups_enabled: bool,
+    /// The notice to show when `signups_enabled` is `false` (the configured
+    /// `SIGNUPS_DISABLED_MESSAGE`, or a generic fallback). `null` while signups are
+    /// enabled, so the SPA can key purely off a non-null value.
+    pub signups_disabled_message: Option<String>,
 }
 
-/// `GET /api/config` -> `200 { "turnstile_site_key": "..." | null }`.
+/// `GET /api/config` -> `200 { "turnstile_site_key": … , "signups_enabled": … ,
+/// "signups_disabled_message": … }`.
 ///
 /// Registered in the private (no-store) router group: the value only changes on a
 /// redeploy and the payload is tiny, so there is nothing to cache. Panic-free.
 pub async fn public_config(State(state): State<AppState>) -> impl IntoResponse {
+    let signups_enabled = state.config.signups_enabled;
     Json(PublicConfig {
         turnstile_site_key: state.config.turnstile_site_key.clone(),
+        signups_enabled,
+        // Only surface the notice when signups are actually off, so the SPA renders
+        // it iff the message is non-null.
+        signups_disabled_message: (!signups_enabled)
+            .then(|| state.config.signups_disabled_notice()),
     })
 }

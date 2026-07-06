@@ -214,6 +214,13 @@ pub async fn register(
     ClientIp(client_ip): ClientIp,
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    // Signup switch (SIGNUPS_ENABLED=false): refuse to start a new registration
+    // while existing users keep signing in. Checked before the CAPTCHA so a
+    // disabled instance needn't mint a token just to be told no. 403 (not 401)
+    // keeps the SPA's access-token auto-refresh from firing on it.
+    if !state.config.signups_enabled {
+        return Err(AppError::Forbidden(state.config.signups_disabled_notice()));
+    }
     state
         .captcha
         .verify(payload.captcha_token.as_deref(), client_ip)
@@ -298,6 +305,11 @@ pub async fn complete_registration(
     jar: CookieJar,
     JsonBody(payload): JsonBody<CompleteRegistrationRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    // Same signup switch as `register`: a completion link issued before signups
+    // were turned off must not be able to finalise a brand-new account either.
+    if !state.config.signups_enabled {
+        return Err(AppError::Forbidden(state.config.signups_disabled_notice()));
+    }
     state
         .captcha
         .verify(payload.captcha_token.as_deref(), client_ip)
@@ -614,6 +626,15 @@ pub async fn reset_password(
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::Unauthorized("invalid or expired token".to_string()))?;
+
+    // Signup switch: a reset must not *activate* a pending (password-less) account
+    // while signups are disabled — that is the same new-account creation `register`
+    // and `complete-registration` refuse (a stale pending row could otherwise be
+    // finalised via forgot/reset). A genuine reset for an account that already has
+    // a password is untouched, so existing users keep recovering their access.
+    if user.password_hash.is_none() && !state.config.signups_enabled {
+        return Err(AppError::Forbidden(state.config.signups_disabled_notice()));
+    }
 
     let user_id = user.id;
     let now = Utc::now();

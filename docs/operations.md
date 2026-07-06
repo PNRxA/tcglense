@@ -305,6 +305,11 @@ Both `web/scripts/*` require the Playwright browsers installed
   set `true` **only** behind a trusted proxy, else clients can spoof their IP),
   `RATE_LIMIT_ENABLED` (`true`; per-IP auth rate limiting — set `false` to defer to
   an upstream WAF),
+  `SIGNUPS_ENABLED` (`true`; accept new-account registration — set `false` to
+  temporarily refuse `POST /api/auth/register` + `/complete-registration` with a
+  `403` while existing users keep signing in), `SIGNUPS_DISABLED_MESSAGE` (unset;
+  the user-facing notice shown when signups are disabled — not a secret, served to
+  the SPA via `GET /api/config`; unset = a generic message),
   `SYNC_ON_STARTUP` (`true`; import card data on boot — set `false` for offline
   dev/tests), `SYNC_INTERVAL_HOURS` (`24`; re-import cadence after the startup
   import — `0` disables the periodic refresh; only applies when `SYNC_ON_STARTUP`
