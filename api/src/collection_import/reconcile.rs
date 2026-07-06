@@ -5,7 +5,9 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, TransactionTrait};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
+};
 
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
@@ -115,14 +117,19 @@ async fn resolve_card_ids(
 ) -> Result<HashMap<String, i32>, ImportError> {
     let mut matched: HashMap<String, i32> = HashMap::new();
     for chunk in external_ids.chunks(IN_CHUNK) {
-        let rows = Card::find()
+        // Only the two id columns; skip the ~66 heavy card columns we never read here.
+        let rows: Vec<(String, i32)> = Card::find()
+            .select_only()
+            .column(card::Column::ExternalId)
+            .column(card::Column::Id)
             .filter(card::Column::Game.eq(game))
             .filter(card::Column::ExternalId.is_in(chunk.iter().cloned()))
+            .into_tuple()
             .all(db)
             .await
             .map_err(ImportError::Db)?;
-        for c in rows {
-            matched.insert(c.external_id, c.id);
+        for (external_id, id) in rows {
+            matched.insert(external_id, id);
         }
     }
     Ok(matched)

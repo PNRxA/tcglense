@@ -271,13 +271,18 @@ async fn load_local_by_external(
     let card_ids: Vec<i32> = items.iter().map(|i| i.card_id).collect();
     let mut external_by_id: HashMap<i32, String> = HashMap::new();
     for chunk in card_ids.chunks(IN_CHUNK) {
-        let rows = Card::find()
+        // Only the two id columns; skip the ~66 heavy card columns we never read here.
+        let rows: Vec<(i32, String)> = Card::find()
+            .select_only()
+            .column(card::Column::Id)
+            .column(card::Column::ExternalId)
             .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .into_tuple()
             .all(db)
             .await
             .map_err(ImportError::Db)?;
-        for c in rows {
-            external_by_id.insert(c.id, c.external_id);
+        for (id, external_id) in rows {
+            external_by_id.insert(id, external_id);
         }
     }
 

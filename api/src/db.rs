@@ -16,7 +16,11 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use sea_orm::{ConnectOptions, DatabaseBackend, sqlx::sqlite::SqliteJournalMode};
+use sea_orm::{
+    ConnectOptions, DatabaseBackend, IdenStatic, Iterable,
+    sea_query::{Expr, SimpleExpr},
+    sqlx::sqlite::SqliteJournalMode,
+};
 
 /// Build [`ConnectOptions`] for `database_url`, branching on the URL scheme.
 ///
@@ -198,6 +202,42 @@ impl Dialect {
             Dialect::Postgres => fmt.to_string(),
         }
     }
+}
+
+/// Build the `WHERE` guard for an `ON CONFLICT … DO UPDATE` action that skips the write
+/// when the incoming row is byte-identical to the stored one.
+///
+/// Emits `("<table>"."c1" IS DISTINCT FROM "excluded"."c1" OR …)` over every column of
+/// `C` for which `skip` is false. `IS DISTINCT FROM` is null-safe (a nullable column
+/// reads NULL↔NULL as equal, NULL↔value as changed) and is valid on both Postgres and
+/// the bundled SQLite (≥ 3.39; we pin 3.46). Feed the result to
+/// [`OnConflict::action_and_where`](sea_orm::sea_query::OnConflict::action_and_where): a
+/// conflicting row whose compared columns all match is then left untouched — no new
+/// tuple, no index maintenance, no WAL — which is the whole point on a re-sync where most
+/// rows are unchanged. It carries **no** bound values, so an insert's `$1..$N` numbering
+/// is unaffected.
+///
+/// `skip` must exclude the conflict/identity keys **and** any always-`now()` timestamp
+/// (e.g. `updated_at`): comparing an always-fresh timestamp would make every row look
+/// changed and defeat the guard. Keep such a timestamp in `update_columns` (so a *real*
+/// change still bumps it) but out of this predicate. Building the list from
+/// `C::iter()` rather than a hand-written literal means a newly-added column is compared
+/// automatically instead of silently dropping out of the guard.
+pub(crate) fn upsert_changed_guard<C>(table: &str, skip: impl Fn(&C) -> bool) -> SimpleExpr
+where
+    C: Iterable + IdenStatic,
+{
+    let pred = C::iter()
+        .filter(|c| !skip(c))
+        .map(|c| {
+            let col = c.as_str();
+            format!(r#"("{table}"."{col}" IS DISTINCT FROM "excluded"."{col}")"#)
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    // No comparable columns (keys/timestamps only) → nothing can differ; always update
+    // (degenerate: our callers always have content columns, so this never fires).
+    Expr::cust(if pred.is_empty() { "TRUE".to_string() } else { pred })
 }
 
 #[cfg(test)]

@@ -63,14 +63,34 @@ pub(super) async fn load_foil_variant_pairs(
     db: &DatabaseConnection,
     game: &str,
 ) -> Result<Vec<FoilVariantPair>, ImportError> {
-    // 1. Every purely-foil star card in the game.
-    let stars = Card::find()
+    // 1. Every purely-foil star card in the game. Project only the five fields the
+    //    pairing uses (of the card's ~68) — the `finishes='foil'` scan can return a few
+    //    thousand rows on the weak prod instance, so the narrower payload matters, and
+    //    the `(game, finishes)` index (m..026) keeps it off a full-table scan (the
+    //    trailing-`★` `LIKE` is an unindexable residual filter over the foil subset).
+    let stars: Vec<StarCard> = Card::find()
+        .select_only()
+        .column(card::Column::Id)
+        .column(card::Column::ExternalId)
+        .column(card::Column::SetCode)
+        .column(card::Column::CollectorNumber)
+        .column(card::Column::OracleId)
         .filter(card::Column::Game.eq(game))
         .filter(card::Column::Finishes.eq("foil"))
         .filter(card::Column::CollectorNumber.like(format!("%{FOIL_STAR}")))
+        .into_tuple::<(i32, String, String, String, Option<String>)>()
         .all(db)
         .await
-        .map_err(ImportError::Db)?;
+        .map_err(ImportError::Db)?
+        .into_iter()
+        .map(|(id, external_id, set_code, collector_number, oracle_id)| StarCard {
+            id,
+            external_id,
+            set_code,
+            collector_number,
+            oracle_id,
+        })
+        .collect();
     if stars.is_empty() {
         return Ok(Vec::new());
     }
@@ -144,6 +164,16 @@ pub(super) async fn load_foil_variant_pairs(
         }
     }
     Ok(pairs)
+}
+
+/// A purely-foil `…★` star card, projected to the fields the pairing keys off (its
+/// field names match `card::Model` so the resolution loops read the same).
+struct StarCard {
+    id: i32,
+    external_id: String,
+    set_code: String,
+    collector_number: String,
+    oracle_id: Option<String>,
 }
 
 /// A resolved nonfoil base card (the fields the pairing needs).
