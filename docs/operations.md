@@ -38,7 +38,8 @@ insecure secret (logged as a warning) — never set that outside local dev. The 
 either backend (the two backend-coupled migrations, m001's case-insensitive email index
 and m017's nullable `password_hash`, branch on `manager.get_database_backend()`).
 Postgres pool sizing comes from `DB_MAX_CONNECTIONS`/`DB_MIN_CONNECTIONS`/
-`DB_CONNECT_TIMEOUT_SECS`/`DB_ACQUIRE_TIMEOUT_SECS` (defaults 10/0/15/30); SQLite stays
+`DB_CONNECT_TIMEOUT_SECS`/`DB_ACQUIRE_TIMEOUT_SECS` (defaults 10/1/15/30 — min 1 keeps
+one connection warm so the first post-idle request skips connect latency); SQLite stays
 single-connection with WAL + the REGEXP function. The startup log line reports the
 selected backend. SQLite remains the default — nothing to install. (`deploy/docker-compose.yml`
 brings up Postgres + Redis for local parity / the gated integration tests.)
@@ -255,7 +256,7 @@ Both `web/scripts/*` require the Playwright browsers installed
 
 - **API:** `DATABASE_URL` (default `sqlite://tcglense.db?mode=rwc`; the scheme selects
   the backend at runtime — `sqlite://` or `postgres://`, both drivers compiled in),
-  `DB_MAX_CONNECTIONS` (10) / `DB_MIN_CONNECTIONS` (0) / `DB_CONNECT_TIMEOUT_SECS` (15) /
+  `DB_MAX_CONNECTIONS` (10) / `DB_MIN_CONNECTIONS` (1) / `DB_CONNECT_TIMEOUT_SECS` (15) /
   `DB_ACQUIRE_TIMEOUT_SECS` (30) — Postgres connection-pool sizing, ignored on SQLite,
   `REDIS_URL` (unset; a `redis://` — or `rediss://` for TLS — URL backing the per-IP +
   per-user rate limiters — shared across instances when set, in-memory otherwise; fails

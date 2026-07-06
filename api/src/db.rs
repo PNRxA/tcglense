@@ -74,7 +74,12 @@ fn apply_postgres_pool(options: &mut ConnectOptions) {
     use crate::config::env_parse;
     options
         .max_connections(env_parse::<u32>("DB_MAX_CONNECTIONS").unwrap_or(10))
-        .min_connections(env_parse::<u32>("DB_MIN_CONNECTIONS").unwrap_or(0))
+        // Keep one connection warm (min 1) so the first request after an idle period
+        // doesn't pay Postgres's backend-fork + TLS-handshake latency — the win a
+        // front-of-DB pooler would otherwise buy, for free. Still conservative against
+        // small managed-Postgres connection ceilings; set DB_MIN_CONNECTIONS=0 to opt
+        // back into a fully lazy pool.
+        .min_connections(env_parse::<u32>("DB_MIN_CONNECTIONS").unwrap_or(1))
         .connect_timeout(Duration::from_secs(
             env_parse::<u64>("DB_CONNECT_TIMEOUT_SECS").unwrap_or(15),
         ))
