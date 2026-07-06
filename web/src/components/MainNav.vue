@@ -69,7 +69,13 @@ function warmSection(value: string) {
           <Layers class="mr-1.5 size-4" aria-hidden="true" />
           Products
         </NavigationMenuTrigger>
-        <NavigationMenuContent>
+        <!-- Force a floating dropdown at every width the nav shows. The shared
+             NavigationMenuContent only turns `absolute md:w-auto` at the md breakpoint;
+             between sm and md (MainNav is visible from sm, but this override was absent)
+             the panel lays out static, so its z-50 goes inert and it slips under page
+             content like the sealed-product image (issue #259). Same override UserMenu
+             already carries — MainNav dropdowns are left-aligned, so no end-0. -->
+        <NavigationMenuContent class="absolute top-full w-auto">
           <ul class="grid w-56 gap-1">
             <!-- Cards -->
             <li>
@@ -127,7 +133,8 @@ function warmSection(value: string) {
           <Library class="mr-1.5 size-4" aria-hidden="true" />
           Collection
         </NavigationMenuTrigger>
-        <NavigationMenuContent>
+        <!-- absolute top-full w-auto: floating dropdown at every width (see Products note, issue #259). -->
+        <NavigationMenuContent class="absolute top-full w-auto">
           <ul class="grid w-56 gap-1">
             <li>
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
@@ -172,7 +179,8 @@ function warmSection(value: string) {
           <Heart class="mr-1.5 size-4" aria-hidden="true" />
           Wish list
         </NavigationMenuTrigger>
-        <NavigationMenuContent>
+        <!-- absolute top-full w-auto: floating dropdown at every width (see Products note, issue #259). -->
+        <NavigationMenuContent class="absolute top-full w-auto">
           <ul class="grid w-56 gap-1">
             <li>
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
