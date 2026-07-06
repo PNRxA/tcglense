@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import { ArrowLeft } from '@lucide/vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import { RouterLink } from 'vue-router'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
@@ -272,9 +273,21 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       <template v-else>
         <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
         <template v-if="byDrop">
-          <DropSection v-for="drop in dropGroups" :key="drop.slug ?? drop.title" :drop="drop">
-            <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
-          </DropSection>
+          <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="dropTotal"
+              :loading="dropsQuery.isPlaceholderData.value"
+              :scroll-target="resultsTop"
+            />
+          </div>
+          <UpdatingOverlay :loading="dropsQuery.isPlaceholderData.value">
+            <DropSection v-for="drop in dropGroups" :key="drop.slug ?? drop.title" :drop="drop">
+              <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
+            </DropSection>
+          </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"
@@ -288,7 +301,18 @@ const searchError = computed(() => searchErrorMessage(listError.value))
 
         <!-- Flat: the whole set as one collector-ordered grid. -->
         <template v-else>
-          <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :loading="cardsQuery.isPlaceholderData.value"
+              :scroll-target="resultsTop"
+            />
+          </div>
+          <UpdatingOverlay :loading="cardsQuery.isPlaceholderData.value">
+            <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+          </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"

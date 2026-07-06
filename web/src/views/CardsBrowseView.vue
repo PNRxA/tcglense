@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
@@ -110,7 +111,19 @@ useClampPage(page, () => ({
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
       </div>
-      <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+      <!-- Top pager mirrors the one below (#264) so a long grid can be paged from the top too. -->
+      <div class="mb-6">
+        <CardPagination
+          v-model:page="page"
+          :page-size="CARD_PAGE_SIZE"
+          :total="total"
+          :loading="cardsQuery.isPlaceholderData.value"
+          :scroll-target="resultsTop"
+        />
+      </div>
+      <UpdatingOverlay :loading="cardsQuery.isPlaceholderData.value">
+        <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+      </UpdatingOverlay>
       <div class="mt-10">
         <CardPagination
           v-model:page="page"

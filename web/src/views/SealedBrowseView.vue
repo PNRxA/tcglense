@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import ProductGrid from '@/components/products/ProductGrid.vue'
 import ProductGridSkeleton from '@/components/products/ProductGridSkeleton.vue'
@@ -174,7 +175,19 @@ useClampPage(page, () => ({
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="PRODUCT_SORT_OPTIONS" />
       </div>
-      <ProductGrid :game="game" :products="products" />
+      <!-- Top pager mirrors the one below (#264) so a long grid can be paged from the top too. -->
+      <div class="mb-6">
+        <CardPagination
+          v-model:page="page"
+          :page-size="PRODUCT_PAGE_SIZE"
+          :total="total"
+          :loading="productsQuery.isPlaceholderData.value"
+          :scroll-target="resultsTop"
+        />
+      </div>
+      <UpdatingOverlay :loading="productsQuery.isPlaceholderData.value">
+        <ProductGrid :game="game" :products="products" />
+      </UpdatingOverlay>
       <div class="mt-10">
         <CardPagination
           v-model:page="page"

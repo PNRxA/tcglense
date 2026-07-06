@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
@@ -529,39 +530,50 @@ const errorMessage = computed(() =>
              the catalog grid (every card in the drop) with wanted badges + dimmed
              not-wanted cards. -->
         <template v-else-if="byDrop">
+          <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <!-- Two typed loops (not one union v-for): wishlisted drops render the
                collection grid off wish-list holdings, ghost drops the catalog grid off
                every card. -->
-          <template v-if="!showGhosts">
-            <DropSection
-              v-for="drop in listedDropGroups"
-              :key="drop.slug ?? drop.title"
-              :drop="drop"
-            >
-              <CollectionGrid
-                :game="game"
-                :entries="drop.cards"
-                list="wishlist"
-                :owned-marks="ownedMarks"
-              />
-            </DropSection>
-          </template>
-          <template v-else>
-            <DropSection
-              v-for="drop in ghostDropGroups"
-              :key="drop.slug ?? drop.title"
-              :drop="drop"
-            >
-              <CardGrid
-                :game="game"
-                :cards="drop.cards"
-                :ownership="ownership"
-                :ghost-unowned="ownershipReady"
-                list="wishlist"
-                :owned-marks="ownedMarks"
-              />
-            </DropSection>
-          </template>
+          <UpdatingOverlay :loading="updating">
+            <template v-if="!showGhosts">
+              <DropSection
+                v-for="drop in listedDropGroups"
+                :key="drop.slug ?? drop.title"
+                :drop="drop"
+              >
+                <CollectionGrid
+                  :game="game"
+                  :entries="drop.cards"
+                  list="wishlist"
+                  :owned-marks="ownedMarks"
+                />
+              </DropSection>
+            </template>
+            <template v-else>
+              <DropSection
+                v-for="drop in ghostDropGroups"
+                :key="drop.slug ?? drop.title"
+                :drop="drop"
+              >
+                <CardGrid
+                  :game="game"
+                  :cards="drop.cards"
+                  :ownership="ownership"
+                  :ghost-unowned="ownershipReady"
+                  list="wishlist"
+                  :owned-marks="ownedMarks"
+                />
+              </DropSection>
+            </template>
+          </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"
@@ -577,22 +589,32 @@ const errorMessage = computed(() =>
              not-wanted cards. The dim waits for the counts to load (ownershipReady) so
              wishlisted cards don't flash as ghosts on first paint / a page change. -->
         <template v-else>
-          <CollectionGrid
-            v-if="!showGhosts"
-            :game="game"
-            :entries="listedEntries"
-            list="wishlist"
-            :owned-marks="ownedMarks"
-          />
-          <CardGrid
-            v-else
-            :game="game"
-            :cards="ghostCards"
-            :ownership="ownership"
-            :ghost-unowned="ownershipReady"
-            list="wishlist"
-            :owned-marks="ownedMarks"
-          />
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
+          </div>
+          <UpdatingOverlay :loading="updating">
+            <CollectionGrid
+              v-if="!showGhosts"
+              :game="game"
+              :entries="listedEntries"
+              list="wishlist"
+              :owned-marks="ownedMarks"
+            />
+            <CardGrid
+              v-else
+              :game="game"
+              :cards="ghostCards"
+              :ownership="ownership"
+              :ghost-unowned="ownershipReady"
+              list="wishlist"
+              :owned-marks="ownedMarks"
+            />
+          </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"
