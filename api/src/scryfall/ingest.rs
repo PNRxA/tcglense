@@ -27,6 +27,7 @@ use super::model::{ScryfallCard, ScryfallSet};
 use super::progress::ImportProgress;
 use super::{DATASET, GAME, GAME_NAME};
 use crate::datasets::SyncSource;
+use crate::db::upsert_changed_guard;
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
@@ -417,6 +418,24 @@ pub(super) async fn flush_cards(
                             | card::Column::Game
                             | card::Column::ExternalId
                             | card::Column::CreatedAt
+                    )
+                }))
+                // Skip the write entirely when the row is unchanged: on the daily
+                // re-sync most of the ~100k cards are byte-identical, and rewriting them
+                // would churn a new MVCC tuple + all indexes for nothing. `updated_at`
+                // stays in the SET list (a real change still bumps it) but is excluded
+                // from the compare, or its always-`now()` value would make every row look
+                // changed and defeat the guard — so `cards.updated_at` now means "last
+                // time a datum actually changed", not "last sync touch" (read nowhere
+                // today; sitemap lastmod uses ingest_state/released_at).
+                .action_and_where(upsert_changed_guard::<card::Column>("cards", |c| {
+                    matches!(
+                        c,
+                        card::Column::Id
+                            | card::Column::Game
+                            | card::Column::ExternalId
+                            | card::Column::CreatedAt
+                            | card::Column::UpdatedAt
                     )
                 }))
                 .to_owned(),

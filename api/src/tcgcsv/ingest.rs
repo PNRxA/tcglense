@@ -28,6 +28,7 @@ use sea_orm::{
 use super::model::{Group, aggregate_prices, published_on_to_date};
 use super::progress::SyncProgress;
 use super::{BackfillError, GAME, MTG_CATEGORY_ID, PRODUCTS_DATASET};
+use crate::db::upsert_changed_guard;
 use crate::entities::prelude::{IngestState, Product};
 use crate::entities::{ingest_state, product};
 
@@ -224,6 +225,20 @@ async fn upsert_products(
                                 | product::Column::Game
                                 | product::Column::ExternalId
                                 | product::Column::CreatedAt
+                        )
+                    }))
+                    // Skip the write when the sealed product is unchanged — the daily
+                    // sweep re-upserts every row on each version bump, and most are
+                    // identical. `updated_at` stays in the SET list but out of the
+                    // compare (same rationale as the card upsert in `scryfall::ingest`).
+                    .action_and_where(upsert_changed_guard::<product::Column>("products", |c| {
+                        matches!(
+                            c,
+                            product::Column::Id
+                                | product::Column::Game
+                                | product::Column::ExternalId
+                                | product::Column::CreatedAt
+                                | product::Column::UpdatedAt
                         )
                     }))
                     .to_owned(),

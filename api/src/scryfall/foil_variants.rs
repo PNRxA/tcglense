@@ -57,6 +57,20 @@ WHERE cards.id IN (
                     AND s.finishes = 'foil'
                     AND s.collector_number = b.collector_number || '★'
         WHERE b.finishes = 'nonfoil'
+    )
+  -- Only rewrite a base whose foil price would actually change. Without this, every
+  -- matched base is re-written each tick even when the sibling price is unchanged,
+  -- churning an MVCC tuple + indexes for nothing. `IS DISTINCT FROM` is null-safe and
+  -- valid on both Postgres and SQLite (≥ 3.39).
+  AND cards.price_usd_foil IS DISTINCT FROM (
+        SELECT sc.price_usd_foil
+        FROM cards sc
+        WHERE sc.game = cards.game
+          AND sc.set_code = cards.set_code
+          AND sc.oracle_id = cards.oracle_id
+          AND sc.finishes = 'foil'
+          AND sc.collector_number = cards.collector_number || '★'
+        LIMIT 1
     )"#;
 
 #[cfg(test)]
@@ -131,8 +145,10 @@ mod tests {
 
         enrich_foil_variant_prices(&db).await.expect("enrich once");
         assert_eq!(foil_price(&db, "ext-1").await.as_deref(), Some("29.39"));
-        // Re-running is a no-op (same value); a later price move re-copies the new value.
-        enrich_foil_variant_prices(&db).await.expect("enrich again");
+        // Re-running is a no-op (same value): the guard skips the write, so zero rows are
+        // touched; a later price move re-copies the new value.
+        let reran = enrich_foil_variant_prices(&db).await.expect("enrich again");
+        assert_eq!(reran, 0, "unchanged base is not rewritten");
         assert_eq!(foil_price(&db, "ext-1").await.as_deref(), Some("29.39"));
 
         let star = card::Entity::find()

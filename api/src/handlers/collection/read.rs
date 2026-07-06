@@ -9,7 +9,7 @@ use axum::{
     extract::State,
 };
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     SelectTwo,
 };
 
@@ -233,12 +233,15 @@ pub async fn owned_counts(
     // response can be keyed by the external id the client sent. Unknown ids just don't
     // appear here (and so never in the result).
     let external_by_internal: HashMap<i32, String> = Card::find()
+        .select_only()
+        .column(card::Column::Id)
+        .column(card::Column::ExternalId)
         .filter(card::Column::Game.eq(game.as_str()))
         .filter(card::Column::ExternalId.is_in(external_ids))
+        .into_tuple::<(i32, String)>()
         .all(&state.db)
         .await?
         .into_iter()
-        .map(|c| (c.id, c.external_id))
         .collect();
     if external_by_internal.is_empty() {
         return Ok(Json(OwnedCountsResponse {
