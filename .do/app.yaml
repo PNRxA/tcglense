@@ -80,7 +80,7 @@ services:
       # ── Non-secret config ────────────────────────────────────────────────────────
       - key: EMAIL_FROM
         scope: RUN_TIME
-        value: onboarding@resend.dev        # <-- your verified sending address
+        value: noreply@t.tcglense.com       # Resend-verified sending subdomain
       # Ephemeral disk ⇒ don't cache images locally: stream from upstream and let the
       # fronting CDN cache them. REQUIRES a real CDN in front (Cloudflare); without one
       # every image view re-fetches from Scryfall.
@@ -100,7 +100,7 @@ services:
         value: "true"
       - key: PUBLIC_SITE_URL
         scope: RUN_TIME
-        value: https://tcglense.example.com   # <-- your domain
+        value: https://tcglense.com
 
 # Single service ⇒ everything routes to it; this block is explicit but optional.
 ingress:
@@ -115,5 +115,5 @@ ingress:
 # for the image CDN) add the domain here and CNAME it from Cloudflare (proxied). Leaving
 # this commented lets `apps create` succeed with the default *.ondigitalocean.app URL.
 # domains:
-#   - domain: tcglense.example.com
+#   - domain: tcglense.com
 #     type: PRIMARY
