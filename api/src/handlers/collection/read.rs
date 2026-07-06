@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::State,
 };
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
@@ -18,7 +18,7 @@ use crate::db::Dialect;
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 use crate::error::AppError;
-use crate::extract::JsonBody;
+use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::{
     CardResponse, Page, SortDir, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card,
     require_game, resolve_set_scope, search_condition, summarize_holdings,

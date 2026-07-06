@@ -14,7 +14,7 @@
 //! with the sync), so each carries a long [`SITEMAP_CACHE_CONTROL`].
 
 use axum::{
-    extract::{Path, State},
+    extract::State,
     http::header,
     response::{IntoResponse, Response},
 };
@@ -24,6 +24,7 @@ use crate::catalog;
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 use crate::error::AppError;
+use crate::extract::Path;
 use crate::state::AppState;
 
 /// Protocol cap on URLs per sitemap (50 000). Cards are split into child sitemaps

@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
 };
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
@@ -13,7 +13,7 @@ use crate::auth::extractor::AuthUser;
 use crate::entities::collection_item;
 use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
-use crate::extract::JsonBody;
+use crate::extract::{JsonBody, Path};
 use crate::handlers::shared::{load_card, require_game, validate_quantity};
 use crate::state::AppState;
 

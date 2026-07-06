@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::State,
 };
 use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::entities::card_price_history;
 use crate::entities::prelude::CardPriceHistory;
 use crate::error::AppError;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{DataBody, load_card, require_game};
 use crate::state::AppState;
 

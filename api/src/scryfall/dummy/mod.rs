@@ -315,7 +315,7 @@ pub async fn seed(db: &DatabaseConnection) -> Result<(), IngestError> {
                 db,
                 ingest::IngestStatus::Error,
                 ingest::IngestStateUpdate {
-                    detail: Some(ingest::truncate(&err.to_string(), 500)),
+                    detail: Some(ingest::truncate(&err.public_detail(), 500)),
                     finished_at: Some(Utc::now()),
                     ..Default::default()
                 },
