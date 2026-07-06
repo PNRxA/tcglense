@@ -3,13 +3,14 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::State,
 };
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
 use crate::entities::card;
 use crate::entities::prelude::Card;
 use crate::error::AppError;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DataBody, Page, SortField, apply_card_sort, build_page, load_card, require_game,
     trim_query,

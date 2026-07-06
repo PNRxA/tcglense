@@ -148,20 +148,27 @@ export function useAllCardsQuery(game: Ref<string>, opts: CardListQueryOptions) 
 
 /** A page (by drop) of a drop-grouped set's cards, grouped into Secret Lair drops.
  * The caller gates it on the by-drop view being active via `opts.enabled` (the
- * endpoint 404s for a set without drops — see `CardSet.has_drops`). */
+ * endpoint 404s for a set without drops — see `CardSet.has_drops`). `query` narrows
+ * the cards within each drop; the optional `drop` narrows the drops by their curated
+ * title (SetView's "filter drops by name" box — the show-ghosts by-drop views omit
+ * it). Both are reactive and ride the query key. */
 export function useSetDropsQuery(
   game: Ref<string>,
   code: Ref<string>,
-  opts: { page: Ref<number>; query: Ref<string>; enabled?: Ref<boolean> },
+  opts: { page: Ref<number>; query: Ref<string>; drop?: Ref<string>; enabled?: Ref<boolean> },
 ) {
+  // Fall back to a stable empty ref so the query key is well-formed whether or not the
+  // caller wires the drop-title filter (mirrors useSetCardsQuery's includeRelated).
+  const drop = opts.drop ?? ref('')
   return useQuery({
-    queryKey: ['set-drops', game, code, opts.query, opts.page],
+    queryKey: ['set-drops', game, code, opts.query, drop, opts.page],
     queryFn: ({ signal }) =>
       listSetDrops(
         game.value,
         code.value,
         {
           q: opts.query.value || undefined,
+          drop: drop.value || undefined,
           page: opts.page.value,
           pageSize: DROP_PAGE_SIZE,
         },

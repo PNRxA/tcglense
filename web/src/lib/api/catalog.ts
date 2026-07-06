@@ -41,6 +41,9 @@ export interface CardListParams {
    * (the quick-add "pick a printing of this name" step). Ignored by the set-cards
    * endpoint. */
   name?: string
+  /** By-drop endpoint only: narrow to the drops whose curated title matches this
+   * (case-insensitive substring) — the by-drop view's "filter drops by name" box. */
+  drop?: string
 }
 
 function cardQuery(params: CardListParams = {}): string {
@@ -115,11 +118,12 @@ export function getCardPrintingsByName(game: string, name: string): Promise<Card
 }
 
 /** Browse a drop-grouped set (e.g. Secret Lair) broken into named drops,
- * paginated by drop. Only valid for sets where `CardSet.has_drops` is true. */
+ * paginated by drop. Only valid for sets where `CardSet.has_drops` is true.
+ * `q` narrows the cards within each drop; `drop` narrows the drops by title. */
 export function listSetDrops(
   game: string,
   code: string,
-  params?: Pick<CardListParams, 'page' | 'pageSize' | 'q'>,
+  params?: Pick<CardListParams, 'page' | 'pageSize' | 'q' | 'drop'>,
   signal?: AbortSignal,
 ): Promise<DropGroupPage> {
   const g = encodeURIComponent(game)

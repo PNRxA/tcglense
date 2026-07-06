@@ -181,6 +181,7 @@ fn params(sort: Option<&str>, dir: Option<&str>) -> ListParams {
         sort: sort.map(str::to_string),
         dir: dir.map(str::to_string),
         name: None,
+        drop: None,
     }
 }
 
@@ -194,6 +195,7 @@ fn list_params_clamps_page_size() {
         sort: None,
         dir: None,
         name: None,
+        drop: None,
     };
     assert_eq!(p.page_and_size(), (1, MAX_PAGE_SIZE));
     let d = ListParams {
@@ -204,6 +206,7 @@ fn list_params_clamps_page_size() {
         sort: None,
         dir: None,
         name: None,
+        drop: None,
     };
     assert_eq!(d.page_and_size(), (1, DEFAULT_PAGE_SIZE));
     assert_eq!(d.search(), None);
@@ -485,6 +488,7 @@ fn drop_page_and_size_clamps() {
         sort: None,
         dir: None,
         name: None,
+        drop: None,
     };
     assert_eq!(p.drop_page_and_size(), (1, MAX_DROP_PAGE_SIZE));
     let d = ListParams {
@@ -495,6 +499,7 @@ fn drop_page_and_size_clamps() {
         sort: None,
         dir: None,
         name: None,
+        drop: None,
     };
     assert_eq!(d.drop_page_and_size(), (1, DEFAULT_DROP_PAGE_SIZE));
 }

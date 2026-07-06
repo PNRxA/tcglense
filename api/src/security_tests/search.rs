@@ -136,3 +136,49 @@ async fn set_drops_color_search_succeeds() {
     assert_eq!(groups[0]["title"].as_str(), Some("Wild in Bloom"));
     assert_eq!(groups[0]["card_count"].as_u64(), Some(1));
 }
+
+/// The by-drop view's "filter drops by name" box (`?drop=`) narrows the response to the
+/// drops whose curated title matches — case-insensitively — spanning the whole set (not
+/// one page), and reports the filtered count so pagination stays correct.
+#[tokio::test]
+async fn set_drops_title_filter_narrows_by_drop_name() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+
+    // Two cards in two different named drops: 2658 -> "Wild in Bloom", 168 -> "Inked".
+    crate::test_support::card_set_model("sld")
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld set");
+    for (id, cn) in [(1, "2658"), (2, "168")] {
+        crate::entities::card::Model {
+            set_code: "sld".into(),
+            set_name: "Secret Lair Drop".into(),
+            collector_number: cn.into(),
+            collector_number_int: cn.parse().ok(),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld card");
+    }
+    let app = crate::build_router(state);
+
+    // "BLOOM" (any case) matches only the "Wild in Bloom" drop; the total is the
+    // filtered drop count, not the set's total drops.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/drops?drop=BLOOM")).await;
+    assert_eq!(status, StatusCode::OK, "drop filter must succeed: {body:?}");
+    let groups = body["data"].as_array().expect("drop groups");
+    assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
+    assert_eq!(groups[0]["title"].as_str(), Some("Wild in Bloom"));
+    assert_eq!(body["total"].as_u64(), Some(1), "total reflects the filtered drops");
+
+    // A filter matching no drop title is an empty (still 200) page.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/drops?drop=no-such-drop")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"].as_array().map(Vec::len), Some(0));
+    assert_eq!(body["total"].as_u64(), Some(0));
+}

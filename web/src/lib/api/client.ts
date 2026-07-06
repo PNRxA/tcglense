@@ -37,9 +37,9 @@ interface RequestOptions {
 
 /**
  * Encode the shared list-endpoint query params in one place. Keys are emitted in a fixed
- * order (page, page_size, q, sort, dir, set, include_related, name) and falsy values are
- * skipped (a 0 page, empty query, or false flag drops out). Returns '' or a leading `?…`
- * string.
+ * order (page, page_size, q, sort, dir, set, include_related, name, drop) and falsy values
+ * are skipped (a 0 page, empty query, or false flag drops out). Returns '' or a leading
+ * `?…` string.
  */
 export function listQuery(params: {
   page?: number
@@ -50,6 +50,7 @@ export function listQuery(params: {
   set?: string
   includeRelated?: boolean
   name?: string
+  drop?: string
 }): string {
   const search = new URLSearchParams()
   if (params.page) search.set('page', String(params.page))
@@ -60,6 +61,7 @@ export function listQuery(params: {
   if (params.set) search.set('set', params.set)
   if (params.includeRelated) search.set('include_related', 'true')
   if (params.name) search.set('name', params.name)
+  if (params.drop) search.set('drop', params.drop)
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }

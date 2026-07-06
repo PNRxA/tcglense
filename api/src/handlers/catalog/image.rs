@@ -2,13 +2,14 @@
 //! on disk on first request. The URL allow-list is also reused by the set-icon proxy.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::State,
     http::header,
     response::{IntoResponse, Response},
 };
 
 use crate::entities::card;
 use crate::error::AppError;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{load_card, require_game, stored_faces};
 use crate::scryfall::model::StoredFace;
 use crate::state::AppState;

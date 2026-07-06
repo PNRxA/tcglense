@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, prelude::DateTimeUtc};
 use serde::Serialize;
@@ -12,6 +12,7 @@ use crate::catalog;
 use crate::entities::ingest_state;
 use crate::entities::prelude::IngestState;
 use crate::error::AppError;
+use crate::extract::Path;
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
 

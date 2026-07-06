@@ -22,7 +22,7 @@
 use axum::{
     Json,
     body::Body,
-    extract::{Path, State},
+    extract::State,
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH, USER_AGENT},
@@ -30,7 +30,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::{error::AppError, state::AppState};
+use crate::{error::AppError, extract::Path, state::AppState};
 
 /// `Cache-Control` for the small mirror **metadata** (the Scryfall bulk-data catalog and
 /// set list, and every TCGCSV JSON / `last-updated.txt`). Shared-cacheable for an hour —
@@ -81,8 +81,12 @@ fn sanitize_tcgcsv_path(path: &str) -> Option<String> {
 }
 
 /// Map a request-path upstream failure to a `502`, tagged with which mirror hop failed.
+/// The raw upstream error (`reqwest`/`IngestError` `Display` — which can carry the
+/// upstream URL, connection/TLS detail, or JSON-decode internals) is logged, never sent:
+/// the client sees only the static `context` tag.
 fn bad_gateway(context: &str, err: impl std::fmt::Display) -> AppError {
-    AppError::BadGateway(format!("mirror: {context}: {err}"))
+    tracing::warn!(context, error = %err, "mirror upstream request failed");
+    AppError::BadGateway(format!("mirror: {context}: upstream request failed"))
 }
 
 /// Stream an upstream `GET` through as the response, forwarding the upstream

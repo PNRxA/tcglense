@@ -29,6 +29,7 @@ mod rate_limit;
 mod refresh;
 mod registration;
 mod request_body;
+mod request_params;
 mod search;
 mod sitemap;
 mod web_root;

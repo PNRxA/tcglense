@@ -6,7 +6,7 @@
 use axum::{
     Json,
     body::Bytes,
-    extract::{Path, Query, State},
+    extract::State,
     http::StatusCode,
 };
 use chrono::Utc;
@@ -19,7 +19,7 @@ use crate::collection_import::{self, ImportSummary, Provider, ReconcileMode};
 use crate::entities::collection_source;
 use crate::entities::prelude::CollectionSource;
 use crate::error::AppError;
-use crate::extract::JsonBody;
+use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::require_game;
 use crate::state::AppState;
 

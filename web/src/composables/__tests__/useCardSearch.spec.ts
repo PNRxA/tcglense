@@ -4,7 +4,7 @@ import { computed, defineComponent, h, nextTick, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
-import { useCardSearch } from '../useCardSearch'
+import { useCardSearch, useDropFilter } from '../useCardSearch'
 
 const VALID_SORTS = ALL_CARDS_SORT_OPTIONS.map((option) => option.value)
 
@@ -198,5 +198,122 @@ describe('useCardSearch', () => {
     expect(restored.page.value).toBe(3)
     expect(restored.query.value).toBe('goblin')
     expect(restored.searchInput.value).toBe('goblin')
+  })
+})
+
+// Same throwaway-harness pattern as mountSearch, for the by-drop "filter drops by name"
+// composable (SetView's ?drop= box).
+function mountDropFilter(router: Router) {
+  let api!: ReturnType<typeof useDropFilter>
+  const harness = mount(
+    defineComponent({
+      setup() {
+        api = useDropFilter()
+        return () => h('div')
+      },
+    }),
+    { global: { plugins: [router] } },
+  )
+  return { api, harness }
+}
+
+async function startDrop(at: string) {
+  const router = makeRouter()
+  await router.push(at)
+  await router.isReady()
+  const { api } = mountDropFilter(router)
+  await nextTick()
+  return { router, api }
+}
+
+describe('useDropFilter', () => {
+  it('hydrates the box and committed filter from ?drop', async () => {
+    const { api } = await startDrop('/cards/mtg/sets/sld?drop=bloom')
+    expect(api.dropQuery.value).toBe('bloom')
+    expect(api.dropInput.value).toBe('bloom')
+  })
+
+  it('debounces the box into ?drop and restarts paging', async () => {
+    const { router, api } = await startDrop('/cards/mtg/sets/sld?page=4')
+    api.dropInput.value = 'galaxy'
+    // Below the 300ms debounce: nothing committed yet.
+    await flushPromises()
+    expect(query(router).drop).toBeUndefined()
+
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).drop).toBe('galaxy')
+    // A new filter restarts paging — the old page is meaningless once the list narrows.
+    expect(query(router).page).toBeUndefined()
+  })
+
+  it('drops the ?drop key when the box is cleared', async () => {
+    const { router, api } = await startDrop('/cards/mtg/sets/sld?drop=bloom')
+    api.dropInput.value = ''
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).drop).toBeUndefined()
+    expect(api.dropQuery.value).toBe('')
+  })
+
+  it('preserves the card search ?q when committing a drop filter', async () => {
+    const { router, api } = await startDrop('/cards/mtg/sets/sld?q=elf')
+    api.dropInput.value = 'bloom'
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).drop).toBe('bloom')
+    expect(query(router).q).toBe('elf')
+  })
+
+  it('resyncs the box to the destination query on navigation (no leak)', async () => {
+    const { router, api } = await startDrop('/cards/mtg/sets/sld?drop=bloom')
+    api.dropInput.value = 'gal' // half-typed, inside the debounce
+    await flushPromises()
+
+    await router.replace({ path: '/cards/mtg/sets/other', query: {} })
+    await flushPromises()
+    // The box resyncs to the (empty) destination immediately…
+    expect(api.dropInput.value).toBe('')
+
+    // …and the pending 'gal' never lands on the destination set.
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).drop).toBeUndefined()
+  })
+
+  it('drops a pending edit when the view leaves by-drop (no phantom ?drop on flat view)', async () => {
+    // Toggling to All-cards is a same-path ?view=all change the path watcher can't see, so
+    // useDropFilter takes the by-drop flag to cancel a mid-debounce keystroke itself.
+    const router = makeRouter()
+    await router.push('/cards/mtg/sets/sld')
+    await router.isReady()
+    const active = ref(true)
+    let api!: ReturnType<typeof useDropFilter>
+    mount(
+      defineComponent({
+        setup() {
+          api = useDropFilter(active)
+          return () => h('div')
+        },
+      }),
+      { global: { plugins: [router] } },
+    )
+    await nextTick()
+
+    api.dropInput.value = 'galaxy' // half-typed, inside the 300ms debounce
+    await flushPromises()
+
+    // Leave the by-drop view before the debounce fires (same path, ?view=all).
+    active.value = false
+    await router.replace({ query: { view: 'all' } })
+    await nextTick()
+    // The box resyncs to the committed (empty) value…
+    expect(api.dropInput.value).toBe('')
+
+    // …and the pending 'galaxy' never lands a phantom ?drop on the flat-view URL.
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).drop).toBeUndefined()
+    expect(query(router).view).toBe('all')
   })
 })

@@ -1,4 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
+import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { defineConfig, type Plugin } from 'vite'
@@ -30,6 +31,15 @@ const SITE_URL = (process.env.VITE_SITE_URL ?? 'http://localhost:5173').replace(
 // DEFAULT_OG_IMAGE for the runtime, per-route default).
 const OG_IMAGE_PATH = '/og-image.png'
 const OG_IMAGE_URL = `${SITE_URL}${OG_IMAGE_PATH}`
+
+// App version, read from package.json and injected at build time so the footer can show
+// which release is deployed (issue #250). Read here rather than imported so vue-tsc's
+// project build doesn't pull package.json (outside src/) into the app's type graph.
+const APP_VERSION = (
+  JSON.parse(
+    readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf-8'),
+  ) as { version: string }
+).version
 
 function robotsTxt(): string {
   return [
@@ -94,6 +104,12 @@ function seoDiscoveryFiles(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    // Expose the package.json version to the app (consumed in AppFooter.vue). Nothing
+    // sets VITE_APP_VERSION via .env, so this define is its sole source — no conflict
+    // with Vite's own env injection.
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
+  },
   plugins: [vue(), vueDevTools(), tailwindcss(), seoDiscoveryFiles()],
   resolve: {
     alias: {
