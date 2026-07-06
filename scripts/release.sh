@@ -3,8 +3,11 @@
 # Cut a TCGLense release.
 #
 # Prompts for a version number, bumps it in api/Cargo.toml (+ Cargo.lock) and
-# web/package.json (+ package-lock.json), commits, tags `vX.Y.Z`, pushes, and
-# publishes a GitHub Release. Publishing the release fires the "Release images"
+# web/package.json (+ package-lock.json), then lands the bump on `main` through a
+# pull request — `main` is protected, so a direct push is rejected. It commits on a
+# short-lived `chore/release-vX.Y.Z` branch, opens a PR, merges it with a merge
+# commit (so the tagged bump commit itself lands in main's history), tags `vX.Y.Z`,
+# and publishes a GitHub Release. Publishing the release fires the "Release images"
 # workflow (.github/workflows/release.yml), which builds and pushes the Docker
 # images (tcglense-api / tcglense-web / tcglense) to GHCR + Docker Hub.
 #
@@ -39,6 +42,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git rep
 gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run: gh auth login"
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+BASE_BRANCH="main"  # the protected branch we cut from and merge the release PR into
 if [ "$BRANCH" != "main" ]; then
   red "You are on branch '$BRANCH', not 'main'. Releases are normally cut from main."
   read -r -p "Continue on '$BRANCH' anyway? [y/N] " reply
@@ -53,10 +57,10 @@ fi
 # Make sure we're not behind the remote (missing commits that should be in the release).
 echo "-> Fetching from origin..."
 git fetch --quiet --tags origin
-if git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
-  behind="$(git rev-list --count "HEAD..origin/$BRANCH")"
+if git rev-parse --verify --quiet "origin/$BASE_BRANCH" >/dev/null; then
+  behind="$(git rev-list --count "HEAD..origin/$BASE_BRANCH")"
   if [ "$behind" -gt 0 ]; then
-    die "local '$BRANCH' is $behind commit(s) behind origin/$BRANCH. Pull first."
+    die "HEAD is $behind commit(s) behind origin/$BASE_BRANCH. Pull/rebase onto it first."
   fi
 fi
 
@@ -103,31 +107,56 @@ if [ -n "$(git ls-remote --tags origin "$TAG")" ]; then
   die "tag $TAG already exists on origin."
 fi
 
+# --- Refuse to clobber an existing release branch --------------------------------
+RELEASE_BRANCH="chore/release-$TAG"
+if git rev-parse -q --verify "refs/heads/$RELEASE_BRANCH" >/dev/null; then
+  die "branch $RELEASE_BRANCH already exists locally."
+fi
+if [ -n "$(git ls-remote --heads origin "$RELEASE_BRANCH")" ]; then
+  die "branch $RELEASE_BRANCH already exists on origin."
+fi
+
 # --- Confirm ---------------------------------------------------------------------
 echo
 bold "About to:"
 echo "  1. Bump api/Cargo.toml + web/package.json to $VERSION (and lockfiles)"
-echo "  2. Commit on '$BRANCH': chore(release): $TAG"
-echo "  3. Tag $TAG and push the branch + tag to origin"
-echo "  4. Publish GitHub Release $TAG$( $PRERELEASE && printf ' (pre-release)' ) — this builds + pushes the Docker images"
+echo "  2. Commit the bump on '$RELEASE_BRANCH' and tag it $TAG"
+echo "  3. Open a PR into $BASE_BRANCH and merge it (merge commit)"
+echo "  4. Push $TAG and publish GitHub Release $TAG$( $PRERELEASE && printf ' (pre-release)' ) — this builds + pushes the Docker images"
 echo
 read -r -p "Proceed? [y/N] " reply
 [ "$reply" = "y" ] || [ "$reply" = "Y" ] || die "aborted (no changes made)."
 
 # From here the working tree gets mutated. On any failure/abort before we finish, tell
 # the user exactly how to recover so a partial release isn't a mystery.
+branch_created=false
 committed=false
+tagged=false
+pushed=false
+merged=false
 release_ok=false
 recover() {
   $release_ok && return 0
   echo >&2
-  if ! $committed; then
-    red "Release $TAG aborted. The version bump is only in your working tree; discard it:"
-    red "  git checkout -- api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json"
+  red "Release $TAG did not finish. Current state and how to unwind it:"
+  if $merged; then
+    red "  The bump was MERGED into $BASE_BRANCH, but the GitHub Release wasn't published."
+    red "  Finish it:  gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+  elif $pushed; then
+    red "  Branch '$RELEASE_BRANCH' + tag $TAG are on origin but not merged. Remove them:"
+    red "    git switch $BASE_BRANCH"
+    red "    git push origin --delete $RELEASE_BRANCH ; git push origin --delete $TAG"
+    red "    git branch -D $RELEASE_BRANCH ; git tag -d $TAG"
+  elif $committed; then
+    red "  The bump is committed on local '$RELEASE_BRANCH'$( $tagged && printf ' (tagged %s)' "$TAG" ) but nothing was pushed. Remove it:"
+    red "    git switch $BASE_BRANCH ; git branch -D $RELEASE_BRANCH$( $tagged && printf ' ; git tag -d %s' "$TAG" )"
+  elif $branch_created; then
+    red "  On '$RELEASE_BRANCH' with the bump only in the working tree. Discard it:"
+    red "    git checkout -- api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json"
+    red "    git switch $BASE_BRANCH ; git branch -D $RELEASE_BRANCH"
   else
-    red "Release $TAG aborted after the commit. Inspect and roll back as needed:"
-    red "  git log -1 --oneline ; git tag -l $TAG ; git ls-remote --tags origin $TAG"
-    red "  (local only? git reset --hard HEAD~1 && git tag -d $TAG)"
+    red "  The version bump is only in your working tree; discard it:"
+    red "    git checkout -- api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json"
   fi
 }
 trap recover EXIT
@@ -143,6 +172,11 @@ lock_pkg_version() {
     }
   ' api/Cargo.lock
 }
+
+# --- Create the release branch (main is protected; the bump merges in via PR) ----
+echo "-> Creating release branch $RELEASE_BRANCH..."
+git switch --quiet -c "$RELEASE_BRANCH"
+branch_created=true
 
 # --- Bump versions ---------------------------------------------------------------
 echo "-> Bumping api/Cargo.toml..."
@@ -177,7 +211,7 @@ if [ "$(lock_pkg_version)" != "$VERSION" ]; then
 fi
 [ "$(lock_pkg_version)" = "$VERSION" ] || die "failed to update api/Cargo.lock to $VERSION."
 
-# --- Commit, tag, push -----------------------------------------------------------
+# --- Commit + tag ----------------------------------------------------------------
 echo "-> Committing..."
 git add api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json
 git commit --quiet -m "chore(release): $TAG"
@@ -185,10 +219,42 @@ committed=true
 
 echo "-> Tagging $TAG..."
 git tag -a "$TAG" -m "Release $TAG"
+tagged=true
 
-echo "-> Pushing $BRANCH + $TAG to origin..."
-git push --quiet origin "$BRANCH"
+# --- Push the branch + tag, open a PR, merge it ----------------------------------
+# main is protected (changes must go through a PR), so the bump can't be pushed
+# straight to it. A merge commit (not squash/rebase) keeps the tagged bump commit's
+# SHA in main's history, so $TAG keeps pointing at "chore(release): $TAG".
+echo "-> Pushing $RELEASE_BRANCH + $TAG to origin..."
+git push --quiet origin "$RELEASE_BRANCH"
 git push --quiet origin "$TAG"
+pushed=true
+
+echo "-> Opening pull request into $BASE_BRANCH..."
+gh pr create --base "$BASE_BRANCH" --head "$RELEASE_BRANCH" \
+  --title "chore(release): $TAG" \
+  --body "Automated version bump to \`$TAG\` (cut by scripts/release.sh). Merging lands the bump on \`$BASE_BRANCH\`; the \`$TAG\` tag and GitHub Release follow and trigger the image build."
+
+# Switch off the release branch so it can be deleted after the merge.
+git switch --quiet "$BASE_BRANCH"
+
+echo "-> Merging the pull request..."
+# Mergeability can take a moment to compute right after the PR opens; retry briefly.
+for _ in 1 2 3 4 5 6; do
+  if gh pr merge "$RELEASE_BRANCH" --merge; then
+    merged=true; break
+  fi
+  echo "   ...not mergeable yet; retrying in 3s"
+  sleep 3
+done
+$merged || die "could not auto-merge the release PR (required checks or approvals?). Merge it in the UI, then run: gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+
+echo "-> Fast-forwarding local $BASE_BRANCH..."
+git pull --quiet --ff-only origin "$BASE_BRANCH"
+
+# Best-effort cleanup of the merged release branch (GitHub may auto-delete it).
+git push --quiet origin --delete "$RELEASE_BRANCH" 2>/dev/null || true
+git branch --quiet -D "$RELEASE_BRANCH" 2>/dev/null || true
 
 # --- Publish the GitHub Release (triggers the image build) -----------------------
 echo "-> Publishing GitHub Release $TAG..."
