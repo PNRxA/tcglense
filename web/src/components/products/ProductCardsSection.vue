@@ -74,6 +74,16 @@ const { ownership } = useOwnedCounts(game, cards)
       <p class="text-muted-foreground text-xs">{{ blurb }}</p>
     </div>
     <template v-if="loaded">
+      <!-- Top pager mirrors the one below (#264) so a long section can be paged from its top too. -->
+      <div class="mb-4">
+        <CardPagination
+          v-model:page="page"
+          :page-size="PRODUCT_CARDS_PAGE_SIZE"
+          :total="total"
+          :loading="paging"
+          :scroll-target="sectionTop"
+        />
+      </div>
       <CardGrid :game="game" :cards="cards" :ownership="ownership" />
       <div class="mt-6">
         <CardPagination

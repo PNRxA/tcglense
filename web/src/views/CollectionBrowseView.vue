@@ -505,6 +505,15 @@ const errorMessage = computed(() =>
              the collection grid (its cards are owned holdings); ghost mode uses the catalog
              grid (every card in the drop) with owned badges + dimmed unowned cards. -->
         <template v-else-if="byDrop">
+          <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <!-- Two typed loops (not one union v-for): owned drops render the collection
                grid off owned holdings, ghost drops the catalog grid off every card. -->
           <template v-if="!showGhosts">
@@ -545,6 +554,14 @@ const errorMessage = computed(() =>
              unowned cards. The dim waits for ownership to load (ownershipReady) so owned
              cards don't flash as ghosts on first paint / a page change. -->
         <template v-else>
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <CollectionGrid v-if="!showGhosts" :game="game" :entries="ownedEntries" />
           <CardGrid
             v-else

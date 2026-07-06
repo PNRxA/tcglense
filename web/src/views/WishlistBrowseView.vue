@@ -529,6 +529,15 @@ const errorMessage = computed(() =>
              the catalog grid (every card in the drop) with wanted badges + dimmed
              not-wanted cards. -->
         <template v-else-if="byDrop">
+          <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <!-- Two typed loops (not one union v-for): wishlisted drops render the
                collection grid off wish-list holdings, ghost drops the catalog grid off
                every card. -->
@@ -577,6 +586,14 @@ const errorMessage = computed(() =>
              not-wanted cards. The dim waits for the counts to load (ownershipReady) so
              wishlisted cards don't flash as ghosts on first paint / a page change. -->
         <template v-else>
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <CollectionGrid
             v-if="!showGhosts"
             :game="game"

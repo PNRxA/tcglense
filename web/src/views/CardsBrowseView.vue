@@ -110,6 +110,16 @@ useClampPage(page, () => ({
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
       </div>
+      <!-- Top pager mirrors the one below (#264) so a long grid can be paged from the top too. -->
+      <div class="mb-6">
+        <CardPagination
+          v-model:page="page"
+          :page-size="CARD_PAGE_SIZE"
+          :total="total"
+          :loading="cardsQuery.isPlaceholderData.value"
+          :scroll-target="resultsTop"
+        />
+      </div>
       <CardGrid :game="game" :cards="cards" :ownership="ownership" />
       <div class="mt-10">
         <CardPagination

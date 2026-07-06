@@ -272,6 +272,16 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       <template v-else>
         <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
         <template v-if="byDrop">
+          <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="dropTotal"
+              :loading="dropsQuery.isPlaceholderData.value"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <DropSection v-for="drop in dropGroups" :key="drop.slug ?? drop.title" :drop="drop">
             <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
           </DropSection>
@@ -288,6 +298,15 @@ const searchError = computed(() => searchErrorMessage(listError.value))
 
         <!-- Flat: the whole set as one collector-ordered grid. -->
         <template v-else>
+          <div class="mb-6">
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :loading="cardsQuery.isPlaceholderData.value"
+              :scroll-target="resultsTop"
+            />
+          </div>
           <CardGrid :game="game" :cards="cards" :ownership="ownership" />
           <div class="mt-10">
             <CardPagination
