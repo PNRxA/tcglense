@@ -1,4 +1,4 @@
-import { onUnmounted, computed, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
+import { onUnmounted, computed, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
 import { ApiError } from '@/lib/api'
 
@@ -27,6 +27,22 @@ function queriesEqual(a: LocationQueryRaw, b: LocationQuery): boolean {
   return true
 }
 
+/** Merge `changes` into the current URL query and `replace` — an undefined/empty value
+ * drops its key, every other (e.g. a set view's `related`/`from`) is left untouched. A
+ * no-op change is skipped so we never push an identical URL. Shared by the list controls. */
+function patchQuery(
+  route: ReturnType<typeof useRoute>,
+  router: ReturnType<typeof useRouter>,
+  changes: Record<string, string | undefined>,
+): void {
+  const next: LocationQueryRaw = { ...route.query }
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined || value === '') delete next[key]
+    else next[key] = value
+  }
+  if (!queriesEqual(next, route.query)) router.replace({ query: next })
+}
+
 /**
  * Shared list controls for the catalog card views — backed by the URL query so the
  * page, search and sort survive navigating away and back (open a card, press Back —
@@ -53,16 +69,8 @@ export function useCardSearch(
   const route = useRoute()
   const router = useRouter()
 
-  // Merge changes into the URL query: an undefined/empty value drops its key, every
-  // other (e.g. `related`/`from`) is left untouched. Replace, never push.
-  function patch(changes: Record<string, string | undefined>) {
-    const next: LocationQueryRaw = { ...route.query }
-    for (const [key, value] of Object.entries(changes)) {
-      if (value === undefined || value === '') delete next[key]
-      else next[key] = value
-    }
-    if (!queriesEqual(next, route.query)) router.replace({ query: next })
-  }
+  // Merge changes into the URL query (drop empty keys, leave `related`/`from` untouched).
+  const patch = (changes: Record<string, string | undefined>) => patchQuery(route, router, changes)
 
   const query = computed(() => readString(route.query.q).trim())
 
@@ -117,4 +125,71 @@ export function useCardSearch(
   })
 
   return { page, searchInput, query, sort }
+}
+
+/**
+ * The by-drop view's "filter drops by name" box, backed by the `?drop=` URL param so it's
+ * shareable, bookmarkable and survives navigating to a card and back — mirroring how
+ * {@link useCardSearch} keeps `?q`. Kept separate from that composable because the two
+ * filter different units: `q` narrows the cards within each drop, `drop` narrows the drops
+ * by their curated Secret Lair title. Only meaningful in the by-drop view — SetView renders
+ * the box under the By-drop toggle and passes `dropQuery` into `useSetDropsQuery`.
+ *
+ * `dropInput` is the live text box, debounced 300ms into the committed `?drop`; `dropQuery`
+ * is the committed value the query keys off. Committing a new filter restarts paging (page 3
+ * of the old drop list is meaningless once the list narrows), and merges into the existing
+ * query so a card view's `q`/scope keys are preserved.
+ *
+ * `active` (the caller's by-drop flag) lets the box drop a mid-debounce keystroke the moment
+ * the view leaves by-drop. Toggling to the flat/related view is a *same-path* query change
+ * (`?view=all`) the path watcher below can't see, so without this a half-typed filter would
+ * fire ~300ms later and land a phantom `?drop=` on the flat-view URL — where the box is
+ * unmounted (`v-if="byDrop"`) and can't clear it.
+ */
+export function useDropFilter(active?: Ref<boolean>) {
+  const route = useRoute()
+  const router = useRouter()
+
+  const dropQuery = computed(() => readString(route.query.drop).trim())
+
+  // The box mirrors the committed filter, debounced so we don't refetch on every keystroke.
+  // Seed it from the URL (a shared/reloaded link).
+  const dropInput = ref(dropQuery.value)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  watch(dropInput, (value) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      const trimmed = value.trim()
+      // Guard against re-committing an unchanged value (e.g. just synced from the URL).
+      if (trimmed !== dropQuery.value)
+        patchQuery(route, router, { drop: trimmed || undefined, page: undefined })
+    }, 300)
+  })
+  onUnmounted(() => clearTimeout(timer))
+
+  // Navigating to a different set (the path changes) must not carry a half-typed, not-yet-
+  // committed filter across: cancel any pending debounce and resync the box to the URL.
+  watch(
+    () => route.path,
+    () => {
+      clearTimeout(timer)
+      dropInput.value = dropQuery.value
+    },
+  )
+  // Leaving the by-drop view (a same-path change the path watcher misses) must likewise drop
+  // a pending edit and resync — otherwise it would commit a phantom ?drop= onto the flat URL.
+  if (active) {
+    watch(active, (on) => {
+      if (on) return
+      clearTimeout(timer)
+      dropInput.value = dropQuery.value
+    })
+  }
+  // The committed filter can also change under us without a path change (Back/forward, or
+  // toggling to the flat view drops the key). Mirror it into the box.
+  watch(dropQuery, (value) => {
+    if (value !== dropInput.value.trim()) dropInput.value = value
+  })
+
+  return { dropInput, dropQuery }
 }

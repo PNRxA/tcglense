@@ -64,6 +64,22 @@ pub(crate) fn group_into_drops<T>(
     buckets.into_values().collect()
 }
 
+/// Narrow already-grouped drop buckets to those whose curated title contains `needle`
+/// (a case-insensitive substring match). Powers the by-drop view's "filter drops by
+/// name" box — applied after grouping and *before* pagination, so the filter spans the
+/// whole set's drops rather than only the page on screen. A blank `needle` matches every
+/// drop (`contains("")` is always true), so callers skip the call for an absent filter.
+pub(crate) fn filter_drops_by_title<T>(
+    buckets: Vec<DropBucket<T>>,
+    needle: &str,
+) -> Vec<DropBucket<T>> {
+    let needle = needle.to_lowercase();
+    buckets
+        .into_iter()
+        .filter(|bucket| bucket.title.to_lowercase().contains(&needle))
+        .collect()
+}
+
 /// Paginate already-grouped drop buckets by *drop* (not by card), mapping each
 /// on-page bucket into its response shape with `map`. The by-drop endpoints pull a
 /// whole (bounded) set, group it in memory, then page over the drops — this is the
@@ -127,6 +143,30 @@ mod tests {
         assert_eq!(buckets[0].slug.as_deref(), Some("wild-in-bloom"));
         assert!(buckets.last().unwrap().slug.is_none());
         assert!(buckets.iter().all(|b| b.cards.len() == 1));
+    }
+
+    #[test]
+    fn filter_drops_by_title_matches_case_insensitively() {
+        let table = crate::scryfall::drops::table("mtg", "sld").unwrap();
+        // 2658 -> "Wild in Bloom"; 168 -> "Inked".
+        let rows = vec![
+            sld_test_card("sld", "2658", Some(2658)),
+            sld_test_card("sld", "168", Some(168)),
+        ];
+        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+
+        // A case-insensitive substring keeps only the matching drop.
+        let matched = filter_drops_by_title(buckets, "BLOOM");
+        let titles: Vec<&str> = matched.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, vec!["Wild in Bloom"]);
+
+        // A non-matching filter drops every bucket; a blank one keeps them all.
+        let rows = vec![sld_test_card("sld", "2658", Some(2658))];
+        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        assert!(filter_drops_by_title(buckets, "no-such-drop").is_empty());
+        let rows = vec![sld_test_card("sld", "2658", Some(2658))];
+        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        assert_eq!(filter_drops_by_title(buckets, "").len(), 1);
     }
 
     #[test]

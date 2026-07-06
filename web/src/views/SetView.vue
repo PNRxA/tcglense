@@ -14,7 +14,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
-import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
+import { searchErrorMessage, useCardSearch, useDropFilter } from '@/composables/useCardSearch'
 import {
   CARD_PAGE_SIZE,
   DROP_PAGE_SIZE,
@@ -61,6 +61,13 @@ const {
   setDropView,
 } = useSetGrouping(game, code)
 
+// The by-drop "filter drops by name" box, backed by ?drop= (orthogonal to the card
+// search ?q above): q narrows the cards within each drop, this narrows the drops by
+// their curated title. Only rendered in the by-drop view; passing `byDrop` lets it
+// drop a mid-debounce keystroke when the view leaves by-drop (so a half-typed filter
+// can't land a phantom ?drop= on the flat view's URL).
+const { dropInput, dropQuery } = useDropFilter(byDrop)
+
 const setQuery = useSetQuery(game, code)
 
 const set = computed(() => setQuery.data.value)
@@ -87,7 +94,7 @@ const cardsQuery = useSetCardsQuery(game, code, {
   enabled: computed(() => !byDrop.value && !setsPending.value),
 })
 
-const dropsQuery = useSetDropsQuery(game, code, { page, query, enabled: byDrop })
+const dropsQuery = useSetDropsQuery(game, code, { page, query, drop: dropQuery, enabled: byDrop })
 
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
@@ -131,11 +138,15 @@ const heading = computed(() =>
     : (set.value?.name ?? code.value.toUpperCase()),
 )
 const countLabel = computed(() => {
-  // By-drop mode counts drops; the flat view counts card printings.
+  // By-drop mode counts drops; the flat view counts card printings. The by-drop view
+  // has two filters — the drop-title box (dropQuery) and the card search (q) — so its
+  // "matching …" suffix reflects whichever is active (the drop filter reads first, as
+  // it's what the drop count directly narrows).
   const [n, singular] = byDrop.value ? [dropTotal.value, 'drop'] : [total.value, 'printing']
-  if (!n && !query.value) return ''
+  const active = byDrop.value ? dropQuery.value || query.value : query.value
+  if (!n && !active) return ''
   const label = `${n.toLocaleString()} ${n === 1 ? singular : `${singular}s`}`
-  return query.value ? `${label} matching “${query.value}”` : label
+  return active ? `${label} matching “${active}”` : label
 })
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(listError.value))
@@ -195,9 +206,48 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         @select="viewSingleSet"
       />
 
+      <!-- Controls: a By-drop / All-cards toggle for drop sets, a card-size menu, and
+           the sort menu (flat view only — the by-drop view has a fixed drop order). The
+           size menu shows in both views since the by-drop sections are grids too. These
+           sit above the results (not inside the has-results branch below) so the toggle
+           and its drop-name filter stay visible — and clearable — even when the filter
+           narrows to nothing; the size/sort menus only make sense with cards on screen,
+           so they hide while the current view is empty. -->
+      <div
+        v-if="hasDrops || !isEmpty"
+        class="mb-4 flex flex-wrap items-center justify-between gap-3"
+      >
+        <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setDropView" />
+        <span v-else />
+        <div v-if="!isEmpty" class="flex gap-2">
+          <CardSizeMenu />
+          <CardSortMenu v-if="!byDrop" v-model="sort" :options="SET_SORT_OPTIONS" />
+        </div>
+      </div>
+
+      <!-- Filter the drops by their curated Secret Lair title, sitting under the
+           By-drop toggle. Server-side (the by-drop view paginates over drops), so it
+           narrows the whole set, not just the drops on the current page. -->
+      <div v-if="byDrop" class="mb-6 max-w-sm">
+        <CardSearchBox
+          v-model="dropInput"
+          placeholder="Filter drops by name…"
+          aria-label="Filter drops by name"
+        />
+      </div>
+
       <LoadingRow v-if="listPending" label="Loading cards…" />
       <p v-else-if="listIsError" class="text-destructive py-12">
         {{ searchError ?? "Couldn't load cards. Please retry." }}
+      </p>
+      <!-- With both filters active the empty response can't attribute the cause (the card
+           search `q` empties drops server-side before the title filter sees them), so name
+           neither — just report no match. Each filter alone gets its own precise message. -->
+      <p v-else-if="isEmpty && byDrop && dropQuery && query" class="text-muted-foreground py-12">
+        No drops match your filters.
+      </p>
+      <p v-else-if="isEmpty && byDrop && dropQuery" class="text-muted-foreground py-12">
+        No drops match “{{ dropQuery }}”.
       </p>
       <p v-else-if="isEmpty && query" class="text-muted-foreground py-12">
         No cards match “{{ query }}”.
@@ -207,19 +257,6 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       </p>
 
       <template v-else>
-        <!-- Controls: a By-drop / All-cards toggle for drop sets, a card-size
-             menu, and the sort menu (flat view only — the by-drop view has a
-             fixed drop order). The size menu shows in both views since the
-             by-drop sections are grids too. -->
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setDropView" />
-          <span v-else />
-          <div class="flex gap-2">
-            <CardSizeMenu />
-            <CardSortMenu v-if="!byDrop" v-model="sort" :options="SET_SORT_OPTIONS" />
-          </div>
-        </div>
-
         <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
         <template v-if="byDrop">
           <DropSection v-for="drop in dropGroups" :key="drop.slug ?? drop.title" :drop="drop">
