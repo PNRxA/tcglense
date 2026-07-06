@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
@@ -43,6 +43,10 @@ const cardsQuery = useAllCardsQuery(game, {
   sort,
   defaultSort: ALL_CARDS_DEFAULT_SORT,
 })
+
+// The top of the results block — paging scrolls here so the new page starts at the top
+// of the grid, clearing the sticky search bar via its scroll-mt (issue #258).
+const resultsTop = ref<HTMLElement | null>(null)
 
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
@@ -102,7 +106,7 @@ useClampPage(page, () => ({
     <p v-else-if="!cards.length" class="text-muted-foreground py-12">No cards found.</p>
 
     <template v-else>
-      <div class="mb-4 flex flex-wrap justify-end gap-2">
+      <div ref="resultsTop" class="mb-4 flex scroll-mt-24 flex-wrap justify-end gap-2">
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
       </div>
@@ -113,6 +117,7 @@ useClampPage(page, () => ({
           :page-size="CARD_PAGE_SIZE"
           :total="total"
           :loading="cardsQuery.isPlaceholderData.value"
+          :scroll-target="resultsTop"
         />
       </div>
     </template>

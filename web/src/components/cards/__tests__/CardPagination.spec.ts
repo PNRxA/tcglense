@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import CardPagination from '../CardPagination.vue'
 
@@ -6,7 +6,13 @@ import CardPagination from '../CardPagination.vue'
 // — swaps both buttons' chevrons for a spinner and disables them while the next page loads,
 // then restores them once the load resolves.
 function mountPagination(
-  props: { page?: number; pageSize?: number; total?: number; loading?: boolean } = {},
+  props: {
+    page?: number
+    pageSize?: number
+    total?: number
+    loading?: boolean
+    scrollTarget?: HTMLElement | null
+  } = {},
 ) {
   return mount(CardPagination, {
     props: {
@@ -14,6 +20,7 @@ function mountPagination(
       pageSize: props.pageSize ?? 60,
       total: props.total ?? 300, // 5 pages by default
       ...(props.loading !== undefined ? { loading: props.loading } : {}),
+      ...(props.scrollTarget !== undefined ? { scrollTarget: props.scrollTarget } : {}),
     },
   })
 }
@@ -46,6 +53,51 @@ describe('CardPagination', () => {
     const last = mountPagination({ page: 5 })
     expect(prev(last).attributes('disabled')).toBeUndefined()
     expect(next(last).attributes('disabled')).toBeDefined()
+  })
+
+  it('scrolls its section top into view on a page change (#258)', async () => {
+    const scrollIntoView = vi.fn<() => void>()
+    const target = { scrollIntoView } as unknown as HTMLElement
+    const wrapper = mountPagination({ page: 2, scrollTarget: target })
+    await next(wrapper).trigger('click')
+    expect(wrapper.emitted('update:page')).toEqual([[3]])
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    // Aligns the section's top edge with the top of the viewport, gliding by default.
+    expect(scrollIntoView).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'smooth', block: 'start' }),
+    )
+  })
+
+  it('jumps without animation when the user prefers reduced motion (#258)', async () => {
+    // jsdom has no matchMedia; stub it to report the reduced-motion preference.
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+    try {
+      const scrollIntoView = vi.fn<() => void>()
+      const wrapper = mountPagination({
+        page: 2,
+        scrollTarget: { scrollIntoView } as unknown as HTMLElement,
+      })
+      await next(wrapper).trigger('click')
+      expect(scrollIntoView).toHaveBeenCalledWith(
+        expect.objectContaining({ behavior: 'auto', block: 'start' }),
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('scrolls on Prev too, and is a no-op (not a throw) without a scrollTarget (#258)', async () => {
+    const scrollIntoView = vi.fn<() => void>()
+    const withTarget = mountPagination({
+      page: 3,
+      scrollTarget: { scrollIntoView } as unknown as HTMLElement,
+    })
+    await prev(withTarget).trigger('click')
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    // No target wired: paging still works and nothing throws.
+    const without = mountPagination({ page: 3 })
+    await next(without).trigger('click')
+    expect(without.emitted('update:page')).toEqual([[4]])
   })
 
   it('spins and disables both buttons while a page loads, then restores them (#223)', async () => {

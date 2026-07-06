@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { ArrowLeft } from '@lucide/vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import { RouterLink } from 'vue-router'
@@ -101,6 +101,9 @@ const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
 const dropGroups = computed(() => dropsQuery.data.value?.data ?? [])
 const dropTotal = computed(() => dropsQuery.data.value?.total ?? 0)
+// The top of the results (the controls row above the grid) — both pagers scroll here so a
+// page change starts at the top of the listing, clearing the sticky search bar (issue #258).
+const resultsTop = ref<HTMLElement | null>(null)
 
 // Every card visible on the current page — the flat grid's cards, or all the drops'
 // cards in the by-drop view — so a single owned-counts lookup drives the collection
@@ -224,7 +227,8 @@ const searchError = computed(() => searchErrorMessage(listError.value))
            so they hide while the current view is empty. -->
       <div
         v-if="hasDrops || !isEmpty"
-        class="mb-4 flex flex-wrap items-center justify-between gap-3"
+        ref="resultsTop"
+        class="mb-4 flex scroll-mt-24 flex-wrap items-center justify-between gap-3"
       >
         <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setDropView" />
         <span v-else />
@@ -277,6 +281,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
               :page-size="DROP_PAGE_SIZE"
               :total="dropTotal"
               :loading="dropsQuery.isPlaceholderData.value"
+              :scroll-target="resultsTop"
             />
           </div>
         </template>
@@ -290,6 +295,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
               :page-size="CARD_PAGE_SIZE"
               :total="total"
               :loading="cardsQuery.isPlaceholderData.value"
+              :scroll-target="resultsTop"
             />
           </div>
         </template>

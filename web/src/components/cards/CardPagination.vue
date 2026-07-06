@@ -13,12 +13,34 @@ const props = defineProps<{
   // tell a page click from an unrelated refetch (a filter change), and a cache-hit navigation
   // never toggles it, so tracking "which button was clicked" would strand a stale spinner.
   loading?: boolean
+  // The element marking the top of the section this pager controls. On a page change it's
+  // scrolled to the top of the viewport, so the next page starts at the top of its own
+  // section rather than wherever the prev/next button happened to sit (issue #258) — the
+  // point being that on a page with several independently-paged sections (a sealed product's
+  // card sections) each pager jumps to *its* section, not the whole page. The router can't do
+  // this: a page change is a same-path `?page=` replace, indistinguishable from opening the
+  // `?card=` dialog (which must NOT scroll), so its scrollBehavior deliberately leaves all
+  // query-only changes alone (see router/index.ts). Optional — omit to keep the current scroll
+  // position. Give the target a `scroll-mt-*` to clear any sticky header sitting over it.
+  scrollTarget?: HTMLElement | null
 }>()
 
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
 
 function go(target: number) {
-  page.value = Math.min(totalPages.value, Math.max(1, target))
+  const next = Math.min(totalPages.value, Math.max(1, target))
+  if (next === page.value) return
+  page.value = next
+  // Jump to the top of this pager's section. Guarded for the SSR/test DOM where a bare
+  // element may lack scrollIntoView; a smooth glide unless the user asked for reduced motion.
+  props.scrollTarget?.scrollIntoView?.({
+    behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    block: 'start',
+  })
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
 }
 </script>
 
