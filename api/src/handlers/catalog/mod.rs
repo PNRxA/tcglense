@@ -110,6 +110,13 @@ pub struct ListParams {
     /// blank/absent value is ignored. Not honoured by the set-cards endpoint.
     #[serde(default)]
     pub name: Option<String>,
+    /// By-drop endpoint only: narrow the *drops* to those whose curated Secret Lair
+    /// title contains this text (case-insensitive), applied after grouping and before
+    /// drop pagination. Powers the by-drop view's "filter drops by name" box; a
+    /// blank/absent value is ignored. Orthogonal to `q`, which narrows the cards
+    /// within each drop — the two filters compose.
+    #[serde(default)]
+    pub drop: Option<String>,
 }
 
 impl ListParams {
@@ -135,6 +142,11 @@ impl ListParams {
     /// The trimmed exact-name filter, or `None` when absent/blank.
     fn exact_name(&self) -> Option<&str> {
         trim_query(self.name.as_deref())
+    }
+
+    /// The trimmed drop-title filter for the by-drop view, or `None` when absent/blank.
+    fn drop_title_filter(&self) -> Option<&str> {
+        trim_query(self.drop.as_deref())
     }
 
     /// Resolve the `(field, direction)` sort from the URL `sort`/`dir` params, an

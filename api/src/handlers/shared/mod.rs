@@ -18,7 +18,9 @@ pub(crate) mod sort;
 pub(crate) mod valuation;
 
 pub(crate) use dto::{CardResponse, stored_faces};
-pub(crate) use grouping::{group_into_drops, paginate_buckets, require_drop_table};
+pub(crate) use grouping::{
+    filter_drops_by_title, group_into_drops, paginate_buckets, require_drop_table,
+};
 pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
     CollectionSort, CollectionSummary, ListParams, MAX_OWNED_IDS, OwnedCountsRequest,

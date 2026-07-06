@@ -17,8 +17,9 @@ use crate::entities::prelude::{Card, CardSet};
 use crate::entities::{card, card_set};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page, group_into_drops,
-    load_group_set_codes, load_set, paginate_buckets, require_drop_table, require_game,
+    CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page,
+    filter_drops_by_title, group_into_drops, load_group_set_codes, load_set, paginate_buckets,
+    require_drop_table, require_game,
 };
 use crate::state::AppState;
 
@@ -194,7 +195,9 @@ pub async fn list_set_cards(
 /// Cards whose collector number isn't in the snapshot (e.g. a drop newer than the
 /// snapshot) collect into a trailing "Other" group so nothing is dropped. An
 /// optional `q` narrows the cards first; drops with no remaining matches are
-/// omitted.
+/// omitted. An optional `drop` then narrows to the drops whose curated title
+/// matches (case-insensitive substring), applied before pagination so it spans the
+/// whole set rather than one page.
 pub async fn list_set_drops(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
@@ -216,7 +219,12 @@ pub async fn list_set_drops(
         .all(&state.db)
         .await?;
 
-    let buckets = group_into_drops(table, rows, |card| card.collector_number.as_str());
+    let mut buckets = group_into_drops(table, rows, |card| card.collector_number.as_str());
+    // Narrow to the drops whose title matches the "filter drops by name" box, before
+    // paginating so the filter spans every drop, not just the page on screen.
+    if let Some(needle) = params.drop_title_filter() {
+        buckets = filter_drops_by_title(buckets, needle);
+    }
 
     let (page, page_size) = params.drop_page_and_size();
     Ok(Json(paginate_buckets(buckets, page, page_size, |b| {
