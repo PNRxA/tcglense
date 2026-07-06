@@ -17,8 +17,9 @@ name: Release images
 # (and link it to this repo). Docker Hub is optional:
 # add repo secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (a Docker Hub access
 # token) and the Docker Hub push turns on automatically; until then only GHCR is
-# pushed. Optional build-time public web config comes from repo variables
-# VITE_SITE_URL and VITE_TURNSTILE_SITE_KEY.
+# pushed. Optional build-time public web config comes from the repo variable
+# VITE_SITE_URL. (The Turnstile site key is no longer baked in — it's a runtime API
+# env var, TURNSTILE_SITE_KEY, served to the SPA via GET /api/config.)
 
 on:
   release:
@@ -131,7 +132,6 @@ jobs:
           build-args: |
             VITE_API_URL=
             VITE_SITE_URL=${{ vars.VITE_SITE_URL }}
-            VITE_TURNSTILE_SITE_KEY=${{ vars.VITE_TURNSTILE_SITE_KEY }}
           # Per-target layer cache in the GitHub Actions cache, so a re-run only
           # recompiles what changed (Rust + web builds are the slow part). `combined`
           # also reads the `api`/`web` scopes so, across runs, it reuses the shared

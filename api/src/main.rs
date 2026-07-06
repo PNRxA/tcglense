@@ -48,6 +48,14 @@ async fn main() {
     // Load .env (best-effort; absence is fine).
     dotenvy::dotenv().ok();
 
+    // Pin the rustls crypto provider for the whole process before any TLS config is
+    // built. reqwest (HTTPS to the card-data providers), SeaORM/sqlx (Postgres TLS),
+    // and redis (`rediss://`, e.g. Upstash) all share one process-wide rustls, and
+    // 0.23 refuses to pick a provider when more than one is linked. aws-lc-rs is the
+    // backend the build already compiles (aws-lc-sys); install it as the default. An
+    // `Err` just means a default is already installed, so the result is ignored.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // Initialise tracing before reading config so config warnings are captured.
     // Log output is routed through `tracing-indicatif` so the startup progress
     // bars (the Scryfall card import — see `scryfall::progress` — and the TCGCSV

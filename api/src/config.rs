@@ -57,9 +57,17 @@ pub struct Config {
     /// Cloudflare Turnstile secret key, used to verify the CAPTCHA token the
     /// browser widget produces on the auth forms. A credential — redacted in
     /// `Debug`. Unset = CAPTCHA verification is disabled (checks pass; no widget
-    /// is expected). The matching public site key lives in the web build's
-    /// `VITE_TURNSTILE_SITE_KEY`.
+    /// is expected). Must be paired with [`Self::turnstile_site_key`] (both set or
+    /// both unset — enforced at boot by [`validate_turnstile_pair`]).
     pub turnstile_secret_key: Option<String>,
+    /// Cloudflare Turnstile *public* site key — the value the browser widget is
+    /// keyed with. **Not** a secret (it ships in the page), so it is printed in
+    /// `Debug` and served to the SPA at runtime via `GET /api/config`. Serving it
+    /// at runtime (rather than baking it into the web bundle as the old
+    /// `VITE_TURNSTILE_SITE_KEY` build arg did) lets the published Docker image
+    /// point at any Turnstile key without a rebuild. Pairs with
+    /// [`Self::turnstile_secret_key`]; unset = no widget is rendered.
+    pub turnstile_site_key: Option<String>,
     /// Whether to trust `X-Forwarded-For` / `Forwarded` when resolving the client
     /// IP for rate limiting. Default `false` (use the socket peer). Enable ONLY
     /// when the API sits behind a trusted reverse proxy that sets the header —
@@ -72,11 +80,11 @@ pub struct Config {
     /// Connection URL for a Redis backing the rate limiters (per-IP + per-user),
     /// e.g. `redis://127.0.0.1:6379`. Unset = the limiters run in-memory /
     /// per-process (single-instance posture). Set it so a multi-instance deploy
-    /// shares one limiter state. Only plain `redis://` is supported (this build
-    /// links the no-TLS `redis` feature set); a `rediss://` URL degrades to
-    /// in-memory. The URL may embed a password — redacted in `Debug`. If it's set
-    /// but Redis is unreachable at boot, the server starts degraded (in-memory)
-    /// with a warning rather than failing (see [`crate::ratelimit::AuthRateLimiter`]).
+    /// shares one limiter state. Both plain `redis://` and TLS `rediss://` (a hosted
+    /// endpoint like Upstash reached over the public internet) are supported. The URL
+    /// may embed a password — redacted in `Debug`. If it's set but Redis is
+    /// unreachable at boot, the server starts degraded (in-memory) with a warning
+    /// rather than failing (see [`crate::ratelimit::AuthRateLimiter`]).
     pub redis_url: Option<String>,
     /// Whether to import card data from providers on startup (disable in tests).
     pub sync_on_startup: bool,
@@ -164,6 +172,8 @@ impl std::fmt::Debug for Config {
                 "turnstile_secret_key",
                 &self.turnstile_secret_key.as_ref().map(|_| "[redacted]"),
             )
+            // The site key is public (it ships in the page), so print it plainly.
+            .field("turnstile_site_key", &self.turnstile_site_key)
             .field("trust_proxy_headers", &self.trust_proxy_headers)
             .field("rate_limit_enabled", &self.rate_limit_enabled)
             // A Redis URL may embed a password; print only whether one is configured.
@@ -235,6 +245,33 @@ fn resolve_jwt_secret(
             );
             Ok(DEV_ONLY_JWT_SECRET.to_string())
         }
+    }
+}
+
+/// Validate the Turnstile key pairing: the secret (server-side token verification)
+/// and the public site key (the browser widget) must be set together or not at all.
+///
+/// Setting only one silently breaks CAPTCHA: with only the site key the widget
+/// renders but the API never verifies the token; with only the secret — the more
+/// dangerous case now that the SPA reads the site key from `GET /api/config` — the
+/// widget can't render, yet the API demands a token, so *every* auth submission
+/// 400s. Kept pure (no env access, no panic) so the boot-closed check is
+/// unit-testable; [`Config::from_env`] turns `Err` into a startup panic.
+fn validate_turnstile_pair(
+    secret_key: Option<&str>,
+    site_key: Option<&str>,
+) -> Result<(), String> {
+    match (secret_key.is_some(), site_key.is_some()) {
+        (true, false) => Err("TURNSTILE_SECRET_KEY is set but TURNSTILE_SITE_KEY is not. Both \
+             must be set together: the API verifies the CAPTCHA token with the secret while the \
+             browser widget is keyed with the site key (served to the SPA via GET /api/config). \
+             Set TURNSTILE_SITE_KEY too, or unset both to disable CAPTCHA."
+            .to_string()),
+        (false, true) => Err("TURNSTILE_SITE_KEY is set but TURNSTILE_SECRET_KEY is not. Both \
+             must be set together: the browser widget would render but the API would not verify \
+             its token. Set TURNSTILE_SECRET_KEY too, or unset both to disable CAPTCHA."
+            .to_string()),
+        _ => Ok(()),
     }
 }
 
@@ -348,6 +385,15 @@ impl Config {
 
         // Unset = CAPTCHA disabled (checks pass) — see the field.
         let turnstile_secret_key = env_trimmed("TURNSTILE_SECRET_KEY");
+        // The public site key, served to the SPA at runtime via GET /api/config
+        // (so the shipped web bundle needs no rebuild to change it). Paired with the
+        // secret — a mismatched pair fails the boot closed (see the field docs).
+        let turnstile_site_key = env_trimmed("TURNSTILE_SITE_KEY");
+        if let Err(message) =
+            validate_turnstile_pair(turnstile_secret_key.as_deref(), turnstile_site_key.as_deref())
+        {
+            panic!("{message}");
+        }
 
         // Only trust proxy IP headers when explicitly opted in (see the field);
         // rate limiting is on by default.
@@ -406,6 +452,7 @@ impl Config {
             resend_api_key,
             email_from,
             turnstile_secret_key,
+            turnstile_site_key,
             trust_proxy_headers,
             rate_limit_enabled,
             redis_url,
@@ -452,7 +499,7 @@ impl Config {
                 "TURNSTILE_SECRET_KEY is not set but this looks like a production deployment: the \
                  auth endpoints have no CAPTCHA, so login/registration are guarded only by the \
                  per-IP rate limit (distributed credential-stuffing across many IPs is not capped \
-                 per account). Set TURNSTILE_SECRET_KEY (and the web VITE_TURNSTILE_SITE_KEY).",
+                 per account). Set TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY.",
             );
         }
 
@@ -545,6 +592,27 @@ mod tests {
         );
     }
 
+    // ----- Turnstile key pairing (boot-closed) -----
+
+    #[test]
+    fn turnstile_pair_accepts_both_set_or_both_unset() {
+        assert!(validate_turnstile_pair(None, None).is_ok());
+        assert!(validate_turnstile_pair(Some("secret"), Some("0xSITEKEY")).is_ok());
+    }
+
+    #[test]
+    fn turnstile_pair_rejects_only_the_secret() {
+        // The dangerous case: the API would demand a token the widget can't produce.
+        let err = validate_turnstile_pair(Some("secret"), None).unwrap_err();
+        assert!(err.contains("TURNSTILE_SITE_KEY"));
+    }
+
+    #[test]
+    fn turnstile_pair_rejects_only_the_site_key() {
+        let err = validate_turnstile_pair(None, Some("0xSITEKEY")).unwrap_err();
+        assert!(err.contains("TURNSTILE_SECRET_KEY"));
+    }
+
     // ----- Insecure-production-posture startup warnings -----
 
     #[test]
@@ -601,6 +669,7 @@ mod tests {
             public_site_url: "https://tcglense.app".to_string(),
             cookie_secure: true,
             turnstile_secret_key: Some("turnstile-secret".to_string()),
+            turnstile_site_key: Some("0xTURNSTILE-SITE-KEY".to_string()),
             redis_url: Some("redis://127.0.0.1:6379".to_string()),
             rate_limit_enabled: true,
             ..crate::test_support::test_config()

@@ -1,0 +1,69 @@
+# TCGLense — DigitalOcean + Upstash + Cloudflare production deploy.
+#
+# Full guide: docs/deploy-digitalocean.md. One DO Droplet runs Caddy + the combined
+# image (SPA + /api); Postgres and Redis are managed services:
+#
+#   internet ─▶ Cloudflare (DNS · CDN · TLS · WAF)
+#            ─▶ [DO cloud firewall: inbound 443/80 from Cloudflare IPs only]
+#            ─▶ caddy (origin TLS · rewrites XFF ⟵ CF-Connecting-IP)
+#            ─▶ api  (combined image)
+#                 ├─▶ DigitalOcean Managed Postgres   (private VPC, ?sslmode=require)
+#                 └─▶ Upstash Redis                   (rediss://… — TLS, public internet)
+#
+# Bring it up on the droplet (see the guide for the DO/Cloudflare/Upstash setup):
+#   cp deploy/do.env.example .env      # then fill it in
+#   # place your Cloudflare Origin cert at deploy/origin/{cert,key}.pem
+#   docker compose -f deploy/docker-compose.do.yml --env-file .env up -d
+#
+# Pin a release with IMAGE_TAG=vX.Y.Z (defaults to :latest). Image is on GHCR.
+services:
+  # Edge on the droplet: terminates origin TLS (Cloudflare Origin cert) and forwards
+  # to the combined image. See deploy/do.Caddyfile.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set your domain, e.g. tcglense.example.com}
+    volumes:
+      - ./do.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./origin:/etc/caddy/origin:ro   # Cloudflare Origin CA cert.pem + key.pem
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  # The combined image: the API serves /api AND the SPA (via WEB_ROOT, baked in).
+  api:
+    image: ghcr.io/pnrxa/tcglense:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set it, e.g. openssl rand -hex 32}
+      # DigitalOcean Managed Postgres — use the PRIVATE (VPC) host + ?sslmode=require.
+      DATABASE_URL: ${DATABASE_URL:?set the DO Managed Postgres URL}
+      # Upstash Redis — rediss://… (TLS). Optional: leave empty to run the rate
+      # limiter in-memory (fine for a single instance; required once you add replicas).
+      REDIS_URL: ${REDIS_URL:-}
+      # Turnstile CAPTCHA — set BOTH or NEITHER. The site key is applied at RUNTIME
+      # (served to the SPA via GET /api/config), so this published image needs no
+      # rebuild to change it.
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      # Email — REQUIRED in production. Without RESEND_API_KEY the API returns the
+      # registration completion token in the response and skips the verified-email
+      # gate (the dev bypass), so anyone could activate any address.
+      RESEND_API_KEY: ${RESEND_API_KEY:?required in production — see the guide}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      COOKIE_SECURE: "true"          # TLS terminates at Cloudflare/Caddy
+      TRUST_PROXY_HEADERS: "true"    # safe: the firewall restricts ingress to Cloudflare
+      CDN_MODE: "true"               # Cloudflare caches images; origin keeps no image dir
+      PUBLIC_SITE_URL: https://${SITE_ADDRESS}
+    volumes:
+      - tcglense_data:/data          # only transient with CDN_MODE=true; DB lives in Postgres
+
+volumes:
+  caddy_data:
+  caddy_config:
+  tcglense_data:

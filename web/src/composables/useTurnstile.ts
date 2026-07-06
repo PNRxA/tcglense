@@ -1,5 +1,5 @@
 import { onUnmounted, type Ref } from 'vue'
-import { TURNSTILE_SITE_KEY, loadTurnstile, turnstileEnabled } from '@/lib/turnstile'
+import { loadTurnstile, turnstileSiteKey } from '@/lib/turnstile'
 
 /** How long to wait for a Turnstile token before giving up on one request. */
 const EXECUTE_TIMEOUT_MS = 20_000
@@ -27,13 +27,16 @@ export function useTurnstile(container: Ref<HTMLElement | undefined>) {
   }
 
   async function ensureWidget(): Promise<boolean> {
-    if (!turnstileEnabled || !TURNSTILE_SITE_KEY || !container.value) return false
+    if (!container.value) return false
     if (widgetId !== undefined) return true
+    // Site key comes from GET /api/config (cached); undefined = CAPTCHA disabled.
+    const sitekey = await turnstileSiteKey()
+    if (!sitekey || !container.value) return false
     const api = await loadTurnstile()
     // Guard against a re-entrant call that rendered while we awaited.
     if (widgetId !== undefined) return true
     widgetId = api.render(container.value, {
-      sitekey: TURNSTILE_SITE_KEY,
+      sitekey,
       execution: 'execute',
       appearance: 'interaction-only',
       callback: (token) => settle(token),

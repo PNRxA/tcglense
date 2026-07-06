@@ -21,13 +21,21 @@ nonzero_ext = "0.3.0"
 rand = "0.10.1"
 # Distributed rate-limiter backend (optional at runtime via REDIS_URL). Always
 # compiled; the in-memory governor limiter is used when REDIS_URL is unset or Redis
-# is unreachable. `tokio-comp` = no TLS (plain redis:// on a private network — no
-# rustls crypto-provider hazard); `connection-manager` gates the cloneable
-# auto-reconnecting multiplexed async connection; `script` gates `redis::Script`
-# (the GCRA Lua EVALSHA path — NOT enabled by tokio-comp/connection-manager in 1.3).
-redis = { version = "1.3.0", default-features = false, features = ["tokio-comp", "connection-manager", "script"] }
+# is unreachable. `tokio-comp` = the plain-TCP async connection; `tokio-rustls-comp`
+# + `tls-rustls-webpki-roots` add `rediss://` TLS (rustls with bundled Mozilla roots)
+# so hosted providers like Upstash work over the public internet. All rustls users
+# in this crate (reqwest, SeaORM/sqlx Postgres TLS, and now redis) share one process
+# provider, pinned to aws-lc-rs in `main` — see the note there. `connection-manager`
+# gates the cloneable auto-reconnecting multiplexed async connection; `script` gates
+# `redis::Script` (the GCRA Lua EVALSHA path — NOT enabled by the others in 1.3).
+redis = { version = "1.3.0", default-features = false, features = ["tokio-comp", "tokio-rustls-comp", "tls-rustls-webpki-roots", "connection-manager", "script"] }
 regex = "1.12"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "gzip", "stream", "json"] }
+# Direct dep only to pin the shared rustls crypto provider (aws-lc-rs) as the process
+# default in `main`: reqwest, SeaORM/sqlx (Postgres TLS) and redis (`rediss://`) all
+# use one process-wide rustls, and 0.23 refuses to auto-select when more than one
+# provider is linked. Matches the aws-lc-sys the build already compiles.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 sea-orm = { version = "1.1.20", features = ["sqlx-sqlite", "sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono"] }
 sea-orm-migration = { version = "1.1.20", features = ["sqlx-sqlite", "sqlx-postgres", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }

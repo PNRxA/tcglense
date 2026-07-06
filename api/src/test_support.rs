@@ -38,6 +38,7 @@ pub(crate) fn test_config() -> Config {
         resend_api_key: None,
         email_from: "TCGLense <test@tcglense.example>".to_string(),
         turnstile_secret_key: None,
+        turnstile_site_key: None,
         trust_proxy_headers: false,
         rate_limit_enabled: true,
         redis_url: None,

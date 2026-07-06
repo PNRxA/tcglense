@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cache;
 pub mod catalog;
 pub mod collection;
+pub mod config;
 pub mod health;
 pub mod mirror;
 pub mod shared;

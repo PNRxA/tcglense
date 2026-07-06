@@ -66,9 +66,11 @@ CLAUDE.md    architecture, conventions, and how to add features
 
 ## Deployment
 
-Two supported Docker topologies (plus a bare-metal option). Both need a `JWT_SECRET`
-— the API refuses to boot without one (generate with `openssl rand -hex 32`). Images
-are published to GHCR + Docker Hub on every release (see [Docker images](#docker-images--releases)).
+Two supported Docker topologies (plus a bare-metal option), and a step-by-step
+managed-cloud guide ([DigitalOcean + Upstash + Cloudflare](./docs/deploy-digitalocean.md)).
+All need a `JWT_SECRET` — the API refuses to boot without one (generate with
+`openssl rand -hex 32`). Images are published to GHCR + Docker Hub on every release
+(see [Docker images](#docker-images--releases)).
 
 ### Homelab — one container + SQLite
 
@@ -97,6 +99,15 @@ On first boot the API imports MTG card data from Scryfall in the background (a
 one-off ~30s; set `SYNC_ON_STARTUP=false` to skip, or `SEED_DUMMY_DATA=true` for an
 offline catalog). For HTTPS, put a reverse proxy / tunnel in front and set
 `COOKIE_SECURE=true` + `PUBLIC_SITE_URL=https://your-host`.
+
+### Managed cloud — DigitalOcean + Upstash + Cloudflare
+
+A recommended single-instance production deploy on managed services: a DO Droplet
+(combined image) + DigitalOcean Managed Postgres + Upstash Redis + a free Cloudflare
+CDN. Ready-to-use [`deploy/docker-compose.do.yml`](./deploy/docker-compose.do.yml) +
+[`deploy/do.Caddyfile`](./deploy/do.Caddyfile) + [`deploy/do.env.example`](./deploy/do.env.example),
+and a full walkthrough (DNS, TLS, backups, rate-limit hardening) in
+**[docs/deploy-digitalocean.md](./docs/deploy-digitalocean.md)**.
 
 ### Production — Caddy + web + api + Postgres + Redis
 
@@ -264,8 +275,9 @@ above, set each package's visibility to Public once (GitHub → your profile →
 the package → settings). For Docker Hub, add repo secrets `DOCKERHUB_USERNAME` and
 `DOCKERHUB_TOKEN` (a Docker Hub [access token](https://hub.docker.com/settings/security))
 — the Docker Hub push then turns on automatically; until then only GHCR is pushed.
-Optional build-time web config (`VITE_SITE_URL`, `VITE_TURNSTILE_SITE_KEY`) comes from
-repo **variables** of the same name.
+Optional build-time web config (`VITE_SITE_URL`) comes from a repo **variable** of the
+same name. The Turnstile site key is set at runtime on the API (`TURNSTILE_SITE_KEY`,
+served to the SPA via `GET /api/config`), so the published image needs no rebuild for it.
 
 ## Docs
 

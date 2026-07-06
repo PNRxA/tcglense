@@ -65,13 +65,17 @@ flow end to end.
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
 | `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, **revokes every refresh token**, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
+| `GET /api/config` | — | `200 { turnstile_site_key: string \| null }` — public runtime config the SPA reads before rendering the auth forms; `no-store` | — |
 
 **Anti-abuse (all seven auth mutation endpoints above):** each request body may carry
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the
 token is **required** — a missing/rejected one is `400 "captcha …"` (deliberately
 not 401/403, so it never collides with login's `403`), verified **before** any
 account lookup so it leaks nothing. When the key is unset, CAPTCHA is disabled and
-the field is ignored (dev/tests). Independently, a **per-IP rate limiter** guards
+the field is ignored (dev/tests). The paired **public** site key
+(`TURNSTILE_SITE_KEY`, set together with the secret) is served to the SPA via
+`GET /api/config`, so the browser renders the widget with a runtime-supplied key —
+the published web bundle needs no rebuild. Independently, a **per-IP rate limiter** guards
 these endpoints (login/register/email-send/token classes, each its own quota);
 over-limit is `429` + `Retry-After`. The client IP is the socket peer by default,
 or the `X-Forwarded-For`/`Forwarded` client when `TRUST_PROXY_HEADERS=true` (set

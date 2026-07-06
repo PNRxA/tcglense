@@ -26,13 +26,13 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 # Build-time public config baked into the bundle. VITE_API_URL stays empty so the
 # SPA calls same-origin /api — correct for both the combined image and the Caddy
 # web image (which proxies /api). VITE_SITE_URL feeds robots.txt's absolute
-# Sitemap: URL; VITE_TURNSTILE_SITE_KEY renders the CAPTCHA widget when set.
+# Sitemap: URL. (The Turnstile site key is NOT baked in — it's a runtime API env
+# var, TURNSTILE_SITE_KEY, the SPA fetches from GET /api/config, so this image needs
+# no rebuild to change it.)
 ARG VITE_API_URL=""
 ARG VITE_SITE_URL=""
-ARG VITE_TURNSTILE_SITE_KEY=""
 ENV VITE_API_URL=$VITE_API_URL \
-    VITE_SITE_URL=$VITE_SITE_URL \
-    VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
+    VITE_SITE_URL=$VITE_SITE_URL
 
 COPY web/ ./
 # `build-only` = `vite build`. It skips the vue-tsc type-check that `npm run build`
