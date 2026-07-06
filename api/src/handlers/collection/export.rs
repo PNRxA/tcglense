@@ -14,7 +14,7 @@
 //! from the joined `cards` row; the few Archidekt columns we don't store (Multiverse Id,
 //! MTGO ID) are emitted as `0`, matching Archidekt's own default for a card it can't map.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use csv::{QuoteStyle, Terminator, WriterBuilder};
@@ -23,6 +23,7 @@ use serde::Deserialize;
 use crate::auth::extractor::AuthUser;
 use crate::entities::{card, collection_item};
 use crate::error::AppError;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::require_game;
 use crate::state::AppState;
 

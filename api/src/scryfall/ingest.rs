@@ -41,7 +41,12 @@ const PROGRESS_EVERY: u32 = 25;
 /// card batch) without locking the bar on every single line.
 const BYTES_PER_TICK: u64 = 1_000_000;
 
-/// Error type for the background import. Logged, never surfaced to a request.
+/// Error type for the background import. Its `Display` wraps the inner
+/// reqwest/io/db error verbatim and is for **logs only** — the caller
+/// ([`crate::catalog::refresh_all`]) records it at `error` level. Anything persisted
+/// into the client-visible `ingest_state.detail` (surfaced by the public
+/// `GET /status` endpoint) must go through [`IngestError::public_detail`] instead, so
+/// upstream URLs, filesystem paths, or SQL text never reach a client.
 #[derive(Debug, thiserror::Error)]
 pub enum IngestError {
     #[error("http error: {0}")]
@@ -52,6 +57,21 @@ pub enum IngestError {
     Db(#[from] sea_orm::DbErr),
     #[error("{0}")]
     Other(String),
+}
+
+impl IngestError {
+    /// A client-safe summary for `ingest_state.detail`. The `Http`/`Io`/`Db` variants
+    /// wrap an external error whose `Display` can leak internal URLs, host paths, or SQL
+    /// detail, so they collapse to a coarse category; `Other` is already a hand-written
+    /// message, so it passes through. The full error stays in the logs.
+    pub(super) fn public_detail(&self) -> String {
+        match self {
+            IngestError::Http(_) => "network error contacting the card-data source".to_string(),
+            IngestError::Io(_) => "i/o error while importing card data".to_string(),
+            IngestError::Db(_) => "database error while importing card data".to_string(),
+            IngestError::Other(msg) => msg.clone(),
+        }
+    }
 }
 
 /// Import lifecycle recorded in `ingest_state.status`. `put_state` is the only
@@ -102,7 +122,7 @@ pub async fn refresh(
                 db,
                 IngestStatus::Error,
                 IngestStateUpdate {
-                    detail: Some(truncate(&err.to_string(), 500)),
+                    detail: Some(truncate(&err.public_detail(), 500)),
                     finished_at: Some(Utc::now()),
                     ..Default::default()
                 },
@@ -470,5 +490,31 @@ mod tests {
     fn truncate_respects_char_boundaries() {
         assert_eq!(truncate("hello", 10), "hello");
         assert_eq!(truncate("hello world", 5).chars().count(), 6); // 5 chars + ellipsis
+    }
+
+    #[test]
+    fn public_detail_never_leaks_the_wrapped_error() {
+        // Io / Db wrap an external error whose `Display` can carry host paths or SQL
+        // detail; `public_detail` (persisted into the client-visible `ingest_state.detail`)
+        // must collapse them to a fixed category rather than echo the inner text.
+        let io = IngestError::Io(std::io::Error::other("/secret/host/path leaked"));
+        assert_eq!(io.public_detail(), "i/o error while importing card data");
+        assert!(!io.public_detail().contains("secret"));
+
+        let db = IngestError::Db(sea_orm::DbErr::Custom(
+            "SELECT secret_column FROM internal_table".to_string(),
+        ));
+        assert_eq!(db.public_detail(), "database error while importing card data");
+        assert!(!db.public_detail().contains("secret"));
+        // The `Display` (log-only) still carries the full detail for operators.
+        assert!(db.to_string().contains("secret_column"));
+
+        // `Other` is a hand-written message, so it passes through unchanged.
+        let other =
+            IngestError::Other("scryfall bulk dataset 'default_cards' not found".to_string());
+        assert_eq!(
+            other.public_detail(),
+            "scryfall bulk dataset 'default_cards' not found"
+        );
     }
 }

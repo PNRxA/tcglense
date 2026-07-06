@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::State,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
@@ -11,6 +11,7 @@ use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::CardSet;
 use crate::entities::{card, card_set, wishlist_item};
 use crate::error::AppError;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSort,
     ListParams, Page, SortDir, SortField, build_collection_sets, group_into_drops, load_set,
