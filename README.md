@@ -109,6 +109,16 @@ CDN. Ready-to-use [`deploy/docker-compose.do.yml`](./deploy/docker-compose.do.ym
 and a full walkthrough (DNS, TLS, backups, rate-limit hardening) in
 **[docs/deploy-digitalocean.md](./docs/deploy-digitalocean.md)**.
 
+### Managed platform — DigitalOcean App Platform (PaaS)
+
+The low-ops variant: **App Platform** runs the combined image (no server to patch),
+DigitalOcean Managed Postgres holds the data, and Cloudflare is the CDN — single
+instance, no Redis. GitHub releases **deploy themselves** via the `deploy-app-platform`
+job in [`release.yml`](./.github/workflows/release.yml) once two DO secrets are set.
+Spec: [`.do/app.yaml`](./.do/app.yaml); full walkthrough (App Platform's ephemeral-disk /
+`CDN_MODE` and rate-limit trade-offs) in
+**[docs/deploy-app-platform.md](./docs/deploy-app-platform.md)**.
+
 ### Production — Caddy + web + api + Postgres + Redis
 
 The scalable split: an edge **Caddy** terminates TLS and forwards to the **web**

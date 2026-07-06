@@ -143,3 +143,46 @@ jobs:
             type=gha,scope=api
             type=gha,scope=web
           cache-to: type=gha,mode=max,scope=${{ matrix.image.target }}
+
+  # After the images are published, redeploy the DigitalOcean App Platform app so it
+  # pulls the freshly-pushed `combined` image. Opt-in: this is a NO-OP unless BOTH repo
+  # secrets DIGITALOCEAN_ACCESS_TOKEN and DIGITALOCEAN_APP_ID are set (mirrors the
+  # Docker Hub gating above), so forks and image-only deployers are unaffected. Setup:
+  # docs/deploy-app-platform.md.
+  deploy-app-platform:
+    name: Deploy to DigitalOcean App Platform
+    needs: build-push
+    # Only for a real, non-prerelease Release — that's when the combined image's
+    # `:latest` tag (which the running app tracks) actually moves.
+    if: github.event_name == 'release' && github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    env:
+      # Job-level env so the steps can branch on the secrets' presence (secrets can't be
+      # referenced directly in a step `if:`).
+      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      DIGITALOCEAN_APP_ID: ${{ secrets.DIGITALOCEAN_APP_ID }}
+    steps:
+      - name: Check App Platform deploy is configured
+        id: cfg
+        run: |
+          if [ -n "$DIGITALOCEAN_ACCESS_TOKEN" ] && [ -n "$DIGITALOCEAN_APP_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DIGITALOCEAN_ACCESS_TOKEN/DIGITALOCEAN_APP_ID not set — skipping App Platform deploy."
+          fi
+
+      - name: Install doctl
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      # `--force-rebuild` re-pulls the combined image's `:latest` tag that build-push
+      # just pushed. We trigger a deployment rather than `apps update --spec` so the
+      # app's console-set secrets and domain are preserved (a full-spec update would
+      # overwrite them). To pin or roll back a version, deploy a specific tag from
+      # .do/app.yaml. `--wait` fails the job if the rollout doesn't come up healthy.
+      - name: Redeploy latest combined image
+        if: steps.cfg.outputs.enabled == 'true'
+        run: doctl apps create-deployment "$DIGITALOCEAN_APP_ID" --force-rebuild --wait

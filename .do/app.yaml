@@ -1,0 +1,119 @@
+# TCGLense — DigitalOcean App Platform spec.
+#
+# Runs the `combined` image (the API serves BOTH /api and the SPA, so everything is
+# same-origin and the httpOnly refresh cookie stays first-party) as ONE App Platform
+# service, backed by DigitalOcean Managed Postgres. There is deliberately NO Redis and
+# exactly ONE instance — see the warnings below.
+#
+# Because App Platform container disk is EPHEMERAL, the app runs in CDN_MODE (no local
+# image cache); a fronting CDN (Cloudflare) holds the card images instead.
+#
+# Full guide: docs/deploy-app-platform.md.
+#
+# First deploy (from the repo root, with doctl authenticated):
+#   doctl apps create --spec .do/app.yaml
+# then set the SECRET env values (JWT_SECRET, DATABASE_URL, RESEND_API_KEY, …) in
+# App → Settings, and add your domain. After that the release workflow redeploys
+# automatically (.github/workflows/release.yml → deploy-app-platform).
+#
+# Replace every <-- marked placeholder before creating the app, and confirm the
+# instance_size_slug against `doctl apps tier instance-size list`.
+
+name: tcglense
+region: nyc   # <-- put this in the SAME region as your Managed Postgres
+
+services:
+  - name: web
+    # The `combined` image published to GHCR on every release (see release.yml). Make
+    # the GHCR package PUBLIC once (repo → Packages → package settings) so App Platform
+    # can pull it anonymously, or add a `registry_credentials` block for a private pull.
+    image:
+      registry_type: GHCR
+      registry: pnrxa
+      repository: tcglense
+      tag: latest          # CI redeploys this tag on each release; pin vX.Y.Z to freeze
+
+    # ── SINGLE INSTANCE, ON PURPOSE ──────────────────────────────────────────────
+    # The per-IP rate limiter is in-process (there is no Redis here), so a second
+    # replica would keep its own separate limiter buckets. Do NOT add an `autoscaling`
+    # block or raise instance_count without first provisioning REDIS_URL (e.g. Upstash
+    # rediss://) so the limiters share state. See docs/deploy-app-platform.md.
+    instance_count: 1
+    instance_size_slug: basic-xs   # ~1 GB RAM: the first catalog sync is memory-hungry.
+                                    # Bump a tier if it OOMs. Confirm the slug with doctl.
+
+    http_port: 8080        # App Platform injects PORT=8080; the API binds it on 0.0.0.0.
+
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 30    # migrations run on boot before /api/health answers
+      period_seconds: 15
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 5
+
+    envs:
+      # ── Secrets: declared here, values set in App → Settings after `apps create` ──
+      - key: JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      # DigitalOcean Managed Postgres — private VPC host, port 25060, ?sslmode=require.
+      # (Or attach the DB to this app and set this to ${db.DATABASE_URL}; see the guide.)
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      # Email — REQUIRED in production. Without RESEND_API_KEY the API returns the
+      # registration token in the response and skips the verified-email gate, so anyone
+      # could activate any address.
+      - key: RESEND_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      # Turnstile CAPTCHA — set BOTH or NEITHER (a mismatched pair fails the boot). The
+      # public site key is served to the SPA at runtime via GET /api/config (no rebuild).
+      - key: TURNSTILE_SECRET_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: TURNSTILE_SITE_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+      # ── Non-secret config ────────────────────────────────────────────────────────
+      - key: EMAIL_FROM
+        scope: RUN_TIME
+        value: noreply@t.tcglense.com       # Resend-verified sending subdomain
+      # Ephemeral disk ⇒ don't cache images locally: stream from upstream and let the
+      # fronting CDN cache them. REQUIRES a real CDN in front (Cloudflare); without one
+      # every image view re-fetches from Scryfall.
+      - key: CDN_MODE
+        scope: RUN_TIME
+        value: "true"
+      # TLS terminates at the platform/Cloudflare edge, so the app is behind a proxy.
+      - key: COOKIE_SECURE
+        scope: RUN_TIME
+        value: "true"
+      # Trust the edge's X-Forwarded-For for per-IP rate limiting. NOTE: unlike the
+      # Droplet's Caddy (which rewrites XFF from CF-Connecting-IP), App Platform can't
+      # guarantee a spoof-proof client IP — per-IP limiting is best-effort here. It
+      # fails open by design; the Turnstile CAPTCHA (fails closed) is the real gate.
+      - key: TRUST_PROXY_HEADERS
+        scope: RUN_TIME
+        value: "true"
+      - key: PUBLIC_SITE_URL
+        scope: RUN_TIME
+        value: https://tcglense.com
+
+# Single service ⇒ everything routes to it; this block is explicit but optional.
+ingress:
+  rules:
+    - match:
+        path:
+          prefix: /
+      component:
+        name: web
+
+# Add your custom domain after the app exists. With Cloudflare in front (recommended,
+# for the image CDN) add the domain here and CNAME it from Cloudflare (proxied). Leaving
+# this commented lets `apps create` succeed with the default *.ondigitalocean.app URL.
+# domains:
+#   - domain: tcglense.com
+#     type: PRIMARY
