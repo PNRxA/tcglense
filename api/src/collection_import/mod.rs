@@ -132,10 +132,15 @@ async fn fetch_holdings_smart(
 /// collection (updated even longer ago) is too, so paging can stop. The match is judged
 /// only **after** the whole page is folded in, so a card that owns both a regular and a
 /// foil finish isn't seen mid-aggregate just because its two rows sit on the same page.
-/// A card still mid-aggregate — one row here, another on a later page — stays a mismatch
-/// until its last row lands, which only *defers* the stop, never falsely triggers it, so
-/// the signal is conservative. Pure (no I/O) so the decision is unit-tested without the
-/// network.
+///
+/// The stop needs more than the current page, though: the provider can split one printing
+/// across rows (differing condition/language/tags) whose `updatedAt`s put them on
+/// non-adjacent pages, so a card can be mid-aggregate from an earlier page yet absent from
+/// the page that looks in sync. Stopping there would strand its remaining rows and let the
+/// reconcile overwrite it *down* to the partial count (silently dropping copies). So the
+/// stop also requires that **no** card in the running aggregate is still below its local
+/// count in either finish — a straddling (or genuinely decreased) card keeps paging until
+/// its rows all land. Pure (no I/O) so the decision is unit-tested without the network.
 ///
 /// `remap` folds a separately-modelled foil printing (`…★`) onto its base card as a foil
 /// copy (issue #209) **before** aggregating, so the running aggregate, the accumulated
@@ -175,10 +180,23 @@ fn smart_absorb_page(
     // cards, so a bulk-edited block of proxies can fill a whole page) proves nothing
     // about sync state — vacuous truth here would falsely stop the fetch, so an empty
     // contribution reads as "keep paging".
-    !touched.is_empty()
+    let page_in_sync = !touched.is_empty()
         && touched.iter().all(|uid| {
             running.get(uid).copied()
                 == local.get(uid).map(|&(r, f)| (i64::from(r), i64::from(f)))
+        });
+    // ...but the per-page check above can't see a card whose rows straddle a page boundary:
+    // seen (mid-aggregate, under-counted) on an earlier page, absent from this one. Stopping
+    // while any card in the whole running aggregate is still *below* its local count would
+    // strand that card's remaining rows and let reconcile_smart overwrite its finish down to
+    // the partial count. Gate the stop on that too (checked only once the cheap per-page test
+    // passes). A new card (local read as (0,0)) can't be below, so it never holds paging open.
+    page_in_sync
+        && running.iter().all(|(uid, &(reg, foil))| {
+            let (lr, lf) = local
+                .get(uid)
+                .map_or((0, 0), |&(r, f)| (i64::from(r), i64::from(f)));
+            reg >= lr && foil >= lf
         })
 }
 
@@ -505,6 +523,141 @@ mod tests {
                 quantity: 1,
             }],
             "the captured holding is already remapped to the base as foil"
+        );
+    }
+
+    #[test]
+    fn smart_absorb_page_keeps_paging_while_an_earlier_card_is_still_below_local() {
+        // Regression: a card whose provider rows straddle a page boundary must not be
+        // stranded. `a` is owned as 2 regular but only one of its rows is on page 1; page 2's
+        // own card (`b`) is fully in sync but `a` is absent from it. The old per-page-only
+        // check stopped on page 2 and abandoned `a`'s second row, so reconcile then overwrote
+        // `a` down to 1 (losing a copy). The stop must now be withheld while `a` is still
+        // below its local count.
+        let local = HashMap::from([("a".to_string(), (2, 0)), ("b".to_string(), (1, 0))]);
+        let mut running = HashMap::new();
+        let mut holdings = Vec::new();
+
+        // Page 1: one of a's two regular rows -> a is mid-aggregate (1 of 2).
+        let page1 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("a".to_string(), false, 1)],
+        );
+        assert!(!page1, "a under-counted (1 != 2) -> keep paging");
+
+        // Page 2: b is fully in sync and a is ABSENT — but a is still below local, so the
+        // fetch must keep paging rather than strand a's remaining row.
+        let page2 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("b".to_string(), false, 1)],
+        );
+        assert!(!page2, "a still below its local count -> must not stop and strand its tail row");
+
+        // Page 3: a's second row lands; now the whole aggregate matches local -> stop.
+        let page3 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("a".to_string(), false, 1)],
+        );
+        assert!(page3, "a now fully aggregated (2,0) and everything matches -> stop");
+    }
+
+    #[test]
+    fn smart_absorb_page_still_stops_when_a_card_grew_above_local() {
+        // The below-local gate uses `>=`, not `==`: a card whose upstream count GREW (running
+        // above its old local) is fully observed on the front pages, so it must NOT hold the
+        // fetch open — otherwise any sync with a pending increase would degrade to a full scan.
+        let local = HashMap::from([("grew".to_string(), (1, 0)), ("same".to_string(), (2, 0))]);
+        let mut running = HashMap::new();
+        let mut holdings = Vec::new();
+
+        // Page 1: the grown card (now 3 regular). Above local, so this page isn't "in sync".
+        let page1 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("grew".to_string(), false, 3)],
+        );
+        assert!(!page1, "grew (3,0) != local (1,0) on its own page -> keep paging");
+
+        // Page 2: an unchanged card, in sync. `grew` is above (not below) local, so it must
+        // not block the stop.
+        let page2 = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            vec![("same".to_string(), false, 2)],
+        );
+        assert!(page2, "no card is below local (grew is above) -> stop signal fires");
+    }
+
+    #[tokio::test]
+    async fn smart_sync_does_not_drop_a_copy_when_a_card_straddles_the_stop_page() {
+        // End-to-end regression for the reported bug (an import totalling N copies dropped to
+        // N-1 on the next smart sync). Card `a` is owned as 2 regular copies the provider
+        // reports as two SEPARATE regular rows (e.g. two conditions) whose `updatedAt`s put
+        // them on non-adjacent pages, with a fully-in-sync `b` page in between. Driving the
+        // same page loop `fetch_smart` runs, the middle page must not stop the fetch and
+        // strand a's second row — which reconcile_smart would then overwrite a down to 1.
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "straddle@test.example").await;
+        let a = insert_card(&db, "ext-a").await;
+        let b = insert_card(&db, "ext-b").await;
+        insert_holding(&db, user_id, a, 2, 0).await; // owned: 2 regular
+        insert_holding(&db, user_id, b, 1, 0).await; // owned: 1 regular
+
+        let local = HashMap::from([("ext-a".to_string(), (2, 0)), ("ext-b".to_string(), (1, 0))]);
+        let remap: HashMap<String, String> = HashMap::new();
+
+        let pages: Vec<Vec<(String, bool, i32)>> = vec![
+            vec![("ext-a".to_string(), false, 1)], // page 1: one of a's two rows
+            vec![("ext-b".to_string(), false, 1)], // page 2: b in sync, a absent
+            vec![("ext-a".to_string(), false, 1)], // page 3: a's second row
+        ];
+        let mut running: HashMap<String, (i64, i64)> = HashMap::new();
+        let mut holdings: Vec<FetchedHolding> = Vec::new();
+        let mut stopped_early = false;
+        for page in pages {
+            if smart_absorb_page(&mut running, &mut holdings, &local, &remap, page) {
+                stopped_early = true;
+                break;
+            }
+        }
+
+        // The middle page must not have stopped the fetch, so both of a's rows were absorbed.
+        assert!(stopped_early, "still stops early once a is fully aggregated on page 3");
+        assert_eq!(running["ext-a"], (2, 0), "a fully aggregated, not stranded at 1");
+
+        reconcile_smart(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            holdings,
+            stopped_early,
+        )
+        .await
+        .expect("reconcile smart");
+
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((2, 0)),
+            "no copy lost from the straddling card"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, b).await,
+            Some((1, 0)),
+            "the in-sync card is unchanged"
         );
     }
 
