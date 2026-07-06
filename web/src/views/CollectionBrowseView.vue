@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardGrid from '@/components/cards/CardGrid.vue'
@@ -516,29 +517,31 @@ const errorMessage = computed(() =>
           </div>
           <!-- Two typed loops (not one union v-for): owned drops render the collection
                grid off owned holdings, ghost drops the catalog grid off every card. -->
-          <template v-if="!showGhosts">
-            <DropSection
-              v-for="drop in ownedDropGroups"
-              :key="drop.slug ?? drop.title"
-              :drop="drop"
-            >
-              <CollectionGrid :game="game" :entries="drop.cards" />
-            </DropSection>
-          </template>
-          <template v-else>
-            <DropSection
-              v-for="drop in ghostDropGroups"
-              :key="drop.slug ?? drop.title"
-              :drop="drop"
-            >
-              <CardGrid
-                :game="game"
-                :cards="drop.cards"
-                :ownership="ownership"
-                :ghost-unowned="ownershipReady"
-              />
-            </DropSection>
-          </template>
+          <UpdatingOverlay :loading="updating">
+            <template v-if="!showGhosts">
+              <DropSection
+                v-for="drop in ownedDropGroups"
+                :key="drop.slug ?? drop.title"
+                :drop="drop"
+              >
+                <CollectionGrid :game="game" :entries="drop.cards" />
+              </DropSection>
+            </template>
+            <template v-else>
+              <DropSection
+                v-for="drop in ghostDropGroups"
+                :key="drop.slug ?? drop.title"
+                :drop="drop"
+              >
+                <CardGrid
+                  :game="game"
+                  :cards="drop.cards"
+                  :ownership="ownership"
+                  :ghost-unowned="ownershipReady"
+                />
+              </DropSection>
+            </template>
+          </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"
@@ -562,14 +565,16 @@ const errorMessage = computed(() =>
               :scroll-target="resultsTop"
             />
           </div>
-          <CollectionGrid v-if="!showGhosts" :game="game" :entries="ownedEntries" />
-          <CardGrid
-            v-else
-            :game="game"
-            :cards="ghostCards"
-            :ownership="ownership"
-            :ghost-unowned="ownershipReady"
-          />
+          <UpdatingOverlay :loading="updating">
+            <CollectionGrid v-if="!showGhosts" :game="game" :entries="ownedEntries" />
+            <CardGrid
+              v-else
+              :game="game"
+              :cards="ghostCards"
+              :ownership="ownership"
+              :ghost-unowned="ownershipReady"
+            />
+          </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"

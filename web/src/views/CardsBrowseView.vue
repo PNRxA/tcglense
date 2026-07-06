@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
@@ -120,7 +121,9 @@ useClampPage(page, () => ({
           :scroll-target="resultsTop"
         />
       </div>
-      <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+      <UpdatingOverlay :loading="cardsQuery.isPlaceholderData.value">
+        <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+      </UpdatingOverlay>
       <div class="mt-10">
         <CardPagination
           v-model:page="page"

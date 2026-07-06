@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import ProductGrid from '@/components/products/ProductGrid.vue'
 import ProductGridSkeleton from '@/components/products/ProductGridSkeleton.vue'
@@ -184,7 +185,9 @@ useClampPage(page, () => ({
           :scroll-target="resultsTop"
         />
       </div>
-      <ProductGrid :game="game" :products="products" />
+      <UpdatingOverlay :loading="productsQuery.isPlaceholderData.value">
+        <ProductGrid :game="game" :products="products" />
+      </UpdatingOverlay>
       <div class="mt-10">
         <CardPagination
           v-model:page="page"

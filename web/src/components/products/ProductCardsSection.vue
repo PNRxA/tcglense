@@ -5,6 +5,7 @@ import { PRODUCT_CARDS_PAGE_SIZE, useProductCardsQuery } from '@/composables/use
 import { useOwnedCounts } from '@/composables/useCollection'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 
 // One independently-paginated block of a sealed product's "Cards in this product" section
@@ -84,7 +85,9 @@ const { ownership } = useOwnedCounts(game, cards)
           :scroll-target="sectionTop"
         />
       </div>
-      <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+      <UpdatingOverlay :loading="paging">
+        <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+      </UpdatingOverlay>
       <div class="mt-6">
         <CardPagination
           v-model:page="page"
