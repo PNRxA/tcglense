@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
@@ -315,6 +315,9 @@ const searchError = computed(() => searchErrorMessage(listError.value))
 
 // The active view sets the pagination unit: drops (by-drop) or printings (flat).
 const pageSize = computed(() => (byDrop.value ? DROP_PAGE_SIZE : CARD_PAGE_SIZE))
+// The top of the results (the controls row above the grid) — both pagers scroll here so a
+// page change starts at the top of the listing, clearing the sticky search bar (issue #258).
+const resultsTop = ref<HTMLElement | null>(null)
 useClampPage(page, () => ({
   ready: listIsSuccess.value,
   total: total.value,
@@ -447,7 +450,10 @@ const errorMessage = computed(() =>
       <template v-else>
         <!-- Controls: the by-drop / all-cards toggle (drop sets) + the show-ghosts toggle,
              then the card-size + sort menus (flat views only — by-drop has a fixed order). -->
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div
+          ref="resultsTop"
+          class="mb-4 flex scroll-mt-24 flex-wrap items-center justify-between gap-3"
+        >
           <div class="flex flex-wrap items-center gap-2">
             <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setDropView" />
             <GhostToggle :show-ghosts="showGhosts" @toggle="setShowGhosts" />
@@ -525,7 +531,12 @@ const errorMessage = computed(() =>
             </DropSection>
           </template>
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="DROP_PAGE_SIZE" :total="total" />
+            <CardPagination
+              v-model:page="page"
+              :page-size="DROP_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
           </div>
         </template>
 
@@ -543,7 +554,12 @@ const errorMessage = computed(() =>
             :ghost-unowned="ownershipReady"
           />
           <div class="mt-10">
-            <CardPagination v-model:page="page" :page-size="CARD_PAGE_SIZE" :total="total" />
+            <CardPagination
+              v-model:page="page"
+              :page-size="CARD_PAGE_SIZE"
+              :total="total"
+              :scroll-target="resultsTop"
+            />
           </div>
         </template>
       </template>

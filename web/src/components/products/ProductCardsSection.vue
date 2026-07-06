@@ -36,6 +36,9 @@ const search = toRef(props, 'search')
 const sort = toRef(props, 'sort')
 
 const page = ref(1)
+// This block's own root — paging scrolls it to the top so a section deep in a stack of
+// them (a sealed product's card sections) jumps to *its* heading, not the whole page (#258).
+const sectionTop = ref<HTMLElement | null>(null)
 // The block is reused across product-to-product navigation (its `sectionKey` is held fixed by
 // the parent's `:key`) and across search/sort changes, so reset to page 1 whenever the product,
 // the search, or the sort changes — otherwise page 3 of the old list would carry into the new.
@@ -65,7 +68,7 @@ const { ownership } = useOwnedCounts(game, cards)
 </script>
 
 <template>
-  <div v-if="show">
+  <div v-if="show" ref="sectionTop" class="scroll-mt-6">
     <div class="mb-3">
       <h3 class="text-sm font-medium">{{ title }}</h3>
       <p class="text-muted-foreground text-xs">{{ blurb }}</p>
@@ -78,6 +81,7 @@ const { ownership } = useOwnedCounts(game, cards)
           :page-size="PRODUCT_CARDS_PAGE_SIZE"
           :total="total"
           :loading="paging"
+          :scroll-target="sectionTop"
         />
       </div>
     </template>

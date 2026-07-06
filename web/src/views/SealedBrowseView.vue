@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
@@ -92,6 +92,9 @@ const productsQuery = useProductsQuery(game, {
 
 const products = computed(() => productsQuery.data.value?.data ?? [])
 const total = computed(() => productsQuery.data.value?.total ?? 0)
+// The top of the results block — paging scrolls here so the new page starts at the top
+// of the grid, clearing the sticky search bar via its scroll-mt (issue #258).
+const resultsTop = ref<HTMLElement | null>(null)
 
 useClampPage(page, () => ({
   ready: productsQuery.isSuccess.value,
@@ -161,7 +164,13 @@ useClampPage(page, () => ({
     </p>
 
     <template v-else>
-      <div class="mb-4 flex flex-wrap justify-end gap-2">
+      <!-- scroll-mt clears the sticky filter bar on a page change (#258). That bar wraps its
+           search + two selects to as many as three rows on a narrow phone (~140px), so the
+           mobile offset is taller; from sm up it's a single ~60px row, hence the tight sm: value. -->
+      <div
+        ref="resultsTop"
+        class="mb-4 flex scroll-mt-40 flex-wrap justify-end gap-2 sm:scroll-mt-24"
+      >
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="PRODUCT_SORT_OPTIONS" />
       </div>
@@ -172,6 +181,7 @@ useClampPage(page, () => ({
           :page-size="PRODUCT_PAGE_SIZE"
           :total="total"
           :loading="productsQuery.isPlaceholderData.value"
+          :scroll-target="resultsTop"
         />
       </div>
     </template>
