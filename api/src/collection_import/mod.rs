@@ -28,7 +28,7 @@ mod types;
 use std::collections::HashMap;
 
 use sea_orm::sea_query::Expr;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
@@ -349,7 +349,14 @@ async fn moxfield_rows_to_holdings(
     // this runs synchronously in the request).
     let mut external_by_pair: HashMap<(String, String), String> = HashMap::new();
     for chunk in pairs.chunks(IN_CHUNK / 2) {
-        let cards = Card::find()
+        // Project only (set_code, collector_number, external_id) of the card's ~65 columns — up to
+        // 450 rows a chunk. The seek is served by `idx_cards_game_set_code_collector_number` (m..024);
+        // with only `(game, set_code)` this row-value IN scans ~every card of each named set.
+        let cards: Vec<(String, String, String)> = Card::find()
+            .select_only()
+            .column(card::Column::SetCode)
+            .column(card::Column::CollectorNumber)
+            .column(card::Column::ExternalId)
             .filter(card::Column::Game.eq(game))
             .filter(
                 Expr::tuple([
@@ -358,11 +365,12 @@ async fn moxfield_rows_to_holdings(
                 ])
                 .in_tuples(chunk.iter().cloned()),
             )
+            .into_tuple()
             .all(db)
             .await
             .map_err(ImportError::Db)?;
-        for c in cards {
-            external_by_pair.insert((c.set_code, c.collector_number), c.external_id);
+        for (set_code, collector_number, external_id) in cards {
+            external_by_pair.insert((set_code, collector_number), external_id);
         }
     }
 

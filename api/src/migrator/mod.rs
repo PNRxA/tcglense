@@ -23,6 +23,8 @@ mod m20240101_000020_create_product_price_history_table;
 mod m20240101_000021_create_sealed_contents_table;
 mod m20240101_000022_add_recency_and_prune_indexes;
 mod m20240101_000023_consolidate_foil_star_holdings;
+mod m20240101_000024_add_cards_set_code_collector_number_index;
+mod m20240101_000025_add_browse_sort_and_email_prune_indexes;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -56,6 +58,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000021_create_sealed_contents_table::Migration),
             Box::new(m20240101_000022_add_recency_and_prune_indexes::Migration),
             Box::new(m20240101_000023_consolidate_foil_star_holdings::Migration),
+            Box::new(m20240101_000024_add_cards_set_code_collector_number_index::Migration),
+            Box::new(m20240101_000025_add_browse_sort_and_email_prune_indexes::Migration),
         ]
     }
 }
