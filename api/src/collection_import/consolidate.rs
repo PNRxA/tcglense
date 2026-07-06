@@ -34,7 +34,7 @@ use chrono::Utc;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter,
-    Set, TransactionTrait,
+    QuerySelect, Set, TransactionTrait,
 };
 
 use crate::entities::prelude::{Card, CollectionItem};
@@ -90,7 +90,16 @@ pub(super) async fn load_foil_variant_pairs(
     //    unique within a set, so a pair resolves to at most one base.
     let mut base_by_pair: HashMap<(String, String), BaseCard> = HashMap::new();
     for chunk in base_pairs.chunks(IN_CHUNK / 2) {
-        let bases = Card::find()
+        // Project only the five fields the pairing uses (of the card's ~65) — up to 450 rows a
+        // chunk, so the narrower payload matters over the wire on the weak prod instance. The seek
+        // itself is served by `idx_cards_game_set_code_collector_number` (m..024).
+        let bases: Vec<(String, String, i32, String, Option<String>)> = Card::find()
+            .select_only()
+            .column(card::Column::SetCode)
+            .column(card::Column::CollectorNumber)
+            .column(card::Column::Id)
+            .column(card::Column::ExternalId)
+            .column(card::Column::OracleId)
             .filter(card::Column::Game.eq(game))
             .filter(card::Column::Finishes.eq("nonfoil"))
             .filter(
@@ -100,16 +109,17 @@ pub(super) async fn load_foil_variant_pairs(
                 ])
                 .in_tuples(chunk.iter().cloned()),
             )
+            .into_tuple()
             .all(db)
             .await
             .map_err(ImportError::Db)?;
-        for b in bases {
+        for (set_code, collector_number, id, external_id, oracle_id) in bases {
             base_by_pair.insert(
-                (b.set_code, b.collector_number),
+                (set_code, collector_number),
                 BaseCard {
-                    id: b.id,
-                    external_id: b.external_id,
-                    oracle_id: b.oracle_id,
+                    id,
+                    external_id,
+                    oracle_id,
                 },
             );
         }
