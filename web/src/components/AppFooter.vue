@@ -2,6 +2,10 @@
 import { RouterLink } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
 
+// Build-time app version (injected via the `define` in vite.config.ts), shown next to the
+// brand so visitors and bug reporters can tell which release is deployed (issue #250).
+const version = import.meta.env.VITE_APP_VERSION
+
 // Site-wide footer, mounted once in App.vue so it renders on every route. It carries the
 // data-source credits (Scryfall / TCGCSV / MTGJSON), the GitHub links, the Terms/Privacy
 // links, and the required WotC Fan Content disclaimer — placed wherever card data/images
@@ -16,7 +20,10 @@ import GitHubMark from '@/components/GitHubMark.vue'
            landmark (display:contents so the 4-col grid still lays them out). -->
       <div class="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
+          <div class="flex items-baseline gap-2">
+            <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
+            <span class="text-muted-foreground text-xs font-medium">v{{ version }}</span>
+          </div>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
             Track trading-card prices and your collection.
           </p>
