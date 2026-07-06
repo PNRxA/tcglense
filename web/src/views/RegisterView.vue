@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Loader2, MailCheck } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useTurnstile } from '@/composables/useTurnstile'
 import { ApiError, register } from '@/lib/api'
+import { publicConfig } from '@/lib/config'
 import { usePageMeta } from '@/lib/seo'
 
 usePageMeta({ title: 'Create your account', canonicalPath: '/register', noindex: true })
@@ -27,6 +28,23 @@ const { execute } = useTurnstile(turnstileEl)
 
 const error = ref<string | null>(null)
 const loading = ref(false)
+
+// Whether new signups are open. The API is the source of truth (it 403s a
+// disabled register), but reading it up front lets us show the operator's notice
+// and disable the form instead of failing on submit. On a config-fetch error we
+// leave the form open — a genuinely disabled instance still refuses server-side.
+const signupsEnabled = ref(true)
+const signupsDisabledMessage = ref<string | null>(null)
+
+onMounted(async () => {
+  try {
+    const config = await publicConfig()
+    signupsEnabled.value = config.signups_enabled
+    signupsDisabledMessage.value = config.signups_disabled_message
+  } catch {
+    // Leave signups enabled; the submit is still guarded by the server.
+  }
+})
 // Registration is email-first: on success we normally stay here and show the
 // check-your-email step (the address we mailed a completion link to). The one
 // exception is the no-email dev bypass, where the response carries the completion
@@ -34,6 +52,7 @@ const loading = ref(false)
 const registeredEmail = ref<string | null>(null)
 
 async function onSubmit() {
+  if (!signupsEnabled.value) return
   error.value = null
   loading.value = true
   try {
@@ -118,6 +137,13 @@ async function onResend() {
           <CardDescription>Start tracking your collection with TCGLense</CardDescription>
         </CardHeader>
         <CardContent>
+          <div
+            v-if="!signupsEnabled"
+            class="border-border bg-muted text-foreground mb-4 rounded-md border p-3 text-sm"
+            role="status"
+          >
+            {{ signupsDisabledMessage ?? 'New sign-ups are temporarily disabled.' }}
+          </div>
           <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
             <div class="flex flex-col gap-2">
               <Label for="email">Email</Label>
@@ -128,13 +154,14 @@ async function onResend() {
                 autocomplete="email"
                 placeholder="you@example.com"
                 required
+                :disabled="!signupsEnabled"
               />
               <p class="text-muted-foreground text-xs">
                 We'll email you a link to finish creating your account.
               </p>
             </div>
             <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
-            <Button type="submit" class="w-full" :disabled="loading">
+            <Button type="submit" class="w-full" :disabled="loading || !signupsEnabled">
               <Loader2 v-if="loading" class="animate-spin" />
               {{ loading ? 'Sending link...' : 'Continue' }}
             </Button>

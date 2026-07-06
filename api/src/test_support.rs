@@ -50,6 +50,8 @@ pub(crate) fn test_config() -> Config {
         sync_from_upstream: false,
         dataset_mirror_url: "https://tcglense.example".to_string(),
         mirror_enabled: false,
+        signups_enabled: true,
+        signups_disabled_message: None,
     }
 }
 

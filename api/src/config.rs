@@ -133,6 +133,20 @@ pub struct Config {
     /// doesn't become an open proxy to the upstream services. See
     /// [`crate::handlers::mirror`].
     pub mirror_enabled: bool,
+    /// Whether new-account registration is accepted. Default `true` (open). Set
+    /// `false` to temporarily stop new signups: `POST /api/auth/register` and
+    /// `/complete-registration` are refused with a `403`, a password reset can't
+    /// *activate* a still-pending (password-less) account either, and the SPA
+    /// renders [`Self::signups_disabled_message`] and disables its signup form (the
+    /// flag + message reach it via `GET /api/config`). Gates **only** new-account
+    /// creation — existing users keep signing in, refreshing, and resetting their
+    /// (already-set) passwords normally. **Not** a secret.
+    pub signups_enabled: bool,
+    /// Optional operator-set notice shown to visitors when
+    /// [`Self::signups_enabled`] is `false` (e.g. "signups are paused while we
+    /// scale up"). Unset = a generic fallback (see
+    /// [`Self::signups_disabled_notice`]). Shown to end users, so **not** a secret.
+    pub signups_disabled_message: Option<String>,
 }
 
 impl std::fmt::Debug for Config {
@@ -186,6 +200,10 @@ impl std::fmt::Debug for Config {
             .field("sync_from_upstream", &self.sync_from_upstream)
             .field("dataset_mirror_url", &self.dataset_mirror_url)
             .field("mirror_enabled", &self.mirror_enabled)
+            // The signups flag + its user-facing message are not secrets (the
+            // message is shown to end users), so both print plainly.
+            .field("signups_enabled", &self.signups_enabled)
+            .field("signups_disabled_message", &self.signups_disabled_message)
             .finish()
     }
 }
@@ -199,6 +217,12 @@ const DEV_ONLY_JWT_SECRET: &str = "dev-only-insecure-jwt-secret-do-not-use-in-pr
 /// Minimum acceptable length (in bytes) for a real `JWT_SECRET`. HS256 keys
 /// shorter than this are brute-forceable offline.
 const MIN_JWT_SECRET_LEN: usize = 32;
+
+/// Generic notice shown when new signups are disabled (`SIGNUPS_ENABLED=false`)
+/// and no custom `SIGNUPS_DISABLED_MESSAGE` is configured. Surfaced both in the
+/// register endpoints' `403` body and on the SPA's signup page.
+const DEFAULT_SIGNUPS_DISABLED_MESSAGE: &str =
+    "New account registration is temporarily disabled. Please check back later.";
 
 /// Resolve and validate the JWT signing secret from the (already-read) env value.
 ///
@@ -434,6 +458,12 @@ impl Config {
         // public site turns it on (paired with SYNC_FROM_UPSTREAM=true).
         let mirror_enabled = env_bool("MIRROR_ENABLED", false);
 
+        // New signups are open by default; SIGNUPS_ENABLED=false temporarily refuses
+        // registration (existing logins are untouched). The optional message is the
+        // user-facing notice; unset falls back to a generic one at read time.
+        let signups_enabled = env_bool("SIGNUPS_ENABLED", true);
+        let signups_disabled_message = env_trimmed("SIGNUPS_DISABLED_MESSAGE");
+
         Config {
             database_url,
             jwt_secret,
@@ -464,7 +494,20 @@ impl Config {
             sync_from_upstream,
             dataset_mirror_url,
             mirror_enabled,
+            signups_enabled,
+            signups_disabled_message,
         }
+    }
+
+    /// The user-facing notice to show when new signups are disabled
+    /// (`signups_enabled == false`): the operator-configured
+    /// `SIGNUPS_DISABLED_MESSAGE`, or [`DEFAULT_SIGNUPS_DISABLED_MESSAGE`] when
+    /// none is set. Shared by the register endpoints' `403` body and the copy the
+    /// SPA renders (served via `GET /api/config`), so the two never drift.
+    pub fn signups_disabled_notice(&self) -> String {
+        self.signups_disabled_message
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SIGNUPS_DISABLED_MESSAGE.to_string())
     }
 
     /// The set of insecure-production-posture warnings that apply to this config.

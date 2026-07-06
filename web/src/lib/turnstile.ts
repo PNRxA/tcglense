@@ -6,32 +6,25 @@
 // at build time), so the published bundle needs no rebuild to change it. The API
 // script is injected once, lazily, on first use.
 
-import { getConfig } from '@/lib/api'
+import { publicConfig } from '@/lib/config'
 
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 
-let siteKeyPromise: Promise<string | undefined> | null = null
-
 /**
- * Fetch the Turnstile site key from the API once, lazily, and cache it (mirroring
- * `loadTurnstile`'s cached-promise idiom). A successful response is cached —
- * including a legitimately-null key when CAPTCHA is disabled server-side, which
- * resolves `undefined` and skips the widget.
+ * The Turnstile site key from the runtime config, or `undefined` to skip the
+ * widget. Reads the shared (once-per-page, cached) `publicConfig()`, so a legit
+ * null key when CAPTCHA is disabled server-side resolves `undefined`.
  *
- * A *failed* fetch is NOT cached: it resolves `undefined` for this attempt but
- * resets the cache so the next call retries. Otherwise a single transient blip
- * (API cold start, brief network error) while CAPTCHA is enabled would leave the
- * widget permanently unrendered for the session — every auth submit sending no
- * token and the server rejecting each with a 400 until a full page reload.
+ * A *failed* config fetch resolves `undefined` for this attempt (rather than
+ * throwing): a single transient blip must not leave the widget permanently
+ * unrendered — `publicConfig()` already dropped its cache, so the next call
+ * retries. Otherwise every auth submit would send no token and the server would
+ * reject each with a 400 until a full page reload.
  */
 export function turnstileSiteKey(): Promise<string | undefined> {
-  siteKeyPromise ??= getConfig()
+  return publicConfig()
     .then((c) => c.turnstile_site_key ?? undefined)
-    .catch(() => {
-      siteKeyPromise = null
-      return undefined
-    })
-  return siteKeyPromise
+    .catch(() => undefined)
 }
 
 export interface TurnstileRenderOptions {

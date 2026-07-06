@@ -175,6 +175,8 @@ Full reference: `docs/operations.md` (authoritative: `api/src/config.rs`,
 email dev bypass above) · `TURNSTILE_SECRET_KEY` pairs with `TURNSTILE_SITE_KEY`
 (both API env vars, both set or both unset — a mismatch fails the boot closed; the
 public site key is served to the SPA at runtime via `GET /api/config`, so the
-published web image needs no rebuild) · `SEED_DUMMY_DATA=true` (offline
-dummy catalog + the seeded e2e account; overrides syncing) · `TRUST_PROXY_HEADERS`
-(see above) · `REDIS_URL` (cross-instance rate limiters).
+published web image needs no rebuild) · `SIGNUPS_ENABLED=false` (temporarily
+refuse new registrations — `register`/`complete-registration` 403 with
+`SIGNUPS_DISABLED_MESSAGE`; existing logins are unaffected) · `SEED_DUMMY_DATA=true`
+(offline dummy catalog + the seeded e2e account; overrides syncing) ·
+`TRUST_PROXY_HEADERS` (see above) · `REDIS_URL` (cross-instance rate limiters).

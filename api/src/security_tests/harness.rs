@@ -117,6 +117,25 @@ pub(super) async fn test_app_trusting_proxy() -> TestApp {
     test_app_over(state)
 }
 
+/// An app whose config has new-user signups turned off (`SIGNUPS_ENABLED=false`),
+/// optionally with a custom disabled-message, so a test can assert `register` /
+/// `complete-registration` are refused while login still works.
+pub(super) async fn test_app_signups_disabled(message: Option<&str>) -> TestApp {
+    let db = crate::test_support::migrated_memory_db().await;
+    let config = Config {
+        data_dir: std::env::temp_dir().join("tcglense-security-tests"),
+        public_site_url: "https://sitemap.test".to_string(),
+        signups_enabled: false,
+        signups_disabled_message: message.map(str::to_string),
+        ..crate::test_support::test_config()
+    };
+    let http = reqwest::Client::builder().build().expect("build http client");
+    let image_http = reqwest::Client::builder().build().expect("build image client");
+    let state =
+        AppState::new(config, db, http, image_http, None).expect("assemble test app state");
+    test_app_over(state)
+}
+
 /// An app with **no email provider** (`Emailer::Disabled`) — the dev posture in
 /// which the emailed completion link can't be delivered: register returns the
 /// completion token in the response instead, and login doesn't gate on

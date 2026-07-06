@@ -31,6 +31,7 @@ mod registration;
 mod request_body;
 mod request_params;
 mod search;
+mod signup_toggle;
 mod sitemap;
 mod web_root;
 mod wishlist;
