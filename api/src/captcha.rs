@@ -75,8 +75,9 @@ impl Captcha {
     }
 
     /// Whether a token is actually required (a real verifier is configured).
-    /// The web app uses the parallel `VITE_TURNSTILE_SITE_KEY` to decide whether
-    /// to render the widget; this is only for logging/introspection.
+    /// The web app decides whether to render the widget from the paired
+    /// `turnstile_site_key` served by `GET /api/config`; this is only for
+    /// logging/introspection.
     pub fn is_enabled(&self) -> bool {
         !matches!(self, Captcha::Disabled)
     }

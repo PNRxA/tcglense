@@ -1,0 +1,19 @@
+# Origin reverse proxy for the DigitalOcean + Upstash + Cloudflare deploy.
+# Full guide: docs/deploy-digitalocean.md.
+#
+# Cloudflare terminates the public TLS and proxies to this droplet; Caddy here
+# terminates the *origin* TLS with a Cloudflare Origin CA certificate (set the
+# Cloudflare SSL/TLS mode to "Full (strict)"), then forwards to the combined image
+# (which serves both the SPA and /api).
+#
+# It rewrites X-Forwarded-For to Cloudflare's real-client header so the API's per-IP
+# auth rate limiting keys on the true visitor, not the Cloudflare edge IP. This is
+# only non-spoofable because a DO cloud firewall restricts inbound 443 to Cloudflare's
+# IP ranges (see the guide) — otherwise a client could hit the origin directly and
+# forge CF-Connecting-IP.
+{$SITE_ADDRESS} {
+	tls /etc/caddy/origin/cert.pem /etc/caddy/origin/key.pem
+	reverse_proxy api:8080 {
+		header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+	}
+}

@@ -36,6 +36,7 @@ use crate::{
             list_collection, owned_counts, save_collection_source, set_collection_entry,
             sync_collection_source,
         },
+        config::public_config,
         health::health,
         mirror::{
             mtgjson_all_printings, scryfall_bulk_data, scryfall_file, scryfall_sets, tcgcsv_proxy,
@@ -77,6 +78,9 @@ pub fn build_router(state: AppState) -> Router {
     // `Cache-Control: no-store` (see `handlers::cache`).
     let private = Router::new()
         .route("/api/health", get(health))
+        // Public runtime config for the SPA (the Turnstile site key). no-store: it
+        // only changes on redeploy and must not be cached per-user/stale.
+        .route("/api/config", get(public_config))
         .route("/api/auth/register", post(register))
         // Finishes an email-first registration: consumes the emailed completion
         // token, sets the first password, and signs the account in.

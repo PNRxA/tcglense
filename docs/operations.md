@@ -195,8 +195,10 @@ tag (`vX.Y.Z`) plus the semver-normalized `X.Y.Z` + `X.Y`, and `latest` only on 
 `linux/amd64` only (multi-arch is future work — Rust under QEMU is slow). Per-target
 layer caching in the GitHub Actions cache (`combined` also reads the `api`/`web` scopes
 so it can reuse shared builder stages across runs). Optional build-time public web
-config comes from repo **variables** `VITE_SITE_URL` and `VITE_TURNSTILE_SITE_KEY`
-(`VITE_API_URL` is baked empty → relative `/api`).
+config comes from the repo **variable** `VITE_SITE_URL`
+(`VITE_API_URL` is baked empty → relative `/api`). The Turnstile site key is no
+longer baked in — it's the API's runtime `TURNSTILE_SITE_KEY`, served via
+`GET /api/config`.
 
 Two compose files run the published images: `deploy/docker-compose.homelab.yml` (the
 combined image + SQLite, one container) and `deploy/docker-compose.prod.yml` (the full
@@ -242,6 +244,7 @@ Both `web/scripts/*` require the Playwright browsers installed
 | `deploy/docker-compose.yml` | Local Postgres + Redis for optional-backend development and the gated integration tests (`cargo test -- --ignored` from `api/`). Not used by the default SQLite dev flow |
 | `deploy/docker-compose.homelab.yml` | Homelab stack: the single `combined` image + SQLite in one container (API serves `/api` **and** the SPA via `WEB_ROOT`); DB + cached images persist in the `tcglense_data` volume. `JWT_SECRET` required; put a reverse proxy in front for HTTPS + set `COOKIE_SECURE=true` + `PUBLIC_SITE_URL`. Pin a release with `IMAGE_TAG=vX.Y.Z` (defaults `:latest`) |
 | `deploy/docker-compose.prod.yml` | Production stack: edge Caddy (TLS) → `web` (Caddy: SPA + `/api` proxy) → `api` → Postgres (`db`) + Redis (`cache`). only `JWT_SECRET` is hard-required (compose `:?` refuses to start without it); `SITE_ADDRESS` defaults to `localhost` and `POSTGRES_PASSWORD` to `tcglense` — set all three for a real deployment. Images from GHCR, pin with `IMAGE_TAG` |
+| `deploy/docker-compose.do.yml` + `deploy/do.Caddyfile` + `deploy/do.env.example` | Managed-cloud stack for the DigitalOcean + Upstash + Cloudflare deploy: one Droplet runs Caddy + the `combined` image, backed by DO Managed Postgres (private VPC, `?sslmode=require`) and Upstash Redis (`rediss://`), fronted by a free Cloudflare CDN. The Caddyfile terminates origin TLS (Cloudflare Origin cert) and rewrites `X-Forwarded-For` from `CF-Connecting-IP`. Full walkthrough: [`deploy-digitalocean.md`](./deploy-digitalocean.md) |
 | `deploy/web.Caddyfile` | Caddy config baked into the `tcglense-web` image: serve the built SPA + reverse-proxy `/api/*` to the API (upstream defaults to compose service `api:8080`, override with `API_UPSTREAM`). Terminate TLS in front of this container |
 | `deploy/edge.Caddyfile` | Edge reverse proxy for the prod compose stack: terminates TLS for `{$SITE_ADDRESS:localhost}` and forwards everything to the `web` container. **Overwrites** (not appends) `X-Forwarded-For` with the real client IP so the API can safely key per-IP rate limiting on the left-most XFF entry (`TRUST_PROXY_HEADERS=true`) without spoofing |
 | `deploy/Caddyfile` | Standalone single-origin production reverse proxy (Caddy v2): serves the built SPA **and** forwards `/api/*` to the Rust API on the same origin (keeps the httpOnly refresh cookie first-party). Auto-provisions HTTPS for a real domain. `caddy run --config deploy/Caddyfile` |
@@ -291,7 +294,11 @@ Both `web/scripts/*` require the Playwright browsers installed
   onboarding sender only delivers to the account owner, so set a verified-domain
   sender in prod),
   `TURNSTILE_SECRET_KEY` (unset; Cloudflare Turnstile secret for the auth-endpoint
-  CAPTCHA — a secret; unset = CAPTCHA disabled/checks pass), `TRUST_PROXY_HEADERS`
+  CAPTCHA — a secret; unset = CAPTCHA disabled/checks pass), `TURNSTILE_SITE_KEY`
+  (unset; the **public** Turnstile site key the browser widget renders with —
+  served to the SPA at runtime via `GET /api/config`, so the published web image
+  needs no rebuild to change it. Pairs with `TURNSTILE_SECRET_KEY`: set both or
+  neither, or the server refuses to boot), `TRUST_PROXY_HEADERS`
   (`false`; trust `X-Forwarded-For`/`Forwarded` for the rate-limiter client IP —
   set `true` **only** behind a trusted proxy, else clients can spoof their IP),
   `RATE_LIMIT_ENABLED` (`true`; per-IP auth rate limiting — set `false` to defer to
@@ -312,9 +319,8 @@ Both `web/scripts/*` require the Playwright browsers installed
   an open proxy to the upstreams; the public mirror sets it with
   `SYNC_FROM_UPSTREAM=true`). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
-  `VITE_TURNSTILE_SITE_KEY` (public Cloudflare Turnstile site key; unset → the
-  CAPTCHA widget isn't rendered and no token is sent — pair it with the API's
-  `TURNSTILE_SECRET_KEY`, both set or both unset).
+  (The Turnstile site key is no longer a web build var — it's the API's runtime
+  `TURNSTILE_SITE_KEY`, fetched by the SPA from `GET /api/config`.)
   `VITE_SITE_URL` (public site origin, default `http://localhost:5173`) — used at
   **build time** for the absolute `Sitemap:` URL in `robots.txt`; canonical and OG
   URLs are resolved at runtime from the live origin, and the sitemap itself is

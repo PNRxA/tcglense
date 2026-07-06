@@ -4,6 +4,7 @@
 // `RequestOptions` and `API_URL` stay module-private (not re-exported here).
 export { ApiError } from './client'
 export * from './auth'
+export * from './config'
 export * from './catalog'
 export * from './products'
 export * from './collection'

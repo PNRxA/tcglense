@@ -1,15 +1,38 @@
 // Cloudflare Turnstile loader + minimal typings.
 //
-// The widget is only used when `VITE_TURNSTILE_SITE_KEY` is set; otherwise the
-// auth forms skip it entirely (dev, and any deploy that runs the API with
-// CAPTCHA disabled). The API script is injected once, lazily, on first use.
+// The widget is only used when the API reports a Turnstile site key; otherwise the
+// auth forms skip it entirely (dev, and any deploy that runs the API with CAPTCHA
+// disabled). The site key is fetched from GET /api/config at runtime (not baked in
+// at build time), so the published bundle needs no rebuild to change it. The API
+// script is injected once, lazily, on first use.
+
+import { getConfig } from '@/lib/api'
 
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 
-export const TURNSTILE_SITE_KEY: string | undefined = import.meta.env.VITE_TURNSTILE_SITE_KEY
+let siteKeyPromise: Promise<string | undefined> | null = null
 
-/** Whether CAPTCHA is configured on the client (a site key is present). */
-export const turnstileEnabled = Boolean(TURNSTILE_SITE_KEY)
+/**
+ * Fetch the Turnstile site key from the API once, lazily, and cache it (mirroring
+ * `loadTurnstile`'s cached-promise idiom). A successful response is cached —
+ * including a legitimately-null key when CAPTCHA is disabled server-side, which
+ * resolves `undefined` and skips the widget.
+ *
+ * A *failed* fetch is NOT cached: it resolves `undefined` for this attempt but
+ * resets the cache so the next call retries. Otherwise a single transient blip
+ * (API cold start, brief network error) while CAPTCHA is enabled would leave the
+ * widget permanently unrendered for the session — every auth submit sending no
+ * token and the server rejecting each with a 400 until a full page reload.
+ */
+export function turnstileSiteKey(): Promise<string | undefined> {
+  siteKeyPromise ??= getConfig()
+    .then((c) => c.turnstile_site_key ?? undefined)
+    .catch(() => {
+      siteKeyPromise = null
+      return undefined
+    })
+  return siteKeyPromise
+}
 
 export interface TurnstileRenderOptions {
   sitekey: string

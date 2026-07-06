@@ -524,28 +524,20 @@ fn note_redis_degraded(last_warn_secs: &AtomicU64, err: &redis::RedisError) {
 }
 
 /// Build an auto-reconnecting multiplexed connection to Redis. Called once at
-/// startup ([`crate::main`]). Returns `Err` if the URL is malformed, points at a
-/// TLS (`rediss://`) endpoint (this build compiles the no-TLS `redis` feature set),
-/// or Redis is unreachable at boot; the caller degrades to in-memory (fail-open)
-/// rather than aborting.
+/// startup ([`crate::main`]). Returns `Err` if the URL is malformed or Redis is
+/// unreachable at boot; the caller degrades to in-memory (fail-open) rather than
+/// aborting.
+///
+/// Both plain `redis://` and TLS `rediss://` (e.g. a hosted Upstash/Valkey endpoint
+/// reached over the public internet) are supported: the build links redis's rustls
+/// TLS feature set with bundled Mozilla roots, and [`crate::main`] installs the
+/// shared aws-lc-rs rustls provider. `Client::open` selects TLS from the URL scheme.
 ///
 /// `ConnectionManager::new` establishes its first connection eagerly (so a dead
 /// Redis surfaces here at boot) and thereafter reconnects automatically, so a
 /// *mid-life* outage is handled by (1) that auto-reconnect and (2) the per-check
 /// fail-open in [`AuthRateLimiter::check`] / [`UserRateLimiter::check`].
 pub async fn connect_redis(url: &str) -> redis::RedisResult<redis::aio::ConnectionManager> {
-    // This build links the no-TLS `redis` feature set, so a `rediss://`/`valkeys://`
-    // URL can never connect. Reject it up front with an actionable message instead
-    // of the crate's terser "the feature is not enabled" (the caller logs it, then
-    // degrades to the in-memory limiter).
-    let scheme = url.split("://").next().unwrap_or("").to_ascii_lowercase();
-    if scheme == "rediss" || scheme == "valkeys" {
-        return Err(redis::RedisError::from((
-            redis::ErrorKind::InvalidClientConfig,
-            "TLS Redis URLs (rediss://) are not supported by this build; use a \
-             plain redis:// endpoint on a private network",
-        )));
-    }
     let client = redis::Client::open(url)?;
     redis::aio::ConnectionManager::new(client).await
 }

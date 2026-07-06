@@ -172,7 +172,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
 Full reference: `docs/operations.md` (authoritative: `api/src/config.rs`,
 `api/.env.example`). The behavior-changing ones: `JWT_SECRET` (required;
 `ALLOW_INSECURE_DEV_SECRET=true` for local dev) · `RESEND_API_KEY` (unset = the
-email dev bypass above) · `TURNSTILE_SECRET_KEY` pairs with the web's
-`VITE_TURNSTILE_SITE_KEY` (both set or both unset) · `SEED_DUMMY_DATA=true` (offline
+email dev bypass above) · `TURNSTILE_SECRET_KEY` pairs with `TURNSTILE_SITE_KEY`
+(both API env vars, both set or both unset — a mismatch fails the boot closed; the
+public site key is served to the SPA at runtime via `GET /api/config`, so the
+published web image needs no rebuild) · `SEED_DUMMY_DATA=true` (offline
 dummy catalog + the seeded e2e account; overrides syncing) · `TRUST_PROXY_HEADERS`
 (see above) · `REDIS_URL` (cross-instance rate limiters).
