@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import {
   NavigationMenu,
   NavigationMenuContent,
@@ -11,6 +11,7 @@ import {
   NavigationMenuTrigger,
 } from '@/components/ui/navigation-menu'
 import { useGamesQuery } from '@/composables/useCatalog'
+import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // The top-bar primary nav: "Products" (the public catalog — Cards + Sealed products,
 // grouped in one dropdown), "Collection" and "Wish list" (per-user).
@@ -28,15 +29,42 @@ import { useGamesQuery } from '@/composables/useCatalog'
 // signed-out visitor who opens one is prompted to sign in / sign up on that page.
 const { data } = useGamesQuery()
 const games = computed(() => data.value?.data ?? [])
+
+// Prefetch the target route's JS chunk on hover/focus so the click lands on an
+// already-loaded view (see lib/prefetch.ts — chunks only, never data/images).
+const router = useRouter()
+const warm = (to: RouteLocationRaw) => prefetchRouteChunks(router, to)
+
+// A dropdown opens 300ms–1s before the click that follows: warm the whole section's
+// landing + per-game chunks then, since those links only exist in the DOM while open.
+// reka emits the open item's `value` (empty string on close). Per-game links all map to
+// the same view chunk, so iterating games costs nothing extra (import() dedupes).
+function warmSection(value: string) {
+  if (value === 'products') {
+    warm('/cards')
+    warm('/sealed')
+    for (const game of games.value) {
+      warm(`/cards/${game.id}`)
+      warm(`/sealed/${game.id}`)
+    }
+  } else if (value === 'collection') {
+    warm('/collection')
+    warm('/scan')
+    for (const game of games.value) warm(`/collection/${game.id}`)
+  } else if (value === 'wishlist') {
+    warm('/wishlist')
+    for (const game of games.value) warm(`/wishlist/${game.id}`)
+  }
+}
 </script>
 
 <template>
-  <NavigationMenu :viewport="false">
+  <NavigationMenu :viewport="false" @update:model-value="warmSection">
     <NavigationMenuList>
       <!-- Products: the public catalog, split into Cards + Sealed products. Both share
            one dropdown so they read as one catalog; each group has a "browse all games"
            landing plus one entry per game. -->
-      <NavigationMenuItem>
+      <NavigationMenuItem value="products">
         <NavigationMenuTrigger>
           <Layers class="mr-1.5 size-4" aria-hidden="true" />
           Products
@@ -51,7 +79,7 @@ const games = computed(() => data.value?.data ?? [])
               <!-- Override on the wrapper so cn()/tailwind-merge resolves the
                    flex-col→flex-row + gap conflict deterministically (not via CSS order). -->
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
-                <RouterLink to="/cards">
+                <RouterLink to="/cards" @pointerenter="warm('/cards')" @focusin="warm('/cards')">
                   <Layers aria-hidden="true" />
                   Browse all games
                 </RouterLink>
@@ -59,7 +87,12 @@ const games = computed(() => data.value?.data ?? [])
             </li>
             <li v-for="game in games" :key="`cards-${game.id}`">
               <NavigationMenuLink as-child>
-                <RouterLink :to="`/cards/${game.id}`">{{ game.name }}</RouterLink>
+                <RouterLink
+                  :to="`/cards/${game.id}`"
+                  @pointerenter="warm(`/cards/${game.id}`)"
+                  @focusin="warm(`/cards/${game.id}`)"
+                  >{{ game.name }}</RouterLink
+                >
               </NavigationMenuLink>
             </li>
             <!-- Sealed products (booster boxes, bundles, decks). -->
@@ -68,7 +101,7 @@ const games = computed(() => data.value?.data ?? [])
             </li>
             <li>
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
-                <RouterLink to="/sealed">
+                <RouterLink to="/sealed" @pointerenter="warm('/sealed')" @focusin="warm('/sealed')">
                   <Package aria-hidden="true" />
                   Browse all games
                 </RouterLink>
@@ -76,7 +109,12 @@ const games = computed(() => data.value?.data ?? [])
             </li>
             <li v-for="game in games" :key="`sealed-${game.id}`">
               <NavigationMenuLink as-child>
-                <RouterLink :to="`/sealed/${game.id}`">{{ game.name }}</RouterLink>
+                <RouterLink
+                  :to="`/sealed/${game.id}`"
+                  @pointerenter="warm(`/sealed/${game.id}`)"
+                  @focusin="warm(`/sealed/${game.id}`)"
+                  >{{ game.name }}</RouterLink
+                >
               </NavigationMenuLink>
             </li>
           </ul>
@@ -84,7 +122,7 @@ const games = computed(() => data.value?.data ?? [])
       </NavigationMenuItem>
 
       <!-- Collection: the signed-in user's owned cards (prompts sign-in if needed). -->
-      <NavigationMenuItem>
+      <NavigationMenuItem value="collection">
         <NavigationMenuTrigger>
           <Library class="mr-1.5 size-4" aria-hidden="true" />
           Collection
@@ -93,7 +131,11 @@ const games = computed(() => data.value?.data ?? [])
           <ul class="grid w-56 gap-1">
             <li>
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
-                <RouterLink to="/collection">
+                <RouterLink
+                  to="/collection"
+                  @pointerenter="warm('/collection')"
+                  @focusin="warm('/collection')"
+                >
                   <Library aria-hidden="true" />
                   All collections
                 </RouterLink>
@@ -101,14 +143,19 @@ const games = computed(() => data.value?.data ?? [])
             </li>
             <li v-for="game in games" :key="game.id">
               <NavigationMenuLink as-child>
-                <RouterLink :to="`/collection/${game.id}`">{{ game.name }}</RouterLink>
+                <RouterLink
+                  :to="`/collection/${game.id}`"
+                  @pointerenter="warm(`/collection/${game.id}`)"
+                  @focusin="warm(`/collection/${game.id}`)"
+                  >{{ game.name }}</RouterLink
+                >
               </NavigationMenuLink>
             </li>
             <!-- Scan cards: rapid-add via the phone/webcam camera. A distinct action, so
                  it sits below the per-game links behind a divider. -->
             <li class="mt-1 border-t pt-2">
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
-                <RouterLink to="/scan">
+                <RouterLink to="/scan" @pointerenter="warm('/scan')" @focusin="warm('/scan')">
                   <ScanLine aria-hidden="true" />
                   Scan cards
                 </RouterLink>
@@ -120,7 +167,7 @@ const games = computed(() => data.value?.data ?? [])
 
       <!-- Wish list: the cards the user wants to buy (issue #167; prompts sign-in if
            needed). -->
-      <NavigationMenuItem>
+      <NavigationMenuItem value="wishlist">
         <NavigationMenuTrigger>
           <Heart class="mr-1.5 size-4" aria-hidden="true" />
           Wish list
@@ -129,7 +176,11 @@ const games = computed(() => data.value?.data ?? [])
           <ul class="grid w-56 gap-1">
             <li>
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
-                <RouterLink to="/wishlist">
+                <RouterLink
+                  to="/wishlist"
+                  @pointerenter="warm('/wishlist')"
+                  @focusin="warm('/wishlist')"
+                >
                   <Heart aria-hidden="true" />
                   All wish lists
                 </RouterLink>
@@ -137,7 +188,12 @@ const games = computed(() => data.value?.data ?? [])
             </li>
             <li v-for="game in games" :key="game.id">
               <NavigationMenuLink as-child>
-                <RouterLink :to="`/wishlist/${game.id}`">{{ game.name }}</RouterLink>
+                <RouterLink
+                  :to="`/wishlist/${game.id}`"
+                  @pointerenter="warm(`/wishlist/${game.id}`)"
+                  @focusin="warm(`/wishlist/${game.id}`)"
+                  >{{ game.name }}</RouterLink
+                >
               </NavigationMenuLink>
             </li>
           </ul>

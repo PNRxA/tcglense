@@ -17,6 +17,22 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => Boolean(accessToken.value || user.value))
 
+  // One-way latch: false until the FIRST session restore settles (success OR failure)
+  // or a session is adopted directly. It answers "has the initial session question been
+  // answered?" — NOT "is the user signed in" — so it is set once and NEVER reset, not
+  // even on logout. Consumers gate flash-of-wrong-state UI on it (see UserMenu,
+  // HomeView, CollectionControls). Deliberately NOT derived from restoreInFlight:
+  // authFetch re-invokes tryRestore on later 401s, so a derived flag would flap.
+  const sessionResolved = ref(false)
+
+  // How long to wait for the first restore before assuming the signed-out posture. The
+  // refresh is a POST, which (unlike GETs) has no client timeout, so a half-open/captive-
+  // portal socket can leave doRestore() pending forever. Without this watchdog the
+  // sessionResolved-gated chrome (UserMenu, HomeView CTAs, CollectionControls, the
+  // collection/wishlist prompts) would stay skeleton indefinitely. The latch is one-way,
+  // so a restore that eventually succeeds still flips isAuthenticated and re-renders.
+  const RESTORE_WATCHDOG_MS = 10_000
+
   async function login(payload: LoginPayload) {
     const response = await apiLogin(payload)
     accessToken.value = response.access_token
@@ -35,6 +51,7 @@ export const useAuthStore = defineStore('auth', () => {
   function setSession(token: string, u: User) {
     accessToken.value = token
     user.value = u
+    sessionResolved.value = true
   }
 
   async function logout() {
@@ -87,7 +104,17 @@ export const useAuthStore = defineStore('auth', () => {
   function tryRestore(): Promise<boolean> {
     restoreInFlight ??= doRestore().finally(() => {
       restoreInFlight = null
+      // The initial session question is now answered (either way). Idempotent — the
+      // latch only ever goes true, so re-settling on a later authFetch restore is a no-op.
+      sessionResolved.value = true
     })
+    // Watchdog: if the restore hasn't settled by the ceiling, degrade to signed-out so
+    // the gated UI stops showing skeletons. Only armed once (while still unresolved).
+    if (!sessionResolved.value) {
+      setTimeout(() => {
+        sessionResolved.value = true
+      }, RESTORE_WATCHDOG_MS)
+    }
     return restoreInFlight
   }
 
@@ -146,6 +173,7 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken,
     user,
     isAuthenticated,
+    sessionResolved,
     login,
     setSession,
     logout,

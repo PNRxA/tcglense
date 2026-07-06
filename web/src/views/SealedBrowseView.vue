@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import ProductGrid from '@/components/products/ProductGrid.vue'
+import ProductGridSkeleton from '@/components/products/ProductGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
 import {
   Select,
   SelectContent,
@@ -140,13 +141,18 @@ useClampPage(page, () => ({
 
     <p class="text-muted-foreground mt-4 mb-6 text-sm">
       <template v-if="productsQuery.isFetching.value && !products.length">Searching…</template>
+      <!-- Refetching over stale results (page/filter change held by keepPreviousData):
+           an honest in-flight cue rather than silently showing the old total. -->
+      <template v-else-if="productsQuery.isFetching.value && productsQuery.isPlaceholderData.value">
+        <UpdatingCue />
+      </template>
       <template v-else
         >{{ total.toLocaleString() }} {{ total === 1 ? 'product' : 'products' }}</template
       >
       <template v-if="query"> matching “{{ query }}”</template>
     </p>
 
-    <LoadingRow v-if="productsQuery.isPending.value" label="Loading products…" />
+    <ProductGridSkeleton v-if="productsQuery.isPending.value" />
     <p v-else-if="productsQuery.isError.value" class="text-destructive py-12">
       Couldn't load sealed products. Please retry.
     </p>

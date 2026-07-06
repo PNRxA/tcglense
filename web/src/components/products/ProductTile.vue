@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import type { Product } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import { formatUsd } from '@/lib/money'
 import { productTypeLabel } from '@/lib/productType'
+import { prefetchRouteChunks } from '@/lib/prefetch'
 import ProductImage from '@/components/products/ProductImage.vue'
 
 const props = defineProps<{
@@ -20,6 +21,11 @@ const price = computed(() => {
 })
 const typeLabel = computed(() => productTypeLabel(props.product.product_type))
 const to = computed(() => `/sealed/${props.game}/${props.product.id}`)
+
+// Warm the product page's JS chunk on hover/focus so the click opens a loaded view
+// (see lib/prefetch.ts — chunks only, never data/images).
+const router = useRouter()
+const warm = () => prefetchRouteChunks(router, to.value)
 </script>
 
 <template>
@@ -38,6 +44,8 @@ const to = computed(() => `/sealed/${props.game}/${props.product.id}`)
     <RouterLink
       :to="to"
       class="mt-1.5 block px-0.5 after:absolute after:inset-0 after:z-10 after:content-['']"
+      @pointerenter="warm"
+      @focusin="warm"
     >
       <p class="truncate text-sm font-medium group-hover:underline" :title="product.name">
         {{ product.name }}

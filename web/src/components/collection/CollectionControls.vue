@@ -4,6 +4,7 @@ import { Check, Loader2, Minus, Plus } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useCollectionEntryQuery } from '@/composables/useCollection'
 import { useWishlistEntryQuery } from '@/composables/useWishlist'
 import { useOwnedCountEditor, type CardListTarget } from '@/composables/useOwnedCountEditor'
@@ -65,8 +66,12 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
       </span>
     </div>
 
-    <!-- Signed out: nudge to sign in (the route is public). -->
-    <p v-if="!auth.isAuthenticated" class="text-muted-foreground text-sm">
+    <!-- Session unresolved: a placeholder line stands in until we know whether to show the
+         sign-in nudge or the steppers — no flash of "Sign in" at an about-to-resolve user. -->
+    <Skeleton v-if="!auth.sessionResolved && !auth.isAuthenticated" class="h-5 w-64" />
+
+    <!-- Signed out (resolved): nudge to sign in (the route is public). -->
+    <p v-else-if="!auth.isAuthenticated" class="text-muted-foreground text-sm">
       <RouterLink :to="loginTo" class="text-primary font-medium hover:underline"
         >Sign in</RouterLink
       >

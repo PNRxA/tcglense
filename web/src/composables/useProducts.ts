@@ -1,5 +1,5 @@
 import { type Ref } from 'vue'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   getCardSealed,
   getProduct,
@@ -10,6 +10,7 @@ import {
 } from '@/lib/api'
 import type { ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
+import { findProductInCache } from '@/lib/placeholders'
 
 /**
  * Shared reads for the sealed-products section. These are PUBLIC catalog endpoints
@@ -39,24 +40,33 @@ interface ProductListQueryOptions {
 export function useProductsQuery(game: Ref<string>, opts: ProductListQueryOptions) {
   return useQuery({
     queryKey: ['products', game, opts.query, opts.set, opts.type, opts.sort, opts.page],
-    queryFn: () =>
-      listProducts(game.value, {
-        q: opts.query.value || undefined,
-        set: opts.set.value || undefined,
-        type: opts.type.value || undefined,
-        page: opts.page.value,
-        pageSize: PRODUCT_PAGE_SIZE,
-        ...toSortParam(opts.sort.value, opts.defaultSort),
-      }),
+    queryFn: ({ signal }) =>
+      listProducts(
+        game.value,
+        {
+          q: opts.query.value || undefined,
+          set: opts.set.value || undefined,
+          type: opts.type.value || undefined,
+          page: opts.page.value,
+          pageSize: PRODUCT_PAGE_SIZE,
+          ...toSortParam(opts.sort.value, opts.defaultSort),
+        },
+        signal,
+      ),
     placeholderData: keepPreviousData,
   })
 }
 
 /** One sealed product by id. Keyed on `['product', game, id]`. */
 export function useProductQuery(game: Ref<string>, id: Ref<string>) {
+  const qc = useQueryClient()
   return useQuery({
     queryKey: ['product', game, id],
     queryFn: () => getProduct(game.value, id.value),
+    // Seed from the (warm) product-list / card-sealed caches so the detail paints
+    // instantly; the real fetch still runs (placeholderData, not initialData) and reads
+    // the current refs so a product→product navigation re-evaluates.
+    placeholderData: () => findProductInCache(qc, game.value, id.value),
   })
 }
 
@@ -79,7 +89,7 @@ export function useProductCardsQuery(
 ) {
   return useQuery({
     queryKey: ['product-cards', game, id, section, q, sort, page],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       // The default sentinel maps to *no* `sort` param (the API's natural order); any other
       // option splits into the API's orthogonal `sort`/`dir` pair.
       const sortParam =
@@ -95,6 +105,7 @@ export function useProductCardsQuery(
         q.value || undefined,
         sortParam?.sort,
         sortParam?.dir,
+        signal,
       )
     },
     placeholderData: keepPreviousData,
@@ -111,7 +122,8 @@ export function useProductCardsQuery(
 export function useProductCardSectionsQuery(game: Ref<string>, id: Ref<string>, q: Ref<string>) {
   return useQuery({
     queryKey: ['product-card-sections', game, id, q],
-    queryFn: () => getProductCardSections(game.value, id.value, q.value || undefined),
+    queryFn: ({ signal }) =>
+      getProductCardSections(game.value, id.value, q.value || undefined, signal),
     placeholderData: keepPreviousData,
   })
 }

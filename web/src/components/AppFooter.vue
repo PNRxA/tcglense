@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
+import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // Site-wide footer, mounted once in App.vue so it renders on every route. It carries the
 // data-source credits (Scryfall / TCGCSV / MTGJSON), the GitHub links, the Terms/Privacy
 // links, and the required WotC Fan Content disclaimer — placed wherever card data/images
 // render (nearly every page). Fully static: no queries, no auth reads, identical signed in
 // or out.
+
+// The legal pages are lazy-loaded route chunks; warm them on hover/focus so the click
+// lands on a loaded view (see lib/prefetch.ts — chunks only, never data/images). The
+// other footer links are external <a> tags (no chunk) or already-loaded routes.
+const router = useRouter()
+const warm = (to: string) => prefetchRouteChunks(router, to)
 </script>
 
 <template>
@@ -139,6 +146,8 @@ import GitHubMark from '@/components/GitHubMark.vue'
                 <RouterLink
                   to="/terms"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                  @pointerenter="warm('/terms')"
+                  @focusin="warm('/terms')"
                 >
                   Terms of Service
                 </RouterLink>
@@ -147,6 +156,8 @@ import GitHubMark from '@/components/GitHubMark.vue'
                 <RouterLink
                   to="/privacy"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                  @pointerenter="warm('/privacy')"
+                  @focusin="warm('/privacy')"
                 >
                   Privacy Policy
                 </RouterLink>

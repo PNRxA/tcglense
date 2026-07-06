@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { ArrowLeft } from '@lucide/vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import { RouterLink } from 'vue-router'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
@@ -10,7 +12,6 @@ import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import DropSection from '@/components/cards/DropSection.vue'
 import DropViewToggle from '@/components/cards/DropViewToggle.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
@@ -113,6 +114,13 @@ const listError = computed(() => (byDrop.value ? dropsQuery.error.value : cardsQ
 const listIsError = computed(() =>
   byDrop.value ? dropsQuery.isError.value : cardsQuery.isError.value,
 )
+// Refetching over stale results (page/filter change held by keepPreviousData): drives an
+// honest "Updating…" cue on the count line rather than silently showing the old total.
+const updating = computed(() =>
+  byDrop.value
+    ? dropsQuery.isFetching.value && dropsQuery.isPlaceholderData.value
+    : cardsQuery.isFetching.value && cardsQuery.isPlaceholderData.value,
+)
 const isEmpty = computed(() =>
   byDrop.value ? dropGroups.value.length === 0 : cards.value.length === 0,
 )
@@ -162,7 +170,8 @@ const searchError = computed(() => searchErrorMessage(listError.value))
             <span class="uppercase">{{ code }}</span>
             <template v-if="set?.set_type"> · {{ set?.set_type?.replace('_', ' ') }}</template>
           </template>
-          <template v-if="countLabel"> · {{ countLabel }}</template>
+          <template v-if="updating"> · <UpdatingCue /> </template>
+          <template v-else-if="countLabel"> · {{ countLabel }}</template>
         </p>
       </header>
 
@@ -195,7 +204,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         @select="viewSingleSet"
       />
 
-      <LoadingRow v-if="listPending" label="Loading cards…" />
+      <CardGridSkeleton v-if="listPending" />
       <p v-else-if="listIsError" class="text-destructive py-12">
         {{ searchError ?? "Couldn't load cards. Please retry." }}
       </p>

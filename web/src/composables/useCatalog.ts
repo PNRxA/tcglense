@@ -1,7 +1,16 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getSet, listCards, listGames, listSetCards, listSetDrops, listSets } from '@/lib/api'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
+import {
+  getCard,
+  getSet,
+  listCards,
+  listGames,
+  listSetCards,
+  listSetDrops,
+  listSets,
+} from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
+import { findCardInCache, findSetInCache } from '@/lib/placeholders'
 
 /**
  * Shared catalog reads. The game registry and per-game set list are used across the
@@ -54,17 +63,36 @@ export function useGameName(game: Ref<string>): ComputedRef<string> {
 export function useSetsQuery(game: Ref<string>) {
   return useQuery({
     queryKey: ['sets', game],
-    queryFn: () => listSets(game.value),
+    queryFn: ({ signal }) => listSets(game.value, signal),
   })
 }
 
 /** One set's metadata. Keyed on `['set', game, code]` so the catalog and collection
  * set views share one warm entry. */
 export function useSetQuery(game: Ref<string>, code: Ref<string>, enabled?: Ref<boolean>) {
+  const qc = useQueryClient()
   return useQuery({
     queryKey: ['set', game, code],
     queryFn: () => getSet(game.value, code.value),
+    // Seed from the (warm) set-list cache so the set view paints instantly; the real fetch
+    // still runs (placeholderData, not initialData) and reads the current refs so a
+    // set→set navigation re-evaluates.
+    placeholderData: () => findSetInCache(qc, game.value, code.value),
     enabled,
+  })
+}
+
+/** One card's full detail. Keyed on `['card', game, id]` so the browse-grid modal
+ * (CardDetailContent) and the standalone page (CardDetailView) share one warm entry and
+ * never double-fetch. Seeds from a warm list/prints/holdings cache so opening a card from
+ * a grid paints instantly (placeholderData, not initialData — the real fetch still runs
+ * and reads the current refs so a card→card navigation re-evaluates). */
+export function useCardQuery(game: Ref<string>, id: Ref<string>) {
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: ['card', game, id],
+    queryFn: () => getCard(game.value, id.value),
+    placeholderData: () => findCardInCache(qc, game.value, id.value),
   })
 }
 
@@ -80,14 +108,19 @@ export function useSetCardsQuery(
   const includeRelated = opts.includeRelated ?? ref(false)
   return useQuery({
     queryKey: ['set-cards', game, code, opts.query, opts.sort, opts.page, includeRelated],
-    queryFn: () =>
-      listSetCards(game.value, code.value, {
-        q: opts.query.value || undefined,
-        page: opts.page.value,
-        pageSize: CARD_PAGE_SIZE,
-        includeRelated: includeRelated.value || undefined,
-        ...toSortParam(opts.sort.value, opts.defaultSort),
-      }),
+    queryFn: ({ signal }) =>
+      listSetCards(
+        game.value,
+        code.value,
+        {
+          q: opts.query.value || undefined,
+          page: opts.page.value,
+          pageSize: CARD_PAGE_SIZE,
+          includeRelated: includeRelated.value || undefined,
+          ...toSortParam(opts.sort.value, opts.defaultSort),
+        },
+        signal,
+      ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
   })
@@ -97,13 +130,17 @@ export function useSetCardsQuery(
 export function useAllCardsQuery(game: Ref<string>, opts: CardListQueryOptions) {
   return useQuery({
     queryKey: ['cards', game, opts.query, opts.sort, opts.page],
-    queryFn: () =>
-      listCards(game.value, {
-        q: opts.query.value || undefined,
-        page: opts.page.value,
-        pageSize: CARD_PAGE_SIZE,
-        ...toSortParam(opts.sort.value, opts.defaultSort),
-      }),
+    queryFn: ({ signal }) =>
+      listCards(
+        game.value,
+        {
+          q: opts.query.value || undefined,
+          page: opts.page.value,
+          pageSize: CARD_PAGE_SIZE,
+          ...toSortParam(opts.sort.value, opts.defaultSort),
+        },
+        signal,
+      ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
   })
@@ -119,12 +156,17 @@ export function useSetDropsQuery(
 ) {
   return useQuery({
     queryKey: ['set-drops', game, code, opts.query, opts.page],
-    queryFn: () =>
-      listSetDrops(game.value, code.value, {
-        q: opts.query.value || undefined,
-        page: opts.page.value,
-        pageSize: DROP_PAGE_SIZE,
-      }),
+    queryFn: ({ signal }) =>
+      listSetDrops(
+        game.value,
+        code.value,
+        {
+          q: opts.query.value || undefined,
+          page: opts.page.value,
+          pageSize: DROP_PAGE_SIZE,
+        },
+        signal,
+      ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
   })

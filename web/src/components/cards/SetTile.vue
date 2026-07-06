@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Layers } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { setIconUrl, type CardSet } from '@/lib/api'
 import { formatCompletion, formatCopies, type CountNoun } from '@/lib/ownership'
 import { useImageLoad } from '@/composables/useImageLoad'
+import { prefetchRouteChunks } from '@/lib/prefetch'
 
 const props = withDefaults(
   defineProps<{
@@ -55,6 +56,11 @@ const nested = computed(() => props.variant === 'nested')
 const displayName = computed(() => props.label ?? props.set.name)
 // Where the tile links: an explicit override (collection view) or the catalog set page.
 const linkTo = computed(() => props.to ?? `/cards/${props.game}/sets/${props.set.code}`)
+
+// Warm the destination's JS chunk on hover/focus so the click opens a loaded view
+// (see lib/prefetch.ts — chunks only, never data/images).
+const router = useRouter()
+const warm = () => prefetchRouteChunks(router, linkTo.value)
 // When the visible label is abbreviated (a stripped sub-set name), keep the full
 // set name as the link's accessible name so it stays unambiguous out of its
 // visual group (WCAG 2.4.4).
@@ -120,6 +126,8 @@ const copiesLabel = computed(() =>
     class="block transition-colors"
     :class="rootClass"
     :aria-label="linkLabel"
+    @pointerenter="warm"
+    @focusin="warm"
   >
     <div class="flex items-center gap-3">
       <div class="flex shrink-0 items-center justify-center" :class="nested ? 'size-8' : 'size-10'">

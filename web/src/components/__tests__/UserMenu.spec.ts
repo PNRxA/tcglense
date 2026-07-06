@@ -28,8 +28,18 @@ async function mountMenu() {
 }
 
 describe('UserMenu', () => {
-  it('shows a login link when signed out', async () => {
+  it('shows a neutral placeholder while the session is unresolved', async () => {
+    // Default store: session not yet resolved and no token — render neither the Sign-in
+    // link nor the account menu, so we don't flash "Sign in" at an about-to-resolve user.
     const { wrapper } = await mountMenu()
+    expect(wrapper.find('a[href^="/login"]').exists()).toBe(false)
+    expect(wrapper.find('[data-slot="skeleton"]').exists()).toBe(true)
+  })
+
+  it('shows a login link once resolved signed out', async () => {
+    const { wrapper, store } = await mountMenu()
+    store.sessionResolved = true
+    await wrapper.vm.$nextTick()
     // The link carries a ?redirect= back to the current route (here, "/").
     const link = wrapper.find('a[href^="/login"]')
     expect(link.exists()).toBe(true)

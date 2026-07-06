@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Heart, Layers, Library, Menu, Package, ScanLine } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useGamesQuery } from '@/composables/useCatalog'
+import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // The mobile counterpart to MainNav: the top-bar's Cards/Collection/Wish list
 // dropdowns don't fit alongside the brand + theme + account controls at phone width,
@@ -24,10 +25,27 @@ import { useGamesQuery } from '@/composables/useCatalog'
 // navigation.
 const { data } = useGamesQuery()
 const games = computed(() => data.value?.data ?? [])
+
+// Touch has no hover, so warm every nav destination's JS chunk when the hamburger opens
+// (see lib/prefetch.ts — chunks only, never data/images). The tap-to-tap gap covers the
+// fetch. Per-game links all map to one view chunk, so iterating games costs nothing.
+const router = useRouter()
+function warmAll(open: boolean) {
+  if (!open) return
+  for (const to of ['/cards', '/sealed', '/collection', '/scan', '/wishlist']) {
+    prefetchRouteChunks(router, to)
+  }
+  for (const game of games.value) {
+    prefetchRouteChunks(router, `/cards/${game.id}`)
+    prefetchRouteChunks(router, `/sealed/${game.id}`)
+    prefetchRouteChunks(router, `/collection/${game.id}`)
+    prefetchRouteChunks(router, `/wishlist/${game.id}`)
+  }
+}
 </script>
 
 <template>
-  <DropdownMenu>
+  <DropdownMenu @update:open="warmAll">
     <DropdownMenuTrigger as-child>
       <Button variant="ghost" size="icon" aria-label="Open navigation menu">
         <Menu />

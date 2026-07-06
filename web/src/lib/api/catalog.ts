@@ -55,8 +55,8 @@ export function gameStatus(game: string): Promise<IngestStatus> {
   return request<IngestStatus>(`/api/games/${encodeURIComponent(game)}/status`)
 }
 
-export function listSets(game: string): Promise<{ data: CardSet[] }> {
-  return request<{ data: CardSet[] }>(`/api/games/${encodeURIComponent(game)}/sets`)
+export function listSets(game: string, signal?: AbortSignal): Promise<{ data: CardSet[] }> {
+  return request<{ data: CardSet[] }>(`/api/games/${encodeURIComponent(game)}/sets`, { signal })
 }
 
 export function getSet(game: string, code: string): Promise<CardSet> {
@@ -67,14 +67,21 @@ export function listSetCards(
   game: string,
   code: string,
   params?: CardListParams,
+  signal?: AbortSignal,
 ): Promise<CardPage> {
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  return request<CardPage>(`/api/games/${g}/sets/${c}/cards${cardQuery(params)}`)
+  return request<CardPage>(`/api/games/${g}/sets/${c}/cards${cardQuery(params)}`, { signal })
 }
 
-export function listCards(game: string, params?: CardListParams): Promise<CardPage> {
-  return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`)
+export function listCards(
+  game: string,
+  params?: CardListParams,
+  signal?: AbortSignal,
+): Promise<CardPage> {
+  return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`, {
+    signal,
+  })
 }
 
 /** How many name hints the quick-add box requests (the server also caps this). */
@@ -113,10 +120,11 @@ export function listSetDrops(
   game: string,
   code: string,
   params?: Pick<CardListParams, 'page' | 'pageSize' | 'q'>,
+  signal?: AbortSignal,
 ): Promise<DropGroupPage> {
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  return request<DropGroupPage>(`/api/games/${g}/sets/${c}/drops${cardQuery(params)}`)
+  return request<DropGroupPage>(`/api/games/${g}/sets/${c}/drops${cardQuery(params)}`, { signal })
 }
 
 export function getCard(game: string, id: string): Promise<Card> {

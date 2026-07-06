@@ -120,6 +120,20 @@ describe('useAuthCacheReset', () => {
 
     expect(qc.getQueryData(['collection', 'mtg'])).toBe('private-collection')
   })
+
+  it('keeps per-user queries fired before the user id lands (null → id boot)', async () => {
+    // Under the non-blocking guard, refresh sets the token and authed queries start
+    // BEFORE fetchMe resolves the user id. The subsequent null→id flip must NOT wipe
+    // those caches (it used to double-fetch every per-user query on every boot).
+    auth.accessToken = 'boot-token'
+    await seedCache(qc)
+    expect(qc.getQueryData(['collection', 'mtg'])).toBe('private-collection')
+
+    auth.user = USER_A // null → id: fetchMe lands
+    await flushPromises()
+
+    expect(qc.getQueryData(['collection', 'mtg'])).toBe('private-collection')
+  })
 })
 
 // The reset only works because `useAuthedQuery` tags every per-user read with

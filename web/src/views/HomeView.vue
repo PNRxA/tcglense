@@ -23,6 +23,7 @@ import {
 import { RouterLink } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
 import { buttonVariants } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -122,6 +123,9 @@ const rowLinkClass =
           you're still missing.
         </p>
 
+        <!-- Auth-branched CTAs: authed variant on a token, guest variant once resolved
+             signed-out, and while the session is still unresolved reserve the two lg
+             buttons' footprint with skeletons so the row doesn't jump on resolve. -->
         <div class="mt-8 flex flex-col gap-3 sm:flex-row">
           <template v-if="auth.isAuthenticated">
             <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
@@ -132,7 +136,7 @@ const rowLinkClass =
               Browse cards
             </RouterLink>
           </template>
-          <template v-else>
+          <template v-else-if="auth.sessionResolved">
             <RouterLink to="/register" :class="buttonVariants({ size: 'lg' })">
               Create a free account
               <ArrowRight aria-hidden="true" />
@@ -141,9 +145,16 @@ const rowLinkClass =
               Browse the catalog
             </RouterLink>
           </template>
+          <template v-else>
+            <Skeleton class="h-10 w-52" />
+            <Skeleton class="h-10 w-40" />
+          </template>
         </div>
 
-        <p v-if="!auth.isAuthenticated" class="text-muted-foreground mt-4 text-sm text-pretty">
+        <p
+          v-if="auth.sessionResolved && !auth.isAuthenticated"
+          class="text-muted-foreground mt-4 text-sm text-pretty"
+        >
           No account needed to browse cards, sets, sealed products, and prices. Already have an
           account?
           <RouterLink to="/login" class="text-primary underline-offset-4 hover:underline">
@@ -399,7 +410,9 @@ const rowLinkClass =
             </p>
             <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
               <RouterLink to="/collection" :class="rowLinkClass">
-                {{ auth.isAuthenticated ? 'Open your collection' : 'Start a collection' }}
+                <template v-if="auth.isAuthenticated">Open your collection</template>
+                <template v-else-if="auth.sessionResolved">Start a collection</template>
+                <Skeleton v-else class="h-4 w-32" />
                 <ArrowRight class="size-4" aria-hidden="true" />
               </RouterLink>
             </div>
@@ -500,12 +513,13 @@ const rowLinkClass =
                   <ArrowRight class="size-4" aria-hidden="true" />
                 </RouterLink>
               </template>
-              <template v-else>
+              <template v-else-if="auth.sessionResolved">
                 <RouterLink to="/register" :class="rowLinkClass">
                   Create a free account to try it
                   <ArrowRight class="size-4" aria-hidden="true" />
                 </RouterLink>
               </template>
+              <Skeleton v-else class="h-5 w-48" />
             </div>
           </div>
           <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
@@ -677,7 +691,9 @@ const rowLinkClass =
             </p>
             <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
               <RouterLink to="/wishlist" :class="rowLinkClass">
-                {{ auth.isAuthenticated ? 'Open your wish list' : 'Start a wish list' }}
+                <template v-if="auth.isAuthenticated">Open your wish list</template>
+                <template v-else-if="auth.sessionResolved">Start a wish list</template>
+                <Skeleton v-else class="h-4 w-32" />
                 <ArrowRight class="size-4" aria-hidden="true" />
               </RouterLink>
             </div>
@@ -942,7 +958,7 @@ const rowLinkClass =
             </RouterLink>
           </div>
         </template>
-        <template v-else>
+        <template v-else-if="auth.sessionResolved">
           <h2 class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
             Start tracking in minutes
           </h2>
@@ -958,6 +974,19 @@ const rowLinkClass =
             <RouterLink to="/login" :class="buttonVariants({ variant: 'outline', size: 'lg' })">
               Sign in
             </RouterLink>
+          </div>
+        </template>
+        <!-- Session unresolved: reserve the band's heading, copy, and two lg CTAs so the
+             closing section keeps its height while the auth branch resolves. -->
+        <template v-else>
+          <Skeleton class="mx-auto h-8 w-72 max-w-full" />
+          <div class="mx-auto mt-3 max-w-xl space-y-2">
+            <Skeleton class="mx-auto h-4 w-full max-w-md" />
+            <Skeleton class="mx-auto h-4 w-4/5 max-w-sm" />
+          </div>
+          <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Skeleton class="h-10 w-52" />
+            <Skeleton class="h-10 w-32" />
           </div>
         </template>
       </div>
