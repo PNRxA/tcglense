@@ -256,10 +256,11 @@ Both `web/scripts/*` require the Playwright browsers installed
   the backend at runtime — `sqlite://` or `postgres://`, both drivers compiled in),
   `DB_MAX_CONNECTIONS` (10) / `DB_MIN_CONNECTIONS` (0) / `DB_CONNECT_TIMEOUT_SECS` (15) /
   `DB_ACQUIRE_TIMEOUT_SECS` (30) — Postgres connection-pool sizing, ignored on SQLite,
-  `REDIS_URL` (unset; a plain `redis://` URL backing the per-IP + per-user rate limiters
-  — shared across instances when set, in-memory otherwise; fails open on outage; a secret
-  if it embeds a password; a `rediss://` TLS URL is unsupported by this build and degrades
-  to in-memory; requires **Redis 5.0+** — the limiter Lua script uses server `TIME` +
+  `REDIS_URL` (unset; a `redis://` — or `rediss://` for TLS — URL backing the per-IP +
+  per-user rate limiters — shared across instances when set, in-memory otherwise; fails
+  open on outage; a secret if it embeds a password; `rediss://` TLS **is** supported
+  (rustls with bundled Mozilla roots, so hosted providers like Upstash work over the
+  public internet); requires **Redis 5.0+** — the limiter Lua script uses server `TIME` +
   `SET`, rejected by older Redis's script effect replication), `JWT_SECRET`
   (**required**, ≥ 32 bytes, not the dev constant), `ALLOW_INSECURE_DEV_SECRET`
   (false; opt-in to the insecure compiled-in secret for local dev only),
