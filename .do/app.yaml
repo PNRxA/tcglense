@@ -101,6 +101,13 @@ services:
       - key: PUBLIC_SITE_URL
         scope: RUN_TIME
         value: https://tcglense.com
+      # SeaORM logs EVERY SQL statement at INFO (sqlx-core target `sqlx::query`), which
+      # floods the App Platform log stream. Keep the app's own logs at info but silence
+      # the per-query SQL. Raise `sqlx::query` to debug temporarily when you need to see
+      # queries (nothing sensitive is logged — tokens/passwords are never in the SQL).
+      - key: RUST_LOG
+        scope: RUN_TIME
+        value: info,sqlx::query=warn
 
 # Single service ⇒ everything routes to it; this block is explicit but optional.
 ingress:
