@@ -33,4 +33,21 @@ describe('App', () => {
 
     expect(wrapper.text()).toContain('TCGLense')
   })
+
+  it('shows the build-time app version in the footer', async () => {
+    const pinia = createPinia()
+    const router = makeRouter()
+    router.push('/')
+    await router.isReady()
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, [VueQueryPlugin, { queryClient }]],
+      },
+    })
+
+    // Injected from package.json via the vite.config.ts `define` (issue #250).
+    expect(wrapper.text()).toMatch(/v\d+\.\d+\.\d+/)
+  })
 })
