@@ -55,13 +55,15 @@ pub fn resolve_product_drop<'a>(
     external_id: &str,
     name: &str,
 ) -> Option<ProductDrop<'a>> {
-    let foil = parse_foil(name).unwrap_or(false);
+    let (base, foil) = strip_finish(name);
     if let Some(slug) = override_slug(external_id) {
         if let Some(drop) = table.drop_by_slug(slug) {
             return Some(ProductDrop { drop, foil });
         }
     }
-    let core = extract_core_title(name);
+    // Exact title match on the finish-stripped, prefix-stripped core, so a product never
+    // resolves to the *wrong* drop — worst case is no match at all.
+    let core = strip_prefixes(&base);
     let drop = table.drop_by_title(&drops::normalize_title(&core))?;
     Some(ProductDrop { drop, foil })
 }
@@ -78,34 +80,71 @@ fn override_slug(external_id: &str) -> Option<&'static str> {
         .map(|(_, slug)| *slug)
 }
 
-/// Whether a Secret Lair product is a foil edition, from its name: an explicit
-/// "Non-Foil" wins over a bare "Foil" (many products name both, e.g. "Rainbow Foil"),
-/// and `None` when the name says nothing (the caller defaults to non-foil).
-fn parse_foil(name: &str) -> Option<bool> {
-    let lc = name.to_lowercase();
-    if lc.contains("non-foil") || lc.contains("nonfoil") || lc.contains("non foil") {
+/// Whether a stripped finish clause denotes a foil printing: an explicit "non-foil" wins
+/// over a bare "foil" (a clause often names both, e.g. "Rainbow Foil"); `None` when the
+/// clause says nothing about the finish.
+fn clause_foil(clause: &str) -> Option<bool> {
+    let l = clause.to_lowercase();
+    if l.contains("non-foil") || l.contains("nonfoil") || l.contains("non foil") {
         Some(false)
-    } else if lc.contains("foil") {
+    } else if l.contains("foil") {
         Some(true)
     } else {
         None
     }
 }
 
-/// A trailing foil/edition clause: `" - Traditional Foil Edition"`, `" - JP Non-Foil
-/// Edition"`, `" (SP Rainbow Foil)"`, `" - Foil Etched Edition"`, … Stripped repeatedly so
-/// stacked clauses (`"… (Japanese)"` after a foil clause) all come off.
-static FOIL_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)\s*[-–(]\s*(jp |sp |eu |japanese )?(traditional foil|rainbow foil|gilded foil|galaxy foil|textured foil|pool party foil|neon ink|foil etched|non-foil|nonfoil|non foil|foil)( edition| version)?\s*\)?\s*(\(japanese\))?\s*$",
-    )
-    .expect("valid foil-suffix regex")
-});
+/// Whether a trailing clause is a finish / edition / language *wrapper* (so it should come
+/// off the drop title) rather than part of the title itself. Deliberately **content-agnostic
+/// on the finish name** — it keys off "foil"/"edition"/"version"/language words, not a fixed
+/// finish list — so a *new* finish (Surge Foil, Halo Foil, Confetti Foil, …) still strips.
+fn is_finish_clause(clause: &str) -> bool {
+    let l = clause.to_lowercase();
+    l.contains("foil")
+        || l.contains("edition")
+        || l.contains("version")
+        || l.contains("japanese")
+        || l.contains("english")
+}
 
-/// A bare trailing `" Edition"` / `" Version"` with no foil word (e.g. "… Compleat
-/// Edition"), stripped once after the foil clauses.
-static TRAILING_EDITION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\s+(edition|version)\s*$").expect("valid edition regex"));
+/// Strip the trailing finish/edition clause(s) from a product name and report its foilness.
+/// Handles both the `" - <finish> Edition"` and parenthetical `" (<finish>)"` forms and any
+/// finish name (not a fixed list). Foilness is read from the **stripped clause**, so a drop
+/// whose *title* contains "foil" (e.g. "Foil-Jumpstart Lands") doesn't mislabel a non-foil
+/// product. Returns `(name_without_finish, foil)`.
+fn strip_finish(name: &str) -> (String, bool) {
+    // Normalise unicode dashes to ASCII so " - " separators and "Non-Foil" match uniformly.
+    let mut base: String = name
+        .chars()
+        .map(|c| match c {
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            other => other,
+        })
+        .collect();
+    base = base.trim().to_string();
+    let mut foil: Option<bool> = None;
+
+    // Trailing parenthetical finish/language clauses, e.g. "(SP Rainbow Foil)", "(Japanese)".
+    while base.ends_with(')') {
+        let Some(open) = base.rfind('(') else { break };
+        let inner = base[open + 1..base.len() - 1].to_string();
+        if !is_finish_clause(&inner) {
+            break;
+        }
+        foil = foil.or_else(|| clause_foil(&inner));
+        base = base[..open].trim_end().to_string();
+    }
+    // The last " - <clause>" segment, if the clause names a finish (leaving any " - " inside
+    // the real title intact).
+    if let Some(idx) = base.rfind(" - ") {
+        let clause = &base[idx + 3..];
+        if is_finish_clause(clause) {
+            foil = foil.or_else(|| clause_foil(clause));
+            base = base[..idx].trim_end().to_string();
+        }
+    }
+    (base, foil.unwrap_or(false))
+}
 
 /// The leading storefront prefixes, stripped in order (each anchored at the start), to
 /// leave the bare drop title: `"Secret Lair Drop: "`, a superdrop segment, `"Secret Lair
@@ -129,28 +168,15 @@ static PREFIX_STRIPS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 static INNER_SECRET_LAIR_X: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)secret lair x\s+").expect("valid inner regex"));
 
-/// Reduce a Secret Lair sealed-product name to the bare drop title for matching: strip the
-/// trailing foil/edition clause(s), then the leading storefront prefix(es). Punctuation and
-/// case are handled downstream by [`drops::normalize_title`], so this only needs to remove
-/// the wrapping *words*, not canonicalise them.
-fn extract_core_title(name: &str) -> String {
-    let mut core = strip_foil_suffix(name);
+/// Strip the leading storefront prefix(es) to leave the bare drop title. Punctuation and
+/// case are handled downstream by [`drops::normalize_title`], so this only removes the
+/// wrapping *words*.
+fn strip_prefixes(base: &str) -> String {
+    let mut core = base.to_string();
     for re in PREFIX_STRIPS.iter() {
         core = re.replace(&core, "").into_owned();
     }
     INNER_SECRET_LAIR_X.replace_all(&core, "").trim().to_string()
-}
-
-fn strip_foil_suffix(name: &str) -> String {
-    let mut core = name.trim().to_string();
-    loop {
-        let next = FOIL_SUFFIX.replace(&core, "").trim().to_string();
-        if next == core {
-            break;
-        }
-        core = next;
-    }
-    TRAILING_EDITION.replace(&core, "").trim().to_string()
 }
 
 /// A stable content hash of everything this derivation reads — the embedded drop snapshot
@@ -177,8 +203,9 @@ pub fn derivation_version() -> &'static str {
 mod tests {
     use super::*;
 
+    /// The bare drop title a product name reduces to (finish clause + storefront prefixes off).
     fn core(name: &str) -> String {
-        extract_core_title(name)
+        strip_prefixes(&strip_finish(name).0)
     }
 
     #[test]
@@ -199,16 +226,32 @@ mod tests {
             core("Secret Lair Drop: Summer Superdrop - Mountain, Go - Traditional Foil Edition"),
             "Mountain, Go",
         );
+        // Content-agnostic finish stripping: a finish NOT in any fixed list still comes off,
+        // and a " - " inside the real drop title is preserved.
+        assert_eq!(
+            core("Secret Lair Drop: Showcase: March of the Machine Vol. 1 - Halo Foil Edition"),
+            "Showcase: March of the Machine Vol. 1",
+        );
+        // A drop title that genuinely ends in "Edition" is NOT over-stripped.
+        assert_eq!(
+            core("Secret Lair Drop: Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition - Non-Foil Edition"),
+            "Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition",
+        );
     }
 
     #[test]
-    fn parses_foil_from_edition() {
-        assert_eq!(parse_foil("Cats of Chaos - Non-Foil Edition"), Some(false));
-        assert_eq!(parse_foil("Cats of Chaos - Traditional Foil Edition"), Some(true));
-        assert_eq!(parse_foil("Nuestra Magia (SP Rainbow Foil)"), Some(true));
-        // "Non-Foil" wins even when "foil" is a substring of it.
-        assert_eq!(parse_foil("Those Non-Foils Just Won't Let Up"), Some(false));
-        assert_eq!(parse_foil("A Plain Name"), None);
+    fn strip_finish_reports_foil_from_the_clause_only() {
+        assert_eq!(strip_finish("Cats of Chaos - Non-Foil Edition").1, false);
+        assert_eq!(strip_finish("Cats of Chaos - Traditional Foil Edition").1, true);
+        assert_eq!(strip_finish("Nuestra Magia (SP Rainbow Foil)").1, true);
+        // Any finish name strips, even one not in a fixed list.
+        assert_eq!(strip_finish("March of the Machine Vol. 1 - Surge Foil Edition"),
+                   ("March of the Machine Vol. 1".to_string(), true));
+        // Foil is read from the finish clause, so "foil" inside the drop *title* doesn't
+        // mislabel a non-foil product.
+        assert_eq!(strip_finish("Foil-Jumpstart Lands - Non-Foil Edition").1, false);
+        // No finish clause -> unchanged, defaults non-foil.
+        assert_eq!(strip_finish("A Plain Name"), ("A Plain Name".to_string(), false));
     }
 
     #[test]
@@ -223,6 +266,30 @@ mod tests {
         let foil = resolve_product_drop(table, "700796", "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition")
             .expect("resolves");
         assert!(foil.foil);
+    }
+
+    #[test]
+    fn resolves_non_standard_finishes_and_edition_titles() {
+        let table = table().expect("sld drop table present");
+        // A finish outside any fixed list ("Halo Foil") still strips, so the product matches
+        // its gallery drop (whose title lacks the finish).
+        let halo = resolve_product_drop(
+            table,
+            "493799",
+            "Secret Lair Drop: Showcase: March of the Machine Vol. 1 - Halo Foil Edition",
+        )
+        .expect("halo-foil resolves");
+        assert_eq!(halo.drop.slug, "showcase-march-of-the-machine-vol-1");
+        assert!(halo.foil);
+        // A drop whose gallery title genuinely ends in "Edition" is not over-stripped.
+        let pool = resolve_product_drop(
+            table,
+            "686670",
+            "Secret Lair Drop: Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition - Non-Foil Edition",
+        )
+        .expect("pool-party-edition resolves");
+        assert_eq!(pool.drop.slug, "marvel-s-deadpool-i-fixed-it-you-re-welcome-pool-party-edition");
+        assert!(!pool.foil);
     }
 
     #[test]

@@ -576,19 +576,19 @@ async fn merge_sld_derived(
         return Ok(0);
     }
 
-    // Resolve those drops' collector numbers (all in the `sld` set) to internal card ids,
-    // in one pass over the set.
-    let card_keys: Vec<(String, String)> = resolved
-        .iter()
-        .flat_map(|(_, _, cns)| cns.iter().map(|cn| (sld::SET_CODE.to_string(), cn.clone())))
-        .collect();
-    let cards = resolve_cards_by_setnum(db, &card_keys).await?;
+    // Resolve just the needed collector numbers (all in the `sld` set) to internal card ids
+    // — bounded to the drops in play, not the whole set.
+    let mut numbers: Vec<&str> =
+        resolved.iter().flat_map(|(_, _, cns)| cns.iter().map(String::as_str)).collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    let cards = resolve_sld_cards(db, &numbers).await?;
 
     let membership = sealed_content::Membership::Contains.as_str();
     let mut added = 0;
-    for (product_id, foil, cns) in resolved {
+    for &(product_id, foil, cns) in &resolved {
         for cn in cns {
-            let Some(&card_id) = cards.get(&(sld::SET_CODE.to_string(), cn.clone())) else {
+            let Some(&card_id) = cards.get(cn.as_str()) else {
                 continue;
             };
             if rows.insert((product_id, card_id, membership, foil)) {
@@ -600,6 +600,30 @@ async fn merge_sld_derived(
         tracing::info!(rows = added, "mtgjson: derived Secret Lair drop card contents");
     }
     Ok(added)
+}
+
+/// Resolve `sld`-set cards by collector number -> internal `cards.id`, for just the numbers
+/// requested (chunked under the bind limit). The set is always `sld`, so the returned map is
+/// keyed by collector number alone.
+async fn resolve_sld_cards(
+    db: &DatabaseConnection,
+    numbers: &[&str],
+) -> Result<HashMap<String, i32>, MtgjsonError> {
+    let mut map = HashMap::new();
+    for chunk in numbers.chunks(IN_CHUNK) {
+        let rows: Vec<(String, i32)> = Card::find()
+            .select_only()
+            .column(card::Column::CollectorNumber)
+            .column(card::Column::Id)
+            .filter(card::Column::Game.eq(GAME))
+            .filter(card::Column::SetCode.eq(sld::SET_CODE))
+            .filter(card::Column::CollectorNumber.is_in(chunk.iter().copied()))
+            .into_tuple()
+            .all(db)
+            .await?;
+        map.extend(rows);
+    }
+    Ok(map)
 }
 
 /// Load every Secret Lair sealed product `(id, external_id, name)` for the game — the
