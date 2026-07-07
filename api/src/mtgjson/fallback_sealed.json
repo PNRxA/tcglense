@@ -60,6 +60,162 @@
         { "set": "tle", "number": "313", "name": "Obscuring Haze", "membership": "variable", "foil": false },
         { "set": "tle", "number": "314", "name": "Worldly Tutor", "membership": "variable", "foil": false }
       ]
+    },
+    {
+      "tcgplayer_product_id": "648682",
+      "name": "Avatar: The Last Airbender - Beginner Box",
+      "note": [
+        "MTGJSON ships contents:null. A two-player starter: 2 tutorial decks + 8 themed half-decks,",
+        "plus play boards, spindowns, tokens and guides — no boosters, no linkable sub-products, so",
+        "the composition is textual. Source: Wizards 'Collecting Avatar' article + Amazon listing."
+      ],
+      "components": [
+        { "kind": "deck", "quantity": 2, "name": "Tutorial deck" },
+        { "kind": "deck", "quantity": 8, "name": "Themed half-deck" },
+        { "kind": "other", "quantity": 2, "name": "Play board" },
+        { "kind": "other", "quantity": 2, "name": "Spindown die" },
+        { "kind": "other", "quantity": 5, "name": "Token" },
+        { "kind": "other", "quantity": 2, "name": "How-to-play guide" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "662272",
+      "name": "Avatar: The Last Airbender - Beginner Box Case",
+      "note": [
+        "MTGJSON ships contents:null. A case of 3 Beginner Boxes (tcg 648682). Source: distributor",
+        "listings (DA Card World 'Beginner 3-Box Case', Cardmarket 'buy 3 for a sealed case')."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Beginner Box", "child_tcgplayer_product_id": "648682" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648719",
+      "name": "Avatar: The Last Airbender - Prerelease Pack (Aang)",
+      "note": [
+        "MTGJSON ships contents:null. Each character prerelease pack: 5 Play Boosters (tcg 648640) +",
+        "1 seeded character booster + 2 double-sided tokens + 1 traditional foil year-stamped rare or",
+        "mythic + 1 spindown die. Source: Wizards 'Collecting Avatar' article."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 1, "name": "Seeded Aang character booster" },
+        { "kind": "other", "quantity": 2, "name": "Double-sided token" },
+        { "kind": "other", "quantity": 1, "name": "Traditional foil year-stamped rare or mythic" },
+        { "kind": "other", "quantity": 1, "name": "Spindown die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648720",
+      "name": "Avatar: The Last Airbender - Prerelease Pack (Katara)",
+      "note": [ "As Prerelease Pack tcg 648719, themed to Katara." ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 1, "name": "Seeded Katara character booster" },
+        { "kind": "other", "quantity": 2, "name": "Double-sided token" },
+        { "kind": "other", "quantity": 1, "name": "Traditional foil year-stamped rare or mythic" },
+        { "kind": "other", "quantity": 1, "name": "Spindown die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648721",
+      "name": "Avatar: The Last Airbender - Prerelease Pack (Azula)",
+      "note": [ "As Prerelease Pack tcg 648719, themed to Azula." ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 1, "name": "Seeded Azula character booster" },
+        { "kind": "other", "quantity": 2, "name": "Double-sided token" },
+        { "kind": "other", "quantity": 1, "name": "Traditional foil year-stamped rare or mythic" },
+        { "kind": "other", "quantity": 1, "name": "Spindown die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648722",
+      "name": "Avatar: The Last Airbender - Prerelease Pack (Zuko)",
+      "note": [ "As Prerelease Pack tcg 648719, themed to Zuko." ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 1, "name": "Seeded Zuko character booster" },
+        { "kind": "other", "quantity": 2, "name": "Double-sided token" },
+        { "kind": "other", "quantity": 1, "name": "Traditional foil year-stamped rare or mythic" },
+        { "kind": "other", "quantity": 1, "name": "Spindown die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648723",
+      "name": "Avatar: The Last Airbender - Prerelease Pack (Toph)",
+      "note": [ "As Prerelease Pack tcg 648719, themed to Toph." ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 1, "name": "Seeded Toph character booster" },
+        { "kind": "other", "quantity": 2, "name": "Double-sided token" },
+        { "kind": "other", "quantity": 1, "name": "Traditional foil year-stamped rare or mythic" },
+        { "kind": "other", "quantity": 1, "name": "Spindown die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648724",
+      "name": "Avatar: The Last Airbender - Prerelease Packs Set of 5",
+      "note": [
+        "MTGJSON ships contents:null. One of each of the 5 character prerelease packs. Source: the",
+        "product name + the 5-character prerelease lineup."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Prerelease Pack (Aang)", "child_tcgplayer_product_id": "648719" },
+        { "kind": "sealed", "quantity": 1, "name": "Prerelease Pack (Katara)", "child_tcgplayer_product_id": "648720" },
+        { "kind": "sealed", "quantity": 1, "name": "Prerelease Pack (Azula)", "child_tcgplayer_product_id": "648721" },
+        { "kind": "sealed", "quantity": 1, "name": "Prerelease Pack (Zuko)", "child_tcgplayer_product_id": "648722" },
+        { "kind": "sealed", "quantity": 1, "name": "Prerelease Pack (Toph)", "child_tcgplayer_product_id": "648723" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648716",
+      "name": "Avatar: The Last Airbender - Scene Box: Tea Time at the Jasmine Dragon",
+      "note": [
+        "MTGJSON ships contents:null. Each Scene Box: 3 Play Boosters (tcg 648640) + 6 traditional",
+        "foil borderless scene cards + 6 art cards + 1 display easel. Source: Wizards 'Collecting",
+        "Avatar' article + Amazon listing."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 6, "name": "Traditional foil borderless scene card" },
+        { "kind": "other", "quantity": 6, "name": "Art card" },
+        { "kind": "other", "quantity": 1, "name": "Display easel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648713",
+      "name": "Avatar: The Last Airbender - Scene Box: The Black Sun Invasion",
+      "note": [ "As Scene Box tcg 648716: 3 Play Boosters + 6 foil scene cards + 6 art cards + 1 easel." ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "other", "quantity": 6, "name": "Traditional foil borderless scene card" },
+        { "kind": "other", "quantity": 6, "name": "Art card" },
+        { "kind": "other", "quantity": 1, "name": "Display easel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648717",
+      "name": "Avatar: The Last Airbender - Scene Box (Set of 2)",
+      "note": [
+        "MTGJSON ships contents:null. One of each Scene Box. Source: the product name + the 2-box lineup."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Scene Box: Tea Time at the Jasmine Dragon", "child_tcgplayer_product_id": "648716" },
+        { "kind": "sealed", "quantity": 1, "name": "Scene Box: The Black Sun Invasion", "child_tcgplayer_product_id": "648713" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648718",
+      "name": "Avatar: The Last Airbender - Scene Box Case",
+      "note": [
+        "MTGJSON ships contents:null. A 4-box case: 2 of each Scene Box. Source: distributor listings",
+        "(Lazarus/Steel City 'Scene 4-box case, 2 of each type')."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Scene Box: Tea Time at the Jasmine Dragon", "child_tcgplayer_product_id": "648716" },
+        { "kind": "sealed", "quantity": 2, "name": "Scene Box: The Black Sun Invasion", "child_tcgplayer_product_id": "648713" }
+      ]
     }
   ]
 }

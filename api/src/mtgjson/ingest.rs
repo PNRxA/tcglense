@@ -970,6 +970,28 @@ mod tests {
         assert!(rows.is_empty());
     }
 
+    /// The **shipped** fallback composition resolves against a catalog: seed the Avatar
+    /// Beginner Box + its case, run the real merge, and confirm the case links the box (3×).
+    /// Guards the committed data + the resolution path together — a typo'd child tcgid would
+    /// silently drop the link, which the pure fallback-data test can't catch.
+    #[tokio::test]
+    async fn shipped_fallback_components_resolve_against_the_catalog() {
+        let db = migrated_memory_db().await;
+        let beginner = insert_product(&db, "648682").await;
+        let case = insert_product(&db, "662272").await;
+
+        let mut rows = Vec::new();
+        let added = merge_fallback_components(&db, fallback::data(), &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
+        assert!(added > 0, "the shipped fallback authored components");
+        // The Beginner Box Case (662272) lists 3× Beginner Box, linked to the box product.
+        let case_rows: Vec<&ComponentRow> = rows.iter().filter(|r| r.product_id == case).collect();
+        assert_eq!(case_rows.len(), 1);
+        assert_eq!(case_rows[0].quantity, 3);
+        assert_eq!(case_rows[0].child_product_id, Some(beginner));
+    }
+
     /// The component write path: delete-then-insert replaces (not duplicates) the game's
     /// rows, and round-trips every column in `position` order.
     #[tokio::test]

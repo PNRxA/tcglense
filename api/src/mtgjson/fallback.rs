@@ -264,6 +264,53 @@ mod tests {
         );
     }
 
+    /// Pin the newly-authored Avatar `contents:null` products — the case/multipack link
+    /// counts and children their composition renders (so a bad tcgid/count fails CI).
+    #[test]
+    fn covers_avatar_null_content_products() {
+        let find = |tcg: &str| {
+            data()
+                .products
+                .iter()
+                .find(|p| p.tcgplayer_product_id == tcg)
+                .unwrap_or_else(|| panic!("product {tcg} present"))
+        };
+
+        // The Beginner Box Case is 3x Beginner Box (tcg 648682).
+        let case = find("662272");
+        assert_eq!(case.components.len(), 1);
+        assert_eq!(case.components[0].quantity, 3);
+        assert_eq!(
+            case.components[0].child_tcgplayer_product_id.as_deref(),
+            Some("648682")
+        );
+
+        // The Prerelease Packs Set of 5 links one of each of the five character packs.
+        let set5 = find("648724");
+        let mut children: Vec<&str> = set5
+            .components
+            .iter()
+            .filter_map(|c| c.child_tcgplayer_product_id.as_deref())
+            .collect();
+        children.sort();
+        assert_eq!(children, vec!["648719", "648720", "648721", "648722", "648723"]);
+        assert!(set5.components.iter().all(|c| c.quantity == 1));
+
+        // The Scene Box Case is 2 of each Scene Box (a 4-box case).
+        let scene_case = find("648718");
+        assert_eq!(scene_case.components.len(), 2);
+        assert!(scene_case.components.iter().all(|c| c.quantity == 2));
+
+        // A prerelease pack lists 5 Play Boosters (tcg 648640).
+        let aang = find("648719");
+        let boosters = aang
+            .components
+            .iter()
+            .find(|c| c.child_tcgplayer_product_id.as_deref() == Some("648640"))
+            .expect("links the play booster");
+        assert_eq!(boosters.quantity, 5);
+    }
+
     /// The version hash is non-empty and stable across calls (drives the ingest gate).
     #[test]
     fn version_is_stable() {

@@ -66,6 +66,13 @@ describe('useProductBackLink', () => {
     })
   })
 
+  it('returns to another sealed product it was opened from (a linked sub-product)', async () => {
+    expect(await backLink('/sealed/mtg/parent-product')).toEqual({
+      to: '/sealed/mtg/parent-product',
+      label: 'Sealed product',
+    })
+  })
+
   it("returns to the card's full detail page it was opened from", async () => {
     expect(await backLink('/cards/mtg/cards/dummy-card')).toEqual({
       to: '/cards/mtg/cards/dummy-card',
