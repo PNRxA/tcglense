@@ -36,6 +36,7 @@ use super::client::{FetchOutcome, fetch_all_printings};
 use super::fallback::{self, FallbackData, FallbackProduct};
 use super::model::{self, RawComponent, RawMembership};
 use super::progress::SyncProgress;
+use super::sld;
 use super::{DATASET, GAME, MtgjsonError};
 use crate::entities::prelude::{Card, IngestState, Product, SealedComponent, SealedContent};
 use crate::entities::{card, ingest_state, product, sealed_component, sealed_content};
@@ -99,18 +100,24 @@ async fn refresh_inner(
         .as_ref()
         .filter(|s| s.status == "complete")
         .and_then(|s| s.source_updated_at.clone());
-    let (prior_etag, prior_fallback) = stored.as_deref().map(split_version).unwrap_or((None, None));
+    let (prior_etag, prior_fallback, prior_sld) =
+        stored.as_deref().map(split_version).unwrap_or((None, None, None));
     let fallback_version = fallback::version();
     let fallback_changed = prior_fallback != Some(fallback_version);
+    // The Secret Lair drop→cards derivation reads `sld_drops.json` + curated overrides;
+    // hash them into the gate so regenerating that data rebuilds even if MTGJSON didn't.
+    let sld_version = sld::derivation_version();
+    let sld_changed = prior_sld != Some(sld_version);
 
     let progress = SyncProgress::start("checking for updates");
 
     // Conditional fetch: a 304 (unchanged file) short-circuits the whole rebuild — but
-    // only when the fallback data is also unchanged. If the fallback file changed we must
-    // re-fetch AllPrintings to rebuild the merged table, so skip the conditional request.
-    // In mirror mode the file streams from the mirror; upstream mode hits MTGJSON directly.
+    // only when the fallback data and the SLD derivation inputs are also unchanged. If
+    // either local source changed we must re-fetch AllPrintings to rebuild the merged
+    // table, so skip the conditional request. In mirror mode the file streams from the
+    // mirror; upstream mode hits MTGJSON directly.
     let base_url = source.mtgjson_base_url();
-    let conditional = if fallback_changed { None } else { prior_etag };
+    let conditional = if fallback_changed || sld_changed { None } else { prior_etag };
     let (etag, all) = match fetch_all_printings(http, &base_url, conditional).await? {
         FetchOutcome::Unchanged => {
             drop(progress);
@@ -178,6 +185,12 @@ async fn refresh_inner(
 
     // Fill products MTGJSON left empty with curated fallback memberships.
     let from_fallback = merge_fallback(db, fallback::data(), &mtgjson_products, &mut rows).await?;
+
+    // Derive card contents for Secret Lair drop products still empty after MTGJSON +
+    // fallback (a drop's cards come from `sld_drops.json`, matched by product name), under
+    // the same "only when nothing described it" gate — so upstream stays authoritative.
+    let covered: HashSet<i32> = rows.iter().map(|&(pid, ..)| pid).collect();
+    let from_sld = merge_sld_derived(db, &covered, &mut rows).await?;
 
     // Resolve the composition rows (positions assigned per resolved product id, so a
     // duplicate-tcgId product's sequences union in order rather than colliding on the unique
@@ -264,10 +277,10 @@ async fn refresh_inner(
     txn.commit().await?;
 
     drop(progress);
-    let version = compose_version(etag.as_deref(), fallback_version);
+    let version = compose_version(etag.as_deref(), fallback_version, sld_version);
     let detail = format!(
         "{matched} memberships across {product_count} products \
-         ({from_mtgjson} from mtgjson, {from_fallback} from fallback); \
+         ({from_mtgjson} from mtgjson, {from_fallback} from fallback, {from_sld} from sld drops); \
          {component_count} components ({components_from_mtgjson} from mtgjson, \
          {components_from_fallback} from fallback)"
     );
@@ -287,6 +300,7 @@ async fn refresh_inner(
         components = component_count,
         products = product_count,
         fallback = from_fallback,
+        sld_derived = from_sld,
         fallback_components = components_from_fallback,
         "mtgjson sealed contents sync complete"
     );
@@ -532,19 +546,96 @@ async fn merge_fallback_components(
     Ok(added)
 }
 
-/// Compose the stored version string from MTGJSON's `ETag` and the fallback content hash.
-fn compose_version(etag: Option<&str>, fallback: &str) -> String {
-    format!("{}{VERSION_SEP}{fallback}", etag.unwrap_or(""))
+/// Derive card contents for Secret Lair Drop products MTGJSON **and** the fallback both
+/// left empty. Each such product's name identifies its drop (see [`sld`]); the drop's
+/// cards (by collector number in the `sld` set) become `contains` memberships, foil per
+/// the product's edition. `covered` is the set of products that already have a membership
+/// row, so this only fills genuine gaps — mirroring the fallback gate. Returns rows added.
+async fn merge_sld_derived(
+    db: &DatabaseConnection,
+    covered: &HashSet<i32>,
+    rows: &mut HashSet<Row>,
+) -> Result<usize, MtgjsonError> {
+    let Some(table) = sld::table() else {
+        return Ok(0);
+    };
+    let products = load_sld_products(db).await?;
+
+    // Resolve each still-empty SLD product to its drop, keeping the drop's collector
+    // numbers (a `'static` slice — the drop table is `'static`) and the product's foilness.
+    let mut resolved: Vec<(i32, bool, &'static [String])> = Vec::new();
+    for (product_id, external_id, name) in &products {
+        if covered.contains(product_id) {
+            continue;
+        }
+        if let Some(pd) = sld::resolve_product_drop(table, external_id, name) {
+            resolved.push((*product_id, pd.foil, pd.drop.collector_numbers.as_slice()));
+        }
+    }
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+
+    // Resolve those drops' collector numbers (all in the `sld` set) to internal card ids,
+    // in one pass over the set.
+    let card_keys: Vec<(String, String)> = resolved
+        .iter()
+        .flat_map(|(_, _, cns)| cns.iter().map(|cn| (sld::SET_CODE.to_string(), cn.clone())))
+        .collect();
+    let cards = resolve_cards_by_setnum(db, &card_keys).await?;
+
+    let membership = sealed_content::Membership::Contains.as_str();
+    let mut added = 0;
+    for (product_id, foil, cns) in resolved {
+        for cn in cns {
+            let Some(&card_id) = cards.get(&(sld::SET_CODE.to_string(), cn.clone())) else {
+                continue;
+            };
+            if rows.insert((product_id, card_id, membership, foil)) {
+                added += 1;
+            }
+        }
+    }
+    if added > 0 {
+        tracing::info!(rows = added, "mtgjson: derived Secret Lair drop card contents");
+    }
+    Ok(added)
 }
 
-/// Split a stored version back into `(mtgjson_etag, fallback_hash)`. A value written
-/// before this feature (a bare ETag, no separator) parses as `(Some(etag), None)`, so the
-/// first sync after upgrade sees a fallback change and rebuilds.
-fn split_version(stored: &str) -> (Option<&str>, Option<&str>) {
-    match stored.split_once(VERSION_SEP) {
-        Some((etag, fallback)) => (non_empty(etag), non_empty(fallback)),
-        None => (non_empty(stored), None),
-    }
+/// Load every Secret Lair sealed product `(id, external_id, name)` for the game — the
+/// candidates the drop→cards derivation matches by name.
+async fn load_sld_products(
+    db: &DatabaseConnection,
+) -> Result<Vec<(i32, String, String)>, MtgjsonError> {
+    Ok(Product::find()
+        .select_only()
+        .column(product::Column::Id)
+        .column(product::Column::ExternalId)
+        .column(product::Column::Name)
+        .filter(product::Column::Game.eq(GAME))
+        .filter(product::Column::SetCode.eq(sld::SET_CODE))
+        .into_tuple::<(i32, String, String)>()
+        .all(db)
+        .await?)
+}
+
+/// Compose the stored version string from MTGJSON's `ETag`, the fallback content hash, and
+/// the SLD-derivation hash, joined by [`VERSION_SEP`].
+fn compose_version(etag: Option<&str>, fallback: &str, sld: &str) -> String {
+    format!("{}{VERSION_SEP}{fallback}{VERSION_SEP}{sld}", etag.unwrap_or(""))
+}
+
+/// Split a stored version back into `(mtgjson_etag, fallback_hash, sld_hash)`. A value
+/// written before a given field existed simply parses that field (and any after it) as
+/// `None`, so the first sync after an upgrade sees a change and rebuilds once: a bare
+/// pre-feature ETag -> `(Some, None, None)`; a two-part pre-SLD version -> `(Some, Some,
+/// None)`.
+fn split_version(stored: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+    let mut parts = stored.split(VERSION_SEP);
+    let etag = parts.next().and_then(non_empty);
+    let fallback = parts.next().and_then(non_empty);
+    let sld = parts.next().and_then(non_empty);
+    (etag, fallback, sld)
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -1057,14 +1148,20 @@ mod tests {
         txn.commit().await.unwrap();
     }
 
-    /// The composite version round-trips, and a bare (pre-feature) ETag reads as
-    /// "no fallback recorded" so the first post-upgrade sync rebuilds.
+    /// The composite version round-trips, and a version written before a field existed
+    /// reads that field (and any after it) as `None`, so the first post-upgrade sync
+    /// rebuilds: a bare ETag -> `(Some, None, None)`; a two-part pre-SLD version ->
+    /// `(Some, Some, None)`.
     #[test]
     fn version_composition_round_trips() {
-        let composed = compose_version(Some("\"etag-123\""), "fbhash");
-        assert_eq!(split_version(&composed), (Some("\"etag-123\""), Some("fbhash")));
-        assert_eq!(split_version("\"legacy-etag\""), (Some("\"legacy-etag\""), None));
-        assert_eq!(split_version(&compose_version(None, "fb")), (None, Some("fb")));
+        let composed = compose_version(Some("\"etag-123\""), "fbhash", "sldhash");
+        assert_eq!(split_version(&composed), (Some("\"etag-123\""), Some("fbhash"), Some("sldhash")));
+        // A pre-feature bare ETag: nothing after it recorded.
+        assert_eq!(split_version("\"legacy-etag\""), (Some("\"legacy-etag\""), None, None));
+        // A two-part version from before the SLD field: SLD reads as absent -> rebuild once.
+        let two_part = format!("\"etag\"{VERSION_SEP}fbhash");
+        assert_eq!(split_version(&two_part), (Some("\"etag\""), Some("fbhash"), None));
+        assert_eq!(split_version(&compose_version(None, "fb", "sld")), (None, Some("fb"), Some("sld")));
     }
 
     /// The resolve + write path: memberships whose product AND card resolve are written;
@@ -1166,5 +1263,102 @@ mod tests {
             .unwrap();
         txn.commit().await.unwrap();
         written
+    }
+
+    // ---- Secret Lair drop→cards derivation (`merge_sld_derived`) ----
+
+    /// Insert a Secret Lair sealed product (`set_code = "sld"`) with a real storefront
+    /// name and return its id — the candidates the derivation matches by name.
+    async fn insert_sld_product(db: &DatabaseConnection, external_id: &str, name: &str) -> i32 {
+        let now = Utc::now();
+        let model = product::ActiveModel {
+            game: Set(GAME.to_string()),
+            external_id: Set(external_id.to_string()),
+            name: Set(name.to_string()),
+            clean_name: Set(None),
+            set_code: Set(sld::SET_CODE.to_string()),
+            product_type: Set("secret_lair".to_string()),
+            url: Set(None),
+            image_url: Set(None),
+            price_usd: Set(None),
+            price_usd_foil: Set(None),
+            released_at: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        product::Entity::insert(model).exec(db).await.unwrap().last_insert_id
+    }
+
+    /// Seed the five cards of the shipped "Cats of Chaos" drop (collector numbers
+    /// 2690–2694) in the `sld` set, so the derivation has cards to attach.
+    async fn seed_cats_of_chaos_cards(db: &DatabaseConnection) {
+        for cn in ["2690", "2691", "2692", "2693", "2694"] {
+            insert_card_at(db, &format!("sf-{cn}"), "sld", cn).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn derives_sld_drop_cards_from_product_name() {
+        let db = migrated_memory_db().await;
+        seed_cats_of_chaos_cards(&db).await;
+        // An unrelated sld card that must NOT be attached to the drop product.
+        insert_card_at(&db, "sf-9999", "sld", "9999").await;
+        let pid =
+            insert_sld_product(&db, "700795", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition").await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        // Exactly the drop's five cards, as non-foil `contains` memberships of this product.
+        assert_eq!(added, 5);
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "contains" && !f));
+    }
+
+    #[tokio::test]
+    async fn derived_foil_edition_marks_cards_foil() {
+        let db = migrated_memory_db().await;
+        seed_cats_of_chaos_cards(&db).await;
+        insert_sld_product(&db, "700796", "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition").await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|&(_, _, m, f)| m == "contains" && f));
+    }
+
+    #[tokio::test]
+    async fn sld_derivation_skips_already_covered_products() {
+        let db = migrated_memory_db().await;
+        seed_cats_of_chaos_cards(&db).await;
+        let pid =
+            insert_sld_product(&db, "700795", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition").await;
+
+        // MTGJSON (or the fallback) already described this product -> derivation is a no-op,
+        // so upstream contents are never doubled up or overwritten.
+        let covered = HashSet::from([pid]);
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_derived(&db, &covered, &mut rows).await.unwrap();
+
+        assert_eq!(added, 0);
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sld_derivation_ignores_unmatched_and_non_sld_products() {
+        let db = migrated_memory_db().await;
+        seed_cats_of_chaos_cards(&db).await;
+        // A non-sld product (a different set) is never a candidate.
+        insert_product(&db, "111").await;
+        // An sld product whose name matches no drop stays empty (never a wrong drop).
+        insert_sld_product(&db, "222", "Secret Lair Drop: A Totally Made Up Nonexistent Drop - Non-Foil Edition")
+            .await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        assert_eq!(added, 0);
     }
 }

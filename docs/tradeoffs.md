@@ -399,6 +399,27 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   to rebuild the merged table — rare, only on a fallback edit). The correct long-term fix for
   a gap is still to author the contents upstream (taw's `magic-sealed-data` /
   `mtgjson/mtg-sealed-content`); the fallback is the stopgap until it flows in.
+- **Secret Lair drop contents — derived, not hand-authored (`mtgjson::sld`):** MTGJSON ships
+  many `SLD` (Secret Lair Drop) products with `contents: null`, but unlike ordinary packaging
+  a drop's meaningful contents is the specific *list of cards* in that drop — and the app
+  already tracks that (`scryfall::drops` / `sld_drops.json`, a title + collector numbers per
+  drop). So instead of hand-typing card lists (which would rot as new drops sync), the ingest
+  **derives** them: a null-contents `SLD` product's name (`Secret Lair Drop: <drop> - <Foil|
+  Non-Foil> Edition`) is matched to its drop by normalised title, and the drop's cards become
+  the product's `contains` contents (foil per the edition). Choices: (1) It's a **third source**
+  after MTGJSON and the fallback, under the **same per-product gate** (applied only to products
+  with no membership row yet) — so upstream stays authoritative and a derived entry self-retires
+  when MTGJSON authors the product. (2) Matching is **exact normalised-title only** (case/
+  punctuation-insensitive), which is *safe* (validated at ~99.8% on the drop products MTGJSON
+  *does* describe — an unmatched product simply shows nothing, never a *wrong* drop) at the cost
+  of recall; a tiny curated `PRODUCT_DROP_OVERRIDES` (TCGplayer id → drop slug) covers the few
+  localised drops named differently on the storefront vs Scryfall's gallery. (3) The derivation's
+  inputs (the drop snapshot + overrides) are hashed into the ingest **version gate** alongside
+  the ETag + fallback hash, so regenerating `sld_drops.json` re-runs it on the next sync. (4)
+  Secret Lair **superdrop bundles** (a bundle *of drops*) are the inverse case: their composition
+  isn't derivable from the drop snapshot and MTGJSON leaves it `null`, so it's hand-authored in
+  `fallback_sealed.json` as linked `sealed` components (the drops the bundle contains) — the
+  usual fallback stopgap, self-retiring when `mtgjson/mtg-sealed-content` authors it upstream.
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that
