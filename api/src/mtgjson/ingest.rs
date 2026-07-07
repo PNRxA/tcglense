@@ -992,6 +992,50 @@ mod tests {
         assert_eq!(case_rows[0].child_product_id, Some(beginner));
     }
 
+    /// The **shipped** Avatar Commander's Bundle composition links its three guaranteed
+    /// borderless staples to the catalog cards (tle 315-317) and keeps the randomised
+    /// 2-of-10 pool as a textual line — so a typo'd set/number in the committed data (which
+    /// would silently drop a card link) fails CI, not just at runtime. Mirrors
+    /// [`shipped_fallback_components_resolve_against_the_catalog`] for the `card` link path.
+    #[tokio::test]
+    async fn shipped_avatar_bundle_links_guaranteed_cards() {
+        let db = migrated_memory_db().await;
+        insert_product(&db, "648686").await; // the Commander's Bundle
+        // The guaranteed three, at their borderless (set, number).
+        let signet = insert_card_at(&db, "sf-signet", "tle", "315").await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let boots = insert_card_at(&db, "sf-boots", "tle", "317").await;
+
+        let mut rows = Vec::new();
+        merge_fallback_components(&db, fallback::data(), &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
+
+        // Every `card` component the bundle authored, in position order.
+        let cards: Vec<&ComponentRow> = {
+            let bundle = rows.iter().find(|r| r.name == "Sol Ring").map(|r| r.product_id);
+            let mut v: Vec<&ComponentRow> = rows
+                .iter()
+                .filter(|r| Some(r.product_id) == bundle && r.kind == "card")
+                .collect();
+            v.sort_by_key(|r| r.position);
+            v
+        };
+        // Three guaranteed cards resolve their links, one each, in staple order.
+        assert_eq!(
+            cards
+                .iter()
+                .take(3)
+                .map(|r| (r.child_card_id, r.quantity))
+                .collect::<Vec<_>>(),
+            vec![(Some(signet), 1), (Some(sol), 1), (Some(boots), 1)],
+        );
+        // The randomised pool is one textual card line: quantity 2, no card link.
+        let pool = cards.last().expect("a pool line");
+        assert_eq!(pool.quantity, 2);
+        assert_eq!(pool.child_card_id, None, "the 2-of-10 pool stays unlinked");
+    }
+
     /// The component write path: delete-then-insert replaces (not duplicates) the game's
     /// rows, and round-trips every column in `position` order.
     #[tokio::test]
