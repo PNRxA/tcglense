@@ -25,6 +25,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 
 /// The committed fallback snapshot, embedded at compile time.
@@ -38,7 +39,9 @@ pub struct FallbackData {
 }
 
 /// One sealed product's curated contents. `tcgplayer_product_id` resolves to
-/// `products.external_id`; `name` is documentation only.
+/// `products.external_id`; `name` is documentation only. `contents` are the per-card
+/// memberships (the "found in / may be in" cards); `components` are the structural
+/// composition ("what's in the box" line items) — either or both may be authored.
 #[derive(Debug, Deserialize)]
 pub struct FallbackProduct {
     pub tcgplayer_product_id: String,
@@ -46,6 +49,52 @@ pub struct FallbackProduct {
     pub name: String,
     #[serde(default)]
     pub contents: Vec<FallbackCard>,
+    #[serde(default)]
+    pub components: Vec<FallbackComponent>,
+}
+
+/// A curated composition line item — the fallback analogue of
+/// [`crate::mtgjson::model::RawComponent`], for products MTGJSON ships without contents.
+/// `kind` / `name` / `quantity` render the line; a `sealed` component optionally links a
+/// sub-product by `child_tcgplayer_product_id`, a `card` component a card by
+/// `(child_set, child_number)`.
+#[derive(Debug, Deserialize)]
+pub struct FallbackComponent {
+    /// `"sealed"` | `"deck"` | `"card"` | `"other"` — see [`ComponentKind`].
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
+    /// How many of the component the product holds; defaults to 1.
+    #[serde(default = "default_quantity")]
+    pub quantity: i32,
+    /// For a `sealed` component: the sub-product to link (its TCGplayer product id).
+    #[serde(default)]
+    pub child_tcgplayer_product_id: Option<String>,
+    /// For a `card` component: the card to link, keyed by `(set, number)` matching
+    /// `cards.set_code` / `cards.collector_number`.
+    #[serde(default)]
+    pub child_set: Option<String>,
+    #[serde(default)]
+    pub child_number: Option<String>,
+}
+
+/// serde default for [`FallbackComponent::quantity`] (a missing count reads as one).
+fn default_quantity() -> i32 {
+    1
+}
+
+impl FallbackComponent {
+    /// Parse the `kind` string into the enum, `None` for an unrecognised value (the ingest
+    /// skips such a component and logs it; [`bundled_data_is_valid`] guards the shipped file).
+    pub fn parsed_kind(&self) -> Option<ComponentKind> {
+        match self.kind.as_str() {
+            "sealed" => Some(ComponentKind::Sealed),
+            "deck" => Some(ComponentKind::Deck),
+            "card" => Some(ComponentKind::Card),
+            "other" => Some(ComponentKind::Other),
+            _ => None,
+        }
+    }
 }
 
 /// A curated card membership within a product, keyed by `(set, number)` matching
@@ -120,8 +169,8 @@ mod tests {
                 product.name
             );
             assert!(
-                !product.contents.is_empty(),
-                "product {} lists contents",
+                !product.contents.is_empty() || !product.components.is_empty(),
+                "product {} lists contents and/or components",
                 product.name
             );
             for card in &product.contents {
@@ -137,6 +186,24 @@ mod tests {
                     card.name,
                     card.number,
                     card.membership
+                );
+            }
+            for component in &product.components {
+                assert!(
+                    component.parsed_kind().is_some(),
+                    "component {} has a valid kind, got {:?}",
+                    component.name,
+                    component.kind
+                );
+                assert!(
+                    !component.name.trim().is_empty(),
+                    "component of {} has a name",
+                    product.name
+                );
+                assert!(
+                    component.quantity >= 1,
+                    "component {} has quantity >= 1",
+                    component.name
                 );
             }
         }
@@ -162,6 +229,38 @@ mod tests {
             find("311").map(|c| c.membership.as_str()),
             Some("variable"),
             "Deflecting Swat (tle #311) is a may-be-in inclusion"
+        );
+    }
+
+    /// Pin the Commander's Bundle composition: MTGJSON ships it `contents: null`, so the
+    /// "what's in the box" (9 Play Boosters + 1 Collector Booster, both linked, + extras)
+    /// comes from the fallback's `components`.
+    #[test]
+    fn covers_avatar_commander_bundle_components() {
+        let bundle = data()
+            .products
+            .iter()
+            .find(|p| p.tcgplayer_product_id == "648686")
+            .expect("Commander's Bundle is present");
+        let play = bundle
+            .components
+            .iter()
+            .find(|c| c.child_tcgplayer_product_id.as_deref() == Some("648640"))
+            .expect("links the Play Booster sub-product");
+        assert_eq!(play.parsed_kind(), Some(ComponentKind::Sealed));
+        assert_eq!(play.quantity, 9, "9 play boosters");
+        let collector = bundle
+            .components
+            .iter()
+            .find(|c| c.child_tcgplayer_product_id.as_deref() == Some("648646"))
+            .expect("links the Collector Booster sub-product");
+        assert_eq!(collector.quantity, 1, "1 collector booster");
+        // The physical extras are textual `other` line items (no child link).
+        assert!(
+            bundle
+                .components
+                .iter()
+                .any(|c| c.kind == "other" && c.child_tcgplayer_product_id.is_none())
         );
     }
 

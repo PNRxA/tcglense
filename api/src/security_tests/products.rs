@@ -4,7 +4,7 @@
 //! product fixtures straight into the harness DB.
 
 use super::harness::*;
-use crate::entities::{card, product_price_history, sealed_content};
+use crate::entities::{card, product_price_history, sealed_component, sealed_content};
 use crate::test_support::{insert_card, insert_product};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, NotSet};
@@ -163,6 +163,102 @@ async fn facets_expose_the_types_and_sets_in_use() {
         .collect();
     assert!(set_codes.contains(&"mkm"));
     assert!(set_codes.contains(&"blb"));
+}
+
+/// Insert one `sealed_components` composition row for a product.
+#[allow(clippy::too_many_arguments)]
+async fn insert_component(
+    db: &sea_orm::DatabaseConnection,
+    product_id: i32,
+    position: i32,
+    kind: &str,
+    name: &str,
+    quantity: i32,
+    child_product_id: Option<i32>,
+    child_card_id: Option<i32>,
+) {
+    let now = Utc::now();
+    sealed_component::ActiveModel {
+        id: NotSet,
+        game: Set("mtg".to_string()),
+        product_id: Set(product_id),
+        position: Set(position),
+        kind: Set(kind.to_string()),
+        name: Set(name.to_string()),
+        quantity: Set(quantity),
+        child_product_id: Set(child_product_id),
+        child_card_id: Set(child_card_id),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .expect("insert sealed component");
+}
+
+#[tokio::test]
+async fn product_contents_endpoint_lists_composition_with_links() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    let bundle = insert_product(db, "600", "Commander's Bundle", "tla", "bundle", Some("59.99")).await;
+    let pack = insert_product(db, "640", "Play Booster Pack", "tla", "play_pack", Some("4.99")).await;
+    let promo = insert_card(db, "sf-promo").await;
+    // A product with no ingested composition (the empty path).
+    insert_product(db, "700", "Empty Deck", "tla", "commander_deck", Some("44.99")).await;
+
+    // 9x Play Booster (linked to the pack), 1x foil promo (linked to the card), and a
+    // textual physical extra — ordered by `position`.
+    insert_component(db, bundle, 0, "sealed", "Play Booster", 9, Some(pack), None).await;
+    insert_component(db, bundle, 1, "card", "Momo, Friendly Flier", 1, None, Some(promo)).await;
+    insert_component(db, bundle, 2, "other", "Spindown life counter", 1, None, None).await;
+
+    let (status, headers, body) = send(&app, get("/api/games/mtg/products/600/contents")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "the product-contents read must be browser + CDN cacheable"
+    );
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 3);
+
+    // Ordered by position; a sealed component links its sub-product (reusing the Product wire
+    // shape) and shows the child's catalog name; a card component links its card; the extra
+    // is textual (both links null).
+    assert_eq!(data[0]["kind"], "sealed");
+    assert_eq!(data[0]["quantity"], 9);
+    assert_eq!(data[0]["name"], "Play Booster Pack", "prefers the linked product's catalog name");
+    assert_eq!(data[0]["product"]["id"], "640");
+    assert!(data[0]["product"]["prices"].is_object());
+    assert!(data[0]["card"].is_null());
+
+    assert_eq!(data[1]["kind"], "card");
+    assert_eq!(data[1]["card"]["id"], "sf-promo");
+    assert_eq!(data[1]["name"], "Card sf-promo", "prefers the linked card's catalog name");
+    assert!(data[1]["card"]["collector_number"].is_string());
+    assert!(data[1]["product"].is_null());
+
+    assert_eq!(data[2]["kind"], "other");
+    assert_eq!(data[2]["name"], "Spindown life counter");
+    assert!(data[2]["product"].is_null());
+    assert!(data[2]["card"].is_null());
+
+    // A product with no composition -> a clean, cacheable empty list.
+    let (status, headers, body) = send(&app, get("/api/games/mtg/products/700/contents")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE));
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+    // Unknown game / product are no-store 404s.
+    for uri in [
+        "/api/games/nope/products/600/contents",
+        "/api/games/mtg/products/999999/contents",
+    ] {
+        let (status, headers, _) = send(&app, get(uri)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} should 404");
+        assert_eq!(cache_control(&headers), Some("no-store"), "{uri} 404 must be no-store");
+    }
 }
 
 /// Insert one `sealed_contents` membership row for `(product, card)`.

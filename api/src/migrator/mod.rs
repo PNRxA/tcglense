@@ -27,6 +27,7 @@ mod m20240101_000024_add_cards_set_code_collector_number_index;
 mod m20240101_000025_add_browse_sort_and_email_prune_indexes;
 mod m20240101_000026_add_cards_game_finishes_index;
 mod m20240101_000027_add_cards_trgm_search_indexes;
+mod m20240101_000028_create_sealed_components_table;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -64,6 +65,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000025_add_browse_sort_and_email_prune_indexes::Migration),
             Box::new(m20240101_000026_add_cards_game_finishes_index::Migration),
             Box::new(m20240101_000027_add_cards_trgm_search_indexes::Migration),
+            Box::new(m20240101_000028_create_sealed_components_table::Migration),
         ]
     }
 }

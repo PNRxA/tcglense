@@ -5,6 +5,7 @@ import {
   getProduct,
   getProductCards,
   getProductCardSections,
+  getProductContents,
   getProductFacets,
   listProducts,
 } from '@/lib/api'
@@ -125,6 +126,16 @@ export function useProductCardSectionsQuery(game: Ref<string>, id: Ref<string>, 
     queryFn: ({ signal }) =>
       getProductCardSections(game.value, id.value, q.value || undefined, signal),
     placeholderData: keepPreviousData,
+  })
+}
+
+/** A sealed product's structural composition — "what's in the box" (the sealed-detail
+ * "What's in the box" section). Public read, so a plain `useQuery`; refs go in the key so a
+ * product-to-product navigation refetches. */
+export function useProductContentsQuery(game: Ref<string>, id: Ref<string>) {
+  return useQuery({
+    queryKey: ['product-contents', game, id],
+    queryFn: ({ signal }) => getProductContents(game.value, id.value, signal),
   })
 }
 

@@ -33,12 +33,12 @@ use sea_orm::{
 };
 
 use super::client::{FetchOutcome, fetch_all_printings};
-use super::fallback::{self, FallbackData};
-use super::model::{self, RawMembership};
+use super::fallback::{self, FallbackData, FallbackProduct};
+use super::model::{self, RawComponent, RawMembership};
 use super::progress::SyncProgress;
 use super::{DATASET, GAME, MtgjsonError};
-use crate::entities::prelude::{Card, IngestState, Product, SealedContent};
-use crate::entities::{card, ingest_state, product, sealed_content};
+use crate::entities::prelude::{Card, IngestState, Product, SealedComponent, SealedContent};
+use crate::entities::{card, ingest_state, product, sealed_component, sealed_content};
 
 /// Rows per external-id `IN` lookup — under SQLite's 32 766 bound-parameter limit.
 const IN_CHUNK: usize = 900;
@@ -50,6 +50,19 @@ const INSERT_BATCH: usize = 2000;
 /// Both the MTGJSON pass and the fallback merge accumulate into a `HashSet<Row>`, which
 /// deduplicates across the two sources for free.
 type Row = (i32, i32, &'static str, bool);
+
+/// A resolved-to-internal-ids composition row, ready to insert into `sealed_components`.
+/// The MTGJSON pass and the fallback merge both accumulate into a `Vec<ComponentRow>`
+/// (ordered by `position` within each product; not deduplicated — position is identity).
+struct ComponentRow {
+    product_id: i32,
+    position: i32,
+    kind: String,
+    name: String,
+    quantity: i32,
+    child_product_id: Option<i32>,
+    child_card_id: Option<i32>,
+}
 
 /// Separator between MTGJSON's `ETag` and the fallback content hash in the stored
 /// `ingest_state.source_updated_at`. A US control byte can't occur in an HTTP `ETag`
@@ -113,20 +126,38 @@ async fn refresh_inner(
         .unwrap_or_else(Utc::now);
     put_state(db, "running", None, "resolving contents", started, None, 0, 0).await?;
 
-    // Resolve contents -> per-card membership rows off the async runtime (CPU-bound over
-    // a big document). `all` is dropped when the closure returns, freeing the parse tree.
+    // Resolve contents -> per-card memberships + the structural composition off the async
+    // runtime (CPU-bound over a big document). `all` is dropped when the closure returns,
+    // freeing the parse tree; both passes run in the one blocking task so it's moved once.
     progress.set_stage("resolving contents");
     let all = *all;
-    let memberships: Vec<RawMembership> = tokio::task::spawn_blocking(move || {
-        model::build_memberships(&all)
-    })
-    .await
-    .map_err(|err| MtgjsonError::Join(err.to_string()))?;
-    tracing::info!(rows = memberships.len(), "mtgjson: resolved membership rows");
+    let (memberships, components): (Vec<RawMembership>, Vec<RawComponent>) =
+        tokio::task::spawn_blocking(move || {
+            (model::build_memberships(&all), model::build_compositions(&all))
+        })
+        .await
+        .map_err(|err| MtgjsonError::Join(err.to_string()))?;
+    tracing::info!(
+        memberships = memberships.len(),
+        components = components.len(),
+        "mtgjson: resolved membership + composition rows"
+    );
 
-    // Map external ids onto our catalog.
-    let product_ext: Vec<String> = distinct(memberships.iter().map(|m| &m.tcgplayer_product_id));
-    let card_ext: Vec<String> = distinct(memberships.iter().map(|m| &m.scryfall_id));
+    // Map external ids onto our catalog: products for membership targets, component parents,
+    // and the sub-products components link to; cards for membership targets + linked promos.
+    let product_ext: Vec<String> = distinct(
+        memberships
+            .iter()
+            .map(|m| &m.tcgplayer_product_id)
+            .chain(components.iter().map(|c| &c.tcgplayer_product_id))
+            .chain(components.iter().filter_map(|c| c.child_tcgplayer_product_id.as_ref())),
+    );
+    let card_ext: Vec<String> = distinct(
+        memberships
+            .iter()
+            .map(|m| &m.scryfall_id)
+            .chain(components.iter().filter_map(|c| c.child_scryfall_id.as_ref())),
+    );
     progress.set_stage("matching to catalog");
     let products = resolve_products(db, &product_ext).await?;
     let cards = resolve_cards(db, &card_ext).await?;
@@ -148,15 +179,33 @@ async fn refresh_inner(
     // Fill products MTGJSON left empty with curated fallback memberships.
     let from_fallback = merge_fallback(db, fallback::data(), &mtgjson_products, &mut rows).await?;
 
-    // Materialise the merged row set as models.
+    // Resolve the composition rows (positions assigned per resolved product id, so a
+    // duplicate-tcgId product's sequences union in order rather than colliding on the unique
+    // key), and note which products MTGJSON gave a composition so the fallback fills gaps.
+    let (mut component_rows, mtgjson_component_products) =
+        resolve_component_rows(&components, &products, &cards);
+    let components_from_mtgjson = component_rows.len();
+
+    // Fill products MTGJSON left without a composition with curated fallback components.
+    let components_from_fallback = merge_fallback_components(
+        db,
+        fallback::data(),
+        &mtgjson_component_products,
+        &mut component_rows,
+    )
+    .await?;
+
+    // Materialise both merged row sets as models.
     let now = Utc::now();
     let models = rows_to_models(&rows, now);
+    let component_models = components_to_models(&component_rows, now);
     let matched = models.len();
+    let component_count = component_models.len();
     let product_count = rows.iter().map(|&(pid, ..)| pid).collect::<HashSet<i32>>().len();
-    progress.set_rows("writing", matched as u64);
+    progress.set_rows("writing", (matched + component_count) as u64);
 
-    // Replace the game's rows in one transaction so a reader never sees a half-rebuilt
-    // table and stale membership can't survive a product's contents changing.
+    // Replace the game's rows in one transaction so a reader never sees a half-rebuilt table
+    // and stale membership / composition can't survive a product's contents changing.
     let txn = db.begin().await?;
     SealedContent::delete_many()
         .filter(sealed_content::Column::Game.eq(GAME))
@@ -185,13 +234,42 @@ async fn refresh_inner(
             .exec_without_returning(&txn)
             .await?;
     }
+    // Rebuild the composition table alongside the memberships, in the same transaction.
+    SealedComponent::delete_many()
+        .filter(sealed_component::Column::Game.eq(GAME))
+        .exec(&txn)
+        .await?;
+    let mut component_iter = component_models.into_iter();
+    loop {
+        let chunk: Vec<sealed_component::ActiveModel> =
+            component_iter.by_ref().take(INSERT_BATCH).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        // do_nothing on conflict is belt-and-braces: positions are unique per product by
+        // construction, and the table was just cleared.
+        SealedComponent::insert_many(chunk)
+            .on_conflict(
+                OnConflict::columns([
+                    sealed_component::Column::Game,
+                    sealed_component::Column::ProductId,
+                    sealed_component::Column::Position,
+                ])
+                .do_nothing()
+                .to_owned(),
+            )
+            .exec_without_returning(&txn)
+            .await?;
+    }
     txn.commit().await?;
 
     drop(progress);
     let version = compose_version(etag.as_deref(), fallback_version);
     let detail = format!(
         "{matched} memberships across {product_count} products \
-         ({from_mtgjson} from mtgjson, {from_fallback} from fallback)"
+         ({from_mtgjson} from mtgjson, {from_fallback} from fallback); \
+         {component_count} components ({components_from_mtgjson} from mtgjson, \
+         {components_from_fallback} from fallback)"
     );
     put_state(
         db,
@@ -206,8 +284,10 @@ async fn refresh_inner(
     .await?;
     tracing::info!(
         memberships = matched,
+        components = component_count,
         products = product_count,
         fallback = from_fallback,
+        fallback_components = components_from_fallback,
         "mtgjson sealed contents sync complete"
     );
     Ok(())
@@ -223,6 +303,68 @@ fn rows_to_models(rows: &HashSet<Row>, now: DateTimeUtc) -> Vec<sealed_content::
             card_id: Set(card_id),
             membership: Set(membership.to_string()),
             foil: Set(foil),
+            created_at: Set(now),
+            updated_at: Set(now),
+        })
+        .collect()
+}
+
+/// Resolve raw composition components to insertable rows, mapping each component's parent
+/// (required) and optional child product / card external ids to internal ids. `position` is
+/// a running counter **per resolved product id** — not the source order — so two MTGJSON
+/// `sealedProduct` entries that resolve to one `product_id` (a shared/duplicate TCGplayer
+/// id) can't collide on the unique `(game, product_id, position)` key: their components
+/// union in order (as the membership pass's `HashSet` does) rather than one silently
+/// dropping. Returns the rows plus the set of products MTGJSON described (the fallback gate).
+fn resolve_component_rows(
+    components: &[RawComponent],
+    products: &HashMap<String, i32>,
+    cards: &HashMap<String, i32>,
+) -> (Vec<ComponentRow>, HashSet<i32>) {
+    let mut rows = Vec::new();
+    let mut covered = HashSet::new();
+    let mut next_position: HashMap<i32, i32> = HashMap::new();
+    for c in components {
+        let Some(&product_id) = products.get(&c.tcgplayer_product_id) else {
+            continue;
+        };
+        covered.insert(product_id);
+        let child_product_id = c
+            .child_tcgplayer_product_id
+            .as_ref()
+            .and_then(|id| products.get(id).copied());
+        let child_card_id = c.child_scryfall_id.as_ref().and_then(|id| cards.get(id).copied());
+        let position = next_position.entry(product_id).or_insert(0);
+        rows.push(ComponentRow {
+            product_id,
+            position: *position,
+            kind: c.kind.to_string(),
+            name: c.name.clone(),
+            quantity: c.quantity,
+            child_product_id,
+            child_card_id,
+        });
+        *position += 1;
+    }
+    (rows, covered)
+}
+
+/// Materialise resolved composition rows as insertable models, all stamped `now`.
+fn components_to_models(
+    rows: &[ComponentRow],
+    now: DateTimeUtc,
+) -> Vec<sealed_component::ActiveModel> {
+    rows.iter()
+        .map(|r| sealed_component::ActiveModel {
+            id: NotSet,
+            game: Set(GAME.to_string()),
+            product_id: Set(r.product_id),
+            position: Set(r.position),
+            kind: Set(r.kind.clone()),
+            name: Set(r.name.clone()),
+            quantity: Set(r.quantity),
+            child_product_id: Set(r.child_product_id),
+            child_card_id: Set(r.child_card_id),
             created_at: Set(now),
             updated_at: Set(now),
         })
@@ -290,6 +432,102 @@ async fn merge_fallback(
     }
     if added > 0 {
         tracing::info!(rows = added, "mtgjson: merged curated fallback memberships");
+    }
+    Ok(added)
+}
+
+/// Merge curated [`fallback`] composition components into `rows`, returning how many were
+/// added. Applied per product **only when MTGJSON gave that product no composition**
+/// (`mtgjson_component_products`), mirroring [`merge_fallback`] — so upstream stays
+/// authoritative and this fills genuine gaps (e.g. Avatar's `contents: null` Commander's
+/// Bundle: "9× Play Booster, 1× Collector Booster, …"). A component's optional child
+/// product / card links resolve to internal ids the same way MTGJSON's do; an unresolved
+/// link keeps the line item as text. A fallback product absent from our catalog, or a
+/// component with an unknown kind, is skipped and logged.
+async fn merge_fallback_components(
+    db: &DatabaseConnection,
+    data: &FallbackData,
+    mtgjson_component_products: &HashSet<i32>,
+    rows: &mut Vec<ComponentRow>,
+) -> Result<usize, MtgjsonError> {
+    let authored: Vec<&FallbackProduct> = data
+        .products
+        .iter()
+        .filter(|p| !p.components.is_empty())
+        .collect();
+    if authored.is_empty() {
+        return Ok(0);
+    }
+
+    // Resolve the fallback products (parents) + any child products they link, plus the
+    // (set, number) keys of any card components, to internal ids.
+    let product_ext: Vec<String> = distinct(
+        authored.iter().map(|p| &p.tcgplayer_product_id).chain(
+            authored
+                .iter()
+                .flat_map(|p| &p.components)
+                .filter_map(|c| c.child_tcgplayer_product_id.as_ref()),
+        ),
+    );
+    let products = resolve_products(db, &product_ext).await?;
+    let card_keys: Vec<(String, String)> = authored
+        .iter()
+        .flat_map(|p| &p.components)
+        .filter_map(|c| Some((c.child_set.as_ref()?.to_lowercase(), c.child_number.clone()?)))
+        .collect();
+    let cards = resolve_cards_by_setnum(db, &card_keys).await?;
+
+    let mut added = 0;
+    for product in &authored {
+        let Some(&product_id) = products.get(&product.tcgplayer_product_id) else {
+            tracing::debug!(
+                product = %product.name,
+                tcgplayer_id = %product.tcgplayer_product_id,
+                "mtgjson fallback: composition product not in catalog, skipping"
+            );
+            continue;
+        };
+        // MTGJSON already describes this product's composition — it wins, skip the entry.
+        if mtgjson_component_products.contains(&product_id) {
+            continue;
+        }
+        let mut position = 0i32;
+        for component in &product.components {
+            let Some(kind) = component.parsed_kind() else {
+                tracing::warn!(
+                    kind = %component.kind, name = %component.name,
+                    "mtgjson fallback: unknown component kind, skipping"
+                );
+                continue;
+            };
+            let child_product_id = component
+                .child_tcgplayer_product_id
+                .as_ref()
+                .and_then(|id| products.get(id).copied());
+            let child_card_id = match (&component.child_set, &component.child_number) {
+                (Some(set), Some(number)) => {
+                    cards.get(&(set.to_lowercase(), number.clone())).copied()
+                }
+                _ => None,
+            };
+            rows.push(ComponentRow {
+                product_id,
+                position,
+                kind: kind.as_str().to_string(),
+                name: component.name.clone(),
+                quantity: component.quantity.max(1),
+                child_product_id,
+                child_card_id,
+            });
+            position += 1;
+            added += 1;
+        }
+    }
+    if added > 0 {
+        tracing::info!(
+            rows = added,
+            "mtgjson: merged curated fallback composition components"
+        );
     }
     Ok(added)
 }
@@ -457,11 +695,11 @@ async fn mark_error(db: &DatabaseConnection, message: &str) -> Result<(), Mtgjso
 
 #[cfg(test)]
 mod tests {
-    use super::super::fallback::{FallbackCard, FallbackProduct};
+    use super::super::fallback::{FallbackCard, FallbackComponent, FallbackProduct};
     use super::*;
-    use crate::entities::prelude::SealedContent;
+    use crate::entities::prelude::{SealedComponent, SealedContent};
     use crate::test_support::{insert_card, migrated_memory_db};
-    use sea_orm::PaginatorTrait;
+    use sea_orm::{PaginatorTrait, QueryOrder};
 
     /// Insert a product row and return its id (products carry only an external id + name).
     async fn insert_product(db: &DatabaseConnection, external_id: &str) -> i32 {
@@ -516,7 +754,36 @@ mod tests {
                 tcgplayer_product_id: tcg.to_string(),
                 name: format!("Product {tcg}"),
                 contents,
+                components: Vec::new(),
             }],
+        }
+    }
+
+    /// Build a one-product fallback dataset with authored composition components.
+    fn one_product_components(tcg: &str, components: Vec<FallbackComponent>) -> FallbackData {
+        FallbackData {
+            products: vec![FallbackProduct {
+                tcgplayer_product_id: tcg.to_string(),
+                name: format!("Product {tcg}"),
+                contents: Vec::new(),
+                components,
+            }],
+        }
+    }
+
+    fn fb_component(
+        kind: &str,
+        name: &str,
+        quantity: i32,
+        child_product: Option<&str>,
+    ) -> FallbackComponent {
+        FallbackComponent {
+            kind: kind.to_string(),
+            name: name.to_string(),
+            quantity,
+            child_tcgplayer_product_id: child_product.map(str::to_string),
+            child_set: None,
+            child_number: None,
         }
     }
 
@@ -593,6 +860,179 @@ mod tests {
         let data = one_product("999999", vec![fb_card("tle", "316", "contains", false)]);
         assert_eq!(merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap(), 0);
         assert!(rows.is_empty());
+    }
+
+    /// Positions are numbered **per resolved product id**, so two component sequences that
+    /// resolve to the same `product_id` (a duplicate TCGplayer id across `sealedProduct`
+    /// entries) union with distinct positions instead of colliding/dropping on the unique key.
+    #[test]
+    fn resolve_component_rows_numbers_positions_per_resolved_product() {
+        let products = HashMap::from([("100".to_string(), 42), ("200".to_string(), 7)]);
+        let cards: HashMap<String, i32> = HashMap::new();
+        let raw = |tcg: &str, kind: &'static str, name: &str| RawComponent {
+            tcgplayer_product_id: tcg.to_string(),
+            kind,
+            name: name.to_string(),
+            quantity: 1,
+            child_tcgplayer_product_id: None,
+            child_scryfall_id: None,
+        };
+        // Product 100 (id 42) appears in two separate runs (as if a duplicate tcgId), with
+        // product 200 (id 7) between them; an unresolved product ("999") is skipped.
+        let components = vec![
+            raw("100", "sealed", "A"),
+            raw("100", "other", "B"),
+            raw("200", "sealed", "C"),
+            raw("999", "other", "skipped"),
+            raw("100", "other", "D"),
+        ];
+        let (rows, covered) = resolve_component_rows(&components, &products, &cards);
+        assert_eq!(covered, HashSet::from([42, 7]));
+        // Product 42 keeps all three components, positions 0/1/2 (union, no collision/drop).
+        let mut p42: Vec<(i32, &str)> = rows
+            .iter()
+            .filter(|r| r.product_id == 42)
+            .map(|r| (r.position, r.name.as_str()))
+            .collect();
+        p42.sort();
+        assert_eq!(p42, vec![(0, "A"), (1, "B"), (2, "D")]);
+        // Product 7 is numbered independently from 0.
+        let p7: Vec<(i32, &str)> = rows
+            .iter()
+            .filter(|r| r.product_id == 7)
+            .map(|r| (r.position, r.name.as_str()))
+            .collect();
+        assert_eq!(p7, vec![(0, "C")]);
+    }
+
+    /// A fallback composition fills a product MTGJSON left empty, resolving a `sealed`
+    /// component's child-product link and keeping an unresolved one as text; positions are
+    /// assigned contiguously from 0.
+    #[tokio::test]
+    async fn merge_fallback_components_fills_and_links() {
+        let db = migrated_memory_db().await;
+        let bundle = insert_product(&db, "648686").await;
+        let play = insert_product(&db, "648640").await;
+        let data = one_product_components(
+            "648686",
+            vec![
+                fb_component("sealed", "Play Booster", 9, Some("648640")),
+                fb_component("other", "Card storage box", 1, None),
+                // A sealed component whose child isn't in the catalog: kept, link null.
+                fb_component("sealed", "Mystery Pack", 1, Some("999999")),
+            ],
+        );
+
+        let mut rows = Vec::new();
+        let added = merge_fallback_components(&db, &data, &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
+        assert_eq!(added, 3);
+        assert_eq!(rows.iter().map(|r| r.position).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(rows[0].product_id, bundle);
+        assert_eq!(rows[0].child_product_id, Some(play));
+        assert_eq!(rows[0].quantity, 9);
+        assert_eq!(rows[2].child_product_id, None, "unresolved child stays textual");
+    }
+
+    /// A `card` composition component links by `(set, number)` like the membership path.
+    #[tokio::test]
+    async fn merge_fallback_components_links_card_by_setnum() {
+        let db = migrated_memory_db().await;
+        insert_product(&db, "648686").await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let mut card = fb_component("card", "Sol Ring", 1, None);
+        card.child_set = Some("tle".to_string());
+        card.child_number = Some("316".to_string());
+        let data = one_product_components("648686", vec![card]);
+
+        let mut rows = Vec::new();
+        merge_fallback_components(&db, &data, &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
+        assert_eq!(rows[0].child_card_id, Some(sol));
+    }
+
+    /// MTGJSON stays authoritative for composition too: a product it already described
+    /// takes no fallback components.
+    #[tokio::test]
+    async fn merge_fallback_components_skips_covered_product() {
+        let db = migrated_memory_db().await;
+        let bundle = insert_product(&db, "648686").await;
+        let data = one_product_components("648686", vec![fb_component("sealed", "Play Booster", 9, None)]);
+
+        let mut rows = Vec::new();
+        let covered = HashSet::from([bundle]);
+        let added = merge_fallback_components(&db, &data, &covered, &mut rows)
+            .await
+            .unwrap();
+        assert_eq!(added, 0);
+        assert!(rows.is_empty());
+    }
+
+    /// The component write path: delete-then-insert replaces (not duplicates) the game's
+    /// rows, and round-trips every column in `position` order.
+    #[tokio::test]
+    async fn components_write_replaces_and_round_trips() {
+        let db = migrated_memory_db().await;
+        let bundle = insert_product(&db, "648686").await;
+        let play = insert_product(&db, "648640").await;
+        let rows = vec![
+            ComponentRow {
+                product_id: bundle,
+                position: 0,
+                kind: "sealed".to_string(),
+                name: "Play Booster".to_string(),
+                quantity: 9,
+                child_product_id: Some(play),
+                child_card_id: None,
+            },
+            ComponentRow {
+                product_id: bundle,
+                position: 1,
+                kind: "other".to_string(),
+                name: "Storage box".to_string(),
+                quantity: 1,
+                child_product_id: None,
+                child_card_id: None,
+            },
+        ];
+
+        write_components_for_test(&db, &rows).await;
+        let stored = SealedComponent::find()
+            .order_by_asc(sealed_component::Column::Position)
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0].kind, "sealed");
+        assert_eq!(stored[0].name, "Play Booster");
+        assert_eq!(stored[0].quantity, 9);
+        assert_eq!(stored[0].child_product_id, Some(play));
+        assert_eq!(stored[1].kind, "other");
+
+        // Re-run replaces rather than duplicating (the transaction wipes first).
+        write_components_for_test(&db, &rows).await;
+        assert_eq!(SealedComponent::find().count(&db).await.unwrap(), 2);
+    }
+
+    /// Drives the composition delete + insert without the network fetch, mirroring the
+    /// `sealed_components` write inside `refresh_inner`.
+    async fn write_components_for_test(db: &DatabaseConnection, rows: &[ComponentRow]) {
+        let models = components_to_models(rows, Utc::now());
+        let txn = db.begin().await.unwrap();
+        SealedComponent::delete_many()
+            .filter(sealed_component::Column::Game.eq(GAME))
+            .exec(&txn)
+            .await
+            .unwrap();
+        if !models.is_empty() {
+            SealedComponent::insert_many(models)
+                .exec_without_returning(&txn)
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
     }
 
     /// The composite version round-trips, and a bare (pre-feature) ETag reads as

@@ -27,9 +27,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::Game;
 use crate::db::Dialect;
-use crate::entities::prelude::{Card, CardSet, Product, ProductPriceHistory, SealedContent};
+use crate::entities::prelude::{
+    Card, CardSet, Product, ProductPriceHistory, SealedComponent, SealedContent,
+};
 use crate::entities::sealed_content::Membership;
-use crate::entities::{card, card_set, product, product_price_history, sealed_content};
+use crate::entities::{
+    card, card_set, product, product_price_history, sealed_component, sealed_content,
+};
 use crate::extract::{Path, Query};
 use crate::error::AppError;
 use crate::handlers::shared::{
@@ -127,6 +131,32 @@ pub(crate) struct SealedProductRef {
     /// Whether the card appears **only** as a foil in this product (a foil-only
     /// inclusion, e.g. a foil Secret Lair printing).
     pub foil: bool,
+}
+
+/// One line item of a sealed product's **composition** — "what's in the box". Carries the
+/// component's kind, display name, and quantity, plus an optional link to the sub-product it
+/// *is* (a `sealed` pack/box that resolves to a catalog [`ProductResponse`], so the SPA
+/// renders a linked tile) or the card it *is* (a `card` promo that resolves to a
+/// [`CardResponse`]). `deck` / `other` (and unresolved links) are textual — both link
+/// fields `None`.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductComponent"))]
+pub(crate) struct ProductComponent {
+    /// `"sealed"` (a nested pack/box), `"deck"` (a precon deck), `"card"` (a fixed promo),
+    /// or `"other"` (a physical extra) — see
+    /// [`crate::entities::sealed_component::ComponentKind`].
+    pub kind: String,
+    /// Display label: the linked child's catalog name when a link resolves, else the name
+    /// MTGJSON gave the component.
+    pub name: String,
+    /// How many of this component the product contains (`>= 1`).
+    pub quantity: u32,
+    /// The sub-product this component links to (a `sealed` component resolving to a catalog
+    /// product), for a linked tile. `None` for textual line items.
+    pub product: Option<ProductResponse>,
+    /// The card this component links to (a `card` component resolving to a catalog card).
+    /// `None` otherwise.
+    pub card: Option<CardResponse>,
 }
 
 /// A card found in — or pullable from — a sealed product, plus how it relates. The
@@ -609,6 +639,95 @@ pub async fn card_sealed(
             .cmp(&Membership::rank(&b.membership))
             .then_with(|| a.product.name.cmp(&b.product.name))
     });
+
+    Ok(Json(DataBody { data }))
+}
+
+/// `GET /api/games/{game}/products/{id}/contents` -> the sealed product's structural
+/// composition — "what's in the box" — in display order (nested packs/boxes, then precon
+/// decks, then fixed promo cards, then physical extras). A `sealed` component that resolves
+/// to a catalog product carries the linked `product` (so the SPA can render "the products
+/// this box contains"); a `card` component carries the linked `card`; the rest are textual.
+/// `{ "data": [] }` when the product has no ingested composition; `404` for an unknown
+/// game/product.
+pub async fn product_contents(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<DataBody<Vec<ProductComponent>>>, AppError> {
+    require_game(&game)?;
+    let product = load_product(&state, &game, &id).await?;
+
+    // The product's components, already ordered by `position` (hits the
+    // (game, product_id, position) unique index).
+    let rows = SealedComponent::find()
+        .filter(sealed_component::Column::Game.eq(game.as_str()))
+        .filter(sealed_component::Column::ProductId.eq(product.id))
+        .order_by_asc(sealed_component::Column::Position)
+        .all(&state.db)
+        .await?;
+    if rows.is_empty() {
+        return Ok(Json(DataBody { data: Vec::new() }));
+    }
+
+    // Load the linked sub-products + promo cards in one query each (a composition has a
+    // bounded number of components), then dress each line item.
+    let child_product_ids: Vec<i32> = rows.iter().filter_map(|r| r.child_product_id).collect();
+    let child_card_ids: Vec<i32> = rows.iter().filter_map(|r| r.child_card_id).collect();
+
+    let names = set_name_map(&state, &game).await?;
+    let child_products: HashMap<i32, product::Model> = if child_product_ids.is_empty() {
+        HashMap::new()
+    } else {
+        Product::find()
+            .filter(product::Column::Game.eq(game.as_str()))
+            .filter(product::Column::Id.is_in(child_product_ids))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|p| (p.id, p))
+            .collect()
+    };
+    let child_cards: HashMap<i32, card::Model> = if child_card_ids.is_empty() {
+        HashMap::new()
+    } else {
+        Card::find()
+            .filter(card::Column::Game.eq(game.as_str()))
+            .filter(card::Column::Id.is_in(child_card_ids))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c))
+            .collect()
+    };
+
+    let data: Vec<ProductComponent> = rows
+        .into_iter()
+        .map(|row| {
+            // A link whose child row vanished (e.g. mid-reimport) degrades to a textual item.
+            let linked_product = row
+                .child_product_id
+                .and_then(|cid| child_products.get(&cid))
+                .map(|p| into_response(p.clone(), &names));
+            let linked_card: Option<CardResponse> = row
+                .child_card_id
+                .and_then(|cid| child_cards.get(&cid))
+                .map(|c| c.clone().into());
+            // Prefer a linked child's catalog name for the label (product or card); else
+            // the name MTGJSON gave the component.
+            let name = linked_product
+                .as_ref()
+                .map(|p| p.name.clone())
+                .or_else(|| linked_card.as_ref().map(|c| c.name.clone()))
+                .unwrap_or(row.name);
+            ProductComponent {
+                kind: row.kind,
+                name,
+                quantity: row.quantity.max(0) as u32,
+                product: linked_product,
+                card: linked_card,
+            }
+        })
+        .collect();
 
     Ok(Json(DataBody { data }))
 }

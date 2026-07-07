@@ -8,6 +8,7 @@ pub use super::ingest_state::Entity as IngestState;
 pub use super::product::Entity as Product;
 pub use super::product_price_history::Entity as ProductPriceHistory;
 pub use super::refresh_token::Entity as RefreshToken;
+pub use super::sealed_component::Entity as SealedComponent;
 pub use super::sealed_content::Entity as SealedContent;
 pub use super::user::Entity as User;
 pub use super::wishlist_item::Entity as WishlistItem;

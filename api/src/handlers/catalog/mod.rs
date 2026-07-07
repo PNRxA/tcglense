@@ -44,8 +44,8 @@ pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use image::card_image;
 pub use prices::card_prices;
 pub use products::{
-    card_sealed, get_product, list_products, product_card_sections, product_cards, product_facets,
-    product_image, product_prices,
+    card_sealed, get_product, list_products, product_card_sections, product_cards,
+    product_contents, product_facets, product_image, product_prices,
 };
 pub use sets::{get_set, list_set_cards, list_set_drops, list_sets, set_icon};
 pub use status::{ingest_status, list_games};

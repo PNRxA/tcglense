@@ -4,6 +4,7 @@ import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProductImage from '@/components/products/ProductImage.vue'
 import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
+import ProductContents from '@/components/products/ProductContents.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -171,6 +172,11 @@ usePageMeta({
           <p v-else class="text-muted-foreground mt-6 text-sm">No current price.</p>
         </div>
       </div>
+
+      <!-- What's in the box: the structural composition (nested packs/boxes linked to their
+        own pages, decks, promos, physical extras). Mounts off the route id and self-hides
+        when the product has no ingested composition. -->
+      <ProductContents :game="game" :id="id" />
 
       <!-- Price history over time (full width, below the details). Keyed off game/id, so
         it mounts and fetches in parallel with the product query above. -->

@@ -20,6 +20,7 @@ export type {
   Product,
   ProductCardEntry,
   ProductCardSection,
+  ProductComponent,
   ProductFacets,
   ProductPricePoint,
   ProductPrices,
@@ -27,7 +28,7 @@ export type {
   SealedProductRef,
 } from './generated'
 
-import type { SealedProductRef } from './generated'
+import type { ProductComponent, SealedProductRef } from './generated'
 
 /** A page of sealed products plus pagination cursors. */
 export type ProductPage = Page<Product>
@@ -83,6 +84,25 @@ export function getProduct(game: string, id: string): Promise<Product> {
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<Product>(`/api/games/${g}/products/${i}`)
+}
+
+/**
+ * The sealed product's structural composition — "what's in the box": nested packs/boxes
+ * (each linked to its own product), precon decks, fixed promo cards (linked to the card),
+ * and physical extras, in display order. Each component carries its `kind`, display `name`,
+ * `quantity`, and — when it resolves to a catalog product/card — the linked `product`/`card`.
+ * Empty when the product has no ingested composition.
+ */
+export function getProductContents(
+  game: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ data: ProductComponent[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: ProductComponent[] }>(`/api/games/${g}/products/${i}/contents`, {
+    signal,
+  })
 }
 
 /**

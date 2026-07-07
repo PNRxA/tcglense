@@ -26,8 +26,8 @@ use crate::{
         catalog::{
             card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
             get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
-            list_set_drops, list_sets, product_card_sections, product_cards, product_facets,
-            product_image, product_prices, set_icon,
+            list_set_drops, list_sets, product_card_sections, product_cards, product_contents,
+            product_facets, product_image, product_prices, set_icon,
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
@@ -214,6 +214,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/products/{id}", get(get_product))
         .route("/api/games/{game}/products/{id}/image", get(product_image))
         .route("/api/games/{game}/products/{id}/prices", get(product_prices))
+        // The structural composition — "what's in the box" (packs, decks, promos, extras),
+        // linking the sub-products it contains. A static-suffix sibling of `/prices`.
+        .route(
+            "/api/games/{game}/products/{id}/contents",
+            get(product_contents),
+        )
         // The cards this product is found to contain / can be pulled from (issue #204,
         // the reverse of `/cards/{id}/sealed`). A static-suffix sibling of `/prices`.
         .route("/api/games/{game}/products/{id}/cards", get(product_cards))
