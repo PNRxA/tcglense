@@ -25,6 +25,12 @@
 //! of curated memberships that the ingest merges in **only for products MTGJSON left
 //! empty**, so upstream stays authoritative and the fallback self-retires as gaps fill.
 //!
+//! Secret Lair Drop (`SLD`) products are the same gap with a twist: a drop's real contents
+//! is the *cards in that drop*, which the app already tracks ([`crate::scryfall::drops`]),
+//! so rather than hand-author them [`sld`] **derives** each null-contents drop product's
+//! cards by matching the product name to its drop (self-maintaining as new drops sync),
+//! merged under the same "only when MTGJSON left it empty" gate.
+//!
 //! Trade-off: `AllPrintings.json` is one ~600 MB document. We fetch the ~160 MB gzip and
 //! parse only the trimmed structs, but the fetch still buffers the compressed body and
 //! the resolved membership set is large (a normal set's booster sheets span ~its whole
@@ -38,6 +44,7 @@ mod fallback;
 pub mod ingest;
 pub mod model;
 mod progress;
+mod sld;
 
 pub use error::MtgjsonError;
 /// Name of the sync progress span; `main.rs` scopes the `IndicatifLayer` to it

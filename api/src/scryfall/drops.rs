@@ -45,14 +45,17 @@ struct RawDrop {
 pub struct Drop {
     pub slug: String,
     pub title: String,
+    /// The drop's card collector numbers (in the set), the join key onto `cards`.
+    pub collector_numbers: Vec<String>,
     /// 0-based index in the set's drop order, for stable section ordering.
     pub order: usize,
 }
 
-/// A set's drop lookup: the ordered drops plus a collector-number index into them.
+/// A set's drop lookup: the ordered drops plus collector-number and title indexes.
 pub struct DropTable {
     drops: Vec<Drop>,
     by_collector: HashMap<String, usize>,
+    by_title: HashMap<String, usize>,
 }
 
 impl DropTable {
@@ -64,10 +67,45 @@ impl DropTable {
             .map(|&i| &self.drops[i])
     }
 
+    /// The drop whose title matches, comparing on [`normalize_title`] (case- and
+    /// punctuation-insensitive). Used to map a Secret Lair *sealed product* to its
+    /// drop by name so the drop's cards can populate the product's contents.
+    pub fn drop_by_title(&self, normalized_title: &str) -> Option<&Drop> {
+        self.by_title.get(normalized_title).map(|&i| &self.drops[i])
+    }
+
+    /// The drop with this slug (an exact, curated key — used by product overrides).
+    pub fn drop_by_slug(&self, slug: &str) -> Option<&Drop> {
+        self.drops.iter().find(|d| d.slug == slug)
+    }
+
     /// Whether the snapshot lists any drops for this set.
     pub fn is_empty(&self) -> bool {
         self.drops.is_empty()
     }
+}
+
+/// Canonicalise a drop/product title for case- and punctuation-insensitive matching:
+/// lowercased, `&` expanded to `and`, every run of non-alphanumeric characters collapsed
+/// to a single space, trimmed. So `"Garfield: Our Only Thought Is To Entertain You"` and
+/// the snapshot's `"Garfield: Our Only Thought Is to Entertain You"` both normalise to
+/// `"garfield our only thought is to entertain you"`.
+pub fn normalize_title(title: &str) -> String {
+    let expanded = title.replace('&', " and ");
+    let mut out = String::with_capacity(expanded.len());
+    let mut pending_space = false;
+    for ch in expanded.chars() {
+        if ch.is_alphanumeric() {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.extend(ch.to_lowercase());
+        } else {
+            pending_space = true;
+        }
+    }
+    out
 }
 
 /// Composite map key. A handful of entries (one per drop-grouped set), so the
@@ -96,22 +134,37 @@ fn build_tables() -> HashMap<String, DropTable> {
     for set in snapshot.sets {
         let mut drops = Vec::with_capacity(set.drops.len());
         let mut by_collector = HashMap::new();
+        let mut by_title = HashMap::new();
         for (order, raw) in set.drops.into_iter().enumerate() {
-            for cn in raw.collector_numbers {
+            for cn in &raw.collector_numbers {
                 // The first drop to list a number keeps it; the snapshot is
                 // generated collision-free, but guard against a future dupe
                 // silently reassigning a card.
-                by_collector.entry(cn).or_insert(order);
+                by_collector.entry(cn.clone()).or_insert(order);
             }
+            // Likewise for titles: the first drop with a given normalised title wins,
+            // so a rare title collision can't silently reassign the earlier drop.
+            by_title.entry(normalize_title(&raw.title)).or_insert(order);
             drops.push(Drop {
                 slug: raw.slug,
                 title: raw.title,
+                collector_numbers: raw.collector_numbers,
                 order,
             });
         }
-        tables.insert(key(&set.game, &set.set), DropTable { drops, by_collector });
+        tables.insert(
+            key(&set.game, &set.set),
+            DropTable { drops, by_collector, by_title },
+        );
     }
     tables
+}
+
+/// The raw embedded drop snapshot JSON. Exposed so a caller that derives data *from* the
+/// drops (the Secret Lair sealed-contents derivation) can fold the snapshot into its own
+/// version gate, so regenerating `sld_drops.json` re-runs that derivation.
+pub fn snapshot_json() -> &'static str {
+    SNAPSHOT_JSON
 }
 
 /// The drop table for a game's set, or `None` if that set isn't drop-grouped.
@@ -163,5 +216,43 @@ mod tests {
     fn first_snapshot_drop_is_order_zero() {
         // Drop order mirrors the snapshot's order; the first drop is 0.
         assert_eq!(drop_for("mtg", "sld", "2658").map(|d| d.order), Some(0));
+    }
+
+    #[test]
+    fn drops_carry_their_collector_numbers() {
+        let table = table("mtg", "sld").expect("sld is drop-grouped");
+        let drop = table.drop_by_title(&normalize_title("Wild in Bloom")).expect("drop present");
+        assert_eq!(drop.collector_numbers, ["2658", "2659", "2660", "2661", "2662"]);
+    }
+
+    #[test]
+    fn drop_by_title_is_case_and_punctuation_insensitive() {
+        let table = table("mtg", "sld").expect("sld is drop-grouped");
+        // A product name capitalises "To" where the snapshot writes "to"; normalisation
+        // collapses the difference, and the surrounding colon becomes a space.
+        let normalized = normalize_title("Garfield: Our Only Thought Is To Entertain You");
+        assert_eq!(
+            table.drop_by_title(&normalized).map(|d| d.slug.as_str()),
+            Some("garfield-our-only-thought-is-to-entertain-you"),
+        );
+        // A title that matches no drop resolves to nothing.
+        assert!(table.drop_by_title(&normalize_title("Not A Real Drop")).is_none());
+    }
+
+    #[test]
+    fn drop_by_slug_resolves_curated_overrides() {
+        let table = table("mtg", "sld").expect("sld is drop-grouped");
+        let drop = table
+            .drop_by_slug("secret-lair-presents-nuestra-magia")
+            .expect("Nuestra Magia drop present");
+        assert_eq!(drop.title, "Secret Lair Presents: Nuestra Magia");
+        assert!(table.drop_by_slug("no-such-slug").is_none());
+    }
+
+    #[test]
+    fn normalize_title_expands_ampersand_and_collapses_separators() {
+        assert_eq!(normalize_title("Rock & Roll"), "rock and roll");
+        assert_eq!(normalize_title("  Witch's  Familiar!! "), "witch s familiar");
+        assert_eq!(normalize_title("FINAL FANTASY: Game Over"), "final fantasy game over");
     }
 }

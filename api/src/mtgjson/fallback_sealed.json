@@ -1748,6 +1748,1681 @@
         { "kind": "other", "quantity": 1, "name": "Card storage box (panoramic art)" },
         { "kind": "other", "quantity": 1, "name": "Shadowmoor novel (Shadowmoor Cycle, Book I)" }
       ]
+    },
+    {
+      "tcgplayer_product_id": "205231",
+      "name": "Secret Lair Drop Series Full Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Bitterblossom Dreams - Non-Foil Edition", "child_tcgplayer_product_id": "205224" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Eldraine Wonderland - Traditional Foil Edition", "child_tcgplayer_product_id": "205225" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Restless in Peace - Non-Foil Edition", "child_tcgplayer_product_id": "205226" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Seeing Visions - Traditional Foil Version", "child_tcgplayer_product_id": "205227" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: “explosion sounds” - Non-Foil Edition", "child_tcgplayer_product_id": "205228" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Kaleidoscope Killers - Traditional Foil Edition", "child_tcgplayer_product_id": "205229" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: OMG KITTIES! - Traditional Foil Edition", "child_tcgplayer_product_id": "205230" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "228709",
+      "name": "Secret Lair Drop: Secretversary Superdrop - No Foils, No Nonsense Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - A Box of Rocks - Non-Foil Edition", "child_tcgplayer_product_id": "228712" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - Artist Series: Seb McKinnon - Non-Foil Edition", "child_tcgplayer_product_id": "228714" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - Happy Little Gathering - Non-Foil Edition", "child_tcgplayer_product_id": "228716" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - Party Hard, Shred Harder - Non-Foil Edition", "child_tcgplayer_product_id": "228718" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "228710",
+      "name": "Secret Lair Drop: Secretversary Superdrop - Foils Forever Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - A Box of Rocks - Traditional Foil Edition", "child_tcgplayer_product_id": "228713" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - Artist Series: Seb McKinnon - Traditional Foil Edition", "child_tcgplayer_product_id": "228715" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - Happy Little Gathering Foil Edition - Traditional Foil Edition", "child_tcgplayer_product_id": "228717" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secretversary Superdrop - We Hope You Like Squirrels - Traditional Foil Edition", "child_tcgplayer_product_id": "228719" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "233762",
+      "name": "Secret Lair Drop: Smitten Superdrop: All-Our-Love Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Faerie, Faerie, Faerie Rad - Traditional Foil Edition", "child_tcgplayer_product_id": "232596" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Unfathomable Crushing Brutality of Basic Lands - Non-Foil Edition", "child_tcgplayer_product_id": "232598" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Unfathomable Crushing Brutality of Basic Lands - Traditional Foil Edition", "child_tcgplayer_product_id": "232597" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Valentine's Day 2021 - Non-Foil Edition", "child_tcgplayer_product_id": "232600" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Valentine's Day 2021 - Traditional Foil Edition", "child_tcgplayer_product_id": "232599" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Kaldheim - Part 1 - Non-Foil Edition", "child_tcgplayer_product_id": "232602" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Kaldheim - Part 1 - Traditional Foil Edition", "child_tcgplayer_product_id": "232601" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Kaldheim - Part 2 - Non-Foil Edition", "child_tcgplayer_product_id": "232604" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Kaldheim - Part 2 - Traditional Foil Edition", "child_tcgplayer_product_id": "232603" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "247335",
+      "name": "Secret Lair Superdrop: The World's Non-foil-est Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Kamigawa Ink - Non-Foil Edition", "child_tcgplayer_product_id": "247338" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Teferi's Time Trouble - Non-Foil Edition", "child_tcgplayer_product_id": "247340" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Johannes Voss - Non-Foil Edition", "child_tcgplayer_product_id": "247343" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Thomas Baxa - Non-Foil Edition", "child_tcgplayer_product_id": "247345" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Math Is For Blockers - Non-Foil Edition", "child_tcgplayer_product_id": "247348" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "258495",
+      "name": "Secret Lair Drop: The Bundle Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Second Secretversary Bundle - Non-Foil Edition", "child_tcgplayer_product_id": "258493" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Second Secretversary Bundle - Foil Edition", "child_tcgplayer_product_id": "258494" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "480444",
+      "name": "Secret Lair Drop: The Prophets Predicted Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Ssssssnakessssss - Traditional Foil Edition", "child_tcgplayer_product_id": "480461" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: All Will Be One - Step-and-Compleat Foil Edition", "child_tcgplayer_product_id": "480452" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The '90s Binder Experience - Traditional Foil Edition", "child_tcgplayer_product_id": "480464" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Draw Your Hand - Traditional Foil Edition", "child_tcgplayer_product_id": "480459" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles - Traditional Foil Edition", "child_tcgplayer_product_id": "480467" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Sam Burley - Traditional Foil Edition", "child_tcgplayer_product_id": "480473" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Phyrexian Faves - Traditional Foil Edition", "child_tcgplayer_product_id": "480456" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "480451",
+      "name": "Secret Lair Drop: The Prophets Predicted Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Ssssssnakessssss - Non-Foil Edition", "child_tcgplayer_product_id": "480462" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The '90s Binder Experience - Non-Foil Edition", "child_tcgplayer_product_id": "480465" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Draw Your Hand - Non-Foil Edition", "child_tcgplayer_product_id": "480460" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles - Non-Foil Edition", "child_tcgplayer_product_id": "480469" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Sam Burley - Non-Foil Edition", "child_tcgplayer_product_id": "480474" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Phyrexian Faves - Non-Foil Edition", "child_tcgplayer_product_id": "480457" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "493794",
+      "name": "Secret Lair Drop: Those Foils Are Really Coming Down Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: March of the Machine Vol. 1 - Halo Foil Edition", "child_tcgplayer_product_id": "493799" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: March of the Machine Vol. 2 - Halo Foil Edition", "child_tcgplayer_product_id": "493802" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: March of the Machine Vol. 3 - Halo Foil Edition", "child_tcgplayer_product_id": "493803" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Cool Ocean Breeze - Traditional Foil Edition", "child_tcgplayer_product_id": "493814" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Nature is Adorable - Traditional Foil Edition", "child_tcgplayer_product_id": "493812" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Rebecca Guay - Traditional Foil Edition", "child_tcgplayer_product_id": "493810" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Randy Vargas - Traditional Foil Edition", "child_tcgplayer_product_id": "493808" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Alayna Danner - Traditional Foil Edition", "child_tcgplayer_product_id": "493805" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "493795",
+      "name": "Secret Lair Drop: Those Non-Foils Just Won't Let Up Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Alayna Danner - Non-Foil Edition", "child_tcgplayer_product_id": "493806" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Randy Vargas - Non-Foil Edition", "child_tcgplayer_product_id": "493807" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Rebecca Guay - Non-Foil Edition", "child_tcgplayer_product_id": "493809" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Nature is Adorable - Non-Foil Edition", "child_tcgplayer_product_id": "493811" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Cool Ocean Breeze - Non-Foil Edition", "child_tcgplayer_product_id": "493813" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "501823",
+      "name": "Secret Lair Drop: Shredding A Wave of Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: More Adventures in Middle-earth - Non-Foil Edition", "child_tcgplayer_product_id": "501835" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: More Adventures in Middle-earth - Traditional Foil Edition", "child_tcgplayer_product_id": "501834" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblin & Squabblin' - Non-Foil Edition", "child_tcgplayer_product_id": "501841" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblin & Squabblin' - Rainbow Foil Edition", "child_tcgplayer_product_id": "501840" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: the Mountain Goats - Non-Foil Edition", "child_tcgplayer_product_id": "501850" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: the Mountain Goats - Traditional Foil Edition", "child_tcgplayer_product_id": "501849" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Death Is Temporary, Metal Is Forever - Non-Foil Edition", "child_tcgplayer_product_id": "501839" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Death Is Temporary, Metal Is Forever - Traditional Foil Edition", "child_tcgplayer_product_id": "501836" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Ryan Alexander Lee - Non-Foil Edition", "child_tcgplayer_product_id": "501846" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Ryan Alexander Lee - Traditional Foil Edition", "child_tcgplayer_product_id": "501845" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Bad to the Bones - Non-Foil Edition", "child_tcgplayer_product_id": "501844" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Bad to the Bones - Traditional Foil Edition", "child_tcgplayer_product_id": "501843" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Stars Gaze Back - Non-Foil Edition", "child_tcgplayer_product_id": "501848" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Stars Gaze Back - Traditional Foil Edition", "child_tcgplayer_product_id": "501847" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "501828",
+      "name": "Secret Lair Drop: Tearing Up A Sick Tube of Non-Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: More Adventures in Middle-earth - Non-Foil Edition", "child_tcgplayer_product_id": "501835" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Death Is Temporary, Metal Is Forever - Non-Foil Edition", "child_tcgplayer_product_id": "501839" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblin & Squabblin' - Non-Foil Edition", "child_tcgplayer_product_id": "501841" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Bad to the Bones - Non-Foil Edition", "child_tcgplayer_product_id": "501844" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Ryan Alexander Lee - Non-Foil Edition", "child_tcgplayer_product_id": "501846" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Stars Gaze Back - Non-Foil Edition", "child_tcgplayer_product_id": "501848" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: the Mountain Goats - Non-Foil Edition", "child_tcgplayer_product_id": "501850" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "511864",
+      "name": "Secret Lair Drop: Seven In Heaven Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Commander Deck: Angels: They're Just Like Us but Cooler and with Wings", "child_tcgplayer_product_id": "511863" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Ryan Alexander Lee - Traditional Foil Edition", "child_tcgplayer_product_id": "501845" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Ryan Alexander Lee - Non-Foil Edition", "child_tcgplayer_product_id": "501846" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblin & Squabblin' - Rainbow Foil Edition", "child_tcgplayer_product_id": "501840" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblin & Squabblin' - Non-Foil Edition", "child_tcgplayer_product_id": "501841" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Bad to the Bones - Traditional Foil Edition", "child_tcgplayer_product_id": "501843" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Bad to the Bones - Non-Foil Edition", "child_tcgplayer_product_id": "501844" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528408",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Jungle Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Life Breaks Free - Non-Foil Edition", "child_tcgplayer_product_id": "528392" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Dr. Ian Malcolm - Non-Foil Edition", "child_tcgplayer_product_id": "528390" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: The Lost Caverns of Ixalan - Non-Foil Edition", "child_tcgplayer_product_id": "528396" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528409",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Jungle Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Life Breaks Free - Rainbow Foil Edition", "child_tcgplayer_product_id": "528393" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Dr. Ian Malcolm - Rainbow Foil Edition", "child_tcgplayer_product_id": "528391" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: The Lost Caverns of Ixalan - Rainbow Foil Edition", "child_tcgplayer_product_id": "528397" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528410",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Holiday Gift Bag Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Through the Wormhole - Non-Foil Edition", "child_tcgplayer_product_id": "528406" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Gift Wrapped - Non-Foil Edition", "child_tcgplayer_product_id": "528400" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Paradise Frost - Non-Foil Edition", "child_tcgplayer_product_id": "528402" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528411",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Holiday Gift Bag Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Through the Wormhole - Galaxy Foil Edition", "child_tcgplayer_product_id": "528407" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Gift Wrapped - Rainbow Foil Edition", "child_tcgplayer_product_id": "528401" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Paradise Frost - Rainbow Foil Edition", "child_tcgplayer_product_id": "528403" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528412",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Lara Croft's Adventuring Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Tomb Raider - Non-Foil Edition", "child_tcgplayer_product_id": "528394" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Tales of the Time Stoppers - Non-Foil Edition", "child_tcgplayer_product_id": "528404" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Through the Wormhole - Non-Foil Edition", "child_tcgplayer_product_id": "528406" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528413",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Lara Croft's Adventuring Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Tomb Raider - Traditional Foil Edition", "child_tcgplayer_product_id": "528395" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Tales of the Time Stoppers - Rainbow Foil Edition", "child_tcgplayer_product_id": "528405" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Through the Wormhole - Galaxy Foil Edition", "child_tcgplayer_product_id": "528407" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "528414",
+      "name": "Secret Lair Drop: Secretversary Superdrop 2023: Welcome to Jurassic World Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Life Breaks Free - Rainbow Foil Edition", "child_tcgplayer_product_id": "528393" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Dr. Ian Malcolm - Rainbow Foil Edition", "child_tcgplayer_product_id": "528391" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Life Breaks Free - Non-Foil Edition", "child_tcgplayer_product_id": "528392" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Jurassic World: Dr. Ian Malcolm - Non-Foil Edition", "child_tcgplayer_product_id": "528390" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537661",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: Everything on the Menu Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Just Add Milk: Second Helpings - Traditional Foil Edition", "child_tcgplayer_product_id": "537673" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Just Add Milk: Second Helpings - Non-Foil Edition", "child_tcgplayer_product_id": "537675" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Hard-Boiled Thrillers - Rainbow Foil Edition", "child_tcgplayer_product_id": "537678" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Hard-Boiled Thrillers - Non-Foil Edition", "child_tcgplayer_product_id": "537681" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Murders at Karlov Manor - Rainbow Foil Edition", "child_tcgplayer_product_id": "537683" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Murders at Karlov Manor - Non-Foil Edition", "child_tcgplayer_product_id": "537684" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prismatic Nightmares - Rainbow Foil Edition", "child_tcgplayer_product_id": "537685" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prismatic Nightmares - Non-Foil Edition", "child_tcgplayer_product_id": "537686" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Beauty of the Beasts - Rainbow Foil Edition", "child_tcgplayer_product_id": "537687" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Beauty of the Beasts - Non-Foil Edition", "child_tcgplayer_product_id": "537688" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Deceptive Divination - Rainbow Foil Edition", "child_tcgplayer_product_id": "537689" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Deceptive Divination - Non-Foil Edition", "child_tcgplayer_product_id": "537690" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537665",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: All the Sweet Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Just Add Milk: Second Helpings - Traditional Foil Edition", "child_tcgplayer_product_id": "537673" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Hard-Boiled Thrillers - Rainbow Foil Edition", "child_tcgplayer_product_id": "537678" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Murders at Karlov Manor - Rainbow Foil Edition", "child_tcgplayer_product_id": "537683" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prismatic Nightmares - Rainbow Foil Edition", "child_tcgplayer_product_id": "537685" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Beauty of the Beasts - Rainbow Foil Edition", "child_tcgplayer_product_id": "537687" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Deceptive Divination - Rainbow Foil Edition", "child_tcgplayer_product_id": "537689" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537667",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: All the Savory Non-Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Just Add Milk: Second Helpings - Non-Foil Edition", "child_tcgplayer_product_id": "537675" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Hard-Boiled Thrillers - Non-Foil Edition", "child_tcgplayer_product_id": "537681" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Murders at Karlov Manor - Non-Foil Edition", "child_tcgplayer_product_id": "537684" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prismatic Nightmares - Non-Foil Edition", "child_tcgplayer_product_id": "537686" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Beauty of the Beasts - Non-Foil Edition", "child_tcgplayer_product_id": "537688" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Deceptive Divination - Non-Foil Edition", "child_tcgplayer_product_id": "537690" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537669",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: Dark Mysteries Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Hard-Boiled Thrillers - Rainbow Foil Edition", "child_tcgplayer_product_id": "537678" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Murders at Karlov Manor - Rainbow Foil Edition", "child_tcgplayer_product_id": "537683" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prismatic Nightmares - Rainbow Foil Edition", "child_tcgplayer_product_id": "537685" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537670",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: Dark Mysteries Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Hard-Boiled Thrillers - Non-Foil Edition", "child_tcgplayer_product_id": "537681" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Murders at Karlov Manor - Non-Foil Edition", "child_tcgplayer_product_id": "537684" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prismatic Nightmares - Non-Foil Edition", "child_tcgplayer_product_id": "537686" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537671",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: Beastly Breakfast Omens Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Just Add Milk: Second Helpings - Traditional Foil Edition", "child_tcgplayer_product_id": "537673" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Beauty of the Beasts - Rainbow Foil Edition", "child_tcgplayer_product_id": "537687" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Deceptive Divination - Rainbow Foil Edition", "child_tcgplayer_product_id": "537689" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "537672",
+      "name": "Secret Lair Drop: Winter Superdrop 2024: Beastly Breakfast Omens Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Just Add Milk: Second Helpings - Non-Foil Edition", "child_tcgplayer_product_id": "537675" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Beauty of the Beasts - Non-Foil Edition", "child_tcgplayer_product_id": "537688" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Deceptive Divination - Non-Foil Edition", "child_tcgplayer_product_id": "537690" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551407",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: Everything is Blooming Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "551437" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Non-Foil Edition", "child_tcgplayer_product_id": "551438" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "551440" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Non-Foil Edition", "child_tcgplayer_product_id": "551442" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblingram - Rainbow Foil Edition", "child_tcgplayer_product_id": "551443" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblingram - Non-Foil Edition", "child_tcgplayer_product_id": "551444" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: sAnS mERcY - Rainbow Foil Edition", "child_tcgplayer_product_id": "551445" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: sAnS mERcY - Non-Foil Edition", "child_tcgplayer_product_id": "551446" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 1: Rebellious Renegades - Rainbow Foil Edition", "child_tcgplayer_product_id": "551447" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 1: Rebellious Renegades - Non-Foil Edition", "child_tcgplayer_product_id": "551448" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 2: Sinister Scoundrels - Rainbow Foil Edition", "child_tcgplayer_product_id": "551449" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 2: Sinister Scoundrels - Non-Foil Edition", "child_tcgplayer_product_id": "551450" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Poker Faces - Rainbow Foil Edition", "child_tcgplayer_product_id": "551451" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Poker Faces - Non-Foil Edition", "child_tcgplayer_product_id": "551452" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Outlaws of Thunder Junction - Traditional Foil Edition", "child_tcgplayer_product_id": "551453" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Outlaws of Thunder Junction - Non-Foil Edition", "child_tcgplayer_product_id": "551454" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551408",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: All The Foils Are Blooming Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "551437" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "551440" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblingram - Rainbow Foil Edition", "child_tcgplayer_product_id": "551443" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: sAnS mERcY - Rainbow Foil Edition", "child_tcgplayer_product_id": "551445" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 1: Rebellious Renegades - Rainbow Foil Edition", "child_tcgplayer_product_id": "551447" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 2: Sinister Scoundrels - Rainbow Foil Edition", "child_tcgplayer_product_id": "551449" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Poker Faces - Rainbow Foil Edition", "child_tcgplayer_product_id": "551451" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Outlaws of Thunder Junction - Traditional Foil Edition", "child_tcgplayer_product_id": "551453" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551409",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: All The Non-Foils Are Blooming Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Non-Foil Edition", "child_tcgplayer_product_id": "551438" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Non-Foil Edition", "child_tcgplayer_product_id": "551442" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblingram - Non-Foil Edition", "child_tcgplayer_product_id": "551444" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: sAnS mERcY - Non-Foil Edition", "child_tcgplayer_product_id": "551446" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 1: Rebellious Renegades - Non-Foil Edition", "child_tcgplayer_product_id": "551448" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 2: Sinister Scoundrels - Non-Foil Edition", "child_tcgplayer_product_id": "551450" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Poker Faces - Non-Foil Edition", "child_tcgplayer_product_id": "551452" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Outlaws of Thunder Junction - Non-Foil Edition", "child_tcgplayer_product_id": "551454" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551411",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: Hatsune Miku: Sakura Superstar Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "551437" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "551440" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Non-Foil Edition", "child_tcgplayer_product_id": "551438" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Non-Foil Edition", "child_tcgplayer_product_id": "551442" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551413",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: Spring Into Action Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "551437" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "551440" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: sAnS mERcY - Rainbow Foil Edition", "child_tcgplayer_product_id": "551445" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblingram - Rainbow Foil Edition", "child_tcgplayer_product_id": "551443" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551415",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: Spring Into Action Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar EN - Non-Foil Edition", "child_tcgplayer_product_id": "551438" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Sakura Superstar JP - Non-Foil Edition", "child_tcgplayer_product_id": "551442" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: sAnS mERcY - Non-Foil Edition", "child_tcgplayer_product_id": "551446" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Goblingram - Non-Foil Edition", "child_tcgplayer_product_id": "551444" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551417",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: Outlaws of Thunder Junction Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Poker Faces - Rainbow Foil Edition", "child_tcgplayer_product_id": "551451" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 1: Rebellious Renegades - Rainbow Foil Edition", "child_tcgplayer_product_id": "551447" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 2: Sinister Scoundrels - Rainbow Foil Edition", "child_tcgplayer_product_id": "551449" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Outlaws of Thunder Junction - Traditional Foil Edition", "child_tcgplayer_product_id": "551453" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "551419",
+      "name": "Secret Lair Drop: Spring Superdrop 2024: Outlaws of Thunder Junction Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Poker Faces - Non-Foil Edition", "child_tcgplayer_product_id": "551452" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 1: Rebellious Renegades - Non-Foil Edition", "child_tcgplayer_product_id": "551448" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Outlaw Anthology Vol. 2: Sinister Scoundrels - Non-Foil Edition", "child_tcgplayer_product_id": "551450" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Outlaws of Thunder Junction - Non-Foil Edition", "child_tcgplayer_product_id": "551454" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556776",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: The Stage with Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "556788" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "556798" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prints of Darkness - Rainbow Foil Edition", "child_tcgplayer_product_id": "556836" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Not a Wolf - Traditional Foil Edition", "child_tcgplayer_product_id": "556833" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Da Vinci's Designs - Rainbow Foil Edition", "child_tcgplayer_product_id": "556804" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Lethal Legends - Rainbow Foil Edition", "child_tcgplayer_product_id": "556806" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Julie Bell - Rainbow Foil Edition", "child_tcgplayer_product_id": "556828" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Non-Foil Edition", "child_tcgplayer_product_id": "556791" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Non-Foil Edition", "child_tcgplayer_product_id": "556794" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prints of Darkness - Non-Foil Edition", "child_tcgplayer_product_id": "556837" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Not a Wolf - Non-Foil Edition", "child_tcgplayer_product_id": "556834" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Da Vinci's Designs - Non-Foil Edition", "child_tcgplayer_product_id": "556805" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Lethal Legends - Non-Foil Edition", "child_tcgplayer_product_id": "556807" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Julie Bell - Non-Foil Edition", "child_tcgplayer_product_id": "556831" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556777",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: The Stage with Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "556788" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "556798" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prints of Darkness - Rainbow Foil Edition", "child_tcgplayer_product_id": "556836" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Not a Wolf - Traditional Foil Edition", "child_tcgplayer_product_id": "556833" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Da Vinci's Designs - Rainbow Foil Edition", "child_tcgplayer_product_id": "556804" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Lethal Legends - Rainbow Foil Edition", "child_tcgplayer_product_id": "556806" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Julie Bell - Rainbow Foil Edition", "child_tcgplayer_product_id": "556828" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556778",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: The Stage with Non-Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Non-Foil Edition", "child_tcgplayer_product_id": "556791" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Non-Foil Edition", "child_tcgplayer_product_id": "556794" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prints of Darkness - Non-Foil Edition", "child_tcgplayer_product_id": "556837" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Not a Wolf - Non-Foil Edition", "child_tcgplayer_product_id": "556834" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Da Vinci's Designs - Non-Foil Edition", "child_tcgplayer_product_id": "556805" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Lethal Legends - Non-Foil Edition", "child_tcgplayer_product_id": "556807" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Julie Bell - Non-Foil Edition", "child_tcgplayer_product_id": "556831" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556779",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: Hatsune Miku: Digital Sensation Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "556788" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "556798" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Non-Foil Edition", "child_tcgplayer_product_id": "556791" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Non-Foil Edition", "child_tcgplayer_product_id": "556794" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556780",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: Showstopper Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "556788" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "556798" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prints of Darkness - Rainbow Foil Edition", "child_tcgplayer_product_id": "556836" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Not a Wolf - Traditional Foil Edition", "child_tcgplayer_product_id": "556833" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556781",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: Showstopper Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation EN - Non-Foil Edition", "child_tcgplayer_product_id": "556791" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Digital Sensation JP - Non-Foil Edition", "child_tcgplayer_product_id": "556794" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Prints of Darkness - Non-Foil Edition", "child_tcgplayer_product_id": "556837" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Not a Wolf - Non-Foil Edition", "child_tcgplayer_product_id": "556834" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556782",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: Virtuoso Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Da Vinci's Designs - Rainbow Foil Edition", "child_tcgplayer_product_id": "556804" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Lethal Legends - Rainbow Foil Edition", "child_tcgplayer_product_id": "556806" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Julie Bell - Rainbow Foil Edition", "child_tcgplayer_product_id": "556828" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "556783",
+      "name": "Secret Lair Drop: Summer Superdrop 2024: Virtuoso Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Da Vinci's Designs - Non-Foil Edition", "child_tcgplayer_product_id": "556805" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Assassin's Creed: Lethal Legends - Non-Foil Edition", "child_tcgplayer_product_id": "556807" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Julie Bell - Non-Foil Edition", "child_tcgplayer_product_id": "556831" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561522",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Take Me to the Floor with Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 1 - Non-Foil Edition", "child_tcgplayer_product_id": "561453" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 1 - Traditional Foil Edition", "child_tcgplayer_product_id": "561454" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 2 - Non-Foil Edition", "child_tcgplayer_product_id": "561479" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 2 - Traditional Foil Edition", "child_tcgplayer_product_id": "561455" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Creatures - Non-Foil Edition", "child_tcgplayer_product_id": "561456" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Creatures - Rainbow Foil Edition", "child_tcgplayer_product_id": "561457" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Lands - Non-Foil Edition", "child_tcgplayer_product_id": "561458" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Lands - Rainbow Foil Edition", "child_tcgplayer_product_id": "561459" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Staples - Non-Foil Edition", "child_tcgplayer_product_id": "561460" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Staples - Rainbow Foil Edition", "child_tcgplayer_product_id": "561461" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Bloomburrow - Non-Foil Edition", "child_tcgplayer_product_id": "561462" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Bloomburrow - Rainbow Foil Edition", "child_tcgplayer_product_id": "561463" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Andrew Maclean - Non-Foil Edition", "child_tcgplayer_product_id": "561464" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Andrew Maclean - Rainbow Foil Edition", "child_tcgplayer_product_id": "561465" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561525",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Take Me to the Floor with Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 1 - Traditional Foil Edition", "child_tcgplayer_product_id": "561454" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 2 - Traditional Foil Edition", "child_tcgplayer_product_id": "561455" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Creatures - Rainbow Foil Edition", "child_tcgplayer_product_id": "561457" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Lands - Rainbow Foil Edition", "child_tcgplayer_product_id": "561459" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Staples - Rainbow Foil Edition", "child_tcgplayer_product_id": "561461" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Bloomburrow - Rainbow Foil Edition", "child_tcgplayer_product_id": "561463" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Andrew Maclean - Rainbow Foil Edition", "child_tcgplayer_product_id": "561465" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561526",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Take Me to the Floor with Non-Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 1 - Non-Foil Edition", "child_tcgplayer_product_id": "561453" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 2 - Non-Foil Edition", "child_tcgplayer_product_id": "561479" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Creatures - Non-Foil Edition", "child_tcgplayer_product_id": "561456" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Lands - Non-Foil Edition", "child_tcgplayer_product_id": "561458" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Staples - Non-Foil Edition", "child_tcgplayer_product_id": "561460" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Bloomburrow - Non-Foil Edition", "child_tcgplayer_product_id": "561462" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Andrew Maclean - Non-Foil Edition", "child_tcgplayer_product_id": "561464" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561528",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Awkward Small Talk Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 1 - Traditional Foil Edition", "child_tcgplayer_product_id": "561454" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 2 - Traditional Foil Edition", "child_tcgplayer_product_id": "561455" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Bloomburrow - Rainbow Foil Edition", "child_tcgplayer_product_id": "561463" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Andrew Maclean - Rainbow Foil Edition", "child_tcgplayer_product_id": "561465" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561529",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Awkward Small Talk Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 1 - Non-Foil Edition", "child_tcgplayer_product_id": "561453" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Monty Python: Monty Python and the Holy Grail: Vol. 2 - Non-Foil Edition", "child_tcgplayer_product_id": "561479" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Showcase: Bloomburrow - Non-Foil Edition", "child_tcgplayer_product_id": "561462" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Andrew Maclean - Non-Foil Edition", "child_tcgplayer_product_id": "561464" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561536",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Brain Dead Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Creatures - Rainbow Foil Edition", "child_tcgplayer_product_id": "561457" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Lands - Rainbow Foil Edition", "child_tcgplayer_product_id": "561459" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Staples - Rainbow Foil Edition", "child_tcgplayer_product_id": "561461" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "561540",
+      "name": "Secret Lair Drop: Inside an Elevator Superdrop: Brain Dead Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Creatures - Non-Foil Edition", "child_tcgplayer_product_id": "561456" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Lands - Non-Foil Edition", "child_tcgplayer_product_id": "561458" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Brain Dead: Staples - Non-Foil Edition", "child_tcgplayer_product_id": "561460" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "592056",
+      "name": "Secret Lair Drop: Marvel Superdrop: The Heroic Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Black Panther - Non-Foil Edition", "child_tcgplayer_product_id": "592086" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Black Panther - Rainbow Foil Edition", "child_tcgplayer_product_id": "592081" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Captain America - Non-Foil Edition", "child_tcgplayer_product_id": "592062" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Captain America - Rainbow Foil Edition", "child_tcgplayer_product_id": "592061" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Iron Man - Non-Foil Edition", "child_tcgplayer_product_id": "592070" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Iron Man - Rainbow Foil Edition", "child_tcgplayer_product_id": "592067" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Storm - Non-Foil Edition", "child_tcgplayer_product_id": "592080" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Storm - Rainbow Foil Edition", "child_tcgplayer_product_id": "592079" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Wolverine - Non-Foil Edition", "child_tcgplayer_product_id": "592074" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Wolverine - Rainbow Foil Edition", "child_tcgplayer_product_id": "592073" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "592059",
+      "name": "Secret Lair Drop: Marvel Superdrop: The Astonishing Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Black Panther - Rainbow Foil Edition", "child_tcgplayer_product_id": "592081" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Captain America - Rainbow Foil Edition", "child_tcgplayer_product_id": "592061" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Iron Man - Rainbow Foil Edition", "child_tcgplayer_product_id": "592067" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Storm - Rainbow Foil Edition", "child_tcgplayer_product_id": "592079" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Wolverine - Rainbow Foil Edition", "child_tcgplayer_product_id": "592073" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "592060",
+      "name": "Secret Lair Drop: Marvel Superdrop: The Mighty Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Black Panther - Non-Foil Edition", "child_tcgplayer_product_id": "592086" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Captain America - Non-Foil Edition", "child_tcgplayer_product_id": "592062" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Iron Man - Non-Foil Edition", "child_tcgplayer_product_id": "592070" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Storm - Non-Foil Edition", "child_tcgplayer_product_id": "592080" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Wolverine - Non-Foil Edition", "child_tcgplayer_product_id": "592074" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618113",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Hatsune Miku: Winter Diva Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "618046" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "618091" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva EN - Non-Foil Edition", "child_tcgplayer_product_id": "618049" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Non-Foil Edition", "child_tcgplayer_product_id": "618087" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618114",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Trailblazing Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Mitsuhiro Arita - Rainbow Foil Edition", "child_tcgplayer_product_id": "618105" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Rainbow Foil Edition", "child_tcgplayer_product_id": "618099" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Aether Drifters - Traditional Foil Edition", "child_tcgplayer_product_id": "618111" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618115",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Trailblazing Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Mitsuhiro Arita - Non-Foil Edition", "child_tcgplayer_product_id": "618106" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Non-Foil Edition", "child_tcgplayer_product_id": "618100" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Aether Drifters - Non-Foil Edition", "child_tcgplayer_product_id": "618112" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618116",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Everything a Pioneer Needs Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "618046" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "618091" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Rainbow Foil Edition", "child_tcgplayer_product_id": "618099" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Aether Drifters - Traditional Foil Edition", "child_tcgplayer_product_id": "618111" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles 2: Dressed to Kill - Rainbow Foil Edition", "child_tcgplayer_product_id": "618102" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Luke Pearson - Rainbow Foil Edition", "child_tcgplayer_product_id": "618097" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Mitsuhiro Arita - Rainbow Foil Edition", "child_tcgplayer_product_id": "618105" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Jesper Ejsing - Rainbow Foil Edition", "child_tcgplayer_product_id": "618094" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Lorwyn Lightboxes - Rainbow Foil Edition", "child_tcgplayer_product_id": "618109" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva EN - Non-Foil Edition", "child_tcgplayer_product_id": "618049" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Non-Foil Edition", "child_tcgplayer_product_id": "618087" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Non-Foil Edition", "child_tcgplayer_product_id": "618100" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Aether Drifters - Non-Foil Edition", "child_tcgplayer_product_id": "618112" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles 2: Dressed to Kill - Non-Foil Edition", "child_tcgplayer_product_id": "618103" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Luke Pearson - Non-Foil Edition", "child_tcgplayer_product_id": "618098" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Mitsuhiro Arita - Non-Foil Edition", "child_tcgplayer_product_id": "618106" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Jesper Ejsing - Non-Foil Edition", "child_tcgplayer_product_id": "618096" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Lorwyn Lightboxes - Non-Foil Edition", "child_tcgplayer_product_id": "618110" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618117",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Survival-Grade Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva EN - Rainbow Foil Edition", "child_tcgplayer_product_id": "618046" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "618091" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Rainbow Foil Edition", "child_tcgplayer_product_id": "618099" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Aether Drifters - Traditional Foil Edition", "child_tcgplayer_product_id": "618111" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles 2: Dressed to Kill - Rainbow Foil Edition", "child_tcgplayer_product_id": "618102" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Luke Pearson - Rainbow Foil Edition", "child_tcgplayer_product_id": "618097" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Mitsuhiro Arita - Rainbow Foil Edition", "child_tcgplayer_product_id": "618105" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Jesper Ejsing - Rainbow Foil Edition", "child_tcgplayer_product_id": "618094" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Lorwyn Lightboxes - Rainbow Foil Edition", "child_tcgplayer_product_id": "618109" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618118",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Trail-Ready Non-Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva EN - Non-Foil Edition", "child_tcgplayer_product_id": "618049" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Non-Foil Edition", "child_tcgplayer_product_id": "618087" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Non-Foil Edition", "child_tcgplayer_product_id": "618100" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Aether Drifters - Non-Foil Edition", "child_tcgplayer_product_id": "618112" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles 2: Dressed to Kill - Non-Foil Edition", "child_tcgplayer_product_id": "618103" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Luke Pearson - Non-Foil Edition", "child_tcgplayer_product_id": "618098" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Mitsuhiro Arita - Non-Foil Edition", "child_tcgplayer_product_id": "618106" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Jesper Ejsing - Non-Foil Edition", "child_tcgplayer_product_id": "618096" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Lorwyn Lightboxes - Non-Foil Edition", "child_tcgplayer_product_id": "618110" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618120",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Campfire Merriment Bundle - Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Luke Pearson - Rainbow Foil Edition", "child_tcgplayer_product_id": "618097" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Jesper Ejsing - Rainbow Foil Edition", "child_tcgplayer_product_id": "618094" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles 2: Dressed to Kill - Rainbow Foil Edition", "child_tcgplayer_product_id": "618102" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Lorwyn Lightboxes - Rainbow Foil Edition", "child_tcgplayer_product_id": "618109" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "618121",
+      "name": "Secret Lair Drop: Winter Superdrop 2025: Campfire Merriment Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Luke Pearson - Non-Foil Edition", "child_tcgplayer_product_id": "618098" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Jesper Ejsing - Non-Foil Edition", "child_tcgplayer_product_id": "618096" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: City Styles 2: Dressed to Kill - Non-Foil Edition", "child_tcgplayer_product_id": "618103" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Lorwyn Lightboxes - Non-Foil Edition", "child_tcgplayer_product_id": "618110" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624749",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants Bundle - Rainbow Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Rainbow Foil Edition", "child_tcgplayer_product_id": "624707" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Rainbow Foil Edition", "child_tcgplayer_product_id": "624706" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Rainbow Foil Edition", "child_tcgplayer_product_id": "624711" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624750",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Non-Foil Edition", "child_tcgplayer_product_id": "624709" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Non-Foil Edition", "child_tcgplayer_product_id": "624705" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Non-Foil Edition", "child_tcgplayer_product_id": "624710" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624751",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Desk Fort Made of Non-Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Non-Foil Edition", "child_tcgplayer_product_id": "624743" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Pick 'Em and Stick 'Em - Non-Foil Edition", "child_tcgplayer_product_id": "624745" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Secret Lair High Class of '87 - Non-Foil Edition", "child_tcgplayer_product_id": "624739" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Non-Foil Edition", "child_tcgplayer_product_id": "624710" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Non-Foil Edition", "child_tcgplayer_product_id": "624705" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Non-Foil Edition", "child_tcgplayer_product_id": "624709" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: They Grow Up So Fast - Non-Foil Edition", "child_tcgplayer_product_id": "624722" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Tragic Romance - Non-Foil Edition", "child_tcgplayer_product_id": "624716" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Twisted Toons - Non-Foil Edition", "child_tcgplayer_product_id": "624715" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624753",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Break Room Disco Ball Made of Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Rainbow Foil Edition", "child_tcgplayer_product_id": "624742" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Pick 'Em and Stick 'Em - Rainbow Foil Edition", "child_tcgplayer_product_id": "624746" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Secret Lair High Class of '87 - Traditional Foil Edition", "child_tcgplayer_product_id": "624740" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Rainbow Foil Edition", "child_tcgplayer_product_id": "624711" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Rainbow Foil Edition", "child_tcgplayer_product_id": "624706" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Rainbow Foil Edition", "child_tcgplayer_product_id": "624707" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: They Grow Up So Fast - Rainbow Foil Edition", "child_tcgplayer_product_id": "624721" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Tragic Romance - Rainbow Foil Edition", "child_tcgplayer_product_id": "624717" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Twisted Toons - Rainbow Foil Edition", "child_tcgplayer_product_id": "624714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624758",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Interim Boss's Bant Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Rainbow Foil Edition", "child_tcgplayer_product_id": "624742" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Fairest Drop of All - Traditional Foil Edition", "child_tcgplayer_product_id": "603324" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Tome of the Astral Sorceress - Non-Foil Edition", "child_tcgplayer_product_id": "584539" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Strange Sands: Plains - Non-Foil Edition", "child_tcgplayer_product_id": "610786" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Strange Sands: Forest - Non-Foil Edition", "child_tcgplayer_product_id": "610794" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624759",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Cover the Boss's Office with Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Non-Foil Edition", "child_tcgplayer_product_id": "624743" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Rainbow Foil Edition", "child_tcgplayer_product_id": "624742" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Pick 'Em and Stick 'Em - Non-Foil Edition", "child_tcgplayer_product_id": "624745" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Pick 'Em and Stick 'Em - Rainbow Foil Edition", "child_tcgplayer_product_id": "624746" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Secret Lair High Class of '87 - Non-Foil Edition", "child_tcgplayer_product_id": "624739" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Secret Lair High Class of '87 - Traditional Foil Edition", "child_tcgplayer_product_id": "624740" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Non-Foil Edition", "child_tcgplayer_product_id": "624710" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Rainbow Foil Edition", "child_tcgplayer_product_id": "624711" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Non-Foil Edition", "child_tcgplayer_product_id": "624705" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Rainbow Foil Edition", "child_tcgplayer_product_id": "624706" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Non-Foil Edition", "child_tcgplayer_product_id": "624709" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Rainbow Foil Edition", "child_tcgplayer_product_id": "624707" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: They Grow Up So Fast - Non-Foil Edition", "child_tcgplayer_product_id": "624722" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: They Grow Up So Fast - Rainbow Foil Edition", "child_tcgplayer_product_id": "624721" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Tragic Romance - Non-Foil Edition", "child_tcgplayer_product_id": "624716" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Tragic Romance - Rainbow Foil Edition", "child_tcgplayer_product_id": "624717" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Twisted Toons - Non-Foil Edition", "child_tcgplayer_product_id": "624715" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Twisted Toons - Rainbow Foil Edition", "child_tcgplayer_product_id": "624714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "624906",
+      "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Biggest. Bundle. Ever. Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Non-Foil Edition", "child_tcgplayer_product_id": "624743" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Rainbow Foil Edition", "child_tcgplayer_product_id": "624742" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Pick 'Em and Stick 'Em - Non-Foil Edition", "child_tcgplayer_product_id": "624745" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Pick 'Em and Stick 'Em - Rainbow Foil Edition", "child_tcgplayer_product_id": "624746" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Secret Lair High Class of '87 - Non-Foil Edition", "child_tcgplayer_product_id": "624739" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Secret Lair High Class of '87 - Traditional Foil Edition", "child_tcgplayer_product_id": "624740" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Non-Foil Edition", "child_tcgplayer_product_id": "624710" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Internet Sensation - Rainbow Foil Edition", "child_tcgplayer_product_id": "624711" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Non-Foil Edition", "child_tcgplayer_product_id": "624705" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Lands Under the Sea - Rainbow Foil Edition", "child_tcgplayer_product_id": "624706" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Non-Foil Edition", "child_tcgplayer_product_id": "624709" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Spongebob Squarepants: Legends of Bikini Bottom - Rainbow Foil Edition", "child_tcgplayer_product_id": "624707" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: They Grow Up So Fast - Non-Foil Edition", "child_tcgplayer_product_id": "624722" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: They Grow Up So Fast - Rainbow Foil Edition", "child_tcgplayer_product_id": "624721" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Tragic Romance - Non-Foil Edition", "child_tcgplayer_product_id": "624716" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Tragic Romance - Rainbow Foil Edition", "child_tcgplayer_product_id": "624717" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Twisted Toons - Non-Foil Edition", "child_tcgplayer_product_id": "624715" },
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Twisted Toons - Rainbow Foil Edition", "child_tcgplayer_product_id": "624714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632021",
+      "name": "Secret Lair Drop: KEXP: Where the Music Matters - Rainbow Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Rainbow Foil Edition", "child_tcgplayer_product_id": "632011" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632023",
+      "name": "Secret Lair Drop: KEXP: Where the Music Matters - Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Non-Foil Edition", "child_tcgplayer_product_id": "632012" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632025",
+      "name": "Secret Lair Drop: vroooOOOMMMMMM! - Non-Foil Playset Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Non-Foil Edition", "child_tcgplayer_product_id": "632016" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632027",
+      "name": "Secret Lair Drop: vroooOOOMMMMMM! - Rainbow Foil Playset Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Rainbow Foil Edition", "child_tcgplayer_product_id": "632015" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632028",
+      "name": "Secret Lair Drop: vroooOOOMMMMMM! - Raised Foil Playset Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Raised Foil Edition", "child_tcgplayer_product_id": "632017" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632029",
+      "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Raised Foil Playset Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Raised Foil Edition", "child_tcgplayer_product_id": "632018" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632031",
+      "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Rainbow Foil Playset Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Rainbow Foil Edition", "child_tcgplayer_product_id": "632019" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632032",
+      "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Non-Foil Playset Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Non-Foil Edition", "child_tcgplayer_product_id": "632020" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632040",
+      "name": "Secret Lair Drop: The Ultimate Pencil - Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Non-Foil Edition", "child_tcgplayer_product_id": "632012" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Non-Foil Edition", "child_tcgplayer_product_id": "632010" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Jay Howell - Non-Foil Edition", "child_tcgplayer_product_id": "632014" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Non-Foil Edition", "child_tcgplayer_product_id": "632020" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Non-Foil Edition", "child_tcgplayer_product_id": "632016" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632042",
+      "name": "Secret Lair Drop: The Ultimate Pencil - Rainbow Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Rainbow Foil Edition", "child_tcgplayer_product_id": "632011" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Rainbow Foil Edition", "child_tcgplayer_product_id": "632009" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Jay Howell - Rainbow Foil Edition", "child_tcgplayer_product_id": "632013" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Rainbow Foil Edition", "child_tcgplayer_product_id": "632019" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Rainbow Foil Edition", "child_tcgplayer_product_id": "632015" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632044",
+      "name": "Secret Lair Drop: The Ultimate Pencil - Almost Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Non-Foil Edition", "child_tcgplayer_product_id": "632012" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Rainbow Foil Edition", "child_tcgplayer_product_id": "632011" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Non-Foil Edition", "child_tcgplayer_product_id": "632010" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Rainbow Foil Edition", "child_tcgplayer_product_id": "632009" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Jay Howell - Non-Foil Edition", "child_tcgplayer_product_id": "632014" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Jay Howell - Rainbow Foil Edition", "child_tcgplayer_product_id": "632013" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Non-Foil Edition", "child_tcgplayer_product_id": "632020" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Rainbow Foil Edition", "child_tcgplayer_product_id": "632019" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Raised Foil Edition", "child_tcgplayer_product_id": "632018" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Non-Foil Edition", "child_tcgplayer_product_id": "632016" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Rainbow Foil Edition", "child_tcgplayer_product_id": "632015" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Raised Foil Edition", "child_tcgplayer_product_id": "632017" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "632047",
+      "name": "Secret Lair Drop: The Ultimate Pencil - Literally Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Non-Foil Edition", "child_tcgplayer_product_id": "632012" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Rainbow Foil Edition", "child_tcgplayer_product_id": "632011" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Non-Foil Edition", "child_tcgplayer_product_id": "632010" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Rainbow Foil Edition", "child_tcgplayer_product_id": "632009" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Jay Howell - Non-Foil Edition", "child_tcgplayer_product_id": "632014" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Jay Howell - Rainbow Foil Edition", "child_tcgplayer_product_id": "632013" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Non-Foil Edition", "child_tcgplayer_product_id": "632020" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Rainbow Foil Edition", "child_tcgplayer_product_id": "632019" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Raised Foil Edition", "child_tcgplayer_product_id": "632018" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Non-Foil Edition", "child_tcgplayer_product_id": "632016" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Rainbow Foil Edition", "child_tcgplayer_product_id": "632015" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Raised Foil Edition", "child_tcgplayer_product_id": "632017" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Commander Deck: Everyone’s Invited! - Double Rainbow Foil Edition", "child_tcgplayer_product_id": "631564" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "643597",
+      "name": "Secret Lair x Sonic the Hedgehog Superdrop: Super Sonic Bundle (Non-Foil)",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Friends & Foes (Non-Foil)", "child_tcgplayer_product_id": "643591" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Chasing Adventure (Non-Foil)", "child_tcgplayer_product_id": "643594" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Turbo Gear (Non-Foil)", "child_tcgplayer_product_id": "643595" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "643598",
+      "name": "Secret Lair x Sonic the Hedgehog Superdrop: Super Sonic Bundle (Rainbow Foil)",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Friends & Foes (Rainbow Foil)", "child_tcgplayer_product_id": "643592" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Chasing Adventure (Rainbow Foil)", "child_tcgplayer_product_id": "643593" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Turbo Gear (Rainbow Foil)", "child_tcgplayer_product_id": "643596" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "643599",
+      "name": "Secret Lair x Sonic the Hedgehog Superdrop: Sonic 100% Complete Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Friends & Foes (Non-Foil)", "child_tcgplayer_product_id": "643591" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Friends & Foes (Rainbow Foil)", "child_tcgplayer_product_id": "643592" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Chasing Adventure (Non-Foil)", "child_tcgplayer_product_id": "643594" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Chasing Adventure (Rainbow Foil)", "child_tcgplayer_product_id": "643593" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Turbo Gear (Non-Foil)", "child_tcgplayer_product_id": "643595" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Sonic the Hedgehog Superdrop: Turbo Gear (Rainbow Foil)", "child_tcgplayer_product_id": "643596" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646780",
+      "name": "Secret Lair Drop: Whimsy & Wonder Bundle - Rainbow Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Rainbow Foil Edition", "child_tcgplayer_product_id": "632009" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Adventures of the Little Witch - Rainbow Foil Edition", "child_tcgplayer_product_id": "629762" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Our Boss is on Vacation Superdrop: Garden Buds - Rainbow Foil Edition", "child_tcgplayer_product_id": "624742" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646781",
+      "name": "Secret Lair Drop: Burn ‘Em All Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Non-Foil Edition", "child_tcgplayer_product_id": "632016" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Non-Foil Edition", "child_tcgplayer_product_id": "618100" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Non-Foil Edition", "child_tcgplayer_product_id": "632020" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646782",
+      "name": "Secret Lair Drop: Burn ‘Em All Bundle - Rainbow Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: vroooOOOMMMMMM! - Rainbow Foil Edition", "child_tcgplayer_product_id": "632015" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Arcade Racers - Rainbow Foil Edition", "child_tcgplayer_product_id": "618099" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: EVERYTHING IS ON FIRE - Rainbow Foil Edition", "child_tcgplayer_product_id": "632019" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646783",
+      "name": "Secret Lair Drop: Chill Beats Bundle - Rainbow Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Rainbow Foil Edition", "child_tcgplayer_product_id": "618091" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Rainbow Foil Edition", "child_tcgplayer_product_id": "632009" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Rainbow Foil Edition", "child_tcgplayer_product_id": "632011" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646784",
+      "name": "Secret Lair Drop: Chill Beats Bundle - Non-Foil Edition",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Hatsune Miku: Winter Diva JP - Non-Foil Edition", "child_tcgplayer_product_id": "618087" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: You Are Not Alone - Non-Foil Edition", "child_tcgplayer_product_id": "632010" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: KEXP: Where the Music Matters - Non-Foil Edition", "child_tcgplayer_product_id": "632012" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646785",
+      "name": "Secret Lair x Chaos Vault Drop: Commander Reinforcements Counter Intelligence Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Chaos Vault Drop: Featuring: Deathburger", "child_tcgplayer_product_id": "646796" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646786",
+      "name": "Secret Lair x Chaos Vault Drop: Commander Reinforcements Counter Intelligence Bundle (Galaxy Foil)",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Chaos Vault Drop: Featuring: Deathburger (Galaxy Foil)", "child_tcgplayer_product_id": "646799" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646787",
+      "name": "Secret Lair x Chaos Vault Drop: Commander Reinforcements World Shaper Bundle (Galaxy Foil)",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Chaos Vault Drop: Alien Auroras (Galaxy Foil)", "child_tcgplayer_product_id": "646801" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "646788",
+      "name": "Secret Lair x Chaos Vault Drop: Commander Reinforcements World Shaper Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Chaos Vault Drop: Alien Auroras", "child_tcgplayer_product_id": "646803" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "655097",
+      "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: The Non-Foil Web-Slinger Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Daily Bugle Breaking News - Non-Foil Edition", "child_tcgplayer_product_id": "652000" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Heroic Deeds - Non-Foil Edition", "child_tcgplayer_product_id": "653118" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Colors) - Non-Foil Edition", "child_tcgplayer_product_id": "653121" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Inks) - Non-Foil Edition", "child_tcgplayer_product_id": "653124" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Villainous Plots - Non-Foil Edition", "child_tcgplayer_product_id": "653125" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "655098",
+      "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: The Foil Web-Slinger Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Daily Bugle Breaking News - Rainbow Foil Edition", "child_tcgplayer_product_id": "652001" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Heroic Deeds - Rainbow Foil Edition", "child_tcgplayer_product_id": "653119" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Colors) - Rainbow Foil Edition", "child_tcgplayer_product_id": "653122" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Inks) - Rainbow Foil Edition", "child_tcgplayer_product_id": "653123" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Villainous Plots - Rainbow Foil Edition", "child_tcgplayer_product_id": "653126" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "655099",
+      "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: The Amazing Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Daily Bugle Breaking News - Non-Foil Edition", "child_tcgplayer_product_id": "652000" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Daily Bugle Breaking News - Rainbow Foil Edition", "child_tcgplayer_product_id": "652001" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Heroic Deeds - Non-Foil Edition", "child_tcgplayer_product_id": "653118" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Heroic Deeds - Rainbow Foil Edition", "child_tcgplayer_product_id": "653119" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Colors) - Non-Foil Edition", "child_tcgplayer_product_id": "653121" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Colors) - Rainbow Foil Edition", "child_tcgplayer_product_id": "653122" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Inks) - Non-Foil Edition", "child_tcgplayer_product_id": "653124" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Venom Unleashed (Inks) - Rainbow Foil Edition", "child_tcgplayer_product_id": "653123" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Villainous Plots - Non-Foil Edition", "child_tcgplayer_product_id": "653125" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Spider-Man: Villainous Plots - Rainbow Foil Edition", "child_tcgplayer_product_id": "653126" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "657867",
+      "name": "Secret Lair Drop: Secret Scare Superdrop: The Gonna Need a Bigger Boat Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Kieran Yanner - Non-Foil Edition", "child_tcgplayer_product_id": "656333" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Kieran Yanner - Rainbow Foil Edition", "child_tcgplayer_product_id": "656335" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Jaws: Terror of Amity Island - Non-Foil Edition", "child_tcgplayer_product_id": "656337" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Jaws: Terror of Amity Island - Rainbow Foil Edition", "child_tcgplayer_product_id": "656338" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Office: Dwight's Destiny - Non-Foil Edition", "child_tcgplayer_product_id": "656339" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Office: Dwight's Destiny - Traditional Foil Edition", "child_tcgplayer_product_id": "656341" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Dreaming Darkly - Non-Foil Edition", "child_tcgplayer_product_id": "656344" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Dreaming Darkly - Rainbow Foil Edition", "child_tcgplayer_product_id": "656345" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Album Art - Non-Foil Edition", "child_tcgplayer_product_id": "656346" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Album Art - Rainbow Foil Edition", "child_tcgplayer_product_id": "656347" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Eddie Unchained - Non-Foil Edition", "child_tcgplayer_product_id": "656349" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Eddie Unchained - Rainbow Foil Edition", "child_tcgplayer_product_id": "656350" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Trick or Treat - Non-Foil Edition", "child_tcgplayer_product_id": "656351" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Trick or Treat - Rainbow Foil Edition", "child_tcgplayer_product_id": "656353" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: Doo-ay Noo-lah - Non-Foil Edition", "child_tcgplayer_product_id": "656355" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: Doo-ay Noo-lah - Rainbow Foil Edition", "child_tcgplayer_product_id": "656356" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Gathering - Non-Foil Edition", "child_tcgplayer_product_id": "656358" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Gathering - Rainbow Foil Edition", "child_tcgplayer_product_id": "656360" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Oddbodies - Non-Foil Edition", "child_tcgplayer_product_id": "656367" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Oddbodies - Rainbow Foil Edition", "child_tcgplayer_product_id": "656369" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "657868",
+      "name": "Secret Lair Drop: Secret Scare Superdrop: Eddie's Metal As Hell All Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Kieran Yanner - Rainbow Foil Edition", "child_tcgplayer_product_id": "656335" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Jaws: Terror of Amity Island - Rainbow Foil Edition", "child_tcgplayer_product_id": "656338" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Office: Dwight's Destiny - Traditional Foil Edition", "child_tcgplayer_product_id": "656341" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Dreaming Darkly - Rainbow Foil Edition", "child_tcgplayer_product_id": "656345" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Album Art - Rainbow Foil Edition", "child_tcgplayer_product_id": "656347" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Eddie Unchained - Rainbow Foil Edition", "child_tcgplayer_product_id": "656350" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Trick or Treat - Rainbow Foil Edition", "child_tcgplayer_product_id": "656353" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: Doo-ay Noo-lah - Rainbow Foil Edition", "child_tcgplayer_product_id": "656356" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Gathering - Rainbow Foil Edition", "child_tcgplayer_product_id": "656360" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Oddbodies - Rainbow Foil Edition", "child_tcgplayer_product_id": "656369" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "657869",
+      "name": "Secret Lair Drop: Secret Scare Superdrop: The Scranton Strangler Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Artist Series: Kieran Yanner - Non-Foil Edition", "child_tcgplayer_product_id": "656333" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Jaws: Terror of Amity Island - Non-Foil Edition", "child_tcgplayer_product_id": "656337" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Office: Dwight's Destiny - Non-Foil Edition", "child_tcgplayer_product_id": "656339" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Dreaming Darkly - Non-Foil Edition", "child_tcgplayer_product_id": "656344" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Album Art - Non-Foil Edition", "child_tcgplayer_product_id": "656346" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Iron Maiden: Eddie Unchained - Non-Foil Edition", "child_tcgplayer_product_id": "656349" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Trick or Treat - Non-Foil Edition", "child_tcgplayer_product_id": "656351" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: Doo-ay Noo-lah - Non-Foil Edition", "child_tcgplayer_product_id": "656355" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Gathering - Non-Foil Edition", "child_tcgplayer_product_id": "656358" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Oddbodies - Non-Foil Edition", "child_tcgplayer_product_id": "656367" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "657870",
+      "name": "Secret Lair Drop: Secret Scare Superdrop: The Ay-loh Tee-wee-lah Confetti Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: Doo-ay Noo-lah - Confetti Foil Edition", "child_tcgplayer_product_id": "656357" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Gathering - Confetti Foil Edition", "child_tcgplayer_product_id": "656361" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Furby: The Oddbodies - Confetti Foil Edition", "child_tcgplayer_product_id": "656371" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "660335",
+      "name": "Secret Lair x Playstation Superdrop: Platinum Trophy Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Horizon: Into the Forbidden West - Non-Foil Edition", "child_tcgplayer_product_id": "658350" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Horizon: Into the Forbidden West - Rainbow Foil Edition", "child_tcgplayer_product_id": "658351" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Ghost of Tsushima - Non-Foil Edition", "child_tcgplayer_product_id": "658352" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Ghost of Tsushima - Rainbow Foil Edition", "child_tcgplayer_product_id": "658353" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Uncharted - Non-Foil Edition", "child_tcgplayer_product_id": "657438" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Uncharted - Rainbow Foil Edition", "child_tcgplayer_product_id": "657441" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part I - Non-Foil Edition", "child_tcgplayer_product_id": "658346" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part I - Rainbow Foil Edition", "child_tcgplayer_product_id": "658347" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part II - Non-Foil Edition", "child_tcgplayer_product_id": "658348" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part II - Rainbow Foil Edition", "child_tcgplayer_product_id": "658349" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Greek - Non-Foil Edition", "child_tcgplayer_product_id": "657420" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Greek - Traditional Foil Edition", "child_tcgplayer_product_id": "657421" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Norse - Non-Foil Edition", "child_tcgplayer_product_id": "657422" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Norse - Traditional Foil Edition", "child_tcgplayer_product_id": "657423" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "660336",
+      "name": "Secret Lair x Playstation Superdrop: Foil Trophy Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Horizon: Into the Forbidden West - Rainbow Foil Edition", "child_tcgplayer_product_id": "658351" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Ghost of Tsushima - Rainbow Foil Edition", "child_tcgplayer_product_id": "658353" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Uncharted - Rainbow Foil Edition", "child_tcgplayer_product_id": "657441" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part I - Rainbow Foil Edition", "child_tcgplayer_product_id": "658347" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part II - Rainbow Foil Edition", "child_tcgplayer_product_id": "658349" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Greek - Traditional Foil Edition", "child_tcgplayer_product_id": "657421" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Norse - Traditional Foil Edition", "child_tcgplayer_product_id": "657423" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "660337",
+      "name": "Secret Lair x Playstation Superdrop: Non-Foil Trophy Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Horizon: Into the Forbidden West - Non-Foil Edition", "child_tcgplayer_product_id": "658350" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Ghost of Tsushima - Non-Foil Edition", "child_tcgplayer_product_id": "658352" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Uncharted - Non-Foil Edition", "child_tcgplayer_product_id": "657438" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part I - Non-Foil Edition", "child_tcgplayer_product_id": "658346" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x The Last of Us Part II - Non-Foil Edition", "child_tcgplayer_product_id": "658348" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Greek - Non-Foil Edition", "child_tcgplayer_product_id": "657420" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x God of War: Norse - Non-Foil Edition", "child_tcgplayer_product_id": "657422" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "664030",
+      "name": "Secret Lair x Avatar: The Last Airbender Superdrop: Master Of All Elements Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: A Lot To Learn - Non-Foil Edition", "child_tcgplayer_product_id": "662592" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: A Lot To Learn - Rainbow Foil Edition", "child_tcgplayer_product_id": "662593" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: Everything Changed - Non-Foil Edition", "child_tcgplayer_product_id": "662586" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: Everything Changed - Rainbow Foil Edition", "child_tcgplayer_product_id": "662590" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition", "child_tcgplayer_product_id": "662577" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: My Cabbages! - Rainbow Foil Edition", "child_tcgplayer_product_id": "662581" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: One with the Elements - Non-Foil Edition", "child_tcgplayer_product_id": "662596" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: One with the Elements - Rainbow Foil Edition", "child_tcgplayer_product_id": "662597" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: The Ember Island Players - Non-Foil Edition", "child_tcgplayer_product_id": "662601" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: The Ember Island Players - Rainbow Foil Edition", "child_tcgplayer_product_id": "662602" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "664031",
+      "name": "Secret Lair x Avatar: The Last Airbender Superdrop: Avatar State Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: A Lot To Learn - Rainbow Foil Edition", "child_tcgplayer_product_id": "662593" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: Everything Changed - Rainbow Foil Edition", "child_tcgplayer_product_id": "662590" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: My Cabbages! - Rainbow Foil Edition", "child_tcgplayer_product_id": "662581" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: One with the Elements - Rainbow Foil Edition", "child_tcgplayer_product_id": "662597" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: The Ember Island Players - Rainbow Foil Edition", "child_tcgplayer_product_id": "662602" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "664032",
+      "name": "Secret Lair x Avatar: The Last Airbender Superdrop: Avatar State Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: A Lot To Learn - Non-Foil Edition", "child_tcgplayer_product_id": "662592" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: Everything Changed - Non-Foil Edition", "child_tcgplayer_product_id": "662586" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition", "child_tcgplayer_product_id": "662577" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: One with the Elements - Non-Foil Edition", "child_tcgplayer_product_id": "662596" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair x Avatar: The Last Airbender: The Ember Island Players - Non-Foil Edition", "child_tcgplayer_product_id": "662601" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "674835",
+      "name": "Secret Lair x Fallout: Rad Superdrop: The Built To Last Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Beyond Vault 33 - Non-Foil Edition", "child_tcgplayer_product_id": "673773" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Beyond Vault 33 - Traditional Foil Edition", "child_tcgplayer_product_id": "673775" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Greet the Dog - Non-Foil Edition", "child_tcgplayer_product_id": "673777" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Greet the Dog - Traditional Foil Edition", "child_tcgplayer_product_id": "673779" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Rad - Non-Foil Edition", "child_tcgplayer_product_id": "673782" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Rad - Traditional Foil Edition", "child_tcgplayer_product_id": "673785" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Welcome to New Vegas - Non-Foil Edition", "child_tcgplayer_product_id": "673786" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Welcome to New Vegas - Traditional Foil Edition", "child_tcgplayer_product_id": "673787" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "674836",
+      "name": "Secret Lair x Fallout: Rad Superdrop: The Atomic-Grade Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Beyond Vault 33 - Traditional Foil Edition", "child_tcgplayer_product_id": "673775" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Greet the Dog - Traditional Foil Edition", "child_tcgplayer_product_id": "673779" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Rad - Traditional Foil Edition", "child_tcgplayer_product_id": "673785" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Welcome to New Vegas - Traditional Foil Edition", "child_tcgplayer_product_id": "673787" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "674837",
+      "name": "Secret Lair x Fallout: Rad Superdrop: The Vault-Issue Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Beyond Vault 33 - Non-Foil Edition", "child_tcgplayer_product_id": "673773" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Greet the Dog - Non-Foil Edition", "child_tcgplayer_product_id": "673777" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Rad - Non-Foil Edition", "child_tcgplayer_product_id": "673782" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Fallout: Welcome to New Vegas - Non-Foil Edition", "child_tcgplayer_product_id": "673786" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "677414",
+      "name": "Secret Lair Drop: Roll for Initiative Superdrop: The All Dice Cast Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadowheart’s Devotion - Non-Foil Edition", "child_tcgplayer_product_id": "677400" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadowheart’s Devotion - Traditional Foil Edition", "child_tcgplayer_product_id": "677401" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Gale’s Ambition - Non-Foil Edition", "child_tcgplayer_product_id": "677402" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Gale’s Ambition - Foil Edition", "child_tcgplayer_product_id": "677403" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Black Lights & Dark Dungeons - Non-Foil Edition", "child_tcgplayer_product_id": "677404" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Black Lights & Dark Dungeons - Traditional Foil Edition", "child_tcgplayer_product_id": "677405" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadows Over Baldur’s Gate - Non-Foil Edition", "child_tcgplayer_product_id": "677406" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadows Over Baldur’s Gate - Traditional Foil Edition", "child_tcgplayer_product_id": "677407" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Whispers in Candlekeep - Non-Foil Edition", "child_tcgplayer_product_id": "677408" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Whispers in Candlekeep - Foil Edition", "child_tcgplayer_product_id": "677409" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Strahd’s Descent - Non-Foil Edition", "child_tcgplayer_product_id": "677410" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Strahd’s Descent - Foil Edition", "child_tcgplayer_product_id": "677411" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Lands of the Forgotten Realms - Non-Foil Edition", "child_tcgplayer_product_id": "677412" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Lands of the Forgotten Realms - Traditional Foil Edition", "child_tcgplayer_product_id": "677413" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "677415",
+      "name": "Secret Lair Drop: Roll for Initiative Superdrop: The Chromatic Dragon’s Hoard Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadowheart’s Devotion - Traditional Foil Edition", "child_tcgplayer_product_id": "677401" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Gale’s Ambition - Foil Edition", "child_tcgplayer_product_id": "677403" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Black Lights & Dark Dungeons - Traditional Foil Edition", "child_tcgplayer_product_id": "677405" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadows Over Baldur’s Gate - Traditional Foil Edition", "child_tcgplayer_product_id": "677407" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Whispers in Candlekeep - Foil Edition", "child_tcgplayer_product_id": "677409" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Strahd’s Descent - Foil Edition", "child_tcgplayer_product_id": "677411" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Lands of the Forgotten Realms - Traditional Foil Edition", "child_tcgplayer_product_id": "677413" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "677416",
+      "name": "Secret Lair Drop: Roll for Initiative Superdrop: The Bag of Holding Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadowheart’s Devotion - Non-Foil Edition", "child_tcgplayer_product_id": "677400" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Gale’s Ambition - Non-Foil Edition", "child_tcgplayer_product_id": "677402" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Black Lights & Dark Dungeons - Non-Foil Edition", "child_tcgplayer_product_id": "677404" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Shadows Over Baldur’s Gate - Non-Foil Edition", "child_tcgplayer_product_id": "677406" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Whispers in Candlekeep - Non-Foil Edition", "child_tcgplayer_product_id": "677408" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Strahd’s Descent - Non-Foil Edition", "child_tcgplayer_product_id": "677410" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dungeons & Dragons: Lands of the Forgotten Realms - Non-Foil Edition", "child_tcgplayer_product_id": "677412" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "680235",
+      "name": "Secret Lair Drop: Totally TubuLair Superdrop: Totally Tubulair! Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: VHS Villains - Non-Foil Edition", "child_tcgplayer_product_id": "679542" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: VHS Villains - Traditional Foil Edition", "child_tcgplayer_product_id": "679543" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Mighty Mutanimals - Non-Foil Edition", "child_tcgplayer_product_id": "679644" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Mighty Mutanimals - Traditional Foil Edition", "child_tcgplayer_product_id": "679646" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Last Ronin - Non-Foil Edition", "child_tcgplayer_product_id": "680226" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Last Ronin - Traditional Foil Edition", "child_tcgplayer_product_id": "680227" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Colors) - Non-Foil Edition", "child_tcgplayer_product_id": "680228" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Colors) - Traditional Foil Edition", "child_tcgplayer_product_id": "680229" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Inks) - Non-Foil Edition", "child_tcgplayer_product_id": "680230" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Inks) - Traditional Foil Edition", "child_tcgplayer_product_id": "680231" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Stan Sakai - Non-Foil Edition", "child_tcgplayer_product_id": "680232" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Stan Sakai - Traditional Foil Edition", "child_tcgplayer_product_id": "680233" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "680237",
+      "name": "Secret Lair Drop: Totally TubuLair Superdrop: Turtle Power Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: VHS Villains - Traditional Foil Edition", "child_tcgplayer_product_id": "679543" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Mighty Mutanimals - Traditional Foil Edition", "child_tcgplayer_product_id": "679646" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Last Ronin - Traditional Foil Edition", "child_tcgplayer_product_id": "680227" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Colors) - Traditional Foil Edition", "child_tcgplayer_product_id": "680229" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Inks) - Traditional Foil Edition", "child_tcgplayer_product_id": "680231" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Stan Sakai - Traditional Foil Edition", "child_tcgplayer_product_id": "680233" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "680238",
+      "name": "Secret Lair Drop: Totally TubuLair Superdrop: Heroes in a Half Shell Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: VHS Villains - Non-Foil Edition", "child_tcgplayer_product_id": "679542" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Mighty Mutanimals - Non-Foil Edition", "child_tcgplayer_product_id": "679644" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Teenage Mutant Ninja Turtles: The Last Ronin - Non-Foil Edition", "child_tcgplayer_product_id": "680226" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Colors) - Non-Foil Edition", "child_tcgplayer_product_id": "680228" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Kevin Eastman (Inks) - Non-Foil Edition", "child_tcgplayer_product_id": "680230" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Featuring: Stan Sakai - Non-Foil Edition", "child_tcgplayer_product_id": "680232" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "686671",
+      "name": "Secret Lair Drop: Secret Lair x Marvel's Deadpool: FINAL_final_REALLYfinal_v7_USETHISONE(2)_Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Deadpool: I Fixed It (You're Welcome) - Non-Foil Edition", "child_tcgplayer_product_id": "686665" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Deadpool: I Fixed It (You're Welcome) - Traditional Foil Edition", "child_tcgplayer_product_id": "686666" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Marvel's Deadpool: I Fixed It (You're Welcome) - Pool Party Foil Edition", "child_tcgplayer_product_id": "686669" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "691199",
+      "name": "Secret Lair Back to School Superdrop: This Will Be On The Test Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: Friendship is Magic - Non-Foil Edition", "child_tcgplayer_product_id": "691175" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: Friendship is Magic - Traditional Foil Edition", "child_tcgplayer_product_id": "691182" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: The Lands of Equestria - Non-Foil Edition", "child_tcgplayer_product_id": "691183" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: The Lands of Equestria - Traditional Foil Edition", "child_tcgplayer_product_id": "691184" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Omens of Chaos - Non-Foil Edition", "child_tcgplayer_product_id": "691185" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Omens of Chaos - Traditional Foil Edition", "child_tcgplayer_product_id": "691186" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dwarf Fortress: Create New World - Non-Foil Edition", "child_tcgplayer_product_id": "691187" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dwarf Fortress: Create New World - Traditional Foil Edition", "child_tcgplayer_product_id": "691188" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Eyes Have It - Non-Foil Edition", "child_tcgplayer_product_id": "691190" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Eyes Have It - Rainbow Foil Edition", "child_tcgplayer_product_id": "691192" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Maho Gakuin Seishun Hakusho - Non-Foil Edition", "child_tcgplayer_product_id": "691193" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Maho Gakuin Seishun Hakusho - Traditional Foil Edition", "child_tcgplayer_product_id": "691194" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Notebook Genius - Non-Foil Edition", "child_tcgplayer_product_id": "691195" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Notebook Genius - Traditional Foil Edition", "child_tcgplayer_product_id": "691196" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Return to Mystical Archive - Non-Foil Edition", "child_tcgplayer_product_id": "691197" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Return to Mystical Archive - Traditional Foil Edition", "child_tcgplayer_product_id": "691198" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "691200",
+      "name": "Secret Lair Back to School Superdrop: Spirit Week All Foils Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: Friendship is Magic - Traditional Foil Edition", "child_tcgplayer_product_id": "691182" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: The Lands of Equestria - Traditional Foil Edition", "child_tcgplayer_product_id": "691184" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Omens of Chaos - Traditional Foil Edition", "child_tcgplayer_product_id": "691186" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dwarf Fortress: Create New World - Traditional Foil Edition", "child_tcgplayer_product_id": "691188" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Eyes Have It - Rainbow Foil Edition", "child_tcgplayer_product_id": "691192" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Maho Gakuin Seishun Hakusho - Traditional Foil Edition", "child_tcgplayer_product_id": "691194" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Notebook Genius - Traditional Foil Edition", "child_tcgplayer_product_id": "691196" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Return to Mystical Archive - Traditional Foil Edition", "child_tcgplayer_product_id": "691198" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "691201",
+      "name": "Secret Lair Back to School Superdrop: Ready For Rollcall Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: Friendship is Magic - Non-Foil Edition", "child_tcgplayer_product_id": "691175" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x My Little Pony: The Lands of Equestria - Non-Foil Edition", "child_tcgplayer_product_id": "691183" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Omens of Chaos - Non-Foil Edition", "child_tcgplayer_product_id": "691185" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Dwarf Fortress: Create New World - Non-Foil Edition", "child_tcgplayer_product_id": "691187" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: The Eyes Have It - Non-Foil Edition", "child_tcgplayer_product_id": "691190" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Maho Gakuin Seishun Hakusho - Non-Foil Edition", "child_tcgplayer_product_id": "691193" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Notebook Genius - Non-Foil Edition", "child_tcgplayer_product_id": "691195" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Return to Mystical Archive - Non-Foil Edition", "child_tcgplayer_product_id": "691197" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693574",
+      "name": "Secret Lair Drop: Two Scoops - The House Special Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Back in My Day! - Non-Foil Edition", "child_tcgplayer_product_id": "694704" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Inked - Non-Foil Edition", "child_tcgplayer_product_id": "694710" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693575",
+      "name": "Secret Lair Drop: Two Scoops - Double Vanilla Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Secret Lair Drop: Back in My Day! - Non-Foil Edition", "child_tcgplayer_product_id": "694704" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693577",
+      "name": "Secret Lair Drop: Two Scoops - Double Chocolate Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Secret Lair Drop: Inked - Non-Foil Edition", "child_tcgplayer_product_id": "694710" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693578",
+      "name": "Secret Lair Drop: Two Scoops - The Vanilla Sampler Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Back in My Day! - Non-Foil Edition", "child_tcgplayer_product_id": "694704" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Back in My Day! - Traditional Foil Edition", "child_tcgplayer_product_id": "694705" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693579",
+      "name": "Secret Lair Drop: Two Scoops - The Vanilla Party, Chocolate Business Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Back in My Day! - Traditional Foil Edition", "child_tcgplayer_product_id": "694705" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Inked - Non-Foil Edition", "child_tcgplayer_product_id": "694710" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693580",
+      "name": "Secret Lair Drop: Two Scoops - The Vanilla Business, Chocolate Party Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Back in My Day! - Non-Foil Edition", "child_tcgplayer_product_id": "694704" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Inked - Rainbow Foil Edition", "child_tcgplayer_product_id": "694714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693581",
+      "name": "Secret Lair Drop: Two Scoops - The Chocolate Sampler Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Inked - Non-Foil Edition", "child_tcgplayer_product_id": "694710" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Inked - Rainbow Foil Edition", "child_tcgplayer_product_id": "694714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693582",
+      "name": "Secret Lair Drop: Two Scoops - Double Vanilla With Sprinkles Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Secret Lair Drop: Back in My Day! - Traditional Foil Edition", "child_tcgplayer_product_id": "694705" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693583",
+      "name": "Secret Lair Drop: Two Scoops - Double Sprinkles Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Back in My Day! - Traditional Foil Edition", "child_tcgplayer_product_id": "694705" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Inked - Rainbow Foil Edition", "child_tcgplayer_product_id": "694714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "693584",
+      "name": "Secret Lair Drop: Two Scoops - Double Chocolate With Sprinkles Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Secret Lair Drop: Inked - Rainbow Foil Edition", "child_tcgplayer_product_id": "694714" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "700802",
+      "name": "Secret Lair Cats Are the Best Superdrop: Cats Rule Everything Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Motivationally Challenged - Non-Foil Edition", "child_tcgplayer_product_id": "694965" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Motivationally Challenged - Traditional Foil Edition", "child_tcgplayer_product_id": "694966" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: As Intended - Non-Foil Edition", "child_tcgplayer_product_id": "694967" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: As Intended - Traditional Foil Edition", "child_tcgplayer_product_id": "694968" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Our Only Thought Is To Entertain You - Non-Foil Edition", "child_tcgplayer_product_id": "694969" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Our Only Thought Is To Entertain You - Traditional Foil Edition", "child_tcgplayer_product_id": "694970" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Felix the Cat: Magic Bag of Tricks - Non-Foil Edition", "child_tcgplayer_product_id": "696126" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Felix the Cat: Magic Bag of Tricks - Traditional Foil Edition", "child_tcgplayer_product_id": "696127" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Toby's Journey By Gary Baseman - Non-Foil Edition", "child_tcgplayer_product_id": "696850" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Toby's Journey By Gary Baseman - Traditional Foil Edition", "child_tcgplayer_product_id": "696851" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Witch's Familiar - Non-Foil Edition", "child_tcgplayer_product_id": "695470" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Witch's Familiar - Traditional Foil Edition", "child_tcgplayer_product_id": "695473" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Purr Majesty - Non-Foil Edition", "child_tcgplayer_product_id": "695134" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Purr Majesty - Traditional Foil Edition", "child_tcgplayer_product_id": "695135" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Cats of Chaos - Non-Foil Edition", "child_tcgplayer_product_id": "700795" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition", "child_tcgplayer_product_id": "700796" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "700803",
+      "name": "Secret Lair Cats Are the Best Superdrop: Laser Focus Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Motivationally Challenged - Traditional Foil Edition", "child_tcgplayer_product_id": "694966" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: As Intended - Traditional Foil Edition", "child_tcgplayer_product_id": "694968" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Our Only Thought Is To Entertain You - Traditional Foil Edition", "child_tcgplayer_product_id": "694970" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Felix the Cat: Magic Bag of Tricks - Traditional Foil Edition", "child_tcgplayer_product_id": "696127" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Toby's Journey By Gary Baseman - Traditional Foil Edition", "child_tcgplayer_product_id": "696851" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Witch's Familiar - Traditional Foil Edition", "child_tcgplayer_product_id": "695473" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Purr Majesty - Traditional Foil Edition", "child_tcgplayer_product_id": "695135" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition", "child_tcgplayer_product_id": "700796" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "700804",
+      "name": "Secret Lair Cats Are the Best Superdrop: Nine Lives Non-Foil Bundle",
+      "note": "Secret Lair superdrop bundle: contents:null upstream; drops researched (WotC/Scryfall) + verified. Self-retires when mtg-sealed-content authors it.",
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Motivationally Challenged - Non-Foil Edition", "child_tcgplayer_product_id": "694965" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: As Intended - Non-Foil Edition", "child_tcgplayer_product_id": "694967" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Garfield: Our Only Thought Is To Entertain You - Non-Foil Edition", "child_tcgplayer_product_id": "694969" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Secret Lair x Felix the Cat: Magic Bag of Tricks - Non-Foil Edition", "child_tcgplayer_product_id": "696126" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Toby's Journey By Gary Baseman - Non-Foil Edition", "child_tcgplayer_product_id": "696850" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Witch's Familiar - Non-Foil Edition", "child_tcgplayer_product_id": "695470" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Purr Majesty - Non-Foil Edition", "child_tcgplayer_product_id": "695134" },
+        { "kind": "sealed", "quantity": 1, "name": "Secret Lair Drop: Cats of Chaos - Non-Foil Edition", "child_tcgplayer_product_id": "700795" }
+      ]
     }
   ]
 }
