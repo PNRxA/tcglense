@@ -216,6 +216,1531 @@
         { "kind": "sealed", "quantity": 2, "name": "Scene Box: Tea Time at the Jasmine Dragon", "child_tcgplayer_product_id": "648716" },
         { "kind": "sealed", "quantity": 2, "name": "Scene Box: The Black Sun Invasion", "child_tcgplayer_product_id": "648713" }
       ]
+    },
+    {
+      "tcgplayer_product_id": "675572",
+      "name": "Secrets of Strixhaven Commander Deck Set of 5",
+      "note": [ "MTGJSON ships contents:null. Multipack/display of all 5 Secrets of Strixhaven Commander decks (one of each). allProducts lists exactly the 5 individual college decks (675567-675571) plus this Set of 5 (675572). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Secrets of Strixhaven Commander Deck Silverquill Influence", "child_tcgplayer_product_id": "675567" },
+        { "kind": "sealed", "quantity": 1, "name": "Secrets of Strixhaven Commander Deck Prismari Artistry", "child_tcgplayer_product_id": "675568" },
+        { "kind": "sealed", "quantity": 1, "name": "Secrets of Strixhaven Commander Deck Witherbloom Pestilence", "child_tcgplayer_product_id": "675569" },
+        { "kind": "sealed", "quantity": 1, "name": "Secrets of Strixhaven Commander Deck Lorehold Spirit", "child_tcgplayer_product_id": "675570" },
+        { "kind": "sealed", "quantity": 1, "name": "Secrets of Strixhaven Commander Deck Quandrix Unlimited", "child_tcgplayer_product_id": "675571" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "675560",
+      "name": "Secrets of Strixhaven Collector Booster Box Master Case",
+      "note": [ "MTGJSON ships contents:null. MTG Play Booster-era Collector Booster distribution is a fixed WotC standard: 12 packs per box, 6 boxes per inner case, 24 boxes (= 4 inner cases) per master case. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Secrets of Strixhaven Collector Booster Box Case", "child_tcgplayer_product_id": "675559" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "657863",
+      "name": "Teenage Mutant Ninja Turtles Pizza Bundle",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Collecting Teenage Mutant Ninja Turtles' article: each Pizza Bundle = 9 TMT Play Boosters, 1 TMT Collector Booster, 25 non-foil pizza basic lands, 5 traditional-foil pizza basic lands, …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Teenage Mutant Ninja Turtles Play Booster", "child_tcgplayer_product_id": "657848" },
+        { "kind": "sealed", "quantity": 1, "name": "Teenage Mutant Ninja Turtles Collector Booster", "child_tcgplayer_product_id": "657851" },
+        { "kind": "card", "quantity": 2, "name": "Traditional foil Pizza Bundle promo card (2 of a possible 6)" },
+        { "kind": "other", "quantity": 5, "name": "Traditional foil pizza full-art basic land" },
+        { "kind": "other", "quantity": 25, "name": "Non-foil pizza full-art basic land" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Pizza Bundle spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Card-storage box" },
+        { "kind": "other", "quantity": 2, "name": "Reference card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "657864",
+      "name": "Teenage Mutant Ninja Turtles Pizza Bundle Case",
+      "note": [ "MTGJSON ships contents:null. DA Card World lists this explicitly as the 'Teenage Mutant Ninja Turtles Pizza Bundle 4-Box Case' (4 bundles per case); matched by TCGplayer's Pizza Bundle Case listing. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Teenage Mutant Ninja Turtles Pizza Bundle", "child_tcgplayer_product_id": "657863" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "675733",
+      "name": "Avatar The Last Airbender Play Pack",
+      "note": [ "MTGJSON ships contents:null. The 'Play Pack' is WotC's WPN Magic Academy onboarding product: a 3-count of Play Boosters. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Avatar: The Last Airbender Play Booster", "child_tcgplayer_product_id": "648640" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "648673",
+      "name": "Avatar The Last Airbender Jumpstart Booster 2 Pack",
+      "note": [ "MTGJSON ships contents:null. Explicit '2 Pack' = 2 of the sibling Jumpstart Booster Pack (tcg 648675). WotC announcement and retail listings (TCGplayer 648673, Amazon, GameStop, mtg.wiki) confirm the 2-pack holds 2 Avatar: The La …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Avatar The Last Airbender Jumpstart Booster Pack", "child_tcgplayer_product_id": "648675" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "645315",
+      "name": "Marvels Spider Man Scene Box Case",
+      "note": [ "MTGJSON ships contents:null. Case of the Marvel's Spider-Man Scene Box (sibling tcg 621113). Multiple retailer/distributor listings (DA Card World, TCGplayer product 645315, retail search results) report 6 Scene Boxes per case, m …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Marvel's Spider-Man Scene Box", "child_tcgplayer_product_id": "621113" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "663011",
+      "name": "Marvels Spider-Man Web-Slingers Kit",
+      "note": [ "MTGJSON ships contents:null. Costco-exclusive kit. Contents confirmed by metagames.toys product page and multiple retail listings (Happy Tiger Gaming, Costco, warehouserunner): 6 Marvel's Spider-Man Play Boosters + 15 Traditional …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Marvel's Spider-Man Play Booster", "child_tcgplayer_product_id": "621106" },
+        { "kind": "other", "quantity": 15, "name": "Traditional Foil Basic Land" },
+        { "kind": "other", "quantity": 30, "name": "Regular Basic Land" },
+        { "kind": "card", "quantity": 1, "name": "Spider-Man, Miles Morales (Foil Promo)" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "656623",
+      "name": "Final Fantasy Scene Box Camp Comrades",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Collecting Magic: The Gathering—FINAL FANTASY' article (magic.wizards.com/en/news/feature/collecting-final-fantasy) confirms every Scene Box contains: 3 Play Boosters, 6 Traditional foi …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Final Fantasy Play Booster Pack", "child_tcgplayer_product_id": "618889" },
+        { "kind": "card", "quantity": 6, "name": "Traditional foil borderless scene card (Camp Comrades scene)" },
+        { "kind": "other", "quantity": 6, "name": "Art card" },
+        { "kind": "other", "quantity": 1, "name": "Display easel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "656621",
+      "name": "Final Fantasy Scene Box Children of Fate",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Collecting Magic: The Gathering—FINAL FANTASY' article confirms every Scene Box contains: 3 Play Boosters, 6 Traditional foil borderless scene cards, 6 Art cards, 1 Display easel. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Final Fantasy Play Booster Pack", "child_tcgplayer_product_id": "618889" },
+        { "kind": "card", "quantity": 6, "name": "Traditional foil borderless scene card (Children of Fate scene)" },
+        { "kind": "other", "quantity": 6, "name": "Art card" },
+        { "kind": "other", "quantity": 1, "name": "Display easel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "656620",
+      "name": "Final Fantasy Scene Box Garland at the Chaos Shrine",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Collecting Magic: The Gathering—FINAL FANTASY' article confirms every Scene Box contains: 3 Play Boosters, 6 Traditional foil borderless scene cards, 6 Art cards, 1 Display easel. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Final Fantasy Play Booster Pack", "child_tcgplayer_product_id": "618889" },
+        { "kind": "card", "quantity": 6, "name": "Traditional foil borderless scene card (Garland at the Chaos Shrine scene)" },
+        { "kind": "other", "quantity": 6, "name": "Art card" },
+        { "kind": "other", "quantity": 1, "name": "Display easel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "656622",
+      "name": "Final Fantasy Scene Box The Siege of Alexandria",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Collecting Magic: The Gathering—FINAL FANTASY' article confirms every Scene Box contains: 3 Play Boosters, 6 Traditional foil borderless scene cards, 6 Art cards, 1 Display easel. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 3, "name": "Final Fantasy Play Booster Pack", "child_tcgplayer_product_id": "618889" },
+        { "kind": "card", "quantity": 6, "name": "Traditional foil borderless scene card (The Siege of Alexandria scene)" },
+        { "kind": "other", "quantity": 6, "name": "Art card" },
+        { "kind": "other", "quantity": 1, "name": "Display easel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "619659",
+      "name": "Tarkir Dragonstorm Prerelease Pack Abzan",
+      "note": [ "MTGJSON ships contents:null. Official WotC Tarkir: Dragonstorm Prerelease Guide (magic.wizards.com/en/news/feature/tarkir-dragonstorm-prerelease-guide), confirmed by Card Kingdom & retail listings. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Tarkir: Dragonstorm Play Booster", "child_tcgplayer_product_id": "619644" },
+        { "kind": "sealed", "quantity": 1, "name": "Abzan clan-seeded Prerelease Booster (14 cards, includes 1 rare or mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Year-stamped traditional foil Rare or Mythic Rare promo" },
+        { "kind": "other", "quantity": 1, "name": "Abzan Spindown life counter die" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "619660",
+      "name": "Tarkir Dragonstorm Prerelease Pack Jeskai",
+      "note": [ "MTGJSON ships contents:null. Official WotC Tarkir: Dragonstorm Prerelease Guide, confirmed by retail listings. Each prerelease pack = 5 Play Boosters + 1 clan-seeded Prerelease Booster (14 cards incl. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Tarkir: Dragonstorm Play Booster", "child_tcgplayer_product_id": "619644" },
+        { "kind": "sealed", "quantity": 1, "name": "Jeskai clan-seeded Prerelease Booster (14 cards, includes 1 rare or mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Year-stamped traditional foil Rare or Mythic Rare promo" },
+        { "kind": "other", "quantity": 1, "name": "Jeskai Spindown life counter die" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "619662",
+      "name": "Tarkir Dragonstorm Prerelease Pack Mardu",
+      "note": [ "MTGJSON ships contents:null. Official WotC Tarkir: Dragonstorm Prerelease Guide, confirmed by retail listings. Each prerelease pack = 5 Play Boosters + 1 clan-seeded Prerelease Booster (14 cards incl. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Tarkir: Dragonstorm Play Booster", "child_tcgplayer_product_id": "619644" },
+        { "kind": "sealed", "quantity": 1, "name": "Mardu clan-seeded Prerelease Booster (14 cards, includes 1 rare or mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Year-stamped traditional foil Rare or Mythic Rare promo" },
+        { "kind": "other", "quantity": 1, "name": "Mardu Spindown life counter die" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "619661",
+      "name": "Tarkir Dragonstorm Prerelease Pack Sultai",
+      "note": [ "MTGJSON ships contents:null. Official WotC Tarkir: Dragonstorm Prerelease Guide, confirmed by retail listings. Each prerelease pack = 5 Play Boosters + 1 clan-seeded Prerelease Booster (14 cards incl. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Tarkir: Dragonstorm Play Booster", "child_tcgplayer_product_id": "619644" },
+        { "kind": "sealed", "quantity": 1, "name": "Sultai clan-seeded Prerelease Booster (14 cards, includes 1 rare or mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Year-stamped traditional foil Rare or Mythic Rare promo" },
+        { "kind": "other", "quantity": 1, "name": "Sultai Spindown life counter die" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "619663",
+      "name": "Tarkir Dragonstorm Prerelease Pack Temur",
+      "note": [ "MTGJSON ships contents:null. Official WotC Tarkir: Dragonstorm Prerelease Guide, confirmed by retail listings. Each prerelease pack = 5 Play Boosters + 1 clan-seeded Prerelease Booster (14 cards incl. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Tarkir: Dragonstorm Play Booster", "child_tcgplayer_product_id": "619644" },
+        { "kind": "sealed", "quantity": 1, "name": "Temur clan-seeded Prerelease Booster (14 cards, includes 1 rare or mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Year-stamped traditional foil Rare or Mythic Rare promo" },
+        { "kind": "other", "quantity": 1, "name": "Temur Spindown life counter die" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "620244",
+      "name": "Tarkir Dragonstorm Prerelease Packs Set of 5",
+      "note": [ "MTGJSON ships contents:null. Retail 'Set of 5' subset (e.g. stompinggroundstcg / Stomping Grounds TCG listing) bundling one of each of the five clan-themed prerelease packs. 'Set of 5' is an exact count = 1 of each clan sibling. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Tarkir: Dragonstorm Prerelease Pack Abzan", "child_tcgplayer_product_id": "619659" },
+        { "kind": "sealed", "quantity": 1, "name": "Tarkir: Dragonstorm Prerelease Pack Jeskai", "child_tcgplayer_product_id": "619660" },
+        { "kind": "sealed", "quantity": 1, "name": "Tarkir: Dragonstorm Prerelease Pack Mardu", "child_tcgplayer_product_id": "619662" },
+        { "kind": "sealed", "quantity": 1, "name": "Tarkir: Dragonstorm Prerelease Pack Sultai", "child_tcgplayer_product_id": "619661" },
+        { "kind": "sealed", "quantity": 1, "name": "Tarkir: Dragonstorm Prerelease Pack Temur", "child_tcgplayer_product_id": "619663" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "622998",
+      "name": "Foundations Jumpstart 2 Pack",
+      "note": [ "MTGJSON ships contents:null. Product name is literally '2 Pack'. Best Buy listing 'Foundations Jumpstart Booster 2 Pack (40 Cards, Including Lands)' and MTG Wiki confirm a Jumpstart 2 Pack = two 20-card Jumpstart boosters (40 car …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Foundations Jumpstart Booster Pack", "child_tcgplayer_product_id": "562128" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "619706",
+      "name": "Bloomburrow Prerelease Pack Case",
+      "note": [ "MTGJSON ships contents:null. A prerelease pack case is a retail carton of prerelease kits. The standard case count for recent MTG sets is 15 kits/case, confirmed for Bloomburrow specifically by an unboxing of an 'ENTIRE 15 Pack C …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 15, "name": "Bloomburrow Prerelease Pack", "child_tcgplayer_product_id": "541245" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "672159",
+      "name": "Bloomburrow Deluxe Commander Kit Animated Army",
+      "note": [ "MTGJSON ships contents:null. Costco-exclusive value bundle (TCGplayer catalogs it as 'Deluxe Commander Kit'). Contents confirmed verbatim from Cape Fear Collectibles product listing (capefearcollectibles.com/products/bloomburrow- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Commander Deck - Animated Army", "child_tcgplayer_product_id": "541246" },
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Foundations Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Aetherdrift Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Edge of Eternities Play Booster" },
+        { "kind": "card", "quantity": 1, "name": "Exclusive Bonus Foil Promo Card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "672160",
+      "name": "Bloomburrow Deluxe Commander Kit Family Matters",
+      "note": [ "MTGJSON ships contents:null. Costco-exclusive value bundle (TCGplayer name 'Deluxe Commander Kit'). Contents confirmed verbatim from Cape Fear Collectibles product listing (capefearcollectibles.com/products/bloomburrow-deluxe-com …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Commander Deck - Family Matters", "child_tcgplayer_product_id": "541247" },
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Foundations Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Aetherdrift Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Edge of Eternities Play Booster" },
+        { "kind": "card", "quantity": 1, "name": "Exclusive Bonus Foil Promo Card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "672161",
+      "name": "Bloomburrow Deluxe Commander Kit Peace Offering",
+      "note": [ "MTGJSON ships contents:null. Costco-exclusive value bundle (TCGplayer name 'Deluxe Commander Kit'). Contents match the confirmed Cape Fear Collectibles listing template and the Costco 'Bloomburrow Commander Kit - Peace Offering' …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Commander Deck - Peace Offering", "child_tcgplayer_product_id": "541248" },
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Foundations Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Aetherdrift Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Edge of Eternities Play Booster" },
+        { "kind": "card", "quantity": 1, "name": "Exclusive Bonus Foil Promo Card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "672162",
+      "name": "Bloomburrow Deluxe Commander Kit Squirreled Away",
+      "note": [ "MTGJSON ships contents:null. Costco-exclusive value bundle (TCGplayer name 'Deluxe Commander Kit'). Contents match the confirmed Cape Fear Collectibles listing template and the Costco 'Bloomburrow Commander Kit - Squirreled Away' …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Commander Deck - Squirreled Away", "child_tcgplayer_product_id": "541249" },
+        { "kind": "sealed", "quantity": 1, "name": "Bloomburrow Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Foundations Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Aetherdrift Play Booster" },
+        { "kind": "sealed", "quantity": 1, "name": "Edge of Eternities Play Booster" },
+        { "kind": "card", "quantity": 1, "name": "Exclusive Bonus Foil Promo Card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "541159",
+      "name": "Modern Horizons 3 Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. WotC official 'Modern Horizons 3 Prerelease Primer' confirms six MH3 Play Boosters + a foil-stamped rare/mythic promo + a Spindown life counter + an info insert. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Modern Horizons 3 Play Booster Pack", "child_tcgplayer_product_id": "541163" },
+        { "kind": "other", "quantity": 1, "name": "Foil year-stamped Rare or Mythic Rare promo card" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "238648",
+      "name": "Modern Horizons 2 Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. Official Wizards Play Network article 'What to Sell During Modern Horizons 2 Prerelease' (wpn.wizards.com) and retailer listings (Card Kingdom, TCGplayer) all confirm identical contents: 'Each Modern …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Modern Horizons 2 Draft Booster Pack", "child_tcgplayer_product_id": "236356" },
+        { "kind": "other", "quantity": 1, "name": "Foil-stamped Modern Horizons 2 Rare/Mythic Rare prerelease promo card" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter die" },
+        { "kind": "other", "quantity": 5, "name": "Double-sided token" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "233309",
+      "name": "Strixhaven School of Mages Prerelease Pack Lorehold",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Secrets of Strixhaven' Prerelease Guide (magic.wizards.com/en/news/feature/secrets-of-strixhaven-prerelease-guide) lists each Prerelease Pack as: 5 Strixhaven Draft Boosters, 1 college- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Strixhaven: School of Mages Draft Booster", "child_tcgplayer_product_id": "233248" },
+        { "kind": "sealed", "quantity": 1, "name": "Strixhaven Lorehold college-themed booster (prerelease-exclusive; cards in the college's two colors with a guaranteed Rare/Mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Traditional foil promo card (Rare or Mythic Rare from the set)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (Lorehold-themed)" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "233310",
+      "name": "Strixhaven School of Mages Prerelease Pack Prismari",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Secrets of Strixhaven' Prerelease Guide (magic.wizards.com/en/news/feature/secrets-of-strixhaven-prerelease-guide) lists each Prerelease Pack as: 5 Strixhaven Draft Boosters, 1 college- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Strixhaven: School of Mages Draft Booster", "child_tcgplayer_product_id": "233248" },
+        { "kind": "sealed", "quantity": 1, "name": "Strixhaven Prismari college-themed booster (prerelease-exclusive; cards in the college's two colors with a guaranteed Rare/Mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Traditional foil promo card (Rare or Mythic Rare from the set)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (Prismari-themed)" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "233311",
+      "name": "Strixhaven School of Mages Prerelease Pack Quandrix",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Secrets of Strixhaven' Prerelease Guide (magic.wizards.com/en/news/feature/secrets-of-strixhaven-prerelease-guide) lists each Prerelease Pack as: 5 Strixhaven Draft Boosters, 1 college- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Strixhaven: School of Mages Draft Booster", "child_tcgplayer_product_id": "233248" },
+        { "kind": "sealed", "quantity": 1, "name": "Strixhaven Quandrix college-themed booster (prerelease-exclusive; cards in the college's two colors with a guaranteed Rare/Mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Traditional foil promo card (Rare or Mythic Rare from the set)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (Quandrix-themed)" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "233313",
+      "name": "Strixhaven School of Mages Prerelease Pack Silverquill",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Secrets of Strixhaven' Prerelease Guide (magic.wizards.com/en/news/feature/secrets-of-strixhaven-prerelease-guide) lists each Prerelease Pack as: 5 Strixhaven Draft Boosters, 1 college- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Strixhaven: School of Mages Draft Booster", "child_tcgplayer_product_id": "233248" },
+        { "kind": "sealed", "quantity": 1, "name": "Strixhaven Silverquill college-themed booster (prerelease-exclusive; cards in the college's two colors with a guaranteed Rare/Mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Traditional foil promo card (Rare or Mythic Rare from the set)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (Silverquill-themed)" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "233314",
+      "name": "Strixhaven School of Mages Prerelease Pack Witherbloom",
+      "note": [ "MTGJSON ships contents:null. Official WotC 'Secrets of Strixhaven' Prerelease Guide (magic.wizards.com/en/news/feature/secrets-of-strixhaven-prerelease-guide) lists each Prerelease Pack as: 5 Strixhaven Draft Boosters, 1 college- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Strixhaven: School of Mages Draft Booster", "child_tcgplayer_product_id": "233248" },
+        { "kind": "sealed", "quantity": 1, "name": "Strixhaven Witherbloom college-themed booster (prerelease-exclusive; cards in the college's two colors with a guaranteed Rare/Mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Traditional foil promo card (Rare or Mythic Rare from the set)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (Witherbloom-themed)" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "230377",
+      "name": "Kaldheim Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. Classic 2013-2023 prerelease template, confirmed for Kaldheim by multiple retail listings (moonshotgamestore.com, d20gamestore.com, coolstuffinc.com/p/308033) and MTG Arena code-card inclusion: 6 Kald …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Kaldheim Draft Booster Pack", "child_tcgplayer_product_id": "228246" },
+        { "kind": "card", "quantity": 1, "name": "Foil-stamped Kaldheim promo (random rare or mythic rare, date-stamped)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "215920",
+      "name": "Core Set 2021 Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. Classic-era (2013-2023) prerelease kit template confirmed for M21 by WotC Core Set 2021 Prerelease Primer (magic.wizards.com/en/news/feature/core-set-2021-prerelease-primer-2020-06-22) and retail list …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Core Set 2021 Draft Booster Pack", "child_tcgplayer_product_id": "214813" },
+        { "kind": "other", "quantity": 1, "name": "Foil promo card (date-stamped random rare or mythic rare)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "202304",
+      "name": "Theros Beyond Death Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. twentysidedstore.com THB Deck Builder's Toolkit listing and Amazon/mtg.wiki confirm: 100 Basic Lands, 125 Fixed Cards, 4 assorted 15-card Booster Packs (War of the Spark, Core Set 2020, Throne of Eldr …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Assorted 15-card Booster Pack (one each: War of the Spark, Core Set 2020, Throne of Eldraine, Theros Beyond Death)" },
+        { "kind": "card", "quantity": 125, "name": "Fixed semi-random game card (selection to improve/build decks, incl. some rares)" },
+        { "kind": "other", "quantity": 100, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Deck builder's / Learn to Play guide" },
+        { "kind": "other", "quantity": 1, "name": "Full-art reusable card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "207785",
+      "name": "Theros Beyond Death Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. CoolStuffInc and Amazon THB Prerelease Pack listings confirm the classic prerelease kit: 6 Theros Beyond Death booster packs, 1 foil promo-stamped rare or mythic rare (date-stamped THB Prerelease prom …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Theros Beyond Death Draft Booster Pack", "child_tcgplayer_product_id": "202299" },
+        { "kind": "card", "quantity": 1, "name": "Foil promo-stamped rare or mythic rare (date-stamped Prerelease promo)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena code card (region-dependent)" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "260894",
+      "name": "Theros Beyond Death Prerelease Pack Case",
+      "note": [ "MTGJSON ships contents:null. sydequest.games THB Prerelease Pack Case listing states 'Each case contains 18 prerelease packs' (corroborated by web search). Linked to the THB Prerelease Pack sibling (tcg 207785)." ],
+      "components": [
+        { "kind": "sealed", "quantity": 18, "name": "Theros Beyond Death Prerelease Pack", "child_tcgplayer_product_id": "207785" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "180737",
+      "name": "Ravnica Allegiance Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (mtg.fandom.com Ravnica Allegiance/Deck Builder's Toolkit), Face to Face Games and Mushyhead Comics product pages: 4 fifteen-card booster packs (Dominaria, Core Set 2019, Guilds of Ravnica, R …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Ravnica Allegiance Booster Pack", "child_tcgplayer_product_id": "180735" },
+        { "kind": "sealed", "quantity": 1, "name": "Guilds of Ravnica Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Core Set 2019 Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Dominaria Booster Pack" },
+        { "kind": "other", "quantity": 125, "name": "Fixed individual (semi-random) cards" },
+        { "kind": "other", "quantity": 100, "name": "Basic land cards" },
+        { "kind": "other", "quantity": 1, "name": "Deck Builder's Guide" },
+        { "kind": "other", "quantity": 1, "name": "Reusable card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "183587",
+      "name": "Ravnica Allegiance Prerelease Pack Azorius",
+      "note": [ "MTGJSON ships contents:null. Amazon, ToyWiz and Card Kingdom guild-prerelease listings: RNA used the guild-locked prerelease format = 5 Ravnica Allegiance booster packs + 1 seeded guild booster (15 Azorius/guild cards) + 1 date-s …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Ravnica Allegiance Booster Pack", "child_tcgplayer_product_id": "180735" },
+        { "kind": "sealed", "quantity": 1, "name": "Ravnica Allegiance Seeded Azorius Booster (15 guild cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil rare/mythic Azorius prerelease promo" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "183588",
+      "name": "Ravnica Allegiance Prerelease Pack Gruul",
+      "note": [ "MTGJSON ships contents:null. Amazon, ToyWiz and Card Kingdom guild-prerelease listings: 5 Ravnica Allegiance booster packs + 1 seeded guild booster (15 Gruul cards) + 1 date-stamped, semi-random foil rare/mythic Gruul prerelease …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Ravnica Allegiance Booster Pack", "child_tcgplayer_product_id": "180735" },
+        { "kind": "sealed", "quantity": 1, "name": "Ravnica Allegiance Seeded Gruul Booster (15 guild cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil rare/mythic Gruul prerelease promo" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "183586",
+      "name": "Ravnica Allegiance Prerelease Pack Orzhov",
+      "note": [ "MTGJSON ships contents:null. Amazon, ToyWiz and Card Kingdom guild-prerelease listings: 5 Ravnica Allegiance booster packs + 1 seeded guild booster (15 Orzhov cards) + 1 date-stamped, semi-random foil rare/mythic Orzhov prereleas …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Ravnica Allegiance Booster Pack", "child_tcgplayer_product_id": "180735" },
+        { "kind": "sealed", "quantity": 1, "name": "Ravnica Allegiance Seeded Orzhov Booster (15 guild cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil rare/mythic Orzhov prerelease promo" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "183590",
+      "name": "Ravnica Allegiance Prerelease Pack Rakdos",
+      "note": [ "MTGJSON ships contents:null. Amazon, ToyWiz and Card Kingdom guild-prerelease listings (ToyWiz explicitly: '5 Booster Packs, Seeded Pack, Promo Card'): 5 Ravnica Allegiance booster packs + 1 seeded guild booster (15 Rakdos cards) …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Ravnica Allegiance Booster Pack", "child_tcgplayer_product_id": "180735" },
+        { "kind": "sealed", "quantity": 1, "name": "Ravnica Allegiance Seeded Rakdos Booster (15 guild cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil rare/mythic Rakdos prerelease promo" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "183589",
+      "name": "Ravnica Allegiance Prerelease Pack Simic",
+      "note": [ "MTGJSON ships contents:null. Amazon, ToyWiz and Card Kingdom guild-prerelease listings: 5 Ravnica Allegiance booster packs + 1 seeded guild booster (15 Simic cards) + 1 date-stamped, semi-random foil rare/mythic Simic prerelease …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Ravnica Allegiance Booster Pack", "child_tcgplayer_product_id": "180735" },
+        { "kind": "sealed", "quantity": 1, "name": "Ravnica Allegiance Seeded Simic Booster (15 guild cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil rare/mythic Simic prerelease promo" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter die" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "173371",
+      "name": "Guilds of Ravnica Prerelease Pack Boros",
+      "note": [ "MTGJSON ships contents:null. WotC Guilds of Ravnica Prerelease Primer (magic.wizards.com): 'five normal Guilds of Ravnica boosters plus a special seeded booster' whose Prerelease card is one of eight guild rares/mythics + mana-fi …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Guilds of Ravnica Booster Pack", "child_tcgplayer_product_id": "173364" },
+        { "kind": "sealed", "quantity": 1, "name": "Boros seeded guild booster (15 guild-themed cards with mana fixing)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil Prerelease promo card (semi-random Boros rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena Sealed event code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "173372",
+      "name": "Guilds of Ravnica Prerelease Pack Dimir",
+      "note": [ "MTGJSON ships contents:null. WotC Guilds of Ravnica Prerelease Primer (magic.wizards.com): 'five normal Guilds of Ravnica boosters plus a special seeded booster' whose Prerelease card is one of eight guild rares/mythics + mana-fi …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Guilds of Ravnica Booster Pack", "child_tcgplayer_product_id": "173364" },
+        { "kind": "sealed", "quantity": 1, "name": "Dimir seeded guild booster (15 guild-themed cards with mana fixing)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil Prerelease promo card (semi-random Dimir rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena Sealed event code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "176694",
+      "name": "Guilds of Ravnica Prerelease Pack Golgari",
+      "note": [ "MTGJSON ships contents:null. WotC Guilds of Ravnica Prerelease Primer (magic.wizards.com): 'five normal Guilds of Ravnica boosters plus a special seeded booster' whose Prerelease card is one of eight guild rares/mythics + mana-fi …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Guilds of Ravnica Booster Pack", "child_tcgplayer_product_id": "173364" },
+        { "kind": "sealed", "quantity": 1, "name": "Golgari seeded guild booster (15 guild-themed cards with mana fixing)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil Prerelease promo card (semi-random Golgari rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena Sealed event code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "176695",
+      "name": "Guilds of Ravnica Prerelease Pack Izzet",
+      "note": [ "MTGJSON ships contents:null. WotC Guilds of Ravnica Prerelease Primer (magic.wizards.com): 'five normal Guilds of Ravnica boosters plus a special seeded booster' whose Prerelease card is one of eight guild rares/mythics + mana-fi …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Guilds of Ravnica Booster Pack", "child_tcgplayer_product_id": "173364" },
+        { "kind": "sealed", "quantity": 1, "name": "Izzet seeded guild booster (15 guild-themed cards with mana fixing)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil Prerelease promo card (semi-random Izzet rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena Sealed event code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "176696",
+      "name": "Guilds of Ravnica Prerelease Pack Selesnya",
+      "note": [ "MTGJSON ships contents:null. WotC Guilds of Ravnica Prerelease Primer (magic.wizards.com): 'five normal Guilds of Ravnica boosters plus a special seeded booster' whose Prerelease card is one of eight guild rares/mythics + mana-fi …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Guilds of Ravnica Booster Pack", "child_tcgplayer_product_id": "173364" },
+        { "kind": "sealed", "quantity": 1, "name": "Selesnya seeded guild booster (15 guild-themed cards with mana fixing)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil Prerelease promo card (semi-random Selesnya rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "MTG Arena Sealed event code card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "172939",
+      "name": "Dominaria Booster Battle Pack",
+      "note": [ "MTGJSON ships contents:null. WebSearch/TCGplayer + Card Kingdom + mtgstocks + YouTube crack-a-pack: the Booster Battle Pack contains two single-color 30-card decks, two Dominaria 15-card booster packs, and a Magic quick reference …" ],
+      "components": [
+        { "kind": "deck", "quantity": 2, "name": "Single-Color 30-Card Deck" },
+        { "kind": "sealed", "quantity": 2, "name": "Dominaria Booster Pack", "child_tcgplayer_product_id": "158425" },
+        { "kind": "other", "quantity": 1, "name": "Magic Quick Reference Card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "154729",
+      "name": "Rivals of Ixalan Bundle",
+      "note": [ "MTGJSON ships contents:null. Retail listings (ToyWiz, Card Kingdom, CoolStuffInc, DA Card World) and MTG Wiki 'Bundle' page. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 10, "name": "Rivals of Ixalan Booster Pack", "child_tcgplayer_product_id": "149405" },
+        { "kind": "other", "quantity": 80, "name": "Basic land cards (non-foil)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Player's Guide" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" },
+        { "kind": "other", "quantity": 1, "name": "Learn to Play guide insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "157613",
+      "name": "Rivals of Ixalan Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. WotC 'Rivals of Ixalan Prerelease Primer' (magic.wizards.com) confirms 6 booster packs + date-stamped premium promo + Spindown d20 + deck box/insert. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Rivals of Ixalan Booster Pack", "child_tcgplayer_product_id": "149405" },
+        { "kind": "sealed", "quantity": 2, "name": "Ixalan Booster Pack" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil Prerelease promo card (random rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Prerelease deck box / insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "131458",
+      "name": "Hour of Devastation Bundle",
+      "note": [ "MTGJSON ships contents:null. Standard 2015-2019-era Bundle. Land count and boosters confirmed by CoolStuffInc product page (coolstuffinc.com/p/241726: '10 booster packs, 80 basic land cards, 1 spindown life counter, 1 card box, p …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 10, "name": "Hour of Devastation Booster Pack", "child_tcgplayer_product_id": "131457" },
+        { "kind": "other", "quantity": 80, "name": "Basic land cards (80-card pack, includes full-art lands)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "137435",
+      "name": "Hour of Devastation Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. Hour of Devastation was a small third set drafted together with Amonkhet, so its prerelease kit deviated from the plain '6 boosters of the set' template. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Hour of Devastation Booster Pack", "child_tcgplayer_product_id": "131457" },
+        { "kind": "sealed", "quantity": 2, "name": "Amonkhet Booster Pack" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil prerelease promo card (random rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "264814",
+      "name": "Kaladesh Holiday Buy a Box Promo Pack",
+      "note": [ "MTGJSON ships contents:null. Official WPN announcement 'Sign Up for Standard Showdown + Holiday Buy-a-Box' (wpn.wizards.com) plus TCGplayer product 264814 and eBay listing ('Sealed Kaladesh Holiday Buy-A-Box Promo Pack (3 Cards P …" ],
+      "components": [
+        { "kind": "card", "quantity": 1, "name": "Premium foil card from a Standard-legal set (Battle for Zendikar through Kaladesh; ~1 in 33 packs is a Kaladesh Inventions or Zendikar Expeditions Masterpiece; no double-faced cards) - randomized" },
+        { "kind": "card", "quantity": 2, "name": "Non-premium rare or mythic rare from Battle for Zendikar through Kaladesh (excludes Oath of the Gatewatch and double-faced cards) - randomized" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "118402",
+      "name": "Eldritch Moon Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Multiple retail listings + MTG Realm unbox agree on EMN Fat Pack contents: nine 15-card EMN booster packs, 70 basic land cards, a Player's Guide (visual encyclopedia), a Spindown life counter, two dec …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Eldritch Moon Booster Pack", "child_tcgplayer_product_id": "118394" },
+        { "kind": "other", "quantity": 70, "name": "Eldritch Moon basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Player's Guide" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" },
+        { "kind": "other", "quantity": 10, "name": "Double-faced card checklist" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "120775",
+      "name": "Eldritch Moon Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. WotC 'Eldritch Moon Prerelease Primer' confirms 6 booster packs, a randomized date-stamped premium foil promo (any rare/mythic in the set), a Spindown d20, and a double-sided premium foil Zombie token …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Eldritch Moon Booster Pack", "child_tcgplayer_product_id": "118394" },
+        { "kind": "sealed", "quantity": 2, "name": "Shadows over Innistrad Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Seeded date-stamped foil prerelease promo (random rare/mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Double-sided premium foil Zombie token" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Deck-building advice insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "112725",
+      "name": "Shadows over Innistrad Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (Shadows over Innistrad/Deck Builder's Toolkit) lists: four 15-card booster packs (two Battle for Zendikar + two Shadows over Innistrad), 85 fixed cards, 40 semi-randomized cards (from a pool …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Shadows over Innistrad Booster Pack", "child_tcgplayer_product_id": "112708" },
+        { "kind": "sealed", "quantity": 2, "name": "Battle for Zendikar Booster Pack" },
+        { "kind": "other", "quantity": 85, "name": "Fixed nonland cards" },
+        { "kind": "other", "quantity": 40, "name": "Semi-randomized cards (40 drawn from a pool of 110)" },
+        { "kind": "other", "quantity": 100, "name": "Basic land card (20 each of the 5 types)" },
+        { "kind": "other", "quantity": 1, "name": "Deck builder's guide" },
+        { "kind": "other", "quantity": 1, "name": "Learn to play guide / rules reference" },
+        { "kind": "other", "quantity": 1, "name": "Full-art reusable card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "116926",
+      "name": "Shadows over Innistrad Prerelease Pack",
+      "note": [ "MTGJSON ships contents:null. Standard 2013-2023 prerelease kit template, confirmed for SOI by retail listings (CoolStuffInc p227030, Face to Face Games, Amazon B01CCJ4U2K): 6 Shadows over Innistrad booster packs, 1 randomized dat …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Shadows over Innistrad Booster Pack", "child_tcgplayer_product_id": "112708" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil prerelease promo (random rare or mythic rare from the set)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Deckbuilding advice insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "110421",
+      "name": "Oath of the Gatewatch Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Classic 2016-era Fat Pack template, confirmed by multiple retail listings (chaoscards, amazon B016VU61WS, spankyscardshop) and matching the standard 9-booster fat pack format. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Oath of the Gatewatch Booster Pack", "child_tcgplayer_product_id": "110420" },
+        { "kind": "other", "quantity": 80, "name": "Full-art basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's Guide" },
+        { "kind": "other", "quantity": 2, "name": "Fat Pack storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "111283",
+      "name": "Oath of the Gatewatch Hedron Prerelease Box",
+      "note": [ "MTGJSON ships contents:null. NOT the standard 6-boosters-of-the-set prerelease template: OGW is a small set drafted alongside Battle for Zendikar, so the prerelease pack mixed both sets. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Oath of the Gatewatch Booster Pack", "child_tcgplayer_product_id": "110420" },
+        { "kind": "sealed", "quantity": 2, "name": "Battle for Zendikar Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil Prerelease promo (random rare or mythic rare)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "100028",
+      "name": "Magic Origins Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (Fandom) Magic Origins/Deck Builder's Toolkit + retail listings: four 15-card booster packs from Journey into Nyx, Fate Reforged, Dragons of Tarkir and Magic Origins (only one is a Magic Orig …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "sealed", "quantity": 3, "name": "Assorted 15-card booster packs (Journey into Nyx, Fate Reforged, Dragons of Tarkir)" },
+        { "kind": "other", "quantity": 100, "name": "Basic land cards (20 of each type from Magic Origins)" },
+        { "kind": "other", "quantity": 85, "name": "Fixed cards (deckbuilding assortment)" },
+        { "kind": "other", "quantity": 40, "name": "Semi-randomized cards (40 of 110 possible)" },
+        { "kind": "other", "quantity": 1, "name": "Deck builder's guide" },
+        { "kind": "other", "quantity": 1, "name": "Magic learn-to-play / rules reference card" },
+        { "kind": "other", "quantity": 1, "name": "Reusable full-art card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "96149",
+      "name": "Magic Origins Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Retail/product listings (Amazon, ToyWiz, ChaosCards) for the Magic Origins Fat Pack: 9 Magic Origins booster packs (linked to set booster pack tcg 96148), an 80-card basic land pack, a Spindown life c …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "other", "quantity": 80, "name": "Basic land cards (assorted)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Magic Origins Player's Guide (card encyclopedia)" },
+        { "kind": "other", "quantity": 2, "name": "Card / deck storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "215048",
+      "name": "Magic Origins Land Station",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (Fandom) 'Land Station' article + Noble Knight and Amazon listings for the Magic Origins Land Station: 400 assorted nonfoil basic lands (approximately 80 of each of the five types) packaged i …" ],
+      "components": [
+        { "kind": "other", "quantity": 400, "name": "Basic land cards (approx. 80 of each type, 5 colors)" },
+        { "kind": "other", "quantity": 1, "name": "Reusable storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "101222",
+      "name": "Magic Origins Prerelease Kit Chandra",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic Origins Prerelease Primer' (magic.wizards.com): each prerelease pack contains 7 boosters for the Sealed pool — 6 normal Magic Origins boosters (linked to tcg 96148) plus 1 seven-card seede …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster (7 red cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil promo (red rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Chandra story booklet" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "101218",
+      "name": "Magic Origins Prerelease Kit Gideon",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic Origins Prerelease Primer' (magic.wizards.com): 6 normal Magic Origins boosters (linked to tcg 96148) + 1 seven-card seeded booster in the chosen Planeswalker's color + a date-stamped foil …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster (7 white cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil promo (white rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Gideon story booklet" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "101219",
+      "name": "Magic Origins Prerelease Kit Jace",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic Origins Prerelease Primer' (magic.wizards.com): 6 normal Magic Origins boosters (linked to tcg 96148) + 1 seven-card seeded booster in the chosen Planeswalker's color + a date-stamped foil …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster (7 blue cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil promo (blue rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Jace story booklet" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "101221",
+      "name": "Magic Origins Prerelease Kit Liliana",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic Origins Prerelease Primer' (magic.wizards.com): 6 normal Magic Origins boosters (linked to tcg 96148) + 1 seven-card seeded booster in the chosen Planeswalker's color + a date-stamped foil …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster (7 black cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil promo (black rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Liliana story booklet" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "101220",
+      "name": "Magic Origins Prerelease Kit Nissa",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic Origins Prerelease Primer' (magic.wizards.com): 6 normal Magic Origins boosters (linked to tcg 96148) + 1 seven-card seeded booster in the chosen Planeswalker's color + a date-stamped foil …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Magic Origins Booster Pack", "child_tcgplayer_product_id": "96148" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster (7 green cards)" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil promo (green rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Nissa story booklet" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95032",
+      "name": "Fate Reforged Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Retail listings (Amazon, ToyWiz, Chaos Cards) and MTG Realm confirm standard 2015 fat-pack contents: 9 Fate Reforged 15-card booster packs, an 80-card basic land pack, a Player's Guide (complete visua …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Fate Reforged Booster Pack", "child_tcgplayer_product_id": "95031" },
+        { "kind": "other", "quantity": 80, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide (visual encyclopedia)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 2, "name": "Fat-pack card storage box" },
+        { "kind": "other", "quantity": 1, "name": "Learn-to-play insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95910",
+      "name": "Fate Reforged Prerelease Kit Abzan Battle with Endurance",
+      "note": [ "MTGJSON ships contents:null. Face to Face Games retail listing for 'Battle with Endurance' and Amazon 'Set of 5' listing (25 boosters / 5 spindowns / 5 foil promos = 5 boosters per kit). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Fate Reforged Booster Pack", "child_tcgplayer_product_id": "95031" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Fate Reforged seeded booster (Abzan)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil prerelease promo (random Abzan-themed rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Activity card" },
+        { "kind": "other", "quantity": 1, "name": "Clan information card" },
+        { "kind": "other", "quantity": 1, "name": "Clan identity button" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95912",
+      "name": "Fate Reforged Prerelease Kit Jeskai Battle with Cunning",
+      "note": [ "MTGJSON ships contents:null. Face to Face Games retail listing and Amazon 'Set of 5' listing (25 boosters / 5 spindowns / 5 foil promos = 5 boosters per kit). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Fate Reforged Booster Pack", "child_tcgplayer_product_id": "95031" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Fate Reforged seeded booster (Jeskai)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil prerelease promo (random Jeskai-themed rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Activity card" },
+        { "kind": "other", "quantity": 1, "name": "Clan information card" },
+        { "kind": "other", "quantity": 1, "name": "Clan identity button" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95911",
+      "name": "Fate Reforged Prerelease Kit Mardu Battle with Speed",
+      "note": [ "MTGJSON ships contents:null. Face to Face Games retail listing and Amazon 'Set of 5' listing (25 boosters / 5 spindowns / 5 foil promos = 5 boosters per kit). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Fate Reforged Booster Pack", "child_tcgplayer_product_id": "95031" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Fate Reforged seeded booster (Mardu)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil prerelease promo (random Mardu-themed rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Activity card" },
+        { "kind": "other", "quantity": 1, "name": "Clan information card" },
+        { "kind": "other", "quantity": 1, "name": "Clan identity button" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95913",
+      "name": "Fate Reforged Prerelease Kit Sultai Battle with Ruthlessness",
+      "note": [ "MTGJSON ships contents:null. Face to Face Games retail listing and Amazon 'Set of 5' listing (25 boosters / 5 spindowns / 5 foil promos = 5 boosters per kit). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Fate Reforged Booster Pack", "child_tcgplayer_product_id": "95031" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Fate Reforged seeded booster (Sultai)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil prerelease promo (random Sultai-themed rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Activity card" },
+        { "kind": "other", "quantity": 1, "name": "Clan information card" },
+        { "kind": "other", "quantity": 1, "name": "Clan identity button" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95914",
+      "name": "Fate Reforged Prerelease Kit Temur Battle with Savagery",
+      "note": [ "MTGJSON ships contents:null. Face to Face Games retail listing and Amazon 'Set of 5' listing (25 boosters / 5 spindowns / 5 foil promos = 5 boosters per kit). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Fate Reforged Booster Pack", "child_tcgplayer_product_id": "95031" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Fate Reforged seeded booster (Temur)" },
+        { "kind": "other", "quantity": 1, "name": "Date-stamped foil prerelease promo (random Temur-themed rare or mythic)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Activity card" },
+        { "kind": "other", "quantity": 1, "name": "Clan information card" },
+        { "kind": "other", "quantity": 1, "name": "Clan identity button" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "91652",
+      "name": "Khans of Tarkir Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Confirmed contents from MTG Realm's Fat Pack listing and multiple retail listings (Card Kingdom, CoolStuffInc, Amazon): 9 Khans of Tarkir booster packs, 1 card storage box, 1 player's guide, 1 x 80-ca …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Khans of Tarkir Booster Pack", "child_tcgplayer_product_id": "91653" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir 80-card Basic Land Pack" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Player's Guide" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Spindown Life Counter" },
+        { "kind": "other", "quantity": 1, "name": "Card Storage Box" },
+        { "kind": "other", "quantity": 2, "name": "60-card Deck Box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95041",
+      "name": "Khans of Tarkir Prerelease Kit Abzan Battle with Endurance",
+      "note": [ "MTGJSON ships contents:null. Official WotC Khans of Tarkir Prerelease Primer confirms the clan-based (not generic 6-booster) kit: 5 regular KTK boosters + 1 seeded clan booster + 1 dated foil prerelease promo (random from a pool …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Khans of Tarkir Booster Pack", "child_tcgplayer_product_id": "91653" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Seeded Abzan Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Khans of Tarkir Dated Foil Prerelease Promo (Abzan pool)" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Spindown Life Counter" },
+        { "kind": "other", "quantity": 1, "name": "Abzan Clan Achievement Card" },
+        { "kind": "other", "quantity": 1, "name": "Abzan Clan Banner Sticker" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95043",
+      "name": "Khans of Tarkir Prerelease Kit Jeskai Battle with Cunning",
+      "note": [ "MTGJSON ships contents:null. Official WotC Khans of Tarkir Prerelease Primer confirms the clan-based kit: 5 regular KTK boosters + 1 seeded clan booster + 1 dated foil prerelease promo (random from a pool of 8 Jeskai-color cards) …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Khans of Tarkir Booster Pack", "child_tcgplayer_product_id": "91653" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Seeded Jeskai Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Khans of Tarkir Dated Foil Prerelease Promo (Jeskai pool)" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Spindown Life Counter" },
+        { "kind": "other", "quantity": 1, "name": "Jeskai Clan Achievement Card" },
+        { "kind": "other", "quantity": 1, "name": "Jeskai Clan Banner Sticker" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95042",
+      "name": "Khans of Tarkir Prerelease Kit Mardu Battle with Speed",
+      "note": [ "MTGJSON ships contents:null. Official WotC Khans of Tarkir Prerelease Primer confirms the clan-based kit: 5 regular KTK boosters + 1 seeded clan booster + 1 dated foil prerelease promo (random from a pool of 8 Mardu-color cards) …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Khans of Tarkir Booster Pack", "child_tcgplayer_product_id": "91653" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Seeded Mardu Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Khans of Tarkir Dated Foil Prerelease Promo (Mardu pool)" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Spindown Life Counter" },
+        { "kind": "other", "quantity": 1, "name": "Mardu Clan Achievement Card" },
+        { "kind": "other", "quantity": 1, "name": "Mardu Clan Banner Sticker" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95044",
+      "name": "Khans of Tarkir Prerelease Kit Sultai Battle with Ruthlessness",
+      "note": [ "MTGJSON ships contents:null. Official WotC Khans of Tarkir Prerelease Primer confirms the clan-based kit: 5 regular KTK boosters + 1 seeded clan booster + 1 dated foil prerelease promo (random from a pool of 8 Sultai-color cards) …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Khans of Tarkir Booster Pack", "child_tcgplayer_product_id": "91653" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Seeded Sultai Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Khans of Tarkir Dated Foil Prerelease Promo (Sultai pool)" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Spindown Life Counter" },
+        { "kind": "other", "quantity": 1, "name": "Sultai Clan Achievement Card" },
+        { "kind": "other", "quantity": 1, "name": "Sultai Clan Banner Sticker" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "95045",
+      "name": "Khans of Tarkir Prerelease Kit Temur Battle with Savagery",
+      "note": [ "MTGJSON ships contents:null. Official WotC Khans of Tarkir Prerelease Primer confirms the clan-based kit: 5 regular KTK boosters + 1 seeded clan booster + 1 dated foil prerelease promo (random from a pool of 8 Temur-color cards) …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Khans of Tarkir Booster Pack", "child_tcgplayer_product_id": "91653" },
+        { "kind": "sealed", "quantity": 1, "name": "Khans of Tarkir Seeded Temur Booster Pack" },
+        { "kind": "card", "quantity": 1, "name": "Khans of Tarkir Dated Foil Prerelease Promo (Temur pool)" },
+        { "kind": "other", "quantity": 1, "name": "Khans of Tarkir Spindown Life Counter" },
+        { "kind": "other", "quantity": 1, "name": "Temur Clan Achievement Card" },
+        { "kind": "other", "quantity": 1, "name": "Temur Clan Banner Sticker" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92490",
+      "name": "2015 Core Set Prerelease Hunt with Ambition",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic 2015 Prerelease Primer' (magic.wizards.com) + mtg.fandom.com/wiki/Magic_2015: each M15 prerelease pack = 5 regular M15 boosters + 1 color-seeded booster + 1 foil premium promo + 1 Spindown …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "2015 Core Set Booster Pack", "child_tcgplayer_product_id": "90785" },
+        { "kind": "sealed", "quantity": 1, "name": "Magic 2015 Seeded Booster Pack (Black / Ambition)" },
+        { "kind": "card", "quantity": 1, "name": "Indulgent Tormentor (foil prerelease promo, date-stamped)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Garruk 'Hunt' challenge card + activity insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92493",
+      "name": "2015 Core Set Prerelease Hunt with Ferocity",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic 2015 Prerelease Primer' + mtg.fandom.com/wiki/Magic_2015: 5 regular M15 boosters + 1 color-seeded booster + 1 foil promo + Spindown + oversized Garruk activity card. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "2015 Core Set Booster Pack", "child_tcgplayer_product_id": "90785" },
+        { "kind": "sealed", "quantity": 1, "name": "Magic 2015 Seeded Booster Pack (Red / Ferocity)" },
+        { "kind": "card", "quantity": 1, "name": "Siege Dragon (foil prerelease promo, date-stamped)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Garruk 'Hunt' challenge card + activity insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92491",
+      "name": "2015 Core Set Prerelease Hunt with Guile",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic 2015 Prerelease Primer' + mtg.fandom.com/wiki/Magic_2015: 5 regular M15 boosters + 1 color-seeded booster + 1 foil promo + Spindown + oversized Garruk activity card. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "2015 Core Set Booster Pack", "child_tcgplayer_product_id": "90785" },
+        { "kind": "sealed", "quantity": 1, "name": "Magic 2015 Seeded Booster Pack (Blue / Guile)" },
+        { "kind": "card", "quantity": 1, "name": "Mercurial Pretender (foil prerelease promo, date-stamped)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Garruk 'Hunt' challenge card + activity insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92492",
+      "name": "2015 Core Set Prerelease Hunt with Strength",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic 2015 Prerelease Primer' + mtg.fandom.com/wiki/Magic_2015: 5 regular M15 boosters + 1 color-seeded booster + 1 foil promo + Spindown + oversized Garruk activity card. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "2015 Core Set Booster Pack", "child_tcgplayer_product_id": "90785" },
+        { "kind": "sealed", "quantity": 1, "name": "Magic 2015 Seeded Booster Pack (Green / Strength)" },
+        { "kind": "card", "quantity": 1, "name": "Phytotitan (foil prerelease promo, date-stamped)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Garruk 'Hunt' challenge card + activity insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92494",
+      "name": "2015 Core Set Prerelease Hunt with Valor",
+      "note": [ "MTGJSON ships contents:null. WotC 'Magic 2015 Prerelease Primer' + mtg.fandom.com/wiki/Magic_2015: 5 regular M15 boosters + 1 color-seeded booster + 1 foil promo + Spindown + oversized Garruk activity card. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "2015 Core Set Booster Pack", "child_tcgplayer_product_id": "90785" },
+        { "kind": "sealed", "quantity": 1, "name": "Magic 2015 Seeded Booster Pack (White / Valor)" },
+        { "kind": "card", "quantity": 1, "name": "Resolute Archangel (foil prerelease promo, date-stamped)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter (d20)" },
+        { "kind": "other", "quantity": 1, "name": "Oversized Garruk 'Hunt' challenge card + activity insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80853",
+      "name": "Defeat a God Challenge Deck",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (Defeat a God) + retailer listings: a self-running 60-card Challenge Deck (15 unique cards incl. …" ],
+      "components": [
+        { "kind": "deck", "quantity": 1, "name": "Defeat a God self-running challenge deck (60 cards)" },
+        { "kind": "other", "quantity": 1, "name": "Paper playmat / challenge-deck rules sheet" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80836",
+      "name": "Journey Into Nyx Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Standard 2014-era Fat Pack contents (confirmed by JOU/M14 retailer listings and WotC product spec): nine boosters, 80-card basic land pack, Player's Guide, special-edition Spindown, set card storage b …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Journey into Nyx Booster Pack", "child_tcgplayer_product_id": "80839" },
+        { "kind": "other", "quantity": 80, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Journey into Nyx Player's Guide" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Journey into Nyx card storage box" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80857",
+      "name": "Journey Into Nyx Prerelease Forged in Glory",
+      "note": [ "MTGJSON ships contents:null. WotC 'Journey into Nyx Prerelease Primer': each pack = 2 JOU + 1 Born of the Gods + 2 Theros boosters + 1 seeded booster (JOU cards weighted to chosen color, incl. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Journey into Nyx Booster Pack", "child_tcgplayer_product_id": "80839" },
+        { "kind": "sealed", "quantity": 1, "name": "Born of the Gods Booster Pack" },
+        { "kind": "sealed", "quantity": 2, "name": "Theros Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster pack (Journey into Nyx cards weighted to White, incl. 1 rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card: Spear of the General" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil prerelease promo (White path)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "'Forge a Godslayer' activity card" },
+        { "kind": "other", "quantity": 1, "name": "Welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80859",
+      "name": "Journey Into Nyx Prerelease Forged in Intellect",
+      "note": [ "MTGJSON ships contents:null. WotC 'Journey into Nyx Prerelease Primer': 2 JOU + 1 Born of the Gods + 2 Theros boosters + 1 seeded booster (weighted to chosen color) + Hero card + color-matched date-stamped foil promo + Spindown + …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Journey into Nyx Booster Pack", "child_tcgplayer_product_id": "80839" },
+        { "kind": "sealed", "quantity": 1, "name": "Born of the Gods Booster Pack" },
+        { "kind": "sealed", "quantity": 2, "name": "Theros Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster pack (Journey into Nyx cards weighted to Blue, incl. 1 rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card: Cloak of the Philosopher" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil prerelease promo (Blue path)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "'Forge a Godslayer' activity card" },
+        { "kind": "other", "quantity": 1, "name": "Welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80863",
+      "name": "Journey Into Nyx Prerelease Forged in Pursuit",
+      "note": [ "MTGJSON ships contents:null. WotC 'Journey into Nyx Prerelease Primer': 2 JOU + 1 Born of the Gods + 2 Theros boosters + 1 seeded booster (weighted to chosen color) + Hero card + color-matched date-stamped foil promo + Spindown + …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Journey into Nyx Booster Pack", "child_tcgplayer_product_id": "80839" },
+        { "kind": "sealed", "quantity": 1, "name": "Born of the Gods Booster Pack" },
+        { "kind": "sealed", "quantity": 2, "name": "Theros Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster pack (Journey into Nyx cards weighted to Green, incl. 1 rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card: Bow of the Hunter" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil prerelease promo (Green path)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "'Forge a Godslayer' activity card" },
+        { "kind": "other", "quantity": 1, "name": "Welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80861",
+      "name": "Journey Into Nyx Prerelease Forged in Tyranny",
+      "note": [ "MTGJSON ships contents:null. WotC 'Journey into Nyx Prerelease Primer': 2 JOU + 1 Born of the Gods + 2 Theros boosters + 1 seeded booster (weighted to chosen color) + Hero card + color-matched date-stamped foil promo + Spindown + …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Journey into Nyx Booster Pack", "child_tcgplayer_product_id": "80839" },
+        { "kind": "sealed", "quantity": 1, "name": "Born of the Gods Booster Pack" },
+        { "kind": "sealed", "quantity": 2, "name": "Theros Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster pack (Journey into Nyx cards weighted to Black, incl. 1 rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card: Lash of the Tyrant" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil prerelease promo (Black path)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "'Forge a Godslayer' activity card" },
+        { "kind": "other", "quantity": 1, "name": "Welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "80862",
+      "name": "Journey Into Nyx Prerelease Forged in War",
+      "note": [ "MTGJSON ships contents:null. WotC 'Journey into Nyx Prerelease Primer': 2 JOU + 1 Born of the Gods + 2 Theros boosters + 1 seeded booster (weighted to chosen color) + Hero card + color-matched date-stamped foil promo + Spindown + …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Journey into Nyx Booster Pack", "child_tcgplayer_product_id": "80839" },
+        { "kind": "sealed", "quantity": 1, "name": "Born of the Gods Booster Pack" },
+        { "kind": "sealed", "quantity": 2, "name": "Theros Booster Pack" },
+        { "kind": "sealed", "quantity": 1, "name": "Seeded booster pack (Journey into Nyx cards weighted to Red, incl. 1 rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card: Axe of the Warmonger" },
+        { "kind": "card", "quantity": 1, "name": "Date-stamped foil prerelease promo (Red path)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "'Forge a Godslayer' activity card" },
+        { "kind": "other", "quantity": 1, "name": "Welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78288",
+      "name": "Battle the Horde Challenge Deck",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (mtg.fandom.com/wiki/Battle_the_Horde) + Amazon/TCGplayer listings: Battle the Horde is a single-player 'Horde Magic' Challenge Deck from Born of the Gods Game Day. …" ],
+      "components": [
+        { "kind": "deck", "quantity": 1, "name": "Battle the Horde 60-card Horde deck" },
+        { "kind": "other", "quantity": 1, "name": "Instructional playmat with self-running rules (paper insert)" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "72028",
+      "name": "Theros Challenge Deck Face the Hydra",
+      "note": [ "MTGJSON ships contents:null. mtg.wiki / MTG Wiki (Face the Hydra) + MagicSpoiler Game Day Hydra deck contents: a standalone 60-card preconstructed 'Challenge Deck' (15 unique card names, 18 Head cards + 42 encounter/sorcery cards …" ],
+      "components": [
+        { "kind": "deck", "quantity": 1, "name": "Face the Hydra challenge deck (60 cards)" },
+        { "kind": "other", "quantity": 1, "name": "Challenge deck rules insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "70962",
+      "name": "Theros Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Amazon/MTG-Realm/Gadgetoid Theros Fat Pack listings + standard 2013 fat pack template: 9 Theros booster packs, one 80-card basic land pack, a special-edition Spindown life counter, two deck boxes, and …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Theros Booster Pack", "child_tcgplayer_product_id": "70961" },
+        { "kind": "other", "quantity": 80, "name": "Theros basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide (visual encyclopedia)" },
+        { "kind": "other", "quantity": 2, "name": "Fat Pack deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "79268",
+      "name": "Theros Prerelease Kit Path of Ambition",
+      "note": [ "MTGJSON ships contents:null. WotC Theros Prerelease Primer + Devastation/retail Prerelease Pack listings: 5 Theros boosters + 1 seeded (color-aligned) booster + 1 date-stamped foil prerelease promo + 1 Spindown + 1 Hero card + ac …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Theros Booster Pack", "child_tcgplayer_product_id": "70961" },
+        { "kind": "sealed", "quantity": 1, "name": "Theros seeded booster pack (Path of Ambition, black-aligned)" },
+        { "kind": "card", "quantity": 1, "name": "Theros date-stamped foil prerelease promo (random rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card - The Avenger" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Choose Your Path activity card" },
+        { "kind": "other", "quantity": 1, "name": "Hero's Path welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "79271",
+      "name": "Theros Prerelease Kit Path of Battle",
+      "note": [ "MTGJSON ships contents:null. WotC Theros Prerelease Primer + retail Prerelease Pack listings: 5 Theros boosters + 1 seeded (color-aligned) booster + 1 date-stamped foil prerelease promo + 1 Spindown + 1 Hero card + activity card …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Theros Booster Pack", "child_tcgplayer_product_id": "70961" },
+        { "kind": "sealed", "quantity": 1, "name": "Theros seeded booster pack (Path of Battle, red-aligned)" },
+        { "kind": "card", "quantity": 1, "name": "Theros date-stamped foil prerelease promo (random rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card - The Warrior" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Choose Your Path activity card" },
+        { "kind": "other", "quantity": 1, "name": "Hero's Path welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "79269",
+      "name": "Theros Prerelease Kit Path of Honor",
+      "note": [ "MTGJSON ships contents:null. WotC Theros Prerelease Primer + retail Prerelease Pack listings: 5 Theros boosters + 1 seeded (color-aligned) booster + 1 date-stamped foil prerelease promo + 1 Spindown + 1 Hero card + activity card …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Theros Booster Pack", "child_tcgplayer_product_id": "70961" },
+        { "kind": "sealed", "quantity": 1, "name": "Theros seeded booster pack (Path of Honor, white-aligned)" },
+        { "kind": "card", "quantity": 1, "name": "Theros date-stamped foil prerelease promo (random rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card - The Protector" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Choose Your Path activity card" },
+        { "kind": "other", "quantity": 1, "name": "Hero's Path welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "79272",
+      "name": "Theros Prerelease Kit Path of Might",
+      "note": [ "MTGJSON ships contents:null. WotC Theros Prerelease Primer + retail Prerelease Pack listings: 5 Theros boosters + 1 seeded (color-aligned) booster + 1 date-stamped foil prerelease promo + 1 Spindown + 1 Hero card + activity card …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Theros Booster Pack", "child_tcgplayer_product_id": "70961" },
+        { "kind": "sealed", "quantity": 1, "name": "Theros seeded booster pack (Path of Might, green-aligned)" },
+        { "kind": "card", "quantity": 1, "name": "Theros date-stamped foil prerelease promo (random rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card - The Hunter" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Choose Your Path activity card" },
+        { "kind": "other", "quantity": 1, "name": "Hero's Path welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "79270",
+      "name": "Theros Prerelease Kit Path of Wisdom",
+      "note": [ "MTGJSON ships contents:null. WotC Theros Prerelease Primer + Devastation Store Path of Wisdom listing: 5 Theros boosters + 1 seeded (color-aligned) booster + 1 date-stamped foil prerelease promo + 1 Spindown + 1 Hero card + Choos …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 5, "name": "Theros Booster Pack", "child_tcgplayer_product_id": "70961" },
+        { "kind": "sealed", "quantity": 1, "name": "Theros seeded booster pack (Path of Wisdom, blue-aligned)" },
+        { "kind": "card", "quantity": 1, "name": "Theros date-stamped foil prerelease promo (random rare/mythic)" },
+        { "kind": "card", "quantity": 1, "name": "Hero card - The Philosopher" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Choose Your Path activity card" },
+        { "kind": "other", "quantity": 1, "name": "Hero's Path welcome letter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78289",
+      "name": "2014 Core Set Booster Battle Pack",
+      "note": [ "MTGJSON ships contents:null. TCGplayer product 78289, BlowoutCards M14 Battle Pack Box listing, and Collector's Cache all agree: each M14 Booster Battle Pack contains two 22-card semi-randomized decks, two 15-card M14 Core Set bo …" ],
+      "components": [
+        { "kind": "deck", "quantity": 2, "name": "22-card semi-randomized deck" },
+        { "kind": "sealed", "quantity": 2, "name": "Magic 2014 Booster Pack", "child_tcgplayer_product_id": "69245" },
+        { "kind": "other", "quantity": 1, "name": "Magic learn-to-play guide" },
+        { "kind": "other", "quantity": 1, "name": "Rules insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "485828",
+      "name": "2014 Core Set Booster Battle Pack Display",
+      "note": [ "MTGJSON ships contents:null. BlowoutCards 'Magic the Gathering 2014 Core Set Battle Pack Box' listing and web search confirm the display holds twelve Booster Battle Packs. Linked to sibling Booster Battle Pack (78289)." ],
+      "components": [
+        { "kind": "sealed", "quantity": 12, "name": "2014 Core Set Booster Battle Pack", "child_tcgplayer_product_id": "78289" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92502",
+      "name": "2014 Core Set Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. mtg.wiki / mtg.fandom 'Magic 2014/Deck Builder's Toolkit': four 15-card booster packs (one Magic 2014 plus three from recent sets: Magic 2013, Return to Ravnica, Gatecrash), 125 non-land cards (85 fix …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 1, "name": "Magic 2014 Booster Pack", "child_tcgplayer_product_id": "69245" },
+        { "kind": "sealed", "quantity": 3, "name": "Assorted booster pack (from recent sets: Magic 2013, Return to Ravnica, Gatecrash)" },
+        { "kind": "other", "quantity": 125, "name": "Semi-random cards (85 fixed + 40 semi-randomized, from M14/RTR/Gatecrash/Dragon's Maze)" },
+        { "kind": "other", "quantity": 100, "name": "Basic land cards (20 of each type)" },
+        { "kind": "other", "quantity": 1, "name": "Deck builder's guide" },
+        { "kind": "other", "quantity": 1, "name": "Magic learn-to-play guide" },
+        { "kind": "other", "quantity": 1, "name": "Reusable full-art card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "69247",
+      "name": "2014 Core Set Fat Pack",
+      "note": [ "MTGJSON ships contents:null. bazaarofmagic + TCGplayer product 69247 + era Fat Pack template: nine M14 booster packs, 80 M14 basic land cards, one Spindown life-counter die, one M14 Fat Pack player's guide, and two card storage/d …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Magic 2014 Booster Pack", "child_tcgplayer_product_id": "69245" },
+        { "kind": "other", "quantity": 80, "name": "Basic land cards" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life-counter die" },
+        { "kind": "other", "quantity": 1, "name": "Magic 2014 player's guide" },
+        { "kind": "other", "quantity": 2, "name": "Card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "215047",
+      "name": "2014 Core Set Land Station",
+      "note": [ "MTGJSON ships contents:null. joshscards.com product page and web search: the M14 Land Station contains approximately 400 assorted basic land cards (approx. …" ],
+      "components": [
+        { "kind": "other", "quantity": 400, "name": "Basic land cards (approx. 80 of each of the 5 basic land types)" },
+        { "kind": "other", "quantity": 1, "name": "Reusable storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "72027",
+      "name": "Return to Ravnica Booster Battle Pack",
+      "note": [ "MTGJSON ships contents:null. WotC/Amazon product listing (amazon.com B009AVP5KA; DailyMTG 'Building a Booster Battle Pack'): each pack = two 22-card semi-randomized guild decks + two 15-card Return to Ravnica booster packs + a le …" ],
+      "components": [
+        { "kind": "deck", "quantity": 2, "name": "22-card semi-random guild deck" },
+        { "kind": "sealed", "quantity": 2, "name": "Return to Ravnica Booster Pack", "child_tcgplayer_product_id": "60121" },
+        { "kind": "other", "quantity": 1, "name": "Learn to Play guide" },
+        { "kind": "other", "quantity": 1, "name": "Rules insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "485935",
+      "name": "Return to Ravnica Booster Battle Pack Display",
+      "note": [ "MTGJSON ships contents:null. Retail/distributor listings label this a 'Booster Battle Pack Display (12)' (Atomic Empire item 126724; TCGplayer product 485935; Cardmarket 'Booster Battle Pack Box'). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 12, "name": "Return to Ravnica Booster Battle Pack", "child_tcgplayer_product_id": "72027" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "60119",
+      "name": "Return to Ravnica Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Standard 2012-era Fat Pack; retail listings (Amazon B008MW1UG6, CoolStuffInc p/165903, ToyWiz, mtg.fandom Return to Ravnica) list: 9 Return to Ravnica booster packs + a Player's Guide (visual encyclop …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Return to Ravnica Booster Pack", "child_tcgplayer_product_id": "60121" },
+        { "kind": "other", "quantity": 1, "name": "Player's Guide" },
+        { "kind": "other", "quantity": 1, "name": "80-card basic land pack" },
+        { "kind": "other", "quantity": 1, "name": "Special edition Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "97819",
+      "name": "2013 Core Set Booster Battle Pack",
+      "note": [ "MTGJSON ships contents:null. Collector's Cache M13 Booster Battle Pack Display listing + WotC-standard Booster Battle Pack format: a two-player intro product containing 2x 15-card Magic 2013 booster packs, 2x semi-randomized ~20- …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "2013 Core Set Booster Pack", "child_tcgplayer_product_id": "59123" },
+        { "kind": "deck", "quantity": 2, "name": "Semi-randomized 20-card ready-to-play deck" },
+        { "kind": "other", "quantity": 1, "name": "Magic learn-to-play guide" },
+        { "kind": "other", "quantity": 1, "name": "Rules insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "485831",
+      "name": "2013 Core Set Booster Battle Pack Display",
+      "note": [ "MTGJSON ships contents:null. Collector's Cache distributor spec table for this exact product (SKU 116063) reads '12 packs per box' and '6 boxes per case' — i.e. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 12, "name": "2013 Core Set Booster Battle Pack", "child_tcgplayer_product_id": "97819" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "245962",
+      "name": "2013 Core Set Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. Trinity Games and Face to Face Games product listings both quote the identical box text: four 15-card booster packs from a variety of recent sets (Innistrad, Dark Ascension, Avacyn Restored, and Magic …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 4, "name": "Booster pack (assorted recent sets: Innistrad, Dark Ascension, Avacyn Restored, Magic 2013)" },
+        { "kind": "other", "quantity": 125, "name": "Semi-randomized game card" },
+        { "kind": "other", "quantity": 100, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Deck builder's guide" },
+        { "kind": "other", "quantity": 1, "name": "Magic learn-to-play guide" },
+        { "kind": "other", "quantity": 1, "name": "Full-art reusable card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "59124",
+      "name": "2013 Core Set Fat Pack",
+      "note": [ "MTGJSON ships contents:null. ToyWiz M13 Fat Pack listing (corroborated by TCGplayer/magicspoiler product descriptions): nine Magic 2013 15-card booster packs, an 80-card basic land pack, two 60-card deck boxes, one storage card b …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "2013 Core Set Booster Pack", "child_tcgplayer_product_id": "59123" },
+        { "kind": "other", "quantity": 80, "name": "Basic land card (80-card land pack)" },
+        { "kind": "other", "quantity": 2, "name": "60-card deck box" },
+        { "kind": "other", "quantity": 1, "name": "Storage card box" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Special-edition Spindown life counter" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "55927",
+      "name": "2012 Core Set Booster Battle Pack",
+      "note": [ "MTGJSON ships contents:null. MTG Wiki (Magic 2012) + retail listings (Collector's Cache, Amazon, Blowoutcards spec '2 decks + 2 booster packs per battle pack'): each Booster Battle Pack contains two 20-card semi-randomized decks, …" ],
+      "components": [
+        { "kind": "deck", "quantity": 2, "name": "20-card semi-randomized deck" },
+        { "kind": "sealed", "quantity": 2, "name": "2012 Core Set Booster Pack", "child_tcgplayer_product_id": "46956" },
+        { "kind": "other", "quantity": 1, "name": "Learn to Play guide & rules insert" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "244380",
+      "name": "2012 Core Set Booster Battle Pack Display",
+      "note": [ "MTGJSON ships contents:null. Blowoutcards retail spec: 'Configuration: 12 battle packs per box'; corroborated by Bargy's/DarksideGames Booster Battle Pack Box listings. Display = 12 of sibling Booster Battle Pack (55927)." ],
+      "components": [
+        { "kind": "sealed", "quantity": 12, "name": "2012 Core Set Booster Battle Pack", "child_tcgplayer_product_id": "55927" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "92504",
+      "name": "2012 Core Set Deck Builders Toolkit",
+      "note": [ "MTGJSON ships contents:null. Waxstat/MTG Wiki Deck Builder's Toolkit exact contents (standard 2011-era template): 125 semi-randomized cards, four 15-card booster packs from a variety of recent sets, 100 basic land cards, a deck b …" ],
+      "components": [
+        { "kind": "other", "quantity": 125, "name": "Semi-randomized card" },
+        { "kind": "sealed", "quantity": 4, "name": "15-card booster pack (assorted recent sets)" },
+        { "kind": "other", "quantity": 100, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Deck builder's guide" },
+        { "kind": "other", "quantity": 1, "name": "Learn to Play guide" },
+        { "kind": "other", "quantity": 1, "name": "Reusable card storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78318",
+      "name": "2012 Core Set Fat Pack",
+      "note": [ "MTGJSON ships contents:null. ToyWiz M12 Fat Pack listing + MTG Wiki Fat Pack article (classic pre-2015 fat pack): nine 15-card booster packs, 80 basic land cards, one Spindown life counter, one player's guide, one card box, and t …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "2012 Core Set Booster Pack", "child_tcgplayer_product_id": "46956" },
+        { "kind": "other", "quantity": 80, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Card box" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "39120",
+      "name": "Mirrodin Besieged Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Standard 2011-era fat pack. Confirmed by ToyWiz, CoolStuffInc, and MTG Wiki listings: 9 Mirrodin Besieged booster packs, 1 card box, a player's guide, a learn-to-play insert, 80 basic lands (40 Scars …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Mirrodin Besieged Booster Pack", "child_tcgplayer_product_id": "39108" },
+        { "kind": "other", "quantity": 80, "name": "Basic land (40 Scars of Mirrodin + 40 Mirrodin Besieged)" },
+        { "kind": "other", "quantity": 1, "name": "Mirrodin Besieged Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Learn-to-play insert" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box" },
+        { "kind": "other", "quantity": 2, "name": "60-card deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "35746",
+      "name": "Scars of Mirrodin Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Official product description (via coolstuffinc.com/p/98212) quotes: 'A player's guide, one card box with panoramic art, 8 Scars of Mirrodin booster packs, a pack of 40 basic lands, and a Scars of Mirr …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 8, "name": "Scars of Mirrodin Booster Pack", "child_tcgplayer_product_id": "35747" },
+        { "kind": "other", "quantity": 40, "name": "Basic land cards" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box (panoramic art)" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "215046",
+      "name": "2011 Core Set Land Station",
+      "note": [ "MTGJSON ships contents:null. Product description confirmed by NobleKnight retail listing and WebSearch of MTG wiki/Fandom, Amazon, and multiple retailers: 'Each Land Station comes with 400 Magic 2011 Core Set basic land cards (80 …" ],
+      "components": [
+        { "kind": "other", "quantity": 80, "name": "Plains (Magic 2011 basic land)" },
+        { "kind": "other", "quantity": 80, "name": "Island (Magic 2011 basic land)" },
+        { "kind": "other", "quantity": 80, "name": "Swamp (Magic 2011 basic land)" },
+        { "kind": "other", "quantity": 80, "name": "Mountain (Magic 2011 basic land)" },
+        { "kind": "other", "quantity": 80, "name": "Forest (Magic 2011 basic land)" },
+        { "kind": "other", "quantity": 1, "name": "Reusable storage box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78317",
+      "name": "Lorwyn Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Official WotC product description, corroborated by MTG Wiki (Lorwyn page) and retail listings (Face to Face Games, CoolStuffInc, Kelz0r, ToyWiz, Amazon). …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Lorwyn Booster Pack", "child_tcgplayer_product_id": "27350" },
+        { "kind": "other", "quantity": 40, "name": "Lorwyn basic land cards" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide (visual encyclopedia)" },
+        { "kind": "other", "quantity": 2, "name": "Card box with panoramic art" },
+        { "kind": "other", "quantity": 6, "name": "Color-coded card dividers" },
+        { "kind": "other", "quantity": 1, "name": "Lorwyn cycle novel (first book)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "card", "quantity": 1, "name": "Random Pro Tour Player promo card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78332",
+      "name": "Time Spiral Fat Pack",
+      "note": [ "MTGJSON ships contents:null. 2006-era Fat Pack, verified via CoolStuffInc (coolstuffinc.com/p/98245), NobleKnight, Collector's Cache, and Face to Face Games listings, all consistent: 6 Time Spiral booster packs, a 40-card basic l …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Time Spiral Booster Pack", "child_tcgplayer_product_id": "27372" },
+        { "kind": "other", "quantity": 40, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Time Spiral Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Time Spiral Player's Guide" },
+        { "kind": "other", "quantity": 2, "name": "Card storage box (panoramic art)" },
+        { "kind": "other", "quantity": 6, "name": "Plastic divider" },
+        { "kind": "card", "quantity": 1, "name": "Random Pro Tour Player foil promo card" },
+        { "kind": "other", "quantity": 1, "name": "Time Spiral novel" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78295",
+      "name": "Ravnica Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Original 2005 small-set-era Fat Pack, NOT the 9-booster/80-land template of later sets. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 6, "name": "Ravnica: City of Guilds Booster Pack", "child_tcgplayer_product_id": "27364" },
+        { "kind": "other", "quantity": 40, "name": "Basic land cards" },
+        { "kind": "other", "quantity": 1, "name": "Ravnica: City of Guilds Player's Guide" },
+        { "kind": "other", "quantity": 2, "name": "Art-covered card storage box" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Ravnica: City of Guilds novel" },
+        { "kind": "other", "quantity": 1, "name": "Random premium foil card (Pro Tour player card)" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "81796",
+      "name": "Multiverse Gift Box",
+      "note": [ "MTGJSON ships contents:null. Contents corroborated across mtg.fandom.com/wiki/Multiverse_Gift_Box, mtg.fandom.com/wiki/Gift_package, and magicuntapped.com's 'The Multiverse Gift Box' article. …" ],
+      "components": [
+        { "kind": "sealed", "quantity": 2, "name": "Visions Special Edition Preview Booster Pack", "child_tcgplayer_product_id": "27379" },
+        { "kind": "sealed", "quantity": 1, "name": "Homelands Booster Pack (French)" },
+        { "kind": "sealed", "quantity": 1, "name": "Chronicles Booster Pack (Japanese)" },
+        { "kind": "sealed", "quantity": 1, "name": "Alliances Booster Pack (Italian)" },
+        { "kind": "sealed", "quantity": 1, "name": "Renaissance Booster Pack (German)" },
+        { "kind": "other", "quantity": 1, "name": "Two-piece cardboard storage box (holds ~840 cards)" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "112723",
+      "name": "Shadows over Innistrad Fat Pack",
+      "note": [ "MTGJSON ships contents:null. WotC/retail product copy; Shadows over Innistrad fat pack land pack is 80 basic lands (verified)." ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Shadows over Innistrad Booster Pack", "child_tcgplayer_product_id": "112708" },
+        { "kind": "other", "quantity": 80, "name": "Basic land card" },
+        { "kind": "other", "quantity": 1, "name": "Special edition Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Card box" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "57580",
+      "name": "Dark Ascension Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Card Kingdom/CoolStuffInc/Amazon reproduce WotC copy: Dark Ascension fat pack = a 70-card basic land pack (verified)." ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Dark Ascension Booster Pack", "child_tcgplayer_product_id": "57583" },
+        { "kind": "other", "quantity": 70, "name": "Basic land (70-card land pack)" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Dark Ascension Player's Guide" },
+        { "kind": "other", "quantity": 1, "name": "Learn to Play insert" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box" },
+        { "kind": "other", "quantity": 2, "name": "Deck box" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "72025",
+      "name": "Mirrodin Besieged Mirran Faction Booster Pack",
+      "note": [ "MTGJSON ships contents:null. MBS collation project + retail: a faction booster pack is 15 cards (1 rare/mythic, 3 uncommons, 10 commons, 1 land) + a token (verified)." ],
+      "components": [
+        { "kind": "other", "quantity": 1, "name": "Mirran-faction booster: 1 rare/mythic, 3 uncommons, 10 commons, 1 basic land (15 cards)" },
+        { "kind": "other", "quantity": 1, "name": "Token / tips-and-tricks card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "72026",
+      "name": "Mirrodin Besieged Phyrexian Faction Booster Pack",
+      "note": [ "MTGJSON ships contents:null. MBS collation project + retail: a faction booster pack is 15 cards (1 rare/mythic, 3 uncommons, 10 commons, 1 land) + a token (verified)." ],
+      "components": [
+        { "kind": "other", "quantity": 1, "name": "Phyrexian-faction booster: 1 rare/mythic, 3 uncommons, 10 commons, 1 basic land (15 cards)" },
+        { "kind": "other", "quantity": 1, "name": "Token / tips-and-tricks card" }
+      ]
+    },
+    {
+      "tcgplayer_product_id": "78330",
+      "name": "Shadowmoor Fat Pack",
+      "note": [ "MTGJSON ships contents:null. Draftsim fat-pack history + WotC copy: the Shadowmoor fat pack included the Shadowmoor novel (Book I) (verified)." ],
+      "components": [
+        { "kind": "sealed", "quantity": 8, "name": "Shadowmoor Booster Pack", "child_tcgplayer_product_id": "27368" },
+        { "kind": "other", "quantity": 40, "name": "Basic land" },
+        { "kind": "other", "quantity": 1, "name": "Spindown life counter" },
+        { "kind": "other", "quantity": 1, "name": "Player's guide" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box (panoramic art)" },
+        { "kind": "other", "quantity": 1, "name": "Shadowmoor novel (Shadowmoor Cycle, Book I)" }
+      ]
     }
   ]
 }
