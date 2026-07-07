@@ -109,7 +109,8 @@ async fn q_set_and_type_filters_narrow_the_list() {
     let app = test_app().await;
     seed_products(&app).await;
 
-    // `q` is a case-insensitive name substring (not Scryfall syntax).
+    // `q` matches each word as a case-insensitive name substring (not Scryfall
+    // syntax); a single word behaves like a plain substring.
     let (_, _, body) = send(&app, get("/api/games/mtg/products?q=bundle")).await;
     assert_eq!(body["total"], 1);
     assert_eq!(body["data"][0]["id"], "200");
@@ -135,6 +136,43 @@ async fn q_set_and_type_filters_narrow_the_list() {
     // A bad sort is a 422 (consistent with the card lists).
     let (status, _, _) = send(&app, get("/api/games/mtg/products?sort=nonsense")).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// Issue #273: a multi-word `q` finds products whose name contains *every* word, even
+// when the words are not adjacent — "karlov box" matches "Karlov Collector Booster
+// Box". Each whitespace-separated word is an independent, order-independent,
+// case-insensitive name substring, AND-ed together.
+#[tokio::test]
+async fn q_matches_each_word_as_an_order_independent_substring() {
+    let app = test_app().await;
+    seed_products(&app).await;
+
+    // Non-adjacent words match: only "Karlov Collector Booster Box" (100) has both
+    // "karlov" and "box" — the plain-substring "karlov box" used to match nothing.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products?q=karlov%20box")).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["id"], "100");
+
+    // Order-independent: reversing the words gives the same single match.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products?q=box%20karlov")).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["id"], "100");
+
+    // Case is folded on both sides, and runs of whitespace collapse.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products?q=KARLOV%20%20Box")).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["id"], "100");
+
+    // Words shared by two products return both ("booster box" -> 100 and 400).
+    let (_, _, body) = send(&app, get("/api/games/mtg/products?q=booster%20box")).await;
+    assert_eq!(body["total"], 2);
+    let ids: Vec<&str> =
+        body["data"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"100") && ids.contains(&"400"));
+
+    // AND semantics: no single product carries both words -> nothing matches.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products?q=karlov%20bloomburrow")).await;
+    assert_eq!(body["total"], 0);
 }
 
 #[tokio::test]
