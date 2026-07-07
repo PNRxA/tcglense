@@ -262,6 +262,27 @@ mod tests {
                 .iter()
                 .any(|c| c.kind == "other" && c.child_tcgplayer_product_id.is_none())
         );
+        // The three guaranteed staples are `card` components linking the borderless printing
+        // (tle 315-317), one each; the two randomised staples are one textual `card` line
+        // (quantity 2, no card link) — so "what's in the box" lists the guaranteed cards and
+        // the 2-of-10 pool alongside the boosters.
+        let guaranteed: Vec<(&str, i32)> = bundle
+            .components
+            .iter()
+            .filter(|c| c.kind == "card" && c.child_set.as_deref() == Some("tle"))
+            .map(|c| (c.child_number.as_deref().unwrap_or_default(), c.quantity))
+            .collect();
+        assert_eq!(
+            guaranteed,
+            vec![("315", 1), ("316", 1), ("317", 1)],
+            "the three guaranteed borderless staples are linked, one each"
+        );
+        let pool = bundle
+            .components
+            .iter()
+            .find(|c| c.kind == "card" && c.child_number.is_none())
+            .expect("a textual card line for the randomised pool");
+        assert_eq!(pool.quantity, 2, "2 random cards drawn from the pool of 10");
     }
 
     /// Pin the newly-authored Avatar `contents:null` products — the case/multipack link

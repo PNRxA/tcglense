@@ -34,12 +34,19 @@
         "nonfoil borderless printing. Source: Wizards 'Collecting Avatar' article + retail listings.",
         "",
         "`components` mirrors the retail 'what's in the box': 9 Play Boosters (tcg 648640) + 1",
-        "Collector Booster (tcg 648646) + the land packs, life counter and storage box. Source:",
-        "Wizards 'Collecting Avatar' article + the Amazon/retail product listing."
+        "Collector Booster (tcg 648646) + the three guaranteed borderless staples (Arcane Signet,",
+        "Sol Ring, Swiftfoot Boots; linked to tle 315-317) + 2 random borderless staples drawn from",
+        "the pool of ten (a textual `card` line, unlinkable since the two are randomised) + the land",
+        "packs, life counter and storage box. The guaranteed three and the pool mirror the `contents`",
+        "above. Source: Wizards 'Collecting Avatar' article + the Amazon/retail product listing."
       ],
       "components": [
         { "kind": "sealed", "quantity": 9, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
         { "kind": "sealed", "quantity": 1, "name": "Collector Booster", "child_tcgplayer_product_id": "648646" },
+        { "kind": "card", "quantity": 1, "name": "Arcane Signet", "child_set": "tle", "child_number": "315" },
+        { "kind": "card", "quantity": 1, "name": "Sol Ring", "child_set": "tle", "child_number": "316" },
+        { "kind": "card", "quantity": 1, "name": "Swiftfoot Boots", "child_set": "tle", "child_number": "317" },
+        { "kind": "card", "quantity": 2, "name": "Borderless Commander staple (random, from a pool of 10)" },
         { "kind": "other", "quantity": 1, "name": "Traditional foil land pack (15 cards)" },
         { "kind": "other", "quantity": 1, "name": "Nonfoil land pack (15 cards)" },
         { "kind": "other", "quantity": 1, "name": "Click Wheel life counter" },
