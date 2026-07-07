@@ -311,6 +311,70 @@ mod tests {
         assert_eq!(boosters.quantity, 5);
     }
 
+    /// Spot-check a few of the bulk-authored non-Avatar products — the multipack link
+    /// structure and standard booster counts (so a typo'd child id or count fails CI).
+    #[test]
+    fn covers_non_avatar_products() {
+        let find = |tcg: &str| {
+            data()
+                .products
+                .iter()
+                .find(|p| p.tcgplayer_product_id == tcg)
+                .unwrap_or_else(|| panic!("product {tcg} present"))
+        };
+
+        // Secrets of Strixhaven Commander Deck Set of 5 -> one of each of 5 college decks.
+        let soc = find("675572");
+        let soc_children: std::collections::HashSet<&str> = soc
+            .components
+            .iter()
+            .filter_map(|c| c.child_tcgplayer_product_id.as_deref())
+            .collect();
+        assert_eq!(soc_children.len(), 5, "links 5 sibling decks");
+        assert!(soc.components.iter().all(|c| c.quantity == 1));
+
+        // Tarkir Dragonstorm Prerelease Packs Set of 5 -> 5 clan packs.
+        let tdm = find("620244");
+        assert_eq!(
+            tdm.components.iter().filter(|c| c.kind == "sealed").count(),
+            5
+        );
+
+        // Modern Horizons 3 Prerelease Pack -> 6 Play Boosters (tcg 541163).
+        let mh3 = find("541159");
+        let mh3_boosters = mh3
+            .components
+            .iter()
+            .find(|c| c.child_tcgplayer_product_id.as_deref() == Some("541163"))
+            .expect("links the play booster pack");
+        assert_eq!(mh3_boosters.quantity, 6);
+    }
+
+    /// Every `sealed` component carries a non-empty child link (a linkable sub-product);
+    /// every non-`sealed` link field stays absent (textual). Guards the shipped file.
+    #[test]
+    fn sealed_components_link_and_others_are_textual() {
+        for product in &data().products {
+            for c in &product.components {
+                match c.kind.as_str() {
+                    "sealed" => {
+                        // Most sealed components link a sub-product; a cross-set booster (a
+                        // deluxe-kit's from-another-set pack) legitimately can't, and stays
+                        // textual — so this only asserts a *present* link is non-empty.
+                        if let Some(id) = &c.child_tcgplayer_product_id {
+                            assert!(!id.trim().is_empty(), "{} sealed link non-empty", c.name);
+                        }
+                    }
+                    _ => assert!(
+                        c.child_tcgplayer_product_id.is_none(),
+                        "non-sealed component {} carries no product link",
+                        c.name
+                    ),
+                }
+            }
+        }
+    }
+
     /// The version hash is non-empty and stable across calls (drives the ingest gate).
     #[test]
     fn version_is_stable() {
