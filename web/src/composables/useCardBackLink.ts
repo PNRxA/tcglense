@@ -3,10 +3,11 @@ import { onBeforeRouteUpdate, useRouter, type RouteLocationResolved } from 'vue-
 import type { Card } from '@/lib/api'
 
 // The card-detail page is shared by every section that lists cards — the catalog, a
-// collection, and a wish list all open it (via the browse-grid modal's "Open full
-// page"). Each of those list routes carries a `:game` param, so the previous page can
-// be honoured whichever section it came from. Non-set list routes get a fixed label;
-// set-scoped routes fall through to the card's own set name below.
+// collection, a wish list, and a sealed product's "Cards in this product" section all open
+// it (via the browse-grid modal's "Open full page"). Each of those list routes carries a
+// `:game` param, so the previous page can be honoured whichever section it came from.
+// Non-set list routes get a fixed label; set-scoped routes fall through to the card's own
+// set name below.
 const FROM_LABELS: Record<string, string> = {
   'game-cards': 'All cards',
   game: 'All sets',
@@ -14,6 +15,9 @@ const FROM_LABELS: Record<string, string> = {
   'game-collection': 'Collection',
   'wishlist-cards': 'Wish list',
   'game-wishlist': 'Wish list',
+  // A sealed product's "Cards in this product" section (the card modal sits over the
+  // product page as `?card=<id>`); back returns to that product's page.
+  'sealed-product': 'Sealed product',
 }
 
 // List routes scoped to a single set (catalog / collection / wish list): every card on

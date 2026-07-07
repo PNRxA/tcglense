@@ -56,6 +56,7 @@ const routes = [
   { path: '/wishlist/:game', name: 'game-wishlist', component: { template: '<div />' } },
   { path: '/wishlist/:game/cards', name: 'wishlist-cards', component: { template: '<div />' } },
   { path: '/wishlist/:game/sets/:code', name: 'wishlist-set', component: { template: '<div />' } },
+  { path: '/sealed/:game/:id', name: 'sealed-product', component: { template: '<div />' } },
   { path: '/cards/:game/cards/:id', name: 'card', component: Host() },
 ]
 
@@ -138,6 +139,13 @@ describe('useCardBackLink', () => {
     expect(await backLink('/wishlist/mtg/cards?card=dummy-blb-0001')).toEqual({
       to: '/wishlist/mtg/cards',
       label: 'Wish list',
+    })
+  })
+
+  it('returns to the sealed product the card was opened from (Cards in this product)', async () => {
+    expect(await backLink('/sealed/mtg/900003?card=dummy-blb-0001')).toEqual({
+      to: '/sealed/mtg/900003',
+      label: 'Sealed product',
     })
   })
 
