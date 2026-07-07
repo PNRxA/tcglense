@@ -278,6 +278,7 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
 | `GET /api/games/{game}/products/{id}/cards?page&page_size&section` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead) and, within the booster pool, **family-exclusive cards first** (a collector booster's special printings no other booster in the set can pull — each flagged `exclusive`, PR #221), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Optional `?section` (`contains`/`exclusive`/`booster`/`variable`) pages just one display section so the SPA paginates each on its own (issue #224); omit it for the whole ordered list — `total`/`has_more` then describe the selected section. Empty page when the product has no ingested contents; `404` for an unknown game/product, `422` for an unknown section |
 | `GET /api/games/{game}/products/{id}/cards/sections` | `{ data: ProductCardSection[] }` — the **non-empty** display sections of the cards above, in display order (`contains` → `exclusive` → `booster` → `variable`) with per-section counts, so the SPA knows which independently-paginated blocks to render (issue #224) before fetching any card. `[]` when the product has no ingested contents; `404` for an unknown game/product |
+| `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
 
 `Product = { id, name, set_code, set_name: string | null, product_type, url: string |
 null, has_image, prices: { usd, usd_foil }, released_at: string | null }`. `id` is the
@@ -319,6 +320,18 @@ section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (th
 display order — so the SPA renders one independently-paginated block per section (issue #224)
 and knows each's size without fetching its cards. The four sections are the membership buckets
 with the `booster` pool split by `exclusive`; their combined `total` is the whole card count.
+
+`ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
+(the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is
+`sealed` (a nested pack/box), `deck` (a precon deck), `card` (a fixed promo), or `other` (a
+physical extra — a die, storage box, land pack…); `name` is the display label (the linked
+child's catalog name when one resolves, else MTGJSON's); `quantity` how many the product
+holds. A `sealed` component links its sub-product via the embedded `product` (reusing the
+`Product` shape, so the SPA renders a linked tile — "the products this box contains"); a
+`card` component links its card via `card`; `deck`/`other` (and unresolved links) leave both
+`null`. Sourced from MTGJSON's `contents` (nested `sealed` w/ counts, `deck`, `card`, `other`)
+via `sealed_components`; `pack`/`variable` are left to the card-membership pass above. The
+component list is **non-recursive** (a box's direct contents, not its packs' cards).
 
 ## Collection API contract
 

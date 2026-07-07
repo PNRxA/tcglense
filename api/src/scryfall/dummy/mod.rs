@@ -37,10 +37,11 @@ use super::ingest::{self, IngestError};
 use super::map;
 use super::price_history;
 use catalog::{dummy_cards, dummy_sets};
-use crate::entities::prelude::{Card, Product, ProductPriceHistory, SealedContent};
+use crate::entities::prelude::{Card, Product, ProductPriceHistory, SealedComponent, SealedContent};
+use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 use crate::entities::{
-    card, card_price_history, product, product_price_history, sealed_content,
+    card, card_price_history, product, product_price_history, sealed_component, sealed_content,
 };
 use prices::price_walk;
 use products::dummy_products;
@@ -304,6 +305,119 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
     Ok(total)
 }
 
+/// Seed a couple of sealed-product **compositions** ("what's in the box"), so the
+/// sealed-detail "What's in the box" section has data offline: the base-set bundle lists
+/// its play boosters (linked to the pack product), a foil promo (linked to the card), and
+/// two physical extras; the collector box lists its packs. Resolves the fabricated
+/// product/card external ids to internal ids the same way [`seed_sealed_contents`] does
+/// (so it runs after both are seeded), wipes the game's rows, then inserts fresh. Returns
+/// the number of rows written.
+async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    // (product ext, position, kind, name, quantity, child product ext, child card ext).
+    // Product ids match `dummy::products`; card ids match `dummy::catalog`.
+    let seed: Vec<(&str, i32, ComponentKind, &str, i32, Option<&str>, Option<&str>)> = vec![
+        // The base-set bundle (900003): 6 play boosters (linked to the pack product 900002),
+        // a foil promo (linked to a card), a spindown, and a storage box.
+        (
+            "900003",
+            0,
+            ComponentKind::Sealed,
+            "Dummy Base Set Play Booster Pack",
+            6,
+            Some("900002"),
+            None,
+        ),
+        (
+            "900003",
+            1,
+            ComponentKind::Card,
+            "Dummy Prerelease Promo",
+            1,
+            None,
+            Some("dummy-dmb-0078"),
+        ),
+        ("900003", 2, ComponentKind::Other, "Spindown life counter", 1, None, None),
+        ("900003", 3, ComponentKind::Other, "Card storage box", 1, None, None),
+        // The collector booster box (900001): 12 booster packs (linked to the pack product).
+        (
+            "900001",
+            0,
+            ComponentKind::Sealed,
+            "Dummy Base Set Play Booster Pack",
+            12,
+            Some("900002"),
+            None,
+        ),
+    ];
+
+    // Resolve product + card external ids -> internal ids from the just-seeded rows.
+    let product_exts: Vec<String> = seed
+        .iter()
+        .flat_map(|(parent, _, _, _, _, child, _)| {
+            std::iter::once(parent.to_string()).chain(child.map(str::to_string))
+        })
+        .collect();
+    let product_ids: std::collections::HashMap<String, i32> = Product::find()
+        .select_only()
+        .column(product::Column::ExternalId)
+        .column(product::Column::Id)
+        .filter(product::Column::Game.eq(GAME))
+        .filter(product::Column::ExternalId.is_in(product_exts))
+        .into_tuple::<(String, i32)>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+    let card_exts: Vec<String> = seed
+        .iter()
+        .filter_map(|(_, _, _, _, _, _, card)| card.map(str::to_string))
+        .collect();
+    let card_ids: std::collections::HashMap<String, i32> = Card::find()
+        .select_only()
+        .column(card::Column::ExternalId)
+        .column(card::Column::Id)
+        .filter(card::Column::Game.eq(GAME))
+        .filter(card::Column::ExternalId.is_in(card_exts))
+        .into_tuple::<(String, i32)>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+
+    let now = Utc::now();
+    let models: Vec<sealed_component::ActiveModel> = seed
+        .into_iter()
+        .filter_map(|(parent, position, kind, name, quantity, child_product, child_card)| {
+            let product_id = *product_ids.get(parent)?;
+            Some(sealed_component::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                product_id: Set(product_id),
+                position: Set(position),
+                kind: Set(kind.as_str().to_string()),
+                name: Set(name.to_string()),
+                quantity: Set(quantity),
+                child_product_id: Set(child_product.and_then(|c| product_ids.get(c).copied())),
+                child_card_id: Set(child_card.and_then(|c| card_ids.get(c).copied())),
+                created_at: Set(now),
+                updated_at: Set(now),
+            })
+        })
+        .collect();
+
+    SealedComponent::delete_many()
+        .filter(sealed_component::Column::Game.eq(GAME))
+        .exec(db)
+        .await?;
+    let total = models.len() as u64;
+    if !models.is_empty() {
+        SealedComponent::insert_many(models)
+            .exec_without_returning(db)
+            .await?;
+    }
+    Ok(total)
+}
+
 /// Seed the dummy MTG catalog, recording status in `ingest_state`. On failure the
 /// state row is best-effort marked `"error"` (mirroring `super::ingest::refresh`) so
 /// `GET /status` stays honest, and the error is returned for the caller to log.
@@ -372,6 +486,11 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     // has data offline. Runs after both cards and products are seeded (it joins them).
     let membership_rows = seed_sealed_contents(db).await?;
     tracing::info!(rows = membership_rows, "seeded dummy sealed-product memberships");
+
+    // Sealed-product compositions ("what's in the box"), so the sealed-detail contents
+    // section renders offline. Also joins cards + products, so it runs after both.
+    let component_rows = seed_sealed_components(db).await?;
+    tracing::info!(rows = component_rows, "seeded dummy sealed-product components");
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not

@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 
+use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 
 // ---------- Serde shapes (trimmed to what we consume) ----------
@@ -82,7 +83,9 @@ pub struct SealedIdentifiers {
     pub tcgplayer_product_id: Option<String>,
 }
 
-/// The six content categories (we consume five; `other` is non-card and ignored).
+/// The six content categories. Card resolution ([`build_memberships`]) consumes five and
+/// ignores `other` (non-card); the composition builder ([`build_compositions`]) consumes
+/// `sealed` / `deck` / `card` / `other` (the physical "what's in the box" line items).
 #[derive(Debug, Default, Deserialize)]
 pub struct Contents {
     #[serde(default)]
@@ -95,6 +98,10 @@ pub struct Contents {
     pub sealed: Vec<ContentSealed>,
     #[serde(default)]
     pub variable: Vec<ContentVariable>,
+    /// Non-card physical extras — a spindown die, a storage box, a basic-land pack, …
+    /// (`{ "name": … }`). Ignored by card resolution; surfaced by the composition builder.
+    #[serde(default)]
+    pub other: Vec<ContentOther>,
 }
 
 /// A directly-named card (usually a fixed promo): resolvable by `uuid` or `(set, number)`.
@@ -108,6 +115,9 @@ pub struct ContentCard {
     pub number: Option<String>,
     #[serde(default)]
     pub foil: bool,
+    /// Display name (composition line item); resolution ignores it.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// A precon-deck reference, resolved against the set's `decks[]` by `name`.
@@ -129,10 +139,26 @@ pub struct ContentPack {
 }
 
 /// A nested sealed product (e.g. a box of packs), resolved by `uuid` and recursed into.
+/// `count` + `name` drive the composition line item ("9× Play Booster Pack"); `uuid` is
+/// both the recursion key (card resolution) and the child-product link (composition).
 #[derive(Debug, Deserialize)]
 pub struct ContentSealed {
     #[serde(default)]
     pub uuid: Option<String>,
+    /// How many of the sub-product the parent bundles (composition quantity). Absent = 1.
+    #[serde(default)]
+    pub count: Option<i32>,
+    /// Display name of the sub-product (composition fallback when the link doesn't resolve).
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// A non-card physical extra (`{ "name": "…Spindown" }`). Surfaced verbatim as a
+/// composition line item — never resolved to a card or product.
+#[derive(Debug, Deserialize)]
+pub struct ContentOther {
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// A randomized ("one of these") configuration; every option is surfaced as `may be in`.
@@ -205,6 +231,24 @@ pub struct RawMembership {
 /// Guards a runaway `sealed` recursion (a box of boxes of …). Real chains are 2–3 deep.
 const MAX_SEALED_DEPTH: usize = 8;
 
+/// One resolved composition line item: a sealed product (by TCGplayer product id) holds
+/// `quantity` of a component. A `sealed` component may link to a sub-product
+/// (`child_tcgplayer_product_id`); a `card` component may link to a card
+/// (`child_scryfall_id`); `deck` / `other` are textual. External-id-keyed so the DB layer
+/// resolves the links to internal ids. Emitted in **display order** per product (the Vec's
+/// order); the ingest assigns the stored `position` from the resolved internal product id,
+/// so it stays collision-free even if two `sealedProduct` entries share a TCGplayer id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawComponent {
+    pub tcgplayer_product_id: String,
+    /// One of [`ComponentKind`]'s string values.
+    pub kind: &'static str,
+    pub name: String,
+    pub quantity: i32,
+    pub child_tcgplayer_product_id: Option<String>,
+    pub child_scryfall_id: Option<String>,
+}
+
 /// Resolve every sealed product's contents into deduplicated per-card membership rows.
 ///
 /// - `contents.card` and precon `contents.deck` cards -> `contains`.
@@ -218,47 +262,27 @@ const MAX_SEALED_DEPTH: usize = 8;
 /// refs that carry only set + collector number). A product with no
 /// `tcgplayerProductId`, or a card that resolves to no Scryfall id, is skipped.
 pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
-    // Index sets by lowercased code (data keys are uppercase; refs are lowercase).
-    let sets: HashMap<String, &SetData> = all
-        .data
-        .iter()
-        .map(|(code, data)| (code.to_lowercase(), data))
-        .collect();
+    memberships_from(all, &Indexes::build(all))
+}
 
-    // uuid -> scryfallId and (set_lower, number) -> scryfallId, over every card.
-    let mut uuid_to_scryfall: HashMap<&str, &str> = HashMap::new();
-    let mut setnum_to_scryfall: HashMap<(String, String), &str> = HashMap::new();
-    for data in all.data.values() {
-        for card in &data.cards {
-            let Some(scryfall) = card.identifiers.scryfall_id.as_deref() else {
-                continue;
-            };
-            if let Some(uuid) = card.uuid.as_deref() {
-                uuid_to_scryfall.insert(uuid, scryfall);
-            }
-            if let (Some(set), Some(number)) = (&card.set_code, &card.number) {
-                setnum_to_scryfall.insert((set.to_lowercase(), number.clone()), scryfall);
-            }
-        }
-    }
+/// Resolve every sealed product's **structural composition** into ordered component rows —
+/// the "what's in the box" line items ([`RawComponent`]). Unlike [`build_memberships`]
+/// (which recurses the whole tree down to cards), this lists each product's *direct*
+/// components in a stable display order: nested packs/boxes (`sealed`) first, then precon
+/// decks, then fixed promo cards, then physical extras (`other`) — `contents.pack` and
+/// `contents.variable` are left to card resolution.
+///
+/// A `sealed` component's `uuid` resolves to the sub-product's `tcgplayerProductId` (the
+/// link target); a `card` component resolves to a Scryfall id the same way card resolution
+/// does. A product with no `tcgplayerProductId` or no `contents` contributes nothing; an
+/// unresolved link is kept as text (the line item still carries name + quantity).
+pub fn build_compositions(all: &AllPrintings) -> Vec<RawComponent> {
+    compositions_from(all, &Indexes::build(all))
+}
 
-    // uuid -> the sealed product it names, for `sealed` recursion.
-    let mut product_by_uuid: HashMap<&str, &SealedProduct> = HashMap::new();
-    for data in all.data.values() {
-        for product in &data.sealed_product {
-            if let Some(uuid) = product.uuid.as_deref() {
-                product_by_uuid.insert(uuid, product);
-            }
-        }
-    }
-
-    let resolver = Resolver {
-        sets: &sets,
-        uuid_to_scryfall: &uuid_to_scryfall,
-        setnum_to_scryfall: &setnum_to_scryfall,
-        product_by_uuid: &product_by_uuid,
-    };
-
+/// The membership walk over a prebuilt [`Indexes`] (see [`build_memberships`]).
+fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
+    let resolver = Resolver { idx };
     let mut out: HashSet<RawMembership> = HashSet::new();
     for data in all.data.values() {
         for product in &data.sealed_product {
@@ -271,19 +295,143 @@ pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
             }
         }
     }
-
     out.into_iter().collect()
 }
 
-/// Borrowed lookups shared across the recursive contents walk.
-struct Resolver<'a> {
-    sets: &'a HashMap<String, &'a SetData>,
-    uuid_to_scryfall: &'a HashMap<&'a str, &'a str>,
-    setnum_to_scryfall: &'a HashMap<(String, String), &'a str>,
-    product_by_uuid: &'a HashMap<&'a str, &'a SealedProduct>,
+/// The composition walk over a prebuilt [`Indexes`] (see [`build_compositions`]).
+fn compositions_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawComponent> {
+    let mut out: Vec<RawComponent> = Vec::new();
+    for data in all.data.values() {
+        for product in &data.sealed_product {
+            let Some(tcg_id) = product.identifiers.tcgplayer_product_id.as_deref() else {
+                continue;
+            };
+            let Some(contents) = &product.contents else {
+                continue;
+            };
+            // Nested packs/boxes: the headline items, linked to the sub-product by uuid.
+            for sr in &contents.sealed {
+                let child = sr.uuid.as_deref().and_then(|uuid| {
+                    idx.product_by_uuid
+                        .get(uuid)
+                        .and_then(|p| p.identifiers.tcgplayer_product_id.clone())
+                });
+                let name = sr.name.clone().unwrap_or_default();
+                push_component(
+                    &mut out,
+                    tcg_id,
+                    ComponentKind::Sealed,
+                    name,
+                    sr.count.unwrap_or(1),
+                    child,
+                    None,
+                );
+            }
+            // Preconstructed decks (textual — the deck's cards are in `sealed_contents`).
+            for dr in &contents.deck {
+                if let Some(name) = dr.name.clone() {
+                    push_component(&mut out, tcg_id, ComponentKind::Deck, name, 1, None, None);
+                }
+            }
+            // Fixed promo cards, linked to the card when it resolves.
+            for cr in &contents.card {
+                let child_card = idx.card_ref(cr).map(str::to_string);
+                push_component(
+                    &mut out,
+                    tcg_id,
+                    ComponentKind::Card,
+                    cr.name.clone().unwrap_or_default(),
+                    1,
+                    None,
+                    child_card,
+                );
+            }
+            // Physical extras (spindown, storage box, land packs, …) — textual.
+            for or in &contents.other {
+                if let Some(name) = or.name.clone() {
+                    push_component(&mut out, tcg_id, ComponentKind::Other, name, 1, None, None);
+                }
+            }
+        }
+    }
+    out
 }
 
-impl Resolver<'_> {
+/// Append one composition line item (in emission = display order). `quantity` is clamped to
+/// `>= 1` (a missing/zero count reads as one).
+fn push_component(
+    out: &mut Vec<RawComponent>,
+    tcg_id: &str,
+    kind: ComponentKind,
+    name: String,
+    quantity: i32,
+    child_product: Option<String>,
+    child_card: Option<String>,
+) {
+    out.push(RawComponent {
+        tcgplayer_product_id: tcg_id.to_string(),
+        kind: kind.as_str(),
+        name,
+        quantity: quantity.max(1),
+        child_tcgplayer_product_id: child_product,
+        child_scryfall_id: child_card,
+    });
+}
+
+/// Lookups built once over the parsed document, shared by the card-membership walk and the
+/// composition builder: sets by lowercased code, `uuid` / `(set, number)` -> Scryfall id,
+/// and sealed-product `uuid` -> the product it names.
+struct Indexes<'a> {
+    sets: HashMap<String, &'a SetData>,
+    uuid_to_scryfall: HashMap<&'a str, &'a str>,
+    setnum_to_scryfall: HashMap<(String, String), &'a str>,
+    product_by_uuid: HashMap<&'a str, &'a SealedProduct>,
+}
+
+impl<'a> Indexes<'a> {
+    fn build(all: &'a AllPrintings) -> Self {
+        // Index sets by lowercased code (data keys are uppercase; refs are lowercase).
+        let sets: HashMap<String, &SetData> = all
+            .data
+            .iter()
+            .map(|(code, data)| (code.to_lowercase(), data))
+            .collect();
+
+        // uuid -> scryfallId and (set_lower, number) -> scryfallId, over every card.
+        let mut uuid_to_scryfall: HashMap<&str, &str> = HashMap::new();
+        let mut setnum_to_scryfall: HashMap<(String, String), &str> = HashMap::new();
+        for data in all.data.values() {
+            for card in &data.cards {
+                let Some(scryfall) = card.identifiers.scryfall_id.as_deref() else {
+                    continue;
+                };
+                if let Some(uuid) = card.uuid.as_deref() {
+                    uuid_to_scryfall.insert(uuid, scryfall);
+                }
+                if let (Some(set), Some(number)) = (&card.set_code, &card.number) {
+                    setnum_to_scryfall.insert((set.to_lowercase(), number.clone()), scryfall);
+                }
+            }
+        }
+
+        // uuid -> the sealed product it names, for `sealed` recursion / child links.
+        let mut product_by_uuid: HashMap<&str, &SealedProduct> = HashMap::new();
+        for data in all.data.values() {
+            for product in &data.sealed_product {
+                if let Some(uuid) = product.uuid.as_deref() {
+                    product_by_uuid.insert(uuid, product);
+                }
+            }
+        }
+
+        Indexes {
+            sets,
+            uuid_to_scryfall,
+            setnum_to_scryfall,
+            product_by_uuid,
+        }
+    }
+
     /// Resolve a direct card reference to a Scryfall id (by `uuid`, else `(set, number)`).
     fn card_ref(&self, cr: &ContentCard) -> Option<&str> {
         if let Some(uuid) = cr.uuid.as_deref()
@@ -300,7 +448,14 @@ impl Resolver<'_> {
         }
         None
     }
+}
 
+/// Borrows the shared [`Indexes`] for the recursive card-membership walk.
+struct Resolver<'a> {
+    idx: &'a Indexes<'a>,
+}
+
+impl Resolver<'_> {
     /// Push a membership row (deduped by the output set).
     fn push(
         &self,
@@ -324,7 +479,7 @@ impl Resolver<'_> {
         let (Some(set_code), Some(name)) = (&dr.set, &dr.name) else {
             return Vec::new();
         };
-        let Some(set) = self.sets.get(&set_code.to_lowercase()) else {
+        let Some(set) = self.idx.sets.get(&set_code.to_lowercase()) else {
             return Vec::new();
         };
         let Some(deck) = set
@@ -347,7 +502,7 @@ impl Resolver<'_> {
         let (Some(set_code), Some(code)) = (&pr.set, &pr.code) else {
             return Vec::new();
         };
-        let Some(set) = self.sets.get(&set_code.to_lowercase()) else {
+        let Some(set) = self.idx.sets.get(&set_code.to_lowercase()) else {
             return Vec::new();
         };
         let Some(config) = set.booster.get(code) else {
@@ -376,7 +531,7 @@ impl Resolver<'_> {
     ) {
         // Directly-named cards: definitely in (unless inside a variable option).
         for cr in &contents.card {
-            if let Some(scryfall) = self.card_ref(cr) {
+            if let Some(scryfall) = self.idx.card_ref(cr) {
                 let membership = membership_override.unwrap_or(Membership::Contains);
                 self.push(tcg_id, scryfall, membership, cr.foil, out);
             }
@@ -384,7 +539,7 @@ impl Resolver<'_> {
         // Precon decks: every deck card is definitely in.
         for dr in &contents.deck {
             for (uuid, is_foil) in self.deck_cards(dr) {
-                if let Some(&scryfall) = self.uuid_to_scryfall.get(uuid) {
+                if let Some(&scryfall) = self.idx.uuid_to_scryfall.get(uuid) {
                     let membership = membership_override.unwrap_or(Membership::Contains);
                     self.push(tcg_id, scryfall, membership, is_foil, out);
                 }
@@ -393,7 +548,7 @@ impl Resolver<'_> {
         // Booster packs: every sheet card can be pulled.
         for pr in &contents.pack {
             for (uuid, foil) in self.pack_cards(pr) {
-                if let Some(&scryfall) = self.uuid_to_scryfall.get(uuid) {
+                if let Some(&scryfall) = self.idx.uuid_to_scryfall.get(uuid) {
                     let membership = membership_override.unwrap_or(Membership::Booster);
                     self.push(tcg_id, scryfall, membership, foil, out);
                 }
@@ -410,6 +565,7 @@ impl Resolver<'_> {
                     pack: config.pack.iter().map(clone_content_pack).collect(),
                     sealed: Vec::new(),
                     variable: Vec::new(),
+                    other: Vec::new(),
                 };
                 self.walk_inner(tcg_id, &view, Some(Membership::Variable), visited, depth, out);
             }
@@ -423,7 +579,7 @@ impl Resolver<'_> {
                 if !visited.insert(uuid.to_string()) {
                     continue; // cycle guard
                 }
-                if let Some(sub) = self.product_by_uuid.get(uuid)
+                if let Some(sub) = self.idx.product_by_uuid.get(uuid)
                     && let Some(sub_contents) = &sub.contents
                 {
                     self.walk_inner(
@@ -448,6 +604,7 @@ fn clone_content_card(c: &ContentCard) -> ContentCard {
         set: c.set.clone(),
         number: c.number.clone(),
         foil: c.foil,
+        name: c.name.clone(),
     }
 }
 fn clone_content_deck(d: &ContentDeck) -> ContentDeck {
@@ -503,11 +660,16 @@ mod tests {
                         { "uuid": "p-pack", "identifiers": { "tcgplayerProductId": "1001" },
                           "contents": { "pack": [ { "code": "draft", "set": "set" } ] } },
                         { "uuid": "p-box", "identifiers": { "tcgplayerProductId": "1002" },
-                          "contents": { "sealed": [ { "uuid": "p-pack" } ] } },
+                          "contents": { "sealed": [
+                              { "uuid": "p-pack", "count": 36, "name": "Draft Booster Pack" }
+                          ] } },
                         { "uuid": "p-deck", "identifiers": { "tcgplayerProductId": "1003" },
                           "contents": { "deck": [ { "name": "Precon A", "set": "set" } ] } },
                         { "uuid": "p-bundle", "identifiers": { "tcgplayerProductId": "1004" },
-                          "contents": { "card": [ { "set": "set", "number": "300", "foil": true } ] } },
+                          "contents": {
+                              "card": [ { "set": "set", "number": "300", "foil": true, "name": "Foil Promo" } ],
+                              "other": [ { "name": "Spindown" }, { "name": "Storage Box" } ]
+                          } },
                         { "uuid": "p-sld", "identifiers": { "tcgplayerProductId": "1005" },
                           "contents": { "variable": [ { "configs": [
                               { "card": [ { "uuid": "u-promo", "foil": true } ] }
@@ -629,5 +791,64 @@ mod tests {
         }));
         // The malformed sealed/deck/pack references contributed nothing but didn't panic.
         assert_eq!(rows.len(), 1);
+    }
+
+    // ---------- Composition (build_compositions) ----------
+
+    fn find_component<'a>(
+        rows: &'a [RawComponent],
+        tcg: &str,
+        kind: &str,
+        name: &str,
+    ) -> Option<&'a RawComponent> {
+        rows.iter()
+            .find(|c| c.tcgplayer_product_id == tcg && c.kind == kind && c.name == name)
+    }
+
+    /// A `sealed` component keeps its count and links to the sub-product it references
+    /// (by uuid -> the child's tcgplayerProductId).
+    #[test]
+    fn sealed_component_links_to_child_product_with_count() {
+        let comps = build_compositions(&fixture());
+        // The box (1002) is "36× Draft Booster Pack", linked to the pack product (1001).
+        let boxed = find_component(&comps, "1002", "sealed", "Draft Booster Pack")
+            .expect("box lists its packs");
+        assert_eq!(boxed.quantity, 36);
+        assert_eq!(boxed.child_tcgplayer_product_id.as_deref(), Some("1001"));
+    }
+
+    /// Decks, promo cards, and physical extras all surface as line items; a promo card
+    /// resolves to a Scryfall id link, the extras stay textual.
+    #[test]
+    fn deck_card_and_other_components_are_emitted() {
+        let comps = build_compositions(&fixture());
+        assert!(find_component(&comps, "1003", "deck", "Precon A").is_some());
+        let promo =
+            find_component(&comps, "1004", "card", "Foil Promo").expect("bundle lists its promo");
+        assert_eq!(promo.child_scryfall_id.as_deref(), Some("sf-promo"));
+        assert!(find_component(&comps, "1004", "other", "Spindown").is_some());
+        assert!(find_component(&comps, "1004", "other", "Storage Box").is_some());
+    }
+
+    /// A bare booster pack (contents is a single `pack` sheet config) and a variable-only
+    /// product contribute no composition — `pack` / `variable` are card-resolution only.
+    #[test]
+    fn pack_only_and_variable_products_have_no_composition() {
+        let comps = build_compositions(&fixture());
+        assert!(comps.iter().all(|c| c.tcgplayer_product_id != "1001"));
+        assert!(comps.iter().all(|c| c.tcgplayer_product_id != "1005"));
+    }
+
+    /// Components are emitted in display order (kinds grouped: sealed → deck → card →
+    /// other) — the bundle has no sealed/deck, so its promo card leads, then the extras.
+    #[test]
+    fn components_are_emitted_in_display_order() {
+        let comps = build_compositions(&fixture());
+        let bundle: Vec<&str> = comps
+            .iter()
+            .filter(|c| c.tcgplayer_product_id == "1004")
+            .map(|c| c.kind)
+            .collect();
+        assert_eq!(bundle, vec!["card", "other", "other"]);
     }
 }

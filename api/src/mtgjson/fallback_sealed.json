@@ -12,6 +12,12 @@
     "documentation only. `membership` is contains | booster | variable (the 'found in / can be",
     "pulled from / may be in' buckets). `foil` marks a foil-only inclusion.",
     "",
+    "`components` (optional, alongside `contents`) is the structural composition — the",
+    "'what's in the box' line items. Each has a `kind` (sealed | deck | card | other), a display",
+    "`name`, and a `quantity`. A `sealed` component links a sub-product by its",
+    "`child_tcgplayer_product_id`; a `card` component links a card by `(child_set, child_number)`;",
+    "`deck` / `other` are textual. Applied only when MTGJSON gives the product no composition.",
+    "",
     "Editing this file changes its content hash, which the ingest folds into its version gate so",
     "the merge re-runs on the next sync even if MTGJSON itself is unchanged."
   ],
@@ -25,7 +31,19 @@
         "collector numbers 305-317) resolve to no sealed product. The bundle guarantees three",
         "staples (Arcane Signet, Sol Ring, Swiftfoot Boots) and includes two more drawn from a pool",
         "of ten — so the guaranteed three are `contains` and the pool is `variable`. All are the",
-        "nonfoil borderless printing. Source: Wizards 'Collecting Avatar' article + retail listings."
+        "nonfoil borderless printing. Source: Wizards 'Collecting Avatar' article + retail listings.",
+        "",
+        "`components` mirrors the retail 'what's in the box': 9 Play Boosters (tcg 648640) + 1",
+        "Collector Booster (tcg 648646) + the land packs, life counter and storage box. Source:",
+        "Wizards 'Collecting Avatar' article + the Amazon/retail product listing."
+      ],
+      "components": [
+        { "kind": "sealed", "quantity": 9, "name": "Play Booster", "child_tcgplayer_product_id": "648640" },
+        { "kind": "sealed", "quantity": 1, "name": "Collector Booster", "child_tcgplayer_product_id": "648646" },
+        { "kind": "other", "quantity": 1, "name": "Traditional foil land pack (15 cards)" },
+        { "kind": "other", "quantity": 1, "name": "Nonfoil land pack (15 cards)" },
+        { "kind": "other", "quantity": 1, "name": "Click Wheel life counter" },
+        { "kind": "other", "quantity": 1, "name": "Card storage box" }
       ],
       "contents": [
         { "set": "tle", "number": "315", "name": "Arcane Signet", "membership": "contains", "foil": false },

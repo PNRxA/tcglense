@@ -399,6 +399,29 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   to rebuild the merged table — rare, only on a fallback edit). The correct long-term fix for
   a gap is still to author the contents upstream (taw's `magic-sealed-data` /
   `mtgjson/mtg-sealed-content`); the fallback is the stopgap until it flows in.
+- **Sealed-product composition / "what's in the box" (MTGJSON):** the same
+  `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
+  product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that
+  resolves to the sub-product's `tcgplayerProductId`), `deck`, `card` (fixed promos), and
+  `other` (physical extras: dice, storage boxes, land packs). The membership pass flattens
+  all of this down to the individual *cards*, discarding the structure — so a second pass
+  (`model::build_compositions`) keeps it, in a sibling table `sealed_components`, and the
+  `/products/{id}/contents` endpoint links the sub-products a box contains. Design choices:
+  (1) A **separate table**, not a column on `products`: the composition is a variable-length
+  ordered list with per-item links, and the structural data lives *only* in `AllPrintings`
+  (which we don't retain), so it must be persisted at ingest like `sealed_contents`.
+  (2) The list is **non-recursive** — a product's *direct* components (a bundle's "9× Play
+  Booster", a box's "36× pack"), not the packs' cards (those are already the cards section).
+  (3) `pack` (a booster *sheet config*, not a purchasable sub-product — and at the top level
+  usually a pack describing *itself*) and `variable` are **excluded** from the composition;
+  they're left to the card-membership pass, so a bare booster pack shows *no* "what's in the
+  box" rather than a redundant "1× itself". (4) Both passes run in one `spawn_blocking` over
+  the parsed doc, each building its own cheap `Indexes` (the maps are a few ms over the parse
+  tree — the ~600 MB cost is the parse, shared); both tables are wiped+rebuilt in the same
+  txn. (5) `mtgjson::fallback` gained a `components` list (same per-product gate: applied only
+  when MTGJSON gave that product *no* composition) so the `contents: null` products get a
+  hand-authored box — e.g. the Avatar Commander's Bundle's "9× Play Booster + 1× Collector
+  Booster + lands + life counter + storage box", the retail manifest MTGJSON hasn't authored.
 - **Gotcha — `reqwest`:** pinned `default-features = false, features = ["rustls",
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on
