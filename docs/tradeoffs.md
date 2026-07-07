@@ -397,8 +397,17 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   gate alongside the ETag (`ingest::compose_version`), so editing the fallback data rebuilds
   on the next sync even when `AllPrintings.json` is unchanged (which forces one full re-fetch
   to rebuild the merged table — rare, only on a fallback edit). The correct long-term fix for
-  a gap is still to author the contents upstream (taw's `magic-sealed-data` /
-  `mtgjson/mtg-sealed-content`); the fallback is the stopgap until it flows in.
+  a gap is still to author the contents upstream; the fallback is the stopgap until it flows in.
+  The authoritative upstream that `AllPrintings.json` is built from is the community repo
+  **`mtgjson/mtg-sealed-content`** (raw `.../main/data/{contents,products}/<SET>.yaml`): per set,
+  `contents/<SET>.yaml` maps a product name → its `sealed` (child products, `{count, name, set}`)
+  / `card` / `deck` / `other` breakdown (an **empty `[]` = unauthored upstream**), and
+  `products/<SET>.yaml` maps that name → `identifiers.tcgplayerProductId` — the join key onto our
+  `products.external_id`. When hand-authoring a fallback entry, **pull from there rather than
+  hand-researching**: our synced `AllPrintings.json` can *lag* this repo, so a `contents: null`
+  in our DB may already be authored upstream; if it's empty there too, the gap is genuinely
+  unauthored (the Secret Lair superdrop bundles below were, as of #279). (taw's
+  `magic-sealed-data` is a *different* repo — booster-pack collation only, no Secret Lair.)
 - **Secret Lair drop contents — derived, not hand-authored (`mtgjson::sld`):** MTGJSON ships
   many `SLD` (Secret Lair Drop) products with `contents: null`, but unlike ordinary packaging
   a drop's meaningful contents is the specific *list of cards* in that drop — and the app
