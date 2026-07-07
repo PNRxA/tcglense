@@ -282,6 +282,10 @@ pub fn build_router(state: AppState) -> Router {
         // (unknown game/set/card) — are more specific and still take precedence.
         let serve_spa =
             ServeDir::new(&web_root).fallback(ServeFile::new(web_root.join("index.html")));
+        let serve_spa = Router::new()
+            .fallback_service(serve_spa)
+            .layer(from_fn(spa_headers_middleware));
+
         app = app
             .route(
                 "/api/{*rest}",
@@ -293,4 +297,32 @@ pub fn build_router(state: AppState) -> Router {
     app.layer(cors_layer())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Middleware to explicitly set Cache-Control headers for the static SPA assets
+/// and HTML page fallbacks. This overrides any default/implicit 'private' caching
+/// headers injected by host environments (like DigitalOcean App Platform).
+async fn spa_headers_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path().to_owned();
+    let mut response = next.run(request).await;
+
+    let status = response.status();
+    if status.is_success() || status == axum::http::StatusCode::NOT_MODIFIED {
+        let headers = response.headers_mut();
+        if path.starts_with("/assets/") {
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            );
+        } else {
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, no-cache"),
+            );
+        }
+    }
+    response
 }

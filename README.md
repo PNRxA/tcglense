@@ -192,11 +192,17 @@ you never have to enumerate those to keep them out.
    or (starts_with(http.request.uri.path, "/api/games") and ends_with(http.request.uri.path, "/status"))
    ```
 
-The two expressions are mutually exclusive (rule 1 excludes `/status`; rule 2 matches
-only auth / collection / wishlist / status), so their order doesn't matter. If you ever
-add *overlapping* cache rules, note that Cloudflare applies **all** that match and the
-**last** one wins per setting — put a bypass rule *below* the rule it should override,
-not above.
+3. **Cache the SPA HTML pages and assets.** *Cache eligibility* → **Eligible for cache**;
+   *Edge TTL* → **Use cache-control header if present, bypass cache if not**; *Browser TTL* →
+   **Respect origin**. When incoming requests match:
+
+   ```
+   not starts_with(http.request.uri.path, "/api/")
+   ```
+
+   *Note: The origin automatically serves HTML pages with `public, no-cache` (cached but revalidated on every request via ETags so builds stay fresh on deploy) and hashed static assets with `public, max-age=31536000, immutable`.*
+
+The expressions are structured so you can apply them in order. If you ever add *overlapping* cache rules, note that Cloudflare applies **all** that match and the **last** one wins per setting.
 
 > **Real client IP (important).** With Cloudflare in front, the edge Caddy's immediate
 > peer is *Cloudflare*, so the default `edge.Caddyfile` line
