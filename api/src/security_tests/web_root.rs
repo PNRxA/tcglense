@@ -51,8 +51,12 @@ async fn api_routes_still_answer_when_web_root_is_set() {
 #[tokio::test]
 async fn root_serves_the_spa_index_html() {
     let app = app_with_web_root(Some(make_web_root("root-index"))).await;
-    let (status, _headers, body) = send_text(&app, get("/")).await;
+    let (status, headers, body) = send_text(&app, get("/")).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("cache-control").and_then(|v| v.to_str().ok()),
+        Some("public, no-cache")
+    );
     assert!(
         body.contains("id=\"app\""),
         "expected the SPA index.html, got: {body}"
@@ -62,8 +66,12 @@ async fn root_serves_the_spa_index_html() {
 #[tokio::test]
 async fn a_static_asset_is_served_from_disk() {
     let app = app_with_web_root(Some(make_web_root("asset"))).await;
-    let (status, _headers, body) = send_text(&app, get("/assets/app-abc123.js")).await;
+    let (status, headers, body) = send_text(&app, get("/assets/app-abc123.js")).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("cache-control").and_then(|v| v.to_str().ok()),
+        Some("public, max-age=31536000, immutable")
+    );
     assert!(body.contains("console.log('spa')"));
 }
 
@@ -72,8 +80,12 @@ async fn a_deep_spa_route_falls_back_to_index_with_200() {
     // The crux of this feature: a client-side route the API doesn't know must serve
     // index.html with a real 200 (not a 404) so deep links are valid, crawlable pages.
     let app = app_with_web_root(Some(make_web_root("spa-deep-link"))).await;
-    let (status, _headers, body) = send_text(&app, get("/collection/mtg/sets/abc")).await;
+    let (status, headers, body) = send_text(&app, get("/collection/mtg/sets/abc")).await;
     assert_eq!(status, StatusCode::OK, "an SPA deep link must be 200, not 404");
+    assert_eq!(
+        headers.get("cache-control").and_then(|v| v.to_str().ok()),
+        Some("public, no-cache")
+    );
     assert!(
         body.contains("id=\"app\""),
         "expected the index.html fallback, got: {body}"

@@ -91,9 +91,9 @@ state or plan to scale to more than one replica.
 3. **SSL/TLS → Origin Server → Create Certificate** — save the certificate and key as
    `origin/cert.pem` and `origin/key.pem` next to the compose file (Caddy serves them
    as the origin cert).
-4. **Caching → Cache Rules** (free plan) — add these two so Cloudflare honors the
+4. **Caching → Cache Rules** (free plan) — add these three so Cloudflare honors the
    `Cache-Control` the API already emits (the origin sends the right header per route;
-   these just tell Cloudflare which `/api/*` paths are cacheable):
+   these just tell Cloudflare which paths are cacheable):
 
    **Rule 1 — cache the catalog, images, and sitemaps.** *Eligibility* → Eligible for
    cache; *Edge TTL* → "Use cache-control header if present, bypass if not"; *Browser
@@ -111,6 +111,13 @@ state or plan to scale to more than one replica.
    or starts_with(http.request.uri.path, "/api/collection/")
    or starts_with(http.request.uri.path, "/api/wishlist/")
    or (starts_with(http.request.uri.path, "/api/games") and ends_with(http.request.uri.path, "/status"))
+   ```
+
+   **Rule 3 — cache the SPA HTML pages and assets.** *Eligibility* → Eligible for
+   cache; *Edge TTL* → "Use cache-control header if present, bypass if not"; *Browser
+   TTL* → Respect origin. Expression:
+   ```
+   not starts_with(http.request.uri.path, "/api/")
    ```
 
    `GET /api/config` is `no-store` at the origin, so Cloudflare never caches it — the
