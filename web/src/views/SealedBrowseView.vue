@@ -34,7 +34,8 @@ const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 
 // Page, name search and sort live in the URL (shared with useCardSearch, same as the
-// card browse views). Note `q` here is a plain name substring, not Scryfall syntax.
+// card browse views). Note `q` here matches each word as an order-independent name
+// substring (all words must be present), not Scryfall syntax (issue #273).
 const { page, searchInput, query, sort } = useCardSearch(
   PRODUCT_DEFAULT_SORT,
   PRODUCT_SORT_OPTIONS.map((option) => option.value),

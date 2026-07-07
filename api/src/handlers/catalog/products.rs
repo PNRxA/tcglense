@@ -3,8 +3,10 @@
 //! one product's detail, its price history, its image proxy, and the filter facets.
 //!
 //! Products aren't cards, so the product *list* deliberately does **not** wire the
-//! Scryfall search compiler — its `q` is a plain case-insensitive name substring. The
-//! "cards in this product" endpoints are the exception: those rows *are* cards, so their
+//! Scryfall search compiler — its `q` matches each whitespace-separated word as an
+//! order-independent, case-insensitive name substring (all words required), mirroring
+//! the card search's bare-word handling (issue #273). The "cards in this product"
+//! endpoints are the exception: those rows *are* cards, so their
 //! optional `q` reuses the card catalog's compiler (issue #222). Set names are resolved
 //! against `card_sets` (falling back to `None` when a product's group has no matching
 //! set), mirroring how the collection set builder degrades gracefully.
@@ -236,7 +238,8 @@ impl ProductSort {
 pub struct ProductListParams {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
-    /// Case-insensitive product-name substring (not Scryfall syntax).
+    /// Case-insensitive product-name filter: matches each whitespace-separated word as
+    /// a name substring, AND-ed together (not Scryfall syntax).
     #[serde(default)]
     pub q: Option<String>,
     /// Filter to one set code (matched case-insensitively).
@@ -409,14 +412,21 @@ pub async fn list_products(
 
     let mut query = Product::find().filter(product::Column::Game.eq(game.as_str()));
     if let Some(term) = trim_query(params.q.as_deref()) {
-        // LOWER both sides (ASCII fold) so the substring match is case-insensitive on
-        // Postgres too; `to_ascii_lowercase` matches SQLite's ASCII-only `LOWER()`, so
-        // the SQLite result set stays byte-identical. Mirrors `handlers::shared::name_like`.
-        let pattern = format!("%{}%", escape_like(term).to_ascii_lowercase());
-        query = query.filter(
-            Expr::expr(Func::lower(Expr::col((product::Entity, product::Column::Name))))
-                .like(LikeExpr::new(pattern).escape('\\')),
-        );
+        // Match every whitespace-separated word as its own order-independent name
+        // substring, AND-ed together, so "final fantasy bundle" finds "Final Fantasy -
+        // Gift Bundle" and "FINAL FANTASY - Chocobo Bundle" (issue #273). This mirrors
+        // the Scryfall card search's bare-word handling, giving cards and sealed the
+        // same "all words present" match. LOWER both sides (ASCII fold) so each match is
+        // case-insensitive on Postgres too; `to_ascii_lowercase` matches SQLite's
+        // ASCII-only `LOWER()`, so the SQLite result set stays byte-identical.
+        // `trim_query` dropped a blank query, so there is always at least one word.
+        for word in term.split_whitespace() {
+            let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
+            query = query.filter(
+                Expr::expr(Func::lower(Expr::col((product::Entity, product::Column::Name))))
+                    .like(LikeExpr::new(pattern).escape('\\')),
+            );
+        }
     }
     if let Some(set) = trim_query(params.set.as_deref()) {
         query = query.filter(product::Column::SetCode.eq(set.to_lowercase()));
