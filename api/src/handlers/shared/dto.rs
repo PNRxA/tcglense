@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::entities::card;
 use crate::scryfall::model::StoredFace;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardPrices"))]
 pub(crate) struct PricesResponse {
     pub usd: Option<String>,
@@ -22,7 +22,7 @@ pub(crate) struct PricesResponse {
     pub tix: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardFace"))]
 pub(crate) struct CardFaceResponse {
     pub name: Option<String>,
@@ -35,7 +35,7 @@ pub(crate) struct CardFaceResponse {
 }
 
 /// A single printing of a card, as the SPA sees it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Card"))]
 pub(crate) struct CardResponse {
     pub id: String,

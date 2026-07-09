@@ -53,7 +53,7 @@ use super::{IMAGE_CACHE_CONTROL, image_error_response};
 // ---------- Wire DTOs ----------
 
 /// A sealed product's market prices (USD only — TCGCSV carries no eur/tix).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPrices"))]
 pub(crate) struct ProductPricesResponse {
     pub usd: Option<String>,
@@ -63,7 +63,7 @@ pub(crate) struct ProductPricesResponse {
 /// A sealed product, as the SPA sees it. Mirrors the `Card` DTO idioms: the provider
 /// id is exposed as a string `id`, prices are nested, and images are fetched through
 /// the proxy (`has_image` says whether one is available).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Product"))]
 pub(crate) struct ProductResponse {
     pub id: String,
@@ -82,7 +82,7 @@ pub(crate) struct ProductResponse {
 }
 
 /// One day's price snapshot in a product's price-over-time series (USD only).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPricePoint"))]
 pub struct ProductPricePoint {
     pub date: String,
@@ -101,7 +101,7 @@ impl From<product_price_history::Model> for ProductPricePoint {
 }
 
 /// A set that actually has products, for building filter dropdowns.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductSetRef"))]
 pub(crate) struct ProductSetRef {
     pub code: String,
@@ -110,7 +110,7 @@ pub(crate) struct ProductSetRef {
 
 /// The distinct filter values that actually occur among a game's products, so the SPA
 /// can build the type + set dropdowns without hardcoding them.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductFacets"))]
 pub(crate) struct ProductFacets {
     /// Distinct `product_type` values, alphabetical.
@@ -141,7 +141,7 @@ pub(crate) struct SealedProductRef {
 /// renders a linked tile) or the card it *is* (a `card` promo that resolves to a
 /// [`CardResponse`]). `deck` / `other` (and unresolved links) are textual — both link
 /// fields `None`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductComponent"))]
 pub(crate) struct ProductComponent {
     /// `"sealed"` (a nested pack/box), `"deck"` (a precon deck), `"card"` (a fixed promo),
@@ -402,6 +402,26 @@ impl CardSection {
 
 /// `GET /api/games/{game}/products` -> a page of sealed products, filtered by
 /// `q`/`set`/`type` and ordered by `sort`/`dir` (default name-ascending).
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Case-insensitive name filter (each whitespace-separated word is a required substring)"),
+        ("set" = Option<String>, Query, description = "Filter to one set code"),
+        ("type" = Option<String>, Query, description = "Filter to one product type"),
+        ("sort" = Option<String>, Query, description = "Sort key (`name`/`price`/`released`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of matching sealed products.", body = Page<ProductResponse>),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown sort/direction."),
+    ),
+)]
 pub async fn list_products(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -451,6 +471,19 @@ pub async fn list_products(
 }
 
 /// `GET /api/games/{game}/products/{id}` -> one product's detail.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+    ),
+    responses(
+        (status = 200, description = "The product's detail.", body = ProductResponse),
+        (status = 404, description = "Unknown game or product."),
+    ),
+)]
 pub async fn get_product(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -463,6 +496,21 @@ pub async fn get_product(
 
 /// `GET /api/games/{game}/products/{id}/prices?range=` -> a product's price history,
 /// oldest first, reusing the exact windowing/downsampling of the card price endpoint.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/prices",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+        ("range" = Option<String>, Query, description = "Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`); absent = the full daily series"),
+    ),
+    responses(
+        (status = 200, description = "The product's price history, oldest first.", body = DataBody<Vec<ProductPricePoint>>),
+        (status = 404, description = "Unknown game or product."),
+        (status = 422, description = "Unknown range."),
+    ),
+)]
 pub async fn product_prices(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -530,6 +578,16 @@ pub async fn product_image(
 
 /// `GET /api/games/{game}/products/facets` -> the distinct product types + the sets
 /// that actually have products, so the SPA can build filter dropdowns.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/facets",
+    tag = "Sealed products",
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "The distinct type + set filter values for the game's products.", body = DataBody<ProductFacets>),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn product_facets(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -660,6 +718,19 @@ pub async fn card_sealed(
 /// this box contains"); a `card` component carries the linked `card`; the rest are textual.
 /// `{ "data": [] }` when the product has no ingested composition; `404` for an unknown
 /// game/product.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/contents",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+    ),
+    responses(
+        (status = 200, description = "The product's structural composition, in display order.", body = DataBody<Vec<ProductComponent>>),
+        (status = 404, description = "Unknown game or product."),
+    ),
+)]
 pub async fn product_contents(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,

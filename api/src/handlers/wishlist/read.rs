@@ -32,6 +32,28 @@ use super::find_row;
 /// `GET /api/wishlist/{game}` -> the signed-in user's wanted cards for a game,
 /// most-recently-updated first, paginated. Each entry carries the full card payload
 /// plus the wanted counts.
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+        ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the signed-in user's wanted cards.", body = Page<CollectionEntry>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
 pub async fn list_wishlist(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -145,6 +167,22 @@ pub(super) fn wishlist_query(
 /// An optional `?set` scopes the stats to a single set (the per-set wish-list view);
 /// `?include_related=true` with a set spans its whole group (root + related sub-sets),
 /// so the header value matches the set / include-related wish-list browse view.
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/summary",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+    ),
+    responses(
+        (status = 200, description = "Aggregate stats for the user's wish list.", body = CollectionSummary),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn wishlist_summary(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -181,6 +219,21 @@ pub(super) async fn summary(
 /// `GET /api/wishlist/{game}/cards/{id}` -> how many copies of one card the user
 /// wants (zeros when the card isn't on their wish list). `id` is the external card
 /// id; a `404` means the game or card is unknown.
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/cards/{id}",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    responses(
+        (status = 200, description = "How many copies of the card the user wants (zeros if none).", body = CollectionQuantities),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
 pub async fn get_wishlist_entry(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

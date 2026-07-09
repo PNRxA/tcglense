@@ -1,3 +1,4 @@
+pub mod api_key;
 pub mod card;
 pub mod card_price_history;
 pub mod card_set;

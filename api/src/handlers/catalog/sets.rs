@@ -28,7 +28,7 @@ use super::image::is_allowed_image_url;
 use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique};
 
 /// A set/expansion within a game.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardSet"))]
 pub struct SetResponse {
     pub code: String,
@@ -63,7 +63,7 @@ impl From<card_set::Model> for SetResponse {
 /// One Secret Lair drop with its cards, as returned by the drops endpoint. The
 /// enclosing [`Page`] paginates over these (so `total` is a drop count, not a
 /// card count).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DropGroup"))]
 pub struct DropGroupResponse {
     /// Stable slug for anchors/links; `None` for the catch-all "Other" group of
@@ -75,6 +75,16 @@ pub struct DropGroupResponse {
 }
 
 /// `GET /api/games/{game}/sets` -> every stored set, newest first.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets",
+    tag = "Cards",
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "Every stored set for the game, newest first.", body = DataBody<Vec<SetResponse>>),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn list_sets(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -93,6 +103,19 @@ pub async fn list_sets(
 }
 
 /// `GET /api/games/{game}/sets/{code}` -> one set's metadata.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code, e.g. `neo`"),
+    ),
+    responses(
+        (status = 200, description = "The set's metadata.", body = SetResponse),
+        (status = 404, description = "Unknown game or set."),
+    ),
+)]
 pub async fn get_set(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
@@ -148,6 +171,26 @@ pub async fn set_icon(
 /// — so a main expansion and its supplements can be browsed as one, instead of
 /// visiting each set individually. Cards are then grouped by set (set-code order),
 /// each set's cards kept together in collector-number order.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}/cards",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code, e.g. `neo`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("include_related" = Option<bool>, Query, description = "Span the set's whole group (root + related sub-sets)"),
+        ("sort" = Option<String>, Query, description = "Sort key (`number`/`name`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the set's cards.", body = Page<CardResponse>),
+        (status = 404, description = "Unknown game or set."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
 pub async fn list_set_cards(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
@@ -199,6 +242,24 @@ pub async fn list_set_cards(
 /// omitted. An optional `drop` then narrows to the drops whose curated title
 /// matches (case-insensitive substring), applied before pagination so it spans the
 /// whole set rather than one page.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}/drops",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code (must have a drop snapshot, e.g. `sld`)"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
+        ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search narrowing the cards within each drop"),
+        ("drop" = Option<String>, Query, description = "Optional case-insensitive drop-title filter"),
+    ),
+    responses(
+        (status = 200, description = "A page of the set's cards grouped by Secret Lair drop.", body = Page<DropGroupResponse>),
+        (status = 404, description = "Unknown game/set, or the set has no drop snapshot."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn list_set_drops(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,

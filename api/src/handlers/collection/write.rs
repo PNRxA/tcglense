@@ -9,7 +9,7 @@ use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
-use crate::auth::extractor::AuthUser;
+use crate::auth::extractor::WritableUser;
 use crate::entities::collection_item;
 use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
@@ -23,9 +23,27 @@ use super::{CollectionQuantities, SetQuantitiesRequest};
 /// (absolute values, not a delta). Both zero removes the card from the collection.
 /// Returns the resulting counts. `404` for an unknown game/card, `422` for a
 /// negative or oversized count.
+#[utoipa::path(
+    put,
+    path = "/api/collection/{game}/cards/{id}",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    request_body = SetQuantitiesRequest,
+    responses(
+        (status = 200, description = "The resulting owned counts (both zero removes the holding).", body = CollectionQuantities),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "A read-scoped API key cannot write."),
+        (status = 404, description = "Unknown game or card."),
+        (status = 422, description = "A negative or oversized count."),
+    ),
+)]
 pub async fn set_collection_entry(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    WritableUser(user): WritableUser,
     Path((game, id)): Path<(String, String)>,
     JsonBody(payload): JsonBody<SetQuantitiesRequest>,
 ) -> Result<Json<CollectionQuantities>, AppError> {

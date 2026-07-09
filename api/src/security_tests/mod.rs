@@ -14,6 +14,7 @@
 
 mod harness;
 
+mod api_keys;
 mod caching;
 mod captcha;
 mod collection;
@@ -22,6 +23,7 @@ mod cors;
 mod email_verification;
 mod login;
 mod mirror;
+mod openapi;
 mod pagination;
 mod password_reset;
 mod products;

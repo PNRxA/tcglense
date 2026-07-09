@@ -68,7 +68,7 @@ impl HoldingCounts for wishlist_item::Model {
 // ---------- Response / request DTOs ----------
 
 /// One owned card: the full public card payload plus how many copies are owned.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionEntry {
     pub card: CardResponse,
@@ -92,7 +92,7 @@ pub struct CollectionDropGroup {
 }
 
 /// Just the owned counts for one card — what the card-detail controls read and write.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionQuantities {
     pub quantity: i32,
@@ -105,7 +105,7 @@ pub struct CollectionQuantities {
 pub type OwnedCountsResponse = DataBody<HashMap<String, CollectionQuantities>>;
 
 /// Aggregate stats for a user's per-game collection (the collection landing header).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionSummary {
     /// Distinct cards owned (one per collection row).
@@ -154,7 +154,7 @@ pub type CollectionSetsResponse = DataBody<Vec<CollectionSet>>;
 
 /// Body of `PUT .../cards/{id}`: the desired absolute counts (not a delta). Setting
 /// both to zero removes the card from the collection.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SetQuantitiesRequest {
     pub quantity: i32,

@@ -33,6 +33,10 @@ export function clearAuthedQueries(qc: QueryClient) {
   qc.removeQueries({
     predicate: (query) => query.meta?.authed === true || isPerUserQueryKey(query.queryKey),
   })
+  // `removeQueries` only touches the QueryCache; also drop cached mutation results so a
+  // write's `data` can't outlive the identity — notably the create-api-key mutation,
+  // whose `data` holds the one-time plaintext key (issue #284).
+  qc.getMutationCache().clear()
 }
 
 /**

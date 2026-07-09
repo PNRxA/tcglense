@@ -7,7 +7,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
     middleware::{from_fn, from_fn_with_state, map_response},
-    routing::{any, get, post},
+    routing::{any, delete, get, post},
 };
 use tower_http::{
     cors::CorsLayer,
@@ -18,6 +18,7 @@ use tower_http::{
 use crate::{
     error::AppError,
     handlers::{
+        api_keys::{create_api_key, list_api_keys, revoke_api_key},
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
             resend_verification, reset_password, verify_email,
@@ -41,6 +42,7 @@ use crate::{
         mirror::{
             mtgjson_all_printings, scryfall_bulk_data, scryfall_file, scryfall_sets, tcgcsv_proxy,
         },
+        openapi::{openapi_json, scalar_ui},
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
@@ -92,6 +94,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        // API-key management for the public API (issue #284). Session-only (a key
+        // cannot manage keys — SessionUser rejects an API-key credential), so these
+        // sit in the private group for `no-store` + the per-user rate limit.
+        .route(
+            "/api/auth/api-keys",
+            get(list_api_keys).post(create_api_key),
+        )
+        .route("/api/auth/api-keys/{id}", delete(revoke_api_key))
         // Email verification + password reset: single-use emailed tokens. All
         // unauthenticated POSTs; the lookup-by-email ones answer generically.
         .route("/api/auth/verify-email", post(verify_email))
@@ -245,6 +255,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/sitemaps/{name}", get(sitemap_child))
         .route("/api/sitemap.xml", get(sitemap_index))
         .route("/api/sitemaps/{name}", get(sitemap_child))
+        // Public API documentation (issue #284): the machine-readable OpenAPI 3.1
+        // document plus the interactive Scalar "try it out" UI. Both are the same for
+        // every visitor and change only on redeploy, so they ride the shared CDN cache
+        // like the rest of the catalog (each error still marked `no-store` by the layer).
+        .route("/api/openapi.json", get(openapi_json))
+        .route("/api/docs", get(scalar_ui))
         .layer(map_response(public_cache_layer))
         .layer(from_fn(conditional_request_layer));
 

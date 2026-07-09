@@ -109,6 +109,64 @@ With no `RESEND_API_KEY` sending is **disabled**: the message — including the
 link — is logged instead, so offline dev and the test suites work with zero
 network (the security-test harness swaps in a capturing mailbox).
 
+## Public API & API keys (issue #284)
+
+TCGLense exposes a **public HTTP API**. Two surfaces:
+
+- **Anonymous, read-only** — the whole card catalog and sealed-product data
+  (`/api/games/...`, documented in the two sections below) needs no
+  authentication. These are the same CDN-cacheable reads the SPA uses.
+- **Per-user, key-authenticated** — a signed-in user mints an **API key** to
+  reach *their own* collection + wish list programmatically (the `/api/collection/*`
+  and `/api/wishlist/*` routes).
+
+**Interactive docs:** an OpenAPI 3.1 document is served at `GET /api/openapi.json`
+(machine-readable — import into Postman/Insomnia/codegen) and rendered as an
+interactive Scalar "try it out" console at `GET /api/docs`. Both are public,
+CDN-cacheable reads in the public router group. The SPA footer links to `/api/docs`.
+
+**How a key authenticates.** A key is presented exactly like an access token —
+`Authorization: Bearer tcgl_<hex>` — and rides the **same** collection/wish-list
+endpoints (no separate route surface). The `AuthUser` extractor branches on the
+`tcgl_` label: a `tcgl_`-prefixed credential is resolved against the `api_keys`
+table (one indexed lookup on the SHA-256 hash) to the owning user; anything else
+is decoded as a JWT. So every existing per-user endpoint accepts either credential
+with no per-handler change.
+
+**Scopes.** A key is `read` (GET only) or `read_write`. Enforcement is at the
+extractor: read endpoints use `AuthUser` (accepts a session or **any** valid key);
+mutating endpoints use `WritableUser` (a session or a `read_write` key — a
+**read-only key is `403 Forbidden`**, since the credential is real but lacks the
+scope). The batch-count `POST`s (`/owned`, `/counts`) are reads, so a read-only key
+may call them. Note a bad/expired/revoked key is `401` (the credential itself is
+invalid), while a valid read-only key on a write is `403` (valid but unauthorized).
+
+**Key management** (`/api/auth/api-keys`) is **session-only** — the `SessionUser`
+extractor rejects an API-key credential with `403`, so a leaked key can neither
+mint more keys nor enumerate/revoke its siblings.
+
+| Method & path | Body | Success | Notes |
+|---------------|------|---------|-------|
+| `POST /api/auth/api-keys` | `{ name, scope, expires_in_days? }` | `201 CreatedApiKey` `{ id, name, scope, key, key_prefix, created_at, expires_at }` — `key` is the **plaintext**, returned **once** (never again) | `scope` ∈ `read`/`read_write` (else `422`); `expires_in_days` optional (omit/null = never; `0` or `> 3650` = `422`); a blank/over-100-char `name` = `422`; exceeding the per-user cap (**25** active keys) = `409`. Session-only (an API-key credential = `403`) |
+| `GET /api/auth/api-keys` | — | `200 ApiKeyList` `{ data: ApiKeyInfo[] }` — active keys, newest first; **metadata only** (never the plaintext or hash) | `ApiKeyInfo = { id, name, scope, key_prefix, created_at, last_used_at, expires_at }`. Session-only |
+| `DELETE /api/auth/api-keys/{id}` | — | `204` — soft-revoke (idempotent for an already-revoked key) | `404` if the key doesn't exist or belongs to another user (ids don't leak across accounts). Session-only |
+
+**Storage & lifecycle** mirror the refresh/email-token design (`auth::api_key`):
+`tcgl_` + 32 CSPRNG bytes hex-encoded, only the **SHA-256 hex** persisted (fast hash
+is correct for a high-entropy secret — not argon2, which is for passwords), the
+plaintext returned once and never logged; `key_prefix` (`tcgl_<8 hex>`) is stored so
+the UI can identify a key after the secret is gone. `last_used_at` is a best-effort,
+throttled (≤ once/60s) stamp; revocation is a `revoked_at` soft delete (audit trail,
+an in-flight request sees it); `expires_at` is optional. Dead keys (expired or
+revoked) are pruned by the 6h maintenance loop. Model: `entities/api_key.rs`
+(`api_keys`, unique on `token_hash`, `user_id` FK → `users` `ON DELETE CASCADE`).
+
+**Rate limiting.** Key-authenticated traffic is throttled under the **same per-user
+quota** as session traffic: the per-user limiter (`ratelimit::user_rate_limit`) tries
+the JWT fast-path first and, on a `tcgl_` token, resolves the key to its user id (one
+indexed lookup) so keyed requests can't bypass the cap. Key *creation* rides the
+generous `general` per-user quota (session-authed).
+
 ## Card catalog API contract
 
 Public (no auth), game-agnostic reads under `/api/games`. `{game}` is a slug like
@@ -200,6 +258,21 @@ on the origin. Per-user, live, and error responses are `no-store`: all `/api/aut
 (access tokens + `Set-Cookie`), the import-`status` route (a live progress signal the
 SPA polls), and any non-2xx (so a CDN can't pin a transient `404`/`5xx`). The image/icon
 routes set their own longer `immutable` header, which the layer preserves.
+
+**Cloudflare (issue #284 bullet 3).** These directives are all standard and
+Cloudflare-honored: `public` makes a response edge-storable, `s-maxage` sets the edge
+TTL (Cloudflare respects it over `max-age` at the edge), `stale-while-revalidate` is
+supported, and the weak `ETag` + `If-None-Match → 304` revalidation (below) lets the
+edge revalidate cheaply. Public reads set **no** `Set-Cookie` and **no** `Vary`, so
+nothing defeats shared caching, and errors are forced to `no-store` so the edge never
+pins a negative. The origin is therefore Cloudflare-ready as shipped. Operational
+caveat: Cloudflare does **not** cache `/api/...` (JSON) paths by default — the edge only
+stores a response once a **Cache Rule** marks its path eligible. Those rules already
+exist and are documented in the README (*Behind a CDN (Cloudflare)*): its catalog rule
+(extended to also match `/api/openapi.json` + `/api/docs`) makes the public reads
+edge-cacheable, and its bypass rule keeps the per-user `/api/auth/*` (incl. the API-key
+management routes), `/api/collection/*`, and `/api/wishlist/*` responses off the edge.
+The header work is done; enabling edge caching is a dashboard step per deployment.
 
 ### Conditional requests (ETag / 304)
 
