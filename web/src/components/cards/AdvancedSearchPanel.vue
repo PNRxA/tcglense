@@ -2,6 +2,7 @@
 import { computed, useId } from 'vue'
 import { Eraser, SlidersHorizontal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   NumberField,
@@ -22,21 +23,34 @@ import { Toggle } from '@/components/ui/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   activeFilterCount,
+  CARD_FLAG_OPTIONS,
   clearBuilderFilters,
   COLOR_MODES,
   COLOR_PIPS,
   FORMAT_OPTIONS,
+  getArtist,
+  getCardFlags,
   getColors,
   getFormat,
   getManaValue,
+  getOracleText,
+  getPower,
   getRarity,
+  getSetCode,
+  getToughness,
   getType,
   getUsd,
   RARITY_OPTIONS,
+  setArtist,
+  setCardFlag,
   setColors,
   setFormat,
   setManaValue,
+  setOracleText,
+  setPower,
   setRarity,
+  setSetCode,
+  setToughness,
   setType,
   setUsd,
   TYPE_OPTIONS,
@@ -146,6 +160,53 @@ const usdMax = computed({
     (query.value = setUsd(query.value, { ...usd.value, max: numToStr(value) })),
 })
 
+// Power / toughness ranges (no :min — power can be negative).
+const pow = computed(() => getPower(query.value))
+const powMin = computed({
+  get: () => strToNum(pow.value.min),
+  set: (value: NumberModel) =>
+    (query.value = setPower(query.value, { ...pow.value, min: numToStr(value) })),
+})
+const powMax = computed({
+  get: () => strToNum(pow.value.max),
+  set: (value: NumberModel) =>
+    (query.value = setPower(query.value, { ...pow.value, max: numToStr(value) })),
+})
+
+const tou = computed(() => getToughness(query.value))
+const touMin = computed({
+  get: () => strToNum(tou.value.min),
+  set: (value: NumberModel) =>
+    (query.value = setToughness(query.value, { ...tou.value, min: numToStr(value) })),
+})
+const touMax = computed({
+  get: () => strToNum(tou.value.max),
+  set: (value: NumberModel) =>
+    (query.value = setToughness(query.value, { ...tou.value, max: numToStr(value) })),
+})
+
+// --- Free-text filters (oracle text, set code, artist) ---
+// Plain string round-trips: the builder quotes multi-word values and strips the quotes
+// back off on read, so typing (including inner spaces) survives the get/set cycle.
+const oracleText = computed({
+  get: () => getOracleText(query.value),
+  set: (value: string) => (query.value = setOracleText(query.value, value)),
+})
+const setCode = computed({
+  get: () => getSetCode(query.value),
+  set: (value: string) => (query.value = setSetCode(query.value, value)),
+})
+const artist = computed({
+  get: () => getArtist(query.value),
+  set: (value: string) => (query.value = setArtist(query.value, value)),
+})
+
+// --- Card flags (`is:` toggles) ---
+const cardFlags = computed(() => getCardFlags(query.value))
+function toggleCardFlag(flag: string) {
+  query.value = setCardFlag(query.value, flag, !cardFlags.value.includes(flag))
+}
+
 function clearAll() {
   query.value = clearBuilderFilters(query.value)
 }
@@ -166,9 +227,15 @@ function keepOpenForSelect(event: {
 const typeId = useId()
 const rarityId = useId()
 const formatId = useId()
+const oracleId = useId()
+const setId = useId()
+const artistId = useId()
 const colorsLabelId = useId()
 const mvLabelId = useId()
 const usdLabelId = useId()
+const powLabelId = useId()
+const touLabelId = useId()
+const flagsLabelId = useId()
 
 // Shared styling for the round mana pips — a Toggle whose "on" state is a ring, not the
 // default filled background (which would clash with the coloured mana glyph).
@@ -198,7 +265,7 @@ const pipClass =
 
     <PopoverContent
       align="end"
-      class="w-80 space-y-4"
+      class="max-h-[min(70vh,40rem)] w-80 space-y-4 overflow-y-auto"
       @pointer-down-outside="keepOpenForSelect"
       @focus-outside="keepOpenForSelect"
     >
@@ -283,6 +350,19 @@ const pipClass =
         </Select>
       </div>
 
+      <!-- Card text -->
+      <div class="space-y-2">
+        <Label :for="oracleId">Card text</Label>
+        <Input
+          :id="oracleId"
+          v-model="oracleText"
+          type="text"
+          class="h-8"
+          placeholder="e.g. draw a card"
+          autocomplete="off"
+        />
+      </div>
+
       <!-- Rarity -->
       <div class="space-y-2">
         <Label :for="rarityId">Rarity</Label>
@@ -349,6 +429,70 @@ const pipClass =
         </div>
       </div>
 
+      <!-- Power -->
+      <div class="space-y-2">
+        <span :id="powLabelId" class="text-sm font-medium leading-none">Power</span>
+        <div class="flex items-center gap-2" role="group" :aria-labelledby="powLabelId">
+          <NumberField
+            v-model="powMin"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 0 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Min" aria-label="Minimum power" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
+          <span class="text-muted-foreground text-sm">–</span>
+          <NumberField
+            v-model="powMax"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 0 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Max" aria-label="Maximum power" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
+        </div>
+      </div>
+
+      <!-- Toughness -->
+      <div class="space-y-2">
+        <span :id="touLabelId" class="text-sm font-medium leading-none">Toughness</span>
+        <div class="flex items-center gap-2" role="group" :aria-labelledby="touLabelId">
+          <NumberField
+            v-model="touMin"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 0 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Min" aria-label="Minimum toughness" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
+          <span class="text-muted-foreground text-sm">–</span>
+          <NumberField
+            v-model="touMax"
+            :step-snapping="false"
+            :format-options="{ maximumFractionDigits: 0 }"
+            class="flex-1"
+          >
+            <NumberFieldContent>
+              <NumberFieldDecrement />
+              <NumberFieldInput placeholder="Max" aria-label="Maximum toughness" />
+              <NumberFieldIncrement />
+            </NumberFieldContent>
+          </NumberField>
+        </div>
+      </div>
+
       <!-- Format legality -->
       <div class="space-y-2">
         <Label :for="formatId">Legal in</Label>
@@ -366,6 +510,32 @@ const pipClass =
             </SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+      <!-- Set / artist -->
+      <div class="flex gap-2">
+        <div class="w-24 shrink-0 space-y-2">
+          <Label :for="setId">Set</Label>
+          <Input
+            :id="setId"
+            v-model="setCode"
+            type="text"
+            class="h-8"
+            placeholder="e.g. mh3"
+            autocomplete="off"
+          />
+        </div>
+        <div class="min-w-0 flex-1 space-y-2">
+          <Label :for="artistId">Artist</Label>
+          <Input
+            :id="artistId"
+            v-model="artist"
+            type="text"
+            class="h-8"
+            placeholder="Artist name"
+            autocomplete="off"
+          />
+        </div>
       </div>
 
       <!-- Price -->
@@ -399,6 +569,25 @@ const pipClass =
               <NumberFieldIncrement />
             </NumberFieldContent>
           </NumberField>
+        </div>
+      </div>
+
+      <!-- Card flags (is: toggles) -->
+      <div class="space-y-2">
+        <span :id="flagsLabelId" class="text-sm font-medium leading-none">Flags</span>
+        <div class="flex flex-wrap gap-1.5" role="group" :aria-labelledby="flagsLabelId">
+          <Toggle
+            v-for="option in CARD_FLAG_OPTIONS"
+            :key="option.value"
+            :model-value="cardFlags.includes(option.value)"
+            variant="outline"
+            size="sm"
+            class="text-xs"
+            :aria-label="option.label"
+            @update:model-value="toggleCardFlag(option.value)"
+          >
+            {{ option.label }}
+          </Toggle>
         </div>
       </div>
     </PopoverContent>
