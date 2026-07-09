@@ -32,11 +32,10 @@ use crate::{
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_set_subtypes, collection_sets,
-            collection_summary,
-            delete_collection_source, export_collection, get_collection_entry,
-            get_collection_source, get_import_job, import_collection, import_collection_csv,
-            list_collection, owned_counts, save_collection_source, set_collection_entry,
-            sync_collection_source,
+            collection_summary, collection_value_history, delete_collection_source,
+            export_collection, get_collection_entry, get_collection_source, get_import_job,
+            import_collection, import_collection_csv, list_collection, owned_counts,
+            save_collection_source, set_collection_entry, sync_collection_source,
         },
         config::public_config,
         health::health,
@@ -114,6 +113,12 @@ pub fn build_router(state: AppState) -> Router {
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))
         .route("/api/collection/{game}/summary", get(collection_summary))
+        // The user's total collection value over time (add-date-clamped, re-priced from
+        // historic snapshots) — the collection's answer to the per-card price chart.
+        .route(
+            "/api/collection/{game}/value-history",
+            get(collection_value_history),
+        )
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
         .route("/api/collection/{game}/sets", get(collection_sets))

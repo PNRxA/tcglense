@@ -13,6 +13,7 @@ pub(crate) mod grouping;
 pub(crate) mod holdings;
 pub(crate) mod lookup;
 pub(crate) mod pagination;
+pub(crate) mod pricing;
 pub(crate) mod search;
 pub(crate) mod sort;
 pub(crate) mod valuation;
@@ -36,5 +37,6 @@ pub(crate) use pagination::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
     build_page, resolve_page, trim_query,
 };
+pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
 pub(crate) use search::search_condition;
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};

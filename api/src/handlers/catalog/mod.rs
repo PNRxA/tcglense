@@ -32,7 +32,6 @@ use crate::scryfall::search::escape_like;
 mod cards;
 mod image;
 mod prices;
-mod pricing;
 mod products;
 mod sets;
 mod status;
@@ -189,15 +188,6 @@ impl ListParams {
 pub struct ImageParams {
     pub size: Option<String>,
     pub face: Option<usize>,
-}
-
-/// Query params for the price-history endpoint.
-#[derive(Debug, Deserialize)]
-pub struct PriceParams {
-    /// Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`). Absent/blank = the
-    /// full daily series; an unknown value is a 422.
-    #[serde(default)]
-    pub range: Option<String>,
 }
 
 /// Query params for the card-name autocomplete endpoint.

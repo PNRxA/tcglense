@@ -33,6 +33,23 @@ async fn first_set_card_id(app: &Router, set_code: &str) -> String {
     body["data"][0]["id"].as_str().expect("card id").to_string()
 }
 
+/// Grab `n` real card external ids that carry a USD price in the seeded catalog, so a
+/// valuation over them is a real number rather than null.
+async fn priced_card_ids(app: &Router, n: usize) -> Vec<String> {
+    let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=50")).await;
+    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    let ids: Vec<String> = body["data"]
+        .as_array()
+        .expect("cards data array")
+        .iter()
+        .filter(|c| c["prices"]["usd"].as_str().is_some())
+        .take(n)
+        .map(|c| c["id"].as_str().expect("card id").to_string())
+        .collect();
+    assert!(ids.len() >= n, "need >= {n} priced seeded cards, got {}", ids.len());
+    ids
+}
+
 /// Own one card, absolute counts, for the token's user.
 async fn own_card(app: &Router, token: &str, id: &str, quantity: i64) {
     let (status, _, body) = send(
@@ -74,6 +91,94 @@ async fn collection_requires_authentication() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn value_history_requires_authentication() {
+    let app = test_app_with_catalog().await;
+
+    // Per-user data, so no token -> 401 and never shared-cached.
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/value-history")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+}
+
+/// The value-over-time series is add-date-clamped and per-user: the seeded catalog carries
+/// a year of daily prices, but a holding added *today* contributes only to today's point —
+/// which must equal the collection summary's current total.
+#[tokio::test]
+async fn value_history_clamps_to_add_date_and_matches_summary() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "history@example.com", "password123").await;
+
+    // Empty collection -> an empty series (and no-store, per-user).
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert!(body["data"].as_array().unwrap().is_empty(), "empty collection has no series");
+
+    // Own a few priced cards today.
+    let ids = priced_card_ids(&app, 3).await;
+    for id in &ids {
+        own_card(&app, &token, id, 2).await;
+    }
+
+    // The summary's current total is the yardstick: the newest history point (today) must
+    // equal it, since a just-added holding is add-date-clamped into today and the seed
+    // anchors today's snapshot to each card's current price.
+    let (_, _, summary) = send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
+    let total_today = summary["total_value_usd"].clone();
+    assert!(total_today.is_string(), "priced holdings -> a real total, got {total_today:?}");
+
+    // Full daily series: ~a year of history exists, but every day before today predates the
+    // holdings' add-date, so only the newest point carries a value — the add-date clamp.
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let points = body["data"].as_array().expect("value-history data array");
+    assert!(points.len() > 300, "the full daily series spans ~a year, got {}", points.len());
+
+    // Dates strictly ascend; only the final point (today) is priced, the rest are null.
+    let mut prev = "";
+    for (i, point) in points.iter().enumerate() {
+        let date = point["date"].as_str().expect("point date");
+        assert!(date > prev, "dates ascend: {prev:?} !< {date:?}");
+        prev = date;
+        if i + 1 < points.len() {
+            assert!(
+                point["value_usd"].is_null(),
+                "day {date} predates every holding, so it contributes nothing"
+            );
+        }
+    }
+    assert_eq!(
+        points.last().unwrap()["value_usd"],
+        total_today,
+        "today's value matches the summary total"
+    );
+
+    // A windowed range downsamples but keeps the same clamp: last point priced, rest null.
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history?range=1y", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let windowed = body["data"].as_array().expect("windowed data array");
+    assert!(!windowed.is_empty() && windowed.len() < points.len(), "1y weekly < full daily");
+    assert_eq!(windowed.last().unwrap()["value_usd"], total_today);
+
+    // An unknown range is a 422, like the per-card price chart.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history?range=week", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A second user sees only their own (empty) history.
+    let (bob, _) = register(&app, "bob-history@example.com", "password123").await;
+    let (_, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history", &bob)).await;
+    assert!(body["data"].as_array().unwrap().is_empty(), "isolation: bob owns nothing");
 }
 
 #[tokio::test]

@@ -1,4 +1,5 @@
 import { API_URL, ApiError, listQuery, request } from './client'
+import type { PriceRange } from './catalog'
 import type {
   CollectionDropGroup,
   CollectionEntry,
@@ -6,6 +7,7 @@ import type {
   CollectionSet,
   CollectionSubtypeGroup,
   CollectionSummary,
+  CollectionValuePoint,
   Page,
 } from './generated'
 
@@ -194,6 +196,45 @@ export async function getCollectionOwned(
     ),
   )
   return Object.assign({}, ...responses.map((response) => response.data))
+}
+
+/** A single day of the collection's total-value series, shaped like the price chart's
+ * `PricePointLike` so it feeds the shared `PriceChart` unchanged: `usd` is the day's total
+ * collection value and there's no separate foil line (`usd_foil` is always null). */
+export interface CollectionValueSeriesPoint {
+  date: string
+  usd: string | null
+  usd_foil: string | null
+}
+
+/** Relative `/api/collection/{game}/value-history` path, with an optional `range`. */
+export function collectionValueHistoryPath(game: string, range?: PriceRange): string {
+  const qs = range ? `?range=${encodeURIComponent(range)}` : ''
+  return `/api/collection/${encodeURIComponent(game)}/value-history${qs}`
+}
+
+/**
+ * The signed-in user's total collection value over time for a game, across the same
+ * `?range` windows as the per-card price chart. The wire DTO's `value_usd` is mapped onto
+ * the chart's `usd` field (with `usd_foil` null — a single total line), so the shared
+ * `PriceChart` renders it without changes.
+ */
+export async function getCollectionValueHistory(
+  token: string,
+  game: string,
+  range?: PriceRange,
+): Promise<{ data: CollectionValueSeriesPoint[] }> {
+  const response = await request<{ data: CollectionValuePoint[] }>(
+    collectionValueHistoryPath(game, range),
+    { token },
+  )
+  return {
+    data: response.data.map((point) => ({
+      date: point.date,
+      usd: point.value_usd,
+      usd_foil: null,
+    })),
+  }
 }
 
 /** How many copies of one card the user owns (zeros when not in the collection). */
