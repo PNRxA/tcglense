@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 
 import {
+  hasFlag,
   parseToken,
   readFilter,
   readRange,
   removeFilter,
+  setFlag,
   setRange,
   tokenizeQuery,
   upsertFilter,
@@ -154,6 +156,39 @@ describe('upsertFilter', () => {
 
   it('clears only its own filter, keeping free text', () => {
     expect(upsertFilter('bolt c:r', COLOR_KEYS, 'c', ':', '')).toBe('bolt')
+  })
+})
+
+describe('hasFlag', () => {
+  it('matches only the exact value among a key’s tokens', () => {
+    expect(hasFlag('is:foil is:promo', ['is'], 'foil')).toBe(true)
+    expect(hasFlag('is:foil', ['is'], 'reprint')).toBe(false)
+  })
+
+  it('compares the value case-insensitively', () => {
+    expect(hasFlag('is:Foil', ['is'], 'foil')).toBe(true)
+  })
+
+  it('ignores a negated token', () => {
+    expect(hasFlag('-is:foil', ['is'], 'foil')).toBe(false)
+  })
+})
+
+describe('setFlag', () => {
+  it('appends the flag without touching the key’s other values', () => {
+    expect(setFlag('is:promo bolt', ['is'], 'is', 'foil', true)).toBe('is:promo bolt is:foil')
+  })
+
+  it('removes only its own value', () => {
+    expect(setFlag('is:foil is:promo', ['is'], 'is', 'foil', false)).toBe('is:promo')
+  })
+
+  it('does not duplicate an already-present flag', () => {
+    expect(setFlag('is:foil', ['is'], 'is', 'foil', true)).toBe('is:foil')
+  })
+
+  it('leaves negated tokens verbatim', () => {
+    expect(setFlag('-is:foil', ['is'], 'is', 'foil', false)).toBe('-is:foil')
   })
 })
 
