@@ -150,7 +150,11 @@ so the *stored* series stays continuous even on a tick where the version-gated i
 skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
 keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
 grows), so every returned point is a genuine, internally-consistent snapshot and the newest
-day is always included; the underlying `card_price_history` rows are untouched.
+day is always included; the underlying `card_price_history` rows are untouched. The read
+is a single index range scan over `card_price_history` (the unique `(game, card, date)`
+index seeks one card's rows and yields them already date-ordered — no separate sort, no
+timeseries extension); the storage model + why-not-Timescale rationale is in
+`docs/tradeoffs.md` ("Price history & the historic-price chart", issue #297).
 
 ### Search syntax (`q`)
 

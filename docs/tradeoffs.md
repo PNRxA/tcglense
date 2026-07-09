@@ -457,6 +457,53 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on
   the client (the bulk download streams for a while); a `read_timeout` guards stalls.
 
+## Price history & the historic-price chart
+
+- **No Postgres timeseries extension — plain relational tables, by design (issue #297).**
+  The card- and sealed-product price charts (`GET …/cards/{id}/prices`,
+  `…/products/{id}/prices`) are served from two ordinary tables — `card_price_history`
+  and `product_price_history` — **not** from any PostgreSQL timeseries extension. There is
+  no TimescaleDB, hypertable, `time_bucket`, or continuous aggregate anywhere (a keyword
+  sweep across `api/`, `deploy/`, and CI is clean; the *only* Postgres extension the app
+  uses is `pg_trgm` for card-name search — m027 — which is not a timeseries one). The
+  "timeseries" behaviour lives in a schema shape plus a little app code instead:
+  - **Shape.** One row per `(game, entity, day)` of decimal-string prices (kept as the
+    provider's strings, never `f64`); `as_of_date` is a zero-padded `"YYYY-MM-DD"` **text**
+    column, not a native `DATE` (mirroring `cards.released_at`). The single index on each
+    table is the **unique composite** `(game, {card,product}_id, as_of_date)`
+    (`idx_card_price_history_game_card_date` / `idx_product_price_history_game_product_date`),
+    which doubles as the daily snapshot's upsert key — so it costs nothing extra on write.
+  - **The read is a single index range scan, not a scan + sort.** Each endpoint
+    (`handlers::catalog::prices::card_prices`, `products::product_prices`) filters
+    `game = ? AND id = ?` plus an optional `as_of_date >= cutoff`, ordered by
+    `as_of_date ASC`. That composite index is a leading-prefix match: the two equality
+    columns seek to one entity's rows, the date cutoff is a range bound on the trailing
+    column, and the index's own order **satisfies the `ORDER BY` with no separate sort**
+    (lexical order over the zero-padded date string equals chronological order). Confirmed
+    on Postgres against a 200k-row stand-in — both the full-history and the windowed query
+    plan to `Index Scan … Index Cond: (game, id[, as_of_date >= …])` with **no Sort node**
+    and a few hundred buffer hits, sub-millisecond — exactly the shape the weak prod
+    Postgres wants, and the same access pattern on SQLite.
+  - **Downsampling is app-side, not a DB rollup.** Longer `?range` windows are thinned to
+    one representative row per bucket by `handlers::catalog::pricing::downsample_rows`
+    (keep the *last* real row per `bucket_days`-wide bucket — never averaged, so every
+    returned point is a genuine snapshot), so the wire payload and plotted line stay light
+    however much history accrues. The DB just returns the windowed, ordered run; the result
+    set per request is bounded by one entity's days of captured history (≈ one row/day since
+    the 2024-02-08 backfill floor — a few hundred rows), small enough that an in-process
+    rollup beats the round-trips a DB-side `GROUP BY` / `time_bucket` would add.
+  - **Why not an extension.** The blocker is the runtime dual-backend (SQLite by default,
+    Postgres by `DATABASE_URL` scheme, both drivers compiled in; the whole non-search layer
+    is portable SeaORM query-builder kept byte-identical on SQLite, and the default tests +
+    CI run on SQLite — see "Postgres dual-backend"). A Postgres-only hypertable /
+    `time_bucket` / continuous aggregate has no SQLite equivalent, so it can't be *shared*:
+    adopting one means either dropping SQLite or carrying a second, divergent Postgres-only
+    storage/query path behind the `db::Dialect` seam — not worth it for a workload this
+    small and point-shaped that is already an O(log n) index range scan. If a single series
+    ever did grow huge, the move is Postgres-only *physical* tuning behind that same seam
+    (a native `DATE` column + BRIN, or partitioning), never an extension the SQLite default
+    can't load.
+
 ## Images & assets
 
 - **Image caching:** the proxy mechanics (lazy first-view download to
