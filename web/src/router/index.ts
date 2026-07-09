@@ -150,6 +150,14 @@ const router = createRouter({
       component: () => import('@/views/ProfileView.vue'),
       meta: { requiresAuth: true },
     },
+    // Personal display preferences (card size, bulk threshold). Signed-in only, like the
+    // profile page — the bulk threshold shapes the collection value the account owns.
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
+      meta: { requiresAuth: true },
+    },
     {
       path: '/login',
       name: 'login',

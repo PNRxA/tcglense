@@ -13,8 +13,8 @@ use crate::entities::{card, card_set, collection_item};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CardResponse, Page, SortDir, SortField, build_collection_sets, group_into_drops, load_set,
-    paginate_buckets, require_drop_table, require_game, search_condition,
+    CardResponse, Page, SetsParams, SortDir, SortField, build_collection_sets, group_into_drops,
+    load_set, paginate_buckets, require_drop_table, require_game, search_condition,
 };
 use crate::state::AppState;
 
@@ -30,6 +30,7 @@ pub async fn collection_sets(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
+    Query(params): Query<SetsParams>,
 ) -> Result<Json<CollectionSetsResponse>, AppError> {
     require_game(&game)?;
 
@@ -44,7 +45,7 @@ pub async fn collection_sets(
         .await?;
 
     Ok(Json(CollectionSetsResponse {
-        data: build_collection_sets(&game, rows, sets),
+        data: build_collection_sets(&game, rows, sets, params.bulk_threshold_cents()),
     }))
 }
 

@@ -150,6 +150,34 @@ describe('getCollectionSets / getCollectionSummary', () => {
     expect(url).not.toContain('include_related')
     expect(url).not.toContain('set=')
   })
+
+  it('sends the bulk threshold on the summary when given', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', undefined, undefined, 250)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('bulk_max_cents=250')
+  })
+
+  it('sends a $0 bulk threshold (a meaningful "nothing is bulk" value), not just truthy ones', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', undefined, undefined, 0)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('bulk_max_cents=0')
+  })
+
+  it('omits the bulk threshold when unspecified', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).not.toContain('bulk_max_cents')
+  })
+
+  it('sends the bulk threshold on the per-set landing', async () => {
+    const fetchMock = stubJson({ data: [] })
+    await getCollectionSets('tok', 'mtg', 500)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/sets?bulk_max_cents=500')
+  })
 })
 
 describe('collectionEntryPath', () => {

@@ -159,7 +159,16 @@ pub async fn wishlist_summary(
     let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let set_codes =
         resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?;
-    Ok(Json(summary(&state.db, user.id, &game, set_codes.as_deref()).await?))
+    Ok(Json(
+        summary(
+            &state.db,
+            user.id,
+            &game,
+            set_codes.as_deref(),
+            params.bulk_threshold_cents(),
+        )
+        .await?,
+    ))
 }
 
 /// Aggregate stats (distinct cards, total copies, estimated USD value) for a user's
@@ -173,9 +182,10 @@ pub(super) async fn summary(
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
+    bulk_threshold_cents: i128,
 ) -> Result<CollectionSummary, AppError> {
     let rows = wanted_with_cards(user_id, game, set_codes).all(db).await?;
-    Ok(summarize_holdings(&rows))
+    Ok(summarize_holdings(&rows, bulk_threshold_cents))
 }
 
 /// `GET /api/wishlist/{game}/cards/{id}` -> how many copies of one card the user

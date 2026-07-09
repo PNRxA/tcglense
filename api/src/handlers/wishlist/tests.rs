@@ -11,7 +11,7 @@ use crate::catalog;
 use crate::db::Dialect;
 use crate::entities::{card, wishlist_item};
 use crate::handlers::shared::{
-    CollectionSort, SortDir, SortField, group_into_drops, search_condition,
+    BULK_THRESHOLD_CENTS, CollectionSort, SortDir, SortField, group_into_drops, search_condition,
 };
 use sea_orm::{ActiveModelTrait, Condition, Set};
 
@@ -241,7 +241,9 @@ async fn summary_skips_rows_whose_card_row_is_missing() {
         w.insert(&db).await.expect("insert wishlist row");
     }
 
-    let s = summary(&db, 1, "mtg", None).await.expect("summary");
+    let s = summary(&db, 1, "mtg", None, BULK_THRESHOLD_CENTS)
+        .await
+        .expect("summary");
     // The orphan (card 999, 5 copies) is skipped entirely: 2 distinct cards, 4 copies
     // (2 + 1 + 1), value = 2×$5.00 (card 1's foil is unpriced) + 1×$2.00 = $12.00.
     assert_eq!(s.unique_cards, 2);
