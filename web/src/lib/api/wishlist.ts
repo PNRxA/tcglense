@@ -4,6 +4,7 @@ import type {
   CollectionDropsParams,
   CollectionListParams,
   CollectionPage,
+  CollectionSubtypeGroupPage,
   OwnedCountsMap,
 } from './collection'
 import type { CollectionQuantities, CollectionSet, CollectionSummary } from './generated'
@@ -84,6 +85,28 @@ export function getWishlistSetDrops(
   params?: CollectionDropsParams,
 ): Promise<CollectionDropGroupPage> {
   return request<CollectionDropGroupPage>(wishlistSetDropsPath(game, code, params), { token })
+}
+
+/** Relative `/api/wishlist/{game}/sets/{code}/subtypes` path (paginated by sub-type). */
+export function wishlistSetSubtypesPath(
+  game: string,
+  code: string,
+  params: CollectionDropsParams = {},
+): string {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return `/api/wishlist/${g}/sets/${c}/subtypes${listQuery(params)}`
+}
+
+/** The signed-in user's wanted cards in a set, grouped by card sub-type (treatment) and
+ * paginated by sub-type — the wish-list mirror of `getCollectionSetSubtypes`. */
+export function getWishlistSetSubtypes(
+  token: string,
+  game: string,
+  code: string,
+  params?: CollectionDropsParams,
+): Promise<CollectionSubtypeGroupPage> {
+  return request<CollectionSubtypeGroupPage>(wishlistSetSubtypesPath(game, code, params), { token })
 }
 
 /**

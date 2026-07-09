@@ -6,6 +6,7 @@ import {
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
+  getCollectionSetSubtypes,
   getCollectionSummary,
   setCollectionEntry,
   type ApiError,
@@ -14,13 +15,15 @@ import {
   type CollectionPage,
   type CollectionQuantities,
   type CollectionSet,
+  type CollectionSubtypeGroupPage,
   type CollectionSummary,
   type OwnedCountsMap,
 } from '@/lib/api'
-import { CARD_PAGE_SIZE, DROP_PAGE_SIZE } from '@/composables/useCatalog'
+import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
+import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 
 /**
  * Refresh every view that depends on the collection contents after any collection write
@@ -37,6 +40,7 @@ export function invalidateCollectionData(
 ) {
   qc.invalidateQueries({ queryKey: ['collection', game] })
   qc.invalidateQueries({ queryKey: ['collection-summary', game] })
+  qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
   qc.invalidateQueries({
     queryKey: opts?.entryId ? ['collection-entry', game, opts.entryId] : ['collection-entry', game],
   })
@@ -121,6 +125,30 @@ export function useCollectionDropsQuery(
   return useAuthedQuery<CollectionDropGroupPage>(options)
 }
 
+/** A page (by sub-type) of the signed-in user's owned cards in a set, grouped by card
+ * treatment — the collection mirror of `useSetSubtypesQuery`. Gated on the by-treatment
+ * view via `opts.enabled`; `query` narrows the owned cards within each sub-type. */
+export function useCollectionSubtypesQuery(
+  game: Ref<string>,
+  code: Ref<string>,
+  page: Ref<number>,
+  query: Ref<string>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
+  const options = {
+    queryKey: ['collection-subtypes', game, code, query, page],
+    queryFn: (token: string) =>
+      getCollectionSetSubtypes(token, game.value, code.value, {
+        page: page.value,
+        pageSize: SUBTYPE_PAGE_SIZE,
+        q: query.value || undefined,
+      }),
+    placeholderData: keepPreviousData,
+    enabled: opts.enabled,
+  }
+  return useAuthedQuery<CollectionSubtypeGroupPage>(options)
+}
+
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
  * optionally scoped to one set — and, with `includeRelated`, that set's whole group (so
  * the value matches the include-related browse view). */
@@ -131,21 +159,36 @@ export function useCollectionSummaryQuery(
 ) {
   const setCode = set ?? ref<string | undefined>(undefined)
   const includeRelated = opts.includeRelated ?? ref(false)
+  // The user's bulk-threshold preference decides the cutoff the server splits the bulk
+  // value at. It's in the query key (as a computed ref) so changing it in Settings
+  // refetches the summary; the store default matches the server's, so a signed-out /
+  // never-changed user gets the standard $1 split.
+  const bulkThreshold = useBulkThresholdStore()
+  const bulkMaxCents = computed(() => bulkThreshold.cents)
   const options = {
-    queryKey: ['collection-summary', game, setCode, includeRelated],
+    queryKey: ['collection-summary', game, setCode, includeRelated, bulkMaxCents],
     queryFn: (token: string) =>
-      getCollectionSummary(token, game.value, setCode.value || undefined, includeRelated.value),
+      getCollectionSummary(
+        token,
+        game.value,
+        setCode.value || undefined,
+        includeRelated.value,
+        bulkMaxCents.value,
+      ),
     enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionSummary>(options)
 }
 
 /** The sets the signed-in user owns cards in (newest set first) — the per-set
- * collection landing. */
+ * collection landing. Carries the bulk-threshold preference so each tile's bulk slice
+ * matches the summary header (and refetches when the threshold changes). */
 export function useCollectionSetsQuery(game: Ref<string>) {
+  const bulkThreshold = useBulkThresholdStore()
+  const bulkMaxCents = computed(() => bulkThreshold.cents)
   const options = {
-    queryKey: ['collection-sets', game],
-    queryFn: (token: string) => getCollectionSets(token, game.value),
+    queryKey: ['collection-sets', game, bulkMaxCents],
+    queryFn: (token: string) => getCollectionSets(token, game.value, bulkMaxCents.value),
   }
   return useAuthedQuery<{ data: CollectionSet[] }>(options)
 }

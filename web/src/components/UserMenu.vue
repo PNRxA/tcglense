@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { LogIn, LogOut, User } from '@lucide/vue'
+import { LogIn, LogOut, Settings, User } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { buttonVariants } from '@/components/ui/button'
 import {
@@ -83,6 +83,14 @@ async function onSignOut() {
                 <RouterLink to="/profile">
                   <User aria-hidden="true" />
                   Profile
+                </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <li>
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/settings">
+                  <Settings aria-hidden="true" />
+                  Settings
                 </RouterLink>
               </NavigationMenuLink>
             </li>

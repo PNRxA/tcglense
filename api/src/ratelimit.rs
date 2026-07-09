@@ -345,18 +345,35 @@ impl UserRateLimiters {
     }
 }
 
+/// Pull the raw `Authorization: Bearer <token>` value out of a request, if present
+/// and non-empty. Shared by the JWT and API-key user-id resolvers below.
+fn bearer_token(request: &Request) -> Option<&str> {
+    let value = request.headers().get(header::AUTHORIZATION)?.to_str().ok()?;
+    value
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+}
+
 /// Pull the authenticated user id out of a request's `Authorization: Bearer` access
 /// token, decoding (but deliberately *not* DB-loading) it — the rate check must be
 /// cheap and run before any query. Returns `None` for an unauthenticated request or
 /// an invalid/expired token: either way there's no user to key on, so the per-user
 /// limiter is skipped.
 fn bearer_user_id(request: &Request, config: &Config) -> Option<i32> {
-    let value = request.headers().get(header::AUTHORIZATION)?.to_str().ok()?;
-    let token = value
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|t| !t.is_empty())?;
+    let token = bearer_token(request)?;
     decode_token(token, config).ok()?.sub.parse::<i32>().ok()
+}
+
+/// Extract an **owned** API-key bearer credential (a `tcgl_`-prefixed token), if the
+/// request carries one. Returning an owned `String` — rather than a borrow of the
+/// request — is deliberate: the caller resolves it against the DB across an `.await`,
+/// and holding a `&Request` across that await would make the middleware future
+/// non-`Send` (axum's `Body` isn't `Sync`). `None` for a missing / non-key token.
+fn bearer_api_key_token(request: &Request) -> Option<String> {
+    bearer_token(request)
+        .filter(|t| t.starts_with(crate::auth::api_key::KEY_PLAINTEXT_PREFIX))
+        .map(str::to_owned)
 }
 
 /// Axum middleware: enforce the per-user limit for an authenticated request's class.
@@ -372,9 +389,22 @@ pub async fn user_rate_limit(
     if !state.config.rate_limit_enabled {
         return next.run(request).await;
     }
-    let Some(user_id) = bearer_user_id(&request, &state.config) else {
-        // No authenticated user to key on: nothing to limit here.
-        return next.run(request).await;
+    // A session JWT resolves without a DB hit; fall back to an API-key lookup so
+    // key-authenticated traffic is throttled per user rather than bypassing the cap.
+    // The API-key token is extracted (owned) before the await so no `&request` borrow
+    // is held across it (which would make this future non-`Send`).
+    let user_id = match bearer_user_id(&request, &state.config) {
+        Some(id) => id,
+        None => match bearer_api_key_token(&request) {
+            Some(token) => match crate::auth::api_key::resolve_user_id(&state.db, &token).await {
+                Ok(Some(id)) => id,
+                // Not a valid key (unknown/revoked/expired) or a lookup error: no
+                // user to key on — the extractor rejects it downstream.
+                _ => return next.run(request).await,
+            },
+            // No authenticated user to key on: nothing to limit here.
+            None => return next.run(request).await,
+        },
     };
 
     let route = UserRoute::from_path(request.uri().path());

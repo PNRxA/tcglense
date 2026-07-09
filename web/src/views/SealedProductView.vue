@@ -7,13 +7,22 @@ import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
 import ProductContents from '@/components/products/ProductContents.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
+import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useProductQuery } from '@/composables/useProducts'
+import { useProductQuery, useProductContentsQuery } from '@/composables/useProducts'
 import { useProductBackLink } from '@/composables/useProductBackLink'
 import { getProductPrices, productImageUrl } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { productTypeLabel } from '@/lib/productType'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
+import {
+  breadcrumbList,
+  graph,
+  productMetaDescription,
+  sealedCrumbs,
+  sealedProductNode,
+  type Crumb,
+} from '@/lib/structuredData'
 
 // The sealed-product detail page: image, name, set + type, current prices, the shared
 // price-history chart, and a "Where to buy" section of outbound store links (US /
@@ -34,6 +43,13 @@ const notFound = computed(
   () => productQuery.isError.value || (!product.value && !productQuery.isPending.value),
 )
 
+// The product's composition ("what's in the box"), folded into the meta description + JSON-LD.
+// Shares the ['product-contents', game, id] key with the <ProductContents> section below, so
+// reading it here adds no extra fetch; mounts off the route refs so it loads in parallel and
+// progressively upgrades the structured data once it arrives.
+const contentsQuery = useProductContentsQuery(game, id)
+const components = computed(() => contentsQuery.data.value?.data ?? [])
+
 // The in-app "back" link, mirroring the page the user arrived by — a card's "Sealed
 // products" section or the sealed browse — rather than always the browse (issue #203).
 const backLink = useProductBackLink(game)
@@ -45,13 +61,15 @@ const setName = computed(
   () => product.value?.set_name ?? product.value?.set_code.toUpperCase() ?? '',
 )
 
-// Current prices, formatted thousands-grouped; blank fields are dropped.
+// Current market prices + MSRP, formatted thousands-grouped; blank fields are dropped, so
+// MSRP (a curated retail price, absent for most products) only appears when known.
 const priceRows = computed(() => {
-  const p = product.value?.prices
-  if (!p) return []
+  const prod = product.value
+  if (!prod) return []
   return [
-    { label: 'USD', value: formatUsd(p.usd) },
-    { label: 'USD foil', value: formatUsd(p.usd_foil) },
+    { label: 'USD', value: formatUsd(prod.prices?.usd) },
+    { label: 'USD foil', value: formatUsd(prod.prices?.usd_foil) },
+    { label: 'MSRP', value: formatUsd(prod.msrp) },
   ].filter((row): row is { label: string; value: string } => row.value != null)
 })
 
@@ -71,40 +89,46 @@ const productImage = computed(() =>
     : undefined,
 )
 
-const metaDescription = computed(() => {
-  const p = product.value
-  if (!p) return undefined
-  return `${p.name} — ${typeLabel.value} · ${setName.value}. Current price and price history on TCGLense.`
-})
-
-// Product structured data (no `offers` block — this is a price-tracking page, not a
-// storefront), mirroring CardDetailView's deliberate omission.
-const jsonLd = computed<Record<string, unknown> | undefined>(() => {
-  const p = product.value
-  if (!p) return undefined
-  const data: Record<string, unknown> = {
-    '@context': 'https://schema.org',
-    '@type': 'Product',
-    name: p.name,
-    category: typeLabel.value,
-  }
-  if (setName.value) data.brand = { '@type': 'Brand', name: setName.value }
-  if (productImage.value) data.image = productImage.value
-  return data
-})
+// Home › Sealed › {Product}, shared by the visible trail and the JSON-LD breadcrumb.
+const crumbs = computed<Crumb[]>(() =>
+  product.value ? sealedCrumbs(game.value, product.value) : [],
+)
 
 usePageMeta({
   title: () => product.value?.name,
-  description: metaDescription,
+  description: () =>
+    product.value
+      ? productMetaDescription(product.value, typeLabel.value, setName.value, components.value)
+      : undefined,
   canonicalPath: () => (product.value ? `/sealed/${game.value}/${product.value.id}` : undefined),
   image: productImage,
   type: 'product',
-  jsonLd,
+  // A schema.org `Product` node (composition via `isRelatedTo`, deliberately NO `offers` — a
+  // price tracker, not a storefront) plus a `BreadcrumbList`, in one `@graph`. Builders + the
+  // no-offers rationale live in lib/structuredData.ts.
+  jsonLd: () =>
+    product.value
+      ? graph(
+          sealedProductNode(
+            game.value,
+            product.value,
+            typeLabel.value,
+            setName.value,
+            components.value,
+            productImage.value,
+          ),
+          breadcrumbList(crumbs.value),
+        )
+      : undefined,
 })
 </script>
 
 <template>
   <div class="mx-auto max-w-5xl px-4 py-10">
+    <!-- Hierarchy trail (mirrors the JSON-LD BreadcrumbList; adds a crawlable link to the
+      sealed browse). The back link below stays — it's history-aware (issue #203). -->
+    <PageBreadcrumbs v-if="crumbs.length" :items="crumbs" />
+
     <RouterLink
       :to="backLink.to"
       class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"

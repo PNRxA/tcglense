@@ -252,6 +252,28 @@ Both `web/scripts/*` require the Playwright browsers installed
 | `deploy/Caddyfile` | Standalone single-origin production reverse proxy (Caddy v2): serves the built SPA **and** forwards `/api/*` to the Rust API on the same origin (keeps the httpOnly refresh cookie first-party). Auto-provisions HTTPS for a real domain. `caddy run --config deploy/Caddyfile` |
 | `deploy/tcglense-api.service` | systemd unit for the API: copy to `/etc/systemd/system/`, adjust `User`/paths, `systemctl enable --now`. Production env (`JWT_SECRET`, `COOKIE_SECURE=true`, `HOST=127.0.0.1`, `DATABASE_URL`, …) supplied by the unit |
 
+### Public API & edge caching (issue #284)
+
+The public API is self-documenting: **`GET /api/openapi.json`** serves the OpenAPI
+3.1 spec (public, CDN-cacheable). The SPA renders it as an interactive Scalar
+reference at **`/docs`** (`DocsView.vue`), linked from the homepage, top nav, and
+footer and listed in the sitemap. Account holders authenticate
+their collection/wish-list calls with an **API key** (`Authorization: Bearer tcgl_…`,
+minted on the profile page) — no new server env var or table config is required
+beyond the migration that creates `api_keys` (runs on boot).
+
+The origin already emits Cloudflare-honored cache headers on every public read (see
+`docs/api-contracts.md` → *HTTP caching*). The Cloudflare **Cache Rules** themselves
+are **not new** for this feature — they're already documented in the
+[README](../README.md#behind-a-cdn-cloudflare). Issue #284 adds only one small delta:
+the public OpenAPI document. Extend the README's **Rule 1** (the "cache the public
+catalog" rule) so its expression also matches `/api/openapi.json`, and it's edge-cached
+like the rest of the catalog (this has been done in the README's rule text). The
+interactive reference is an SPA route (`/docs`), served as static web assets — no API
+cache rule applies. The **API-key routes need no change** — they live under `/api/auth/*`,
+which the README's **Rule 2** already bypasses (per-user, must never be edge-cached),
+alongside `/api/collection/*` and `/api/wishlist/*`.
+
 ## Environment variables
 
 - **API:** `DATABASE_URL` (default `sqlite://tcglense.db?mode=rwc`; the scheme selects

@@ -14,8 +14,9 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSort,
-    ListParams, Page, SortDir, SortField, build_collection_sets, group_into_drops, load_set,
-    paginate_buckets, require_drop_table, require_game, search_condition,
+    CollectionSubtypeGroup, ListParams, Page, SetsParams, SortDir, SortField, build_collection_sets,
+    group_into_drops, group_into_subtypes, load_set, paginate_buckets, require_drop_table,
+    require_game, search_condition,
 };
 use crate::state::AppState;
 
@@ -28,6 +29,7 @@ pub async fn wishlist_sets(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
+    Query(params): Query<SetsParams>,
 ) -> Result<Json<CollectionSetsResponse>, AppError> {
     require_game(&game)?;
 
@@ -42,7 +44,7 @@ pub async fn wishlist_sets(
         .await?;
 
     Ok(Json(CollectionSetsResponse {
-        data: build_collection_sets(&game, rows, sets),
+        data: build_collection_sets(&game, rows, sets, params.bulk_threshold_cents()),
     }))
 }
 
@@ -102,6 +104,74 @@ pub async fn wishlist_set_drops(
     let (page, page_size) = params.drop_page_and_size();
     Ok(Json(paginate_buckets(buckets, page, page_size, |bucket| {
         CollectionDropGroup {
+            slug: bucket.slug,
+            title: bucket.title,
+            card_count: bucket.cards.len(),
+            cards: bucket
+                .cards
+                .into_iter()
+                .map(|(item, card)| CollectionEntry {
+                    card: CardResponse::from(card),
+                    quantity: item.quantity,
+                    foil_quantity: item.foil_quantity,
+                })
+                .collect(),
+        }
+    })))
+}
+
+/// `GET /api/wishlist/{game}/sets/{code}/subtypes` -> the signed-in user's wanted cards in
+/// a set, grouped by card sub-type (treatment) and **paginated by sub-type** — the
+/// wish-list mirror of the catalog's set-subtypes endpoint, scoped to (and carrying the
+/// wanted counts of) what the user wants.
+///
+/// Only wanted cards appear, so a sub-type the user wants nothing in is simply absent. Any
+/// set works (no drop-table gate); the SPA gates the toggle on the tile's `has_subtypes`.
+/// An optional `q` narrows the wanted cards, dropping now-empty sub-types.
+pub async fn wishlist_set_subtypes(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, code)): Path<(String, String)>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<Page<CollectionSubtypeGroup>>, AppError> {
+    let game_meta = require_game(&game)?;
+    // Canonicalise the set (and 404 an unknown one) exactly as the catalog does.
+    let set = load_set(&state, &game, &code).await?;
+    let dialect = state.dialect();
+
+    // Parse the optional Scryfall-syntax query up front so a malformed one 422s before we
+    // touch the DB (mirrors the by-drop handler).
+    let search = params
+        .search()
+        .map(|s| search_condition(game_meta, s, dialect))
+        .transpose()?;
+
+    // The user's wanted cards in this set, in collector-number order (with their wish-list
+    // rows) — bounded by one set, so we group + paginate by sub-type in memory.
+    let scope = [set.code.clone()];
+    let rows = wishlist_query(
+        user.id,
+        &game,
+        Some(&scope),
+        search,
+        CollectionSort::Card(SortField::Number),
+        SortDir::Asc,
+        dialect,
+    )
+    .all(&state.db)
+    .await?;
+
+    // A row whose card is gone (a catalog re-import) left-joins to `None` — skip it.
+    let pairs: Vec<(wishlist_item::Model, card::Model)> = rows
+        .into_iter()
+        .filter_map(|(item, card)| card.map(|c| (item, c)))
+        .collect();
+
+    let buckets = group_into_subtypes(pairs, |(_, card)| card);
+
+    let (page, page_size) = params.drop_page_and_size();
+    Ok(Json(paginate_buckets(buckets, page, page_size, |bucket| {
+        CollectionSubtypeGroup {
             slug: bucket.slug,
             title: bucket.title,
             card_count: bucket.cards.len(),

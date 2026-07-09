@@ -1,3 +1,4 @@
+pub mod api_keys;
 pub mod auth;
 pub mod cache;
 pub mod catalog;
@@ -5,6 +6,7 @@ pub mod collection;
 pub mod config;
 pub mod health;
 pub mod mirror;
+pub mod openapi;
 pub mod shared;
 pub mod sitemap;
 pub mod wishlist;

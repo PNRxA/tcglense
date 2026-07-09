@@ -5,6 +5,7 @@ import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
 import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
+import { useCardNavList } from '@/composables/useCardNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
 
@@ -33,6 +34,13 @@ function isOwnedMark(entry: CollectionEntry): boolean {
   const owned = props.ownedMarks?.[entry.card.id]
   return !!owned && owned.quantity + owned.foil_quantity > 0
 }
+
+// Publish these entries' cards (in display order) so the card-detail modal can step prev/next
+// through them with the arrow keys / its buttons (issue #275).
+useCardNavList(
+  () => props.game,
+  () => props.entries.map((entry) => entry.card.id),
+)
 </script>
 
 <template>

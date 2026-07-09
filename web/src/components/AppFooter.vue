@@ -151,6 +151,16 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
               </li>
               <li>
                 <RouterLink
+                  to="/docs"
+                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                  @pointerenter="warm('/docs')"
+                  @focusin="warm('/docs')"
+                >
+                  API
+                </RouterLink>
+              </li>
+              <li>
+                <RouterLink
                   to="/terms"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
                   @pointerenter="warm('/terms')"

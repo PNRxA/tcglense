@@ -11,11 +11,13 @@ import {
   collectionSetDropsPath,
   collectionSourcePath,
   collectionSyncPath,
+  collectionValueHistoryPath,
   exportCollectionCsv,
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
   getCollectionSummary,
+  getCollectionValueHistory,
   importCollectionCsv,
 } from '../api'
 
@@ -149,6 +151,79 @@ describe('getCollectionSets / getCollectionSummary', () => {
     const [url] = fetchMock.mock.calls[0] as [string]
     expect(url).not.toContain('include_related')
     expect(url).not.toContain('set=')
+  })
+
+  it('sends the bulk threshold on the summary when given', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', undefined, undefined, 250)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('bulk_max_cents=250')
+  })
+
+  it('sends a $0 bulk threshold (a meaningful "nothing is bulk" value), not just truthy ones', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg', undefined, undefined, 0)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('bulk_max_cents=0')
+  })
+
+  it('omits the bulk threshold when unspecified', async () => {
+    const fetchMock = stubJson({ unique_cards: 0, total_cards: 0, total_value_usd: null })
+    await getCollectionSummary('tok', 'mtg')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).not.toContain('bulk_max_cents')
+  })
+
+  it('sends the bulk threshold on the per-set landing', async () => {
+    const fetchMock = stubJson({ data: [] })
+    await getCollectionSets('tok', 'mtg', 500)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/sets?bulk_max_cents=500')
+  })
+})
+
+describe('collectionValueHistoryPath', () => {
+  it('builds the value-history path with no range', () => {
+    expect(collectionValueHistoryPath('mtg')).toBe('/api/collection/mtg/value-history')
+  })
+
+  it('appends and encodes the range', () => {
+    expect(collectionValueHistoryPath('mtg', '30d')).toBe(
+      '/api/collection/mtg/value-history?range=30d',
+    )
+  })
+})
+
+describe('getCollectionValueHistory', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function stubJson(payload: unknown) {
+    const fetchMock = vi.fn<(url: string, init?: unknown) => Promise<Response>>(async () => {
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('requests the value-history endpoint with the range', async () => {
+    const fetchMock = stubJson({ data: [] })
+    await getCollectionValueHistory('tok', 'mtg', '1y')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/value-history?range=1y')
+  })
+
+  it('maps the wire value_usd onto the chart-shaped usd field with a null foil line', async () => {
+    stubJson({
+      data: [
+        { date: '2024-01-01', value_usd: null },
+        { date: '2024-01-02', value_usd: '123.45' },
+      ],
+    })
+    const result = await getCollectionValueHistory('tok', 'mtg')
+    expect(result.data).toEqual([
+      { date: '2024-01-01', usd: null, usd_foil: null },
+      { date: '2024-01-02', usd: '123.45', usd_foil: null },
+    ])
   })
 })
 

@@ -46,8 +46,8 @@ vi.mock('@/composables/useCardSearch', () => ({
   searchErrorMessage: (error: unknown) => (error ? 'Malformed search.' : null),
 }))
 
-function section(key: string, total = 1): ProductCardSection {
-  return { key, total }
+function section(key: string, total = 1, boosterFamily: string | null = null): ProductCardSection {
+  return { key, total, booster_family: boosterFamily }
 }
 
 // Mount over a manifest (+ optional search state) and return the section blocks the parent
@@ -108,7 +108,20 @@ describe('ProductCards sections', () => {
     ])
   })
 
-  it('labels the exclusives block by the product’s own booster family', () => {
+  it('titles the exclusives block by the backend-provided contained booster family', () => {
+    // A bundle's own product_type carries no family, but the backend names the collector
+    // booster it wraps — so the section reads "Collector Booster exclusives" (issue #290).
+    const { sections } = mountCards(
+      [section('exclusive', 1, 'collector_pack'), section('booster')],
+      'bundle',
+    )
+    expect(sections.map((s) => s.title)).toEqual([
+      'Collector Booster exclusives',
+      'Can be pulled from boosters',
+    ])
+  })
+
+  it('falls back to the product’s own booster family when the backend hands none down', () => {
     const { sections } = mountCards([section('exclusive'), section('booster')], 'play_pack')
     expect(sections.map((s) => s.title)).toEqual([
       'Play Booster exclusives',
@@ -116,7 +129,7 @@ describe('ProductCards sections', () => {
     ])
   })
 
-  it('falls back to a generic exclusives label with no booster family', () => {
+  it('falls back to a generic exclusives label with no booster family at all', () => {
     const { sections } = mountCards([section('exclusive')], 'bundle')
     expect(sections.map((s) => s.title)).toEqual(['Booster exclusives'])
   })

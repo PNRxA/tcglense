@@ -141,6 +141,10 @@ const router = createRouter({
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
     },
+    // Interactive public-API reference (issue #284). Public and indexable; linked from
+    // the homepage, nav, and footer. Lazy-loaded — the Scalar bundle is heavy and must
+    // stay out of the app's initial payload.
+    { path: '/docs', name: 'docs', component: () => import('@/views/DocsView.vue') },
     // Legal pages, linked from the site footer. Public and indexable.
     { path: '/terms', name: 'terms', component: () => import('@/views/TermsView.vue') },
     { path: '/privacy', name: 'privacy', component: () => import('@/views/PrivacyPolicyView.vue') },
@@ -148,6 +152,14 @@ const router = createRouter({
       path: '/profile',
       name: 'profile',
       component: () => import('@/views/ProfileView.vue'),
+      meta: { requiresAuth: true },
+    },
+    // Personal display preferences (card size, bulk threshold). Signed-in only, like the
+    // profile page — the bulk threshold shapes the collection value the account owns.
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -187,6 +199,15 @@ const router = createRouter({
       path: '/verify-email',
       name: 'verify-email',
       component: () => import('@/views/VerifyEmailView.vue'),
+    },
+    // Catch-all 404. Kept last so every explicit route above wins first; the greedy
+    // `/:pathMatch(.*)*` matches any otherwise-unrouted path (its param holds the
+    // segments, if a future view wants to echo the attempted path). Public and
+    // lazy-loaded; the view sets `noindex` so soft-404s stay out of the index.
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('@/views/NotFoundView.vue'),
     },
   ],
   // Restore the saved scroll position on back/forward; otherwise start a new page at the

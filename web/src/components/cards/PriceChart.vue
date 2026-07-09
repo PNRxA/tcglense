@@ -21,12 +21,25 @@ interface PricePointLike {
   usd: string | null
   usd_foil: string | null
 }
-const props = defineProps<{
-  /** Base cache key (without the range); the selected range is appended. */
-  queryKey: readonly unknown[]
-  /** Fetch the USD price series for the given range. */
-  fetcher: (range: PriceRange) => Promise<{ data: PricePointLike[] }>
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** Base cache key (without the range); the selected range is appended. */
+    queryKey: readonly unknown[]
+    /** Fetch the USD price series for the given range. */
+    fetcher: (range: PriceRange) => Promise<{ data: PricePointLike[] }>
+    /** Card heading + range-group label. Defaults to the price-history wording; the
+     * collection value chart overrides it. */
+    title?: string
+    /** Message shown when the selected range has no plottable data. */
+    emptyText?: string
+    /** Plot a single USD line with no foil series — the collection total. */
+    singleSeries?: boolean
+  }>(),
+  {
+    title: 'Price history',
+    emptyText: 'No price history for this range.',
+  },
+)
 
 // The chart body is a separate chunk so unovis never bloats a detail route; a Skeleton
 // (reduced-motion aware, like every other placeholder) stands in immediately (delay 0)
@@ -68,8 +81,14 @@ const query = useQuery({
 
 const series = computed<PricePointLike[]>(() => query.data.value?.data ?? [])
 
+// "Empty" for a range means nothing plottable — either no rows at all, or (for the
+// add-date-clamped collection series) every row null because the collection is younger than
+// the window. Either way the chart body would draw a blank frame, so show emptyText instead.
 const isEmpty = computed(
-  () => !query.isPending.value && !query.isError.value && series.value.length === 0,
+  () =>
+    !query.isPending.value &&
+    !query.isError.value &&
+    !series.value.some((p) => p.usd != null || p.usd_foil != null),
 )
 </script>
 
@@ -77,11 +96,11 @@ const isEmpty = computed(
   <Card class="mt-6">
     <CardHeader>
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <CardTitle class="text-sm font-semibold">Price history</CardTitle>
+        <CardTitle class="text-sm font-semibold">{{ props.title }}</CardTitle>
         <div
           class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5"
           role="group"
-          aria-label="Price history range"
+          :aria-label="`${props.title} range`"
         >
           <Button
             v-for="opt in RANGE_OPTIONS"
@@ -110,10 +129,10 @@ const isEmpty = computed(
         Couldn't load price history.
       </p>
       <p v-else-if="isEmpty" class="text-muted-foreground py-12 text-sm">
-        No price history for this range.
+        {{ props.emptyText }}
       </p>
 
-      <PriceChartInner v-else :series="series" :range="range" />
+      <PriceChartInner v-else :series="series" :range="range" :single-series="props.singleSeries" />
     </CardContent>
   </Card>
 </template>

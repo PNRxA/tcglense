@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
+import { Code, Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
 import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import {
   NavigationMenu,
@@ -9,6 +9,7 @@ import {
   NavigationMenuLink,
   NavigationMenuList,
   NavigationMenuTrigger,
+  navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { prefetchRouteChunks } from '@/lib/prefetch'
@@ -206,6 +207,16 @@ function warmSection(value: string) {
             </li>
           </ul>
         </NavigationMenuContent>
+      </NavigationMenuItem>
+
+      <!-- API docs: a plain link (no dropdown) to the in-app Scalar reference (issue #284). -->
+      <NavigationMenuItem>
+        <NavigationMenuLink as-child :class="navigationMenuTriggerStyle()">
+          <RouterLink to="/docs" @pointerenter="warm('/docs')" @focusin="warm('/docs')">
+            <Code class="mr-1.5 size-4" aria-hidden="true" />
+            API
+          </RouterLink>
+        </NavigationMenuLink>
       </NavigationMenuItem>
     </NavigationMenuList>
   </NavigationMenu>

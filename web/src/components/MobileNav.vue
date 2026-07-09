@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Heart, Layers, Library, Menu, Package, ScanLine } from '@lucide/vue'
+import { Code, Heart, Layers, Library, Menu, Package, ScanLine } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -32,7 +32,7 @@ const games = computed(() => data.value?.data ?? [])
 const router = useRouter()
 function warmAll(open: boolean) {
   if (!open) return
-  for (const to of ['/cards', '/sealed', '/collection', '/scan', '/wishlist']) {
+  for (const to of ['/cards', '/sealed', '/collection', '/scan', '/wishlist', '/docs']) {
     prefetchRouteChunks(router, to)
   }
   for (const game of games.value) {
@@ -104,6 +104,15 @@ function warmAll(open: boolean) {
       </DropdownMenuItem>
       <DropdownMenuItem v-for="game in games" :key="`wishlist-${game.id}`" as-child>
         <RouterLink :to="`/wishlist/${game.id}`">{{ game.name }}</RouterLink>
+      </DropdownMenuItem>
+
+      <DropdownMenuSeparator />
+
+      <DropdownMenuItem as-child>
+        <RouterLink to="/docs">
+          <Code class="size-4" aria-hidden="true" />
+          API docs
+        </RouterLink>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>

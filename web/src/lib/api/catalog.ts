@@ -1,5 +1,14 @@
 import { API_URL, listQuery, request } from './client'
-import type { Card, CardSet, DropGroup, Game, IngestStatus, Page, PricePoint } from './generated'
+import type {
+  Card,
+  CardSet,
+  DropGroup,
+  Game,
+  IngestStatus,
+  Page,
+  PricePoint,
+  SubtypeGroup,
+} from './generated'
 
 // ---------- Card catalog (public, game-agnostic) ----------
 //
@@ -17,6 +26,7 @@ export type {
   IngestStatus,
   Page,
   PricePoint,
+  SubtypeGroup,
 } from './generated'
 
 /** A page of cards plus pagination cursors. */
@@ -24,6 +34,9 @@ export type CardPage = Page<Card>
 
 /** A page of drop groups — `total`/pagination count *drops*, not cards. */
 export type DropGroupPage = Page<DropGroup>
+
+/** A page of sub-type groups — `total`/pagination count *sub-types*, not cards. */
+export type SubtypeGroupPage = Page<SubtypeGroup>
 
 export type ImageSize = 'small' | 'normal' | 'large' | 'png' | 'art_crop'
 
@@ -129,6 +142,22 @@ export function listSetDrops(
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
   return request<DropGroupPage>(`/api/games/${g}/sets/${c}/drops${cardQuery(params)}`, { signal })
+}
+
+/** Browse any set grouped by card sub-type (treatment: Borderless, Showcase, …),
+ * paginated by sub-type. The SPA gates this on `CardSet.has_subtypes`; `q` narrows the
+ * cards within each sub-type. */
+export function listSetSubtypes(
+  game: string,
+  code: string,
+  params?: Pick<CardListParams, 'page' | 'pageSize' | 'q'>,
+  signal?: AbortSignal,
+): Promise<SubtypeGroupPage> {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return request<SubtypeGroupPage>(`/api/games/${g}/sets/${c}/subtypes${cardQuery(params)}`, {
+    signal,
+  })
 }
 
 export function getCard(game: string, id: string): Promise<Card> {

@@ -7,7 +7,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
     middleware::{from_fn, from_fn_with_state, map_response},
-    routing::{any, get, post},
+    routing::{any, delete, get, post},
 };
 use tower_http::{
     cors::CorsLayer,
@@ -18,6 +18,7 @@ use tower_http::{
 use crate::{
     error::AppError,
     handlers::{
+        api_keys::{create_api_key, list_api_keys, revoke_api_key},
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
             resend_verification, reset_password, verify_email,
@@ -26,25 +27,26 @@ use crate::{
         catalog::{
             card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
             get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
-            list_set_drops, list_sets, product_card_sections, product_cards, product_contents,
-            product_facets, product_image, product_prices, scan_cards, set_icon,
+            list_set_drops, list_set_subtypes, list_sets, product_card_sections, product_cards,
+            product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
-            delete_collection_source, export_collection, get_collection_entry,
-            get_collection_source, get_import_job, import_collection, import_collection_csv,
-            list_collection, owned_counts, save_collection_source, set_collection_entry,
-            sync_collection_source,
+            MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_set_subtypes, collection_sets,
+            collection_summary, collection_value_history, delete_collection_source,
+            export_collection, get_collection_entry, get_collection_source, get_import_job,
+            import_collection, import_collection_csv, list_collection, owned_counts,
+            save_collection_source, set_collection_entry, sync_collection_source,
         },
         config::public_config,
         health::health,
         mirror::{
             mtgjson_all_printings, scryfall_bulk_data, scryfall_file, scryfall_sets, tcgcsv_proxy,
         },
+        openapi::openapi_json,
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
-            wishlist_set_drops, wishlist_sets, wishlist_summary,
+            wishlist_set_drops, wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
     },
     state::AppState,
@@ -92,6 +94,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        // API-key management for the public API (issue #284). Session-only (a key
+        // cannot manage keys — SessionUser rejects an API-key credential), so these
+        // sit in the private group for `no-store` + the per-user rate limit.
+        .route(
+            "/api/auth/api-keys",
+            get(list_api_keys).post(create_api_key),
+        )
+        .route("/api/auth/api-keys/{id}", delete(revoke_api_key))
         // Email verification + password reset: single-use emailed tokens. All
         // unauthenticated POSTs; the lookup-by-email ones answer generically.
         .route("/api/auth/verify-email", post(verify_email))
@@ -107,6 +117,12 @@ pub fn build_router(state: AppState) -> Router {
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))
         .route("/api/collection/{game}/summary", get(collection_summary))
+        // The user's total collection value over time (add-date-clamped, re-priced from
+        // historic snapshots) — the collection's answer to the per-card price chart.
+        .route(
+            "/api/collection/{game}/value-history",
+            get(collection_value_history),
+        )
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
         .route("/api/collection/{game}/sets", get(collection_sets))
@@ -116,6 +132,12 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/collection/{game}/sets/{code}/drops",
             get(collection_set_drops),
+        )
+        // The same owned set grouped by card sub-type (treatment) — the collection mirror
+        // of the catalog's set-subtypes endpoint, scoped to what the user owns.
+        .route(
+            "/api/collection/{game}/sets/{code}/subtypes",
+            get(collection_set_subtypes),
         )
         // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
         // counts out). POST so a big page's id list can't blow the URL length.
@@ -159,6 +181,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/wishlist/{game}/sets/{code}/drops",
             get(wishlist_set_drops),
         )
+        // The same wanted set grouped by card sub-type (treatment) — the wish-list mirror
+        // of the catalog's set-subtypes endpoint, scoped to what the user wants.
+        .route(
+            "/api/wishlist/{game}/sets/{code}/subtypes",
+            get(wishlist_set_subtypes),
+        )
         // Batch wanted-counts lookup for the browse-grid badges/ghosts (external ids
         // in, wanted counts out). POST so a big page's id list can't blow the URL
         // length. `/counts`, not `/owned` — a wish list doesn't track ownership.
@@ -199,6 +227,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
         .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
         .route("/api/games/{game}/sets/{code}/drops", get(list_set_drops))
+        .route(
+            "/api/games/{game}/sets/{code}/subtypes",
+            get(list_set_subtypes),
+        )
         .route("/api/games/{game}/cards", get(list_cards))
         // Distinct card-name autocomplete for the collection quick-add box. A sibling
         // of `/cards` (not `/cards/{name}`) so it never collides with `/cards/{id}`.
@@ -249,6 +281,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/sitemaps/{name}", get(sitemap_child))
         .route("/api/sitemap.xml", get(sitemap_index))
         .route("/api/sitemaps/{name}", get(sitemap_child))
+        // Public API documentation (issue #284): the machine-readable OpenAPI 3.1
+        // document plus the interactive Scalar "try it out" UI. Both are the same for
+        // every visitor and change only on redeploy, so they ride the shared CDN cache
+        // like the rest of the catalog (each error still marked `no-store` by the layer).
+        .route("/api/openapi.json", get(openapi_json))
         .layer(map_response(public_cache_layer))
         .layer(from_fn(conditional_request_layer));
 

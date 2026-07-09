@@ -60,6 +60,7 @@ tower-http = { version = "0.7.0", features = ["cors", "trace", "fs"] }
 tracing = "0.1.44"
 tracing-indicatif = "0.3"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+utoipa = { version = "5.5.0", features = ["chrono"] }
 
 [dev-dependencies]
 # `util` brings `tower::ServiceExt::oneshot`, used by the HTTP security tests to

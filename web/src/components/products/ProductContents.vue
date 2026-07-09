@@ -47,7 +47,12 @@ const show = computed(() => rows.value.length > 0)
 
 <template>
   <section v-if="show" class="mt-10">
-    <h2 class="mb-1 text-sm font-semibold">What's in the box</h2>
+    <h2 class="mb-1 flex items-baseline gap-2 text-sm font-semibold">
+      What's in the box
+      <span class="text-muted-foreground text-xs font-normal">
+        {{ rows.length }} item{{ rows.length === 1 ? '' : 's' }}
+      </span>
+    </h2>
     <p class="text-muted-foreground mb-4 text-xs">
       The products and extras this sealed product contains.
     </p>

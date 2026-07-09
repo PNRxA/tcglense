@@ -24,6 +24,8 @@ const SETS: CardSet[] = [
     parent_set_code: 'sld',
     set_type: 'commander',
   }),
+  // A set with special treatments (borderless, showcase, …) for the by-sub-type tests.
+  makeCardSet('woe', { name: 'Wilds of Eldraine', has_subtypes: true }),
 ]
 
 function makeRouter() {
@@ -113,11 +115,12 @@ describe('useSetGrouping', () => {
 
   it('stays inert for the unscoped collection view (empty code)', async () => {
     // The collection's all-cards view passes code '' — it resolves to no group and no
-    // drops, so the scope bar and by-drop stay off without a scoped guard in the view.
+    // grouping, so the scope bar and grouped view stay off without a scoped guard in the view.
     const { api } = await start('/', '')
     expect(api.hasRelated.value).toBe(false)
     expect(api.hasDrops.value).toBe(false)
-    expect(api.byDrop.value).toBe(false)
+    expect(api.groupMode.value).toBeNull()
+    expect(api.grouped.value).toBe(false)
   })
 
   it('remembers the origin set across a sub-set → view-all → view-single round-trip', async () => {
@@ -222,46 +225,58 @@ describe('useSetGrouping', () => {
     expect(query(router).ghosts).toBe('1')
   })
 
-  it('drives the by-drop view off hasDrops, ?view=all and the related scope', async () => {
-    // A drop-grouped set defaults to by-drop; a plain set never activates it.
+  it('drives the grouped view off the grouping, ?view=all and the related scope', async () => {
+    // A drop-grouped set defaults to grouped (by drop); a plain set never activates it.
     const { router, api } = await start('/cards/mtg/sets/sld', 'sld')
     expect(api.hasDrops.value).toBe(true)
-    expect(api.byDrop.value).toBe(true)
+    expect(api.groupMode.value).toBe('drops')
+    expect(api.groupLabel.value).toBe('By drop')
+    expect(api.grouped.value).toBe(true)
 
     // ?view=all opts back into the flat grid.
     await router.replace({ query: { view: 'all' } })
-    expect(api.byDrop.value).toBe(false)
+    expect(api.grouped.value).toBe(false)
 
-    // The related-sets view is itself a flat cross-set listing, so it suppresses by-drop.
+    // The related-sets view is itself a flat cross-set listing, so it suppresses grouping.
     await router.replace({ query: { related: '1' } })
     expect(api.includeRelated.value).toBe(true)
-    expect(api.byDrop.value).toBe(false)
+    expect(api.grouped.value).toBe(false)
   })
 
-  it('toggles the by-drop vs flat view, keeping search + sort and restarting paging', async () => {
+  it('drives the by-sub-type view off has_subtypes (drops take precedence)', async () => {
+    // A set with treatments but no drops groups by sub-type, labelled "By treatment".
+    const { api } = await start('/cards/mtg/sets/woe', 'woe')
+    expect(api.hasSubtypes.value).toBe(true)
+    expect(api.hasDrops.value).toBe(false)
+    expect(api.groupMode.value).toBe('subtypes')
+    expect(api.groupLabel.value).toBe('By treatment')
+    expect(api.grouped.value).toBe(true)
+  })
+
+  it('toggles the grouped vs flat view, keeping search + sort and restarting paging', async () => {
     const { router, api } = await start('/cards/mtg/sets/sld?q=elf&sort=name:desc&page=3', 'sld')
-    api.setDropView('all')
+    api.setGroupView('all')
     await flushPromises()
     expect(query(router).view).toBe('all')
     expect(query(router).q).toBe('elf')
     expect(query(router).sort).toBe('name:desc')
     expect(query(router).page).toBeUndefined()
-    expect(api.byDrop.value).toBe(false)
+    expect(api.grouped.value).toBe(false)
 
-    // Back to by-drop: ?view is shed (by-drop is the bare default).
-    api.setDropView('drops')
+    // Back to grouped: ?view is shed (grouped is the bare default).
+    api.setGroupView('grouped')
     await flushPromises()
     expect(query(router).view).toBeUndefined()
     expect(query(router).q).toBe('elf')
-    expect(api.byDrop.value).toBe(true)
+    expect(api.grouped.value).toBe(true)
   })
 
-  it('carries a preserved query key (ghosts) across the by-drop toggle', async () => {
+  it('carries a preserved query key (ghosts) across the grouped toggle', async () => {
     const { router, api } = await start('/collection/mtg/sets/sld?ghosts=1', 'sld', {
       basePath: '/collection',
       preserveQuery: ['ghosts'],
     })
-    api.setDropView('all')
+    api.setGroupView('all')
     await flushPromises()
     expect(query(router).view).toBe('all')
     expect(query(router).ghosts).toBe('1')

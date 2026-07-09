@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import PriceChart from '@/components/cards/PriceChart.vue'
 import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
@@ -14,12 +15,13 @@ import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
+import { getCollectionValueHistory } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { groupByYear, partitionPinned } from '@/lib/setGroups'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
-import type { CardSet } from '@/lib/api'
+import type { CardSet, PriceRange } from '@/lib/api'
 
 // The per-game collection landing: pick a set to see just your cards from it, or "All
 // cards" for the whole collection. By default it lists just the sets you own cards in;
@@ -132,6 +134,13 @@ const bulkValue = computed(() => formatUsd(summary.value?.bulk_value_usd))
 
 // Stats are worth showing only once something is owned.
 const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
+
+// Value-over-time chart fetcher. PriceChart owns its own query (it appends the selected
+// range to the base key); the read goes through the auth store so an expired access token
+// refreshes transparently — the endpoint is per-user and authenticated.
+function fetchValueHistory(range: PriceRange) {
+  return auth.authFetch((token) => getCollectionValueHistory(token, game.value, range))
+}
 </script>
 
 <template>
@@ -206,12 +215,24 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
         <CollectionSyncControls :game="game" />
       </header>
 
+      <!-- Total collection value over time — reconstructed from historic prices and each
+           card's add-date. Shown once something is owned; reuses the shared price-history
+           chart to render the single total-value line. -->
+      <PriceChart
+        v-if="hasStats"
+        title="Collection value"
+        empty-text="No value history for this range yet."
+        single-series
+        :query-key="['collection-value-history', game]"
+        :fetcher="fetchValueHistory"
+      />
+
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year
            headings below offset against its fixed height (their sticky `top-15`),
            mirroring the catalog game view. -->
       <StickySearchBar class="mb-6 flex flex-wrap items-center gap-3">
-        <!-- Which sets to list — the DropViewToggle-style segmented control. -->
+        <!-- Which sets to list — the GroupViewToggle-style segmented control. -->
         <div class="bg-muted text-muted-foreground inline-flex shrink-0 rounded-md p-0.5 text-sm">
           <button
             type="button"

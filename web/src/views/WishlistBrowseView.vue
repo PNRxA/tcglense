@@ -15,7 +15,7 @@ import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import CollectionGrid from '@/components/collection/CollectionGrid.vue'
 import DropSection from '@/components/cards/DropSection.vue'
-import DropViewToggle from '@/components/cards/DropViewToggle.vue'
+import GroupViewToggle from '@/components/cards/GroupViewToggle.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
@@ -25,17 +25,20 @@ import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import {
   CARD_PAGE_SIZE,
   DROP_PAGE_SIZE,
+  SUBTYPE_PAGE_SIZE,
   useAllCardsQuery,
   useGameName,
   useSetCardsQuery,
   useSetDropsQuery,
   useSetQuery,
+  useSetSubtypesQuery,
 } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import {
   useWishlistCounts,
   useWishlistDropsQuery,
   useWishlistQuery,
+  useWishlistSubtypesQuery,
   useWishlistSummaryQuery,
 } from '@/composables/useWishlist'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -110,15 +113,21 @@ const {
   relatedCount,
   hasRelated,
   includeRelated,
-  hasDrops,
-  byDrop,
+  groupMode,
+  grouped,
+  groupLabel,
   setsWord,
   scopeBarProps,
   setsPending,
   setIncludeRelated,
   viewSingleSet,
-  setDropView,
+  setGroupView,
 } = useSetGrouping(game, groupCode, { basePath: '/wishlist', preserveQuery: ['ghosts'] })
+
+// A grouped set breaks down into either Secret Lair drops or card sub-types (never both —
+// see `groupMode`); split the flag so each mode's query can be selected.
+const byDrop = computed(() => grouped.value && groupMode.value === 'drops')
+const bySubtype = computed(() => grouped.value && groupMode.value === 'subtypes')
 
 // A set's display name for the header/breadcrumb (public, cached). Only fetched for the
 // set-scoped view; falls back to the upper-cased code until it loads or if it's unknown.
@@ -175,20 +184,26 @@ const { page, searchInput, query, sort } = useCardSearch(defaultSort, validSorts
 // unscoped view has no drops/related, so it never waits.
 const flatReady = computed(() => !scoped.value || !setsPending.value)
 
-// ---- Four data sources: {list, ghost} × {flat, by-drop}. Exactly one is enabled. ----
+// ---- Data sources: {list, ghost} × {flat, grouped}. Exactly one is enabled. The grouped
+// column is itself either by-drop or by-sub-type (never both — `groupMode`), so each has
+// both query hooks; only the one matching this set's mode ever fetches. ----
 
-// Wishlisted + flat. Idle when ghosts (the default here) or by-drop is active.
+// Wishlisted + flat. Idle when ghosts (the default here) or a grouped view is active.
 const wishlistQuery = useWishlistQuery(game, page, query, sort, setCode, {
   includeRelated,
-  enabled: computed(() => !showGhosts.value && !byDrop.value && flatReady.value),
+  enabled: computed(() => !showGhosts.value && !grouped.value && flatReady.value),
 })
 const listedEntries = computed(() => wishlistQuery.data.value?.data ?? [])
 
-// Wishlisted + by drop: the user's wishlisted cards grouped into Secret Lair drops.
+// Wishlisted + grouped: the user's wanted cards grouped into Secret Lair drops or sub-types.
 const listedDropsQuery = useWishlistDropsQuery(game, groupCode, page, query, {
   enabled: computed(() => !showGhosts.value && byDrop.value),
 })
-const listedDropGroups = computed(() => listedDropsQuery.data.value?.data ?? [])
+const listedSubtypesQuery = useWishlistSubtypesQuery(game, groupCode, page, query, {
+  enabled: computed(() => !showGhosts.value && bySubtype.value),
+})
+const listedGroupsQuery = computed(() => (bySubtype.value ? listedSubtypesQuery : listedDropsQuery))
+const listedGroups = computed(() => listedGroupsQuery.value.data.value?.data ?? [])
 
 // Ghost + flat: the public catalog list for this scope (wanted + not), paginated +
 // searchable + sortable exactly like the catalog browse grids, spanning the set's group
@@ -198,7 +213,7 @@ const listedDropGroups = computed(() => listedDropsQuery.data.value?.data ?? [])
 // The whole grid lives behind the signed-in template, so a signed-out visitor sees the
 // sign-in prompt — don't fetch for them.
 const ghostFlat = computed(
-  () => auth.isAuthenticated && showGhosts.value && !byDrop.value && flatReady.value,
+  () => auth.isAuthenticated && showGhosts.value && !grouped.value && flatReady.value,
 )
 // Both hooks are called unconditionally — this component backs both the all-cards and
 // set-scoped routes, so `scoped` can flip on the same reused instance — with `enabled`
@@ -227,22 +242,28 @@ const ghostSettled = computed(
   () => ghostQuery.value.isSuccess.value && !ghostQuery.value.isPlaceholderData.value,
 )
 
-// Ghost + by drop: the catalog's by-drop endpoint (every card in each drop), so the drops
-// show what you haven't wished for (dimmed) alongside what you have.
+// Ghost + grouped: the catalog's by-drop / by-sub-type endpoint (every card in each group),
+// so the groups show what you haven't wished for (dimmed) alongside what you have.
 const ghostDropsQuery = useSetDropsQuery(game, groupCode, {
   page,
   query,
   enabled: computed(() => auth.isAuthenticated && showGhosts.value && byDrop.value),
 })
-const ghostDropGroups = computed(() => ghostDropsQuery.data.value?.data ?? [])
+const ghostSubtypesQuery = useSetSubtypesQuery(game, groupCode, {
+  page,
+  query,
+  enabled: computed(() => auth.isAuthenticated && showGhosts.value && bySubtype.value),
+})
+const ghostGroupsQuery = computed(() => (bySubtype.value ? ghostSubtypesQuery : ghostDropsQuery))
+const ghostGroups = computed(() => ghostGroupsQuery.value.data.value?.data ?? [])
 
-// Wanted counts for the visible ghost cards (the flat page, or every drop's cards): they
+// Wanted counts for the visible ghost cards (the flat page, or every group's cards): they
 // drive both the count badges and which cards render as ghosts (a card absent from the
 // map — i.e. not on the wish list — is dimmed). `ownershipReady` gates the dimming so
 // wishlisted cards don't flash as ghosts before their counts load. Empty/idle in the
 // list-only modes.
 const ghostVisibleCards = computed<Card[]>(() =>
-  byDrop.value ? ghostDropGroups.value.flatMap((drop) => drop.cards) : ghostCards.value,
+  grouped.value ? ghostGroups.value.flatMap((g) => g.cards) : ghostCards.value,
 )
 const { ownership, ready: ownershipReady } = useWishlistCounts(game, ghostVisibleCards)
 
@@ -258,8 +279,8 @@ const markableCards = computed<Card[]>(() => {
   // Ghost mode renders the same cards `ghostVisibleCards` already derives; the listed-only
   // modes render the wishlisted holdings' cards.
   if (showGhosts.value) return ghostVisibleCards.value
-  return byDrop.value
-    ? listedDropGroups.value.flatMap((drop) => drop.cards.map((entry) => entry.card))
+  return grouped.value
+    ? listedGroups.value.flatMap((g) => g.cards.map((entry) => entry.card))
     : listedEntries.value.map((entry) => entry.card)
 })
 const { ownership: collectionOwnership } = useOwnedCounts(game, markableCards, {
@@ -308,16 +329,17 @@ const scopeCopiesLabel = computed(() => {
   return s && s.total_cards > s.unique_cards ? formatCopies(s.total_cards) : null
 })
 
-// ---- Active data source: exactly one of the four {list,ghost}×{flat,by-drop} queries is
+// ---- Active data source: exactly one of the {list,ghost}×{flat,grouped} queries is
 // enabled at a time. Pick it once — by reference, so its reactive fields stay live — and
-// derive the list state off it, instead of re-branching on the mode in every computed. ----
+// derive the list state off it, instead of re-branching on the mode in every computed. The
+// grouped queries themselves switch on `groupMode` (drops vs sub-types). ----
 const active = computed(() =>
   showGhosts.value
-    ? byDrop.value
-      ? ghostDropsQuery
+    ? grouped.value
+      ? ghostGroupsQuery.value
       : ghostQuery.value
-    : byDrop.value
-      ? listedDropsQuery
+    : grouped.value
+      ? listedGroupsQuery.value
       : wishlistQuery,
 )
 const total = computed(() => active.value.data.value?.total ?? 0)
@@ -336,8 +358,10 @@ const hasCards = computed(() => (active.value.data.value?.data?.length ?? 0) > 0
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(listError.value))
 
-// The active view sets the pagination unit: drops (by-drop) or printings (flat).
-const pageSize = computed(() => (byDrop.value ? DROP_PAGE_SIZE : CARD_PAGE_SIZE))
+// The active view sets the pagination unit: groups (grouped) or printings (flat). Drops
+// and sub-types share a page size, but pick by mode so the two can diverge later.
+const groupPageSize = computed(() => (bySubtype.value ? SUBTYPE_PAGE_SIZE : DROP_PAGE_SIZE))
+const pageSize = computed(() => (grouped.value ? groupPageSize.value : CARD_PAGE_SIZE))
 // The top of the results (the controls row above the grid) — both pagers scroll here so a
 // page change starts at the top of the listing, clearing the sticky search bar (issue #258).
 const resultsTop = ref<HTMLElement | null>(null)
@@ -349,9 +373,10 @@ useClampPage(page, () => ({
 
 const countLabel = computed(() => {
   const n = total.value
-  // By-drop counts drops.
-  if (byDrop.value) {
-    const label = `${n.toLocaleString()} ${n === 1 ? 'drop' : 'drops'}`
+  // A grouped view counts its groups (drops or sub-types).
+  if (grouped.value) {
+    const unit = bySubtype.value ? 'sub-type' : 'drop'
+    const label = `${n.toLocaleString()} ${n === 1 ? unit : `${unit}s`}`
     return query.value ? `${label} matching “${query.value}”` : label
   }
   const word = n === 1 ? 'card' : 'cards'
@@ -470,19 +495,25 @@ const errorMessage = computed(() =>
       </p>
 
       <template v-else>
-        <!-- Controls: the by-drop / all-cards toggle (drop sets) + the show-ghosts toggle,
-             then the card-size + sort menus (flat views only — by-drop has a fixed order). -->
+        <!-- Controls: the grouped / all-cards toggle (grouped sets: By drop or By
+             treatment) + the show-ghosts toggle, then the card-size + sort menus (flat
+             views only — a grouped view has a fixed order). -->
         <div
           ref="resultsTop"
           class="mb-4 flex scroll-mt-24 flex-wrap items-center justify-between gap-3"
         >
           <div class="flex flex-wrap items-center gap-2">
-            <DropViewToggle v-if="scoped && hasDrops" :by-drop="byDrop" @select="setDropView" />
+            <GroupViewToggle
+              v-if="scoped && groupMode"
+              :grouped="grouped"
+              :label="groupLabel"
+              @select="setGroupView"
+            />
             <GhostToggle :show-ghosts="showGhosts" list="wishlist" @toggle="setShowGhosts" />
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <CardSizeMenu />
-            <CardSortMenu v-if="!byDrop" v-model="sort" :options="sortOptions" />
+            <CardSortMenu v-if="!grouped" v-model="sort" :options="sortOptions" />
           </div>
         </div>
 
@@ -525,33 +556,33 @@ const errorMessage = computed(() =>
           </template>
         </div>
 
-        <!-- By-drop: one section per Secret Lair drop, paginated by drop. List-only mode
-             uses the collection grid (its cards are wishlisted holdings); ghost mode uses
-             the catalog grid (every card in the drop) with wanted badges + dimmed
-             not-wanted cards. -->
-        <template v-else-if="byDrop">
+        <!-- Grouped: one section per group (Secret Lair drop or card sub-type), paginated
+             by group. List-only mode uses the collection grid (its cards are wishlisted
+             holdings); ghost mode uses the catalog grid (every card in the group) with
+             wanted badges + dimmed not-wanted cards. -->
+        <template v-else-if="grouped">
           <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
           <div class="mb-6">
             <CardPagination
               v-model:page="page"
-              :page-size="DROP_PAGE_SIZE"
+              :page-size="groupPageSize"
               :total="total"
               :scroll-target="resultsTop"
             />
           </div>
-          <!-- Two typed loops (not one union v-for): wishlisted drops render the
-               collection grid off wish-list holdings, ghost drops the catalog grid off
+          <!-- Two typed loops (not one union v-for): wishlisted groups render the
+               collection grid off wish-list holdings, ghost groups the catalog grid off
                every card. -->
           <UpdatingOverlay :loading="updating">
             <template v-if="!showGhosts">
               <DropSection
-                v-for="drop in listedDropGroups"
-                :key="drop.slug ?? drop.title"
-                :drop="drop"
+                v-for="cardGroup in listedGroups"
+                :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
+                :drop="cardGroup"
               >
                 <CollectionGrid
                   :game="game"
-                  :entries="drop.cards"
+                  :entries="cardGroup.cards"
                   list="wishlist"
                   :owned-marks="ownedMarks"
                 />
@@ -559,13 +590,13 @@ const errorMessage = computed(() =>
             </template>
             <template v-else>
               <DropSection
-                v-for="drop in ghostDropGroups"
-                :key="drop.slug ?? drop.title"
-                :drop="drop"
+                v-for="cardGroup in ghostGroups"
+                :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
+                :drop="cardGroup"
               >
                 <CardGrid
                   :game="game"
-                  :cards="drop.cards"
+                  :cards="cardGroup.cards"
                   :ownership="ownership"
                   :ghost-unowned="ownershipReady"
                   list="wishlist"
@@ -577,7 +608,7 @@ const errorMessage = computed(() =>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"
-              :page-size="DROP_PAGE_SIZE"
+              :page-size="groupPageSize"
               :total="total"
               :scroll-target="resultsTop"
             />

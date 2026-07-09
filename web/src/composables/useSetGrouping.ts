@@ -12,11 +12,11 @@ import { filterGroups, findGroup, groupSets, originSetCode, subSetLabel } from '
  * scope in the URL so it's shareable and survives a reload.
  *
  * `game`/`code` are the set-view route params (refs). Returns the group derivations
- * the view renders — including the bundled SetScopeBar props and the by-drop view
- * flag — plus the nav helpers that toggle the scope and the by-drop/flat view.
- * `setsPending` is the underlying set-list query's pending flag, which the view gates
- * its flat card fetch on so a cold-loaded by-drop/related link doesn't fire a
- * throwaway request.
+ * the view renders — including the bundled SetScopeBar props and the grouped-view flag
+ * (`grouped`) + what it groups by (`groupMode`: Secret Lair drops or derived sub-types) —
+ * plus the nav helpers that toggle the scope and the grouped/flat view. `setsPending` is
+ * the underlying set-list query's pending flag, which the view gates its flat card fetch on
+ * so a cold-loaded grouped/related link doesn't fire a throwaway request.
  *
  * `options.basePath` is the route prefix the scope-nav helpers navigate under
  * (default `/cards`); the collection's set view passes `/collection` so the same
@@ -92,13 +92,29 @@ export function useSetGrouping(
     () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.has_drops ?? false,
   )
 
-  // By-drop is the default for a drop-grouped set; ?view=all opts back into the flat
-  // grid, and the related-sets view (?related=1) is itself a flat cross-set listing,
-  // so it suppresses by-drop too. `hasDrops` resolves false for the collection's
-  // unscoped '' code, so the all-cards view needs no scope guard of its own.
-  const byDrop = computed(
-    () => hasDrops.value && route.query.view !== 'all' && !includeRelated.value,
+  // Whether this set has cards with special treatments (borderless, showcase, …) to group
+  // by (issue #282). Same set-list source as `hasDrops`, so it's known up front too.
+  const hasSubtypes = computed(
+    () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.has_subtypes ?? false,
   )
+
+  // A set is browsable under at most one grouping. Drops (Secret Lair) win over derived
+  // sub-types — a drop-grouped set's natural breakdown IS its drops — so the two never both
+  // apply. `null` = no grouping (only the flat grid).
+  const groupMode = computed<'drops' | 'subtypes' | null>(() =>
+    hasDrops.value ? 'drops' : hasSubtypes.value ? 'subtypes' : null,
+  )
+
+  // The grouped view is the default wherever a grouping exists; ?view=all opts back into the
+  // flat grid, and the related-sets view (?related=1) is itself a flat cross-set listing, so
+  // it suppresses grouping too. `groupMode` is null for the collection's unscoped '' code, so
+  // the all-cards view needs no scope guard of its own.
+  const grouped = computed(
+    () => groupMode.value !== null && route.query.view !== 'all' && !includeRelated.value,
+  )
+
+  // The grouped-view toggle's label — what the set would be grouped BY.
+  const groupLabel = computed(() => (groupMode.value === 'subtypes' ? 'By treatment' : 'By drop'))
 
   // The full prop set SetScopeBar renders, bundled so both set-scoped views bind the
   // bar with one v-bind (the camelCase keys match its props) instead of relaying
@@ -170,11 +186,11 @@ export function useSetGrouping(
     }
   }
 
-  // Toggle the by-drop vs flat view of this set. Preserves the search + sort (and any
+  // Toggle the grouped vs flat view of this set. Preserves the search + sort (and any
   // preserved view mode) but sheds the related/from scope and restarts paging (page is
   // dropped by listState) — the two views paginate over different units. ?view=all
-  // marks the flat mode; by-drop is the bare default.
-  function setDropView(mode: 'drops' | 'all') {
+  // marks the flat mode; grouped is the bare default.
+  function setGroupView(mode: 'grouped' | 'all') {
     const next = listState()
     if (mode === 'all') next.view = 'all'
     router.replace({ query: next })
@@ -190,13 +206,16 @@ export function useSetGrouping(
     activeSetCode,
     originName,
     hasDrops,
-    byDrop,
+    hasSubtypes,
+    groupMode,
+    grouped,
+    groupLabel,
     setsWord,
     scopeBarProps,
     setsPending: setsQuery.isPending,
     setIncludeRelated,
     viewSingleSet,
-    setDropView,
+    setGroupView,
   }
 }
 

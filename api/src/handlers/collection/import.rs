@@ -13,7 +13,7 @@ use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
-use crate::auth::extractor::AuthUser;
+use crate::auth::extractor::{AuthUser, WritableUser};
 use crate::collection_import::jobs::{self, JobStatus};
 use crate::collection_import::{self, ImportSummary, Provider, ReconcileMode};
 use crate::entities::collection_source;
@@ -35,7 +35,7 @@ use super::{
 /// any), so importing your saved collection updates "Last synced" just like a re-sync.
 pub async fn import_collection(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    WritableUser(user): WritableUser,
     Path(game): Path<String>,
     JsonBody(payload): JsonBody<ImportRequest>,
 ) -> Result<(StatusCode, Json<ImportJobResponse>), AppError> {
@@ -87,7 +87,7 @@ pub async fn import_collection(
 /// `422` for a bad mode / unreadable CSV / one missing a required column / an empty upload.
 pub async fn import_collection_csv(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    WritableUser(user): WritableUser,
     Path(game): Path<String>,
     Query(params): Query<CsvImportParams>,
     body: Bytes,
@@ -143,7 +143,7 @@ pub async fn get_collection_source(
 /// game. Validates that the source resolves to a provider collection id; does not sync.
 pub async fn save_collection_source(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    WritableUser(user): WritableUser,
     Path(game): Path<String>,
     JsonBody(payload): JsonBody<SaveSourceRequest>,
 ) -> Result<Json<CollectionSourceResponse>, AppError> {
@@ -217,7 +217,7 @@ pub async fn save_collection_source(
 /// Idempotent: deleting when nothing is saved still returns `204`.
 pub async fn delete_collection_source(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    WritableUser(user): WritableUser,
     Path(game): Path<String>,
 ) -> Result<StatusCode, AppError> {
     require_game(&game)?;
@@ -235,7 +235,7 @@ pub async fn delete_collection_source(
 /// with a job id to poll. `404` when no link is saved.
 pub async fn sync_collection_source(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    WritableUser(user): WritableUser,
     Path(game): Path<String>,
 ) -> Result<(StatusCode, Json<ImportJobResponse>), AppError> {
     require_game(&game)?;

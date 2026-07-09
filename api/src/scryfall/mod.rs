@@ -14,6 +14,7 @@ pub mod model;
 mod price_history;
 mod progress;
 pub mod search;
+pub mod subtypes;
 
 pub use dummy::seed;
 /// Copy each foil-★ variant's foil price onto its nonfoil base card (issue #209), so a

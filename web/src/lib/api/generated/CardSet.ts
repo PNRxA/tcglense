@@ -9,4 +9,11 @@ export type CardSet = { code: string, name: string, set_type: string | null, rel
  * (the `.../drops` endpoint). Lets the SPA offer a by-drop view only where
  * there's drop data to show.
  */
-has_drops: boolean, };
+has_drops: boolean, 
+/**
+ * Whether this set has cards with special treatments (borderless, showcase, …), so
+ * it can be browsed grouped by sub-type (the `.../subtypes` endpoint). Unlike
+ * `has_drops` this is data-derived, so the `From` impl leaves it `false` — the
+ * handler fills it from a query.
+ */
+has_subtypes: boolean, };

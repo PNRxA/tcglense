@@ -12,7 +12,7 @@ import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import DropSection from '@/components/cards/DropSection.vue'
-import DropViewToggle from '@/components/cards/DropViewToggle.vue'
+import GroupViewToggle from '@/components/cards/GroupViewToggle.vue'
 import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
@@ -20,9 +20,11 @@ import { searchErrorMessage, useCardSearch, useDropFilter } from '@/composables/
 import {
   CARD_PAGE_SIZE,
   DROP_PAGE_SIZE,
+  SUBTYPE_PAGE_SIZE,
   useSetCardsQuery,
   useSetDropsQuery,
   useSetQuery,
+  useSetSubtypesQuery,
 } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -43,25 +45,32 @@ const { page, searchInput, query, sort } = useCardSearch(
   SET_SORT_OPTIONS.map((option) => option.value),
 )
 
-// Related-sub-set grouping + the "view all together" / "view just one set" scope
-// nav + the by-drop view, all keyed off the (game-cached) full set list.
-// `hasDrops`/`byDrop` and `setsPending` come from that same list, which the flat
-// card fetch below gates on — so a drop set is known up front (no flat-grid flash,
-// no throwaway fetch).
+// Related-sub-set grouping + the "view all together" / "view just one set" scope nav +
+// the grouped view (Secret Lair drops or card sub-types), all keyed off the (game-cached)
+// full set list. `groupMode`/`grouped` and `setsPending` come from that same list, which
+// the flat card fetch below gates on — so a grouped set is known up front (no flat-grid
+// flash, no throwaway fetch).
 const {
   group,
   relatedCount,
   hasRelated,
   includeRelated,
-  hasDrops,
-  byDrop,
+  groupMode,
+  grouped,
+  groupLabel,
   setsWord,
   scopeBarProps,
   setsPending,
   setIncludeRelated,
   viewSingleSet,
-  setDropView,
+  setGroupView,
 } = useSetGrouping(game, code)
+
+// The grouped view breaks down into either Secret Lair drops or card sub-types (never
+// both — see `groupMode`). Split the flag so the drops-only bits (the drop-title filter)
+// stay drops-only.
+const byDrop = computed(() => grouped.value && groupMode.value === 'drops')
+const bySubtype = computed(() => grouped.value && groupMode.value === 'subtypes')
 
 // The by-drop "filter drops by name" box, backed by ?drop= (orthogonal to the card
 // search ?q above): q narrows the cards within each drop, this narrows the drops by
@@ -89,57 +98,70 @@ const cardsQuery = useSetCardsQuery(game, code, {
   sort,
   defaultSort: SET_DEFAULT_SORT,
   includeRelated,
-  // Skip the flat list while the by-drop view is active, and wait for the set
-  // list to settle first — it's what tells us whether this is a drop set (and
-  // resolves the related grouping), so we never fire a throwaway flat request
-  // that a cold-loaded by-drop / related link would immediately discard.
-  enabled: computed(() => !byDrop.value && !setsPending.value),
+  // Skip the flat list while a grouped view is active, and wait for the set list to
+  // settle first — it's what tells us whether this set is grouped (and resolves the
+  // related grouping), so we never fire a throwaway flat request that a cold-loaded
+  // grouped / related link would immediately discard.
+  enabled: computed(() => !grouped.value && !setsPending.value),
 })
 
+// The two grouped data sources — Secret Lair drops and card sub-types. Both hooks are
+// called unconditionally (composables can't be conditional); their `enabled` gates pick
+// the one matching this set's `groupMode`, so only the active one ever fetches.
 const dropsQuery = useSetDropsQuery(game, code, { page, query, drop: dropQuery, enabled: byDrop })
+const subtypesQuery = useSetSubtypesQuery(game, code, { page, query, enabled: bySubtype })
+// The active grouped query, picked by reference so its reactive fields stay live.
+const groupQuery = computed(() => (bySubtype.value ? subtypesQuery : dropsQuery))
 
 const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
-const dropGroups = computed(() => dropsQuery.data.value?.data ?? [])
-const dropTotal = computed(() => dropsQuery.data.value?.total ?? 0)
+// The active grouped view's groups (drops or sub-types) and their count. Paginated by
+// group, so `groupTotal` is a group count, not a card count.
+const groups = computed(() => groupQuery.value.data.value?.data ?? [])
+const groupTotal = computed(() => groupQuery.value.data.value?.total ?? 0)
+const groupPageSize = computed(() => (bySubtype.value ? SUBTYPE_PAGE_SIZE : DROP_PAGE_SIZE))
+// keepPreviousData holds the prior page while the next loads; drives the "Updating…" cue.
+const groupLoading = computed(() => groupQuery.value.isPlaceholderData.value)
 // The top of the results (the controls row above the grid) — both pagers scroll here so a
 // page change starts at the top of the listing, clearing the sticky search bar (issue #258).
 const resultsTop = ref<HTMLElement | null>(null)
 
-// Every card visible on the current page — the flat grid's cards, or all the drops'
-// cards in the by-drop view — so a single owned-counts lookup drives the collection
+// Every card visible on the current page — the flat grid's cards, or all the groups'
+// cards in a grouped view — so a single owned-counts lookup drives the collection
 // badges on whichever grid(s) render below.
 const visibleCards = computed<Card[]>(() =>
-  byDrop.value ? dropGroups.value.flatMap((drop) => drop.cards) : cards.value,
+  grouped.value ? groups.value.flatMap((group) => group.cards) : cards.value,
 )
 const { ownership } = useOwnedCounts(game, visibleCards)
 
-// The list's loading / error / empty state reads from whichever query drives the
-// current view. cardsQuery waits on the set list, so an as-yet-undecided drop set
-// shows the active query's own pending state (no flat-grid flash), while
-// keepPreviousData still carries the prior set's cards smoothly across navigation.
+// The list's loading / error / empty state reads from whichever query drives the current
+// view. cardsQuery waits on the set list, so an as-yet-undecided grouped set shows the
+// active query's own pending state (no flat-grid flash), while keepPreviousData still
+// carries the prior set's cards smoothly across navigation.
 const listPending = computed(() =>
-  byDrop.value ? dropsQuery.isPending.value : cardsQuery.isPending.value,
+  grouped.value ? groupQuery.value.isPending.value : cardsQuery.isPending.value,
 )
-const listError = computed(() => (byDrop.value ? dropsQuery.error.value : cardsQuery.error.value))
+const listError = computed(() =>
+  grouped.value ? groupQuery.value.error.value : cardsQuery.error.value,
+)
 const listIsError = computed(() =>
-  byDrop.value ? dropsQuery.isError.value : cardsQuery.isError.value,
+  grouped.value ? groupQuery.value.isError.value : cardsQuery.isError.value,
 )
 // Refetching over stale results (page/filter change held by keepPreviousData): drives an
 // honest "Updating…" cue on the count line rather than silently showing the old total.
 const updating = computed(() =>
-  byDrop.value
-    ? dropsQuery.isFetching.value && dropsQuery.isPlaceholderData.value
+  grouped.value
+    ? groupQuery.value.isFetching.value && groupLoading.value
     : cardsQuery.isFetching.value && cardsQuery.isPlaceholderData.value,
 )
 const isEmpty = computed(() =>
-  byDrop.value ? dropGroups.value.length === 0 : cards.value.length === 0,
+  grouped.value ? groups.value.length === 0 : cards.value.length === 0,
 )
 
-// The active view sets the pagination unit: drops (by-drop) or printings (flat).
+// The active view sets the pagination unit: groups (grouped) or printings (flat).
 useClampPage(page, () =>
-  byDrop.value
-    ? { ready: dropsQuery.isSuccess.value, total: dropTotal.value, pageSize: DROP_PAGE_SIZE }
+  grouped.value
+    ? { ready: groupQuery.value.isSuccess.value, total: groupTotal.value, pageSize: groupPageSize.value }
     : { ready: cardsQuery.isSuccess.value, total: total.value, pageSize: CARD_PAGE_SIZE },
 )
 
@@ -150,11 +172,13 @@ const heading = computed(() =>
     : (set.value?.name ?? code.value.toUpperCase()),
 )
 const countLabel = computed(() => {
-  // By-drop mode counts drops; the flat view counts card printings. The by-drop view
-  // has two filters — the drop-title box (dropQuery) and the card search (q) — so its
-  // "matching …" suffix reflects whichever is active (the drop filter reads first, as
-  // it's what the drop count directly narrows).
-  const [n, singular] = byDrop.value ? [dropTotal.value, 'drop'] : [total.value, 'printing']
+  // A grouped view counts its groups (drops or sub-types); the flat view counts card
+  // printings. The by-drop view has two filters — the drop-title box (dropQuery) and the
+  // card search (q) — so its "matching …" suffix reflects whichever is active (the drop
+  // filter reads first, as it's what the drop count directly narrows).
+  const [n, singular] = grouped.value
+    ? [groupTotal.value, bySubtype.value ? 'sub-type' : 'drop']
+    : [total.value, 'printing']
   const active = byDrop.value ? dropQuery.value || query.value : query.value
   if (!n && !active) return ''
   const label = `${n.toLocaleString()} ${n === 1 ? singular : `${singular}s`}`
@@ -219,29 +243,35 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         @select="viewSingleSet"
       />
 
-      <!-- Controls: a By-drop / All-cards toggle for drop sets, a card-size menu, and
-           the sort menu (flat view only — the by-drop view has a fixed drop order). The
-           size menu shows in both views since the by-drop sections are grids too. These
-           sit above the results (not inside the has-results branch below) so the toggle
-           and its drop-name filter stay visible — and clearable — even when the filter
-           narrows to nothing; the size/sort menus only make sense with cards on screen,
-           so they hide while the current view is empty. -->
+      <!-- Controls: a grouped / All-cards toggle for grouped sets (By drop or By
+           treatment), a card-size menu, and the sort menu (flat view only — a grouped
+           view has a fixed order). The size menu shows in both views since the grouped
+           sections are grids too. These sit above the results (not inside the has-results
+           branch below) so the toggle and its drop-name filter stay visible — and
+           clearable — even when the filter narrows to nothing; the size/sort menus only
+           make sense with cards on screen, so they hide while the current view is empty. -->
       <div
-        v-if="hasDrops || !isEmpty"
+        v-if="groupMode || !isEmpty"
         ref="resultsTop"
         class="mb-4 flex scroll-mt-24 flex-wrap items-center justify-between gap-3"
       >
-        <DropViewToggle v-if="hasDrops" :by-drop="byDrop" @select="setDropView" />
+        <GroupViewToggle
+          v-if="groupMode"
+          :grouped="grouped"
+          :label="groupLabel"
+          @select="setGroupView"
+        />
         <span v-else />
         <div v-if="!isEmpty" class="flex gap-2">
           <CardSizeMenu />
-          <CardSortMenu v-if="!byDrop" v-model="sort" :options="SET_SORT_OPTIONS" />
+          <CardSortMenu v-if="!grouped" v-model="sort" :options="SET_SORT_OPTIONS" />
         </div>
       </div>
 
       <!-- Filter the drops by their curated Secret Lair title, sitting under the
            By-drop toggle. Server-side (the by-drop view paginates over drops), so it
-           narrows the whole set, not just the drops on the current page. -->
+           narrows the whole set, not just the drops on the current page. Drops-only —
+           the by-treatment view has a small fixed set of sub-types, so no name filter. -->
       <div v-if="byDrop" class="mb-6 max-w-sm">
         <CardSearchBox
           v-model="dropInput"
@@ -271,29 +301,34 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       </p>
 
       <template v-else>
-        <!-- By-drop: one section per Secret Lair drop, paginated by drop. -->
-        <template v-if="byDrop">
+        <!-- Grouped: one section per group (Secret Lair drop or card sub-type),
+             paginated by group. -->
+        <template v-if="grouped">
           <!-- Top pager mirrors the one below (#264) so a long list can be paged from the top too. -->
           <div class="mb-6">
             <CardPagination
               v-model:page="page"
-              :page-size="DROP_PAGE_SIZE"
-              :total="dropTotal"
-              :loading="dropsQuery.isPlaceholderData.value"
+              :page-size="groupPageSize"
+              :total="groupTotal"
+              :loading="groupLoading"
               :scroll-target="resultsTop"
             />
           </div>
-          <UpdatingOverlay :loading="dropsQuery.isPlaceholderData.value">
-            <DropSection v-for="drop in dropGroups" :key="drop.slug ?? drop.title" :drop="drop">
-              <CardGrid :game="game" :cards="drop.cards" :ownership="ownership" />
+          <UpdatingOverlay :loading="groupLoading">
+            <DropSection
+              v-for="cardGroup in groups"
+              :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
+              :drop="cardGroup"
+            >
+              <CardGrid :game="game" :cards="cardGroup.cards" :ownership="ownership" />
             </DropSection>
           </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
               v-model:page="page"
-              :page-size="DROP_PAGE_SIZE"
-              :total="dropTotal"
-              :loading="dropsQuery.isPlaceholderData.value"
+              :page-size="groupPageSize"
+              :total="groupTotal"
+              :loading="groupLoading"
               :scroll-target="resultsTop"
             />
           </div>

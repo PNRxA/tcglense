@@ -95,15 +95,19 @@ state or plan to scale to more than one replica.
    `Cache-Control` the API already emits (the origin sends the right header per route;
    these just tell Cloudflare which paths are cacheable):
 
-   **Rule 1 — cache the catalog, images, and sitemaps.** *Eligibility* → Eligible for
-   cache; *Edge TTL* → "Use cache-control header if present, bypass if not"; *Browser
-   TTL* → Respect origin. Expression (the `/api/sitemap*` lines cover the legacy
-   aliases; the canonical root `/sitemap.xml` + `/sitemaps/*` paths — issue #294 —
-   fall under Rule 3, which already respects the origin's sitemap `Cache-Control`):
+   **Rule 1 — cache the catalog, images, sitemaps, and API docs.** *Eligibility* →
+   Eligible for cache; *Edge TTL* → "Use cache-control header if present, bypass if
+   not"; *Browser TTL* → Respect origin. Expression (the `/api/sitemap*` lines cover
+   the legacy aliases; the canonical root `/sitemap.xml` + `/sitemaps/*` paths — issue
+   #294 — fall under Rule 3, which already respects the origin's sitemap
+   `Cache-Control`; the `/api/openapi.json` line covers the public OpenAPI document —
+   issue #284; the interactive reference is the SPA's `/docs` route, static web assets
+   that need no API rule):
    ```
    (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
+   or http.request.uri.path eq "/api/openapi.json"
    ```
 
    **Rule 2 — bypass everything per-user or live.** *Eligibility* → Bypass cache.

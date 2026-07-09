@@ -1,21 +1,34 @@
-//! Shared price-history windowing + downsampling, reused by the card price-history
-//! endpoint ([`super::prices`]) and the sealed-product one ([`super::products`]).
+//! Shared price-history windowing + downsampling, reused by the per-card price-history
+//! endpoint ([`crate::handlers::catalog::prices`]), the sealed-product one
+//! ([`crate::handlers::catalog::products`]), and the collection value-over-time endpoint
+//! ([`crate::handlers::collection::value_history`]).
 //!
-//! Both series are one row per `(entity, day)` of decimal-string prices; only the row
+//! Each per-entity series is one row per `(entity, day)` of decimal-string prices, and the
+//! collection series aggregates many of those into one total-per-day line; only the row
 //! shape differs. So the `?range` vocabulary, the window cutoff, and the "keep the last
 //! real row per bucket" downsampling live here, generic over the row type via a date
 //! accessor — the handlers just convert the retained rows into their own point DTO.
 
 use chrono::{Datelike, Duration, NaiveDate};
+use serde::Deserialize;
 
 use crate::error::AppError;
 
-/// Time window + sampling resolution for a price history, selected by the detail-page
-/// chart via `?range`. Longer windows are **downsampled** to a coarser resolution so
-/// the wire payload (and the plotted line) stays light however much history accrues.
-/// When no `range` is given the endpoint returns the full, un-sampled daily series.
+/// Query params for a price-history / value-history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct PriceParams {
+    /// Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`). Absent/blank = the
+    /// full daily series; an unknown value is a 422.
+    #[serde(default)]
+    pub range: Option<String>,
+}
+
+/// Time window + sampling resolution for a price history, selected by a detail-page or
+/// collection chart via `?range`. Longer windows are **downsampled** to a coarser
+/// resolution so the wire payload (and the plotted line) stays light however much history
+/// accrues. When no `range` is given the endpoint returns the full, un-sampled daily series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PriceRange {
+pub(crate) enum PriceRange {
     /// Last 7 days, daily.
     D7,
     /// Last 30 days, daily.
@@ -34,7 +47,7 @@ impl PriceRange {
     /// An unrecognised value is a 422 (consistent with a bad `sort`/`q`). Blank/absent
     /// is handled by the caller (it means "full series"), so this is only ever called
     /// with a non-empty value.
-    pub(super) fn parse(value: &str) -> Result<Self, AppError> {
+    pub(crate) fn parse(value: &str) -> Result<Self, AppError> {
         Ok(match value {
             "7d" => PriceRange::D7,
             "30d" => PriceRange::D30,
@@ -60,7 +73,7 @@ impl PriceRange {
 
     /// Width of one downsample bucket in days; one representative day (the most recent
     /// in the bucket) is kept per bucket, so a larger value = coarser chart.
-    pub(super) fn bucket_days(self) -> i64 {
+    pub(crate) fn bucket_days(self) -> i64 {
         match self {
             PriceRange::D7 | PriceRange::D30 => 1,
             PriceRange::Y1 => 7,
@@ -74,7 +87,7 @@ impl PriceRange {
 /// The inclusive lower bound (`"YYYY-MM-DD"`) for a range's window relative to `today`,
 /// or `None` for [`PriceRange::All`] (no lower bound). Pure so the date arithmetic stays
 /// unit-testable; the handler passes `Utc::now().date_naive()`.
-pub(super) fn cutoff_date(today: NaiveDate, range: PriceRange) -> Option<String> {
+pub(crate) fn cutoff_date(today: NaiveDate, range: PriceRange) -> Option<String> {
     range
         .window_days()
         .map(|days| crate::scryfall::format_date(today - Duration::days(days)))
@@ -86,7 +99,7 @@ pub(super) fn cutoff_date(today: NaiveDate, range: PriceRange) -> Option<String>
 /// resolution). Rows are kept whole (never averaged), so every returned row stays a
 /// real, internally consistent day. Generic over the row type via `date_of`, which
 /// yields each row's `"YYYY-MM-DD"` string.
-pub(super) fn downsample_rows<T>(
+pub(crate) fn downsample_rows<T>(
     rows: Vec<T>,
     bucket_days: i64,
     date_of: impl Fn(&T) -> &str,

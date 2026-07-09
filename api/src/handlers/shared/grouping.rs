@@ -1,10 +1,16 @@
-//! Secret Lair drop grouping shared by the catalog and collection by-drop views:
-//! the generic grouping pass (over bare cards or owned holdings) and the by-drop
-//! pagination tail both endpoints run once their rows are grouped into buckets.
+//! Set-card grouping shared by the catalog, collection, and wish-list views: the generic
+//! bucketing pass (over bare cards or owned holdings) plus the pagination tail every
+//! grouped endpoint runs once its rows are in buckets. Two groupings ride on it — Secret
+//! Lair **drops** (curated, keyed by collector number; see [`crate::scryfall::drops`]) and
+//! set **sub-types** (card treatments derived from print attributes; see
+//! [`crate::scryfall::subtypes`]).
+
+use std::collections::BTreeMap;
 
 use super::pagination::Page;
 use crate::error::AppError;
 use crate::scryfall::drops::DropTable;
+use crate::scryfall::subtypes::{self, Subtype};
 
 /// Resolve a game's set to its Secret Lair drop table, `404`ing an set that isn't
 /// drop-grouped. This is the single definition of "drop-grouped" the by-drop endpoints
@@ -19,41 +25,28 @@ pub(crate) fn require_drop_table(
         .ok_or_else(|| AppError::NotFound(format!("set '{set_code}' has no drops")))
 }
 
-/// A drop's items, before pagination/serialization (so off-page drops never get
-/// turned into response DTOs). Generic over the item type `T`: the public catalog
-/// groups bare `card::Model`s, while the per-user collection groups owned
-/// `(collection_item, card)` pairs — both share this one grouping pass.
-pub(crate) struct DropBucket<T> {
+/// One group's items, before pagination/serialization (so off-page groups never get
+/// turned into response DTOs). Generic over the item type `T`: the public catalog groups
+/// bare `card::Model`s, while the per-user collection/wish list groups owned `(item, card)`
+/// pairs — every grouping shares this one bucket type.
+pub(crate) struct Bucket<T> {
+    /// Stable slug for anchors/links; `None` only for the drops' catch-all "Other" group.
     pub(crate) slug: Option<String>,
     pub(crate) title: String,
     pub(crate) cards: Vec<T>,
 }
 
-/// Group a set's items — already in collector-number order — into Secret Lair
-/// drops, preserving Scryfall's drop order. `collector_number` extracts each item's
-/// collector number (the drop-table key), so the same grouping works for bare cards
-/// and for owned holdings. Items the snapshot doesn't place in a drop collect into a
-/// trailing "Other" bucket. Empty drops never appear: a bucket exists only once an
-/// item lands in it (so a search that matches a subset yields only the drops with
-/// matches).
-pub(crate) fn group_into_drops<T>(
-    table: &DropTable,
-    rows: Vec<T>,
-    collector_number: impl Fn(&T) -> &str,
-) -> Vec<DropBucket<T>> {
-    use std::collections::BTreeMap;
-    // Sentinel order for the "Other" bucket: `BTreeMap` ordering parks it last.
-    const OTHER: usize = usize::MAX;
-
-    let mut buckets: BTreeMap<usize, DropBucket<T>> = BTreeMap::new();
+/// Bucket `rows` by a key function mapping each row to `(order, slug, title)`, keeping the
+/// buckets in ascending `order`. A bucket exists only once a row lands in it (empty groups
+/// never appear), and the first row to land names it. The shared core of the by-drop and
+/// by-sub-type passes.
+fn group_by<T>(rows: Vec<T>, key: impl Fn(&T) -> (usize, Option<String>, String)) -> Vec<Bucket<T>> {
+    let mut buckets: BTreeMap<usize, Bucket<T>> = BTreeMap::new();
     for row in rows {
-        let (order, slug, title) = match table.drop_for(collector_number(&row)) {
-            Some(drop) => (drop.order, Some(drop.slug.clone()), drop.title.clone()),
-            None => (OTHER, None, "Other".to_string()),
-        };
+        let (order, slug, title) = key(&row);
         buckets
             .entry(order)
-            .or_insert_with(|| DropBucket {
+            .or_insert_with(|| Bucket {
                 slug,
                 title,
                 cards: Vec::new(),
@@ -64,15 +57,48 @@ pub(crate) fn group_into_drops<T>(
     buckets.into_values().collect()
 }
 
+/// Group a set's items — already in collector-number order — into Secret Lair drops,
+/// preserving Scryfall's drop order. `collector_number` extracts each item's collector
+/// number (the drop-table key), so the same grouping works for bare cards and for owned
+/// holdings. Items the snapshot doesn't place in a drop collect into a trailing "Other"
+/// bucket. Empty drops never appear: a bucket exists only once an item lands in it (so a
+/// search that matches a subset yields only the drops with matches).
+pub(crate) fn group_into_drops<T>(
+    table: &DropTable,
+    rows: Vec<T>,
+    collector_number: impl Fn(&T) -> &str,
+) -> Vec<Bucket<T>> {
+    // Sentinel order for the "Other" bucket: `BTreeMap` ordering parks it last.
+    const OTHER: usize = usize::MAX;
+    group_by(rows, |row| match table.drop_for(collector_number(row)) {
+        Some(drop) => (drop.order, Some(drop.slug.clone()), drop.title.clone()),
+        None => (OTHER, None, "Other".to_string()),
+    })
+}
+
+/// Group a set's items into their derived sub-types (card treatments), Normal first then
+/// the treatments in sub-type order. `card` extracts each item's joined `card::Model` (so
+/// this works for bare cards and owned holdings alike); classification is
+/// [`subtypes::classify`]. Sub-types no card matches never appear.
+pub(crate) fn group_into_subtypes<T>(
+    rows: Vec<T>,
+    card: impl Fn(&T) -> &crate::entities::card::Model,
+) -> Vec<Bucket<T>> {
+    group_by(rows, |row| {
+        let subtype: &Subtype = subtypes::classify(card(row));
+        (subtype.order, Some(subtype.slug.to_string()), subtype.title.to_string())
+    })
+}
+
 /// Narrow already-grouped drop buckets to those whose curated title contains `needle`
 /// (a case-insensitive substring match). Powers the by-drop view's "filter drops by
 /// name" box — applied after grouping and *before* pagination, so the filter spans the
 /// whole set's drops rather than only the page on screen. A blank `needle` matches every
 /// drop (`contains("")` is always true), so callers skip the call for an absent filter.
 pub(crate) fn filter_drops_by_title<T>(
-    buckets: Vec<DropBucket<T>>,
+    buckets: Vec<Bucket<T>>,
     needle: &str,
-) -> Vec<DropBucket<T>> {
+) -> Vec<Bucket<T>> {
     let needle = needle.to_lowercase();
     buckets
         .into_iter()
@@ -80,16 +106,16 @@ pub(crate) fn filter_drops_by_title<T>(
         .collect()
 }
 
-/// Paginate already-grouped drop buckets by *drop* (not by card), mapping each
-/// on-page bucket into its response shape with `map`. The by-drop endpoints pull a
-/// whole (bounded) set, group it in memory, then page over the drops — this is the
-/// shared tail of that: off-page buckets are skipped before `map` runs, so their
-/// cards are never turned into DTOs.
+/// Paginate already-grouped buckets by *group* (not by card), mapping each on-page bucket
+/// into its response shape with `map`. The grouped endpoints pull a whole (bounded) set,
+/// group it in memory, then page over the groups — this is the shared tail of that:
+/// off-page buckets are skipped before `map` runs, so their cards are never turned into
+/// DTOs.
 pub(crate) fn paginate_buckets<T, R>(
-    buckets: Vec<DropBucket<T>>,
+    buckets: Vec<Bucket<T>>,
     page: u64,
     page_size: u64,
-    map: impl Fn(DropBucket<T>) -> R,
+    map: impl Fn(Bucket<T>) -> R,
 ) -> Page<R> {
     let total = buckets.len() as u64;
     let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
@@ -186,5 +212,21 @@ mod tests {
             .map(|c| c.collector_number.as_str())
             .collect();
         assert_eq!(cns, vec!["2659", "2658"]);
+    }
+
+    #[test]
+    fn group_into_subtypes_orders_normal_then_treatments() {
+        let borderless = card::Model { border_color: Some("borderless".into()), ..card_model(1) };
+        let showcase = card::Model { frame_effects: Some("showcase".into()), ..card_model(2) };
+        let normal = card_model(3);
+        // Input order is scrambled; output is Normal (order 0) first, then the treatments
+        // in sub-type order (Borderless=1, Showcase=2). Sub-types no card matches (Extended
+        // Art, Full Art) never appear.
+        let rows = vec![showcase, borderless, normal];
+        let buckets = group_into_subtypes(rows, |c| c);
+        let titles: Vec<&str> = buckets.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, vec!["Normal", "Borderless", "Showcase"]);
+        assert_eq!(buckets[0].slug.as_deref(), Some("normal"));
+        assert!(buckets.iter().all(|b| b.cards.len() == 1));
     }
 }

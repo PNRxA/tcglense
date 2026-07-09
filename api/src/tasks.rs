@@ -72,8 +72,9 @@ async fn seed_dev_user(db: &DatabaseConnection) {
     }
 }
 
-/// Periodic maintenance: prune expired refresh + email tokens so those tables
-/// can't grow unbounded, and drop replenished rate-limiter keys (both the per-IP
+/// Periodic maintenance: prune expired refresh + email tokens and dead (expired or
+/// revoked) API keys so those tables can't grow unbounded, and drop replenished
+/// rate-limiter keys (both the per-IP
 /// and the per-user sets) so those keyspaces can't either. When a limiter is
 /// Redis-backed its keys self-evict via `PEXPIRE`, so `retain_recent` there only
 /// sweeps the in-memory fail-open fallback (cheap and harmless). The first tick
@@ -99,6 +100,13 @@ fn spawn_maintenance(
                 Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to prune expired email tokens")
+                }
+            }
+            match crate::auth::api_key::prune_dead(&db).await {
+                Ok(n) if n > 0 => tracing::info!("pruned {n} dead api keys"),
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to prune dead api keys")
                 }
             }
             rate_limiters.retain_recent();

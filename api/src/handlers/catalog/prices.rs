@@ -13,17 +13,16 @@ use crate::entities::card_price_history;
 use crate::entities::prelude::CardPriceHistory;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
-use crate::handlers::shared::{DataBody, load_card, require_game};
+use crate::handlers::shared::{
+    DataBody, PriceParams, PriceRange, cutoff_date, downsample_rows, load_card, require_game,
+};
 use crate::state::AppState;
-
-use super::PriceParams;
-use super::pricing::{PriceRange, cutoff_date, downsample_rows};
 
 /// One day's price snapshot in a card's price-over-time series. Prices are the
 /// decimal strings exactly as stored (mirroring the card's
 /// [`PricesResponse`](crate::handlers::shared::dto::PricesResponse)); `date` is a
 /// `"YYYY-MM-DD"` string.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PricePoint {
     pub date: String,
@@ -45,12 +44,29 @@ impl From<card_price_history::Model> for PricePoint {
     }
 }
 
+/// Get card price history
+///
 /// `GET /api/games/{game}/cards/{id}/prices?range=` -> a card's price history,
 /// oldest first, for charting. With no `range` the full daily series is returned;
 /// an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows the series and
 /// **downsamples** it to a coarser resolution the longer the window. `404` if the
 /// game or card id is unknown; `422` for an unknown `range`; an empty
 /// `{ "data": [] }` when the card has no captured history in the window.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}/prices",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+        ("range" = Option<String>, Query, description = "Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`); absent = the full daily series"),
+    ),
+    responses(
+        (status = 200, description = "The card's price history, oldest first.", body = DataBody<Vec<PricePoint>>),
+        (status = 404, description = "Unknown game or card."),
+        (status = 422, description = "Unknown range."),
+    ),
+)]
 pub async fn card_prices(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,

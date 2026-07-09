@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { UserCircle } from '@lucide/vue'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import ApiKeysManager from '@/components/account/ApiKeysManager.vue'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
@@ -56,6 +57,10 @@ const memberSince = computed(() => {
         </div>
       </CardContent>
     </Card>
+
+    <div class="mt-6">
+      <ApiKeysManager />
+    </div>
 
     <p class="text-muted-foreground mt-6 text-center text-sm">
       Profile editing and collection stats are coming soon.

@@ -1,0 +1,5 @@
+{
+  "//": "Curated set sub-type overrides (issue #282). Most treatments (Borderless, Showcase, Extended Art, Full Art) are DERIVED from the bulk card data by `subtypes::classify` and need no entry here. This file is the escape hatch for sub-types the dataset does NOT mark — e.g. Scryfall's panoramic 'Borderless Scene' cards, which have no distinguishing promo_type/frame_effect. Add an entry to force specific cards into a curated sub-type, matched by (game, set, collector_number) exactly like `sld_drops.json`.",
+  "//2": "Shape: sets[].entries[] = { subtype: <slug from subtypes::CURATED>, collector_numbers: [<string>, ...] }. An entry's `subtype` slug must be one of: borderless-scene, borderless, showcase, extended-art, full-art, normal. An override wins over the derived classification.",
+  "sets": []
+}
