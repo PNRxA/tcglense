@@ -143,6 +143,18 @@ faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] 
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
 `null` elsewhere) — see the `/sets/{code}/drops` endpoint above.
 
+**Visual scanner (authed).** `POST /api/games/{game}/scan` — identify a photographed
+card from its perceptual hash. Body `{ fingerprint: number[], top_k?: number }` where
+`fingerprint` is exactly **32 bytes** (the client-computed 256-bit pHash of the cropped
+card — only this small, non-reversible vector is uploaded, never the image). Returns
+`{ data: ScanMatch[] }`, `ScanMatch = { card: Card, distance }`, nearest first
+(`distance` = Hamming distance, 0..256; smaller is a closer visual match). Empty `data`
+= no card within the confidence radius (`FINGERPRINT_MAX_DISTANCE`). Auth-gated
+(`Authorization: Bearer …`) and `no-store`; `422` if the fingerprint isn't 32 bytes;
+`404` if this instance has no fingerprint index built/imported yet (distinct from an
+empty-`data` "no match"). Matching is an in-memory Hamming scan — no per-request DB
+work. See `docs/tradeoffs.md` → *Visual card scanner*.
+
 `PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
 strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
 every sync tick from the already-committed `cards` rows (`scryfall::price_history::snapshot_prices`),

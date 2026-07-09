@@ -27,7 +27,7 @@ use crate::{
             card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
             get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
             list_set_drops, list_sets, product_card_sections, product_cards, product_contents,
-            product_facets, product_image, product_prices, set_icon,
+            product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
@@ -99,6 +99,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/forgot-password", post(forgot_password))
         .route("/api/auth/reset-password", post(reset_password))
         .route("/api/games/{game}/status", get(ingest_status))
+        // Visual card scanner: identify a photographed card from its client-computed
+        // perceptual hash (only the 32-byte fingerprint is uploaded, never the image).
+        // Auth-gated + no-store; a per-request POST body, so never CDN-cacheable.
+        .route("/api/games/{game}/scan", post(scan_cards))
         // Per-user card collections: reads + upserts of how many copies a signed-in
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))

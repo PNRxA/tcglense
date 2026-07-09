@@ -1,4 +1,5 @@
 pub use super::card::Entity as Card;
+pub use super::card_fingerprint::Entity as CardFingerprint;
 pub use super::card_price_history::Entity as CardPriceHistory;
 pub use super::card_set::Entity as CardSet;
 pub use super::collection_item::Entity as CollectionItem;

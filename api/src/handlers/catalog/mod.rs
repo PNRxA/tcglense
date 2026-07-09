@@ -34,6 +34,7 @@ mod image;
 mod prices;
 mod pricing;
 mod products;
+mod scan;
 mod sets;
 mod status;
 
@@ -43,6 +44,7 @@ mod tests;
 pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use image::card_image;
 pub use prices::card_prices;
+pub use scan::scan_cards;
 pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
     product_contents, product_facets, product_image, product_prices,

@@ -29,6 +29,7 @@ mod rate_limit;
 mod refresh;
 mod registration;
 mod request_body;
+mod scan;
 mod request_params;
 mod search;
 mod signup_toggle;

@@ -280,6 +280,22 @@ impl ImageCache {
         }
     }
 
+    /// Fetch an image's raw bytes from an **allow-listed** provider CDN without ever
+    /// touching the on-disk cache — used by the fingerprint build to hash-and-discard
+    /// each card image, so it never persists the (hundreds-of-MB) catalogue to disk.
+    /// Shares the live-view politeness budget (the `fetch_limit` semaphore) and the
+    /// same host allow-list as the image proxy, so a bad stored URL can't turn the
+    /// build into an SSRF. Errors mirror [`download`]: a definitive 4xx is
+    /// [`Unavailable`](ImageError::Unavailable), a transient failure is
+    /// [`Http`](ImageError::Http). A non-allow-listed host is refused as `Unavailable`.
+    pub async fn fetch_bytes(&self, source_url: &str) -> Result<Vec<u8>, ImageError> {
+        if !is_allowed_image_url(source_url) {
+            return Err(ImageError::Unavailable(StatusCode::FORBIDDEN));
+        }
+        let _permit = self.fetch_limit.acquire().await.ok();
+        self.download(source_url).await
+    }
+
     /// Raw upstream GET of `source_url`, returning the body bytes. Shared by the
     /// on-disk cache-miss path and CDN mode (which never persists the result).
     /// The **caller holds** the `fetch_limit` permit around this (each call site
@@ -303,6 +319,26 @@ impl ImageCache {
             return Err(ImageError::Unavailable(status));
         }
         Ok(response.error_for_status()?.bytes().await?.to_vec())
+    }
+}
+
+/// Whether the image fetchers may retrieve a URL: HTTPS on a known provider CDN
+/// (Scryfall for card art / set icons, the TCGplayer CDN for sealed-product images).
+/// Stored/derived image URLs all come from those providers; this guards every outbound
+/// image fetch — the proxy handler ([`crate::handlers::catalog`] re-exports it) and the
+/// fingerprint build's [`ImageCache::fetch_bytes`] — against a bad value ever turning a
+/// fetch into an SSRF.
+pub(crate) fn is_allowed_image_url(url: &str) -> bool {
+    match reqwest::Url::parse(url) {
+        Ok(parsed) => {
+            parsed.scheme() == "https"
+                && parsed.host_str().is_some_and(|host| {
+                    host == "scryfall.io"
+                        || host.ends_with(".scryfall.io")
+                        || host == "tcgplayer-cdn.tcgplayer.com"
+                })
+        }
+        Err(_) => false,
     }
 }
 

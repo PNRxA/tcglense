@@ -1,4 +1,5 @@
 pub mod card;
+pub mod card_fingerprint;
 pub mod card_price_history;
 pub mod card_set;
 pub mod collection_item;

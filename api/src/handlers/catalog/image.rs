@@ -76,23 +76,11 @@ pub async fn card_image(
         .into_response())
 }
 
-/// Whether the image proxy is allowed to fetch a URL: HTTPS on a known provider CDN
-/// (Scryfall for card art / set icons, the TCGplayer CDN for sealed-product images).
-/// Stored/derived image URLs all come from those providers; this guards against a bad
-/// value ever turning the proxy into an SSRF.
-pub(super) fn is_allowed_image_url(url: &str) -> bool {
-    match reqwest::Url::parse(url) {
-        Ok(parsed) => {
-            parsed.scheme() == "https"
-                && parsed.host_str().is_some_and(|host| {
-                    host == "scryfall.io"
-                        || host.ends_with(".scryfall.io")
-                        || host == "tcgplayer-cdn.tcgplayer.com"
-                })
-        }
-        Err(_) => false,
-    }
-}
+/// The image-URL host allow-list, shared with the fingerprint build. Defined next to
+/// the downloader (`crate::catalog::images`) so both fetch paths guard the same hosts;
+/// re-exported here for the proxy handlers (`super::image::is_allowed_image_url`) and
+/// their tests.
+pub(super) use crate::catalog::images::is_allowed_image_url;
 
 /// Map a requested image size to a stored, allow-listed size (default `normal`).
 pub(super) fn normalize_size(requested: Option<&str>) -> &'static str {

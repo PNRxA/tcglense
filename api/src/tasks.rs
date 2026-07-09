@@ -2,15 +2,18 @@
 //! depending on config, either an offline dummy-catalog seed or the periodic
 //! card-data sync. Split out of `main` so the orchestration reads at a glance.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sha2::{Digest, Sha256};
 
 use crate::{
     catalog,
+    catalog::fingerprints::FingerprintIndex,
+    catalog::images::ImageCache,
     datasets::SyncSource,
     entities::{prelude::User, user},
     ratelimit::{AuthRateLimiter, UserRateLimiter},
@@ -148,6 +151,144 @@ fn spawn_price_backfill(
     });
 }
 
+/// Image size the fingerprint build fetches: the smallest useful crop (146×204), so a
+/// full-catalogue pass moves the least bytes and keeps the whole disambiguating frame.
+const FINGERPRINT_SOURCE_SIZE: &str = "small";
+
+/// Cards read per DB batch while walking for un-fingerprinted cards (bounded + resumable).
+const FINGERPRINT_BATCH: u64 = 200;
+
+/// Politeness pause after each image fetch, on top of the shared 8-way concurrency cap
+/// the fetch already rides — keeps the whole-catalogue build a considerate CDN citizen.
+const FINGERPRINT_FETCH_DELAY: Duration = Duration::from_millis(80);
+
+/// Everything the opt-in fingerprint build needs, threaded from [`AppState`] once the
+/// operator has enabled it. Cheaply cloneable (all `Arc`/`Copy`).
+#[derive(Clone)]
+struct FingerprintBuild {
+    /// The polite image downloader (shared 8-way cap + host allow-list); the build
+    /// fetches bytes through it and discards them after hashing (never persists to disk).
+    images: Arc<ImageCache>,
+    /// The live match index to refresh after a build pass.
+    index_slot: Arc<RwLock<Arc<FingerprintIndex>>>,
+    /// Version stamped on built rows and used to load the index.
+    algo_version: i32,
+    /// Hours between re-scans (to fingerprint newly-synced cards); `0` = a single pass.
+    rebuild_interval_hours: u64,
+}
+
+/// Assemble the build config from state (only meaningful when the build is enabled).
+fn fingerprint_build(state: &AppState) -> FingerprintBuild {
+    FingerprintBuild {
+        images: state.images.clone(),
+        index_slot: state.fingerprint_index.clone(),
+        algo_version: state.config.fingerprint_algo_version,
+        rebuild_interval_hours: state.config.sync_interval_hours,
+    }
+}
+
+/// Walk the catalogue once, fetching + hashing the `small` image of every card that
+/// still lacks a current-version front-face fingerprint, and upserting the result. The
+/// image bytes are dropped immediately after hashing — nothing is written to the image
+/// cache. Resumable by the `cards.id` cursor; per-card failures are logged and skipped.
+/// Returns how many fingerprints were built this pass.
+async fn run_fingerprint_pass(
+    db: &DatabaseConnection,
+    cfg: &FingerprintBuild,
+) -> Result<u64, sea_orm::DbErr> {
+    use crate::catalog::fingerprints;
+
+    let game = crate::scryfall::GAME;
+    let mut after_id = 0i32;
+    let mut built = 0u64;
+    loop {
+        let batch =
+            fingerprints::pending_batch(db, game, cfg.algo_version, after_id, FINGERPRINT_BATCH)
+                .await?;
+        let Some(last_id) = batch.last_id else {
+            break; // no more candidate cards — the walk is done
+        };
+        for pending in batch.cards {
+            match cfg.images.fetch_bytes(&pending.image_url).await {
+                Ok(bytes) => match fingerprints::hash_image_bytes(&bytes) {
+                    Some(hash) => {
+                        let source_hash = hex::encode(Sha256::digest(&bytes));
+                        match fingerprints::upsert(
+                            db,
+                            game,
+                            &pending.external_id,
+                            0,
+                            cfg.algo_version,
+                            &hash,
+                            FINGERPRINT_SOURCE_SIZE,
+                            &source_hash,
+                        )
+                        .await
+                        {
+                            Ok(()) => built += 1,
+                            Err(err) => tracing::warn!(
+                                id = %pending.external_id,
+                                error = %err,
+                                "failed to store card fingerprint"
+                            ),
+                        }
+                    }
+                    None => tracing::debug!(
+                        id = %pending.external_id,
+                        "fetched image did not decode; skipping"
+                    ),
+                },
+                Err(err) => tracing::debug!(
+                    id = %pending.external_id,
+                    error = %err,
+                    "fingerprint image fetch failed; skipping"
+                ),
+            }
+            tokio::time::sleep(FINGERPRINT_FETCH_DELAY).await;
+        }
+        after_id = last_id;
+    }
+    Ok(built)
+}
+
+/// Spawn the detached, opt-in fingerprint build (only when `FINGERPRINT_BUILD_ENABLED`).
+/// Mirrors [`spawn_price_backfill`]: a long, polite background walk kept off the sync
+/// ticker, internally incremental (skips already-fingerprinted cards) and resumable, so
+/// re-running after completion is cheap. After each pass it reloads the in-memory match
+/// index. With a periodic sync it re-scans every `rebuild_interval_hours` to pick up
+/// newly-synced cards; with periodic sync disabled it runs a single pass. Errors are
+/// logged, never fatal.
+fn spawn_fingerprint_build(db: DatabaseConnection, cfg: FingerprintBuild) {
+    tokio::spawn(async move {
+        loop {
+            match run_fingerprint_pass(&db, &cfg).await {
+                Ok(built) if built > 0 => {
+                    tracing::info!(built, "card-fingerprint build pass complete")
+                }
+                Ok(_) => tracing::debug!("card-fingerprint build pass: nothing to do"),
+                Err(err) => tracing::error!(error = %err, "card-fingerprint build pass failed"),
+            }
+            // Refresh the live match index off the freshly-built table.
+            match crate::catalog::fingerprints::load_index(&db, cfg.algo_version).await {
+                Ok(index) => {
+                    tracing::info!(count = index.len(), "loaded card-fingerprint match index");
+                    *cfg.index_slot.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(index);
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to load card-fingerprint match index")
+                }
+            }
+            if cfg.rebuild_interval_hours == 0 {
+                break; // startup-only posture: one pass, no periodic re-scan
+            }
+            tokio::time::sleep(Duration::from_secs(
+                cfg.rebuild_interval_hours.saturating_mul(60 * 60),
+            ))
+            .await;
+        }
+    });
+}
+
 /// Import card data from each provider in the background so the server is available
 /// immediately (the SPA shows import progress via the status route), then re-import
 /// on a fixed interval to pick up Scryfall's newer prices/sets. The import is
@@ -162,6 +303,7 @@ fn spawn_card_sync(
     sync_interval_hours: u64,
     tcgcsv_user_agent: String,
     mut backfill: Option<BackfillConfig>,
+    mut fingerprint: Option<FingerprintBuild>,
     source: SyncSource,
 ) {
     tokio::spawn(async move {
@@ -172,6 +314,10 @@ fn spawn_card_sync(
             catalog::snapshot_all(&db).await;
             if let Some(cfg) = backfill.take() {
                 spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone());
+            }
+            // Cards now exist, so the opt-in fingerprint build can walk them.
+            if let Some(cfg) = fingerprint.take() {
+                spawn_fingerprint_build(db.clone(), cfg);
             }
             return;
         }
@@ -198,6 +344,11 @@ fn spawn_card_sync(
             if let Some(cfg) = backfill.take() {
                 spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone());
             }
+            // Same one-time spawn for the opt-in fingerprint build (cards now exist to
+            // walk); its own loop then re-scans on the sync interval for new cards.
+            if let Some(cfg) = fingerprint.take() {
+                spawn_fingerprint_build(db.clone(), cfg);
+            }
         }
     });
 }
@@ -218,6 +369,23 @@ pub async fn start(state: &AppState, http: &Client) {
         state.user_rate_limiters.clone(),
     );
 
+    // Load any already-built / imported fingerprint index into memory before serving, so
+    // the visual scanner works immediately on an instance that imported a prebuilt index
+    // (the common self-host case — it never runs the build itself). Empty on a fresh DB;
+    // the build task (if enabled) refreshes it after each pass. Non-fatal on error.
+    match catalog::fingerprints::load_index(&state.db, state.config.fingerprint_algo_version).await
+    {
+        Ok(index) => {
+            if !index.is_empty() {
+                tracing::info!(count = index.len(), "loaded card-fingerprint match index");
+            }
+            state.set_fingerprint_index(index);
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to load card-fingerprint match index at startup")
+        }
+    }
+
     if state.config.seed_dummy_data {
         tracing::warn!(
             "SEED_DUMMY_DATA enabled: seeding a dummy offline catalog and skipping all \
@@ -232,12 +400,19 @@ pub async fn start(state: &AppState, http: &Client) {
             user_agent: state.config.tcgcsv_user_agent.clone(),
             days: state.config.price_backfill_days,
         });
+        // The opt-in visual-scanner fingerprint build (off by default); spawned after the
+        // first sync populates cards to walk (see `spawn_card_sync`).
+        let fingerprint = state
+            .config
+            .fingerprint_build_enabled
+            .then(|| fingerprint_build(state));
         spawn_card_sync(
             state.db.clone(),
             http.clone(),
             state.config.sync_interval_hours,
             state.config.tcgcsv_user_agent.clone(),
             backfill,
+            fingerprint,
             SyncSource::from_config(&state.config),
         );
     } else {
@@ -246,5 +421,10 @@ pub async fn start(state: &AppState, http: &Client) {
         // the existing catalog — otherwise a foil-★ holding folded by the m..023 migration
         // values at $0 (issue #209).
         spawn_foil_price_enrichment(state.db.clone());
+        // Cards already exist from a prior run (no sync this boot); if the operator opted
+        // into the fingerprint build, run it against the existing catalogue.
+        if state.config.fingerprint_build_enabled {
+            spawn_fingerprint_build(state.db.clone(), fingerprint_build(state));
+        }
     }
 }

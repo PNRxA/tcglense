@@ -13,6 +13,7 @@ mod extract;
 mod handlers;
 mod migrator;
 mod mtgjson;
+mod phash;
 mod ratelimit;
 mod router;
 mod scryfall;
