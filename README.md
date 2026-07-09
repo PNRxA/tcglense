@@ -146,9 +146,9 @@ Pin a release across the whole stack with `IMAGE_TAG=vX.Y.Z` (defaults to `lates
 #### Behind a CDN (Cloudflare)
 
 The public catalog (`/api/games/*`), its image/icon proxy, the XML sitemaps
-(`/api/sitemap.xml`, `/api/sitemaps/*`), and the public API docs (`/api/openapi.json`,
-`/api/docs`) already emit CDN-friendly `Cache-Control` (`s-maxage` / `immutable`), so a
-CDN caches them with no code change. To put Cloudflare in front:
+(`/api/sitemap.xml`, `/api/sitemaps/*`), and the public OpenAPI document
+(`/api/openapi.json`) already emit CDN-friendly `Cache-Control` (`s-maxage` /
+`immutable`), so a CDN caches them with no code change. To put Cloudflare in front:
 
 - Set **`CDN_MODE=true`** on the `api` service — the origin then skips caching card
   images to disk (the CDN absorbs the repeats), so it needs no writable image dir.
@@ -179,7 +179,6 @@ you never have to enumerate those to keep them out.
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
    or http.request.uri.path eq "/api/openapi.json"
-   or http.request.uri.path eq "/api/docs"
    ```
 
 2. **Bypass everything per-user or live.** *Cache eligibility* → **Bypass cache**. This

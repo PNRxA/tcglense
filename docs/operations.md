@@ -255,10 +255,9 @@ Both `web/scripts/*` require the Playwright browsers installed
 ### Public API & edge caching (issue #284)
 
 The public API is self-documenting: **`GET /api/openapi.json`** serves the OpenAPI
-3.1 spec and **`GET /api/docs`** renders an interactive Scalar console (both public,
-CDN-cacheable). The SPA also renders the same reference in-app at **`/docs`**
-(`DocsView.vue`), linked from the homepage, top nav, and footer and listed in the
-sitemap. Account holders authenticate
+3.1 spec (public, CDN-cacheable). The SPA renders it as an interactive Scalar
+reference at **`/docs`** (`DocsView.vue`), linked from the homepage, top nav, and
+footer and listed in the sitemap. Account holders authenticate
 their collection/wish-list calls with an **API key** (`Authorization: Bearer tcgl_…`,
 minted on the profile page) — no new server env var or table config is required
 beyond the migration that creates `api_keys` (runs on boot).
@@ -267,10 +266,11 @@ The origin already emits Cloudflare-honored cache headers on every public read (
 `docs/api-contracts.md` → *HTTP caching*). The Cloudflare **Cache Rules** themselves
 are **not new** for this feature — they're already documented in the
 [README](../README.md#behind-a-cdn-cloudflare). Issue #284 adds only one small delta:
-the two public doc endpoints. Extend the README's **Rule 1** (the "cache the public
-catalog" rule) so its expression also matches `/api/openapi.json` and `/api/docs`, and
-they're edge-cached like the rest of the catalog (this has been done in the README's
-rule text). The **API-key routes need no change** — they live under `/api/auth/*`,
+the public OpenAPI document. Extend the README's **Rule 1** (the "cache the public
+catalog" rule) so its expression also matches `/api/openapi.json`, and it's edge-cached
+like the rest of the catalog (this has been done in the README's rule text). The
+interactive reference is an SPA route (`/docs`), served as static web assets — no API
+cache rule applies. The **API-key routes need no change** — they live under `/api/auth/*`,
 which the README's **Rule 2** already bypasses (per-user, must never be edge-cached),
 alongside `/api/collection/*` and `/api/wishlist/*`.
 

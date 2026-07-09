@@ -121,13 +121,12 @@ TCGLense exposes a **public HTTP API**. Two surfaces:
   and `/api/wishlist/*` routes).
 
 **Interactive docs:** an OpenAPI 3.1 document is served at `GET /api/openapi.json`
-(machine-readable — import into Postman/Insomnia/codegen) and rendered as an
-interactive Scalar "try it out" console at `GET /api/docs` (a self-contained,
-no-framework page). Both are public, CDN-cacheable reads in the public router group.
-The SPA also renders the same reference in-app at the `/docs` route (`DocsView.vue`,
-`@scalar/api-reference`) — a branded page linked from the homepage, top nav, and
-footer, and listed in the sitemap. Each operation carries a short `summary` (the
-sidebar title) plus the fuller `description`; keep both when adding an endpoint.
+(machine-readable — import into Postman/Insomnia/codegen; a public, CDN-cacheable read
+in the public router group). The SPA renders it as an interactive Scalar "try it out"
+reference at the `/docs` route (`DocsView.vue`, `@scalar/api-reference`) — a branded
+page linked from the homepage, top nav, and footer, and listed in the sitemap. Each
+operation carries a short `summary` (the sidebar title) plus the fuller `description`;
+keep both when adding an endpoint.
 
 **How a key authenticates.** A key is presented exactly like an access token —
 `Authorization: Bearer tcgl_<hex>` — and rides the **same** collection/wish-list
@@ -281,7 +280,7 @@ pins a negative. The origin is therefore Cloudflare-ready as shipped. Operationa
 caveat: Cloudflare does **not** cache `/api/...` (JSON) paths by default — the edge only
 stores a response once a **Cache Rule** marks its path eligible. Those rules already
 exist and are documented in the README (*Behind a CDN (Cloudflare)*): its catalog rule
-(extended to also match `/api/openapi.json` + `/api/docs`) makes the public reads
+(extended to also match `/api/openapi.json`) makes the public reads
 edge-cacheable, and its bypass rule keeps the per-user `/api/auth/*` (incl. the API-key
 management routes), `/api/collection/*`, and `/api/wishlist/*` responses off the edge.
 The header work is done; enabling edge caching is a dashboard step per deployment.
