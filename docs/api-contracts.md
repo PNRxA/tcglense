@@ -221,16 +221,22 @@ un-`ETag`ged).
 ### Sitemaps (crawlers)
 
 A DB-backed XML sitemap advertises the public catalog (`handlers::sitemap`).
-`GET /api/sitemap.xml` is a **sitemap index** pointing at child sitemaps:
-`/api/sitemaps/pages.xml` (static + per-game routes), `/api/sitemaps/sets.xml` (every
-set), and `/api/sitemaps/cards-{n}.xml` (cards, chunked at 50 000 URLs/file since one
-sitemap is capped there). The `<loc>`s are the SPA's own routes (e.g.
-`/cards/mtg/sets/blb`), built against `PUBLIC_SITE_URL` — not the API's `/api/...` URLs
-— with a `<lastmod>` from the set/card `released_at` or the latest sync. Served under
-`/api/` (the one path routed to the backend in dev and same-origin prod); the web
-build's `robots.txt` points crawlers at `/api/sitemap.xml`. Each success carries a long
-`Cache-Control` (a day fresh, a week stale-while-revalidate, preserved by the cache
-layer); an unknown/out-of-range child is a `no-store` `404`.
+`GET /sitemap.xml` is a **sitemap index** pointing at child sitemaps:
+`/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, and the legal pages),
+`/sitemaps/sets.xml` (every set), `/sitemaps/cards-{n}.xml` (cards), and
+`/sitemaps/products-{n}.xml` (sealed products). Cards and products are chunked at
+10 000 URLs/file — well under the protocol's 50 000 cap, because Google timed out
+fetching the full-size chunks (issue #294). The `<loc>`s are the SPA's own routes
+(e.g. `/cards/mtg/sets/blb`, `/sealed/mtg/{id}`), built against `PUBLIC_SITE_URL` —
+not the API's `/api/...` URLs — with a `<lastmod>` from the set/card/product
+`released_at` or the latest sync. Served at the **site root** so the sitemap-protocol
+scope rule covers the whole site (dev Vite and the split-deploy Caddyfiles proxy
+`/sitemap.xml` + `/sitemaps/*` to the API; the combined image routes them natively);
+`/api/sitemap.xml` and `/api/sitemaps/{name}` still answer as aliases for
+already-submitted URLs. The web build's `robots.txt` points crawlers at
+`/sitemap.xml`. Each success carries a long `Cache-Control` (a day fresh, a week
+stale-while-revalidate, preserved by the cache layer); an unknown/out-of-range child
+is a `no-store` `404`.
 
 ### Image proxy
 

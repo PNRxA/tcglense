@@ -95,10 +95,7 @@ pub fn build_router(state: AppState) -> Router {
         // Email verification + password reset: single-use emailed tokens. All
         // unauthenticated POSTs; the lookup-by-email ones answer generically.
         .route("/api/auth/verify-email", post(verify_email))
-        .route(
-            "/api/auth/resend-verification",
-            post(resend_verification),
-        )
+        .route("/api/auth/resend-verification", post(resend_verification))
         .route("/api/auth/forgot-password", post(forgot_password))
         .route("/api/auth/reset-password", post(reset_password))
         .route("/api/games/{game}/status", get(ingest_status))
@@ -172,7 +169,10 @@ pub fn build_router(state: AppState) -> Router {
         // collection + wishlist surfaces + `me`. Added before `no_store_layer` so a
         // 429 that either one short-circuits still gets `Cache-Control: no-store`
         // from that outer layer (a CDN must never pin a rate-limit response).
-        .layer(from_fn_with_state(state.clone(), crate::ratelimit::rate_limit))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::ratelimit::rate_limit,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             crate::ratelimit::user_rate_limit,
@@ -213,7 +213,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/products/facets", get(product_facets))
         .route("/api/games/{game}/products/{id}", get(get_product))
         .route("/api/games/{game}/products/{id}/image", get(product_image))
-        .route("/api/games/{game}/products/{id}/prices", get(product_prices))
+        .route(
+            "/api/games/{game}/products/{id}/prices",
+            get(product_prices),
+        )
         // The structural composition — "what's in the box" (packs, decks, promos, extras),
         // linking the sub-products it contains. A static-suffix sibling of `/prices`.
         .route(
@@ -230,9 +233,16 @@ pub fn build_router(state: AppState) -> Router {
             get(product_card_sections),
         )
         // DB-backed sitemaps for crawlers: an index plus its child sitemaps
-        // (pages / sets / chunked cards). Shared-cacheable like the rest of the
-        // catalog; each success sets its own longer `Cache-Control`, which the
-        // layer preserves, and a bad chunk 404s to `no-store`.
+        // (pages / sets / chunked cards / chunked sealed products). Canonically at
+        // the site root (issue #294) so the sitemap-protocol scope rule holds; the
+        // `/api/` aliases keep previously submitted URLs working. Explicit routes,
+        // so they win over the combined image's SPA fallback; split deploys must
+        // proxy the root paths to the API (see deploy/*.Caddyfile + the Vite dev
+        // proxy). Shared-cacheable like the rest of the catalog; each success sets
+        // its own longer `Cache-Control`, which the layer preserves, and a bad
+        // chunk 404s to `no-store`.
+        .route("/sitemap.xml", get(sitemap_index))
+        .route("/sitemaps/{name}", get(sitemap_child))
         .route("/api/sitemap.xml", get(sitemap_index))
         .route("/api/sitemaps/{name}", get(sitemap_child))
         .layer(map_response(public_cache_layer))

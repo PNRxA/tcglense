@@ -6,8 +6,16 @@
 	encode zstd gzip
 
 	# Forward the API to the backend, preserving the /api prefix the API expects
-	# (`handle`, not `handle_path`).
+	# (`handle`, not `handle_path`). The root sitemap paths are API-served too
+	# (issue #294): the sitemap index must live at the site root for the
+	# sitemap-protocol scope rule to cover the whole site.
 	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /sitemap.xml {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /sitemaps/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 
