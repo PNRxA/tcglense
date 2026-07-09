@@ -75,6 +75,7 @@ async fn sitemap_pages_covers_static_and_game_routes() {
     // The sealed hub + per-game browse and the legal pages (issue #294).
     assert!(body.contains("<loc>https://sitemap.test/sealed</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/sealed/mtg</loc>"));
+    assert!(body.contains("<loc>https://sitemap.test/docs</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/terms</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/privacy</loc>"));
 }

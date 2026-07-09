@@ -122,8 +122,12 @@ TCGLense exposes a **public HTTP API**. Two surfaces:
 
 **Interactive docs:** an OpenAPI 3.1 document is served at `GET /api/openapi.json`
 (machine-readable — import into Postman/Insomnia/codegen) and rendered as an
-interactive Scalar "try it out" console at `GET /api/docs`. Both are public,
-CDN-cacheable reads in the public router group. The SPA footer links to `/api/docs`.
+interactive Scalar "try it out" console at `GET /api/docs` (a self-contained,
+no-framework page). Both are public, CDN-cacheable reads in the public router group.
+The SPA also renders the same reference in-app at the `/docs` route (`DocsView.vue`,
+`@scalar/api-reference`) — a branded page linked from the homepage, top nav, and
+footer, and listed in the sitemap. Each operation carries a short `summary` (the
+sidebar title) plus the fuller `description`; keep both when adding an endpoint.
 
 **How a key authenticates.** A key is presented exactly like an access token —
 `Authorization: Bearer tcgl_<hex>` — and rides the **same** collection/wish-list

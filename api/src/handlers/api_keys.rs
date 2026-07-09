@@ -101,6 +101,8 @@ pub struct ApiKeyList {
 
 // ---------- Handlers ----------
 
+/// Create API key
+///
 /// `POST /api/auth/api-keys` — mint a new key for the signed-in user.
 ///
 /// Validated synchronously: a blank/oversized name, an unknown scope, or an
@@ -174,6 +176,8 @@ pub async fn create_api_key(
     ))
 }
 
+/// List API keys
+///
 /// `GET /api/auth/api-keys` — the signed-in user's active keys, newest first
 /// (metadata only; the secret is never returned again).
 #[utoipa::path(
@@ -199,6 +203,8 @@ pub async fn list_api_keys(
     Ok(Json(ApiKeyList { data }))
 }
 
+/// Revoke API key
+///
 /// `DELETE /api/auth/api-keys/{id}` — revoke one of the user's keys. `204` on
 /// success (idempotent for an already-revoked key), `404` if the key doesn't exist
 /// or belongs to another user (so key ids don't leak across accounts).

@@ -30,6 +30,8 @@ use super::{
     MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SummaryParams, find_row,
 };
 
+/// List collection
+///
 /// `GET /api/collection/{game}` -> the signed-in user's owned cards for a game,
 /// most-recently-updated first, paginated. Each entry carries the full card payload
 /// plus the owned counts.
@@ -163,6 +165,8 @@ pub(super) fn collection_query(
     }
 }
 
+/// Get collection summary
+///
 /// `GET /api/collection/{game}/summary` -> aggregate stats (distinct cards, total
 /// copies, estimated USD value) for the signed-in user's collection in a game.
 /// An optional `?set` scopes the stats to a single set (the per-set collection view);
@@ -228,6 +232,8 @@ pub(super) async fn summary(
     Ok(summarize_holdings(&rows, bulk_threshold_cents))
 }
 
+/// Get collection card
+///
 /// `GET /api/collection/{game}/cards/{id}` -> how many copies of one card the user
 /// owns (zeros when the card isn't in their collection). `id` is the external card
 /// id; a `404` means the game or card is unknown.

@@ -256,7 +256,9 @@ Both `web/scripts/*` require the Playwright browsers installed
 
 The public API is self-documenting: **`GET /api/openapi.json`** serves the OpenAPI
 3.1 spec and **`GET /api/docs`** renders an interactive Scalar console (both public,
-CDN-cacheable; the SPA footer links to `/api/docs`). Account holders authenticate
+CDN-cacheable). The SPA also renders the same reference in-app at **`/docs`**
+(`DocsView.vue`), linked from the homepage, top nav, and footer and listed in the
+sitemap. Account holders authenticate
 their collection/wish-list calls with an **API key** (`Authorization: Bearer tcgl_…`,
 minted on the profile page) — no new server env var or table config is required
 beyond the migration that creates `api_keys` (runs on boot).

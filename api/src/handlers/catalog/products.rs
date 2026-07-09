@@ -410,6 +410,8 @@ impl CardSection {
 
 // ---------- Handlers ----------
 
+/// List sealed products
+///
 /// `GET /api/games/{game}/products` -> a page of sealed products, filtered by
 /// `q`/`set`/`type` and ordered by `sort`/`dir` (default name-ascending).
 #[utoipa::path(
@@ -480,6 +482,8 @@ pub async fn list_products(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
+/// Get sealed product
+///
 /// `GET /api/games/{game}/products/{id}` -> one product's detail.
 #[utoipa::path(
     get,
@@ -504,6 +508,8 @@ pub async fn get_product(
     Ok(Json(into_response(product, &names)))
 }
 
+/// Get product price history
+///
 /// `GET /api/games/{game}/products/{id}/prices?range=` -> a product's price history,
 /// oldest first, reusing the exact windowing/downsampling of the card price endpoint.
 #[utoipa::path(
@@ -586,6 +592,8 @@ pub async fn product_image(
         .into_response())
 }
 
+/// Get product filters
+///
 /// `GET /api/games/{game}/products/facets` -> the distinct product types + the sets
 /// that actually have products, so the SPA can build filter dropdowns.
 #[utoipa::path(
@@ -721,6 +729,8 @@ pub async fn card_sealed(
     Ok(Json(DataBody { data }))
 }
 
+/// Get product contents
+///
 /// `GET /api/games/{game}/products/{id}/contents` -> the sealed product's structural
 /// composition — "what's in the box" — in display order (nested packs/boxes, then precon
 /// decks, then fixed promo cards, then physical extras). A `sealed` component that resolves

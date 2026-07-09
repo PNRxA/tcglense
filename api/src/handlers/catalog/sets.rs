@@ -95,6 +95,8 @@ pub struct SubtypeGroupResponse {
     pub cards: Vec<CardResponse>,
 }
 
+/// List sets
+///
 /// `GET /api/games/{game}/sets` -> every stored set, newest first.
 #[utoipa::path(
     get,
@@ -133,6 +135,8 @@ pub async fn list_sets(
     Ok(Json(DataBody { data }))
 }
 
+/// Get set
+///
 /// `GET /api/games/{game}/sets/{code}` -> one set's metadata.
 #[utoipa::path(
     get,
@@ -197,6 +201,8 @@ pub async fn set_icon(
         .into_response())
 }
 
+/// List set cards
+///
 /// `GET /api/games/{game}/sets/{code}/cards` -> a set's cards (optional `q` name
 /// search), by collector number.
 ///
@@ -264,6 +270,8 @@ pub async fn list_set_cards(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
+/// List set drops
+///
 /// `GET /api/games/{game}/sets/{code}/drops` -> a set's cards grouped by Secret
 /// Lair drop (Scryfall's curated drop titles), **paginated by drop**.
 ///

@@ -29,6 +29,8 @@ use crate::state::AppState;
 
 use super::find_row;
 
+/// List wish list
+///
 /// `GET /api/wishlist/{game}` -> the signed-in user's wanted cards for a game,
 /// most-recently-updated first, paginated. Each entry carries the full card payload
 /// plus the wanted counts.
@@ -162,6 +164,8 @@ pub(super) fn wishlist_query(
     }
 }
 
+/// Get wish list summary
+///
 /// `GET /api/wishlist/{game}/summary` -> aggregate stats (distinct cards, total
 /// copies, estimated USD value) for the signed-in user's wish list in a game.
 /// An optional `?set` scopes the stats to a single set (the per-set wish-list view);
@@ -226,6 +230,8 @@ pub(super) async fn summary(
     Ok(summarize_holdings(&rows, bulk_threshold_cents))
 }
 
+/// Get wish list card
+///
 /// `GET /api/wishlist/{game}/cards/{id}` -> how many copies of one card the user
 /// wants (zeros when the card isn't on their wish list). `id` is the external card
 /// id; a `404` means the game or card is unknown.

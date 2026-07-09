@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ChevronRight,
   CircleCheck,
+  Code,
   ExternalLink,
   Ghost,
   Heart,
@@ -87,6 +88,14 @@ const otherFeatures: FeatureLink[] = [
     description:
       'Register with just an email address — free to track your collection and wish list.',
     to: '/register',
+  },
+  {
+    icon: Code,
+    title: 'Public API',
+    description:
+      'A documented public API for the catalog, plus scoped API keys for your collection and ' +
+      'wish list. Interactive reference included.',
+    to: '/docs',
   },
 ]
 
