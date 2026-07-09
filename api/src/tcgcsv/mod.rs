@@ -25,6 +25,7 @@ pub mod client;
 mod error;
 pub mod ingest;
 pub mod model;
+pub mod msrp;
 pub mod price_history;
 mod progress;
 

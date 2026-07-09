@@ -5,7 +5,7 @@
 
 use super::harness::*;
 use crate::entities::{card, product_price_history, sealed_component, sealed_content};
-use crate::test_support::{insert_card, insert_product};
+use crate::test_support::{insert_card, insert_product, set_product_msrp};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, NotSet};
 
@@ -44,6 +44,8 @@ async fn products_list_is_publicly_readable_and_shared_cacheable() {
 async fn product_detail_and_prices_are_readable() {
     let app = test_app().await;
     seed_products(&app).await;
+    // Product 100 has a curated MSRP; product 400 (seeded by seed_products above) has none.
+    set_product_msrp(&app.state.db, "100", "179.99").await;
 
     let (status, headers, body) = send(&app, get("/api/games/mtg/products/100")).await;
     assert_eq!(status, StatusCode::OK);
@@ -52,6 +54,10 @@ async fn product_detail_and_prices_are_readable() {
     assert_eq!(body["set_code"], "mkm");
     assert_eq!(body["product_type"], "collector_display");
     assert_eq!(body["prices"]["usd"], "249.99");
+    // MSRP (curated retail price) surfaces on the wire when set, and is null otherwise.
+    assert_eq!(body["msrp"], "179.99");
+    let (_, _, no_msrp) = send(&app, get("/api/games/mtg/products/400")).await;
+    assert!(no_msrp["msrp"].is_null(), "a product with no curated MSRP reports null");
 
     // Prices endpoint: empty (no history) but a clean, cacheable 200.
     let (status, headers, body) = send(&app, get("/api/games/mtg/products/100/prices")).await;

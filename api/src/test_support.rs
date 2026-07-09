@@ -245,6 +245,27 @@ pub(crate) async fn insert_product(
     .id
 }
 
+/// Set an existing product's curated MSRP (retail price) by external (TCGplayer) id. The
+/// ingest normally sources this from the committed `msrp.json`; tests set it directly to
+/// exercise the wire field without threading it through every [`insert_product`] call.
+pub(crate) async fn set_product_msrp(db: &DatabaseConnection, external_id: &str, msrp: &str) {
+    let id = product::Entity::find()
+        .filter(product::Column::ExternalId.eq(external_id))
+        .one(db)
+        .await
+        .expect("query product")
+        .expect("product exists")
+        .id;
+    product::ActiveModel {
+        id: Set(id),
+        msrp: Set(Some(msrp.to_string())),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .expect("set product msrp");
+}
+
 /// Insert an owned-card holding for `(user, card)` with the given counts.
 pub(crate) async fn insert_holding(
     db: &DatabaseConnection,

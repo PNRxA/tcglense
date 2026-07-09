@@ -78,6 +78,11 @@ pub(crate) struct ProductResponse {
     /// Whether an image is available through the product image proxy.
     pub has_image: bool,
     pub prices: ProductPricesResponse,
+    /// Manufacturer's suggested retail price (USD), as a decimal string, or `None` when
+    /// unknown. A **retail list** price curated from WotC announcements (no feed carries
+    /// it) — kept separate from the TCGCSV *market* prices in `prices`. The SPA hides the
+    /// MSRP line when this is absent.
+    pub msrp: Option<String>,
     pub released_at: Option<String>,
 }
 
@@ -1279,6 +1284,7 @@ fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductR
             usd: p.price_usd,
             usd_foil: p.price_usd_foil,
         },
+        msrp: p.msrp,
         released_at: p.released_at,
     }
 }

@@ -298,7 +298,14 @@ carried over near-verbatim from the audited source, with the sealed-product prov
     single-day, bounded, but not streamed across days. A single malformed prices file is
     logged + skipped rather than aborting the day. (3) TCGCSV blocks generic User-Agents,
     so the backfill needs a descriptive `TCGCSV_USER_AGENT` (defaults to the Scryfall UA
-    fallback). Prices are **USD only** (TCGCSV carries no eur/tix). Product images and the
+    fallback). Prices are **USD only** (TCGCSV carries no eur/tix). **MSRP** (issue #296)
+    is a different provenance again: no feed carries sealed-product MSRP (neither TCGCSV nor
+    MTGJSON), so the `products.msrp` retail list price comes from a **committed, curated
+    map** (`tcgcsv::msrp`'s `msrp.json`, keyed by TCGplayer product id — the same
+    embedded-JSON-where-upstream-is-missing pattern as `mtgjson::fallback` below), applied
+    in the product upsert and `null` for anything not listed. Its content hash folds into
+    the products sync's version gate, so editing `msrp.json` re-applies on the next sync
+    even when TCGCSV itself is unchanged. Product images and the
     price-history `?range` downsampling reuse the same image-proxy + `pricing` helpers as
     the card endpoints; the products list uses a plain case-insensitive name substring for
     `q` (not the Scryfall search compiler — products aren't cards), and set names resolve

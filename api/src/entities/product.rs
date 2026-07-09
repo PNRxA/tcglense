@@ -38,6 +38,12 @@ pub struct Model {
     pub image_url: Option<String>,
     pub price_usd: Option<String>,
     pub price_usd_foil: Option<String>,
+    /// Manufacturer's suggested retail price (USD), as a decimal string like the market
+    /// prices above. No upstream feed carries sealed-product MSRP (TCGCSV/MTGJSON both
+    /// omit it), so this is populated from the curated, committed
+    /// [`crate::tcgcsv::msrp`] map (keyed by TCGplayer product id) during ingest — `None`
+    /// for any product not listed there.
+    pub msrp: Option<String>,
     /// Release date as an ISO `YYYY-MM-DD` string (from the group's `publishedOn`),
     /// or `None` when the provider gives none.
     pub released_at: Option<String>,

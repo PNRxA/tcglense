@@ -15,6 +15,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     url: 'https://www.tcgplayer.com/product/517079',
     has_image: false,
     prices: { usd: '199.99', usd_foil: null },
+    msrp: null,
     released_at: '2024-08-02',
     ...overrides,
   }
