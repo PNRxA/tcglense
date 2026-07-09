@@ -166,6 +166,11 @@ const FINGERPRINT_SOURCE_SIZE: &str = "small";
 /// Cards read per DB batch while walking for un-fingerprinted cards (bounded + resumable).
 const FINGERPRINT_BATCH: u64 = 200;
 
+/// Republish the in-memory match index after this many new fingerprints during a build,
+/// so the scanner starts recognising cards while the (long) first pass is still running
+/// rather than only once the whole catalogue is done.
+const FINGERPRINT_INDEX_REFRESH_EVERY: u64 = 500;
+
 /// Everything the opt-in fingerprint build needs, threaded from [`AppState`] once the
 /// operator has enabled it. Cheaply cloneable (all `Arc`/`Copy`).
 #[derive(Clone)]
@@ -191,11 +196,25 @@ fn fingerprint_build(state: &AppState) -> FingerprintBuild {
     }
 }
 
+/// Load the current fingerprints from the table and swap them into the live match index.
+async fn reload_fingerprint_index(db: &DatabaseConnection, cfg: &FingerprintBuild) {
+    match crate::catalog::fingerprints::load_index(db, cfg.algo_version).await {
+        Ok(index) => {
+            tracing::info!(count = index.len(), "loaded card-fingerprint match index");
+            *cfg.index_slot.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(index);
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "failed to load card-fingerprint match index")
+        }
+    }
+}
+
 /// Walk the catalogue once, fetching + hashing the `small` image of every card that
 /// still lacks a current-version front-face fingerprint, and upserting the result. The
 /// image bytes are dropped immediately after hashing — nothing is written to the image
 /// cache. Resumable by the `cards.id` cursor; per-card failures are logged and skipped.
-/// Returns how many fingerprints were built this pass.
+/// Publishes the match index every [`FINGERPRINT_INDEX_REFRESH_EVERY`] new fingerprints
+/// so the scanner comes online progressively. Returns how many fingerprints were built.
 async fn run_fingerprint_pass(
     db: &DatabaseConnection,
     cfg: &FingerprintBuild,
@@ -205,6 +224,7 @@ async fn run_fingerprint_pass(
     let game = crate::scryfall::GAME;
     let mut after_id = 0i32;
     let mut built = 0u64;
+    let mut refreshed_at = 0u64;
     loop {
         let batch =
             fingerprints::pending_batch(db, game, cfg.algo_version, after_id, FINGERPRINT_BATCH)
@@ -212,46 +232,60 @@ async fn run_fingerprint_pass(
         let Some(last_id) = batch.last_id else {
             break; // no more candidate cards — the walk is done
         };
-        for pending in batch.cards {
-            match cfg.images.fetch_bytes(&pending.image_url).await {
-                Ok(bytes) => match fingerprints::hash_image_bytes(&bytes) {
-                    Some(hash) => {
-                        let source_hash = hex::encode(Sha256::digest(&bytes));
-                        match fingerprints::upsert(
-                            db,
-                            game,
-                            &pending.external_id,
-                            0,
-                            cfg.algo_version,
-                            &hash,
-                            FINGERPRINT_SOURCE_SIZE,
-                            &source_hash,
-                        )
-                        .await
-                        {
-                            Ok(()) => built += 1,
-                            Err(err) => tracing::warn!(
-                                id = %pending.external_id,
-                                error = %err,
-                                "failed to store card fingerprint"
-                            ),
+        // Fetch + hash this batch's images CONCURRENTLY: the shared 8-way cap inside
+        // `fetch_bytes` bounds real parallelism (no artificial delay — the image CDN
+        // isn't rate-limited), and the network round-trip dominates, so this is ~8× the
+        // serial throughput. Decode+hash is cheap and done inline; the bytes are dropped
+        // as soon as the hash is computed.
+        let hashed = futures_util::future::join_all(batch.cards.into_iter().map(|pending| {
+            let images = cfg.images.clone();
+            async move {
+                match images.fetch_bytes(&pending.image_url).await {
+                    Ok(bytes) => match fingerprints::hash_image_bytes(&bytes) {
+                        Some(hash) => {
+                            Some((pending.external_id, hash, hex::encode(Sha256::digest(&bytes))))
                         }
+                        None => {
+                            tracing::debug!(id = %pending.external_id, "fetched image did not decode; skipping");
+                            None
+                        }
+                    },
+                    Err(err) => {
+                        tracing::debug!(id = %pending.external_id, error = %err, "fingerprint image fetch failed; skipping");
+                        None
                     }
-                    None => tracing::debug!(
-                        id = %pending.external_id,
-                        "fetched image did not decode; skipping"
-                    ),
-                },
-                Err(err) => tracing::debug!(
-                    id = %pending.external_id,
-                    error = %err,
-                    "fingerprint image fetch failed; skipping"
-                ),
+                }
             }
-            // No artificial per-request delay: the image CDN isn't rate-limited, and the
-            // shared 8-way concurrency cap in `fetch_bytes` is the politeness bound.
+        }))
+        .await;
+        // Upsert serially — the SQLite pool is single-writer anyway, and the writes are
+        // fast relative to the network fetches above.
+        for (external_id, hash, source_hash) in hashed.into_iter().flatten() {
+            match fingerprints::upsert(
+                db,
+                game,
+                &external_id,
+                0,
+                cfg.algo_version,
+                &hash,
+                FINGERPRINT_SOURCE_SIZE,
+                &source_hash,
+            )
+            .await
+            {
+                Ok(()) => built += 1,
+                Err(err) => {
+                    tracing::warn!(id = %external_id, error = %err, "failed to store card fingerprint")
+                }
+            }
         }
         after_id = last_id;
+        // Publish partial progress so the scanner recognises the cards done so far while
+        // the rest of the (long) first pass keeps running.
+        if built - refreshed_at >= FINGERPRINT_INDEX_REFRESH_EVERY {
+            reload_fingerprint_index(db, cfg).await;
+            refreshed_at = built;
+        }
     }
     Ok(built)
 }
@@ -273,16 +307,9 @@ fn spawn_fingerprint_build(db: DatabaseConnection, cfg: FingerprintBuild) {
                 Ok(_) => tracing::debug!("card-fingerprint build pass: nothing to do"),
                 Err(err) => tracing::error!(error = %err, "card-fingerprint build pass failed"),
             }
-            // Refresh the live match index off the freshly-built table.
-            match crate::catalog::fingerprints::load_index(&db, cfg.algo_version).await {
-                Ok(index) => {
-                    tracing::info!(count = index.len(), "loaded card-fingerprint match index");
-                    *cfg.index_slot.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(index);
-                }
-                Err(err) => {
-                    tracing::error!(error = %err, "failed to load card-fingerprint match index")
-                }
-            }
+            // Final refresh off the freshly-built table (partial refreshes happened
+            // during the pass; this catches the tail).
+            reload_fingerprint_index(&db, &cfg).await;
             if cfg.rebuild_interval_hours == 0 {
                 break; // startup-only posture: one pass, no periodic re-scan
             }
