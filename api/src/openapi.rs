@@ -70,7 +70,8 @@ impl Modify for SecurityAddon {
 (cards + sealed products, MTG first) with singles/sealed price history, plus per-user \
 collection and wish-list holdings. Read endpoints are unauthenticated and CDN-cacheable; \
 the collection, wish-list, and API-key endpoints authenticate with a personal API key \
-(`Authorization: Bearer tcgl_...`).",
+(`Authorization: Bearer tcgl_...`). Sign in and create a key from your profile page \
+(Profile → API keys) — the token is shown only once, so copy it when it's created.",
         license(name = "See repository")
     ),
     paths(

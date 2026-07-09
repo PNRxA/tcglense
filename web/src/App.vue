@@ -88,7 +88,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="bg-background text-foreground flex min-h-screen flex-col overflow-x-hidden">
+  <!-- overflow-x-clip (not -hidden) contains any accidental horizontal overflow WITHOUT
+       turning this root into a scroll container: `overflow-x: hidden` forces the computed
+       `overflow-y` to `auto`, which silently breaks every descendant `position: sticky`
+       (the /docs Scalar sidebar scrolled away with the page). `clip` leaves overflow-y
+       `visible`, so the page scrolls the document and sticky works. -->
+  <div class="bg-background text-foreground flex min-h-screen flex-col overflow-x-clip">
     <!-- Top-of-page navigation progress bar, shown only when a route change runs long. -->
     <NavigationProgressBar />
     <header class="border-b">
