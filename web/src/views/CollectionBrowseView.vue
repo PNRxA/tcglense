@@ -553,7 +553,7 @@ const errorMessage = computed(() =>
             <template v-if="!showGhosts">
               <DropSection
                 v-for="cardGroup in ownedGroups"
-                :key="cardGroup.slug ?? cardGroup.title"
+                :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
                 :drop="cardGroup"
               >
                 <CollectionGrid :game="game" :entries="cardGroup.cards" />
@@ -562,7 +562,7 @@ const errorMessage = computed(() =>
             <template v-else>
               <DropSection
                 v-for="cardGroup in ghostGroups"
-                :key="cardGroup.slug ?? cardGroup.title"
+                :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
                 :drop="cardGroup"
               >
                 <CardGrid
