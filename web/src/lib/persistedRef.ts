@@ -65,3 +65,42 @@ export function persistedBoolRef(key: string, fallback: boolean): Ref<boolean> {
 
   return state
 }
+
+/**
+ * The number flavour of {@link persistedRef} — a numeric preference persisted to
+ * localStorage as its decimal string. `persistedRef` hands back the raw stored *string*,
+ * so it only fits string-valued preferences; a numeric one needs to parse the stored value
+ * back to a `number`. `sanitize` maps every candidate (the stored value and the fallback)
+ * to a valid number — clamping to a range, rounding to whole units, etc. — so a stale or
+ * hand-edited key can never yield `NaN` or an out-of-range value. Same guarded read
+ * (blocked storage falls back to `fallback`) and best-effort write.
+ */
+export function persistedNumberRef(
+  key: string,
+  fallback: number,
+  sanitize: (value: number) => number,
+): Ref<number> {
+  function read(): number {
+    try {
+      const stored = localStorage.getItem(key)
+      if (stored === null) return sanitize(fallback)
+      const parsed = Number(stored)
+      return sanitize(Number.isFinite(parsed) ? parsed : fallback)
+    } catch {
+      // Storage unavailable (private mode, blocked): fall back to the default.
+      return sanitize(fallback)
+    }
+  }
+
+  const state = ref(read())
+
+  watch(state, (value) => {
+    try {
+      localStorage.setItem(key, String(value))
+    } catch {
+      // Storage unavailable: still honour the choice for this session.
+    }
+  })
+
+  return state
+}
