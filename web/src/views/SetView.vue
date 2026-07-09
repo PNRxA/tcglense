@@ -317,7 +317,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
           <UpdatingOverlay :loading="groupLoading">
             <DropSection
               v-for="cardGroup in groups"
-              :key="cardGroup.slug ?? cardGroup.title"
+              :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
               :drop="cardGroup"
             >
               <CardGrid :game="game" :cards="cardGroup.cards" :ownership="ownership" />
