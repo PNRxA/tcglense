@@ -37,6 +37,7 @@ export function invalidateCollectionData(
 ) {
   qc.invalidateQueries({ queryKey: ['collection', game] })
   qc.invalidateQueries({ queryKey: ['collection-summary', game] })
+  qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
   qc.invalidateQueries({
     queryKey: opts?.entryId ? ['collection-entry', game, opts.entryId] : ['collection-entry', game],
   })

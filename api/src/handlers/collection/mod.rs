@@ -34,6 +34,7 @@ mod export;
 mod import;
 mod read;
 mod sets;
+mod value_history;
 mod write;
 
 #[cfg(test)]
@@ -46,6 +47,7 @@ pub use import::{
 };
 pub use read::{collection_summary, get_collection_entry, list_collection, owned_counts};
 pub use sets::{collection_set_drops, collection_sets};
+pub use value_history::collection_value_history;
 pub use write::set_collection_entry;
 
 // The entity-agnostic DTOs, params, and constants (shared with `handlers::wishlist`).

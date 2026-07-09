@@ -1,7 +1,7 @@
 use super::*;
 use super::image::{is_allowed_image_url, normalize_size};
 use super::prices::PricePoint;
-use super::pricing::{PriceRange, cutoff_date, downsample_rows};
+use crate::handlers::shared::pricing::{PriceRange, cutoff_date, downsample_rows};
 use crate::db::Dialect;
 use crate::entities::card_price_history;
 use crate::scryfall::search::escape_like;

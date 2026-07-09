@@ -11,11 +11,13 @@ import {
   collectionSetDropsPath,
   collectionSourcePath,
   collectionSyncPath,
+  collectionValueHistoryPath,
   exportCollectionCsv,
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
   getCollectionSummary,
+  getCollectionValueHistory,
   importCollectionCsv,
 } from '../api'
 
@@ -149,6 +151,51 @@ describe('getCollectionSets / getCollectionSummary', () => {
     const [url] = fetchMock.mock.calls[0] as [string]
     expect(url).not.toContain('include_related')
     expect(url).not.toContain('set=')
+  })
+})
+
+describe('collectionValueHistoryPath', () => {
+  it('builds the value-history path with no range', () => {
+    expect(collectionValueHistoryPath('mtg')).toBe('/api/collection/mtg/value-history')
+  })
+
+  it('appends and encodes the range', () => {
+    expect(collectionValueHistoryPath('mtg', '30d')).toBe(
+      '/api/collection/mtg/value-history?range=30d',
+    )
+  })
+})
+
+describe('getCollectionValueHistory', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function stubJson(payload: unknown) {
+    const fetchMock = vi.fn<(url: string, init?: unknown) => Promise<Response>>(async () => {
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('requests the value-history endpoint with the range', async () => {
+    const fetchMock = stubJson({ data: [] })
+    await getCollectionValueHistory('tok', 'mtg', '1y')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/collection/mtg/value-history?range=1y')
+  })
+
+  it('maps the wire value_usd onto the chart-shaped usd field with a null foil line', async () => {
+    stubJson({
+      data: [
+        { date: '2024-01-01', value_usd: null },
+        { date: '2024-01-02', value_usd: '123.45' },
+      ],
+    })
+    const result = await getCollectionValueHistory('tok', 'mtg')
+    expect(result.data).toEqual([
+      { date: '2024-01-01', usd: null, usd_foil: null },
+      { date: '2024-01-02', usd: '123.45', usd_foil: null },
+    ])
   })
 })
 
