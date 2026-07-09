@@ -37,8 +37,14 @@ mod write;
 mod tests;
 
 pub use read::{get_wishlist_entry, list_wishlist, wishlist_counts, wishlist_summary};
-pub use sets::{wishlist_set_drops, wishlist_sets};
+pub use sets::{wishlist_set_drops, wishlist_set_subtypes, wishlist_sets};
 pub use write::set_wishlist_entry;
+
+// The `#[utoipa::path]`-generated route metadata structs, re-exported so
+// `crate::openapi::ApiDoc` can name them at `crate::handlers::wishlist::__path_<fn>`
+// (see the note in `crate::handlers::catalog`).
+pub use read::{__path_get_wishlist_entry, __path_list_wishlist, __path_wishlist_summary};
+pub use write::__path_set_wishlist_entry;
 
 /// The user's wish-list row for a card, if any. Shared by the get/set entry handlers.
 async fn find_row(

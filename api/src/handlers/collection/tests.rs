@@ -7,8 +7,8 @@ use crate::db::Dialect;
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::{card, card_set};
 use crate::handlers::shared::{
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField, build_collection_sets, dedupe_ids,
-    group_into_drops, search_condition, validate_quantity,
+    BULK_THRESHOLD_CENTS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField, build_collection_sets,
+    dedupe_ids, group_into_drops, search_condition, validate_quantity,
 };
 use sea_orm::{ActiveModelTrait, Condition, Set};
 
@@ -429,7 +429,9 @@ async fn summary_skips_holdings_whose_card_row_is_missing() {
         h.insert(&db).await.expect("insert holding");
     }
 
-    let s = summary(&db, 1, "mtg", None).await.expect("summary");
+    let s = summary(&db, 1, "mtg", None, BULK_THRESHOLD_CENTS)
+        .await
+        .expect("summary");
     // The orphan (card 999, 5 copies) is skipped entirely: 2 distinct cards, 4 copies
     // (2 + 1 + 1), value = 2×$5.00 (card 1's foil is unpriced) + 1×$2.00 = $12.00.
     assert_eq!(s.unique_cards, 2);
@@ -684,7 +686,7 @@ fn build_collection_sets_aggregates_dresses_and_orders() {
     // Only "aaa" has metadata; "bbb" must fall back to the card's set_name.
     let sets = vec![set_meta("aaa", "Alpha", "2000-01-01")];
 
-    let out = build_collection_sets("mtg", rows, sets);
+    let out = build_collection_sets("mtg", rows, sets, BULK_THRESHOLD_CENTS);
     assert_eq!(out.len(), 2);
 
     // "bbb" (dated? no metadata -> released_at None) sorts after the dated "aaa".
@@ -742,10 +744,47 @@ fn build_collection_sets_splits_bulk_per_finish() {
         (hold(2, 2, 1, 2), Some(carded(2, Some("2.00"), Some("0.50")))),
     ];
 
-    let out = build_collection_sets("mtg", rows, vec![]);
+    let out = build_collection_sets("mtg", rows, vec![], BULK_THRESHOLD_CENTS);
     assert_eq!(out.len(), 1);
     // Total = 1.00 + 3.00 + 2.00 + 1.00 = 7.00.
     assert_eq!(out[0].owned_value_usd.as_deref(), Some("7.00"));
     // Bulk = $1.00 (card 1 regulars) + $1.00 (card 2 foils) = $2.00.
     assert_eq!(out[0].owned_bulk_value_usd.as_deref(), Some("2.00"));
+}
+
+/// The bulk threshold is a per-request parameter (a user preference, issue #289): a wider
+/// cutoff pulls more finishes into the bulk subtotal without touching the total. Pins that
+/// `build_collection_sets` actually threads the threshold through to each set's valuation.
+#[test]
+fn build_collection_sets_honors_a_custom_bulk_threshold() {
+    let ts = "2024-01-01T00:00:00Z"
+        .parse::<sea_orm::prelude::DateTimeUtc>()
+        .unwrap();
+    let hold = |id: i32, card_id: i32, quantity: i32, foil_quantity: i32| collection_item::Model {
+        id,
+        user_id: 1,
+        game: "mtg".into(),
+        card_id,
+        quantity,
+        foil_quantity,
+        created_at: ts,
+        updated_at: ts,
+    };
+    let carded = |id: i32, usd: Option<&str>| {
+        let mut c = seed_card(id, "Card", "Creature", usd);
+        c.set_code = "aaa".into();
+        c.set_name = "Alpha".into();
+        c
+    };
+    // A $0.50 card (always bulk) and a $3.00 card (bulk only under a wide cutoff).
+    let rows = vec![
+        (hold(1, 1, 2, 0), Some(carded(1, Some("0.50")))),
+        (hold(2, 2, 1, 0), Some(carded(2, Some("3.00")))),
+    ];
+
+    // A $5 cutoff (500 cents): both cards are now bulk. Total is unchanged.
+    let out = build_collection_sets("mtg", rows, vec![], 500);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].owned_value_usd.as_deref(), Some("4.00")); // 0.50×2 + 3.00
+    assert_eq!(out[0].owned_bulk_value_usd.as_deref(), Some("4.00")); // all of it is bulk now
 }

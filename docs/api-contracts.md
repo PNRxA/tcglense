@@ -109,6 +109,64 @@ With no `RESEND_API_KEY` sending is **disabled**: the message — including the
 link — is logged instead, so offline dev and the test suites work with zero
 network (the security-test harness swaps in a capturing mailbox).
 
+## Public API & API keys (issue #284)
+
+TCGLense exposes a **public HTTP API**. Two surfaces:
+
+- **Anonymous, read-only** — the whole card catalog and sealed-product data
+  (`/api/games/...`, documented in the two sections below) needs no
+  authentication. These are the same CDN-cacheable reads the SPA uses.
+- **Per-user, key-authenticated** — a signed-in user mints an **API key** to
+  reach *their own* collection + wish list programmatically (the `/api/collection/*`
+  and `/api/wishlist/*` routes).
+
+**Interactive docs:** an OpenAPI 3.1 document is served at `GET /api/openapi.json`
+(machine-readable — import into Postman/Insomnia/codegen) and rendered as an
+interactive Scalar "try it out" console at `GET /api/docs`. Both are public,
+CDN-cacheable reads in the public router group. The SPA footer links to `/api/docs`.
+
+**How a key authenticates.** A key is presented exactly like an access token —
+`Authorization: Bearer tcgl_<hex>` — and rides the **same** collection/wish-list
+endpoints (no separate route surface). The `AuthUser` extractor branches on the
+`tcgl_` label: a `tcgl_`-prefixed credential is resolved against the `api_keys`
+table (one indexed lookup on the SHA-256 hash) to the owning user; anything else
+is decoded as a JWT. So every existing per-user endpoint accepts either credential
+with no per-handler change.
+
+**Scopes.** A key is `read` (GET only) or `read_write`. Enforcement is at the
+extractor: read endpoints use `AuthUser` (accepts a session or **any** valid key);
+mutating endpoints use `WritableUser` (a session or a `read_write` key — a
+**read-only key is `403 Forbidden`**, since the credential is real but lacks the
+scope). The batch-count `POST`s (`/owned`, `/counts`) are reads, so a read-only key
+may call them. Note a bad/expired/revoked key is `401` (the credential itself is
+invalid), while a valid read-only key on a write is `403` (valid but unauthorized).
+
+**Key management** (`/api/auth/api-keys`) is **session-only** — the `SessionUser`
+extractor rejects an API-key credential with `403`, so a leaked key can neither
+mint more keys nor enumerate/revoke its siblings.
+
+| Method & path | Body | Success | Notes |
+|---------------|------|---------|-------|
+| `POST /api/auth/api-keys` | `{ name, scope, expires_in_days? }` | `201 CreatedApiKey` `{ id, name, scope, key, key_prefix, created_at, expires_at }` — `key` is the **plaintext**, returned **once** (never again) | `scope` ∈ `read`/`read_write` (else `422`); `expires_in_days` optional (omit/null = never; `0` or `> 3650` = `422`); a blank/over-100-char `name` = `422`; exceeding the per-user cap (**25** active keys) = `409`. Session-only (an API-key credential = `403`) |
+| `GET /api/auth/api-keys` | — | `200 ApiKeyList` `{ data: ApiKeyInfo[] }` — active keys, newest first; **metadata only** (never the plaintext or hash) | `ApiKeyInfo = { id, name, scope, key_prefix, created_at, last_used_at, expires_at }`. Session-only |
+| `DELETE /api/auth/api-keys/{id}` | — | `204` — soft-revoke (idempotent for an already-revoked key) | `404` if the key doesn't exist or belongs to another user (ids don't leak across accounts). Session-only |
+
+**Storage & lifecycle** mirror the refresh/email-token design (`auth::api_key`):
+`tcgl_` + 32 CSPRNG bytes hex-encoded, only the **SHA-256 hex** persisted (fast hash
+is correct for a high-entropy secret — not argon2, which is for passwords), the
+plaintext returned once and never logged; `key_prefix` (`tcgl_<8 hex>`) is stored so
+the UI can identify a key after the secret is gone. `last_used_at` is a best-effort,
+throttled (≤ once/60s) stamp; revocation is a `revoked_at` soft delete (audit trail,
+an in-flight request sees it); `expires_at` is optional. Dead keys (expired or
+revoked) are pruned by the 6h maintenance loop. Model: `entities/api_key.rs`
+(`api_keys`, unique on `token_hash`, `user_id` FK → `users` `ON DELETE CASCADE`).
+
+**Rate limiting.** Key-authenticated traffic is throttled under the **same per-user
+quota** as session traffic: the per-user limiter (`ratelimit::user_rate_limit`) tries
+the JWT fast-path first and, on a `tcgl_` token, resolves the key to its user id (one
+indexed lookup) so keyed requests can't bypass the cap. Key *creation* rides the
+generous `general` per-user quota (session-authed).
+
 ## Card catalog API contract
 
 Public (no auth), game-agnostic reads under `/api/games`. `{game}` is a slug like
@@ -121,11 +179,12 @@ plain `{ data: [...] }`.
 |---------------|---------|
 | `GET /api/games` | `{ data: Game[] }` — `Game = { id, name, publisher, data_source }` |
 | `GET /api/games/{game}/status` | import status `{ status, detail, sets_imported, cards_imported, source_updated_at, finished_at }` (`status`: `idle`/`running`/`complete`/`error`) |
-| `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code, has_drops }` |
+| `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code, has_drops, has_subtypes }`. `has_subtypes` (data-derived) flags a set with special-treatment cards, browsable by sub-type — see the `/subtypes` endpoint below |
 | `GET /api/games/{game}/sets/{code}` | one `Set` |
 | `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
 | `GET /api/games/{game}/sets/{code}/cards?q&page&page_size&include_related` | page of `Card` (optional `q` Scryfall-style search), by collector number. `include_related=true` spans the set's whole **group** — its top-level root plus every related sub-set (tokens/promos/decks) — grouped by set (set-code order), each set in collector order |
 | `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated drop titles), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cards: Card[] }` and `total` counts drops. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
+| `GET /api/games/{game}/sets/{code}/subtypes?q&page&page_size` | a set's cards grouped by **sub-type** (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by sub-type** — `{ data: SubtypeGroup[], page, page_size, total, has_more }` where `SubtypeGroup = { slug, title, card_count, cards: Card[] }` and `total` counts sub-types. The sub-type is **derived** from the card's print attributes (see `crate::scryfall::subtypes`); every card classifies, so `Normal` heads the list, then treatments. Unlike `/drops` this never `404`s (any set groups — one `Normal` group if plain; the SPA gates the view on `has_subtypes`); optional `q` filters cards, dropping now-empty sub-types |
 | `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
 | `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection quick-add autocomplete |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
@@ -138,10 +197,13 @@ plain `{ data: [...] }`.
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
 prices: { usd, usd_foil, eur, tix }, has_image,
-drop_name: string | null, drop_slug: string | null,
+drop_name: string | null, drop_slug: string | null, secret_lair_bonus: boolean,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
-`null` elsewhere) — see the `/sets/{code}/drops` endpoint above.
+`null` elsewhere) — see the `/sets/{code}/drops` endpoint above. `secret_lair_bonus`
+is `true` for a Secret Lair **chase/bonus** card (Scryfall's `sldbonus` promo type) —
+the optional card given with a qualifying drop purchase, which has no sealed product of
+its own, so the SPA marks it and links to its drop rather than a "found in" section.
 
 `PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
 strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
@@ -150,7 +212,11 @@ so the *stored* series stays continuous even on a tick where the version-gated i
 skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
 keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
 grows), so every returned point is a genuine, internally-consistent snapshot and the newest
-day is always included; the underlying `card_price_history` rows are untouched.
+day is always included; the underlying `card_price_history` rows are untouched. The read
+is a single index range scan over `card_price_history` (the unique `(game, card, date)`
+index seeks one card's rows and yields them already date-ordered — no separate sort, no
+timeseries extension); the storage model + why-not-Timescale rationale is in
+`docs/tradeoffs.md` ("Price history & the historic-price chart", issue #297).
 
 ### Search syntax (`q`)
 
@@ -200,6 +266,21 @@ on the origin. Per-user, live, and error responses are `no-store`: all `/api/aut
 (access tokens + `Set-Cookie`), the import-`status` route (a live progress signal the
 SPA polls), and any non-2xx (so a CDN can't pin a transient `404`/`5xx`). The image/icon
 routes set their own longer `immutable` header, which the layer preserves.
+
+**Cloudflare (issue #284 bullet 3).** These directives are all standard and
+Cloudflare-honored: `public` makes a response edge-storable, `s-maxage` sets the edge
+TTL (Cloudflare respects it over `max-age` at the edge), `stale-while-revalidate` is
+supported, and the weak `ETag` + `If-None-Match → 304` revalidation (below) lets the
+edge revalidate cheaply. Public reads set **no** `Set-Cookie` and **no** `Vary`, so
+nothing defeats shared caching, and errors are forced to `no-store` so the edge never
+pins a negative. The origin is therefore Cloudflare-ready as shipped. Operational
+caveat: Cloudflare does **not** cache `/api/...` (JSON) paths by default — the edge only
+stores a response once a **Cache Rule** marks its path eligible. Those rules already
+exist and are documented in the README (*Behind a CDN (Cloudflare)*): its catalog rule
+(extended to also match `/api/openapi.json` + `/api/docs`) makes the public reads
+edge-cacheable, and its bypass rule keeps the per-user `/api/auth/*` (incl. the API-key
+management routes), `/api/collection/*`, and `/api/wishlist/*` responses off the edge.
+The header work is done; enabling edge caching is a dashboard step per deployment.
 
 ### Conditional requests (ETag / 304)
 
@@ -287,11 +368,15 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
 
 `Product = { id, name, set_code, set_name: string | null, product_type, url: string |
-null, has_image, prices: { usd, usd_foil }, released_at: string | null }`. `id` is the
-external (TCGplayer) product id; `url` is the tcgplayer.com product page (for buy-links);
-`has_image` is whether an image is available through the product image proxy. Prices are
-**USD only** — TCGCSV carries no eur/tix (`ProductPrices = { usd, usd_foil }`, decimal
-strings or `null`).
+null, has_image, prices: { usd, usd_foil }, msrp: string | null, released_at: string |
+null }`. `id` is the external (TCGplayer) product id; `url` is the tcgplayer.com product
+page (for buy-links); `has_image` is whether an image is available through the product
+image proxy. Prices are **USD only** — TCGCSV carries no eur/tix (`ProductPrices = { usd,
+usd_foil }`, decimal strings or `null`). `msrp` is the manufacturer's suggested **retail
+list** price (USD decimal string, or `null`) — a separate, curated field from the market
+`prices`: no feed carries sealed-product MSRP, so it comes from a committed, hand-curated
+map (`tcgcsv::msrp`, keyed by TCGplayer product id) and is `null` for products not listed
+there (issue #296).
 
 `ProductPricePoint = { date (YYYY-MM-DD), usd, usd_foil }` — decimal strings exactly as
 stored (any may be `null`), USD only. Same one-row-per-`(product, day)` model + last-real-
@@ -312,20 +397,28 @@ with the membership bucket (`"contains"` / `"booster"` / `"variable"`) and a `fo
 
 `ProductCardEntry = { card: Card, membership, foil, exclusive }` is the reverse wrapper
 (the `.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
-bucket, the foil-only flag, and `exclusive` (a `booster` card pullable from this product's
-booster family but from no *other* booster family in the set — `false` for any non-`booster`
-card, a non-booster product, or a set with no other booster family to compare against). A
-card that is both contained in and pullable from the same product reports its **strongest**
-membership (lowest rank), so it shows once, in the "found in" group. The by-card-id lookups
-are chunked (`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival"
-bundles reference thousands of cards — can't blow SQLite's per-statement bind limit.
+bucket, the foil-only flag, and `exclusive` (a `booster` card the product's booster line yields
+but no *other* booster family in the set can — a collector booster's special printings). The
+family judged is the product's **own** for a standalone booster, or, for a **bundle / gift box**,
+the premium booster it *contains* (Collector, else a generic special booster like Final
+Fantasy's Chocobo booster — issue #290): so a gift bundle's collector-only cards split out ahead
+of the shared play pool. `false` for any non-`booster` card, a bundle wrapping only
+play/set/draft boosters, or a set with no other booster family to compare against. A card that
+is both contained in and pullable from the same product reports its **strongest** membership
+(lowest rank), so it shows once, in the "found in" group. The by-card-id lookups are chunked
+(`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival" bundles reference
+thousands of cards — can't blow SQLite's per-statement bind limit.
 
-`ProductCardSection = { key, total }` (the `.../cards/sections` endpoint) is the display-
-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the value the
-`?section` filter takes), `total` its card count. Only non-empty sections are returned, in
-display order — so the SPA renders one independently-paginated block per section (issue #224)
-and knows each's size without fetching its cards. The four sections are the membership buckets
-with the `booster` pool split by `exclusive`; their combined `total` is the whole card count.
+`ProductCardSection = { key, total, booster_family }` (the `.../cards/sections` endpoint) is
+the display-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the
+value the `?section` filter takes), `total` its card count. `booster_family` is set **only on
+the `exclusive` section** — a representative `product_type` slug (e.g. `collector_pack`) naming
+the family those cards are exclusive to, so the SPA titles the block after the *contained*
+booster ("Collector Booster exclusives") even for a bundle whose own type carries no family;
+`null` on every other section. Only non-empty sections are returned, in display order — so the
+SPA renders one independently-paginated block per section (issue #224) and knows each's size
+without fetching its cards. The four sections are the membership buckets with the `booster`
+pool split by `exclusive`; their combined `total` is the whole card count.
 
 `ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
 (the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is
@@ -365,6 +458,7 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/sets/{code}/drops?q&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
+| `GET /api/collection/{game}/sets/{code}/subtypes?q&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
@@ -389,7 +483,8 @@ string; `"0.00"` when something is priced but none of it is bulk, `null` when no
 is priced.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
-`card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`) plus owned aggregates:
+`card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `has_subtypes` — the latter
+derived from the user's *owned* cards in the set) plus owned aggregates:
 `owned_cards` (distinct owned), `owned_copies` (regular + foil), `owned_value_usd`
 (estimated USD value, same semantics as the summary's `total_value_usd`, scoped to the one
 set, `null` if none priced), and `owned_bulk_value_usd` (the set-scoped bulk slice — value
@@ -404,7 +499,8 @@ set first.
 collection mirror of the catalog's `DropGroupResponse` (owned cards only, each carrying its
 counts); the `.../sets/{code}/drops` handler reuses the shared generic `group_into_drops`
 (generic over the grouped item, so it folds `(collection_item, card)` pairs) and paginates
-by drop in memory. The batch/import `POST`s, the `PUT`s, and the saved-source `DELETE` need
+by drop in memory. `CollectionSubtypeGroup` is the same shape for the `.../sets/{code}/subtypes`
+handler, which reuses the sibling `group_into_subtypes` over the same pairs. The batch/import `POST`s, the `PUT`s, and the saved-source `DELETE` need
 CORS `POST`/`PUT`/`DELETE` (all in the allow-list alongside `GET`); in dev/prod the SPA is
 same-origin so CORS isn't exercised, but a direct cross-origin call needs it.
 
@@ -540,6 +636,7 @@ collection twin exactly (params, ordering, errors, caps):
 | `GET /api/wishlist/{game}/summary?set&include_related` | the collection summary (unique / copies / value of what's wanted) |
 | `GET /api/wishlist/{game}/sets` | the collection per-set aggregates (sets holding wishlisted cards, newest first, counts + value) |
 | `GET /api/wishlist/{game}/sets/{code}/drops?q&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
+| `GET /api/wishlist/{game}/sets/{code}/subtypes?q&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
 | `POST /api/wishlist/{game}/counts` `{ ids }` | `POST .../owned` (batch counts, listed cards only, > 500 ids `422`) — named `/counts` because a wish list doesn't track ownership |
 | `GET /api/wishlist/{game}/cards/{id}` | the single-card counts read (zeros if absent) |
 | `PUT /api/wishlist/{game}/cards/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero deletes, negative/oversized `422`) |

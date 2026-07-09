@@ -257,7 +257,7 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
 /// A card whose collector number has no leading digit, so `collector_number_int` is
 /// NULL — exercises the NULLS-LAST ordering in `list_set_cards`.
 fn special_card(set: &SetDef, n: i32, collector_number: &str, name: &str) -> ScryfallCard {
-    SeedCard {
+    let mut card = SeedCard {
         external_id: card_id(set.code, n),
         oracle_id: None,
         name: name.to_string(),
@@ -274,14 +274,18 @@ fn special_card(set: &SetDef, n: i32, collector_number: &str, name: &str) -> Scr
         prices: dummy_prices(n),
         card_faces: None,
     }
-    .into_scryfall()
+    .into_scryfall();
+    // A borderless promo printing, so the offline base set has a second treatment for the
+    // by-treatment view (issue #282) alongside the showcase card above.
+    card.border_color = Some("borderless".to_string());
+    card
 }
 
 /// A foil-only printing: no regular `usd` price, only a `usd_foil` one. Some real
 /// cards are sold only as foils, so the browse views surface (and price-sort on)
 /// the foil price as a fallback — this card exercises that path offline.
 fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
-    SeedCard {
+    let mut card = SeedCard {
         external_id: card_id(set.code, n),
         oracle_id: None,
         name: "Dummy Foil-Only Showcase".to_string(),
@@ -304,7 +308,12 @@ fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
         },
         card_faces: None,
     }
-    .into_scryfall()
+    .into_scryfall();
+    // A "Showcase" printing carries the showcase frame effect, so an offline seed exercises
+    // the by-treatment view (issue #282): the base set groups into Normal + Showcase +
+    // Borderless (the promo below).
+    card.frame_effects = Some(vec!["showcase".to_string()]);
+    card
 }
 
 /// A token printing (no mana cost, no market price) for the token child set.
@@ -594,6 +603,25 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.usd.is_none() && p.usd_foil.is_some())),
             "expected a foil-only card (no usd, has usd_foil)",
+        );
+    }
+
+    #[test]
+    fn has_treatment_cards_for_the_by_subtype_view() {
+        // At least one showcase card and one borderless card, so a seeded catalog exercises
+        // the by-treatment view (issue #282) — has_subtypes lights up and the base set groups
+        // into more than just "Normal".
+        let cards = dummy_cards();
+        assert!(
+            cards.iter().any(|c| c
+                .frame_effects
+                .as_ref()
+                .is_some_and(|f| f.iter().any(|e| e == "showcase"))),
+            "expected a showcase card",
+        );
+        assert!(
+            cards.iter().any(|c| c.border_color.as_deref() == Some("borderless")),
+            "expected a borderless card",
         );
     }
 

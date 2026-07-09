@@ -13,14 +13,18 @@ use sea_orm::DatabaseConnection;
 use serde::Serialize;
 
 /// Static metadata describing a supported game (serialised to the SPA).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct Game {
     /// Stable id slug used in URLs and the `game` column, e.g. `"mtg"`.
+    #[schema(value_type = String)]
     pub id: &'static str,
+    #[schema(value_type = String)]
     pub name: &'static str,
+    #[schema(value_type = String)]
     pub publisher: &'static str,
     /// Upstream data source, shown as attribution in the UI.
+    #[schema(value_type = String)]
     pub data_source: &'static str,
 }
 

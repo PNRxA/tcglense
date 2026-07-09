@@ -19,8 +19,8 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page,
-    filter_drops_by_title, group_into_drops, load_group_set_codes, load_set, paginate_buckets,
-    require_drop_table, require_game,
+    filter_drops_by_title, group_into_drops, group_into_subtypes, load_group_set_codes, load_set,
+    paginate_buckets, require_drop_table, require_game,
 };
 use crate::state::AppState;
 
@@ -28,7 +28,7 @@ use super::image::is_allowed_image_url;
 use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique};
 
 /// A set/expansion within a game.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardSet"))]
 pub struct SetResponse {
     pub code: String,
@@ -42,6 +42,11 @@ pub struct SetResponse {
     /// (the `.../drops` endpoint). Lets the SPA offer a by-drop view only where
     /// there's drop data to show.
     pub has_drops: bool,
+    /// Whether this set has cards with special treatments (borderless, showcase, …), so
+    /// it can be browsed grouped by sub-type (the `.../subtypes` endpoint). Unlike
+    /// `has_drops` this is data-derived, so the `From` impl leaves it `false` — the
+    /// handler fills it from a query.
+    pub has_subtypes: bool,
 }
 
 impl From<card_set::Model> for SetResponse {
@@ -56,6 +61,8 @@ impl From<card_set::Model> for SetResponse {
             icon_svg_uri: m.icon_svg_uri,
             parent_set_code: m.parent_set_code,
             has_drops,
+            // Derived from card data, not the set row — filled by the handler.
+            has_subtypes: false,
         }
     }
 }
@@ -63,7 +70,7 @@ impl From<card_set::Model> for SetResponse {
 /// One Secret Lair drop with its cards, as returned by the drops endpoint. The
 /// enclosing [`Page`] paginates over these (so `total` is a drop count, not a
 /// card count).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DropGroup"))]
 pub struct DropGroupResponse {
     /// Stable slug for anchors/links; `None` for the catch-all "Other" group of
@@ -74,7 +81,31 @@ pub struct DropGroupResponse {
     pub cards: Vec<CardResponse>,
 }
 
+/// One set sub-type (card treatment) with its cards, as returned by the subtypes
+/// endpoint. Same shape as [`DropGroupResponse`] — the enclosing [`Page`] paginates over
+/// these (`total` is a sub-type count) and the SPA renders both through one section
+/// component — but here `slug` is always present (every card classifies, Normal included).
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "SubtypeGroup"))]
+pub struct SubtypeGroupResponse {
+    /// Stable slug (`normal`/`borderless`/`showcase`/…) for anchors/links.
+    pub slug: Option<String>,
+    pub title: String,
+    pub card_count: usize,
+    pub cards: Vec<CardResponse>,
+}
+
 /// `GET /api/games/{game}/sets` -> every stored set, newest first.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets",
+    tag = "Cards",
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "Every stored set for the game, newest first.", body = DataBody<Vec<SetResponse>>),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn list_sets(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -88,18 +119,44 @@ pub async fn list_sets(
         .order_by_asc(card_set::Column::Name)
         .all(&state.db)
         .await?;
-    let data: Vec<SetResponse> = sets.into_iter().map(SetResponse::from).collect();
+    // One aggregate scan marks which sets have a special-treatment card, so each tile knows
+    // whether to offer the by-sub-type view (the set list is CDN-cached, so this runs ~hourly).
+    let with_subtypes = crate::scryfall::subtypes::sets_with_subtypes(&state.db, &game).await?;
+    let data: Vec<SetResponse> = sets
+        .into_iter()
+        .map(|m| {
+            let mut set = SetResponse::from(m);
+            set.has_subtypes = with_subtypes.contains(&set.code);
+            set
+        })
+        .collect();
     Ok(Json(DataBody { data }))
 }
 
 /// `GET /api/games/{game}/sets/{code}` -> one set's metadata.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code, e.g. `neo`"),
+    ),
+    responses(
+        (status = 200, description = "The set's metadata.", body = SetResponse),
+        (status = 404, description = "Unknown game or set."),
+    ),
+)]
 pub async fn get_set(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
 ) -> Result<Json<SetResponse>, AppError> {
     require_game(&game)?;
     let set = load_set(&state, &game, &code).await?;
-    Ok(Json(SetResponse::from(set)))
+    let has_subtypes = crate::scryfall::subtypes::set_has_subtypes(&state.db, &game, &set.code).await?;
+    let mut response = SetResponse::from(set);
+    response.has_subtypes = has_subtypes;
+    Ok(Json(response))
 }
 
 /// `GET /api/games/{game}/sets/{code}/icon` -> the set's SVG icon.
@@ -148,6 +205,26 @@ pub async fn set_icon(
 /// — so a main expansion and its supplements can be browsed as one, instead of
 /// visiting each set individually. Cards are then grouped by set (set-code order),
 /// each set's cards kept together in collector-number order.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}/cards",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code, e.g. `neo`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("include_related" = Option<bool>, Query, description = "Span the set's whole group (root + related sub-sets)"),
+        ("sort" = Option<String>, Query, description = "Sort key (`number`/`name`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the set's cards.", body = Page<CardResponse>),
+        (status = 404, description = "Unknown game or set."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
 pub async fn list_set_cards(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
@@ -199,6 +276,24 @@ pub async fn list_set_cards(
 /// omitted. An optional `drop` then narrows to the drops whose curated title
 /// matches (case-insensitive substring), applied before pagination so it spans the
 /// whole set rather than one page.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}/drops",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code (must have a drop snapshot, e.g. `sld`)"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
+        ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search narrowing the cards within each drop"),
+        ("drop" = Option<String>, Query, description = "Optional case-insensitive drop-title filter"),
+    ),
+    responses(
+        (status = 200, description = "A page of the set's cards grouped by Secret Lair drop.", body = Page<DropGroupResponse>),
+        (status = 404, description = "Unknown game/set, or the set has no drop snapshot."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn list_set_drops(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,
@@ -230,6 +325,47 @@ pub async fn list_set_drops(
     let (page, page_size) = params.drop_page_and_size();
     Ok(Json(paginate_buckets(buckets, page, page_size, |b| {
         DropGroupResponse {
+            slug: b.slug,
+            title: b.title,
+            card_count: b.cards.len(),
+            cards: b.cards.into_iter().map(CardResponse::from).collect(),
+        }
+    })))
+}
+
+/// `GET /api/games/{game}/sets/{code}/subtypes` -> a set's cards grouped by sub-type
+/// (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by
+/// sub-type**.
+///
+/// Unlike the by-drop view, every set can be grouped this way — a set with no special
+/// treatments is just one "Normal" group (the SPA gates the toggle on `has_subtypes`, so
+/// it only offers this where there's something to see). Sub-types keep their fixed order
+/// (Normal first, then treatments); within one, cards are in collector-number order. An
+/// optional `q` narrows the cards first; sub-types with no remaining matches are omitted.
+pub async fn list_set_subtypes(
+    State(state): State<AppState>,
+    Path((game, code)): Path<(String, String)>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<Page<SubtypeGroupResponse>>, AppError> {
+    let game_meta = require_game(&game)?;
+    let set = load_set(&state, &game, &code).await?;
+    let dialect = state.dialect();
+
+    // One set's cards are bounded, so we pull the whole (optionally searched) set and group
+    // + paginate by sub-type in memory — keeping every sub-type complete regardless of where
+    // the page boundary falls (matching the by-drop handler).
+    let query = Card::find()
+        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
+    let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
+        .all(&state.db)
+        .await?;
+
+    let buckets = group_into_subtypes(rows, |card| card);
+    let (page, page_size) = params.drop_page_and_size();
+    Ok(Json(paginate_buckets(buckets, page, page_size, |b| {
+        SubtypeGroupResponse {
             slug: b.slug,
             title: b.title,
             card_count: b.cards.len(),

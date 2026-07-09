@@ -45,7 +45,7 @@ use crate::handlers::shared::{
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
-use crate::tcgcsv::classify::booster_family;
+use crate::tcgcsv::classify::{BoosterFamily, booster_family};
 
 use super::image::is_allowed_image_url;
 use super::{IMAGE_CACHE_CONTROL, image_error_response};
@@ -53,7 +53,7 @@ use super::{IMAGE_CACHE_CONTROL, image_error_response};
 // ---------- Wire DTOs ----------
 
 /// A sealed product's market prices (USD only — TCGCSV carries no eur/tix).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPrices"))]
 pub(crate) struct ProductPricesResponse {
     pub usd: Option<String>,
@@ -63,7 +63,7 @@ pub(crate) struct ProductPricesResponse {
 /// A sealed product, as the SPA sees it. Mirrors the `Card` DTO idioms: the provider
 /// id is exposed as a string `id`, prices are nested, and images are fetched through
 /// the proxy (`has_image` says whether one is available).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Product"))]
 pub(crate) struct ProductResponse {
     pub id: String,
@@ -78,11 +78,16 @@ pub(crate) struct ProductResponse {
     /// Whether an image is available through the product image proxy.
     pub has_image: bool,
     pub prices: ProductPricesResponse,
+    /// Manufacturer's suggested retail price (USD), as a decimal string, or `None` when
+    /// unknown. A **retail list** price curated from WotC announcements (no feed carries
+    /// it) — kept separate from the TCGCSV *market* prices in `prices`. The SPA hides the
+    /// MSRP line when this is absent.
+    pub msrp: Option<String>,
     pub released_at: Option<String>,
 }
 
 /// One day's price snapshot in a product's price-over-time series (USD only).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPricePoint"))]
 pub struct ProductPricePoint {
     pub date: String,
@@ -101,7 +106,7 @@ impl From<product_price_history::Model> for ProductPricePoint {
 }
 
 /// A set that actually has products, for building filter dropdowns.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductSetRef"))]
 pub(crate) struct ProductSetRef {
     pub code: String,
@@ -110,7 +115,7 @@ pub(crate) struct ProductSetRef {
 
 /// The distinct filter values that actually occur among a game's products, so the SPA
 /// can build the type + set dropdowns without hardcoding them.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductFacets"))]
 pub(crate) struct ProductFacets {
     /// Distinct `product_type` values, alphabetical.
@@ -141,7 +146,7 @@ pub(crate) struct SealedProductRef {
 /// renders a linked tile) or the card it *is* (a `card` promo that resolves to a
 /// [`CardResponse`]). `deck` / `other` (and unresolved links) are textual — both link
 /// fields `None`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductComponent"))]
 pub(crate) struct ProductComponent {
     /// `"sealed"` (a nested pack/box), `"deck"` (a precon deck), `"card"` (a fixed promo),
@@ -201,6 +206,11 @@ pub(crate) struct ProductCardSection {
     pub key: String,
     /// How many cards fall in this section.
     pub total: u64,
+    /// For the `exclusive` section only: a representative `product_type` slug for the booster
+    /// family these cards are exclusive to (e.g. `collector_pack` -> "Collector Booster"), so
+    /// the SPA can title the section after the *contained* booster even when the viewed
+    /// product is a bundle whose own type carries no family. `None` for every other section.
+    pub booster_family: Option<String>,
 }
 
 // ---------- Query params ----------
@@ -402,6 +412,26 @@ impl CardSection {
 
 /// `GET /api/games/{game}/products` -> a page of sealed products, filtered by
 /// `q`/`set`/`type` and ordered by `sort`/`dir` (default name-ascending).
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Case-insensitive name filter (each whitespace-separated word is a required substring)"),
+        ("set" = Option<String>, Query, description = "Filter to one set code"),
+        ("type" = Option<String>, Query, description = "Filter to one product type"),
+        ("sort" = Option<String>, Query, description = "Sort key (`name`/`price`/`released`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of matching sealed products.", body = Page<ProductResponse>),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown sort/direction."),
+    ),
+)]
 pub async fn list_products(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -451,6 +481,19 @@ pub async fn list_products(
 }
 
 /// `GET /api/games/{game}/products/{id}` -> one product's detail.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+    ),
+    responses(
+        (status = 200, description = "The product's detail.", body = ProductResponse),
+        (status = 404, description = "Unknown game or product."),
+    ),
+)]
 pub async fn get_product(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -463,6 +506,21 @@ pub async fn get_product(
 
 /// `GET /api/games/{game}/products/{id}/prices?range=` -> a product's price history,
 /// oldest first, reusing the exact windowing/downsampling of the card price endpoint.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/prices",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+        ("range" = Option<String>, Query, description = "Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`); absent = the full daily series"),
+    ),
+    responses(
+        (status = 200, description = "The product's price history, oldest first.", body = DataBody<Vec<ProductPricePoint>>),
+        (status = 404, description = "Unknown game or product."),
+        (status = 422, description = "Unknown range."),
+    ),
+)]
 pub async fn product_prices(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -530,6 +588,16 @@ pub async fn product_image(
 
 /// `GET /api/games/{game}/products/facets` -> the distinct product types + the sets
 /// that actually have products, so the SPA can build filter dropdowns.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/facets",
+    tag = "Sealed products",
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "The distinct type + set filter values for the game's products.", body = DataBody<ProductFacets>),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn product_facets(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -660,6 +728,19 @@ pub async fn card_sealed(
 /// this box contains"); a `card` component carries the linked `card`; the rest are textual.
 /// `{ "data": [] }` when the product has no ingested composition; `404` for an unknown
 /// game/product.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/contents",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+    ),
+    responses(
+        (status = 200, description = "The product's structural composition, in display order.", body = DataBody<Vec<ProductComponent>>),
+        (status = 404, description = "Unknown game or product."),
+    ),
+)]
 pub async fn product_contents(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -884,6 +965,12 @@ pub async fn product_card_sections(
             None => sections.push(ProductCardSection {
                 key: key.to_string(),
                 total: 1,
+                // Only the exclusive section names its booster family (for the heading);
+                // every other section leaves it `None`.
+                booster_family: match section {
+                    CardSection::Exclusive => index.exclusive_family.clone(),
+                    _ => None,
+                },
             }),
         }
     }
@@ -902,6 +989,13 @@ struct ProductCardIndex {
     best: HashMap<i32, (u8, String, bool)>,
     /// The subset of booster cards exclusive to this product's booster family.
     exclusive: HashSet<i32>,
+    /// A representative `product_type` slug for the booster family the [`exclusive`] cards
+    /// belong to (e.g. `collector_pack`) — the viewed booster's own family, or, for a bundle,
+    /// the *contained* premium booster's family. `None` when nothing is exclusive. Surfaced on
+    /// the `exclusive` section so the SPA titles it after the right family.
+    ///
+    /// [`exclusive`]: ProductCardIndex::exclusive
+    exclusive_family: Option<String>,
     /// Every distinct card id, in final display order (membership, then family-exclusive
     /// booster cards ahead of the shared pool, then set code + collector number).
     ordered: Vec<i32>,
@@ -944,6 +1038,7 @@ async fn build_product_card_index(
         return Ok(ProductCardIndex {
             best: HashMap::new(),
             exclusive: HashSet::new(),
+            exclusive_family: None,
             ordered: Vec::new(),
         });
     }
@@ -953,9 +1048,11 @@ async fn build_product_card_index(
     let best = best_memberships(&rows);
 
     // Which of this product's booster cards are exclusive to its booster family (a
-    // collector-booster-only printing, say) — one small cross-product lookup, empty for a
-    // non-booster product or a set with nothing to compare against.
-    let exclusive = booster_exclusive_card_ids(state, game, product, &best).await?;
+    // collector-booster-only printing, say), plus a slug naming that family for the section
+    // heading — one small cross-product lookup, empty for a non-booster product that wraps no
+    // premium booster, or a set with nothing to compare against.
+    let (exclusive, exclusive_family) =
+        booster_exclusive_card_ids(state, game, product, &best).await?;
 
     // Load the sort keys for every distinct card so the full list can be ordered before
     // it's paged; chunked under the bind limit. A card whose row vanished mid-reimport
@@ -1000,6 +1097,7 @@ async fn build_product_card_index(
     Ok(ProductCardIndex {
         best,
         exclusive,
+        exclusive_family,
         ordered: ordered.into_iter().map(|entry| entry.5).collect(),
     })
 }
@@ -1147,27 +1245,32 @@ fn best_memberships(rows: &[(i32, String, bool)]) -> HashMap<i32, (u8, String, b
     best
 }
 
-/// The subset of this product's `booster`-membership cards that are **exclusive** to its
-/// booster family: pullable from this product's booster line but from no booster product
-/// of a *different* family in the same set (e.g. a collector-booster-only borderless
-/// printing the play / draft / set sheets don't carry).
+/// The subset of this product's `booster`-membership cards that are **exclusive** to a
+/// booster family, plus a representative `product_type` slug naming that family (for the
+/// section heading). A card is exclusive when it's pullable from this product's booster line
+/// but from no booster product of a *different* family in the same set — e.g. a
+/// collector-booster-only borderless printing the play / draft / set sheets don't carry.
 ///
-/// Returns an empty set — nothing flagged exclusive — when the product isn't a booster
-/// (a deck / bundle / …), when it has no booster cards, or when the set has no other
-/// booster family to compare against (a collector-only Commander release, say, where
-/// "exclusive" would be vacuously true of every card and so carries no signal). Two small
-/// indexed lookups: the set's other-family booster products, then their booster card pool.
+/// The family judged is:
+/// - the product's **own** family, for a standalone booster ([`booster_family`] is `Some`);
+/// - the **contained premium** family, for a non-booster product that wraps boosters (a
+///   bundle / gift box): Collector if it tucks in a collector booster, else a generic
+///   special booster (Final Fantasy's Chocobo booster, say). See [`contained_booster_family`].
+///
+/// Returns `(∅, None)` — nothing exclusive, no heading — when the product has no booster
+/// cards, when it's a non-booster wrapping only play/set/draft boosters (no premium tier to
+/// call out), when the set has no other-family booster to compare against (a collector-only
+/// release where "exclusive" would be vacuously true of every card), or when the split turns
+/// up empty. Two small indexed lookups (plus, for a bundle, its component children's types).
 async fn booster_exclusive_card_ids(
     state: &AppState,
     game: &str,
     product: &product::Model,
     best: &HashMap<i32, (u8, String, bool)>,
-) -> Result<HashSet<i32>, AppError> {
-    let Some(family) = booster_family(&product.product_type) else {
-        return Ok(HashSet::new());
-    };
-
+) -> Result<(HashSet<i32>, Option<String>), AppError> {
     // This product's own booster-pullable cards — the only ones exclusivity applies to.
+    // Computed first (in-memory) so a product with no booster cards (a deck) never runs the
+    // component / cross-product lookups below.
     let booster = Membership::Booster.as_str();
     let own_booster: HashSet<i32> = best
         .iter()
@@ -1175,8 +1278,18 @@ async fn booster_exclusive_card_ids(
         .map(|(id, _)| *id)
         .collect();
     if own_booster.is_empty() {
-        return Ok(HashSet::new());
+        return Ok((HashSet::new(), None));
     }
+
+    // The family whose exclusives we split out: the product's own (a standalone booster) or,
+    // for a bundle / gift box, the premium booster it contains.
+    let family = match booster_family(&product.product_type) {
+        Some(family) => family,
+        None => match contained_booster_family(state, game, product).await? {
+            Some(family) => family,
+            None => return Ok((HashSet::new(), None)),
+        },
+    };
 
     // The set's booster products of a *different* family — the comparison pool. (Same-set
     // scope, so a collector display/case of the same family is excluded by the type list.)
@@ -1190,7 +1303,7 @@ async fn booster_exclusive_card_ids(
         .all(&state.db)
         .await?;
     if comparison_products.is_empty() {
-        return Ok(HashSet::new());
+        return Ok((HashSet::new(), None));
     }
 
     // Every card those other-family boosters can pull; one of ours not in this pool is
@@ -1217,13 +1330,79 @@ async fn booster_exclusive_card_ids(
         .into_iter()
         .collect();
     if comparison_cards.is_empty() {
-        return Ok(HashSet::new());
+        return Ok((HashSet::new(), None));
     }
 
-    Ok(own_booster
+    let exclusive: HashSet<i32> = own_booster
         .into_iter()
         .filter(|id| !comparison_cards.contains(id))
-        .collect())
+        .collect();
+    // A family slug only carries meaning when the split is non-empty (the exclusive section
+    // only renders then), so keep the two in lock-step.
+    if exclusive.is_empty() {
+        return Ok((HashSet::new(), None));
+    }
+    Ok((exclusive, Some(family.representative_type().to_string())))
+}
+
+/// The **premium** booster family a non-booster product (a bundle / gift box) wraps — the
+/// family whose special printings its exclusive section calls out. Reads the product's
+/// `sealed_components` children (the boosters it contains, already linked to catalog
+/// products), maps each to a [`BoosterFamily`], and picks Collector if present, else a
+/// generic special booster (e.g. Final Fantasy's Chocobo booster, a `pack`), else `None`.
+///
+/// `None` (so no exclusive split) when the product contains no linked booster, or wraps only
+/// play/set/draft boosters — those share the set's main pool, so there's no premium tier to
+/// separate and flagging their commons would mislabel the whole shared pool.
+async fn contained_booster_family(
+    state: &AppState,
+    game: &str,
+    product: &product::Model,
+) -> Result<Option<BoosterFamily>, AppError> {
+    // The catalog products this one contains as sealed components — a bundle's boosters. Only
+    // `sealed` line items carry a child-product link (decks / promos / extras don't).
+    let child_ids: Vec<i32> = SealedComponent::find()
+        .select_only()
+        .column(sealed_component::Column::ChildProductId)
+        .filter(sealed_component::Column::Game.eq(game))
+        .filter(sealed_component::Column::ProductId.eq(product.id))
+        .filter(sealed_component::Column::Kind.eq(sealed_component::ComponentKind::Sealed.as_str()))
+        .filter(sealed_component::Column::ChildProductId.is_not_null())
+        .into_tuple::<Option<i32>>()
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .flatten()
+        .collect();
+    if child_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let child_types: Vec<String> = Product::find()
+        .select_only()
+        .column(product::Column::ProductType)
+        .filter(product::Column::Game.eq(game))
+        .filter(product::Column::Id.is_in(child_ids))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(premium_booster_family(&child_types))
+}
+
+/// Pick the premium booster family out of a bundle's contained-booster `product_type`s:
+/// Collector if any child is a collector booster, else Generic if any is a generic special
+/// booster, else `None` (only play/set/draft — no premium tier). A pure decision so it's
+/// unit-tested without a DB.
+fn premium_booster_family(child_types: &[String]) -> Option<BoosterFamily> {
+    let mut has_generic = false;
+    for child_type in child_types {
+        match booster_family(child_type) {
+            Some(BoosterFamily::Collector) => return Some(BoosterFamily::Collector),
+            Some(BoosterFamily::Generic) => has_generic = true,
+            _ => {}
+        }
+    }
+    has_generic.then_some(BoosterFamily::Generic)
 }
 
 /// Collator key for a card's numeric collector number that parks `NULL` (a non-numeric
@@ -1279,6 +1458,7 @@ fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductR
             usd: p.price_usd,
             usd_foil: p.price_usd_foil,
         },
+        msrp: p.msrp,
         released_at: p.released_at,
     }
 }
@@ -1421,5 +1601,29 @@ mod tests {
     fn cn_int_key_parks_nulls_last() {
         assert!(cn_int_key(Some(5)) < cn_int_key(None));
         assert!(cn_int_key(Some(2)) < cn_int_key(Some(10)));
+    }
+
+    #[test]
+    fn premium_booster_family_prefers_collector_then_generic() {
+        let types = |slugs: &[&str]| slugs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A gift bundle wrapping play + collector -> Collector (the premium tier).
+        assert_eq!(
+            premium_booster_family(&types(&["play_pack", "collector_pack"])),
+            Some(BoosterFamily::Collector)
+        );
+        // A Chocobo-style bundle: play + a generic special booster -> Generic.
+        assert_eq!(
+            premium_booster_family(&types(&["play_pack", "pack"])),
+            Some(BoosterFamily::Generic)
+        );
+        // Collector wins even when a generic booster is also present.
+        assert_eq!(
+            premium_booster_family(&types(&["pack", "collector_display"])),
+            Some(BoosterFamily::Collector)
+        );
+        // Only play/set/draft (or non-boosters) -> no premium tier to split out.
+        assert_eq!(premium_booster_family(&types(&["play_pack", "set_pack"])), None);
+        assert_eq!(premium_booster_family(&types(&["commander_deck", "bundle"])), None);
+        assert_eq!(premium_booster_family(&[]), None);
     }
 }

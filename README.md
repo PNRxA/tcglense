@@ -145,10 +145,10 @@ Pin a release across the whole stack with `IMAGE_TAG=vX.Y.Z` (defaults to `lates
 
 #### Behind a CDN (Cloudflare)
 
-The public catalog (`/api/games/*`), its image/icon proxy, and the XML sitemaps
-(`/api/sitemap.xml`, `/api/sitemaps/*`) already emit CDN-friendly `Cache-Control`
-(`s-maxage` / `immutable`), so a CDN caches them with no code change. To put Cloudflare
-in front:
+The public catalog (`/api/games/*`), its image/icon proxy, the XML sitemaps
+(`/api/sitemap.xml`, `/api/sitemaps/*`), and the public API docs (`/api/openapi.json`,
+`/api/docs`) already emit CDN-friendly `Cache-Control` (`s-maxage` / `immutable`), so a
+CDN caches them with no code change. To put Cloudflare in front:
 
 - Set **`CDN_MODE=true`** on the `api` service — the origin then skips caching card
   images to disk (the CDN absorbs the repeats), so it needs no writable image dir.
@@ -168,7 +168,7 @@ chose — catalog reads their hour at the edge (`s-maxage=3600`), the image/icon
 (auth, the live `status` route, per-user collection/wishlist data, and every error), so
 you never have to enumerate those to keep them out.
 
-1. **Cache the public catalog, images, and sitemaps.** *Cache eligibility* →
+1. **Cache the public catalog, images, sitemaps, and API docs.** *Cache eligibility* →
    **Eligible for cache**; *Edge TTL* → **Use cache-control header if present, bypass
    cache if not** (the honor-the-origin option — pick the *bypass*-if-absent one, not
    *…use default Cloudflare caching…*); *Browser TTL* → **Respect origin**. When
@@ -178,6 +178,8 @@ you never have to enumerate those to keep them out.
    (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
+   or http.request.uri.path eq "/api/openapi.json"
+   or http.request.uri.path eq "/api/docs"
    ```
 
 2. **Bypass everything per-user or live.** *Cache eligibility* → **Bypass cache**. This

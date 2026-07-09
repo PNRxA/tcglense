@@ -22,7 +22,7 @@ use crate::state::AppState;
 /// decimal strings exactly as stored (mirroring the card's
 /// [`PricesResponse`](crate::handlers::shared::dto::PricesResponse)); `date` is a
 /// `"YYYY-MM-DD"` string.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PricePoint {
     pub date: String,
@@ -50,6 +50,21 @@ impl From<card_price_history::Model> for PricePoint {
 /// **downsamples** it to a coarser resolution the longer the window. `404` if the
 /// game or card id is unknown; `422` for an unknown `range`; an empty
 /// `{ "data": [] }` when the card has no captured history in the window.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}/prices",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+        ("range" = Option<String>, Query, description = "Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`); absent = the full daily series"),
+    ),
+    responses(
+        (status = 200, description = "The card's price history, oldest first.", body = DataBody<Vec<PricePoint>>),
+        (status = 404, description = "Unknown game or card."),
+        (status = 422, description = "Unknown range."),
+    ),
+)]
 pub async fn card_prices(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,

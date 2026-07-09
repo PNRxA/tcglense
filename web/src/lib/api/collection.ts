@@ -5,6 +5,7 @@ import type {
   CollectionEntry,
   CollectionQuantities,
   CollectionSet,
+  CollectionSubtypeGroup,
   CollectionSummary,
   CollectionValuePoint,
   Page,
@@ -23,6 +24,7 @@ export type {
   CollectionEntry,
   CollectionQuantities,
   CollectionSet,
+  CollectionSubtypeGroup,
   CollectionSummary,
 } from './generated'
 
@@ -70,25 +72,35 @@ export function getCollection(
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
  * optionally scoped to a single set (the per-set collection view). With a `set` and
  * `includeRelated`, the stats span the set's whole group (root + related sub-sets) — the
- * mirror of the catalog's include-related scope, so the value matches that browse view. */
+ * mirror of the catalog's include-related scope, so the value matches that browse view.
+ * `bulkMaxCents` (the user's bulk-threshold preference, in cents) sets the cutoff the
+ * server splits the bulk subtotal at; omitted = the server default ($1). */
 export function getCollectionSummary(
   token: string,
   game: string,
   set?: string,
   includeRelated?: boolean,
+  bulkMaxCents?: number,
 ): Promise<CollectionSummary> {
   // include_related only means anything alongside a set scope (matches the backend).
-  const qs = listQuery({ set, includeRelated: set ? includeRelated : undefined })
+  const qs = listQuery({ set, includeRelated: set ? includeRelated : undefined, bulkMaxCents })
   return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary${qs}`, {
     token,
   })
 }
 
-/** The sets the user owns cards in, newest set first — the per-set collection landing. */
-export function getCollectionSets(token: string, game: string): Promise<{ data: CollectionSet[] }> {
-  return request<{ data: CollectionSet[] }>(`/api/collection/${encodeURIComponent(game)}/sets`, {
-    token,
-  })
+/** The sets the user owns cards in, newest set first — the per-set collection landing.
+ * `bulkMaxCents` sets each tile's bulk cutoff, matching the summary header (omitted = $1). */
+export function getCollectionSets(
+  token: string,
+  game: string,
+  bulkMaxCents?: number,
+): Promise<{ data: CollectionSet[] }> {
+  const qs = listQuery({ bulkMaxCents })
+  return request<{ data: CollectionSet[] }>(
+    `/api/collection/${encodeURIComponent(game)}/sets${qs}`,
+    { token },
+  )
 }
 
 /** A page of collection drop groups — `total`/pagination count *drops*, not cards. */
@@ -122,6 +134,34 @@ export function getCollectionSetDrops(
   params?: CollectionDropsParams,
 ): Promise<CollectionDropGroupPage> {
   return request<CollectionDropGroupPage>(collectionSetDropsPath(game, code, params), { token })
+}
+
+/** A page of collection sub-type groups — `total`/pagination count *sub-types*, not cards. */
+export type CollectionSubtypeGroupPage = Page<CollectionSubtypeGroup>
+
+/** Relative `/api/collection/{game}/sets/{code}/subtypes` path (paginated by sub-type).
+ * Same param shape as the by-drop path. */
+export function collectionSetSubtypesPath(
+  game: string,
+  code: string,
+  params: CollectionDropsParams = {},
+): string {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return `/api/collection/${g}/sets/${c}/subtypes${listQuery(params)}`
+}
+
+/** The signed-in user's owned cards in a set, grouped by card sub-type (treatment) and
+ * paginated by sub-type. Offered where the tile's `has_subtypes` is true. */
+export function getCollectionSetSubtypes(
+  token: string,
+  game: string,
+  code: string,
+  params?: CollectionDropsParams,
+): Promise<CollectionSubtypeGroupPage> {
+  return request<CollectionSubtypeGroupPage>(collectionSetSubtypesPath(game, code, params), {
+    token,
+  })
 }
 
 /**

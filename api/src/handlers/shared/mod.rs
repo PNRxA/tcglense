@@ -20,14 +20,18 @@ pub(crate) mod valuation;
 
 pub(crate) use dto::{CardResponse, stored_faces};
 pub(crate) use grouping::{
-    filter_drops_by_title, group_into_drops, paginate_buckets, require_drop_table,
+    filter_drops_by_title, group_into_drops, group_into_subtypes, paginate_buckets,
+    require_drop_table,
 };
 pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
-    CollectionSort, CollectionSummary, ListParams, MAX_OWNED_IDS, OwnedCountsRequest,
-    OwnedCountsResponse, SetQuantitiesRequest, SummaryParams, build_collection_sets, copies_expr,
-    dedupe_ids, resolve_set_scope, summarize_holdings, validate_quantity,
+    CollectionSort, CollectionSubtypeGroup, CollectionSummary, ListParams, MAX_OWNED_IDS,
+    OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams, SummaryParams,
+    build_collection_sets, copies_expr, dedupe_ids, resolve_set_scope, summarize_holdings,
+    validate_quantity,
 };
+#[cfg(test)]
+pub(crate) use valuation::BULK_THRESHOLD_CENTS;
 pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};
 pub(crate) use pagination::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,

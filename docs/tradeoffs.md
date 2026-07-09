@@ -35,6 +35,41 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   runtime; this crate pins `default-features = false, features = ["rust_crypto"]`
   (pure Rust, no C toolchain). Don't drop that when bumping it.
 
+## Public API keys (issue #284)
+
+- **Same routes, not a new surface.** API keys authenticate the *existing*
+  collection/wish-list endpoints rather than a duplicated `/api/v1/...` tree. The
+  whole design is: teach the one `AuthUser` extractor to also resolve a `tcgl_`-labelled
+  bearer credential to a user, and every per-user endpoint accepts a key for free.
+  The alternative (a parallel public router) would double the wire surface and drift.
+- **`Bearer tcgl_…`, not `X-Api-Key`.** Reusing the `Authorization: Bearer` header
+  means zero CORS changes (`AUTHORIZATION` is already allow-listed) and one credential
+  path. A JWT is three base64url segments and can't start with `tcgl_`, so the two
+  never collide — the extractor branches on the label.
+- **SHA-256, not argon2.** A key is 32 CSPRNG bytes — already uniformly random — so a
+  fast hash is correct (argon2 is for low-entropy passwords) and, crucially, lets the
+  auth path resolve a presented key with a single indexed lookup on `token_hash`. The
+  plaintext is returned once and only the hash is stored (mirrors refresh/email tokens).
+- **Scope enforced by extractor, not by method.** `read` vs `read_write` can't be a
+  pure HTTP-method check because `POST /owned` and `POST /counts` are *reads*. So
+  reads take `AuthUser` (session or any key), writes take `WritableUser` (session or a
+  `read_write` key; a read-only key → **403**), and this is explicit per handler. A
+  bad/expired/revoked key is **401** (invalid credential); a valid read-only key on a
+  write is **403** (valid but unauthorized) — the two are deliberately distinct.
+- **Keys can't manage keys.** Management (`/api/auth/api-keys`) uses `SessionUser`
+  (JWT only) so a leaked key can neither mint more nor revoke its siblings — a
+  compromised key is contained to *using* the API, and the real session can revoke it.
+- **Rate-limit parity.** The per-user limiter had to be taught to resolve a `tcgl_`
+  token to its user id (one extra indexed lookup, only for key traffic — a JWT still
+  takes the pure-crypto fast path), or keyed requests would silently bypass the
+  per-user quota. Extracting the key token *before* the `await` keeps that middleware
+  future `Send` (a `&Request` held across the await isn't, since axum's `Body: !Sync`).
+- **Soft revoke + optional expiry + a per-user cap (25).** Revocation is a `revoked_at`
+  stamp (audit trail; an in-flight request sees it), expiry is optional per key, and
+  dead (expired/revoked) rows are pruned by the same 6h maintenance loop as the other
+  token tables. `last_used_at` is a best-effort, ≤once/60s throttled write so a busy
+  key doesn't pay a DB write per request.
+
 ## Rate limiting & anti-abuse
 
 - **Auth anti-abuse (CAPTCHA + rate limiting):** the auth mutation endpoints are
@@ -298,7 +333,14 @@ carried over near-verbatim from the audited source, with the sealed-product prov
     single-day, bounded, but not streamed across days. A single malformed prices file is
     logged + skipped rather than aborting the day. (3) TCGCSV blocks generic User-Agents,
     so the backfill needs a descriptive `TCGCSV_USER_AGENT` (defaults to the Scryfall UA
-    fallback). Prices are **USD only** (TCGCSV carries no eur/tix). Product images and the
+    fallback). Prices are **USD only** (TCGCSV carries no eur/tix). **MSRP** (issue #296)
+    is a different provenance again: no feed carries sealed-product MSRP (neither TCGCSV nor
+    MTGJSON), so the `products.msrp` retail list price comes from a **committed, curated
+    map** (`tcgcsv::msrp`'s `msrp.json`, keyed by TCGplayer product id — the same
+    embedded-JSON-where-upstream-is-missing pattern as `mtgjson::fallback` below), applied
+    in the product upsert and `null` for anything not listed. Its content hash folds into
+    the products sync's version gate, so editing `msrp.json` re-applies on the next sync
+    even when TCGCSV itself is unchanged. Product images and the
     price-history `?range` downsampling reuse the same image-proxy + `pricing` helpers as
     the card endpoints; the products list uses a plain case-insensitive name substring for
     `q` (not the Scryfall search compiler — products aren't cards), and set names resolve
@@ -372,7 +414,30 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   `products.external_id`; card `identifiers.scryfallId` → `cards.external_id`). It runs
   in `catalog::refresh_all` after the Scryfall + TCGCSV syncs (so both tables exist to
   resolve against) and is **version-gated on the file's HTTP `ETag`** (`Meta.json` bumps
-  daily from price rebuilds, so it's useless as a gate). Trade-offs: (1) `AllPrintings`
+  daily from price rebuilds, so it's useless as a gate).
+
+  **Derived booster pull-pools + bundle exclusivity (issue #290).** A sealed product's
+  "Can be pulled from boosters" / "{family} exclusives" split needs a product to carry
+  `booster`-membership rows for the boosters it *offers*. MTGJSON's native `sealed` recursion
+  gives most bundles their pool (a gift box that lists its play + collector boosters expands
+  both), but two gaps remain, filled by **ingest-time synthesis** (`mtgjson::ingest`,
+  `merge_contained_booster_pools` + `merge_sibling_booster_pools`), each gated on "the product
+  has **no** booster rows of its own" so MTGJSON / the fallback stay authoritative: (a) a
+  bundle whose `contents: null` was composed only by the fallback (Avatar's Commander's Bundle)
+  inherits the pools of the boosters its **`sealed_components`** link; (b) a booster *variant*
+  with no pool — a "Sleeved Play Booster Pack", a language edition — inherits its **canonical
+  same-set / same-family sibling's** pool (the fullest one in the group). The sibling rule can
+  over-share a genuinely-distinct-but-empty variant (a "Minimal"/"Omega" pack) the standard
+  family pool, but it only ever touches products that would otherwise render *nothing*, and a
+  variant carrying its own curated pool (a "Sample" pack) is non-empty so it's left alone.
+  Because this is **pure code** (no data file), its version is a bumped constant
+  (`DERIVATION_VERSION`) folded into the gate, so changing the logic forces one rebuild.
+  The **exclusive split** for a bundle is judged at read time (`booster_exclusive_card_ids`):
+  a non-booster product's premium family comes from its contained boosters — Collector if it
+  wraps a collector booster, else a generic special booster (the Chocobo case) — and the split
+  reuses the same "cards no other family in the set can pull" comparison as a standalone booster.
+
+  Trade-offs: (1) `AllPrintings`
   is one ~600 MB document; we fetch the ~160 MB gzip and parse only trimmed structs, but
   a rebuild still transiently uses a few hundred MB (the fetch buffers the compressed
   body and a normal set's booster sheets span ~its whole card list) — acceptable for a
@@ -456,6 +521,53 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on
   the client (the bulk download streams for a while); a `read_timeout` guards stalls.
+
+## Price history & the historic-price chart
+
+- **No Postgres timeseries extension — plain relational tables, by design (issue #297).**
+  The card- and sealed-product price charts (`GET …/cards/{id}/prices`,
+  `…/products/{id}/prices`) are served from two ordinary tables — `card_price_history`
+  and `product_price_history` — **not** from any PostgreSQL timeseries extension. There is
+  no TimescaleDB, hypertable, `time_bucket`, or continuous aggregate anywhere (a keyword
+  sweep across `api/`, `deploy/`, and CI is clean; the *only* Postgres extension the app
+  uses is `pg_trgm` for card-name search — m027 — which is not a timeseries one). The
+  "timeseries" behaviour lives in a schema shape plus a little app code instead:
+  - **Shape.** One row per `(game, entity, day)` of decimal-string prices (kept as the
+    provider's strings, never `f64`); `as_of_date` is a zero-padded `"YYYY-MM-DD"` **text**
+    column, not a native `DATE` (mirroring `cards.released_at`). The single index on each
+    table is the **unique composite** `(game, {card,product}_id, as_of_date)`
+    (`idx_card_price_history_game_card_date` / `idx_product_price_history_game_product_date`),
+    which doubles as the daily snapshot's upsert key — so it costs nothing extra on write.
+  - **The read is a single index range scan, not a scan + sort.** Each endpoint
+    (`handlers::catalog::prices::card_prices`, `products::product_prices`) filters
+    `game = ? AND id = ?` plus an optional `as_of_date >= cutoff`, ordered by
+    `as_of_date ASC`. That composite index is a leading-prefix match: the two equality
+    columns seek to one entity's rows, the date cutoff is a range bound on the trailing
+    column, and the index's own order **satisfies the `ORDER BY` with no separate sort**
+    (lexical order over the zero-padded date string equals chronological order). Confirmed
+    on Postgres against a 200k-row stand-in — both the full-history and the windowed query
+    plan to `Index Scan … Index Cond: (game, id[, as_of_date >= …])` with **no Sort node**
+    and a few hundred buffer hits, sub-millisecond — exactly the shape the weak prod
+    Postgres wants, and the same access pattern on SQLite.
+  - **Downsampling is app-side, not a DB rollup.** Longer `?range` windows are thinned to
+    one representative row per bucket by `handlers::catalog::pricing::downsample_rows`
+    (keep the *last* real row per `bucket_days`-wide bucket — never averaged, so every
+    returned point is a genuine snapshot), so the wire payload and plotted line stay light
+    however much history accrues. The DB just returns the windowed, ordered run; the result
+    set per request is bounded by one entity's days of captured history (≈ one row/day since
+    the 2024-02-08 backfill floor — a few hundred rows), small enough that an in-process
+    rollup beats the round-trips a DB-side `GROUP BY` / `time_bucket` would add.
+  - **Why not an extension.** The blocker is the runtime dual-backend (SQLite by default,
+    Postgres by `DATABASE_URL` scheme, both drivers compiled in; the whole non-search layer
+    is portable SeaORM query-builder kept byte-identical on SQLite, and the default tests +
+    CI run on SQLite — see "Postgres dual-backend"). A Postgres-only hypertable /
+    `time_bucket` / continuous aggregate has no SQLite equivalent, so it can't be *shared*:
+    adopting one means either dropping SQLite or carrying a second, divergent Postgres-only
+    storage/query path behind the `db::Dialect` seam — not worth it for a workload this
+    small and point-shaped that is already an O(log n) index range scan. If a single series
+    ever did grow huge, the move is Postgres-only *physical* tuning behind that same seam
+    (a native `DATE` column + BRIN, or partitioning), never an extension the SQLite default
+    can't load.
 
 ## Images & assets
 

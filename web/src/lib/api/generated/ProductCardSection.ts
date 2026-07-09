@@ -16,4 +16,11 @@ key: string,
 /**
  * How many cards fall in this section.
  */
-total: number, };
+total: number, 
+/**
+ * For the `exclusive` section only: a representative `product_type` slug for the booster
+ * family these cards are exclusive to (e.g. `collector_pack` -> "Collector Booster"), so
+ * the SPA can title the section after the *contained* booster even when the viewed
+ * product is a bundle whose own type carries no family. `None` for every other section.
+ */
+booster_family: string | null, };

@@ -8,6 +8,7 @@ import {
   listSetCards,
   listSetDrops,
   listSets,
+  listSetSubtypes,
 } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 import { findCardInCache, findSetInCache } from '@/lib/placeholders'
@@ -27,6 +28,10 @@ export const CARD_PAGE_SIZE = 60
 /** Drops per page in the by-drop views — they paginate over *drops* (each a handful
  * of cards), so they use a smaller page size than the flat card grid. */
 export const DROP_PAGE_SIZE = 20
+
+/** Sub-types per page in the by-treatment views — like drops, they paginate over
+ * *groups* (a set has only a handful of treatments), so one page always covers them. */
+export const SUBTYPE_PAGE_SIZE = 20
 
 /** Reactive list controls shared by the card-list queries: `page`/`query`/`sort` are
  * carried in the query key so a change refetches; `defaultSort` backs an empty sort. */
@@ -171,6 +176,33 @@ export function useSetDropsQuery(
           drop: drop.value || undefined,
           page: opts.page.value,
           pageSize: DROP_PAGE_SIZE,
+        },
+        signal,
+      ),
+    enabled: opts.enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A page (by sub-type) of a set's cards grouped by card treatment (Borderless,
+ * Showcase, …). The caller gates it on the by-treatment view being active via
+ * `opts.enabled` (offered where `CardSet.has_subtypes` is true). `query` narrows the
+ * cards within each sub-type; it's reactive and rides the query key. */
+export function useSetSubtypesQuery(
+  game: Ref<string>,
+  code: Ref<string>,
+  opts: { page: Ref<number>; query: Ref<string>; enabled?: Ref<boolean> },
+) {
+  return useQuery({
+    queryKey: ['set-subtypes', game, code, opts.query, opts.page],
+    queryFn: ({ signal }) =>
+      listSetSubtypes(
+        game.value,
+        code.value,
+        {
+          q: opts.query.value || undefined,
+          page: opts.page.value,
+          pageSize: SUBTYPE_PAGE_SIZE,
         },
         signal,
       ),

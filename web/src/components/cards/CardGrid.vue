@@ -5,6 +5,7 @@ import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
 import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
+import { useCardNavList } from '@/composables/useCardNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useAuthStore } from '@/stores/auth'
@@ -60,6 +61,13 @@ const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
 
 // Quick-add controls (issue #95) are a signed-in feature.
 const auth = useAuthStore()
+
+// Publish this grid's cards (in display order) so the card-detail modal can step prev/next
+// through them with the arrow keys / its buttons (issue #275).
+useCardNavList(
+  () => props.game,
+  () => props.cards.map((card) => card.id),
+)
 </script>
 
 <template>

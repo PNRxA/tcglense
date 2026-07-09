@@ -13,6 +13,7 @@ mod extract;
 mod handlers;
 mod migrator;
 mod mtgjson;
+mod openapi;
 mod ratelimit;
 mod router;
 mod scryfall;

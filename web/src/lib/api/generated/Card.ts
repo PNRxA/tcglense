@@ -20,6 +20,14 @@ drop_name: string | null,
  */
 drop_slug: string | null, 
 /**
+ * Whether this printing is a Secret Lair **chase / bonus** card — the optional
+ * card handed out with a qualifying drop purchase (Scryfall's `sldbonus` promo
+ * type). These have no sealed product of their own, so the card page has nothing
+ * in its "found in" section; the flag lets the SPA mark the card as a chase card
+ * and link it to its drop instead (issue #295).
+ */
+secret_lair_bonus: boolean, 
+/**
  * Present for multi-faced cards; request face images via `?face=N`.
  */
 faces: Array<CardFace>, };
