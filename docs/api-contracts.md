@@ -138,10 +138,13 @@ plain `{ data: [...] }`.
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
 prices: { usd, usd_foil, eur, tix }, has_image,
-drop_name: string | null, drop_slug: string | null,
+drop_name: string | null, drop_slug: string | null, secret_lair_bonus: boolean,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
-`null` elsewhere) — see the `/sets/{code}/drops` endpoint above.
+`null` elsewhere) — see the `/sets/{code}/drops` endpoint above. `secret_lair_bonus`
+is `true` for a Secret Lair **chase/bonus** card (Scryfall's `sldbonus` promo type) —
+the optional card given with a qualifying drop purchase, which has no sealed product of
+its own, so the SPA marks it and links to its drop rather than a "found in" section.
 
 `PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
 strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
