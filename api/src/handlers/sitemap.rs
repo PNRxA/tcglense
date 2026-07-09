@@ -33,10 +33,11 @@ use crate::state::AppState;
 
 /// URLs per child sitemap. The protocol allows 50 000 / 50 MB, but Google timed out
 /// fetching our 50 000-URL card chunks (issue #294) — each was a multi-megabyte
-/// document built from a single large OFFSET window on a modest origin. Smaller
-/// chunks build and transfer fast; the index grows by a few dozen entries, which is
-/// nothing (an index may hold 50 000 sitemaps).
-const MAX_URLS_PER_SITEMAP: u64 = 10_000;
+/// document built from a single large OFFSET window on a modest origin. We dropped to
+/// 10 000, then to 5 000 (issue #318) for still-smaller documents that build and
+/// transfer even faster; the index grows by a few dozen more entries, which is nothing
+/// (an index may hold 50 000 sitemaps).
+const MAX_URLS_PER_SITEMAP: u64 = 5_000;
 
 /// `Content-Type` for a sitemap document.
 const SITEMAP_CONTENT_TYPE: &str = "application/xml; charset=utf-8";

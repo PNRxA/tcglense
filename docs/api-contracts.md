@@ -306,8 +306,8 @@ A DB-backed XML sitemap advertises the public catalog (`handlers::sitemap`).
 `/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, and the legal pages),
 `/sitemaps/sets.xml` (every set), `/sitemaps/cards-{n}.xml` (cards), and
 `/sitemaps/products-{n}.xml` (sealed products). Cards and products are chunked at
-10 000 URLs/file — well under the protocol's 50 000 cap, because Google timed out
-fetching the full-size chunks (issue #294). The `<loc>`s are the SPA's own routes
+5 000 URLs/file — well under the protocol's 50 000 cap, because Google timed out
+fetching the full-size chunks (issues #294, #318). The `<loc>`s are the SPA's own routes
 (e.g. `/cards/mtg/sets/blb`, `/sealed/mtg/{id}`), built against `PUBLIC_SITE_URL` —
 not the API's `/api/...` URLs — with a `<lastmod>` from the set/card/product
 `released_at` or the latest sync. Served at the **site root** so the sitemap-protocol
