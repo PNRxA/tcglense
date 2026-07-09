@@ -42,6 +42,7 @@ function makeCard(over: Partial<Card> = {}): Card {
     has_image: true,
     drop_name: null,
     drop_slug: null,
+    secret_lair_bonus: false,
     faces: [],
     ...over,
   }
