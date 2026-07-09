@@ -97,7 +97,9 @@ state or plan to scale to more than one replica.
 
    **Rule 1 — cache the catalog, images, and sitemaps.** *Eligibility* → Eligible for
    cache; *Edge TTL* → "Use cache-control header if present, bypass if not"; *Browser
-   TTL* → Respect origin. Expression:
+   TTL* → Respect origin. Expression (the `/api/sitemap*` lines cover the legacy
+   aliases; the canonical root `/sitemap.xml` + `/sitemaps/*` paths — issue #294 —
+   fall under Rule 3, which already respects the origin's sitemap `Cache-Control`):
    ```
    (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
    or http.request.uri.path eq "/api/sitemap.xml"

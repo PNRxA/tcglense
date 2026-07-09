@@ -1,35 +1,42 @@
-//! DB-backed XML sitemaps advertising the public card catalog to crawlers.
+//! DB-backed XML sitemaps advertising the public catalog to crawlers.
 //!
-//! A sitemap **index** (`GET /api/sitemap.xml`) points at child sitemaps for the
-//! static/landing pages, every set, and the cards (chunked, since a single sitemap
-//! is capped at 50 000 URLs / 50 MB). The `<loc>`s are the SPA's own routes
+//! A sitemap **index** (`GET /sitemap.xml`) points at child sitemaps for the
+//! static/landing pages, every set, the cards, and the sealed products (both
+//! chunked — see [`MAX_URLS_PER_SITEMAP`]). The `<loc>`s are the SPA's own routes
 //! (e.g. `/cards/mtg/sets/blb`), built against the configured public site origin
 //! ([`crate::config::Config::public_site_url`]) — not the API's `/api/...` URLs.
-//! See issue #75.
+//! See issues #75 and #294.
 //!
-//! The sitemaps are served under `/api/` because that is the only path routed to
-//! the backend in both the dev Vite proxy and the recommended same-origin
-//! production deploy; `robots.txt` (emitted by the web build) points crawlers at
-//! `/api/sitemap.xml`. A shared cache may store them (they change at most daily,
-//! with the sync), so each carries a long [`SITEMAP_CACHE_CONTROL`].
+//! The sitemaps live at the site root (`/sitemap.xml`, `/sitemaps/...`) so the
+//! strict sitemap-protocol scope rule ("a sitemap may only claim URLs under its own
+//! directory") holds for every crawler; `robots.txt` (emitted by the web build)
+//! points crawlers there. The same handlers also answer under `/api/` so the URLs
+//! already submitted to search consoles keep working. A shared cache may store them
+//! (they change at most daily, with the sync), so each carries a long
+//! [`SITEMAP_CACHE_CONTROL`].
 
 use axum::{
     extract::State,
     http::header,
     response::{IntoResponse, Response},
 };
-use sea_orm::{EntityTrait, Order, PaginatorTrait, QueryOrder, QuerySelect, sea_query::NullOrdering};
+use sea_orm::{
+    EntityTrait, Order, PaginatorTrait, QueryOrder, QuerySelect, sea_query::NullOrdering,
+};
 
 use crate::catalog;
-use crate::entities::prelude::{Card, CardSet, IngestState};
-use crate::entities::{card, card_set, ingest_state};
+use crate::entities::prelude::{Card, CardSet, IngestState, Product};
+use crate::entities::{card, card_set, ingest_state, product};
 use crate::error::AppError;
 use crate::extract::Path;
 use crate::state::AppState;
 
-/// Protocol cap on URLs per sitemap (50 000). Cards are split into child sitemaps
-/// of at most this many URLs each.
-const MAX_URLS_PER_SITEMAP: u64 = 50_000;
+/// URLs per child sitemap. The protocol allows 50 000 / 50 MB, but Google timed out
+/// fetching our 50 000-URL card chunks (issue #294) — each was a multi-megabyte
+/// document built from a single large OFFSET window on a modest origin. Smaller
+/// chunks build and transfer fast; the index grows by a few dozen entries, which is
+/// nothing (an index may hold 50 000 sitemaps).
+const MAX_URLS_PER_SITEMAP: u64 = 10_000;
 
 /// `Content-Type` for a sitemap document.
 const SITEMAP_CONTENT_TYPE: &str = "application/xml; charset=utf-8";
@@ -46,29 +53,51 @@ pub const SITEMAP_CACHE_CONTROL: &str =
 
 // ---------- Handlers ----------
 
-/// `GET /api/sitemap.xml` -> the sitemap **index**: pointers to the `pages`, `sets`,
-/// and per-chunk `cards` child sitemaps. Each entry carries a `<lastmod>` of the
-/// latest card-data sync so crawlers can tell when the catalog last changed.
+/// `GET /sitemap.xml` (and `/api/sitemap.xml`) -> the sitemap **index**: pointers to
+/// the `pages`, `sets`, per-chunk `cards`, and per-chunk `products` child sitemaps.
+/// Each entry carries a `<lastmod>` of the latest card-data sync so crawlers can
+/// tell when the catalog last changed. Children are always advertised at the root
+/// `/sitemaps/...` path, whichever alias served the index.
 pub async fn sitemap_index(State(state): State<AppState>) -> Result<Response, AppError> {
     let base = &state.config.public_site_url;
     let lastmod = latest_ingest_lastmod(&state.db).await?;
-    let chunks = card_chunk_count(&state.db).await?;
+    let card_chunks = chunk_count(Card::find().count(&state.db).await?);
+    let product_chunks = chunk_count(Product::find().count(&state.db).await?);
 
     let mut body = String::new();
-    push_sitemap(&mut body, &format!("{base}/api/sitemaps/pages.xml"), lastmod.as_deref());
-    push_sitemap(&mut body, &format!("{base}/api/sitemaps/sets.xml"), lastmod.as_deref());
-    // Card chunks are 1-based; zero cards means no card sitemaps at all.
-    for n in 1..=chunks {
-        push_sitemap(&mut body, &format!("{base}/api/sitemaps/cards-{n}.xml"), lastmod.as_deref());
+    push_sitemap(
+        &mut body,
+        &format!("{base}/sitemaps/pages.xml"),
+        lastmod.as_deref(),
+    );
+    push_sitemap(
+        &mut body,
+        &format!("{base}/sitemaps/sets.xml"),
+        lastmod.as_deref(),
+    );
+    // Chunks are 1-based; zero rows means no child sitemaps of that kind at all.
+    for n in 1..=card_chunks {
+        push_sitemap(
+            &mut body,
+            &format!("{base}/sitemaps/cards-{n}.xml"),
+            lastmod.as_deref(),
+        );
+    }
+    for n in 1..=product_chunks {
+        push_sitemap(
+            &mut body,
+            &format!("{base}/sitemaps/products-{n}.xml"),
+            lastmod.as_deref(),
+        );
     }
 
     Ok(xml_response(sitemapindex(body)))
 }
 
-/// `GET /api/sitemaps/{name}` -> one child sitemap. Dispatches on the filename so a
-/// single route covers `pages.xml`, `sets.xml`, and `cards-{n}.xml` (matchit-safe:
-/// one whole-segment param). Any other name — including an out-of-range card chunk —
-/// is a `404`.
+/// `GET /sitemaps/{name}` (and `/api/sitemaps/{name}`) -> one child sitemap.
+/// Dispatches on the filename so a single route covers `pages.xml`, `sets.xml`,
+/// `cards-{n}.xml`, and `products-{n}.xml` (matchit-safe: one whole-segment param).
+/// Any other name — including an out-of-range chunk — is a `404`.
 pub async fn sitemap_child(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -77,25 +106,35 @@ pub async fn sitemap_child(
     match name.as_str() {
         "pages.xml" => Ok(xml_response(urlset(pages_body(base)))),
         "sets.xml" => sets_sitemap(&state, base).await,
-        other => match parse_card_chunk(other) {
-            Some(n) => cards_sitemap(&state, base, n).await,
-            None => Err(AppError::NotFound(format!("unknown sitemap '{name}'"))),
-        },
+        other => {
+            if let Some(n) = parse_chunk(other, "cards") {
+                cards_sitemap(&state, base, n).await
+            } else if let Some(n) = parse_chunk(other, "products") {
+                products_sitemap(&state, base, n).await
+            } else {
+                Err(AppError::NotFound(format!("unknown sitemap '{name}'")))
+            }
+        }
     }
 }
 
 // ---------- Child sitemap bodies ----------
 
-/// The evergreen landing pages plus each game's hub and all-cards browse view.
-/// Games are a static registry, so this needs no database.
+/// The evergreen landing pages (home, legal), the cards + sealed hubs, and each
+/// game's card hub/browse and sealed browse views. Games are a static registry, so
+/// this needs no database.
 fn pages_body(base: &str) -> String {
     let mut body = String::new();
     push_url(&mut body, &format!("{base}/"), None);
     push_url(&mut body, &format!("{base}/cards"), None);
+    push_url(&mut body, &format!("{base}/sealed"), None);
     for game in catalog::GAMES {
         push_url(&mut body, &format!("{base}/cards/{}", game.id), None);
         push_url(&mut body, &format!("{base}/cards/{}/cards", game.id), None);
+        push_url(&mut body, &format!("{base}/sealed/{}", game.id), None);
     }
+    push_url(&mut body, &format!("{base}/terms"), None);
+    push_url(&mut body, &format!("{base}/privacy"), None);
     body
 }
 
@@ -116,7 +155,11 @@ async fn sets_sitemap(state: &AppState, base: &str) -> Result<Response, AppError
 
     let mut body = String::new();
     for (game, code, released_at) in rows {
-        push_url(&mut body, &format!("{base}/cards/{game}/sets/{code}"), released_at.as_deref());
+        push_url(
+            &mut body,
+            &format!("{base}/cards/{game}/sets/{code}"),
+            released_at.as_deref(),
+        );
     }
     Ok(xml_response(urlset(body)))
 }
@@ -144,7 +187,9 @@ async fn cards_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response,
         .await?;
 
     if rows.is_empty() {
-        return Err(AppError::NotFound(format!("sitemap card chunk {n} is out of range")));
+        return Err(AppError::NotFound(format!(
+            "sitemap card chunk {n} is out of range"
+        )));
     }
 
     let mut body = String::new();
@@ -158,14 +203,41 @@ async fn cards_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response,
     Ok(xml_response(urlset(body)))
 }
 
-// ---------- Data helpers ----------
+/// One chunk of sealed-product detail pages (`n` is 1-based) — `cards_sitemap`'s
+/// twin over the `products` table (issue #294). Same stable-window and 404-past-the-
+/// end behavior; the SPA's product route is `/sealed/{game}/{external_id}`.
+async fn products_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response, AppError> {
+    let offset = n.saturating_sub(1).saturating_mul(MAX_URLS_PER_SITEMAP);
+    let rows: Vec<(String, String, Option<String>)> = Product::find()
+        .select_only()
+        .column(product::Column::Game)
+        .column(product::Column::ExternalId)
+        .column(product::Column::ReleasedAt)
+        .order_by_asc(product::Column::Id)
+        .offset(offset)
+        .limit(MAX_URLS_PER_SITEMAP)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
 
-/// Number of card child sitemaps needed to cover every card, at
-/// [`MAX_URLS_PER_SITEMAP`] URLs each. Zero cards -> zero chunks.
-async fn card_chunk_count(db: &sea_orm::DatabaseConnection) -> Result<u64, AppError> {
-    let total = Card::find().count(db).await?;
-    Ok(chunk_count(total))
+    if rows.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "sitemap product chunk {n} is out of range"
+        )));
+    }
+
+    let mut body = String::new();
+    for (game, external_id, released_at) in rows {
+        push_url(
+            &mut body,
+            &format!("{base}/sealed/{game}/{external_id}"),
+            released_at.as_deref(),
+        );
+    }
+    Ok(xml_response(urlset(body)))
 }
+
+// ---------- Data helpers ----------
 
 /// Pure chunk-count arithmetic, split out so it is unit-testable without a DB.
 fn chunk_count(total: u64) -> u64 {
@@ -181,17 +253,22 @@ async fn latest_ingest_lastmod(
     db: &sea_orm::DatabaseConnection,
 ) -> Result<Option<String>, AppError> {
     let row = IngestState::find()
-        .order_by_with_nulls(ingest_state::Column::FinishedAt, Order::Desc, NullOrdering::Last)
+        .order_by_with_nulls(
+            ingest_state::Column::FinishedAt,
+            Order::Desc,
+            NullOrdering::Last,
+        )
         .one(db)
         .await?;
     Ok(row.and_then(|r| r.finished_at).map(|t| t.to_rfc3339()))
 }
 
-/// Parse a card child-sitemap filename (`cards-<n>.xml`) into its 1-based chunk
-/// number, or `None` if it isn't that shape (so the caller 404s). Rejects a
+/// Parse a chunked child-sitemap filename (`<prefix>-<n>.xml`) into its 1-based
+/// chunk number, or `None` if it isn't that shape (so the caller 404s). Rejects a
 /// non-positive or non-numeric index.
-fn parse_card_chunk(name: &str) -> Option<u64> {
-    name.strip_prefix("cards-")
+fn parse_chunk(name: &str, prefix: &str) -> Option<u64> {
+    name.strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix('-'))
         .and_then(|rest| rest.strip_suffix(".xml"))
         .and_then(|n| n.parse::<u64>().ok())
         .filter(|n| *n >= 1)
@@ -289,22 +366,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_card_chunk_accepts_valid_and_rejects_the_rest() {
-        assert_eq!(parse_card_chunk("cards-1.xml"), Some(1));
-        assert_eq!(parse_card_chunk("cards-42.xml"), Some(42));
+    fn parse_chunk_accepts_valid_and_rejects_the_rest() {
+        assert_eq!(parse_chunk("cards-1.xml", "cards"), Some(1));
+        assert_eq!(parse_chunk("cards-42.xml", "cards"), Some(42));
+        assert_eq!(parse_chunk("products-1.xml", "products"), Some(1));
         // Wrong prefix/suffix, non-numeric, zero, or the sibling filenames.
-        assert_eq!(parse_card_chunk("cards-0.xml"), None);
-        assert_eq!(parse_card_chunk("cards-.xml"), None);
-        assert_eq!(parse_card_chunk("cards-1"), None);
-        assert_eq!(parse_card_chunk("cards-1.json"), None);
-        assert_eq!(parse_card_chunk("cards-abc.xml"), None);
-        assert_eq!(parse_card_chunk("pages.xml"), None);
-        assert_eq!(parse_card_chunk("sets.xml"), None);
+        assert_eq!(parse_chunk("cards-0.xml", "cards"), None);
+        assert_eq!(parse_chunk("cards-.xml", "cards"), None);
+        assert_eq!(parse_chunk("cards-1", "cards"), None);
+        assert_eq!(parse_chunk("cards-1.json", "cards"), None);
+        assert_eq!(parse_chunk("cards-abc.xml", "cards"), None);
+        assert_eq!(parse_chunk("products-1.xml", "cards"), None);
+        assert_eq!(parse_chunk("cards-1.xml", "products"), None);
+        assert_eq!(parse_chunk("pages.xml", "cards"), None);
+        assert_eq!(parse_chunk("sets.xml", "cards"), None);
     }
 
     #[test]
     fn xml_escape_escapes_the_five_entities() {
-        assert_eq!(xml_escape("a&b<c>d\"e'f"), "a&amp;b&lt;c&gt;d&quot;e&apos;f");
+        assert_eq!(
+            xml_escape("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
         assert_eq!(xml_escape("no-special-chars"), "no-special-chars");
     }
 
@@ -327,10 +410,18 @@ mod tests {
         let body = pages_body("https://x.test");
         assert!(body.contains("<loc>https://x.test/</loc>"));
         assert!(body.contains("<loc>https://x.test/cards</loc>"));
-        // Every registered game contributes a hub + browse URL.
+        assert!(body.contains("<loc>https://x.test/sealed</loc>"));
+        assert!(body.contains("<loc>https://x.test/terms</loc>"));
+        assert!(body.contains("<loc>https://x.test/privacy</loc>"));
+        // Every registered game contributes a card hub + browse URL and a sealed
+        // browse URL.
         for game in catalog::GAMES {
             assert!(body.contains(&format!("<loc>https://x.test/cards/{}</loc>", game.id)));
-            assert!(body.contains(&format!("<loc>https://x.test/cards/{}/cards</loc>", game.id)));
+            assert!(body.contains(&format!(
+                "<loc>https://x.test/cards/{}/cards</loc>",
+                game.id
+            )));
+            assert!(body.contains(&format!("<loc>https://x.test/sealed/{}</loc>", game.id)));
         }
     }
 }

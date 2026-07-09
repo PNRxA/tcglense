@@ -14,7 +14,16 @@ tcglense.example.com {
 
 	# API: forward /api/* to the Rust backend (bound to 127.0.0.1 in production).
 	# `handle` (not `handle_path`) preserves the /api prefix the backend expects.
+	# The root sitemap paths are API-served too (issue #294): the sitemap index
+	# must live at the site root for the sitemap-protocol scope rule to cover the
+	# whole site.
 	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /sitemap.xml {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /sitemaps/* {
 		reverse_proxy 127.0.0.1:8080
 	}
 
