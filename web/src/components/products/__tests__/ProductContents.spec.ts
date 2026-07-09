@@ -49,7 +49,9 @@ describe('ProductContents', () => {
       comp({ kind: 'sealed', name: 'Play Booster', quantity: 9, product: linkedProduct('648640') }),
       comp({ kind: 'other', name: 'Card storage box', quantity: 1 }),
     ])
-    expect(wrapper.find('h2').text()).toBe("What's in the box")
+    // Heading carries the section title plus a live item count (SEO enrichment, issue #302).
+    expect(wrapper.find('h2').text()).toContain("What's in the box")
+    expect(wrapper.find('h2').text()).toContain('2 items')
     const items = wrapper.findAll('li')
     expect(items).toHaveLength(2)
     expect(items[0]!.text()).toContain('9×')
