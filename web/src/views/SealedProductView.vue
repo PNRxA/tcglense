@@ -61,13 +61,15 @@ const setName = computed(
   () => product.value?.set_name ?? product.value?.set_code.toUpperCase() ?? '',
 )
 
-// Current prices, formatted thousands-grouped; blank fields are dropped.
+// Current market prices + MSRP, formatted thousands-grouped; blank fields are dropped, so
+// MSRP (a curated retail price, absent for most products) only appears when known.
 const priceRows = computed(() => {
-  const p = product.value?.prices
-  if (!p) return []
+  const prod = product.value
+  if (!prod) return []
   return [
-    { label: 'USD', value: formatUsd(p.usd) },
-    { label: 'USD foil', value: formatUsd(p.usd_foil) },
+    { label: 'USD', value: formatUsd(prod.prices?.usd) },
+    { label: 'USD foil', value: formatUsd(prod.prices?.usd_foil) },
+    { label: 'MSRP', value: formatUsd(prod.msrp) },
   ].filter((row): row is { label: string; value: string } => row.value != null)
 })
 

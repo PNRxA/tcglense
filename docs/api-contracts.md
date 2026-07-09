@@ -294,11 +294,15 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
 
 `Product = { id, name, set_code, set_name: string | null, product_type, url: string |
-null, has_image, prices: { usd, usd_foil }, released_at: string | null }`. `id` is the
-external (TCGplayer) product id; `url` is the tcgplayer.com product page (for buy-links);
-`has_image` is whether an image is available through the product image proxy. Prices are
-**USD only** — TCGCSV carries no eur/tix (`ProductPrices = { usd, usd_foil }`, decimal
-strings or `null`).
+null, has_image, prices: { usd, usd_foil }, msrp: string | null, released_at: string |
+null }`. `id` is the external (TCGplayer) product id; `url` is the tcgplayer.com product
+page (for buy-links); `has_image` is whether an image is available through the product
+image proxy. Prices are **USD only** — TCGCSV carries no eur/tix (`ProductPrices = { usd,
+usd_foil }`, decimal strings or `null`). `msrp` is the manufacturer's suggested **retail
+list** price (USD decimal string, or `null`) — a separate, curated field from the market
+`prices`: no feed carries sealed-product MSRP, so it comes from a committed, hand-curated
+map (`tcgcsv::msrp`, keyed by TCGplayer product id) and is `null` for products not listed
+there (issue #296).
 
 `ProductPricePoint = { date (YYYY-MM-DD), usd, usd_foil }` — decimal strings exactly as
 stored (any may be `null`), USD only. Same one-row-per-`(product, day)` model + last-real-
