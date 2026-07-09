@@ -58,6 +58,7 @@ function makeProduct(over: Partial<Product> = {}): Product {
     url: null,
     has_image: true,
     prices: { usd: '199.99', usd_foil: null },
+    msrp: null,
     released_at: '2021-02-05',
     ...over,
   }
