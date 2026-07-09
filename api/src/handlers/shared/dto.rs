@@ -64,6 +64,12 @@ pub(crate) struct CardResponse {
     pub drop_name: Option<String>,
     /// Stable slug of the drop above (anchors/links), paired with `drop_name`.
     pub drop_slug: Option<String>,
+    /// Whether this printing is a Secret Lair **chase / bonus** card — the optional
+    /// card handed out with a qualifying drop purchase (Scryfall's `sldbonus` promo
+    /// type). These have no sealed product of their own, so the card page has nothing
+    /// in its "found in" section; the flag lets the SPA mark the card as a chase card
+    /// and link it to its drop instead (issue #295).
+    pub secret_lair_bonus: bool,
     /// Present for multi-faced cards; request face images via `?face=N`.
     pub faces: Vec<CardFaceResponse>,
 }
@@ -73,6 +79,7 @@ impl From<card::Model> for CardResponse {
         let drop = crate::scryfall::drops::drop_for(&m.game, &m.set_code, &m.collector_number);
         let drop_name = drop.map(|d| d.title.clone());
         let drop_slug = drop.map(|d| d.slug.clone());
+        let secret_lair_bonus = is_secret_lair_bonus(m.promo_types.as_deref());
 
         let stored_faces = stored_faces(&m);
 
@@ -124,9 +131,18 @@ impl From<card::Model> for CardResponse {
             has_image,
             drop_name,
             drop_slug,
+            secret_lair_bonus,
             faces,
         }
     }
+}
+
+/// Whether a card's comma-joined `promo_types` marks it as a Secret Lair chase/bonus
+/// card. `sldbonus` is Scryfall's explicit tag for the optional card given with a
+/// qualifying Secret Lair purchase, so this is an exact-token match, not a substring
+/// one (`"sldbonus"` must be a whole entry, never part of another tag).
+pub(crate) fn is_secret_lair_bonus(promo_types: Option<&str>) -> bool {
+    promo_types.is_some_and(|types| types.split(',').any(|t| t == "sldbonus"))
 }
 
 pub(crate) fn stored_faces(card: &card::Model) -> Vec<StoredFace> {
@@ -156,5 +172,19 @@ mod tests {
         assert_eq!(split_csv(None), Vec::<String>::new());
         assert_eq!(split_csv(Some(String::new())), Vec::<String>::new());
         assert_eq!(split_csv(Some("W,U".to_string())), vec!["W", "U"]);
+    }
+
+    #[test]
+    fn detects_secret_lair_bonus() {
+        // Absent / empty / unrelated promo types are not chase cards.
+        assert!(!is_secret_lair_bonus(None));
+        assert!(!is_secret_lair_bonus(Some("")));
+        assert!(!is_secret_lair_bonus(Some("buyabox,prerelease")));
+        // The tag anywhere in the comma-joined list marks a chase card.
+        assert!(is_secret_lair_bonus(Some("sldbonus")));
+        assert!(is_secret_lair_bonus(Some("sldbonus,universesbeyond")));
+        assert!(is_secret_lair_bonus(Some("ffx,sldbonus,universesbeyond")));
+        // Exact-token match: a tag that merely contains the substring must not match.
+        assert!(!is_secret_lair_bonus(Some("notsldbonus")));
     }
 }

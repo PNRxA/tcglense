@@ -27,6 +27,7 @@ function print(
     has_image: false,
     drop_name: null,
     drop_slug: null,
+    secret_lair_bonus: false,
     faces: [],
     ...overrides,
   }

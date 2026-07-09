@@ -40,6 +40,19 @@ const REQUEST_SPACING: Duration = Duration::from_millis(100);
 /// parameters — under SQLite's 32 766 limit.
 const PRODUCT_BATCH: usize = 1000;
 
+/// Separator joining TCGCSV's `last-updated` value with the curated MSRP file's content
+/// hash in the stored version (a US control byte, which can't occur in either part — the
+/// `last-updated` value is a timestamp and the MSRP hash is hex). Mirrors the coupling
+/// [`crate::mtgjson::ingest`] uses for its ETag + fallback hash.
+const VERSION_SEP: char = '\u{1f}';
+
+/// Compose the stored sync version from TCGCSV's `last-updated` value and the curated MSRP
+/// file's content hash, so an MSRP-data-only edit changes the version and forces a
+/// re-sweep on the next tick even when TCGCSV itself is unchanged.
+fn compose_version(tcgcsv: &str, msrp_hash: &str) -> String {
+    format!("{tcgcsv}{VERSION_SEP}{msrp_hash}")
+}
+
 /// Sync MTG sealed products from TCGCSV, recording status in `ingest_state`. On error
 /// the state row is best-effort marked `"error"` (so the next tick retries) and the
 /// error is returned for the caller to log.
@@ -66,12 +79,15 @@ async fn refresh_inner(
 ) -> Result<(), BackfillError> {
     let base_url = source.tcgcsv_base_url();
     // Version gate: one cheap request. Skip the whole sweep if TCGCSV hasn't refreshed
-    // since our last complete sync.
+    // since our last complete sync. The stored version couples TCGCSV's `last-updated`
+    // value with the curated MSRP file's content hash (see `compose_version`), so editing
+    // `msrp.json` re-applies MSRP on the next sync even when TCGCSV itself is unchanged.
     let remote_version = super::client::last_updated(http, &base_url, user_agent).await?;
+    let version = compose_version(&remote_version, super::msrp::version());
     let existing = load_state(db).await?;
     if let Some(state) = &existing
         && state.status == "complete"
-        && state.source_updated_at.as_deref() == Some(remote_version.as_str())
+        && state.source_updated_at.as_deref() == Some(version.as_str())
     {
         tracing::info!(version = %remote_version, "tcgcsv products already up to date");
         return Ok(());
@@ -89,6 +105,9 @@ async fn refresh_inner(
     tracing::info!(groups = groups.len(), "tcgcsv products: sweeping groups");
 
     let now = Utc::now();
+    // Curated MSRP map (TCGplayer product id -> retail price), applied to every sweep so a
+    // product's `msrp` stays set (or NULL) idempotently on each re-upsert.
+    let msrp = super::msrp::price_map();
     let mut total_products: i32 = 0;
     let groups_total = groups.len() as i32;
     // Live terminal progress: a determinate bar over the groups being swept, with a
@@ -109,7 +128,7 @@ async fn refresh_inner(
                 .results,
         );
 
-        let models = build_group_products(group, products, &prices, now);
+        let models = build_group_products(group, products, &prices, msrp, now);
         let sealed = models.len();
         total_products += upsert_products(db, models).await? as i32;
         progress.inc();
@@ -143,7 +162,7 @@ async fn refresh_inner(
     put_state(
         db,
         "complete",
-        Some(&remote_version),
+        Some(&version),
         &format!("imported {total_products} sealed products from {groups_total} groups"),
         started,
         Some(Utc::now()),
@@ -160,12 +179,14 @@ async fn refresh_inner(
 }
 
 /// Build product `ActiveModel`s for a group's **sealed** products, attaching each
-/// product's current market prices from `prices`. Cards (products with a `Rarity`/
-/// `Number` attribute) are filtered out. Pure so it's unit-testable without a DB.
+/// product's current market prices from `prices` and its curated retail price from `msrp`
+/// (both keyed by TCGplayer product id). Cards (products with a `Rarity`/`Number`
+/// attribute) are filtered out. Pure so it's unit-testable without a DB.
 fn build_group_products(
     group: &Group,
     products: Vec<super::model::Product>,
     prices: &HashMap<i64, super::model::DayPrice>,
+    msrp: &HashMap<i64, String>,
     now: DateTimeUtc,
 ) -> Vec<product::ActiveModel> {
     let set_code = group
@@ -193,6 +214,7 @@ fn build_group_products(
                 image_url: Set(p.image_url),
                 price_usd: Set(day.and_then(|d| d.usd.clone())),
                 price_usd_foil: Set(day.and_then(|d| d.usd_foil.clone())),
+                msrp: Set(msrp.get(&p.product_id).cloned()),
                 released_at: Set(released_at.clone()),
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -363,8 +385,10 @@ mod tests {
                 usd_foil: None,
             },
         );
+        // Curated MSRP for the box only; the bundle isn't listed.
+        let msrp: HashMap<i64, String> = HashMap::from([(100, "249.99".to_string())]);
         let now = Utc::now();
-        let models = build_group_products(&group(), products, &prices, now);
+        let models = build_group_products(&group(), products, &prices, &msrp, now);
 
         assert_eq!(models.len(), 2, "the single card is filtered out");
         let box_model = models
@@ -376,6 +400,8 @@ mod tests {
         assert_eq!(box_model.released_at.as_ref().as_deref(), Some("2024-02-09"));
         assert_eq!(box_model.price_usd.as_ref().as_deref(), Some("199.99"));
         assert!(box_model.price_usd_foil.as_ref().is_none());
+        // The curated MSRP is attached to the listed product.
+        assert_eq!(box_model.msrp.as_ref().as_deref(), Some("249.99"));
 
         let bundle = models
             .iter()
@@ -383,6 +409,8 @@ mod tests {
             .expect("sealed bundle present");
         assert_eq!(bundle.product_type.as_ref(), "bundle");
         assert!(bundle.price_usd.as_ref().is_none());
+        // A product absent from the curated map has no MSRP.
+        assert!(bundle.msrp.as_ref().is_none());
     }
 
     #[test]
@@ -395,6 +423,7 @@ mod tests {
         let models = build_group_products(
             &group,
             vec![src_product(1, "Booster Box", &[])],
+            &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
         );
@@ -410,6 +439,7 @@ mod tests {
         let first = build_group_products(
             &group(),
             vec![src_product(100, "Collector Booster Box", &["UPC"])],
+            &HashMap::new(),
             &HashMap::new(),
             now,
         );
@@ -428,6 +458,7 @@ mod tests {
             &group(),
             vec![src_product(100, "Collector Booster Box", &["UPC"])],
             &prices,
+            &HashMap::new(),
             now,
         );
         upsert_products(&db, second).await.expect("second upsert");
@@ -435,5 +466,16 @@ mod tests {
         let all = Product::find().all(&db).await.unwrap();
         assert_eq!(all.len(), 1, "same (game, external_id) upserts, not duplicates");
         assert_eq!(all[0].price_usd.as_deref(), Some("149.99"));
+    }
+
+    #[test]
+    fn compose_version_couples_tcgcsv_and_msrp_hash() {
+        // Same TCGCSV version but a different MSRP hash yields a different stored version,
+        // so an MSRP-file edit alone re-runs the sweep on the next tick.
+        let a = compose_version("2024-02-08", "aaaa");
+        let b = compose_version("2024-02-08", "bbbb");
+        assert_ne!(a, b);
+        // …and the same inputs are stable (the equality the version gate compares on).
+        assert_eq!(a, compose_version("2024-02-08", "aaaa"));
     }
 }

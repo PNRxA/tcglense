@@ -2,21 +2,34 @@ import { describe, it, expect } from 'vitest'
 
 import {
   activeFilterCount,
+  CARD_FLAG_OPTIONS,
   clearBuilderFilters,
   COLOR_MODES,
   COLOR_PIPS,
   FORMAT_OPTIONS,
+  getArtist,
+  getCardFlags,
   getColors,
   getFormat,
   getManaValue,
+  getOracleText,
+  getPower,
   getRarity,
+  getSetCode,
+  getToughness,
   getType,
   getUsd,
   RARITY_OPTIONS,
+  setArtist,
+  setCardFlag,
   setColors,
   setFormat,
   setManaValue,
+  setOracleText,
+  setPower,
   setRarity,
+  setSetCode,
+  setToughness,
   setType,
   setUsd,
   TYPE_OPTIONS,
@@ -206,6 +219,88 @@ describe('price (usd, range)', () => {
   })
 })
 
+describe('power / toughness (ranges)', () => {
+  it('reads and writes power bounds', () => {
+    expect(getPower('pow>=2 pow<=5')).toEqual({ min: '2', max: '5' })
+    expect(setPower('', { min: '2', max: '' })).toBe('pow>=2')
+  })
+
+  it('reads and writes toughness bounds, including via the long alias', () => {
+    expect(getToughness('toughness>=3')).toEqual({ min: '3', max: '' })
+    expect(setToughness('toughness>=3', { min: '', max: '4' })).toBe('tou<=4')
+  })
+
+  it('allows negative bounds', () => {
+    expect(setPower('', { min: '-1', max: '' })).toBe('pow>=-1')
+    expect(getPower('pow>=-1')).toEqual({ min: '-1', max: '' })
+  })
+})
+
+describe('free-text filters (oracle text, set, artist)', () => {
+  it('round-trips a single-word value unquoted', () => {
+    expect(setOracleText('', 'draw')).toBe('o:draw')
+    expect(getOracleText('o:draw')).toBe('draw')
+  })
+
+  it('quotes a multi-word value and strips the quotes back off on read', () => {
+    expect(setOracleText('bolt', 'draw a card')).toBe('bolt o:"draw a card"')
+    expect(getOracleText('o:"draw a card"')).toBe('draw a card')
+  })
+
+  it('preserves inner whitespace mid-typing (no trimming on write)', () => {
+    // A trailing space must survive the get/set cycle or the user can't type a phrase.
+    const query = setOracleText('', 'draw ')
+    expect(getOracleText(query)).toBe('draw ')
+  })
+
+  it('drops quote characters rather than severing the token', () => {
+    expect(setOracleText('', 'draw" a')).toBe('o:"draw a"')
+  })
+
+  it('treats a whitespace-only value as empty and clears the filter', () => {
+    expect(setOracleText('o:draw', '  ')).toBe('')
+  })
+
+  it('reads the oracle alias and writes back the canonical key', () => {
+    expect(getOracleText('oracle:flying')).toBe('flying')
+    expect(setOracleText('oracle:flying', 'haste')).toBe('o:haste')
+  })
+
+  it('round-trips the set code across its aliases', () => {
+    expect(getSetCode('e:mh3')).toBe('mh3')
+    expect(setSetCode('edition:neo', 'mh3')).toBe('s:mh3')
+    expect(setSetCode('s:mh3', '')).toBe('')
+  })
+
+  it('round-trips the artist without touching the artists count key', () => {
+    expect(setArtist('artists>1', 'rebecca guay')).toBe('artists>1 a:"rebecca guay"')
+    expect(getArtist('a:"rebecca guay" artists>1')).toBe('rebecca guay')
+  })
+})
+
+describe('card flags (is: toggles)', () => {
+  it('offers each flag once', () => {
+    const values = CARD_FLAG_OPTIONS.map((o) => o.value)
+    expect(new Set(values).size).toBe(values.length)
+  })
+
+  it('reads the offered flags present in the query', () => {
+    expect(getCardFlags('')).toEqual([])
+    expect(getCardFlags('is:foil bolt is:reprint')).toEqual(['foil', 'reprint'])
+  })
+
+  it('turns a single flag on and off without touching other is: values', () => {
+    let query = setCardFlag('is:mdfc', 'foil', true)
+    expect(query).toBe('is:mdfc is:foil')
+    query = setCardFlag(query, 'foil', false)
+    expect(query).toBe('is:mdfc')
+  })
+
+  it('leaves a negated flag alone', () => {
+    expect(setCardFlag('-is:foil', 'foil', true)).toBe('-is:foil is:foil')
+  })
+})
+
 describe('activeFilterCount', () => {
   it('is zero for an empty or plain-text query', () => {
     expect(activeFilterCount('')).toBe(0)
@@ -214,10 +309,15 @@ describe('activeFilterCount', () => {
 
   it('counts each active control once', () => {
     expect(activeFilterCount('c:r t:creature r:rare mv>=2 f:modern usd<=5')).toBe(6)
+    expect(activeFilterCount('o:draw s:mh3 a:guay pow>=2 tou<=4 is:foil')).toBe(6)
   })
 
   it('counts a range control once even with both bounds set', () => {
     expect(activeFilterCount('mv>=2 mv<=5')).toBe(1)
+  })
+
+  it('counts the flags group once even with several flags set', () => {
+    expect(activeFilterCount('is:foil is:promo is:reprint')).toBe(1)
   })
 
   it('counts a colourless selection as an active colour filter', () => {
@@ -240,11 +340,17 @@ describe('clearBuilderFilters', () => {
     )
   })
 
-  it('clears all six control key groups', () => {
+  it('clears every control key group', () => {
     expect(clearBuilderFilters('c:r t:creature r:rare mv>=2 f:modern usd<=5')).toBe('')
+    expect(clearBuilderFilters('o:draw s:mh3 a:guay pow>=2 tou<=4 is:foil')).toBe('')
+  })
+
+  it('clears a builder-owned is: value the toggles cannot show', () => {
+    // Same philosophy as `r:special`: the group owns the key, so count and Clear agree.
+    expect(clearBuilderFilters('bolt is:mdfc')).toBe('bolt')
   })
 
   it('leaves a query with no builder filters unchanged', () => {
-    expect(clearBuilderFilters('lightning bolt o:draw')).toBe('lightning bolt o:draw')
+    expect(clearBuilderFilters('lightning bolt kw:flying')).toBe('lightning bolt kw:flying')
   })
 })

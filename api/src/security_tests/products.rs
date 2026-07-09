@@ -5,7 +5,7 @@
 
 use super::harness::*;
 use crate::entities::{card, product_price_history, sealed_component, sealed_content};
-use crate::test_support::{insert_card, insert_product};
+use crate::test_support::{insert_card, insert_product, set_product_msrp};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, NotSet};
 
@@ -44,6 +44,8 @@ async fn products_list_is_publicly_readable_and_shared_cacheable() {
 async fn product_detail_and_prices_are_readable() {
     let app = test_app().await;
     seed_products(&app).await;
+    // Product 100 has a curated MSRP; product 400 (seeded by seed_products above) has none.
+    set_product_msrp(&app.state.db, "100", "179.99").await;
 
     let (status, headers, body) = send(&app, get("/api/games/mtg/products/100")).await;
     assert_eq!(status, StatusCode::OK);
@@ -52,6 +54,10 @@ async fn product_detail_and_prices_are_readable() {
     assert_eq!(body["set_code"], "mkm");
     assert_eq!(body["product_type"], "collector_display");
     assert_eq!(body["prices"]["usd"], "249.99");
+    // MSRP (curated retail price) surfaces on the wire when set, and is null otherwise.
+    assert_eq!(body["msrp"], "179.99");
+    let (_, _, no_msrp) = send(&app, get("/api/games/mtg/products/400")).await;
+    assert!(no_msrp["msrp"].is_null(), "a product with no curated MSRP reports null");
 
     // Prices endpoint: empty (no history) but a clean, cacheable 200.
     let (status, headers, body) = send(&app, get("/api/games/mtg/products/100/prices")).await;
@@ -581,6 +587,123 @@ async fn product_cards_no_exclusives_without_a_comparison_family() {
     insert_sealed(db, _deck, a, "contains", false).await;
     let (_, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
     assert_eq!(body["data"][0]["exclusive"], false);
+}
+
+#[tokio::test]
+async fn product_cards_flags_bundle_contained_collector_exclusives() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // A gift bundle whose booster pool (from the play + collector boosters it wraps) spans a
+    // shared play card and a collector-only card, plus one guaranteed card. Its `sealed`
+    // components link the play + collector boosters — so the split is judged against the set's
+    // play booster and titled after the *contained* collector booster (issue #290).
+    let shared = insert_card(db, "sf-shared").await;
+    let collector_only = insert_card(db, "sf-collector").await;
+    let guaranteed = insert_card(db, "sf-guar").await;
+    let collector =
+        insert_product(db, "100", "Collector Booster Pack", "fin", "collector_pack", Some("24.99")).await;
+    let play = insert_product(db, "200", "Play Booster Pack", "fin", "play_pack", Some("4.99")).await;
+    let bundle = insert_product(db, "300", "Gift Bundle", "fin", "bundle", Some("49.99")).await;
+
+    // The bundle's inherited booster pool + its guaranteed card.
+    insert_sealed(db, bundle, shared, "booster", false).await;
+    insert_sealed(db, bundle, collector_only, "booster", false).await;
+    insert_sealed(db, bundle, guaranteed, "contains", false).await;
+    // The set's standalone play booster carries the shared card (the comparison pool); the
+    // collector-only card is on no other family's booster.
+    insert_sealed(db, play, shared, "booster", false).await;
+    // The bundle wraps both boosters (only the collector child drives the "premium" family).
+    insert_component(db, bundle, 0, "sealed", "Play Booster", 9, Some(play), None).await;
+    insert_component(db, bundle, 1, "sealed", "Collector Booster", 1, Some(collector), None).await;
+
+    // /cards: the collector-only card is flagged exclusive and leads the booster pool.
+    let (status, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
+    assert_eq!(status, StatusCode::OK);
+    let data = body["data"].as_array().unwrap();
+    // contains (guaranteed) leads, then the exclusive booster card, then the shared one.
+    assert_eq!(data[0]["card"]["id"], "sf-guar");
+    assert_eq!(data[0]["membership"], "contains");
+    assert_eq!(data[1]["card"]["id"], "sf-collector");
+    assert_eq!(data[1]["membership"], "booster");
+    assert_eq!(data[1]["exclusive"], true, "a collector-only card the bundle wraps is exclusive");
+    assert_eq!(data[2]["card"]["id"], "sf-shared");
+    assert_eq!(data[2]["exclusive"], false, "the shared play card is not exclusive");
+
+    // /cards/sections: the exclusive section exists and is titled after the collector family.
+    let (status, _, body) = send(&app, get("/api/games/mtg/products/300/cards/sections")).await;
+    assert_eq!(status, StatusCode::OK);
+    let sections: Vec<(&str, u64, Option<&str>)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["key"].as_str().unwrap(),
+                s["total"].as_u64().unwrap(),
+                s["booster_family"].as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sections,
+        vec![
+            ("contains", 1, None),
+            ("exclusive", 1, Some("collector_pack")),
+            ("booster", 1, None),
+        ],
+        "the bundle splits into contains / collector-exclusive / shared-booster, the exclusive \
+         section naming the contained collector family"
+    );
+}
+
+#[tokio::test]
+async fn product_card_sections_bundle_premium_family_variants() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // A Chocobo-style bundle: it wraps a play booster + a *generic* special booster (Final
+    // Fantasy's Chocobo booster is a `pack`). The special-only card reads exclusive, titled
+    // after the generic booster family.
+    let shared = insert_card(db, "sf-shared").await;
+    let special_only = insert_card(db, "sf-special").await;
+    let play = insert_product(db, "200", "Play Booster Pack", "fin", "play_pack", Some("4.99")).await;
+    let chocobo = insert_product(db, "210", "Chocobo Booster Pack", "fin", "pack", Some("6.99")).await;
+    let chocobo_bundle = insert_product(db, "310", "Chocobo Bundle", "fin", "bundle", Some("39.99")).await;
+
+    insert_sealed(db, chocobo_bundle, shared, "booster", false).await;
+    insert_sealed(db, chocobo_bundle, special_only, "booster", false).await;
+    insert_sealed(db, play, shared, "booster", false).await;
+    insert_component(db, chocobo_bundle, 0, "sealed", "Play Booster", 10, Some(play), None).await;
+    insert_component(db, chocobo_bundle, 1, "sealed", "Chocobo Booster", 1, Some(chocobo), None).await;
+
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/310/cards/sections")).await;
+    let exclusive = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "exclusive")
+        .expect("a generic-booster bundle still splits out its exclusives");
+    assert_eq!(exclusive["total"], 1);
+    assert_eq!(exclusive["booster_family"], "pack", "titled after the generic booster family");
+
+    // A plain bundle wrapping only a play booster has no premium tier — no exclusive section,
+    // and every booster card is just "Can be pulled from boosters".
+    let plain = insert_product(db, "320", "Bloomburrow Bundle", "blb", "bundle", Some("39.99")).await;
+    let other_play = insert_product(db, "220", "Play Booster Pack", "blb", "play_pack", Some("4.99")).await;
+    let c1 = insert_card(db, "sf-blb-1").await;
+    insert_sealed(db, plain, c1, "booster", false).await;
+    insert_sealed(db, other_play, c1, "booster", false).await;
+    insert_component(db, plain, 0, "sealed", "Play Booster", 8, Some(other_play), None).await;
+
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/320/cards/sections")).await;
+    let keys: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, vec!["booster"], "a play-only bundle has no exclusive section");
 }
 
 /// Seed one collector booster (100) with a card in every display section, plus a play booster

@@ -70,6 +70,14 @@ struct ComponentRow {
 /// (RFC 9110 `etagc` excludes control chars), so splitting on it is unambiguous.
 const VERSION_SEP: char = '\u{1f}';
 
+/// Version tag for the **derived** booster-pool synthesis ([`merge_contained_booster_pools`]
+/// + [`merge_sibling_booster_pools`]). Folded into the stored version (see
+/// [`compose_version`]) so that changing this derivation forces a one-off rebuild even when
+/// `AllPrintings.json`, the fallback data, and the SLD inputs are all byte-identical — the
+/// only way a pure code change takes effect, since the sync is otherwise ETag-gated. Bump it
+/// whenever the synthesis logic changes.
+const DERIVATION_VERSION: &str = "booster-pool-1";
+
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
 /// the error is returned for the caller to log.
@@ -100,14 +108,17 @@ async fn refresh_inner(
         .as_ref()
         .filter(|s| s.status == "complete")
         .and_then(|s| s.source_updated_at.clone());
-    let (prior_etag, prior_fallback, prior_sld) =
-        stored.as_deref().map(split_version).unwrap_or((None, None, None));
+    let (prior_etag, prior_fallback, prior_sld, prior_derivation) =
+        stored.as_deref().map(split_version).unwrap_or((None, None, None, None));
     let fallback_version = fallback::version();
     let fallback_changed = prior_fallback != Some(fallback_version);
     // The Secret Lair drop→cards derivation reads `sld_drops.json` + curated overrides;
     // hash them into the gate so regenerating that data rebuilds even if MTGJSON didn't.
     let sld_version = sld::derivation_version();
     let sld_changed = prior_sld != Some(sld_version);
+    // The derived booster-pool synthesis is pure code (no data file), so its version is a
+    // bumped constant; a change forces one rebuild the same way a fallback/SLD edit does.
+    let derivation_changed = prior_derivation != Some(DERIVATION_VERSION);
 
     let progress = SyncProgress::start("checking for updates");
 
@@ -117,7 +128,11 @@ async fn refresh_inner(
     // table, so skip the conditional request. In mirror mode the file streams from the
     // mirror; upstream mode hits MTGJSON directly.
     let base_url = source.mtgjson_base_url();
-    let conditional = if fallback_changed || sld_changed { None } else { prior_etag };
+    let conditional = if fallback_changed || sld_changed || derivation_changed {
+        None
+    } else {
+        prior_etag
+    };
     let (etag, all) = match fetch_all_printings(http, &base_url, conditional).await? {
         FetchOutcome::Unchanged => {
             drop(progress);
@@ -208,6 +223,16 @@ async fn refresh_inner(
     )
     .await?;
 
+    // Derive booster pull-pools for products that contain boosters but carry none of their
+    // own (both gated on "no own booster rows", so MTGJSON / the fallback stay authoritative):
+    //   - a bundle / gift box inherits the pools of the boosters it *wraps* (its `sealed`
+    //     components) — the play + collector pulls a bundle offers (issue #290). Purely
+    //     in-memory over the just-resolved membership + component rows.
+    //   - a booster *variant* with no pool of its own (a Sleeved Play Booster Pack, a
+    //     language variant) inherits its canonical same-set/same-family sibling's pool.
+    let from_contained = merge_contained_booster_pools(&mut rows, &component_rows);
+    let from_siblings = merge_sibling_booster_pools(db, &mut rows).await?;
+
     // Materialise both merged row sets as models.
     let now = Utc::now();
     let models = rows_to_models(&rows, now);
@@ -277,10 +302,11 @@ async fn refresh_inner(
     txn.commit().await?;
 
     drop(progress);
-    let version = compose_version(etag.as_deref(), fallback_version, sld_version);
+    let version = compose_version(etag.as_deref(), fallback_version, sld_version, DERIVATION_VERSION);
     let detail = format!(
         "{matched} memberships across {product_count} products \
-         ({from_mtgjson} from mtgjson, {from_fallback} from fallback, {from_sld} from sld drops); \
+         ({from_mtgjson} from mtgjson, {from_fallback} from fallback, {from_sld} from sld drops, \
+         {from_contained} from contained boosters, {from_siblings} from sibling boosters); \
          {component_count} components ({components_from_mtgjson} from mtgjson, \
          {components_from_fallback} from fallback)"
     );
@@ -301,6 +327,8 @@ async fn refresh_inner(
         products = product_count,
         fallback = from_fallback,
         sld_derived = from_sld,
+        contained_boosters = from_contained,
+        sibling_boosters = from_siblings,
         fallback_components = components_from_fallback,
         "mtgjson sealed contents sync complete"
     );
@@ -643,23 +671,152 @@ async fn load_sld_products(
         .await?)
 }
 
-/// Compose the stored version string from MTGJSON's `ETag`, the fallback content hash, and
-/// the SLD-derivation hash, joined by [`VERSION_SEP`].
-fn compose_version(etag: Option<&str>, fallback: &str, sld: &str) -> String {
-    format!("{}{VERSION_SEP}{fallback}{VERSION_SEP}{sld}", etag.unwrap_or(""))
+/// The booster-membership cards `(card_id, foil)` each product currently carries, indexed by
+/// product id — the base both booster-pool synthesizers read. Built once over the resolved
+/// rows; a product with no booster row simply isn't a key.
+fn booster_pool_by_product(rows: &HashSet<Row>) -> HashMap<i32, Vec<(i32, bool)>> {
+    let booster = sealed_content::Membership::Booster.as_str();
+    let mut pools: HashMap<i32, Vec<(i32, bool)>> = HashMap::new();
+    for &(product_id, card_id, membership, foil) in rows {
+        if membership == booster {
+            pools.entry(product_id).or_default().push((card_id, foil));
+        }
+    }
+    pools
 }
 
-/// Split a stored version back into `(mtgjson_etag, fallback_hash, sld_hash)`. A value
-/// written before a given field existed simply parses that field (and any after it) as
-/// `None`, so the first sync after an upgrade sees a change and rebuilds once: a bare
-/// pre-feature ETag -> `(Some, None, None)`; a two-part pre-SLD version -> `(Some, Some,
-/// None)`.
-fn split_version(stored: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+/// Give a product the booster pull-pools of the boosters it **contains** — a bundle / gift box
+/// wrapping a play + collector booster inherits both boosters' `booster`-membership cards as
+/// its own, so its page shows "Can be pulled from boosters" (issue #290). Applied only to a
+/// parent with **no** booster rows of its own: MTGJSON's native `sealed` recursion already
+/// gives most bundles their pool, so this fills only the ones whose contents MTGJSON shipped
+/// as `null` (composed just by the fallback, e.g. Avatar's Commander's Bundle). One level deep
+/// — direct `sealed` component children with a resolved child-product link. Pure + in-memory
+/// over the resolved membership + component rows; returns the number of new rows added.
+fn merge_contained_booster_pools(rows: &mut HashSet<Row>, components: &[ComponentRow]) -> usize {
+    // Snapshot the pools (and thus which parents already have one) *before* adding anything,
+    // so every eligible parent inherits from ALL its booster children — adding the play pool
+    // mustn't make the parent look "covered" and skip its collector pool.
+    let pools = booster_pool_by_product(rows);
+    let sealed_kind = sealed_component::ComponentKind::Sealed.as_str();
+    let booster = sealed_content::Membership::Booster.as_str();
+    let mut added = 0;
+    for component in components {
+        // Only a `sealed` child with a resolved product link is a contained sub-product.
+        if component.kind != sealed_kind {
+            continue;
+        }
+        let Some(child_id) = component.child_product_id else {
+            continue;
+        };
+        // The parent already carries a booster pool (its own, from MTGJSON) — leave it be.
+        if pools.contains_key(&component.product_id) {
+            continue;
+        }
+        let Some(child_pool) = pools.get(&child_id) else {
+            continue; // the child isn't a resolved booster / has no pool to inherit
+        };
+        for &(card_id, foil) in child_pool {
+            if rows.insert((component.product_id, card_id, booster, foil)) {
+                added += 1;
+            }
+        }
+    }
+    if added > 0 {
+        tracing::info!(rows = added, "mtgjson: synthesized contained-booster pull pools");
+    }
+    added
+}
+
+/// Give a booster **variant** with no pool of its own the pull-pool of its canonical sibling —
+/// a Sleeved Play Booster Pack, a language variant, or any booster product MTGJSON never
+/// modelled inherits the fullest same-set / same-family booster's cards, so it stops rendering
+/// an empty "cards in this product" (issue #290). Grouped by set code + booster family (a
+/// family's pack and box forms share one pool); the canonical is the sibling with the largest
+/// pool. Applied only to a product with **no** booster rows, so a variant carrying its own
+/// (smaller, curated) pool — a Sample / Jumpstart pack — keeps it. Returns the rows added.
+async fn merge_sibling_booster_pools(
+    db: &DatabaseConnection,
+    rows: &mut HashSet<Row>,
+) -> Result<usize, MtgjsonError> {
+    use crate::tcgcsv::classify::booster_family;
+
+    // Every product's (id, set_code, product_type) for the game — the grouping keys.
+    let meta: Vec<(i32, String, String)> = Product::find()
+        .select_only()
+        .column(product::Column::Id)
+        .column(product::Column::SetCode)
+        .column(product::Column::ProductType)
+        .filter(product::Column::Game.eq(GAME))
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    // Group only the booster products by (set_code, family) — a family's representative slug
+    // folds its pack + box forms together. Non-boosters (bundles, decks, …) are handled by
+    // contained inheritance and never seed a sibling group.
+    let mut groups: HashMap<(String, &'static str), Vec<i32>> = HashMap::new();
+    for (id, set_code, product_type) in &meta {
+        if let Some(family) = booster_family(product_type) {
+            groups
+                .entry((set_code.clone(), family.representative_type()))
+                .or_default()
+                .push(*id);
+        }
+    }
+
+    let pools = booster_pool_by_product(rows);
+    let booster = sealed_content::Membership::Booster.as_str();
+    let mut added = 0;
+    for members in groups.values() {
+        // The canonical sibling = the member with the largest pool. Skip the group when every
+        // member is empty (an entirely unmodelled set — nothing to inherit from).
+        let Some(&canonical) = members.iter().max_by_key(|&&id| pools.get(&id).map_or(0, |p| p.len()))
+        else {
+            continue;
+        };
+        let Some(canonical_pool) = pools.get(&canonical).filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        for &member in members {
+            // Fill only genuinely-empty variants; a sibling with its own pool keeps it.
+            if pools.contains_key(&member) {
+                continue;
+            }
+            for &(card_id, foil) in canonical_pool {
+                if rows.insert((member, card_id, booster, foil)) {
+                    added += 1;
+                }
+            }
+        }
+    }
+    if added > 0 {
+        tracing::info!(rows = added, "mtgjson: synthesized sibling booster pull pools");
+    }
+    Ok(added)
+}
+
+/// Compose the stored version string from MTGJSON's `ETag`, the fallback content hash, the
+/// SLD-derivation hash, and the booster-pool derivation tag, joined by [`VERSION_SEP`].
+fn compose_version(etag: Option<&str>, fallback: &str, sld: &str, derivation: &str) -> String {
+    format!(
+        "{}{VERSION_SEP}{fallback}{VERSION_SEP}{sld}{VERSION_SEP}{derivation}",
+        etag.unwrap_or("")
+    )
+}
+
+/// Split a stored version back into `(mtgjson_etag, fallback_hash, sld_hash,
+/// derivation_tag)`. A value written before a given field existed simply parses that field
+/// (and any after it) as `None`, so the first sync after an upgrade sees a change and
+/// rebuilds once: a bare pre-feature ETag -> `(Some, None, None, None)`; a three-part
+/// pre-derivation version -> `(Some, Some, Some, None)`.
+fn split_version(stored: &str) -> (Option<&str>, Option<&str>, Option<&str>, Option<&str>) {
     let mut parts = stored.split(VERSION_SEP);
     let etag = parts.next().and_then(non_empty);
     let fallback = parts.next().and_then(non_empty);
     let sld = parts.next().and_then(non_empty);
-    (etag, fallback, sld)
+    let derivation = parts.next().and_then(non_empty);
+    (etag, fallback, sld, derivation)
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -1222,14 +1379,154 @@ mod tests {
     /// `(Some, Some, None)`.
     #[test]
     fn version_composition_round_trips() {
-        let composed = compose_version(Some("\"etag-123\""), "fbhash", "sldhash");
-        assert_eq!(split_version(&composed), (Some("\"etag-123\""), Some("fbhash"), Some("sldhash")));
+        let composed = compose_version(Some("\"etag-123\""), "fbhash", "sldhash", "dvtag");
+        assert_eq!(
+            split_version(&composed),
+            (Some("\"etag-123\""), Some("fbhash"), Some("sldhash"), Some("dvtag"))
+        );
         // A pre-feature bare ETag: nothing after it recorded.
-        assert_eq!(split_version("\"legacy-etag\""), (Some("\"legacy-etag\""), None, None));
-        // A two-part version from before the SLD field: SLD reads as absent -> rebuild once.
-        let two_part = format!("\"etag\"{VERSION_SEP}fbhash");
-        assert_eq!(split_version(&two_part), (Some("\"etag\""), Some("fbhash"), None));
-        assert_eq!(split_version(&compose_version(None, "fb", "sld")), (None, Some("fb"), Some("sld")));
+        assert_eq!(split_version("\"legacy-etag\""), (Some("\"legacy-etag\""), None, None, None));
+        // A three-part version from before the derivation field: it reads as absent -> rebuild once.
+        let three_part = format!("\"etag\"{VERSION_SEP}fbhash{VERSION_SEP}sldhash");
+        assert_eq!(
+            split_version(&three_part),
+            (Some("\"etag\""), Some("fbhash"), Some("sldhash"), None)
+        );
+        assert_eq!(
+            split_version(&compose_version(None, "fb", "sld", "dv")),
+            (None, Some("fb"), Some("sld"), Some("dv"))
+        );
+    }
+
+    // ---- Derived booster-pool synthesis (contained + sibling) ----
+
+    fn boosters_of(rows: &HashSet<Row>, product_id: i32) -> Vec<(i32, bool)> {
+        let mut v: Vec<(i32, bool)> = rows
+            .iter()
+            .filter(|&&(p, _, m, _)| p == product_id && m == "booster")
+            .map(|&(_, c, _, f)| (c, f))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    fn sealed_child(product_id: i32, child_product_id: i32) -> ComponentRow {
+        ComponentRow {
+            product_id,
+            position: 0,
+            kind: "sealed".to_string(),
+            name: "Booster".to_string(),
+            quantity: 1,
+            child_product_id: Some(child_product_id),
+            child_card_id: None,
+        }
+    }
+
+    /// A bundle with no booster rows inherits the pools of every booster it wraps (play +
+    /// collector), carrying each card's foil finish; a card it also guarantees stays put.
+    #[test]
+    fn contained_booster_pools_inherit_from_all_children() {
+        let bundle = 100;
+        let play = 101;
+        let collector = 102;
+        let mut rows: HashSet<Row> = HashSet::from([
+            // The bundle's own guaranteed card (not a booster row) — must be left untouched.
+            (bundle, 1, "contains", false),
+            // Play booster pool.
+            (play, 10, "booster", false),
+            (play, 11, "booster", false),
+            // Collector booster pool (one foil).
+            (collector, 20, "booster", true),
+        ]);
+        let components = vec![sealed_child(bundle, play), sealed_child(bundle, collector)];
+
+        let added = merge_contained_booster_pools(&mut rows, &components);
+        assert_eq!(added, 3, "3 booster cards inherited (2 play + 1 collector)");
+        assert_eq!(boosters_of(&rows, bundle), vec![(10, false), (11, false), (20, true)]);
+        // The children and the bundle's own guarantee are unchanged.
+        assert!(rows.contains(&(bundle, 1, "contains", false)));
+    }
+
+    /// A parent that already carries its own booster pool (MTGJSON recursion) is left as-is.
+    #[test]
+    fn contained_booster_pools_skip_a_parent_with_its_own_pool() {
+        let bundle = 100;
+        let collector = 102;
+        let mut rows: HashSet<Row> = HashSet::from([
+            (bundle, 5, "booster", false), // the bundle already has a pool
+            (collector, 20, "booster", true),
+        ]);
+        let components = vec![sealed_child(bundle, collector)];
+
+        let added = merge_contained_booster_pools(&mut rows, &components);
+        assert_eq!(added, 0);
+        assert_eq!(boosters_of(&rows, bundle), vec![(5, false)]);
+    }
+
+    /// Insert a booster product of a given type + set, returning its id.
+    async fn insert_booster_product(
+        db: &DatabaseConnection,
+        external_id: &str,
+        set_code: &str,
+        product_type: &str,
+    ) -> i32 {
+        let now = Utc::now();
+        product::Entity::insert(product::ActiveModel {
+            game: Set(GAME.to_string()),
+            external_id: Set(external_id.to_string()),
+            name: Set(format!("Product {external_id}")),
+            clean_name: Set(None),
+            set_code: Set(set_code.to_string()),
+            product_type: Set(product_type.to_string()),
+            url: Set(None),
+            image_url: Set(None),
+            price_usd: Set(None),
+            price_usd_foil: Set(None),
+            released_at: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .exec(db)
+        .await
+        .unwrap()
+        .last_insert_id
+    }
+
+    /// A sleeved play pack (no pool) inherits its set's canonical play booster's pool, while a
+    /// same-family pack that already carries its own (smaller) pool keeps it, and a
+    /// different-set variant is untouched.
+    #[tokio::test]
+    async fn sibling_booster_pools_fill_empty_same_family_variants() {
+        let db = migrated_memory_db().await;
+        let pack = insert_booster_product(&db, "p-pack", "fin", "play_pack").await;
+        let sleeved = insert_booster_product(&db, "p-sleeved", "fin", "play_pack").await;
+        let display = insert_booster_product(&db, "p-display", "fin", "play_display").await;
+        let sample = insert_booster_product(&db, "p-sample", "fin", "play_pack").await;
+        let other_set = insert_booster_product(&db, "p-other", "blb", "play_pack").await;
+
+        let mut rows: HashSet<Row> = HashSet::from([
+            // The canonical play pack's pool (the largest in the fin/play group).
+            (pack, 10, "booster", false),
+            (pack, 11, "booster", false),
+            (pack, 12, "booster", true),
+            // The sample pack carries its own smaller curated pool — must be preserved.
+            (sample, 99, "booster", false),
+            // A different set's play pack, empty, but its family group has no pool at all.
+            // (other_set intentionally has no rows.)
+        ]);
+        let _ = other_set;
+
+        let added = merge_sibling_booster_pools(&db, &mut rows).await.unwrap();
+
+        // The empty sleeved pack + the empty display both inherit the 3-card canonical pool.
+        assert_eq!(added, 6);
+        assert_eq!(boosters_of(&rows, sleeved), vec![(10, false), (11, false), (12, true)]);
+        assert_eq!(boosters_of(&rows, display), vec![(10, false), (11, false), (12, true)]);
+        // The sample pack keeps ONLY its own curated pool (not inherited).
+        assert_eq!(boosters_of(&rows, sample), vec![(99, false)]);
+        // The other set (no pool anywhere in its group) gains nothing.
+        assert_eq!(boosters_of(&rows, other_set), Vec::new());
     }
 
     /// The resolve + write path: memberships whose product AND card resolve are written;

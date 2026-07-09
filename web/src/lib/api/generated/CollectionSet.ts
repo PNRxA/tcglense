@@ -22,7 +22,8 @@ owned_copies: number,
 owned_value_usd: string | null, 
 /**
  * The "bulk" portion of `owned_value_usd`: the value of just the finishes priced
- * under $1 each, a 2-dp decimal string. `"0.00"` when the set's owned cards are
- * priced but none are bulk; `null` when nothing owned in the set is priced.
+ * under the request's bulk threshold each (default $1), a 2-dp decimal string.
+ * `"0.00"` when the set's owned cards are priced but none are bulk; `null` when
+ * nothing owned in the set is priced.
  */
 owned_bulk_value_usd: string | null, };

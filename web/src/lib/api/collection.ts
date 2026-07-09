@@ -68,25 +68,35 @@ export function getCollection(
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,
  * optionally scoped to a single set (the per-set collection view). With a `set` and
  * `includeRelated`, the stats span the set's whole group (root + related sub-sets) — the
- * mirror of the catalog's include-related scope, so the value matches that browse view. */
+ * mirror of the catalog's include-related scope, so the value matches that browse view.
+ * `bulkMaxCents` (the user's bulk-threshold preference, in cents) sets the cutoff the
+ * server splits the bulk subtotal at; omitted = the server default ($1). */
 export function getCollectionSummary(
   token: string,
   game: string,
   set?: string,
   includeRelated?: boolean,
+  bulkMaxCents?: number,
 ): Promise<CollectionSummary> {
   // include_related only means anything alongside a set scope (matches the backend).
-  const qs = listQuery({ set, includeRelated: set ? includeRelated : undefined })
+  const qs = listQuery({ set, includeRelated: set ? includeRelated : undefined, bulkMaxCents })
   return request<CollectionSummary>(`/api/collection/${encodeURIComponent(game)}/summary${qs}`, {
     token,
   })
 }
 
-/** The sets the user owns cards in, newest set first — the per-set collection landing. */
-export function getCollectionSets(token: string, game: string): Promise<{ data: CollectionSet[] }> {
-  return request<{ data: CollectionSet[] }>(`/api/collection/${encodeURIComponent(game)}/sets`, {
-    token,
-  })
+/** The sets the user owns cards in, newest set first — the per-set collection landing.
+ * `bulkMaxCents` sets each tile's bulk cutoff, matching the summary header (omitted = $1). */
+export function getCollectionSets(
+  token: string,
+  game: string,
+  bulkMaxCents?: number,
+): Promise<{ data: CollectionSet[] }> {
+  const qs = listQuery({ bulkMaxCents })
+  return request<{ data: CollectionSet[] }>(
+    `/api/collection/${encodeURIComponent(game)}/sets${qs}`,
+    { token },
+  )
 }
 
 /** A page of collection drop groups — `total`/pagination count *drops*, not cards. */
