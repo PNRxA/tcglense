@@ -15,6 +15,7 @@ export function makeCardSet(code: string, over: Partial<CardSet> = {}): CardSet 
     icon_svg_uri: null,
     parent_set_code: null,
     has_drops: false,
+    has_subtypes: false,
     ...over,
   }
 }

@@ -6,6 +6,7 @@ import {
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
+  getCollectionSetSubtypes,
   getCollectionSummary,
   setCollectionEntry,
   type ApiError,
@@ -14,10 +15,11 @@ import {
   type CollectionPage,
   type CollectionQuantities,
   type CollectionSet,
+  type CollectionSubtypeGroupPage,
   type CollectionSummary,
   type OwnedCountsMap,
 } from '@/lib/api'
-import { CARD_PAGE_SIZE, DROP_PAGE_SIZE } from '@/composables/useCatalog'
+import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
@@ -120,6 +122,30 @@ export function useCollectionDropsQuery(
     enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionDropGroupPage>(options)
+}
+
+/** A page (by sub-type) of the signed-in user's owned cards in a set, grouped by card
+ * treatment — the collection mirror of `useSetSubtypesQuery`. Gated on the by-treatment
+ * view via `opts.enabled`; `query` narrows the owned cards within each sub-type. */
+export function useCollectionSubtypesQuery(
+  game: Ref<string>,
+  code: Ref<string>,
+  page: Ref<number>,
+  query: Ref<string>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
+  const options = {
+    queryKey: ['collection-subtypes', game, code, query, page],
+    queryFn: (token: string) =>
+      getCollectionSetSubtypes(token, game.value, code.value, {
+        page: page.value,
+        pageSize: SUBTYPE_PAGE_SIZE,
+        q: query.value || undefined,
+      }),
+    placeholderData: keepPreviousData,
+    enabled: opts.enabled,
+  }
+  return useAuthedQuery<CollectionSubtypeGroupPage>(options)
 }
 
 /** Aggregate stats (unique cards, total copies, estimated value) for the collection,

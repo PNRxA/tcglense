@@ -4,6 +4,7 @@ import type {
   CollectionEntry,
   CollectionQuantities,
   CollectionSet,
+  CollectionSubtypeGroup,
   CollectionSummary,
   Page,
 } from './generated'
@@ -21,6 +22,7 @@ export type {
   CollectionEntry,
   CollectionQuantities,
   CollectionSet,
+  CollectionSubtypeGroup,
   CollectionSummary,
 } from './generated'
 
@@ -130,6 +132,34 @@ export function getCollectionSetDrops(
   params?: CollectionDropsParams,
 ): Promise<CollectionDropGroupPage> {
   return request<CollectionDropGroupPage>(collectionSetDropsPath(game, code, params), { token })
+}
+
+/** A page of collection sub-type groups — `total`/pagination count *sub-types*, not cards. */
+export type CollectionSubtypeGroupPage = Page<CollectionSubtypeGroup>
+
+/** Relative `/api/collection/{game}/sets/{code}/subtypes` path (paginated by sub-type).
+ * Same param shape as the by-drop path. */
+export function collectionSetSubtypesPath(
+  game: string,
+  code: string,
+  params: CollectionDropsParams = {},
+): string {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return `/api/collection/${g}/sets/${c}/subtypes${listQuery(params)}`
+}
+
+/** The signed-in user's owned cards in a set, grouped by card sub-type (treatment) and
+ * paginated by sub-type. Offered where the tile's `has_subtypes` is true. */
+export function getCollectionSetSubtypes(
+  token: string,
+  game: string,
+  code: string,
+  params?: CollectionDropsParams,
+): Promise<CollectionSubtypeGroupPage> {
+  return request<CollectionSubtypeGroupPage>(collectionSetSubtypesPath(game, code, params), {
+    token,
+  })
 }
 
 /**

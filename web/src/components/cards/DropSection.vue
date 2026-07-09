@@ -1,11 +1,13 @@
 <script setup lang="ts">
-// One Secret Lair drop's section wrapper: an anchor-able heading (drop title + card
-// count) above a default slot that holds the drop's grid. Shared by the catalog set
-// view and the collection browse view (owned + ghost), which each render their own grid
-// kind inside. The `v-for` + `:key` stay with the caller; this just wraps one drop.
+// One card-group section wrapper: an anchor-able heading (group title + card count) above
+// a default slot that holds the group's grid. Shared by the catalog set view and the
+// collection/wish-list browse views (owned + ghost), across both groupings — Secret Lair
+// drops and card sub-types (treatments) — which each render their own grid kind inside.
+// The `v-for` + `:key` stay with the caller; this just wraps one group.
 //
-// `drop` is typed structurally (the fields both `DropGroup` and `CollectionDropGroup`
-// share), so either drop shape works without coupling this to a card type.
+// `drop` is typed structurally (the fields every group DTO — `DropGroup`,
+// `CollectionDropGroup`, `SubtypeGroup`, `CollectionSubtypeGroup` — shares), so any group
+// shape works without coupling this to a card type.
 defineProps<{ drop: { slug: string | null; title: string; card_count: number } }>()
 </script>
 

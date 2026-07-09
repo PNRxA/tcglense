@@ -47,7 +47,7 @@ pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
     product_contents, product_facets, product_image, product_prices,
 };
-pub use sets::{get_set, list_set_cards, list_set_drops, list_sets, set_icon};
+pub use sets::{get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon};
 pub use status::{ingest_status, list_games};
 
 /// Card art for a given id is immutable, so it is safe to cache aggressively.
