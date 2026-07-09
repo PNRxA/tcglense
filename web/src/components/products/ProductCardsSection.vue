@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
+import { ChevronDown } from '@lucide/vue'
 import type { Card, ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_PAGE_SIZE, useProductCardsQuery } from '@/composables/useProducts'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -9,17 +10,22 @@ import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 
 // One independently-paginated block of a sealed product's "Cards in this product" section
-// (issue #224): a heading + blurb, this section's page of cards, and its own prev/next. Cards
-// (and the page count) come from a per-section paged query keyed on `sectionKey`, which the
-// parent holds fixed by keying each block on it. The parent's `search` is threaded in so the
-// block pages only the matching cards (issue #222). Until that first page loads the block
-// shows a loading row rather than an empty grid + pagination, matching the pre-split "no flash".
+// (issue #224): a collapsible heading + blurb (collapsed by default, issue #291), this
+// section's page of cards, and its own prev/next. Cards (and the page count) come from a
+// per-section paged query keyed on `sectionKey`, which the parent holds fixed by keying each
+// block on it. The parent's `search` is threaded in so the block pages only the matching
+// cards (issue #222). Once expanded, until that first page loads the block shows a loading
+// row rather than an empty grid + pagination, matching the pre-split "no flash".
 const props = defineProps<{
   game: string
   id: string
   sectionKey: ProductCardSectionKey
   title: string
   blurb: string
+  // This section's card count from the parent's manifest — shown on the header so a
+  // collapsed block (the default, issue #291) still says how many cards it hides,
+  // without needing this block's own paged query (which stays off until expanded).
+  count: number
   // The committed card search shared across the product's sections (issue #222). The parent
   // only renders sections the filtered manifest still lists, but a search change races the
   // manifest refetch, so the block also self-hides when it resolves to zero matches (below).
@@ -47,7 +53,26 @@ watch([id, search, sort], () => {
   page.value = 1
 })
 
-const query = useProductCardsQuery(game, id, page, props.sectionKey, search, sort)
+// Collapsed by default (issue #291): the header (title + count + blurb) stays as a toggle
+// and the paged query holds off until expanded, so a product page stacking several big
+// sections doesn't render — or fetch — hundreds of cards nobody asked to see. Same idiom
+// as SetGroup: an active search auto-reveals (additive only, never force-collapses —
+// issue #149's rationale), since a section the filtered manifest still lists holds matches
+// the user just searched for. Product-to-product navigation re-collapses (unless arriving
+// with a search already committed, e.g. a `?q=` deep link).
+const expanded = ref(false)
+watch(
+  search,
+  (q) => {
+    if (q) expanded.value = true
+  },
+  { immediate: true },
+)
+watch(id, () => {
+  expanded.value = search.value.length > 0
+})
+
+const query = useProductCardsQuery(game, id, page, props.sectionKey, search, sort, expanded)
 const cards = computed<Card[]>(() => (query.data.value?.data ?? []).map((entry) => entry.card))
 // This section's own card count drives the page count — always the total of the very page set
 // being shown, so pagination can never point past the data (keepPreviousData holds the prior
@@ -70,34 +95,50 @@ const { ownership } = useOwnedCounts(game, cards)
 
 <template>
   <div v-if="show" ref="sectionTop" class="scroll-mt-6">
-    <div class="mb-3">
-      <h3 class="text-sm font-medium">{{ title }}</h3>
-      <p class="text-muted-foreground text-xs">{{ blurb }}</p>
-    </div>
-    <template v-if="loaded">
-      <!-- Top pager mirrors the one below (#264) so a long section can be paged from its top too. -->
-      <div class="mb-4">
-        <CardPagination
-          v-model:page="page"
-          :page-size="PRODUCT_CARDS_PAGE_SIZE"
-          :total="total"
-          :loading="paging"
-          :scroll-target="sectionTop"
-        />
-      </div>
-      <UpdatingOverlay :loading="paging">
-        <CardGrid :game="game" :cards="cards" :ownership="ownership" />
-      </UpdatingOverlay>
-      <div class="mt-6">
-        <CardPagination
-          v-model:page="page"
-          :page-size="PRODUCT_CARDS_PAGE_SIZE"
-          :total="total"
-          :loading="paging"
-          :scroll-target="sectionTop"
-        />
-      </div>
+    <button
+      type="button"
+      class="group -mx-1.5 mb-3 flex items-start gap-1.5 rounded-md px-1.5 py-1 text-left"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+    >
+      <ChevronDown
+        class="text-muted-foreground group-hover:text-foreground mt-0.5 size-4 shrink-0 transition-transform"
+        :class="expanded ? 'rotate-180' : ''"
+      />
+      <span>
+        <h3 class="text-sm font-medium">
+          {{ title }}
+          <span class="text-muted-foreground font-normal">({{ count.toLocaleString() }})</span>
+        </h3>
+        <p class="text-muted-foreground text-xs">{{ blurb }}</p>
+      </span>
+    </button>
+    <template v-if="expanded">
+      <template v-if="loaded">
+        <!-- Top pager mirrors the one below (#264) so a long section can be paged from its top too. -->
+        <div class="mb-4">
+          <CardPagination
+            v-model:page="page"
+            :page-size="PRODUCT_CARDS_PAGE_SIZE"
+            :total="total"
+            :loading="paging"
+            :scroll-target="sectionTop"
+          />
+        </div>
+        <UpdatingOverlay :loading="paging">
+          <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+        </UpdatingOverlay>
+        <div class="mt-6">
+          <CardPagination
+            v-model:page="page"
+            :page-size="PRODUCT_CARDS_PAGE_SIZE"
+            :total="total"
+            :loading="paging"
+            :scroll-target="sectionTop"
+          />
+        </div>
+      </template>
+      <LoadingRow v-else label="Loading cards…" />
     </template>
-    <LoadingRow v-else label="Loading cards…" />
   </div>
 </template>

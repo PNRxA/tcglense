@@ -82,11 +82,13 @@ function sectionMeta(key: string): { title: string; blurb: string } {
 }
 
 // The sections to render, in the manifest's (display) order, each dressed with its heading.
-// Each block owns its own paged query (and thus its own card count + pagination), so only the
-// key + labels + the shared search are threaded down; the manifest counts feed the grand total.
+// Each block owns its own paged query (and thus its own pagination), so only the key +
+// labels + the shared search are threaded down — plus the manifest count, which labels the
+// block's collapsed-by-default header (issue #291) and feeds the grand total.
 const sections = computed(() =>
   manifest.value.map((section) => ({
     key: section.key as ProductCardSectionKey,
+    count: section.total,
     ...sectionMeta(section.key),
   })),
 )
@@ -132,6 +134,7 @@ const sections = computed(() =>
         :section-key="section.key"
         :title="section.title"
         :blurb="section.blurb"
+        :count="section.count"
         :search="query"
         :sort="sort"
       />

@@ -11,7 +11,9 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 // OWN section key + the shared search, size its pagination off its OWN query's total, reset to
 // page 1 when the product or search changes, drive the pagination spinner off its query's
 // placeholder state (#223), and show a loading row (not an empty grid) until its first page
-// arrives. Capture the exact args passed into the query and hand back controllable state.
+// arrives. It starts collapsed (#291) — header only, paged query disabled — expanding on the
+// header toggle or automatically when a search is active. Capture the exact args passed into
+// the query and hand back controllable state.
 const state = vi.hoisted(() => ({
   calls: [] as unknown[][],
   data: undefined as ProductCardsPage | undefined,
@@ -69,12 +71,18 @@ function mountSection(
       sectionKey: 'exclusive',
       title: 'Collector Booster exclusives',
       blurb: 'b',
+      count: 5,
       search: '',
       sort: 'default',
       ...opts.props,
     },
     global: { stubs: { CardGrid: true, CardPagination: true, LoadingRow: true } },
   })
+}
+
+// Reveal the (default-collapsed, #291) block's body via its header toggle.
+async function expand(wrapper: ReturnType<typeof mountSection>) {
+  await wrapper.get('button[aria-expanded]').trigger('click')
 }
 
 beforeEach(() => {
@@ -95,17 +103,20 @@ describe('ProductCardsSection', () => {
     expect((call[5] as Ref<string>).value).toBe('price:desc')
   })
 
-  it('sizes its pagination off its own query total, not the parent', () => {
+  it('sizes its pagination off its own query total, not the parent', async () => {
     const wrapper = mountSection({ data: pageData(130) })
+    await expand(wrapper)
     expect(wrapper.findComponent(CardPagination).props('total')).toBe(130)
   })
 
-  it('drives the pagination loading flag off its query placeholder state (#223)', () => {
+  it('drives the pagination loading flag off its query placeholder state (#223)', async () => {
     // Idle (fresh page loaded) → no spinner.
     const idle = mountSection({ data: pageData(130) })
+    await expand(idle)
     expect(idle.findComponent(CardPagination).props('loading')).toBe(false)
     // A page transition in flight (keepPreviousData is serving the prior page) → loading.
     const paging = mountSection({ data: pageData(130), isPlaceholderData: true })
+    await expand(paging)
     expect(paging.findComponent(CardPagination).props('loading')).toBe(true)
   })
 
@@ -133,17 +144,59 @@ describe('ProductCardsSection', () => {
     expect(page.value).toBe(1)
   })
 
-  it('shows a loading row (not an empty grid) until the first page loads', () => {
+  it('shows a loading row (not an empty grid) until the first page loads', async () => {
     const wrapper = mountSection({ data: undefined, isPending: true })
+    await expand(wrapper)
     expect(wrapper.findComponent(LoadingRow).exists()).toBe(true)
     expect(wrapper.findComponent(CardGrid).exists()).toBe(false)
     expect(wrapper.findComponent(CardPagination).exists()).toBe(false)
   })
 
-  it('renders the grid + pagination once loaded', () => {
+  it('renders the grid + pagination once expanded and loaded', async () => {
     const wrapper = mountSection({ data: pageData(5) })
+    await expand(wrapper)
     expect(wrapper.findComponent(CardGrid).exists()).toBe(true)
     expect(wrapper.findComponent(LoadingRow).exists()).toBe(false)
+  })
+
+  it('starts collapsed (#291): header + manifest count only, and the paged query disabled', () => {
+    const wrapper = mountSection({ data: undefined, isPending: true, props: { count: 42 } })
+    // The header names the section and its (manifest) card count…
+    expect(wrapper.get('h3').text()).toContain('Collector Booster exclusives')
+    expect(wrapper.get('h3').text()).toContain('42')
+    expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('false')
+    // …but no body — and no fetch: the enabled ref threaded into the query (7th arg) is off.
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(false)
+    expect(wrapper.findComponent(CardPagination).exists()).toBe(false)
+    expect(wrapper.findComponent(LoadingRow).exists()).toBe(false)
+    expect(((state.calls[0] ?? [])[6] as Ref<boolean>).value).toBe(false)
+  })
+
+  it('enables the paged query on expand', async () => {
+    const wrapper = mountSection({ data: undefined, isPending: true })
+    await expand(wrapper)
+    expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('true')
+    expect(((state.calls[0] ?? [])[6] as Ref<boolean>).value).toBe(true)
+  })
+
+  it('auto-expands when a search is active (a match must not hide behind the toggle)', () => {
+    const wrapper = mountSection({ data: pageData(3), props: { search: 't:goblin' } })
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(true)
+  })
+
+  it('never force-collapses on a search change — manual expansion survives clearing it', async () => {
+    const wrapper = mountSection({ data: pageData(3), props: { search: 't:goblin' } })
+    await wrapper.setProps({ search: '' })
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(true)
+  })
+
+  it('re-collapses when navigating product-to-product', async () => {
+    const wrapper = mountSection({ data: pageData(3) })
+    await expand(wrapper)
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(true)
+    await wrapper.setProps({ id: '200' })
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(false)
+    expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('false')
   })
 
   it('collapses entirely once loaded with no matches (a search filtered every card out)', () => {

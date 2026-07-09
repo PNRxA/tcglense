@@ -79,6 +79,7 @@ function mountCards(
     sections: wrapper.findAllComponents(ProductCardsSection).map((c) => ({
       key: c.props('sectionKey') as string,
       title: c.props('title') as string,
+      count: c.props('count') as number,
       search: c.props('search') as string,
       sort: c.props('sort') as string,
     })),
@@ -128,6 +129,11 @@ describe('ProductCards sections', () => {
     expect(sections.map((s) => s.key)).toEqual(['contains', 'booster'])
     // "Cards in this product (5)" — the grand total across sections (from the manifest).
     expect(wrapper.find('h2').text()).toContain('5')
+  })
+
+  it('threads each manifest count into its block (labels the collapsed header, #291)', () => {
+    const { sections } = mountCards([section('contains', 2), section('booster', 3)], 'bundle')
+    expect(sections.map((s) => s.count)).toEqual([2, 3])
   })
 
   it('renders nothing when the product has no card sections', () => {
