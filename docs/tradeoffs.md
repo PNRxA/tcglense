@@ -35,6 +35,41 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   runtime; this crate pins `default-features = false, features = ["rust_crypto"]`
   (pure Rust, no C toolchain). Don't drop that when bumping it.
 
+## Public API keys (issue #284)
+
+- **Same routes, not a new surface.** API keys authenticate the *existing*
+  collection/wish-list endpoints rather than a duplicated `/api/v1/...` tree. The
+  whole design is: teach the one `AuthUser` extractor to also resolve a `tcgl_`-labelled
+  bearer credential to a user, and every per-user endpoint accepts a key for free.
+  The alternative (a parallel public router) would double the wire surface and drift.
+- **`Bearer tcgl_…`, not `X-Api-Key`.** Reusing the `Authorization: Bearer` header
+  means zero CORS changes (`AUTHORIZATION` is already allow-listed) and one credential
+  path. A JWT is three base64url segments and can't start with `tcgl_`, so the two
+  never collide — the extractor branches on the label.
+- **SHA-256, not argon2.** A key is 32 CSPRNG bytes — already uniformly random — so a
+  fast hash is correct (argon2 is for low-entropy passwords) and, crucially, lets the
+  auth path resolve a presented key with a single indexed lookup on `token_hash`. The
+  plaintext is returned once and only the hash is stored (mirrors refresh/email tokens).
+- **Scope enforced by extractor, not by method.** `read` vs `read_write` can't be a
+  pure HTTP-method check because `POST /owned` and `POST /counts` are *reads*. So
+  reads take `AuthUser` (session or any key), writes take `WritableUser` (session or a
+  `read_write` key; a read-only key → **403**), and this is explicit per handler. A
+  bad/expired/revoked key is **401** (invalid credential); a valid read-only key on a
+  write is **403** (valid but unauthorized) — the two are deliberately distinct.
+- **Keys can't manage keys.** Management (`/api/auth/api-keys`) uses `SessionUser`
+  (JWT only) so a leaked key can neither mint more nor revoke its siblings — a
+  compromised key is contained to *using* the API, and the real session can revoke it.
+- **Rate-limit parity.** The per-user limiter had to be taught to resolve a `tcgl_`
+  token to its user id (one extra indexed lookup, only for key traffic — a JWT still
+  takes the pure-crypto fast path), or keyed requests would silently bypass the
+  per-user quota. Extracting the key token *before* the `await` keeps that middleware
+  future `Send` (a `&Request` held across the await isn't, since axum's `Body: !Sync`).
+- **Soft revoke + optional expiry + a per-user cap (25).** Revocation is a `revoked_at`
+  stamp (audit trail; an in-flight request sees it), expiry is optional per key, and
+  dead (expired/revoked) rows are pruned by the same 6h maintenance loop as the other
+  token tables. `last_used_at` is a best-effort, ≤once/60s throttled write so a busy
+  key doesn't pay a DB write per request.
+
 ## Rate limiting & anti-abuse
 
 - **Auth anti-abuse (CAPTCHA + rate limiting):** the auth mutation endpoints are

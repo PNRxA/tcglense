@@ -1,3 +1,4 @@
+pub mod api_key;
 pub mod cookie;
 pub mod email_token;
 pub mod extractor;

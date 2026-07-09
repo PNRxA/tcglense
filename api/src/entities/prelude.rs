@@ -1,3 +1,4 @@
+pub use super::api_key::Entity as ApiKey;
 pub use super::card::Entity as Card;
 pub use super::card_price_history::Entity as CardPriceHistory;
 pub use super::card_set::Entity as CardSet;

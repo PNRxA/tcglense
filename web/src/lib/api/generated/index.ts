@@ -1,6 +1,8 @@
 // Barrel for the wire types generated from the API's Rust DTOs by ts-rs
 // (`cargo test` in api/ regenerates the sibling files; see api/.cargo/config.toml).
 // Hand-maintained: add a line when a new DTO is exported.
+export type { ApiKeyInfo } from './ApiKeyInfo'
+export type { ApiKeyList } from './ApiKeyList'
 export type { AuthResponse } from './AuthResponse'
 export type { Card } from './Card'
 export type { CardFace } from './CardFace'
@@ -14,6 +16,8 @@ export type { CollectionSet } from './CollectionSet'
 export type { CollectionSource } from './CollectionSource'
 export type { CollectionSubtypeGroup } from './CollectionSubtypeGroup'
 export type { CollectionSummary } from './CollectionSummary'
+export type { CreateApiKeyRequest } from './CreateApiKeyRequest'
+export type { CreatedApiKey } from './CreatedApiKey'
 export type { DataBody } from './DataBody'
 export type { DropGroup } from './DropGroup'
 export type { Game } from './Game'

@@ -33,6 +33,28 @@ use super::{
 /// `GET /api/collection/{game}` -> the signed-in user's owned cards for a game,
 /// most-recently-updated first, paginated. Each entry carries the full card payload
 /// plus the owned counts.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+        ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the signed-in user's owned cards.", body = Page<CollectionEntry>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
 pub async fn list_collection(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -146,6 +168,22 @@ pub(super) fn collection_query(
 /// An optional `?set` scopes the stats to a single set (the per-set collection view);
 /// `?include_related=true` with a set spans its whole group (root + related sub-sets),
 /// so the header value matches the set / include-related collection browse view.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/summary",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+    ),
+    responses(
+        (status = 200, description = "Aggregate stats for the user's collection.", body = CollectionSummary),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn collection_summary(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -193,6 +231,21 @@ pub(super) async fn summary(
 /// `GET /api/collection/{game}/cards/{id}` -> how many copies of one card the user
 /// owns (zeros when the card isn't in their collection). `id` is the external card
 /// id; a `404` means the game or card is unknown.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/cards/{id}",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    responses(
+        (status = 200, description = "How many copies of the card the user owns (zeros if none).", body = CollectionQuantities),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
 pub async fn get_collection_entry(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

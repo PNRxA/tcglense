@@ -29,6 +29,14 @@ pub struct StatusResponse {
 }
 
 /// `GET /api/games` -> the list of supported games.
+#[utoipa::path(
+    get,
+    path = "/api/games",
+    tag = "Cards",
+    responses(
+        (status = 200, description = "Every supported game.", body = DataBody<Vec<catalog::Game>>),
+    ),
+)]
 pub async fn list_games() -> Json<DataBody<&'static [catalog::Game]>> {
     Json(DataBody { data: catalog::GAMES })
 }

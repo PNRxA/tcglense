@@ -11,7 +11,11 @@ detail lives in `docs/` — read the relevant one before working in its area:
 **TCGLense** tracks trading-card games: a card catalog (MTG first, via Scryfall),
 singles + sealed-product price history (TCGCSV, MTGJSON), per-user collections
 (Archidekt/Moxfield import + CSV upload) and a wish list, behind email-first auth
-(Turnstile CAPTCHA + rate limiting). Not yet built: set-completion progress.
+(Turnstile CAPTCHA + rate limiting). A **public API** (issue #284) documents the
+anonymous catalog reads and lets account holders mint scoped **API keys**
+(`Authorization: Bearer tcgl_…`) for their collection/wish list — OpenAPI at
+`/api/openapi.json`, interactive Scalar docs at `/api/docs`. Not yet built:
+set-completion progress.
 
 ## Layout
 
@@ -64,13 +68,13 @@ db.rs                  SQLite (WAL + REGEXP UDF) or Postgres, picked at runtime;
 datasets.rs            SyncSource seam: providers fetch datasets from upstream or from a TCGLense mirror
 captcha.rs / client_ip.rs / ratelimit.rs / email.rs   Turnstile CAPTCHA · client-IP resolution · per-IP + per-user rate limiters · Resend email (each enum-dispatched with Disabled/test variants)
 error.rs / extract.rs  AppError → JSON { error } · JsonBody<T>, the JSON body extractor with JSON rejections
-auth/                  Argon2 passwords · HS256 JWTs · single-use rotating refresh tokens · purpose-scoped email tokens · AuthUser extractor
+auth/                  Argon2 passwords · HS256 JWTs · single-use rotating refresh tokens · purpose-scoped email tokens · scoped API keys (api_key.rs) · AuthUser/WritableUser/SessionUser extractors
 catalog/               GAMES registry + refresh_all/seed_all dispatch per game · images.rs = lazy on-disk image cache
 scryfall/              MTG provider: streaming bulk ingest, the search compiler (search/), daily price snapshots, Secret Lair drops, offline dummy seed
 tcgcsv/                sealed-product provider: product catalog + product price history + opt-in historic price backfill
 mtgjson/               card→sealed-product contents (AllPrintings.json)
 collection_import/     Archidekt + Moxfield + CSV → one aggregate/resolve/reconcile engine; in-memory job queue
-handlers/              auth · cache · catalog/ (incl. products.rs + pricing.rs) · collection/ · wishlist/ · shared/ (cross-cutting DTOs + the holdings core) · sitemap · mirror · health
+handlers/              auth · api_keys · cache · catalog/ (incl. products.rs + pricing.rs) · collection/ · wishlist/ · shared/ (cross-cutting DTOs + the holdings core) · openapi (spec + Scalar UI) · sitemap · mirror · health
 entities/ migrator/    SeaORM entities · one migration per file + the migrations() registry
 security_tests/        HTTP-level suites driving build_router in-process; Postgres/Redis tests env-gated behind --ignored
 ```
@@ -141,6 +145,16 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
 - No `RESEND_API_KEY` = register returns the completion token in the response and
   login skips the verified gate — the dev/CI posture. **Never run prod without the
   key** (anyone could activate any address).
+- **API keys** authenticate via `Authorization: Bearer tcgl_…` on the *same*
+  collection/wish-list routes as a JWT (the `AuthUser` extractor branches on the
+  `tcgl_` label). Scope is enforced by **extractor choice**, not by HTTP method:
+  read handlers use `AuthUser` (session or any key), write handlers use
+  `WritableUser` (session or a `read_write` key — a read-only key is **403**), and
+  key management (`/api/auth/api-keys`) uses `SessionUser` (**JWT only**; a key can't
+  mint/list/revoke keys). A bad/expired/revoked key is **401**; a valid read-only key
+  on a write is **403**. Keep the per-user rate limiter key-aware (`ratelimit.rs`
+  resolves a `tcgl_` token to its user) or keyed traffic bypasses the quota. Store
+  only the SHA-256 hash; the plaintext is shown **once**.
 - Rate limiting **fails open** (Redis outage, unresolvable IP); CAPTCHA fails
   closed. Behind a proxy set `TRUST_PROXY_HEADERS=true`, and only behind one that
   overwrites `X-Forwarded-For` (else clients spoof their IP).

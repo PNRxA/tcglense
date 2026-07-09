@@ -26,6 +26,25 @@ const DEFAULT_NAME_SUGGESTIONS: u64 = 10;
 const MAX_NAME_SUGGESTIONS: u64 = 25;
 
 /// `GET /api/games/{game}/cards` -> all cards (optional `q` search), by name.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter (name substrings plus `c:`, `t:`, `r:`, …)"),
+        ("name" = Option<String>, Query, description = "Optional exact-name filter (matched literally)"),
+        ("sort" = Option<String>, Query, description = "Sort key (`name`/`number`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of matching cards.", body = Page<CardResponse>),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
 pub async fn list_cards(
     State(state): State<AppState>,
     Path(game): Path<String>,
@@ -81,6 +100,19 @@ pub async fn card_names(
 }
 
 /// `GET /api/games/{game}/cards/{id}` -> one card's full detail.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    responses(
+        (status = 200, description = "The card's full detail.", body = CardResponse),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
 pub async fn get_card(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -96,6 +128,19 @@ pub async fn get_card(
 /// `404` if the game or card id is unknown; an empty `{ "data": [] }` when the card
 /// has no other printings (or carries no `oracle_id`, so its siblings can't be
 /// identified — e.g. reversible cards, whose `oracle_id` lives only per-face).
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}/prints",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    responses(
+        (status = 200, description = "The card's other printings (newest first).", body = DataBody<Vec<CardResponse>>),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
 pub async fn card_prints(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
