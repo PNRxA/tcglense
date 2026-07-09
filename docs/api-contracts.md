@@ -323,20 +323,28 @@ with the membership bucket (`"contains"` / `"booster"` / `"variable"`) and a `fo
 
 `ProductCardEntry = { card: Card, membership, foil, exclusive }` is the reverse wrapper
 (the `.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
-bucket, the foil-only flag, and `exclusive` (a `booster` card pullable from this product's
-booster family but from no *other* booster family in the set — `false` for any non-`booster`
-card, a non-booster product, or a set with no other booster family to compare against). A
-card that is both contained in and pullable from the same product reports its **strongest**
-membership (lowest rank), so it shows once, in the "found in" group. The by-card-id lookups
-are chunked (`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival"
-bundles reference thousands of cards — can't blow SQLite's per-statement bind limit.
+bucket, the foil-only flag, and `exclusive` (a `booster` card the product's booster line yields
+but no *other* booster family in the set can — a collector booster's special printings). The
+family judged is the product's **own** for a standalone booster, or, for a **bundle / gift box**,
+the premium booster it *contains* (Collector, else a generic special booster like Final
+Fantasy's Chocobo booster — issue #290): so a gift bundle's collector-only cards split out ahead
+of the shared play pool. `false` for any non-`booster` card, a bundle wrapping only
+play/set/draft boosters, or a set with no other booster family to compare against. A card that
+is both contained in and pullable from the same product reports its **strongest** membership
+(lowest rank), so it shows once, in the "found in" group. The by-card-id lookups are chunked
+(`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival" bundles reference
+thousands of cards — can't blow SQLite's per-statement bind limit.
 
-`ProductCardSection = { key, total }` (the `.../cards/sections` endpoint) is the display-
-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the value the
-`?section` filter takes), `total` its card count. Only non-empty sections are returned, in
-display order — so the SPA renders one independently-paginated block per section (issue #224)
-and knows each's size without fetching its cards. The four sections are the membership buckets
-with the `booster` pool split by `exclusive`; their combined `total` is the whole card count.
+`ProductCardSection = { key, total, booster_family }` (the `.../cards/sections` endpoint) is
+the display-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the
+value the `?section` filter takes), `total` its card count. `booster_family` is set **only on
+the `exclusive` section** — a representative `product_type` slug (e.g. `collector_pack`) naming
+the family those cards are exclusive to, so the SPA titles the block after the *contained*
+booster ("Collector Booster exclusives") even for a bundle whose own type carries no family;
+`null` on every other section. Only non-empty sections are returned, in display order — so the
+SPA renders one independently-paginated block per section (issue #224) and knows each's size
+without fetching its cards. The four sections are the membership buckets with the `booster`
+pool split by `exclusive`; their combined `total` is the whole card count.
 
 `ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
 (the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is

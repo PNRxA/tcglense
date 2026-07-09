@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import type { ProductCardSectionKey } from '@/lib/api'
+import type { ProductCardSection, ProductCardSectionKey } from '@/lib/api'
 import { useProductCardSectionsQuery } from '@/composables/useProducts'
 import { useProductCardsSearch } from '@/composables/useProductCardsSearch'
 import { searchErrorMessage } from '@/composables/useCardSearch'
@@ -51,21 +51,29 @@ const total = computed(() => manifest.value.reduce((sum, section) => sum + secti
 // (rather than hiding it and stranding the user with no way to clear the filter).
 const showSection = computed(() => searching.value || total.value > 0)
 
-// This booster's family label ("Collector Booster", …), or null for a non-booster product —
-// it names the exclusives section and is absent when there's no such section.
+// This product's *own* booster-family label ("Collector Booster", …), or null for a
+// non-booster product — a fallback for naming the exclusives section when the backend
+// doesn't hand one down.
 const familyLabel = computed(() => boosterFamilyLabel(props.productType))
 
-// Heading + one-line note on how strong the "is in this product" claim is, per section key.
-// The exclusive section is named after this product's own booster family.
-function sectionMeta(key: string): { title: string; blurb: string } {
-  switch (key) {
+// Heading + one-line note on how strong the "is in this product" claim is, per section.
+function sectionMeta(section: ProductCardSection): { title: string; blurb: string } {
+  switch (section.key) {
     case 'contains':
       return { title: 'In the box', blurb: 'Cards guaranteed to be included.' }
-    case 'exclusive':
+    case 'exclusive': {
+      // The exclusive section is named after its booster family. The backend hands down the
+      // *contained* booster's family (a bundle wraps a collector / special booster its own
+      // product_type can't express); fall back to this product's own family, then a generic
+      // label.
+      const family =
+        (section.booster_family ? boosterFamilyLabel(section.booster_family) : null) ??
+        familyLabel.value
       return {
-        title: familyLabel.value ? `${familyLabel.value} exclusives` : 'Booster exclusives',
+        title: family ? `${family} exclusives` : 'Booster exclusives',
         blurb: "Cards you can only pull from this product — not the set's other boosters.",
       }
+    }
     case 'booster':
       return {
         title: 'Can be pulled from boosters',
@@ -77,7 +85,7 @@ function sectionMeta(key: string): { title: string; blurb: string } {
         blurb: 'Cards this product sometimes includes (a randomized configuration).',
       }
     default:
-      return { title: key, blurb: '' }
+      return { title: section.key, blurb: '' }
   }
 }
 
@@ -89,7 +97,7 @@ const sections = computed(() =>
   manifest.value.map((section) => ({
     key: section.key as ProductCardSectionKey,
     count: section.total,
-    ...sectionMeta(section.key),
+    ...sectionMeta(section),
   })),
 )
 </script>

@@ -379,7 +379,30 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   `products.external_id`; card `identifiers.scryfallId` → `cards.external_id`). It runs
   in `catalog::refresh_all` after the Scryfall + TCGCSV syncs (so both tables exist to
   resolve against) and is **version-gated on the file's HTTP `ETag`** (`Meta.json` bumps
-  daily from price rebuilds, so it's useless as a gate). Trade-offs: (1) `AllPrintings`
+  daily from price rebuilds, so it's useless as a gate).
+
+  **Derived booster pull-pools + bundle exclusivity (issue #290).** A sealed product's
+  "Can be pulled from boosters" / "{family} exclusives" split needs a product to carry
+  `booster`-membership rows for the boosters it *offers*. MTGJSON's native `sealed` recursion
+  gives most bundles their pool (a gift box that lists its play + collector boosters expands
+  both), but two gaps remain, filled by **ingest-time synthesis** (`mtgjson::ingest`,
+  `merge_contained_booster_pools` + `merge_sibling_booster_pools`), each gated on "the product
+  has **no** booster rows of its own" so MTGJSON / the fallback stay authoritative: (a) a
+  bundle whose `contents: null` was composed only by the fallback (Avatar's Commander's Bundle)
+  inherits the pools of the boosters its **`sealed_components`** link; (b) a booster *variant*
+  with no pool — a "Sleeved Play Booster Pack", a language edition — inherits its **canonical
+  same-set / same-family sibling's** pool (the fullest one in the group). The sibling rule can
+  over-share a genuinely-distinct-but-empty variant (a "Minimal"/"Omega" pack) the standard
+  family pool, but it only ever touches products that would otherwise render *nothing*, and a
+  variant carrying its own curated pool (a "Sample" pack) is non-empty so it's left alone.
+  Because this is **pure code** (no data file), its version is a bumped constant
+  (`DERIVATION_VERSION`) folded into the gate, so changing the logic forces one rebuild.
+  The **exclusive split** for a bundle is judged at read time (`booster_exclusive_card_ids`):
+  a non-booster product's premium family comes from its contained boosters — Collector if it
+  wraps a collector booster, else a generic special booster (the Chocobo case) — and the split
+  reuses the same "cards no other family in the set can pull" comparison as a standalone booster.
+
+  Trade-offs: (1) `AllPrintings`
   is one ~600 MB document; we fetch the ~160 MB gzip and parse only trimmed structs, but
   a rebuild still transiently uses a few hundred MB (the fetch buffers the compressed
   body and a normal set's booster sheets span ~its whole card list) — acceptable for a

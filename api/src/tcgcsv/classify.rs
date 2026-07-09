@@ -136,6 +136,21 @@ impl BoosterFamily {
             .filter(|pt| booster_family(pt) != Some(self))
             .collect()
     }
+
+    /// A representative `product_type` slug for this family — the single-pack form. Lets a
+    /// caller name the family with the same `product_type` -> label map the SPA already
+    /// uses (`web/src/lib/productType.ts`), so a bundle's exclusive section can be titled
+    /// after the *contained* booster's family (e.g. `collector_pack` -> "Collector Booster")
+    /// without the SPA knowing which booster the bundle wraps.
+    pub fn representative_type(self) -> &'static str {
+        match self {
+            BoosterFamily::Collector => "collector_pack",
+            BoosterFamily::Play => "play_pack",
+            BoosterFamily::Set => "set_pack",
+            BoosterFamily::Draft => "draft_pack",
+            BoosterFamily::Generic => "pack",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -254,5 +269,17 @@ mod tests {
         assert!(others.contains(&"pack"));
         // Every booster type except the two collector ones.
         assert_eq!(others.len(), BOOSTER_PRODUCT_TYPES.len() - 2);
+    }
+
+    #[test]
+    fn representative_type_round_trips_through_family() {
+        use BoosterFamily::*;
+        // Each family's representative slug is a booster type that maps back to that family,
+        // so naming the exclusive section by it reuses the SPA's product_type -> label map.
+        for family in [Collector, Play, Set, Draft, Generic] {
+            assert_eq!(booster_family(family.representative_type()), Some(family));
+        }
+        assert_eq!(Collector.representative_type(), "collector_pack");
+        assert_eq!(Generic.representative_type(), "pack");
     }
 }
