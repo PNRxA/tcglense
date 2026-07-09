@@ -1,0 +1,22 @@
+import { scanCard, type ScanResponse } from '@/lib/api'
+import { useAuthedMutation } from '@/lib/queries'
+
+// Imperative visual-scan lookup for the scanner loop. It's an authed action (not
+// declarative, cacheable server state), so it goes through `useAuthedMutation` — which
+// routes the call through the auth store's `authFetch` (token restore/refresh + one
+// 401 retry) — and is driven with `mutateAsync` from `useScanSession`.
+
+export interface ScanVars {
+  game: string
+  /** The 32-byte 256-bit perceptual hash of the cropped card. */
+  fingerprint: Uint8Array
+  /** How many ranked matches to request; omit for the server default. */
+  topK?: number
+}
+
+/** A mutation that identifies a scanned card from its fingerprint. */
+export function useScanMutation() {
+  return useAuthedMutation<ScanResponse, ScanVars>({
+    mutationFn: (token, vars) => scanCard(token, vars.game, vars.fingerprint, vars.topK),
+  })
+}

@@ -529,14 +529,16 @@ carried over near-verbatim from the audited source, with the sealed-product prov
 - **Sourcing — the one sanctioned bulk image fetch.** Building the index needs every
   card image once, which collides with the "never bulk-download" posture. Resolved by
   making the build **opt-in and off by default** (`FINGERPRINT_BUILD_ENABLED`): only the
-  operator's index-building instance runs it, throttled, at the smallest useful size
-  (`small`, 146×204), through the same polite downloader (`ImageCache::fetch_bytes`, the
-  shared 8-way cap + host allow-list), **hashing and discarding** each image (nothing
-  written to `<DATA_DIR>/images`). The derived index (~3 MB for ~90k) is distributed via
-  the existing dataset mirror, so every ordinary self-host imports it and fetches **zero**
+  operator's index-building instance runs it, at the smallest useful size (`small`,
+  146×204), through the same downloader (`ImageCache::fetch_bytes`, the shared 8-way cap
+  + host allow-list), **hashing and discarding** each image (nothing written to
+  `<DATA_DIR>/images`). The derived index (~3 MB for ~90k) is distributed via the
+  existing dataset mirror, so every ordinary self-host imports it and fetches **zero**
   images — the guarantee stays literally true for self-hosts. This is within Scryfall's
-  guidelines: the documented rate limit governs `api.scryfall.com`, not the image CDN
-  (`cards.scryfall.io`), which Scryfall supports for resolving many images from bulk data.
+  guidelines: their documented rate limit governs the **API** (`api.scryfall.com`); the
+  **image CDN** (`cards.scryfall.io`) is **not** rate-limited, and Scryfall supports
+  resolving many images from bulk-data URIs. So the build applies no artificial
+  per-request delay — the shared 8-way concurrency cap is its only politeness bound.
 - **Privacy.** Matching is server-side but the photo never leaves the device: the browser
   computes the 32-byte fingerprint locally and uploads only that (a small, non-reversible
   vector) to `POST /api/games/{game}/scan`. The endpoint is auth-gated (scanning builds a

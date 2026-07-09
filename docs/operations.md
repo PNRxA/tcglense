@@ -327,10 +327,11 @@ Both `web/scripts/*` require the Playwright browsers installed
   an open proxy to the upstreams; the public mirror sets it with
   `SYNC_FROM_UPSTREAM=true`),
   `FINGERPRINT_BUILD_ENABLED` (`false`; build the visual-scanner fingerprint index on
-  this instance — a throttled, `small`-size, hash-and-discard walk of the whole
-  catalogue, the **one** sanctioned bulk image fetch. Off by default: an ordinary
-  self-host imports the prebuilt index via the mirror and fetches **zero** images.
-  Only the operator's index-building instance sets it),
+  this instance — a `small`-size, hash-and-discard walk of the whole catalogue, the
+  **one** sanctioned bulk image fetch (the image CDN isn't rate-limited; the shared
+  8-way fetch cap is the only politeness bound). Off by default: an ordinary self-host
+  imports the prebuilt index via the mirror and fetches **zero** images. Only the
+  operator's index-building instance sets it),
   `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
   match index — bump to invalidate every fingerprint and force a rebuild + client
   cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`5`; how many

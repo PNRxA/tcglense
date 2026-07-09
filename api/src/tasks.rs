@@ -158,10 +158,6 @@ const FINGERPRINT_SOURCE_SIZE: &str = "small";
 /// Cards read per DB batch while walking for un-fingerprinted cards (bounded + resumable).
 const FINGERPRINT_BATCH: u64 = 200;
 
-/// Politeness pause after each image fetch, on top of the shared 8-way concurrency cap
-/// the fetch already rides — keeps the whole-catalogue build a considerate CDN citizen.
-const FINGERPRINT_FETCH_DELAY: Duration = Duration::from_millis(80);
-
 /// Everything the opt-in fingerprint build needs, threaded from [`AppState`] once the
 /// operator has enabled it. Cheaply cloneable (all `Arc`/`Copy`).
 #[derive(Clone)]
@@ -244,7 +240,8 @@ async fn run_fingerprint_pass(
                     "fingerprint image fetch failed; skipping"
                 ),
             }
-            tokio::time::sleep(FINGERPRINT_FETCH_DELAY).await;
+            // No artificial per-request delay: the image CDN isn't rate-limited, and the
+            // shared 8-way concurrency cap in `fetch_bytes` is the politeness bound.
         }
         after_id = last_id;
     }

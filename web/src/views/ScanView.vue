@@ -14,30 +14,23 @@ import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import ScanSessionList from '@/components/collection/ScanSessionList.vue'
 import { useCardScanner } from '@/composables/useCardScanner'
 import { useScanSession } from '@/composables/useScanSession'
-import { cleanCardName, isSameHeldCard, sameCardText } from '@/lib/scan/ocr'
-import {
-  CARD_ASPECT,
-  GUIDE_MARGIN,
-  NAME_REGION,
-  SET_REGION,
-  rectToPercentStyle,
-} from '@/lib/scan/regions'
+import { hamming } from '@/lib/scan/phash'
+import { CARD_ASPECT, GUIDE_MARGIN, SET_REGION, rectToPercentStyle } from '@/lib/scan/regions'
 import { usePageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 
-// Scan physical cards into the collection with the phone/webcam camera. The user aligns a
-// card to the on-screen guide; the app OCRs its name + set line on-device, matches it
-// against the catalog, and shows an editable match. Showing the NEXT card commits the
-// previous one — a hands-free bulk-add rhythm — with a manual "Capture" mode as a fallback.
-//
-// MTG only for now: the set/collector parsing is tuned to the modern MTG frame. The route
-// is auth-gated, so this view only ever renders for a signed-in user.
+// Scan physical cards into the collection with the phone/webcam camera. The app detects and
+// deskews the card in the frame, identifies it **visually** (a perceptual-hash fingerprint
+// matched against the catalog index), and pins the exact printing from an OCR of the set
+// line. Showing the NEXT card commits the previous one — a hands-free bulk-add rhythm — with
+// a manual "Capture" mode as a fallback. The photo never leaves the device; only the small
+// fingerprint is sent. The route is auth-gated, so this view only renders for a signed-in user.
 usePageMeta({ title: 'Scan cards', canonicalPath: '/scan', noindex: true })
 
 const game = ref('mtg')
 
 const video = ref<HTMLVideoElement | null>(null)
-const { status, errorMessage, ocrLoading, start, stop, switchCamera, capture } =
+const { status, errorMessage, ocrLoading, start, stop, switchCamera, capture, captureFingerprint } =
   useCardScanner(video)
 
 const {
@@ -53,7 +46,7 @@ const {
   ownedError,
   log,
   addedCount,
-  lastUnmatched,
+  unrecognized,
   commitError,
   handleCapture,
   commitCurrent,
@@ -66,21 +59,26 @@ const {
 } = useScanSession(game)
 
 // Auto-detect a new card and commit the previous one, vs. tapping to capture each. Auto is
-// hands-free (continuous OCR); manual is lighter on the device.
+// hands-free (continuous scanning); manual is lighter on the device.
 const autoMode = ref(true)
-// True while a frame is being OCR'd — gates overlapping captures and drives the UI.
+// True while a frame is being processed — gates overlapping captures and drives the UI.
 const reading = ref(false)
 
-// Cadence of the continuous scan loop. Effective rate is max(interval, OCR time) thanks to
-// the `reading` guard, so this just paces how often we try when idle.
-const SCAN_INTERVAL_MS = 700
-// A newly-seen name must survive this many consecutive reads before it's accepted, so a
-// one-frame misread never auto-commits the wrong card.
+// Cadence of the continuous scan loop. Effective rate is max(interval, capture time) thanks
+// to the `reading` guard, so this just paces how often we try when idle.
+const SCAN_INTERVAL_MS = 400
+// A newly-seen card's fingerprint must hold steady across this many consecutive frames
+// before it's accepted, so a mid-swap blur never auto-commits the wrong card.
 const STABILITY_READS = 2
+// Max Hamming distance (of 256 bits) between two frame fingerprints for them to count as
+// the *same* card — tolerant of hand jitter / lighting, tight enough to notice a swap.
+const SAME_CARD_HAMMING = 44
 
 let loopTimer: number | null = null
-let pendingText = ''
+// The fingerprint of the frame currently accumulating stability, and of the card on screen.
+let pendingFp: Uint8Array | null = null
 let pendingReads = 0
+let currentFp: Uint8Array | null = null
 
 const isReady = computed(() => status.value === 'ready')
 
@@ -106,7 +104,6 @@ const guideStyle = computed(() => {
     boxShadow: '0 0 0 100vmax rgba(0, 0, 0, 0.35)',
   }
 })
-const nameStripStyle = rectToPercentStyle(NAME_REGION)
 const setStripStyle = rectToPercentStyle(SET_REGION)
 
 function startLoop() {
@@ -118,53 +115,51 @@ function stopLoop() {
     clearInterval(loopTimer)
     loopTimer = null
   }
-  pendingText = ''
+  pendingFp = null
   pendingReads = 0
 }
 
-// One continuous-scan step: OCR the frame, and only act once a *new* card has been read
-// stably. The same card still held in front of the camera is ignored (no re-commit).
+// One continuous-scan step: fingerprint the frame (cheap, no OCR) and only run the full
+// match once a *new* card's fingerprint has held steady. The same card still in front of
+// the camera is ignored (no re-commit).
 async function tick() {
   if (!isReady.value || reading.value) return
   reading.value = true
   try {
-    const cap = await capture()
-    if (!cap) return
-    const cleaned = cleanCardName(cap.nameText)
-    if (cleaned.length < 3) {
-      pendingText = ''
+    const fp = captureFingerprint()
+    if (!fp) return
+    // Current card still held? (its fingerprint is close to what we committed.)
+    if (match.value && currentFp && hamming(fp, currentFp) <= SAME_CARD_HAMMING) {
+      pendingFp = null
       pendingReads = 0
       return
     }
-    if (match.value && isSameHeldCard(cleaned, match.value.ocrName)) {
-      // The current card is still on screen — hold steady, nothing to do.
-      pendingText = ''
-      pendingReads = 0
-      return
-    }
-    if (sameCardText(cleaned, pendingText)) {
+    // Stability: consecutive frames must agree before we commit.
+    if (pendingFp && hamming(fp, pendingFp) <= SAME_CARD_HAMMING) {
       pendingReads += 1
     } else {
-      pendingText = cleaned
+      pendingFp = fp
       pendingReads = 1
     }
     if (pendingReads >= STABILITY_READS) {
-      pendingText = ''
+      pendingFp = null
       pendingReads = 0
-      await handleCapture(cap)
+      // The stable frame is worth a full capture (fingerprint + set-line OCR) and match.
+      const cap = await capture()
+      if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprint
     }
   } finally {
     reading.value = false
   }
 }
 
-// Manual mode: OCR + resolve one frame on demand (bypasses the stability gate).
+// Manual mode: capture + match one frame on demand (bypasses the stability gate).
 async function captureNow() {
   if (!isReady.value || reading.value) return
   reading.value = true
   try {
     const cap = await capture()
-    if (cap) await handleCapture(cap)
+    if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprint
   } finally {
     reading.value = false
   }
@@ -196,6 +191,12 @@ watch(status, (s) => {
   if (s !== 'ready') stopLoop()
 })
 
+// When the on-screen match is cleared (discarded, or committed on stop), forget its
+// fingerprint so re-showing that same card scans it afresh rather than being suppressed.
+watch(match, (m) => {
+  if (!m) currentFp = null
+})
+
 onBeforeUnmount(() => {
   stopLoop()
   // Best-effort save of the tentative card if the user navigates away mid-scan.
@@ -204,7 +205,7 @@ onBeforeUnmount(() => {
 
 const statusHint = computed(() => {
   if (resolving.value) return 'Matching…'
-  if (reading.value) return 'Reading…'
+  if (reading.value) return 'Scanning…'
   if (match.value) return 'Show the next card to add this one.'
   return 'Hold a card inside the frame.'
 })
@@ -217,8 +218,9 @@ const statusHint = computed(() => {
     <header class="mb-6">
       <h1 class="text-3xl font-semibold tracking-tight">Scan cards</h1>
       <p class="text-muted-foreground mt-1 max-w-2xl">
-        Point your camera at a Magic card to add it to your collection. Show the next card and
-        the previous one is added automatically — edit the match first if you need to.
+        Point your camera at a Magic card to add it to your collection — it's identified from
+        its artwork. Show the next card and the previous one is added automatically; edit the
+        match first if you need to.
       </p>
     </header>
 
@@ -241,27 +243,24 @@ const statusHint = computed(() => {
             @loadedmetadata="onLoadedMetadata"
           ></video>
 
-          <!-- Alignment guide + name/set strips, shown while the camera is live. -->
+          <!-- Alignment guide (also the detection fallback) + the set-line strip the OCR
+               reads to pin the printing, shown while the camera is live. -->
           <div
             v-if="isReady"
             class="pointer-events-none absolute inset-0 flex items-center justify-center"
           >
             <div class="relative rounded-lg border-2 border-white/70" :style="guideStyle">
-              <div
-                class="border-primary/80 bg-primary/10 absolute rounded-sm border"
-                :style="nameStripStyle"
-              ></div>
               <div class="border-primary/60 absolute rounded-sm border" :style="setStripStyle"></div>
             </div>
           </div>
 
-          <!-- Reading / matching pulse. -->
+          <!-- Scanning / matching pulse. -->
           <div
             v-if="isReady && (reading || resolving)"
             class="absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
           >
             <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-            {{ resolving ? 'Matching' : 'Reading' }}
+            {{ resolving ? 'Matching' : 'Scanning' }}
           </div>
 
           <!-- Idle: start CTA. -->
@@ -271,7 +270,8 @@ const statusHint = computed(() => {
           >
             <Camera class="size-10 opacity-60" aria-hidden="true" />
             <p class="max-w-xs text-sm">
-              Camera access is needed to scan. Nothing is uploaded — matching runs on your device.
+              Camera access is needed to scan. Your photo never leaves your device — only a
+              small fingerprint is sent to identify the card.
             </p>
             <Button @click="startScanning">
               <ScanLine class="size-4" aria-hidden="true" />
@@ -406,14 +406,14 @@ const statusHint = computed(() => {
           />
         </div>
 
-        <!-- Nudge before the first match, or when the last OCR didn't resolve. -->
+        <!-- Nudge before the first match, or when the last scan didn't resolve. -->
         <div
           v-else-if="isReady"
           class="text-muted-foreground rounded-xl border border-dashed p-6 text-center text-sm"
         >
-          <template v-if="lastUnmatched">
-            Read “{{ lastUnmatched }}” but found no matching card in the catalog. Check the spelling,
-            or that this card's set has been added yet.
+          <template v-if="unrecognized">
+            Couldn't recognise that card. Try a straight-on, glare-free shot filling the frame —
+            or its set may not have been added to the catalog yet.
           </template>
           <template v-else> The card you scan will appear here to review and edit. </template>
         </div>

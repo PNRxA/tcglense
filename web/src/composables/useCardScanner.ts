@@ -2,29 +2,39 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 // tesseract.js is a CommonJS `export =` namespace, so the type comes in via a default
 // import (esModuleInterop) and the runtime via a lazy dynamic import().
 import type Tesseract from 'tesseract.js'
-import {
-  NAME_REGION,
-  SET_REGION,
-  guideRect,
-  regionInRect,
-  type Rect,
-} from '@/lib/scan/regions'
+import { detectCardQuad, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
+import { phashFromRgba } from '@/lib/scan/phash'
+import { SET_REGION, guideRect, regionInRect } from '@/lib/scan/regions'
 
-// Camera + on-device OCR engine for the card scanner. Owns the getUserMedia stream and a
-// single, lazily-created Tesseract worker, and turns "the current video frame" into the
-// two text strips the session needs (title + set/collector line). Everything CV-heavy is
-// client-side: no image ever leaves the browser, matching the app's self-hosted posture.
+// Camera + on-device vision engine for the card scanner. Owns the getUserMedia stream
+// and turns "the current video frame" into what the session needs to identify the card:
+// a perceptual-hash **fingerprint** of the deskewed card (which drives the visual match),
+// plus an OCR read of the bottom-left set/collector line (which pins the exact printing).
+// Everything CV-heavy is client-side — the photo never leaves the browser; only the
+// 32-byte fingerprint is later sent to the match endpoint.
 //
-// tesseract.js is a big WASM + trained-data payload, so it's dynamically imported the
-// first time the camera starts (never at app load) and the worker is reused across frames.
+// The card is auto-detected and perspective-warped to a fixed upright crop (see
+// `lib/scan/detect`); when detection fails (busy background, heavy rotation) it falls
+// back to warping the on-screen guide box. tesseract.js is a big WASM + trained-data
+// payload, so it's dynamically imported the first time the camera starts (never at app
+// load) and its worker is reused; it now only reads the small set-line strip.
 
 export type CameraStatus = 'idle' | 'starting' | 'ready' | 'denied' | 'unavailable' | 'error'
 
-/** The two OCR strips read from one captured frame. */
+/** Size of the upright, deskewed crop the card is warped to (61:85, matching the guide
+ * and the reference images the index is built from). */
+const WARP_W = 610
+const WARP_H = 850
+
+/** Cap on the frame's long edge used for detection — keeps the per-frame CV cheap on a
+ * mid phone without hurting corner accuracy. */
+const FRAME_MAX = 1000
+
+/** What one captured frame yields for the session. */
 export interface ScanCapture {
-  /** Raw OCR of the title bar. */
-  nameText: string
-  /** Raw OCR of the bottom-left collector/set line. */
+  /** 256-bit perceptual hash of the deskewed card — the visual-match query. */
+  fingerprint: Uint8Array
+  /** Raw OCR of the bottom-left collector/set line — the printing hint. */
   setText: string
 }
 
@@ -50,9 +60,14 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   // resolves late can tell it was superseded and stop the now-orphaned stream (getUserMedia
   // has no cancellation) rather than going live on a dead component.
   let generation = 0
-  // One reusable scratch canvas for cropping frames — avoids churning nodes per capture.
-  const canvas =
+  // Reusable scratch canvases — avoid churning DOM nodes per captured frame. `frameCanvas`
+  // holds the (downscaled) video frame we detect in; `cropCanvas` holds the warped card;
+  // `ocrCanvas` holds the upscaled set-line strip handed to Tesseract.
+  const makeCanvas = () =>
     typeof document !== 'undefined' ? document.createElement('canvas') : null
+  const frameCanvas = makeCanvas()
+  const cropCanvas = makeCanvas()
+  const ocrCanvas = makeCanvas()
 
   function cameraSupported(): boolean {
     return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
@@ -198,62 +213,108 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return workerInit
   }
 
-  // Crop one region of the current frame onto the scratch canvas — upscaled and
-  // high-contrast grayscale — and OCR just that strip. A small, preprocessed region
-  // reads far more reliably (and faster) than the whole frame.
-  async function recognizeRect(
-    rect: Rect,
-    singleLine: boolean,
-    whitelist: string,
-  ): Promise<string> {
+  // The guide box's four corners in frame pixels — the detection fallback: when no card
+  // is auto-detected we warp exactly the region the user aligned to.
+  function guideQuad(frameW: number, frameH: number): Quad {
+    const g = guideRect(frameW, frameH)
+    return [
+      { x: g.left, y: g.top },
+      { x: g.left + g.width, y: g.top },
+      { x: g.left + g.width, y: g.top + g.height },
+      { x: g.left, y: g.top + g.height },
+    ]
+  }
+
+  // Draw the current frame (downscaled), detect the card (or fall back to the guide box),
+  // and warp it to an upright WARP_W×WARP_H crop. Returns the crop's RGBA, or null if the
+  // camera isn't ready / the frame has no dimensions yet.
+  function warpFrame(): Uint8ClampedArray | null {
     const el = video.value
-    if (!canvas || !el) return ''
+    if (!frameCanvas || status.value !== 'ready' || !el) return null
+    const vw = el.videoWidth
+    const vh = el.videoHeight
+    if (!vw || !vh) return null
+
+    const scale = Math.min(1, FRAME_MAX / Math.max(vw, vh))
+    const fw = Math.max(1, Math.round(vw * scale))
+    const fh = Math.max(1, Math.round(vh * scale))
+    frameCanvas.width = fw
+    frameCanvas.height = fh
+    const fctx = frameCanvas.getContext('2d', { willReadFrequently: true })
+    if (!fctx) return null
+    fctx.drawImage(el, 0, 0, fw, fh)
+    const frame = fctx.getImageData(0, 0, fw, fh)
+
+    const detected = detectCardQuad(toGray(frame.data, fw, fh), fw, fh)
+    const quad = detected ?? guideQuad(fw, fh)
+    return warpToRect(frame.data, fw, fh, quad, WARP_W, WARP_H)
+  }
+
+  /** The fingerprint of the current frame's deskewed card, or null if the camera isn't
+   * ready yet. Cheap (no OCR) — the live loop calls this every tick to gate on stability. */
+  function captureFingerprint(): Uint8Array | null {
+    const rgba = warpFrame()
+    return rgba ? phashFromRgba(rgba, WARP_W, WARP_H) : null
+  }
+
+  // OCR the set/collector strip of a warped crop: draw the crop, crop out the SET_REGION
+  // strip upscaled + high-contrast, and recognise just that (a small, preprocessed,
+  // now-deskewed region reads far more reliably than the raw frame did).
+  async function recognizeSetLine(rgba: Uint8ClampedArray): Promise<string> {
+    if (!cropCanvas || !ocrCanvas) return ''
+    cropCanvas.width = WARP_W
+    cropCanvas.height = WARP_H
+    const cctx = cropCanvas.getContext('2d')
+    if (!cctx) return ''
+    // Copy into a fresh ArrayBuffer-backed array — `ImageData` needs `Uint8ClampedArray
+    // <ArrayBuffer>`, not the `ArrayBufferLike` the warp buffer is typed as.
+    cctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), WARP_W, WARP_H), 0, 0)
+
+    const rect = regionInRect(SET_REGION, { left: 0, top: 0, width: WARP_W, height: WARP_H })
     const scale = 2
-    canvas.width = Math.max(1, Math.round(rect.width * scale))
-    canvas.height = Math.max(1, Math.round(rect.height * scale))
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return ''
-    ctx.filter = 'grayscale(1) contrast(1.5) brightness(1.05)'
-    ctx.drawImage(
-      el,
+    ocrCanvas.width = Math.max(1, Math.round(rect.width * scale))
+    ocrCanvas.height = Math.max(1, Math.round(rect.height * scale))
+    const octx = ocrCanvas.getContext('2d')
+    if (!octx) return ''
+    octx.filter = 'grayscale(1) contrast(1.5) brightness(1.05)'
+    octx.drawImage(
+      cropCanvas,
       rect.left,
       rect.top,
       rect.width,
       rect.height,
       0,
       0,
-      canvas.width,
-      canvas.height,
+      ocrCanvas.width,
+      ocrCanvas.height,
     )
+
     const activeWorker = await ensureWorker()
     const { PSM } = await import('tesseract.js')
     await activeWorker.setParameters({
-      // Single text line for the title; a block for the two-line set/collector strip.
-      tessedit_pageseg_mode: singleLine ? PSM.SINGLE_LINE : PSM.SINGLE_BLOCK,
-      // An empty whitelist disables the restriction (all characters allowed).
-      tessedit_char_whitelist: whitelist,
+      // A block for the two-line set/collector strip (number over set code / language).
+      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+      tessedit_char_whitelist: SET_WHITELIST,
     })
-    const { data } = await activeWorker.recognize(canvas)
+    const { data } = await activeWorker.recognize(ocrCanvas)
     return data.text ?? ''
   }
 
-  /** OCR the title + set strips of the current frame, or null if the camera isn't ready,
-   * the frame has no dimensions yet, or the OCR worker failed (transient — the next capture
-   * retries, since a failed warm-up is no longer cached). */
+  /** A full capture for committing a match: the card fingerprint plus an OCR of the set
+   * line (which pins the exact printing). Null if the camera isn't ready / the frame has
+   * no dimensions yet; a transient OCR failure just yields an empty `setText` (the
+   * printing then falls back to the newest, and the next capture retries the worker). */
   async function capture(): Promise<ScanCapture | null> {
-    const el = video.value
-    if (status.value !== 'ready' || !el) return null
-    const vw = el.videoWidth
-    const vh = el.videoHeight
-    if (!vw || !vh) return null
-    const guide = guideRect(vw, vh)
+    const rgba = warpFrame()
+    if (!rgba) return null
+    const fingerprint = phashFromRgba(rgba, WARP_W, WARP_H)
+    let setText = ''
     try {
-      const nameText = await recognizeRect(regionInRect(NAME_REGION, guide), true, '')
-      const setText = await recognizeRect(regionInRect(SET_REGION, guide), false, SET_WHITELIST)
-      return { nameText, setText }
+      setText = await recognizeSetLine(rgba)
     } catch {
-      return null
+      setText = ''
     }
+    return { fingerprint, setText }
   }
 
   onBeforeUnmount(() => {
@@ -278,5 +339,6 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     stop,
     switchCamera,
     capture,
+    captureFingerprint,
   }
 }
