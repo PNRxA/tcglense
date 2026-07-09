@@ -32,6 +32,7 @@ function makeRouter() {
       { path: '/collection/:game', component: { template: '<div />' } },
       { path: '/wishlist', component: { template: '<div />' } },
       { path: '/wishlist/:game', component: { template: '<div />' } },
+      { path: '/docs', component: { template: '<div />' } },
     ],
   })
 }
@@ -68,6 +69,13 @@ describe('MainNav', () => {
     expect(trigger(wrapper, 'Products').exists()).toBe(true)
     expect(trigger(wrapper, 'Collection').exists()).toBe(true)
     expect(trigger(wrapper, 'Wish list').exists()).toBe(true)
+  })
+
+  it('links to the API docs directly (no dropdown)', async () => {
+    const wrapper = await mountNav()
+    const docs = wrapper.find('a[href="/docs"]')
+    expect(docs.exists()).toBe(true)
+    expect(docs.text()).toContain('API')
   })
 
   it('reveals both catalog and sealed links when the Products menu is opened', async () => {

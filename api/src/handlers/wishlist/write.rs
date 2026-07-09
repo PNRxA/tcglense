@@ -19,6 +19,8 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
+/// Update wish list card
+///
 /// `PUT /api/wishlist/{game}/cards/{id}` -> set the wanted counts for one card
 /// (absolute values, not a delta). Both zero removes the card from the wish list.
 /// Returns the resulting counts. `404` for an unknown game/card, `422` for a

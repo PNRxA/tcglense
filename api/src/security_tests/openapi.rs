@@ -1,8 +1,9 @@
-//! HTTP-level tests for the served OpenAPI spec + Scalar docs UI (issue #284).
+//! HTTP-level tests for the served OpenAPI spec (issue #284).
 //!
 //! The `openapi::tests::openapi_spec_builds` unit test proves `ApiDoc::openapi()`
-//! doesn't panic; these prove the two public doc routes are actually wired, serve,
-//! and are CDN-cacheable (in the public group, not swallowed by any fallback).
+//! doesn't panic; this proves the public `/api/openapi.json` route is actually wired,
+//! serves, and is CDN-cacheable (in the public group, not swallowed by any fallback).
+//! The interactive reference is rendered by the SPA at `/docs`, not the API.
 
 use super::harness::*;
 
@@ -31,22 +32,4 @@ async fn openapi_json_serves_a_cacheable_spec() {
     // Public, CDN-cacheable (in the public router group).
     let cc = cache_control(&headers).unwrap_or_default();
     assert!(cc.contains("public"), "spec should be shared-cacheable: {cc:?}");
-}
-
-#[tokio::test]
-async fn scalar_docs_ui_serves_html() {
-    let app = test_app().await;
-    let (status, headers, body) = send_text(&app, get("/api/docs")).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        content_type(&headers).unwrap_or_default().contains("text/html"),
-        "the docs console is HTML"
-    );
-    // The Scalar viewer HTML references its own script and points at the spec.
-    let lower = body.to_lowercase();
-    assert!(
-        lower.contains("scalar") || lower.contains("openapi"),
-        "looks like the Scalar viewer page"
-    );
 }

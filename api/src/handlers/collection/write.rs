@@ -19,6 +19,8 @@ use crate::state::AppState;
 
 use super::{CollectionQuantities, SetQuantitiesRequest};
 
+/// Update collection card
+///
 /// `PUT /api/collection/{game}/cards/{id}` -> set the owned counts for one card
 /// (absolute values, not a delta). Both zero removes the card from the collection.
 /// Returns the resulting counts. `404` for an unknown game/card, `422` for a

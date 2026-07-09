@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.22.0",
+    "@scalar/api-reference": "^1.48.7",
     "@tailwindcss/vite": "^4.3.1",
     "@tanstack/vue-query": "^5.101.2",
     "@unovis/ts": "^1.6.7",

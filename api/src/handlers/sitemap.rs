@@ -134,6 +134,7 @@ fn pages_body(base: &str) -> String {
         push_url(&mut body, &format!("{base}/cards/{}/cards", game.id), None);
         push_url(&mut body, &format!("{base}/sealed/{}", game.id), None);
     }
+    push_url(&mut body, &format!("{base}/docs"), None);
     push_url(&mut body, &format!("{base}/terms"), None);
     push_url(&mut body, &format!("{base}/privacy"), None);
     body
@@ -412,6 +413,7 @@ mod tests {
         assert!(body.contains("<loc>https://x.test/</loc>"));
         assert!(body.contains("<loc>https://x.test/cards</loc>"));
         assert!(body.contains("<loc>https://x.test/sealed</loc>"));
+        assert!(body.contains("<loc>https://x.test/docs</loc>"));
         assert!(body.contains("<loc>https://x.test/terms</loc>"));
         assert!(body.contains("<loc>https://x.test/privacy</loc>"));
         // Every registered game contributes a card hub + browse URL and a sealed

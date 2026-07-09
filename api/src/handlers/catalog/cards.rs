@@ -25,6 +25,8 @@ use super::{
 const DEFAULT_NAME_SUGGESTIONS: u64 = 10;
 const MAX_NAME_SUGGESTIONS: u64 = 25;
 
+/// List cards
+///
 /// `GET /api/games/{game}/cards` -> all cards (optional `q` search), by name.
 #[utoipa::path(
     get,
@@ -99,6 +101,8 @@ pub async fn card_names(
     Ok(Json(DataBody { data: names }))
 }
 
+/// Get card
+///
 /// `GET /api/games/{game}/cards/{id}` -> one card's full detail.
 #[utoipa::path(
     get,
@@ -122,6 +126,8 @@ pub async fn get_card(
     Ok(Json(CardResponse::from(card)))
 }
 
+/// List card printings
+///
 /// `GET /api/games/{game}/cards/{id}/prints` -> this card's **other** printings:
 /// every card sharing its gameplay identity (Scryfall `oracle_id`) in the same
 /// game, excluding the card itself, newest printing first (capped at `MAX_PAGE_SIZE`).

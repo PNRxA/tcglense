@@ -44,6 +44,8 @@ impl From<card_price_history::Model> for PricePoint {
     }
 }
 
+/// Get card price history
+///
 /// `GET /api/games/{game}/cards/{id}/prices?range=` -> a card's price history,
 /// oldest first, for charting. With no `range` the full daily series is returned;
 /// an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows the series and

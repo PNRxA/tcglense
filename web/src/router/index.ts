@@ -141,6 +141,10 @@ const router = createRouter({
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
     },
+    // Interactive public-API reference (issue #284). Public and indexable; linked from
+    // the homepage, nav, and footer. Lazy-loaded — the Scalar bundle is heavy and must
+    // stay out of the app's initial payload.
+    { path: '/docs', name: 'docs', component: () => import('@/views/DocsView.vue') },
     // Legal pages, linked from the site footer. Public and indexable.
     { path: '/terms', name: 'terms', component: () => import('@/views/TermsView.vue') },
     { path: '/privacy', name: 'privacy', component: () => import('@/views/PrivacyPolicyView.vue') },

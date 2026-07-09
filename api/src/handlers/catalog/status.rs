@@ -28,6 +28,8 @@ pub struct StatusResponse {
     pub finished_at: Option<DateTimeUtc>,
 }
 
+/// List games
+///
 /// `GET /api/games` -> the list of supported games.
 #[utoipa::path(
     get,

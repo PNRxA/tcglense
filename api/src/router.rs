@@ -42,7 +42,7 @@ use crate::{
         mirror::{
             mtgjson_all_printings, scryfall_bulk_data, scryfall_file, scryfall_sets, tcgcsv_proxy,
         },
-        openapi::{openapi_json, scalar_ui},
+        openapi::openapi_json,
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
@@ -282,7 +282,6 @@ pub fn build_router(state: AppState) -> Router {
         // every visitor and change only on redeploy, so they ride the shared CDN cache
         // like the rest of the catalog (each error still marked `no-store` by the layer).
         .route("/api/openapi.json", get(openapi_json))
-        .route("/api/docs", get(scalar_ui))
         .layer(map_response(public_cache_layer))
         .layer(from_fn(conditional_request_layer));
 

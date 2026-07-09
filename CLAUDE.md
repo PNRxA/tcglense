@@ -14,8 +14,8 @@ singles + sealed-product price history (TCGCSV, MTGJSON), per-user collections
 (Turnstile CAPTCHA + rate limiting). A **public API** (issue #284) documents the
 anonymous catalog reads and lets account holders mint scoped **API keys**
 (`Authorization: Bearer tcgl_…`) for their collection/wish list — OpenAPI at
-`/api/openapi.json`, interactive Scalar docs at `/api/docs`. Not yet built:
-set-completion progress.
+`/api/openapi.json`, rendered as an interactive Scalar reference in-app at the SPA's
+`/docs` route (`DocsView.vue`). Not yet built: set-completion progress.
 
 ## Layout
 

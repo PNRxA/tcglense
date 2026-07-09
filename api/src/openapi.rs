@@ -2,9 +2,9 @@
 //!
 //! [`ApiDoc`] is a [`utoipa::OpenApi`] document assembled at compile time from the
 //! `#[utoipa::path]` annotations on the handlers and the `#[derive(utoipa::ToSchema)]`
-//! on the wire DTOs. It's served two ways (see [`crate::handlers::openapi`]):
-//! `GET /api/openapi.json` (the raw document) and `GET /api/docs` (the interactive
-//! Scalar "try it out" UI). Both are public, CDN-cacheable routes.
+//! on the wire DTOs. It's served as raw JSON at `GET /api/openapi.json` (a public,
+//! CDN-cacheable route — see [`crate::handlers::openapi`]) and rendered as an interactive
+//! reference by the SPA at `/docs` (`web/src/views/DocsView.vue`, `@scalar/api-reference`).
 //!
 //! Coverage is the read catalog (cards + sealed products) plus the authenticated
 //! collection / wish-list / API-key surfaces. [`SecurityAddon`] registers two bearer
