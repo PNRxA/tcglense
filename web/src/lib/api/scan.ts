@@ -10,19 +10,20 @@ import type { ScanResponse } from './generated'
 export type { ScanMatch, ScanResponse } from './generated'
 
 /**
- * Identify a card from its fingerprint. Returns the ranked matches, nearest first
- * (`distance` = Hamming distance; smaller is closer). An empty `data` means nothing
- * was within the confidence radius (card not recognised); a `404` means this instance
- * has no fingerprint index built/imported yet.
+ * Identify a card from its fingerprint variants (the deskewed crop plus a few small
+ * geometric corrections; the server keeps each card's closest). Returns the ranked
+ * matches, nearest first (`distance` = Hamming distance; smaller is closer). An empty
+ * `data` means nothing was within the confidence radius (card not recognised); a `404`
+ * means this instance has no fingerprint index built/imported yet.
  */
 export function scanCard(
   token: string,
   game: string,
-  fingerprint: Uint8Array,
+  fingerprints: Uint8Array[],
   topK?: number,
 ): Promise<ScanResponse> {
-  const body: { fingerprint: number[]; top_k?: number } = {
-    fingerprint: Array.from(fingerprint),
+  const body: { fingerprints: number[][]; top_k?: number } = {
+    fingerprints: fingerprints.map((f) => Array.from(f)),
   }
   if (topK !== undefined) body.top_k = topK
   return request<ScanResponse>(`/api/games/${encodeURIComponent(game)}/scan`, {

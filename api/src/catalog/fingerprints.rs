@@ -70,12 +70,14 @@ impl FingerprintIndex {
         self.entries.is_empty()
     }
 
-    /// The `top_k` printings nearest to `query` for `game`, nearest first. At most one
-    /// hit per printing (the best-matching face), so a double-faced card can't fill the
-    /// shortlist with both faces. Returns empty for a wrong-length query, `top_k == 0`,
-    /// or an empty index. Ties on distance break by external id for a stable order.
-    pub fn nearest(&self, game: &str, query: &[u8], top_k: usize) -> Vec<ScanHit> {
-        if query.len() != PHASH_BYTES || top_k == 0 || self.entries.is_empty() {
+    /// The `top_k` printings nearest to the query for `game`, nearest first. `queries` is
+    /// one or more variant hashes of the same scanned card (the crop plus small geometric
+    /// corrections the client tries); each card's distance is the **minimum** over all
+    /// variants, so a residually-rotated / loosely-cropped scan still matches its tight,
+    /// upright reference. At most one hit per printing (the best-matching face). Returns
+    /// empty for no queries, `top_k == 0`, or an empty index. Ties break by external id.
+    pub fn nearest(&self, game: &str, queries: &[[u8; PHASH_BYTES]], top_k: usize) -> Vec<ScanHit> {
+        if queries.is_empty() || top_k == 0 || self.entries.is_empty() {
             return Vec::new();
         }
         let mut best: HashMap<&str, (u32, i32)> = HashMap::new();
@@ -83,7 +85,12 @@ impl FingerprintIndex {
             if entry.game != game {
                 continue;
             }
-            let dist = hamming(&entry.hash, query);
+            // Best (min) distance across the query's geometric variants.
+            let dist = queries
+                .iter()
+                .map(|q| hamming(&entry.hash, q))
+                .min()
+                .unwrap_or(u32::MAX);
             best.entry(entry.external_id.as_str())
                 .and_modify(|slot| {
                     if dist < slot.0 {
@@ -352,7 +359,7 @@ mod tests {
         };
 
         let query = [0u8; PHASH_BYTES];
-        let hits = index.nearest("mtg", &query, 3);
+        let hits = index.nearest("mtg", &[query], 3);
         assert_eq!(hits.len(), 3);
         assert_eq!(hits[0].external_id, "a");
         assert_eq!(hits[0].distance, 0);
@@ -361,7 +368,25 @@ mod tests {
         assert_eq!(hits[2].external_id, "c");
         assert_eq!(hits[2].distance, 4);
         // The other-game entry never appears.
-        assert!(index.nearest("mtg", &query, 10).iter().all(|h| h.external_id != "z"));
+        assert!(index.nearest("mtg", &[query], 10).iter().all(|h| h.external_id != "z"));
+    }
+
+    #[test]
+    fn nearest_takes_the_min_distance_across_query_variants() {
+        let mut b = [0u8; PHASH_BYTES];
+        b[0] = 0b0000_1111; // 4 bits from all-zero
+        let index = FingerprintIndex {
+            entries: vec![entry("mtg", "a", [0u8; PHASH_BYTES]), entry("mtg", "b", b)],
+        };
+        // Two variants: one far from "a", one exact — the min wins, so "a" is distance 0.
+        let far = {
+            let mut q = [0u8; PHASH_BYTES];
+            q[5] = 0xff;
+            q
+        };
+        let hits = index.nearest("mtg", &[far, [0u8; PHASH_BYTES]], 1);
+        assert_eq!(hits[0].external_id, "a");
+        assert_eq!(hits[0].distance, 0);
     }
 
     #[test]
@@ -376,19 +401,19 @@ mod tests {
                 IndexEntry { game: "mtg".into(), external_id: "dfc".into(), face_index: 1, hash: near },
             ],
         };
-        let hits = index.nearest("mtg", &[0u8; PHASH_BYTES], 5);
+        let hits = index.nearest("mtg", &[[0u8; PHASH_BYTES]], 5);
         assert_eq!(hits.len(), 1, "one hit per printing");
         assert_eq!(hits[0].face_index, 1, "keeps the closer face");
         assert_eq!(hits[0].distance, 1);
     }
 
     #[test]
-    fn nearest_rejects_wrong_length_query() {
+    fn nearest_handles_empty_queries_and_zero_k() {
         let index = FingerprintIndex {
             entries: vec![entry("mtg", "a", [0u8; PHASH_BYTES])],
         };
-        assert!(index.nearest("mtg", &[0u8; 16], 3).is_empty());
-        assert!(index.nearest("mtg", &[0u8; PHASH_BYTES], 0).is_empty());
+        assert!(index.nearest("mtg", &[], 3).is_empty());
+        assert!(index.nearest("mtg", &[[0u8; PHASH_BYTES]], 0).is_empty());
     }
 
     #[test]

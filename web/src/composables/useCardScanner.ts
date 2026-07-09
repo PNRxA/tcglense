@@ -30,10 +30,21 @@ const WARP_H = 850
  * mid phone without hurting corner accuracy. */
 const FRAME_MAX = 1000
 
+// Geometric variants of the deskewed crop the match query carries. A hand-held scan has
+// residual rotation and small framing error even after detection+warp, and pHash is very
+// sensitive to both (a 2° rotation or a 4%-loose crop alone can exceed the match budget).
+// Hashing this small grid of rotations × inset (zoom) corrections and letting the server
+// keep the best distance absorbs that — validated to drop distorted-query distances from
+// ~100 to ~30. Kept modest so the per-capture cost stays small (only runs on a commit).
+// The base crop (rot 0, inset 0) is FIRST so `fingerprints[0]` is the canonical hash.
+const VARIANT_ROTATIONS = [0, -3, 3, -6, 6]
+const VARIANT_INSETS = [0, 0.05, 0.1]
+
 /** What one captured frame yields for the session. */
 export interface ScanCapture {
-  /** 256-bit perceptual hash of the deskewed card — the visual-match query. */
-  fingerprint: Uint8Array
+  /** 256-bit perceptual hashes of the deskewed card — the base crop plus small geometric
+   * variants; the server matches whichever is closest to the reference. */
+  fingerprints: Uint8Array[]
   /** Raw OCR of the bottom-left collector/set line — the printing hint. */
   setText: string
 }
@@ -68,6 +79,8 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   const frameCanvas = makeCanvas()
   const cropCanvas = makeCanvas()
   const ocrCanvas = makeCanvas()
+  // Holds each rotated/inset variant while its fingerprint is computed.
+  const variantCanvas = makeCanvas()
 
   function cameraSupported(): boolean {
     return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
@@ -257,19 +270,57 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return rgba ? phashFromRgba(rgba, WARP_W, WARP_H) : null
   }
 
-  // OCR the set/collector strip of a warped crop: draw the crop, crop out the SET_REGION
-  // strip upscaled + high-contrast, and recognise just that (a small, preprocessed,
-  // now-deskewed region reads far more reliably than the raw frame did).
-  async function recognizeSetLine(rgba: Uint8ClampedArray): Promise<string> {
-    if (!cropCanvas || !ocrCanvas) return ''
+  // Draw the deskewed crop onto `cropCanvas` — the shared source for the variant
+  // fingerprints and the set-line OCR. Copies into a fresh ArrayBuffer-backed array,
+  // since `ImageData` needs `Uint8ClampedArray<ArrayBuffer>`, not the warp buffer's
+  // `ArrayBufferLike`.
+  function drawCropToCanvas(rgba: Uint8ClampedArray): boolean {
+    if (!cropCanvas) return false
     cropCanvas.width = WARP_W
     cropCanvas.height = WARP_H
-    const cctx = cropCanvas.getContext('2d')
-    if (!cctx) return ''
-    // Copy into a fresh ArrayBuffer-backed array — `ImageData` needs `Uint8ClampedArray
-    // <ArrayBuffer>`, not the `ArrayBufferLike` the warp buffer is typed as.
-    cctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), WARP_W, WARP_H), 0, 0)
+    const ctx = cropCanvas.getContext('2d')
+    if (!ctx) return false
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), WARP_W, WARP_H), 0, 0)
+    return true
+  }
 
+  // Fingerprint the crop on `cropCanvas` plus a grid of rotation × inset (zoom) variants,
+  // so a residually-rotated or slightly-loose scan still matches its tight, upright
+  // reference (the server keeps the closest). The base crop (rot 0, inset 0) is included.
+  function variantFingerprints(): Uint8Array[] {
+    const out: Uint8Array[] = []
+    if (!cropCanvas || !variantCanvas) return out
+    variantCanvas.width = WARP_W
+    variantCanvas.height = WARP_H
+    const ctx = variantCanvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) return out
+    for (const inset of VARIANT_INSETS) {
+      const sx = inset * WARP_W
+      const sy = inset * WARP_H
+      const sw = WARP_W - 2 * sx
+      const sh = WARP_H - 2 * sy
+      for (const rot of VARIANT_ROTATIONS) {
+        ctx.save()
+        ctx.clearRect(0, 0, WARP_W, WARP_H)
+        if (rot !== 0) {
+          ctx.translate(WARP_W / 2, WARP_H / 2)
+          ctx.rotate((rot * Math.PI) / 180)
+          ctx.translate(-WARP_W / 2, -WARP_H / 2)
+        }
+        // Draw the inset source region to the full canvas (zoom), under the rotation.
+        ctx.drawImage(cropCanvas, sx, sy, sw, sh, 0, 0, WARP_W, WARP_H)
+        ctx.restore()
+        out.push(phashFromRgba(ctx.getImageData(0, 0, WARP_W, WARP_H).data, WARP_W, WARP_H))
+      }
+    }
+    return out
+  }
+
+  // OCR the set/collector strip of the crop already on `cropCanvas`: crop out the
+  // SET_REGION strip upscaled + high-contrast and recognise just that (a small,
+  // preprocessed, now-deskewed region reads far more reliably than the raw frame did).
+  async function recognizeSetLine(): Promise<string> {
+    if (!cropCanvas || !ocrCanvas) return ''
     const rect = regionInRect(SET_REGION, { left: 0, top: 0, width: WARP_W, height: WARP_H })
     const scale = 2
     ocrCanvas.width = Math.max(1, Math.round(rect.width * scale))
@@ -300,21 +351,23 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return data.text ?? ''
   }
 
-  /** A full capture for committing a match: the card fingerprint plus an OCR of the set
-   * line (which pins the exact printing). Null if the camera isn't ready / the frame has
-   * no dimensions yet; a transient OCR failure just yields an empty `setText` (the
-   * printing then falls back to the newest, and the next capture retries the worker). */
+  /** A full capture for committing a match: the variant fingerprints of the deskewed card
+   * plus an OCR of the set line (which pins the exact printing). Null if the camera isn't
+   * ready / the frame has no dimensions yet; a transient OCR failure just yields an empty
+   * `setText` (the printing then falls back to the newest, and the next capture retries). */
   async function capture(): Promise<ScanCapture | null> {
     const rgba = warpFrame()
-    if (!rgba) return null
-    const fingerprint = phashFromRgba(rgba, WARP_W, WARP_H)
+    if (!rgba || !drawCropToCanvas(rgba)) return null
+    const fingerprints = variantFingerprints()
+    // Fallback if canvas variants are unavailable: at least the base crop's fingerprint.
+    if (fingerprints.length === 0) fingerprints.push(phashFromRgba(rgba, WARP_W, WARP_H))
     let setText = ''
     try {
-      setText = await recognizeSetLine(rgba)
+      setText = await recognizeSetLine()
     } catch {
       setText = ''
     }
-    return { fingerprint, setText }
+    return { fingerprints, setText }
   }
 
   onBeforeUnmount(() => {

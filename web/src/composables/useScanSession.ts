@@ -246,7 +246,7 @@ export function useScanSession(game: Ref<string>) {
       try {
         const res = await scanMutation.mutateAsync({
           game: game.value,
-          fingerprint: capture.fingerprint,
+          fingerprints: capture.fingerprints,
         })
         matches = res.data
       } catch {

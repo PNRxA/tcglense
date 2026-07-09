@@ -24,12 +24,19 @@ use crate::state::AppState;
 /// Hard cap on the requested match count, independent of the server's default.
 const MAX_SCAN_TOP_K: u32 = 25;
 
-/// A scan request: the client-computed fingerprint and how many matches to return.
+/// Hard cap on how many variant fingerprints one scan may carry (the client sends the
+/// crop plus a few geometric corrections; bounds the per-request match work).
+const MAX_SCAN_FINGERPRINTS: usize = 32;
+
+/// A scan request: the client-computed fingerprint(s) and how many matches to return.
 #[derive(Debug, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ScanRequest {
-    /// The 256-bit perceptual hash of the cropped card, as its 32 bytes.
-    pub fingerprint: Vec<u8>,
+    /// One or more 256-bit perceptual hashes (32 bytes each): the cropped card plus a
+    /// few small geometric variants (rotations / inset corrections) the client tries, so
+    /// a residually-rotated or loosely-cropped scan still matches the tight, upright
+    /// reference. The server keeps each card's **best** (minimum) distance across them.
+    pub fingerprints: Vec<Vec<u8>>,
     /// How many ranked matches to return (clamped to `[1, 25]`); absent = the server
     /// default (`FINGERPRINT_TOP_K`).
     #[serde(default)]
@@ -65,10 +72,17 @@ pub async fn scan_cards(
 ) -> Result<Json<ScanResponse>, AppError> {
     require_game(&game)?;
 
-    if payload.fingerprint.len() != PHASH_BYTES {
+    if payload.fingerprints.is_empty() || payload.fingerprints.len() > MAX_SCAN_FINGERPRINTS {
         return Err(AppError::Validation(format!(
-            "fingerprint must be exactly {PHASH_BYTES} bytes"
+            "send between 1 and {MAX_SCAN_FINGERPRINTS} fingerprints"
         )));
+    }
+    let mut queries: Vec<[u8; PHASH_BYTES]> = Vec::with_capacity(payload.fingerprints.len());
+    for fp in &payload.fingerprints {
+        let arr: [u8; PHASH_BYTES] = fp.as_slice().try_into().map_err(|_| {
+            AppError::Validation(format!("each fingerprint must be exactly {PHASH_BYTES} bytes"))
+        })?;
+        queries.push(arr);
     }
 
     let index = state.fingerprint_index();
@@ -89,7 +103,7 @@ pub async fn scan_cards(
     // Nearest neighbours within the confidence radius; beyond it a hit is more likely a
     // distant false positive than the card, so it's dropped (empty result = no match).
     let hits: Vec<fingerprints::ScanHit> = index
-        .nearest(&game, &payload.fingerprint, top_k)
+        .nearest(&game, &queries, top_k)
         .into_iter()
         .filter(|hit| hit.distance <= max_distance)
         .collect();

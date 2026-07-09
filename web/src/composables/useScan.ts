@@ -8,15 +8,15 @@ import { useAuthedMutation } from '@/lib/queries'
 
 export interface ScanVars {
   game: string
-  /** The 32-byte 256-bit perceptual hash of the cropped card. */
-  fingerprint: Uint8Array
+  /** The 32-byte perceptual hashes of the cropped card (base crop + geometric variants). */
+  fingerprints: Uint8Array[]
   /** How many ranked matches to request; omit for the server default. */
   topK?: number
 }
 
-/** A mutation that identifies a scanned card from its fingerprint. */
+/** A mutation that identifies a scanned card from its fingerprint variants. */
 export function useScanMutation() {
   return useAuthedMutation<ScanResponse, ScanVars>({
-    mutationFn: (token, vars) => scanCard(token, vars.game, vars.fingerprint, vars.topK),
+    mutationFn: (token, vars) => scanCard(token, vars.game, vars.fingerprints, vars.topK),
   })
 }

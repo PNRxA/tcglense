@@ -146,7 +146,7 @@ async function tick() {
       pendingReads = 0
       // The stable frame is worth a full capture (fingerprint + set-line OCR) and match.
       const cap = await capture()
-      if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprint
+      if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprints[0] ?? null
     }
   } finally {
     reading.value = false
@@ -159,7 +159,7 @@ async function captureNow() {
   reading.value = true
   try {
     const cap = await capture()
-    if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprint
+    if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprints[0] ?? null
   } finally {
     reading.value = false
   }

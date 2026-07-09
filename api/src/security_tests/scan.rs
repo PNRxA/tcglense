@@ -9,7 +9,7 @@ use crate::catalog::fingerprints;
 const ALGO_VERSION: i32 = 1;
 
 fn scan_body(fingerprint: &[u8]) -> Value {
-    json!({ "fingerprint": fingerprint })
+    json!({ "fingerprints": [fingerprint] })
 }
 
 /// One real seeded card external id.
@@ -63,6 +63,46 @@ async fn scan_rejects_a_wrong_length_fingerprint() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:?}");
     assert_eq!(cache_control(&headers), Some("no-store"));
+}
+
+#[tokio::test]
+async fn scan_rejects_an_empty_fingerprint_list() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "scanner@example.com", "password123").await;
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer("POST", "/api/games/mtg/scan", &token, json!({ "fingerprints": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:?}");
+}
+
+#[tokio::test]
+async fn scan_matches_across_variant_fingerprints() {
+    // The client sends several variant hashes of one card; the card's distance is the
+    // MIN across them. A far variant plus the exact hash must still match at distance 0.
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "scanner@example.com", "password123").await;
+    let id = one_card_id(&app).await;
+    let hash = [0x5Au8; 32];
+    index_card(&app, &id, &hash).await;
+
+    let far = [0xFFu8; 32];
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/games/mtg/scan",
+            &token,
+            json!({ "fingerprints": [far, hash] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["card"]["id"].as_str().unwrap(), id);
+    assert_eq!(data[0]["distance"].as_u64().unwrap(), 0);
 }
 
 #[tokio::test]
