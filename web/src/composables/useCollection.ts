@@ -23,6 +23,7 @@ import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
+import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 
 /**
  * Refresh every view that depends on the collection contents after any collection write
@@ -157,21 +158,36 @@ export function useCollectionSummaryQuery(
 ) {
   const setCode = set ?? ref<string | undefined>(undefined)
   const includeRelated = opts.includeRelated ?? ref(false)
+  // The user's bulk-threshold preference decides the cutoff the server splits the bulk
+  // value at. It's in the query key (as a computed ref) so changing it in Settings
+  // refetches the summary; the store default matches the server's, so a signed-out /
+  // never-changed user gets the standard $1 split.
+  const bulkThreshold = useBulkThresholdStore()
+  const bulkMaxCents = computed(() => bulkThreshold.cents)
   const options = {
-    queryKey: ['collection-summary', game, setCode, includeRelated],
+    queryKey: ['collection-summary', game, setCode, includeRelated, bulkMaxCents],
     queryFn: (token: string) =>
-      getCollectionSummary(token, game.value, setCode.value || undefined, includeRelated.value),
+      getCollectionSummary(
+        token,
+        game.value,
+        setCode.value || undefined,
+        includeRelated.value,
+        bulkMaxCents.value,
+      ),
     enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionSummary>(options)
 }
 
 /** The sets the signed-in user owns cards in (newest set first) — the per-set
- * collection landing. */
+ * collection landing. Carries the bulk-threshold preference so each tile's bulk slice
+ * matches the summary header (and refetches when the threshold changes). */
 export function useCollectionSetsQuery(game: Ref<string>) {
+  const bulkThreshold = useBulkThresholdStore()
+  const bulkMaxCents = computed(() => bulkThreshold.cents)
   const options = {
-    queryKey: ['collection-sets', game],
-    queryFn: (token: string) => getCollectionSets(token, game.value),
+    queryKey: ['collection-sets', game, bulkMaxCents],
+    queryFn: (token: string) => getCollectionSets(token, game.value, bulkMaxCents.value),
   }
   return useAuthedQuery<{ data: CollectionSet[] }>(options)
 }

@@ -18,8 +18,9 @@ total_cards: number,
  */
 total_value_usd: string | null, 
 /**
- * The "bulk" portion of the total: the value of just the finishes priced under $1
- * each (the low-value commons/uncommons), a 2-dp decimal string. `"0.00"` when
- * something is priced but none of it is bulk; `null` when nothing owned is priced.
+ * The "bulk" portion of the total: the value of just the finishes priced under the
+ * request's bulk threshold each (default $1 — the low-value commons/uncommons), a
+ * 2-dp decimal string. `"0.00"` when something is priced but none of it is bulk;
+ * `null` when nothing owned is priced.
  */
 bulk_value_usd: string | null, };

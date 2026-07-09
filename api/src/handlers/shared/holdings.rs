@@ -27,7 +27,7 @@ use super::pagination::{
     resolve_page, trim_query,
 };
 use super::sort::{SortDir, SortField};
-use super::valuation::Valuation;
+use super::valuation::{Valuation, resolve_bulk_threshold_cents};
 
 /// Cap on how many card ids one batch owned-counts lookup may request. A browse page
 /// shows at most a few hundred cards, so this bounds the two `IN (...)` queries well
@@ -129,9 +129,10 @@ pub struct CollectionSummary {
     /// Estimated USD value: regular copies at the card's `usd`, foil copies at
     /// `usd_foil`, as a 2-dp decimal string. `null` when nothing owned is priced.
     pub total_value_usd: Option<String>,
-    /// The "bulk" portion of the total: the value of just the finishes priced under $1
-    /// each (the low-value commons/uncommons), a 2-dp decimal string. `"0.00"` when
-    /// something is priced but none of it is bulk; `null` when nothing owned is priced.
+    /// The "bulk" portion of the total: the value of just the finishes priced under the
+    /// request's bulk threshold each (default $1 — the low-value commons/uncommons), a
+    /// 2-dp decimal string. `"0.00"` when something is priced but none of it is bulk;
+    /// `null` when nothing owned is priced.
     pub bulk_value_usd: Option<String>,
 }
 
@@ -161,8 +162,9 @@ pub struct CollectionSet {
     /// same semantics as the summary's `total_value_usd`, scoped to the one set.
     pub owned_value_usd: Option<String>,
     /// The "bulk" portion of `owned_value_usd`: the value of just the finishes priced
-    /// under $1 each, a 2-dp decimal string. `"0.00"` when the set's owned cards are
-    /// priced but none are bulk; `null` when nothing owned in the set is priced.
+    /// under the request's bulk threshold each (default $1), a 2-dp decimal string.
+    /// `"0.00"` when the set's owned cards are priced but none are bulk; `null` when
+    /// nothing owned in the set is priced.
     pub owned_bulk_value_usd: Option<String>,
 }
 
@@ -231,6 +233,36 @@ pub struct SummaryParams {
     /// catalog's `include_related`, matching the list / ghost views. Ignored without a `set`.
     #[serde(default)]
     pub include_related: Option<bool>,
+    /// Optional per-unit "bulk" price cutoff, in USD cents (a user display preference the
+    /// SPA persists and sends, issue #289). Absent = the default $1; clamped server-side
+    /// (see [`resolve_bulk_threshold_cents`]).
+    #[serde(default)]
+    pub bulk_max_cents: Option<i64>,
+}
+
+impl SummaryParams {
+    /// The resolved bulk cutoff (in cents) to split the summary's bulk subtotal at.
+    pub(crate) fn bulk_threshold_cents(&self) -> i128 {
+        resolve_bulk_threshold_cents(self.bulk_max_cents)
+    }
+}
+
+/// Query params for the per-set holdings landing (collection + wish list). Only the bulk
+/// threshold: the per-set tiles carry the same bulk split as the summary header, so the
+/// cutoff has to track the same user preference.
+#[derive(Debug, Deserialize)]
+pub struct SetsParams {
+    /// Per-unit "bulk" price cutoff, in USD cents — the same preference as
+    /// [`SummaryParams::bulk_max_cents`]. Absent = the default $1; clamped server-side.
+    #[serde(default)]
+    pub bulk_max_cents: Option<i64>,
+}
+
+impl SetsParams {
+    /// The resolved bulk cutoff (in cents) to split each set tile's bulk subtotal at.
+    pub(crate) fn bulk_threshold_cents(&self) -> i128 {
+        resolve_bulk_threshold_cents(self.bulk_max_cents)
+    }
 }
 
 /// How the collection list is ordered: either the collection-specific recency order
@@ -377,10 +409,11 @@ pub(crate) fn validate_quantity(value: i32, field: &str) -> Result<i32, AppError
 /// tests share the one aggregation.
 pub(crate) fn summarize_holdings<H: HoldingCounts>(
     rows: &[(H, Option<card::Model>)],
+    bulk_threshold_cents: i128,
 ) -> CollectionSummary {
     let mut unique_cards: i64 = 0;
     let mut total_cards: i64 = 0;
-    let mut valuation = Valuation::default();
+    let mut valuation = Valuation::new(bulk_threshold_cents);
     for (item, card) in rows {
         let Some(card) = card else { continue };
         unique_cards += 1;
@@ -428,6 +461,7 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
     game: &str,
     rows: Vec<(H, Option<card::Model>)>,
     sets: Vec<card_set::Model>,
+    bulk_threshold_cents: i128,
 ) -> Vec<CollectionSet> {
     let mut agg: HashMap<String, SetAgg> = HashMap::new();
     for (item, card) in rows {
@@ -438,8 +472,11 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
         // so the borrow is clean regardless of aggregation order.
         let usd = card.price_usd.as_deref();
         let usd_foil = card.price_usd_foil.as_deref();
+        // Each set's running valuation splits its bulk subtotal at the request's chosen
+        // cutoff (default $1), matching the summary header's figure.
         let entry = agg.entry(card.set_code).or_insert_with(|| SetAgg {
             fallback_name: card.set_name,
+            valuation: Valuation::new(bulk_threshold_cents),
             ..SetAgg::default()
         });
         entry.has_subtypes |= is_special;

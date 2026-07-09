@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSort,
-    CollectionSubtypeGroup, ListParams, Page, SortDir, SortField, build_collection_sets,
+    CollectionSubtypeGroup, ListParams, Page, SetsParams, SortDir, SortField, build_collection_sets,
     group_into_drops, group_into_subtypes, load_set, paginate_buckets, require_drop_table,
     require_game, search_condition,
 };
@@ -29,6 +29,7 @@ pub async fn wishlist_sets(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
+    Query(params): Query<SetsParams>,
 ) -> Result<Json<CollectionSetsResponse>, AppError> {
     require_game(&game)?;
 
@@ -43,7 +44,7 @@ pub async fn wishlist_sets(
         .await?;
 
     Ok(Json(CollectionSetsResponse {
-        data: build_collection_sets(&game, rows, sets),
+        data: build_collection_sets(&game, rows, sets, params.bulk_threshold_cents()),
     }))
 }
 

@@ -19,4 +19,11 @@ url: string | null,
 /**
  * Whether an image is available through the product image proxy.
  */
-has_image: boolean, prices: ProductPrices, released_at: string | null, };
+has_image: boolean, prices: ProductPrices, 
+/**
+ * Manufacturer's suggested retail price (USD), as a decimal string, or `None` when
+ * unknown. A **retail list** price curated from WotC announcements (no feed carries
+ * it) — kept separate from the TCGCSV *market* prices in `prices`. The SPA hides the
+ * MSRP line when this is absent.
+ */
+msrp: string | null, released_at: string | null, };

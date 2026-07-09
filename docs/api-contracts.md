@@ -139,10 +139,13 @@ plain `{ data: [...] }`.
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
 prices: { usd, usd_foil, eur, tix }, has_image,
-drop_name: string | null, drop_slug: string | null,
+drop_name: string | null, drop_slug: string | null, secret_lair_bonus: boolean,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
-`null` elsewhere) — see the `/sets/{code}/drops` endpoint above.
+`null` elsewhere) — see the `/sets/{code}/drops` endpoint above. `secret_lair_bonus`
+is `true` for a Secret Lair **chase/bonus** card (Scryfall's `sldbonus` promo type) —
+the optional card given with a qualifying drop purchase, which has no sealed product of
+its own, so the SPA marks it and links to its drop rather than a "found in" section.
 
 `PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
 strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
@@ -151,7 +154,11 @@ so the *stored* series stays continuous even on a tick where the version-gated i
 skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
 keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
 grows), so every returned point is a genuine, internally-consistent snapshot and the newest
-day is always included; the underlying `card_price_history` rows are untouched.
+day is always included; the underlying `card_price_history` rows are untouched. The read
+is a single index range scan over `card_price_history` (the unique `(game, card, date)`
+index seeks one card's rows and yields them already date-ordered — no separate sort, no
+timeseries extension); the storage model + why-not-Timescale rationale is in
+`docs/tradeoffs.md` ("Price history & the historic-price chart", issue #297).
 
 ### Search syntax (`q`)
 
@@ -288,11 +295,15 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
 
 `Product = { id, name, set_code, set_name: string | null, product_type, url: string |
-null, has_image, prices: { usd, usd_foil }, released_at: string | null }`. `id` is the
-external (TCGplayer) product id; `url` is the tcgplayer.com product page (for buy-links);
-`has_image` is whether an image is available through the product image proxy. Prices are
-**USD only** — TCGCSV carries no eur/tix (`ProductPrices = { usd, usd_foil }`, decimal
-strings or `null`).
+null, has_image, prices: { usd, usd_foil }, msrp: string | null, released_at: string |
+null }`. `id` is the external (TCGplayer) product id; `url` is the tcgplayer.com product
+page (for buy-links); `has_image` is whether an image is available through the product
+image proxy. Prices are **USD only** — TCGCSV carries no eur/tix (`ProductPrices = { usd,
+usd_foil }`, decimal strings or `null`). `msrp` is the manufacturer's suggested **retail
+list** price (USD decimal string, or `null`) — a separate, curated field from the market
+`prices`: no feed carries sealed-product MSRP, so it comes from a committed, hand-curated
+map (`tcgcsv::msrp`, keyed by TCGplayer product id) and is `null` for products not listed
+there (issue #296).
 
 `ProductPricePoint = { date (YYYY-MM-DD), usd, usd_foil }` — decimal strings exactly as
 stored (any may be `null`), USD only. Same one-row-per-`(product, day)` model + last-real-
@@ -313,20 +324,28 @@ with the membership bucket (`"contains"` / `"booster"` / `"variable"`) and a `fo
 
 `ProductCardEntry = { card: Card, membership, foil, exclusive }` is the reverse wrapper
 (the `.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
-bucket, the foil-only flag, and `exclusive` (a `booster` card pullable from this product's
-booster family but from no *other* booster family in the set — `false` for any non-`booster`
-card, a non-booster product, or a set with no other booster family to compare against). A
-card that is both contained in and pullable from the same product reports its **strongest**
-membership (lowest rank), so it shows once, in the "found in" group. The by-card-id lookups
-are chunked (`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival"
-bundles reference thousands of cards — can't blow SQLite's per-statement bind limit.
+bucket, the foil-only flag, and `exclusive` (a `booster` card the product's booster line yields
+but no *other* booster family in the set can — a collector booster's special printings). The
+family judged is the product's **own** for a standalone booster, or, for a **bundle / gift box**,
+the premium booster it *contains* (Collector, else a generic special booster like Final
+Fantasy's Chocobo booster — issue #290): so a gift bundle's collector-only cards split out ahead
+of the shared play pool. `false` for any non-`booster` card, a bundle wrapping only
+play/set/draft boosters, or a set with no other booster family to compare against. A card that
+is both contained in and pullable from the same product reports its **strongest** membership
+(lowest rank), so it shows once, in the "found in" group. The by-card-id lookups are chunked
+(`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival" bundles reference
+thousands of cards — can't blow SQLite's per-statement bind limit.
 
-`ProductCardSection = { key, total }` (the `.../cards/sections` endpoint) is the display-
-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the value the
-`?section` filter takes), `total` its card count. Only non-empty sections are returned, in
-display order — so the SPA renders one independently-paginated block per section (issue #224)
-and knows each's size without fetching its cards. The four sections are the membership buckets
-with the `booster` pool split by `exclusive`; their combined `total` is the whole card count.
+`ProductCardSection = { key, total, booster_family }` (the `.../cards/sections` endpoint) is
+the display-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the
+value the `?section` filter takes), `total` its card count. `booster_family` is set **only on
+the `exclusive` section** — a representative `product_type` slug (e.g. `collector_pack`) naming
+the family those cards are exclusive to, so the SPA titles the block after the *contained*
+booster ("Collector Booster exclusives") even for a bundle whose own type carries no family;
+`null` on every other section. Only non-empty sections are returned, in display order — so the
+SPA renders one independently-paginated block per section (issue #224) and knows each's size
+without fetching its cards. The four sections are the membership buckets with the `booster`
+pool split by `exclusive`; their combined `total` is the whole card count.
 
 `ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
 (the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is

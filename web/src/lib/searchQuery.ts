@@ -131,6 +131,41 @@ export function upsertFilter(
   return base ? `${base} ${token}` : token
 }
 
+/**
+ * Whether a non-negated `key:value` flag token is present — for multi-valued keys like
+ * `is:`, where several values coexist (`is:foil is:promo`) and each toggle owns only
+ * its own value, never the whole key. Value comparison is case-insensitive.
+ */
+export function hasFlag(query: string, keys: readonly string[], value: string): boolean {
+  const wanted = value.toLowerCase()
+  for (const token of tokenizeQuery(query)) {
+    const parsed = parseToken(token)
+    if (parsed && keyMatches(parsed, keys, [':']) && parsed.value.toLowerCase() === wanted)
+      return true
+  }
+  return false
+}
+
+/**
+ * Add or remove a single `key:value` flag token, leaving the key's other values (and
+ * negated tokens) untouched — the multi-valued counterpart of upsertFilter.
+ */
+export function setFlag(
+  query: string,
+  keys: readonly string[],
+  canonicalKey: string,
+  value: string,
+  on: boolean,
+): string {
+  const wanted = value.toLowerCase()
+  const kept = tokenizeQuery(query).filter((token) => {
+    const parsed = parseToken(token)
+    return !(parsed && keyMatches(parsed, keys, [':']) && parsed.value.toLowerCase() === wanted)
+  })
+  if (on) kept.push(`${canonicalKey}:${value}`)
+  return join(kept)
+}
+
 /** The `{ min, max }` of a numeric range filter, read from its `>`/`>=` and `<`/`<=`
  * tokens (empty string when a bound isn't set). */
 export function readRange(query: string, keys: readonly string[]): { min: string; max: string } {

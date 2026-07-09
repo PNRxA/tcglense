@@ -37,9 +37,9 @@ interface RequestOptions {
 
 /**
  * Encode the shared list-endpoint query params in one place. Keys are emitted in a fixed
- * order (page, page_size, q, sort, dir, set, include_related, name, drop) and falsy values
- * are skipped (a 0 page, empty query, or false flag drops out). Returns '' or a leading
- * `?…` string.
+ * order (page, page_size, q, sort, dir, set, include_related, name, drop, bulk_max_cents)
+ * and falsy values are skipped (a 0 page, empty query, or false flag drops out). Returns
+ * '' or a leading `?…` string.
  */
 export function listQuery(params: {
   page?: number
@@ -51,6 +51,7 @@ export function listQuery(params: {
   includeRelated?: boolean
   name?: string
   drop?: string
+  bulkMaxCents?: number
 }): string {
   const search = new URLSearchParams()
   if (params.page) search.set('page', String(params.page))
@@ -62,6 +63,9 @@ export function listQuery(params: {
   if (params.includeRelated) search.set('include_related', 'true')
   if (params.name) search.set('name', params.name)
   if (params.drop) search.set('drop', params.drop)
+  // A bulk cutoff of 0 is meaningful (nothing counts as bulk), so guard on presence
+  // rather than truthiness — unlike the other params above.
+  if (params.bulkMaxCents != null) search.set('bulk_max_cents', String(params.bulkMaxCents))
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }

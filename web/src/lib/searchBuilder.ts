@@ -10,7 +10,15 @@
 // rewrites the key's `>=`/`<=` tokens, so an unusual hand-typed form for that same key
 // (`mv:even`, `mv=3`) is replaced once the range control is used.
 
-import { readFilter, readRange, removeFilter, setRange, upsertFilter } from './searchQuery'
+import {
+  hasFlag,
+  readFilter,
+  readRange,
+  removeFilter,
+  setFlag,
+  setRange,
+  upsertFilter,
+} from './searchQuery'
 
 // --- Option lists (value is the token value; '' means "Any", i.e. no filter) ---------
 
@@ -67,6 +75,18 @@ export const FORMAT_OPTIONS: readonly { value: string; label: string }[] = [
   { value: 'oldschool', label: 'Old School' },
 ]
 
+/**
+ * The `is:` predicates the panel offers as toggles. Each toggle owns only its own
+ * `is:<value>` token — other `is:` values (hand-typed `is:mdfc`, …) are left alone.
+ */
+export const CARD_FLAG_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: 'foil', label: 'Foil' },
+  { value: 'promo', label: 'Promo' },
+  { value: 'reprint', label: 'Reprint' },
+  { value: 'fullart', label: 'Full art' },
+  { value: 'reserved', label: 'Reserved list' },
+]
+
 // --- Key groups each control owns (aliases the backend accepts) ----------------------
 
 const COLOR_KEYS = ['c', 'color', 'colors'] as const
@@ -75,6 +95,12 @@ const RARITY_KEYS = ['r', 'rarity'] as const
 const MV_KEYS = ['mv', 'cmc', 'manavalue'] as const
 const FORMAT_KEYS = ['f', 'format', 'legal'] as const
 const USD_KEYS = ['usd'] as const
+const ORACLE_KEYS = ['o', 'oracle'] as const
+const SET_KEYS = ['s', 'set', 'e', 'edition'] as const
+const ARTIST_KEYS = ['a', 'artist'] as const
+const POW_KEYS = ['pow', 'power'] as const
+const TOU_KEYS = ['tou', 'toughness'] as const
+const IS_KEYS = ['is'] as const
 
 const WUBRG = ['w', 'u', 'b', 'r', 'g']
 
@@ -192,9 +218,83 @@ export function setUsd(query: string, range: RangeSelection): string {
   return setRange(query, USD_KEYS, 'usd', range.min, range.max)
 }
 
+// --- Power / toughness (ranges) ------------------------------------------------------
+
+export function getPower(query: string): RangeSelection {
+  return readRange(query, POW_KEYS)
+}
+
+export function setPower(query: string, range: RangeSelection): string {
+  return setRange(query, POW_KEYS, 'pow', range.min, range.max)
+}
+
+export function getToughness(query: string): RangeSelection {
+  return readRange(query, TOU_KEYS)
+}
+
+export function setToughness(query: string, range: RangeSelection): string {
+  return setRange(query, TOU_KEYS, 'tou', range.min, range.max)
+}
+
+// --- Free-text filters (oracle text, set code, artist) --------------------------------
+
+/** Strip the surrounding quotes of a quoted filter value so the input shows plain text. */
+function unquote(value: string): string {
+  return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1)
+    : value
+}
+
+/**
+ * Make a typed value safe as a single token: drop quote characters (they'd sever the
+ * token) and quote the whole value when it contains whitespace so the tokenizer keeps
+ * it intact. A whitespace-only value counts as empty (clears the filter).
+ */
+function quoteTextValue(value: string): string {
+  const clean = value.replace(/"/g, '')
+  if (!clean.trim()) return ''
+  return /\s/.test(clean) ? `"${clean}"` : clean
+}
+
+export function getOracleText(query: string): string {
+  return unquote(readFilter(query, ORACLE_KEYS)?.value ?? '')
+}
+
+export function setOracleText(query: string, value: string): string {
+  return upsertFilter(query, ORACLE_KEYS, 'o', ':', quoteTextValue(value))
+}
+
+export function getSetCode(query: string): string {
+  return unquote(readFilter(query, SET_KEYS)?.value ?? '')
+}
+
+export function setSetCode(query: string, value: string): string {
+  return upsertFilter(query, SET_KEYS, 's', ':', quoteTextValue(value))
+}
+
+export function getArtist(query: string): string {
+  return unquote(readFilter(query, ARTIST_KEYS)?.value ?? '')
+}
+
+export function setArtist(query: string, value: string): string {
+  return upsertFilter(query, ARTIST_KEYS, 'a', ':', quoteTextValue(value))
+}
+
+// --- Card flags (`is:` toggles) --------------------------------------------------------
+
+/** Which of the offered `is:` flags are present in the query. */
+export function getCardFlags(query: string): string[] {
+  return CARD_FLAG_OPTIONS.filter((o) => hasFlag(query, IS_KEYS, o.value)).map((o) => o.value)
+}
+
+/** Turn a single `is:` flag on or off, leaving the key's other values untouched. */
+export function setCardFlag(query: string, flag: string, on: boolean): string {
+  return setFlag(query, IS_KEYS, 'is', flag, on)
+}
+
 // --- Aggregate helpers ---------------------------------------------------------------
 
-// The six key-groups the builder owns — the single source of truth for both the active
+// The key-groups the builder owns — the single source of truth for both the active
 // count and Clear, so the two never disagree about what counts as builder-owned.
 const BUILDER_KEY_GROUPS = [
   COLOR_KEYS,
@@ -203,6 +303,12 @@ const BUILDER_KEY_GROUPS = [
   MV_KEYS,
   FORMAT_KEYS,
   USD_KEYS,
+  ORACLE_KEYS,
+  SET_KEYS,
+  ARTIST_KEYS,
+  POW_KEYS,
+  TOU_KEYS,
+  IS_KEYS,
 ] as const
 
 /**
