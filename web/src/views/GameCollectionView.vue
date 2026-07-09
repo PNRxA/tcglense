@@ -211,7 +211,7 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
            headings below offset against its fixed height (their sticky `top-15`),
            mirroring the catalog game view. -->
       <StickySearchBar class="mb-6 flex flex-wrap items-center gap-3">
-        <!-- Which sets to list — the DropViewToggle-style segmented control. -->
+        <!-- Which sets to list — the GroupViewToggle-style segmented control. -->
         <div class="bg-muted text-muted-foreground inline-flex shrink-0 rounded-md p-0.5 text-sm">
           <button
             type="button"

@@ -37,7 +37,7 @@ mod write;
 mod tests;
 
 pub use read::{get_wishlist_entry, list_wishlist, wishlist_counts, wishlist_summary};
-pub use sets::{wishlist_set_drops, wishlist_sets};
+pub use sets::{wishlist_set_drops, wishlist_set_subtypes, wishlist_sets};
 pub use write::set_wishlist_entry;
 
 /// The user's wish-list row for a card, if any. Shared by the get/set entry handlers.

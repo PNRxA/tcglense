@@ -26,11 +26,12 @@ use crate::{
         catalog::{
             card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
             get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
-            list_set_drops, list_sets, product_card_sections, product_cards, product_contents,
-            product_facets, product_image, product_prices, set_icon,
+            list_set_drops, list_set_subtypes, list_sets, product_card_sections, product_cards,
+            product_contents, product_facets, product_image, product_prices, set_icon,
         },
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_sets, collection_summary,
+            MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_set_subtypes, collection_sets,
+            collection_summary,
             delete_collection_source, export_collection, get_collection_entry,
             get_collection_source, get_import_job, import_collection, import_collection_csv,
             list_collection, owned_counts, save_collection_source, set_collection_entry,
@@ -44,7 +45,7 @@ use crate::{
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
-            wishlist_set_drops, wishlist_sets, wishlist_summary,
+            wishlist_set_drops, wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
     },
     state::AppState,
@@ -113,6 +114,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/sets/{code}/drops",
             get(collection_set_drops),
         )
+        // The same owned set grouped by card sub-type (treatment) — the collection mirror
+        // of the catalog's set-subtypes endpoint, scoped to what the user owns.
+        .route(
+            "/api/collection/{game}/sets/{code}/subtypes",
+            get(collection_set_subtypes),
+        )
         // Batch owned-counts lookup for the browse-grid badges (external ids in, owned
         // counts out). POST so a big page's id list can't blow the URL length.
         .route("/api/collection/{game}/owned", post(owned_counts))
@@ -155,6 +162,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/wishlist/{game}/sets/{code}/drops",
             get(wishlist_set_drops),
         )
+        // The same wanted set grouped by card sub-type (treatment) — the wish-list mirror
+        // of the catalog's set-subtypes endpoint, scoped to what the user wants.
+        .route(
+            "/api/wishlist/{game}/sets/{code}/subtypes",
+            get(wishlist_set_subtypes),
+        )
         // Batch wanted-counts lookup for the browse-grid badges/ghosts (external ids
         // in, wanted counts out). POST so a big page's id list can't blow the URL
         // length. `/counts`, not `/owned` — a wish list doesn't track ownership.
@@ -195,6 +208,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
         .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
         .route("/api/games/{game}/sets/{code}/drops", get(list_set_drops))
+        .route(
+            "/api/games/{game}/sets/{code}/subtypes",
+            get(list_set_subtypes),
+        )
         .route("/api/games/{game}/cards", get(list_cards))
         // Distinct card-name autocomplete for the collection quick-add box. A sibling
         // of `/cards` (not `/cards/{name}`) so it never collides with `/cards/{id}`.

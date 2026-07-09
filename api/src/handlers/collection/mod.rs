@@ -45,14 +45,14 @@ pub use import::{
     import_collection_csv, save_collection_source, sync_collection_source,
 };
 pub use read::{collection_summary, get_collection_entry, list_collection, owned_counts};
-pub use sets::{collection_set_drops, collection_sets};
+pub use sets::{collection_set_drops, collection_set_subtypes, collection_sets};
 pub use write::set_collection_entry;
 
 // The entity-agnostic DTOs, params, and constants (shared with `handlers::wishlist`).
 pub(crate) use crate::handlers::shared::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
-    CollectionSort, CollectionSummary, ListParams, MAX_OWNED_IDS, OwnedCountsRequest,
-    OwnedCountsResponse, SetQuantitiesRequest, SummaryParams,
+    CollectionSort, CollectionSubtypeGroup, CollectionSummary, ListParams, MAX_OWNED_IDS,
+    OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SummaryParams,
 };
 
 /// Hard ceiling on an uploaded collection CSV, enforced as a route body limit (see the

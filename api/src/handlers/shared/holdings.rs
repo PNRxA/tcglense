@@ -91,6 +91,20 @@ pub struct CollectionDropGroup {
     pub cards: Vec<CollectionEntry>,
 }
 
+/// One set sub-type (card treatment) with the signed-in user's owned cards in it — the
+/// collection/wish-list mirror of the catalog's `SubtypeGroupResponse`, each card carrying
+/// its owned counts. Same shape as [`CollectionDropGroup`]; the enclosing
+/// [`Page`](crate::handlers::shared::Page) paginates over these (`total` is a sub-type count).
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct CollectionSubtypeGroup {
+    /// Stable slug (`normal`/`borderless`/`showcase`/…) for anchors/links.
+    pub slug: Option<String>,
+    pub title: String,
+    pub card_count: usize,
+    pub cards: Vec<CollectionEntry>,
+}
+
 /// Just the owned counts for one card — what the card-detail controls read and write.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
@@ -135,6 +149,9 @@ pub struct CollectionSet {
     pub icon_svg_uri: Option<String>,
     pub parent_set_code: Option<String>,
     pub has_drops: bool,
+    /// Whether the user's owned cards in this set include any special treatment, so the
+    /// tile can offer the by-sub-type view (mirrors the catalog set's `has_subtypes`).
+    pub has_subtypes: bool,
     /// Distinct cards owned in this set.
     pub owned_cards: i64,
     /// Total copies owned (regular + foil) in this set.
@@ -397,6 +414,9 @@ struct SetAgg {
     /// `usd_foil`); its `any_priced` flag reports `null` for an all-unpriced set
     /// rather than `$0.00`, matching the summary.
     valuation: Valuation,
+    /// Whether any owned card in the set has a special treatment — so the tile can offer
+    /// the by-sub-type view. Derived from the owned cards already in hand (no query).
+    has_subtypes: bool,
 }
 
 /// Aggregate owned holdings into per-set tiles: count distinct owned cards + total
@@ -412,6 +432,8 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
     let mut agg: HashMap<String, SetAgg> = HashMap::new();
     for (item, card) in rows {
         let Some(card) = card else { continue };
+        // Classify the treatment before the card's fields move into the map entry.
+        let is_special = crate::scryfall::subtypes::is_special(&card);
         // Read the card's prices before its set_code/set_name move into the map entry,
         // so the borrow is clean regardless of aggregation order.
         let usd = card.price_usd.as_deref();
@@ -420,6 +442,7 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
             fallback_name: card.set_name,
             ..SetAgg::default()
         });
+        entry.has_subtypes |= is_special;
         entry.owned_cards += 1;
         entry.owned_copies += i64::from(item.quantity()) + i64::from(item.foil_quantity());
         entry
@@ -438,6 +461,7 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
                 owned_cards,
                 owned_copies,
                 valuation,
+                has_subtypes,
             } = agg;
             // Dress the tile with the game's set metadata; a set present in a holding but
             // absent from card_sets (e.g. metadata not yet synced) degrades to a bare tile
@@ -452,6 +476,7 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
                 icon_svg_uri: m.and_then(|m| m.icon_svg_uri.clone()),
                 parent_set_code: m.and_then(|m| m.parent_set_code.clone()),
                 has_drops: crate::scryfall::drops::has_drops(game, &code),
+                has_subtypes,
                 owned_cards,
                 owned_copies,
                 owned_value_usd: valuation.total_usd(),
