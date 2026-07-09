@@ -209,9 +209,14 @@ function warmSection(value: string) {
         </NavigationMenuContent>
       </NavigationMenuItem>
 
-      <!-- API docs: a plain link (no dropdown) to the in-app Scalar reference (issue #284). -->
+      <!-- API docs: a plain link (no dropdown) to the in-app Scalar reference (issue #284).
+           NavigationMenuLink's base class is `flex flex-col gap-1` (built for stacked
+           dropdown entries); the trigger style doesn't override the direction, so without
+           `flex-row` the icon stacks ABOVE the label and "API" sits lower than its sibling
+           triggers. `gap-0` drops the leaked column gap so the icon's `mr-1.5` is the only
+           spacing — matching the Products/Collection/Wish-list triggers exactly. -->
       <NavigationMenuItem>
-        <NavigationMenuLink as-child :class="navigationMenuTriggerStyle()">
+        <NavigationMenuLink as-child :class="[navigationMenuTriggerStyle(), 'flex-row gap-0']">
           <RouterLink to="/docs" @pointerenter="warm('/docs')" @focusin="warm('/docs')">
             <Code class="mr-1.5 size-4" aria-hidden="true" />
             API
