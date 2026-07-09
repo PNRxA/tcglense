@@ -188,6 +188,15 @@ const router = createRouter({
       name: 'verify-email',
       component: () => import('@/views/VerifyEmailView.vue'),
     },
+    // Catch-all 404. Kept last so every explicit route above wins first; the greedy
+    // `/:pathMatch(.*)*` matches any otherwise-unrouted path (its param holds the
+    // segments, if a future view wants to echo the attempted path). Public and
+    // lazy-loaded; the view sets `noindex` so soft-404s stay out of the index.
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('@/views/NotFoundView.vue'),
+    },
   ],
   // Restore the saved scroll position on back/forward; otherwise start a new page at the
   // top. A query/hash-only change to the SAME path (pagination via router.replace, the
