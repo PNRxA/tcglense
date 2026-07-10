@@ -95,19 +95,24 @@ state or plan to scale to more than one replica.
    `Cache-Control` the API already emits (the origin sends the right header per route;
    these just tell Cloudflare which paths are cacheable):
 
-   **Rule 1 — cache the catalog, images, sitemaps, and API docs.** *Eligibility* →
+   **Rule 1 — cache the catalog, images, sitemaps, API docs, and the dataset mirror.** *Eligibility* →
    Eligible for cache; *Edge TTL* → "Use cache-control header if present, bypass if
    not"; *Browser TTL* → Respect origin. Expression (the `/api/sitemap*` lines cover
    the legacy aliases; the canonical root `/sitemap.xml` + `/sitemaps/*` paths — issue
    #294 — fall under Rule 3, which already respects the origin's sitemap
    `Cache-Control`; the `/api/openapi.json` line covers the public OpenAPI document —
    issue #284; the interactive reference is the SPA's `/docs` route, static web assets
-   that need no API rule):
+   that need no API rule; the `/api/mirror/*` line — issue #192 — makes Cloudflare honor
+   the dataset mirror's per-route `Cache-Control` and matters only on a mirror host
+   (`MIRROR_ENABLED=true`, like the public site), a harmless no-op otherwise — keep it
+   under this *honor-origin* rule, **never a fixed Edge TTL**, or the mirror's
+   deliberately shorter bulk-file TTL collapses into the catalog's):
    ```
    (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
    or http.request.uri.path eq "/api/openapi.json"
+   or starts_with(http.request.uri.path, "/api/mirror/")
    ```
 
    **Rule 2 — bypass everything per-user or live.** *Eligibility* → Bypass cache.

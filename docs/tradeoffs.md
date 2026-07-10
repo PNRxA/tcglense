@@ -355,16 +355,26 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   mirror host's posture). Serving the mirror is separate: `MIRROR_ENABLED=true` exposes
   `/api/mirror/*` (`handlers::mirror`), which **streams each file from upstream on
   demand** (no disk persistence — the same fetch-and-serve model as `CDN_MODE`) and sets
-  CDN-cacheable headers so a fronting CDN absorbs the repeats. It's off by default so an
+  CDN-cacheable headers so a fronting CDN absorbs the repeats — but only once a Cloudflare
+  **Cache Rule** marks `/api/mirror/*` edge-eligible; Cloudflare bypasses `/api/…` by
+  default, so the deploy guides fold the mirror into the *honor-origin* catalog rule
+  (README *Behind a CDN*), and without that rule every consumer pull re-streams from
+  upstream. It's off by default so an
   ordinary self-host doesn't become an open proxy to the upstreams; the public mirror
   runs `MIRROR_ENABLED=true` + `SYNC_FROM_UPSTREAM=true`. Trade-offs: (1) the mirror
   fetches on the shared gzip-decoding client, so the Scryfall/TCGCSV JSON is re-served
   **decompressed** (a CDN re-compresses egress; MTGJSON's `.gz` + TCGCSV's `.7z` pass
   through as opaque bytes) — bounded-memory streamed, but the origin→CDN fill transfers
-  the uncompressed size once per cache period; (2) the bulk-**file** cache TTL is
+  the uncompressed size once per cache period, and because that decompressed Scryfall bulk
+  file is large and steadily growing, watch it against Cloudflare's max cacheable object
+  size (512 MB on the Free/Pro/Business plans), above which the edge silently bypasses
+  that one route and re-streams it on every pull; (2) the bulk-**file** cache TTL is
   deliberately **shorter** than the bulk-data **catalog** TTL, so a consumer can never
   read a fresh `updated_at` while the CDN still holds a stale file (which it would then
-  stamp as current and never re-pull); (3) MTGJSON stays ETag-gated end-to-end — the
+  stamp as current and never re-pull) — a guarantee that holds only while the CDN honors
+  each route's `s-maxage`, which is why the deploy rule keeps the mirror under
+  *honor-origin* and never a fixed Edge TTL (one fixed TTL would collapse the file and
+  catalog windows into one and could invert the guarantee); (3) MTGJSON stays ETag-gated end-to-end — the
   mirror forwards `If-None-Match` and relays the upstream `304` (its cache is
   `must-revalidate`), so an unchanged file is still a cheap conditional; (4) the mirror
   is a public read proxy to fixed upstream hosts with `kind`/path inputs sanitised
