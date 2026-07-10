@@ -9,8 +9,15 @@
 
 use std::path::PathBuf;
 
+use axum::http::header::{ETAG, IF_NONE_MATCH};
+
 use super::harness::*;
-use crate::{build_router, config::Config, state::AppState};
+use crate::{
+    build_router,
+    catalog::{fingerprint_sync, fingerprints},
+    config::Config,
+    state::AppState,
+};
 
 /// Build the real router over a fresh migrated state with `mirror_enabled` (and,
 /// optionally, `web_root`) set. `web_root` need not exist on disk — `ServeDir` is
@@ -47,6 +54,7 @@ async fn mirror_routes_are_absent_by_default() {
         "/api/mirror/scryfall/file/default_cards",
         "/api/mirror/mtgjson/AllPrintings.json.gz",
         "/api/mirror/tcgcsv/last-updated.txt",
+        "/api/mirror/fingerprints/mtg",
     ] {
         let (status, _headers, _body) = send(&app, get(path)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path} should be absent");
@@ -89,6 +97,84 @@ async fn enabled_mirror_rejects_tcgcsv_path_traversal_without_fetching() {
             "expected a JSON error for {path}"
         );
     }
+}
+
+/// Build the real router with the mirror enabled and one fingerprint seeded into the
+/// live match index, so the fingerprint export endpoint has a real payload to serve.
+async fn app_with_fingerprint(external_id: &str, hash: &[u8; 32]) -> Router {
+    let db = crate::test_support::migrated_memory_db().await;
+    let config = Config {
+        mirror_enabled: true,
+        ..crate::test_support::test_config()
+    };
+    let http = reqwest::Client::builder().build().expect("http client");
+    let image_http = reqwest::Client::builder().build().expect("image client");
+    let state = AppState::new(config, db, http, image_http, None).expect("assemble app state");
+    fingerprints::upsert(
+        &state.db,
+        "mtg",
+        external_id,
+        0,
+        1,
+        hash,
+        "small",
+        "src-hash",
+    )
+    .await
+    .expect("seed fingerprint");
+    let index = fingerprints::load_index(&state.db, 1)
+        .await
+        .expect("load index");
+    state.set_fingerprint_index(index);
+    build_router(state)
+}
+
+#[tokio::test]
+async fn enabled_mirror_serves_a_parseable_fingerprint_payload() {
+    // The export is served straight from the in-memory index (no upstream), as the
+    // compact binary the import path parses — so this round-trips through the real parser.
+    let hash = [9u8; 32];
+    let app = app_with_fingerprint("card-uuid-1", &hash).await;
+    let (status, headers, body) = send_bytes(&app, get("/api/mirror/fingerprints/mtg")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type(&headers), Some("application/octet-stream"));
+    assert!(
+        headers.get(ETAG).is_some(),
+        "the payload must carry an ETag"
+    );
+    let parsed = fingerprint_sync::parse(&body).expect("payload parses");
+    assert_eq!(parsed.algo_version, 1);
+    assert_eq!(parsed.rows.len(), 1);
+    assert_eq!(parsed.rows[0].external_id, "card-uuid-1");
+    assert_eq!(parsed.rows[0].hash, hash);
+}
+
+#[tokio::test]
+async fn fingerprint_index_honours_a_conditional_request() {
+    // A consumer that already has the current index sends its stored ETag and gets a
+    // bodyless 304 — the mechanism that keeps an unchanged index off the wire.
+    let app = app_with_fingerprint("card-uuid-1", &[9u8; 32]).await;
+    let (status, headers, _) = send_bytes(&app, get("/api/mirror/fingerprints/mtg")).await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = headers
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag")
+        .to_string();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/mirror/fingerprints/mtg")
+        .header(IF_NONE_MATCH, &etag)
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, body) = send_bytes(&app, req).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(body.is_empty(), "a 304 carries no body");
+    assert_eq!(
+        headers.get(ETAG).and_then(|v| v.to_str().ok()),
+        Some(etag.as_str())
+    );
 }
 
 #[tokio::test]

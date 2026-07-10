@@ -1,13 +1,13 @@
 import { computed, reactive, ref, watch, type Ref } from 'vue'
-import { getCardNames, type Card, type CollectionQuantities } from '@/lib/api'
+import type { Card, CollectionQuantities, ScanMatch as ApiScanMatch } from '@/lib/api'
 import { useCardPrintingsByName } from '@/composables/useQuickAdd'
 import { useCollectionEntryQuery, useSetCollectionEntryMutation } from '@/composables/useCollection'
+import { useScanMutation } from '@/composables/useScan'
 import { matchPrinting } from '@/lib/scan/match'
-import { cleanCardName, nameQueryCandidates, parseSetHint, type SetHint } from '@/lib/scan/ocr'
-import { deconfuseDigits, namePoolPrefix, ocrSimilarity, rankNames } from '@/lib/scan/similarity'
+import { parseSetHint, type SetHint } from '@/lib/scan/ocr'
 import type { ScanCapture } from '@/composables/useCardScanner'
 
-// Orchestrates one scanning session: turn an OCR capture into a confirmed catalog match,
+// Orchestrates one scanning session: turn a captured card into a confirmed catalog match,
 // let the user tweak the printing/counts, and commit it to the collection when the *next*
 // card is shown (the rapid-add rhythm). It deliberately does NOT use useOwnedCountEditor:
 // that editor auto-saves 350ms after each change, but a scanner must stay tentative until
@@ -17,11 +17,12 @@ import type { ScanCapture } from '@/composables/useCardScanner'
 
 /** How the resolved match is being edited before it's committed. */
 export interface ScanMatch {
-  /** Cleaned OCR title text — drives same-card detection and the "read as" hint. */
+  /** The visually-matched card name (the "read as" hint shown to the user). */
   ocrName: string
-  /** Set/collector hints parsed from the bottom strip (advisory printing pre-select). */
+  /** Set/collector hints parsed from the OCR'd bottom strip (printing pre-select). */
   hint: SetHint
-  /** Catalog name candidates from the autocomplete (the user can correct the pick). */
+  /** Catalog name candidates (the distinct names of the top visual matches) the user
+   * can correct the pick to. */
   candidates: string[]
   /** The chosen catalog name (drives the printings query). */
   name: string
@@ -41,21 +42,15 @@ export interface SessionEntry {
 /** Regular copies a fresh scan proposes — you showed the camera one card. */
 const SCANNED_COPIES = 1
 
-/** How many name candidates to pull for the confirm/correct dropdown. */
+/** How many name candidates to keep for the confirm/correct dropdown (from the distinct
+ * names of the top visual matches). */
 const NAME_CANDIDATE_LIMIT = 8
-
-/** A wider pool for the fuzzy recovery query, when no exact substring matched (the server
- * caps this at 25). Ranking then picks the closest read out of the larger net. */
-const FUZZY_POOL_LIMIT = 25
-
-/** Lowest OCR-similarity we'll trust for a fuzzy-recovered name. Below this the closest
- * pool entry is more likely noise than the card, so we report it unmatched instead. */
-const FUZZY_MATCH_THRESHOLD = 0.62
 
 export type CaptureOutcome = 'matched' | 'same' | 'unmatched' | 'busy'
 
 export function useScanSession(game: Ref<string>) {
   const mutation = useSetCollectionEntryMutation()
+  const scanMutation = useScanMutation()
 
   // Monotonic id per committed entry (stable session-log key across each unshift).
   let nextEntryId = 0
@@ -68,9 +63,15 @@ export function useScanSession(game: Ref<string>) {
   const selectedId = ref('')
   const seeded = ref(false)
   const resolving = ref(false)
-  const lastUnmatched = ref<string | null>(null)
+  // True when the last capture matched no catalog card (nothing within the visual
+  // confidence radius) — drives the "not recognised" nudge.
+  const unrecognized = ref(false)
   const commitError = ref(false)
   const log = ref<SessionEntry[]>([])
+  // The ranked visual matches from the last capture (nearest first) — shown as a
+  // pickable strip so the user can correct a weak/wrong top match by tapping the right
+  // card (its art, not just a name).
+  const candidates = ref<ApiScanMatch[]>([])
 
   // Absolute counts to write on commit: owned + the scanned copy, then user-adjustable.
   const target = reactive<CollectionQuantities>({ quantity: 0, foil_quantity: 0 })
@@ -151,7 +152,7 @@ export function useScanSession(game: Ref<string>) {
 
   function startMatch(next: ScanMatch) {
     match.value = next
-    lastUnmatched.value = null
+    unrecognized.value = false
     selectedName.value = next.name
     selectId('')
   }
@@ -162,6 +163,14 @@ export function useScanSession(game: Ref<string>) {
     match.value = { ...match.value, name }
     selectedName.value = name
     selectId('')
+  }
+
+  /** Pick one of the ranked visual candidates (a tap on the pick strip): switch to its
+   * name if different, then select that exact printing. */
+  function pickCandidate(card: Card) {
+    if (!match.value) return
+    if (card.name !== match.value.name) setName(card.name)
+    selectId(card.id)
   }
 
   function adjust(which: 'quantity' | 'foil_quantity', delta: number) {
@@ -175,6 +184,7 @@ export function useScanSession(game: Ref<string>) {
     selectId('')
     seeded.value = false
     commitError.value = false
+    candidates.value = []
   }
 
   /** Drop the on-screen match without adding it (a misread you don't want). */
@@ -182,43 +192,23 @@ export function useScanSession(game: Ref<string>) {
     clearCurrent()
   }
 
-  async function fetchNames(query: string, limit: number): Promise<string[]> {
-    try {
-      const { data } = await getCardNames(game.value, query, limit)
-      return data
-    } catch {
-      // Transient failure — the caller moves on to the next (broader) query.
-      return []
-    }
+  /** Explicitly add the current match now, then clear the panel for the next card. On a
+   * failed save the panel is kept (with the error) so it can be retried. */
+  async function confirmCurrent(): Promise<void> {
+    await commitCurrent()
+    if (!commitError.value) clearCurrent()
   }
 
-  /**
-   * Resolve an OCR'd title into catalog name candidates, best match first, tolerant of a
-   * slightly wrong read. Three tiers, most-confident first:
-   *  1. Exact-substring queries — the raw read and its leading-word prefixes, then the same
-   *     with OCR digit-for-letter swaps undone (so `Lightn1ng Bolt` still finds the card).
-   *     The first that hits is a real substring match, so its pool is trusted; we only
-   *     re-rank it so the closest name is the default pick.
-   *  2. Recovery — nothing matched as a substring (a *letter* was misread). Pull a wider
-   *     pool off a short prefix and keep it only if the closest name clears the confidence
-   *     bar, so a genuine misread resolves while noise stays unmatched.
-   */
-  async function resolveNames(cleaned: string): Promise<string[]> {
-    const queries = new Set(nameQueryCandidates(cleaned))
-    const deconfused = deconfuseDigits(cleaned)
-    if (deconfused !== cleaned) for (const q of nameQueryCandidates(deconfused)) queries.add(q)
-    for (const query of queries) {
-      const pool = await fetchNames(query, NAME_CANDIDATE_LIMIT)
-      if (pool.length) return rankNames(cleaned, pool)
+  /** The distinct card names of the ranked visual matches, best first, capped — the
+   * correction dropdown (if the top visual match's name is wrong, a runner-up may be
+   * right). */
+  function uniqueNames(matches: ApiScanMatch[]): string[] {
+    const out: string[] = []
+    for (const m of matches) {
+      if (!out.includes(m.card.name)) out.push(m.card.name)
+      if (out.length >= NAME_CANDIDATE_LIMIT) break
     }
-
-    const prefix = namePoolPrefix(cleaned)
-    if (prefix) {
-      const ranked = rankNames(cleaned, await fetchNames(prefix, FUZZY_POOL_LIMIT))
-      const top = ranked[0]
-      if (top && ocrSimilarity(cleaned, top) >= FUZZY_MATCH_THRESHOLD) return ranked
-    }
-    return []
+    return out
   }
 
   /** Write the current match's absolute counts, unless nothing changed. Logs the add with
@@ -262,29 +252,51 @@ export function useScanSession(game: Ref<string>) {
   }
 
   /**
-   * Process a fresh capture. Resolves the OCR'd name against the catalog; if it's a
-   * genuinely different card, commits the one on screen and swaps in the new match. A
-   * capture of the same card (or unreadable text) leaves the current match untouched.
+   * Process a fresh capture. Identifies the card **visually** (its fingerprint → the
+   * match endpoint), and pins the exact printing from the OCR'd set line. If it resolves
+   * to a genuinely different card, it commits the one on screen and swaps in the new
+   * match; the same card (or an unrecognised one) leaves the current match untouched.
    */
   async function handleCapture(capture: ScanCapture): Promise<CaptureOutcome> {
     // Don't advance past a match whose holding is still loading — commit it first.
     if (!currentSettled.value) return 'busy'
-    const cleaned = cleanCardName(capture.nameText)
-    if (cleaned.length < 3) return 'unmatched'
     resolving.value = true
     try {
-      const candidates = await resolveNames(cleaned)
-      const name = candidates[0]
-      if (!name) {
-        lastUnmatched.value = cleaned
+      let matches: ApiScanMatch[]
+      try {
+        const res = await scanMutation.mutateAsync({
+          game: game.value,
+          fingerprints: capture.fingerprints,
+          topK: NAME_CANDIDATE_LIMIT,
+        })
+        matches = res.data
+      } catch {
+        // Transient scan failure (offline, or no index on this instance yet): treat as
+        // unrecognised and leave the current card untouched; the next capture retries.
+        unrecognized.value = true
         return 'unmatched'
       }
+      const name = matches[0]?.card.name
+      if (!name) {
+        unrecognized.value = true
+        return 'unmatched'
+      }
+      // Offer the ranked matches as a pickable strip (refreshed on every capture, so
+      // re-scanning the same card updates the choices too).
+      candidates.value = matches
       if (match.value && name === match.value.name) return 'same'
       await commitCurrent()
       // A failed save keeps the current card on screen rather than silently replacing (and
       // losing) it; the next capture retries the commit once the connection recovers.
       if (commitError.value) return 'busy'
-      startMatch({ ocrName: cleaned, hint: parseSetHint(capture.setText), candidates, name })
+      // Visual match gives identity (name); the OCR'd set line pins the printing via the
+      // existing hint → matchPrinting flow (see the auto-pick watch above).
+      startMatch({
+        ocrName: name,
+        hint: parseSetHint(capture.setText),
+        candidates: uniqueNames(matches),
+        name,
+      })
       return 'matched'
     } finally {
       resolving.value = false
@@ -327,20 +339,23 @@ export function useScanSession(game: Ref<string>) {
     ready,
     resolving,
     ownedError,
+    candidates,
     // session
     log,
     addedCount,
-    lastUnmatched,
+    unrecognized,
     commitError,
     committing,
     // actions
     handleCapture,
     commitCurrent,
+    confirmCurrent,
     discardCurrent,
     selectId,
     setName,
     adjust,
     undo,
     retryOwned,
+    pickCandidate,
   }
 }

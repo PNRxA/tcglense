@@ -15,6 +15,7 @@ flate2 = "1.1.9"
 futures-util = "0.3.32"
 governor = "0.10.4"
 hex = "0.4.3"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 indicatif = "0.18"
 jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto"] }
 nonzero_ext = "0.3.0"

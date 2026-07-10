@@ -347,7 +347,25 @@ alongside `/api/collection/*` and `/api/wishlist/*`.
   `MIRROR_ENABLED` (`false`; serve the `/api/mirror/*` dataset endpoints so other
   instances can pull the datasets from this one — off by default so a self-host isn't
   an open proxy to the upstreams; the public mirror sets it with
-  `SYNC_FROM_UPSTREAM=true`). See `api/.env.example`.
+  `SYNC_FROM_UPSTREAM=true`),
+  `FINGERPRINT_BUILD_ENABLED` (`false`; build the visual-scanner fingerprint index on
+  this instance — a `small`-size, hash-and-discard walk of the whole catalogue, the
+  **one** sanctioned bulk image fetch (the image CDN isn't rate-limited; the shared
+  8-way fetch cap is the only politeness bound). Off by default: an ordinary self-host
+  imports the prebuilt index via the mirror and fetches **zero** images. Only the
+  operator's index-building instance sets it),
+  `FINGERPRINT_IMPORT_ENABLED` (`true`; a self-host imports the prebuilt fingerprint index
+  from the mirror at `DATASET_MIRROR_URL` (which must have `MIRROR_ENABLED=true`) so its
+  scanner works with **zero** image fetches. On by default; ignored when
+  `FINGERPRINT_BUILD_ENABLED` is set (the builder produces the index itself); set `false`
+  to opt out of the scanner / any outbound index pull),
+  `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
+  match index — bump to invalidate every fingerprint and force a rebuild + client
+  cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`8`; how many
+  ranked candidate matches a scan returns for the user to pick from, clamped `1..25`),
+  `FINGERPRINT_MAX_DISTANCE` (`96`; largest Hamming distance of 256 bits still offered as
+  a candidate — generous so a weak/off-angle scan still offers the right card; beyond it
+  a scan resolves to no match). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
   (The Turnstile site key is no longer a web build var — it's the API's runtime
   `TURNSTILE_SITE_KEY`, fetched by the SPA from `GET /api/config`.)

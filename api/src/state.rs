@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection};
 
 use crate::auth::password::hash_password;
 use crate::captcha::Captcha;
+use crate::catalog::fingerprints::FingerprintIndex;
 use crate::catalog::images::ImageCache;
 use crate::collection_import::ProviderSettings;
 use crate::collection_import::jobs::ImportQueue;
@@ -49,6 +50,12 @@ pub struct AppState {
     /// keyed by the access-token user id (in-memory, or Redis-backed; see
     /// [`crate::ratelimit::UserRateLimiter`]).
     pub user_rate_limiters: Arc<UserRateLimiter>,
+    /// The visual scanner's in-memory perceptual-hash match index. Empty until loaded
+    /// from the `card_fingerprint` table at startup (and rebuilt after each build /
+    /// sync pass) by [`crate::tasks`]. Read behind the lock — each scan clones the
+    /// inner `Arc` and matches against it without holding the lock (see
+    /// [`Self::fingerprint_index`]); a rebuild swaps the inner `Arc` wholesale.
+    pub fingerprint_index: Arc<RwLock<Arc<FingerprintIndex>>>,
 }
 
 impl AppState {
@@ -103,6 +110,7 @@ impl AppState {
             captcha,
             rate_limiters,
             user_rate_limiters,
+            fingerprint_index: Arc::new(RwLock::new(Arc::new(FingerprintIndex::default()))),
         })
     }
 
@@ -110,5 +118,25 @@ impl AppState {
     /// backend-specific SQL.
     pub fn dialect(&self) -> crate::db::Dialect {
         crate::db::Dialect::from_backend(self.db.get_database_backend())
+    }
+
+    /// A snapshot of the current fingerprint match index. Clones the inner `Arc` under
+    /// a brief read lock and returns it, so the caller matches against a stable index
+    /// without holding the lock across the (sync, few-ms) Hamming scan — and a
+    /// concurrent rebuild that swaps the inner `Arc` never disturbs an in-flight scan.
+    pub fn fingerprint_index(&self) -> Arc<FingerprintIndex> {
+        self.fingerprint_index
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Swap in a freshly-built fingerprint match index (called after a build / sync
+    /// pass loads the current fingerprints from the table).
+    pub fn set_fingerprint_index(&self, index: FingerprintIndex) {
+        *self
+            .fingerprint_index
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Arc::new(index);
     }
 }

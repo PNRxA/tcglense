@@ -584,8 +584,8 @@ carried over near-verbatim from the audited source, with the sealed-product prov
 - **Image caching:** the proxy mechanics (lazy first-view download to
   `<DATA_DIR>/images`, the `scryfall.io` allow-list, redirects disabled, concurrency
   cap 8, `CDN_MODE`) are in `docs/api-contracts.md`. The posture: a bulk image download
-  is deliberately avoided (hundreds of GB, and against Scryfall's guidelines) — images
-  cache lazily, per view. The image route is public and card ids are enumerable, so
+  is deliberately avoided (hundreds of GB) — images cache lazily, per view. The image
+  route is public and card ids are enumerable, so
   it's open to scripted disk-fill / bandwidth-amplification abuse — there's no per-IP
   rate limit, cache budget, or eviction yet (the same open posture as the dataset
   mirror; the per-IP limiter covers only the auth endpoints). Set icons go through the
@@ -617,3 +617,51 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   half-coloured mana (a couple of Un-set joke cards) has no single mana-font class —
   mana-font renders it via a wrapper `<span class="ms-half">`, which our one-`<i>`-per-
   symbol component doesn't emit, so those tokens fall back to literal `{HW}` text.
+
+## Visual card scanner
+
+- **Approach — perceptual hash, not a learned embedding.** A card is identified by a
+  256-bit DCT perceptual hash (pHash) of its image, matched by Hamming distance. The
+  decisive reason is **cross-implementation parity**: the reference index is built in
+  Rust (`api/src/phash`) and the query is hashed in the browser (`web/src/lib/scan/
+  phash.ts`), and the two must agree closely or the distance is meaningless. Both sides
+  run the *same* integer grayscale + box downsample + DCT against a **shared basis
+  table** (`scripts/gen_phash_basis.py` generates identical f64 constants for both
+  languages), so parity is guaranteed by construction and pinned by golden fixtures in
+  both test suites. A learned embedding would be more robust but would require shipping
+  and running one identical ONNX model on both sides (float-nondeterminism caveats) plus
+  a heavy client bundle — deferred behind the `algo_version` upgrade seam. The trade-off
+  is honesty about accuracy: pHash identifies a card's *art* well but **cannot** separate
+  printings that share art (reprints, borderless, alt-art) — which is exactly why the
+  scanner is **hybrid** (below), not a pHash-only replacement.
+- **Hybrid, not a replacement.** The visual match resolves *identity* (which card); the
+  existing OCR of the collector-number + set line (`lib/scan/match.ts::matchPrinting`)
+  resolves the *exact printing*. Full-card pHash mathematically discards the tiny
+  set-symbol / collector signal that distinguishes reprints, so replacing OCR with pHash
+  would regress printing accuracy — the two are kept complementary.
+- **Storage / NN search — opaque BLOB, no vector extension.** Fingerprints live in a
+  narrow `card_fingerprint` table (never a column on the wide `cards` row) as a 32-byte
+  BLOB/BYTEA, **never queried by content in SQL**. Nearest-neighbour is a brute-force
+  Hamming scan in memory (`FingerprintIndex` in `AppState`, rebuilt after each build/sync)
+  — a few ms over ~90k entries — so there is no pgvector / sqlite-vec, no dialect-specific
+  popcount, and behaviour is identical on SQLite and Postgres (the DB only ever does
+  insert/upsert/select-all). Query-time cost to the (weak) prod Postgres is therefore
+  **zero**; only the off-request-path enumerate-pending walk touches it, as an
+  index-bounded `cards.id` range scan.
+- **Sourcing — the one sanctioned bulk image fetch.** Building the index needs every
+  card image once, which collides with the "never bulk-download" posture. Resolved by
+  making the build **opt-in and off by default** (`FINGERPRINT_BUILD_ENABLED`): only the
+  operator's index-building instance runs it, at the smallest useful size (`small`,
+  146×204), through the same downloader (`ImageCache::fetch_bytes`, the shared 8-way cap
+  + host allow-list), **hashing and discarding** each image (nothing written to
+  `<DATA_DIR>/images`). The derived index (~3 MB for ~90k) is distributed via the
+  existing dataset mirror, so every ordinary self-host imports it and fetches **zero**
+  images — the guarantee stays literally true for self-hosts. This is within Scryfall's
+  guidelines: their documented rate limit governs the **API** (`api.scryfall.com`); the
+  **image CDN** (`cards.scryfall.io`) is **not** rate-limited, and Scryfall supports
+  resolving many images from bulk-data URIs. So the build applies no artificial
+  per-request delay — the shared 8-way concurrency cap is its only politeness bound.
+- **Privacy.** Matching is server-side but the photo never leaves the device: the browser
+  computes the 32-byte fingerprint locally and uploads only that (a small, non-reversible
+  vector) to `POST /api/games/{game}/scan`. The endpoint is auth-gated (scanning builds a
+  signed-in user's collection) and `no-store`.

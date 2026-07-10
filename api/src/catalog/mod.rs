@@ -6,6 +6,8 @@
 //! to a provider in those dispatchers. Everything downstream (entities, handlers,
 //! routes, the SPA) is already generic over `game`.
 
+pub mod fingerprint_sync;
+pub mod fingerprints;
 pub mod images;
 
 use reqwest::Client;

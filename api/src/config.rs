@@ -147,6 +147,33 @@ pub struct Config {
     /// scale up"). Unset = a generic fallback (see
     /// [`Self::signups_disabled_notice`]). Shown to end users, so **not** a secret.
     pub signups_disabled_message: Option<String>,
+    /// Master switch for the **opt-in** visual-scanner fingerprint build (see
+    /// [`crate::catalog::fingerprints`]). Default `false`: an ordinary self-host never
+    /// fetches card images — it imports a prebuilt index instead. Set `true` only on the
+    /// operator instance that builds the index once (a throttled, `small`-size,
+    /// hash-and-discard walk of the catalogue), which is then distributed via the
+    /// dataset mirror. **Not** a secret.
+    pub fingerprint_build_enabled: bool,
+    /// Version tag stamped on built fingerprints and used to load the match index.
+    /// Bump it to invalidate every stored fingerprint and force a rebuild when the hash
+    /// algorithm changes (it also cache-busts the client). Default `1`.
+    pub fingerprint_algo_version: i32,
+    /// How many ranked matches a scan returns (clamped to `[1, 25]`) — the candidate
+    /// list the manual scanner lets the user pick from. Default `8`.
+    pub fingerprint_top_k: u32,
+    /// Largest Hamming distance (of 256 bits) still returned as a **candidate** for the
+    /// user to pick from; a query with nothing within this radius resolves to no match
+    /// rather than a distant false positive. Generous so a weak (off-angle) but plausible
+    /// scan still offers the right card to pick. Default `96`.
+    pub fingerprint_max_distance: u32,
+    /// Whether an ordinary self-host **imports** the prebuilt fingerprint index from the
+    /// dataset mirror ([`Self::dataset_mirror_url`]) so its visual scanner works without
+    /// ever fetching card images (see [`crate::catalog::fingerprint_sync`]). Default
+    /// `true` — the hassle-free posture. Ignored on the index-building operator instance
+    /// ([`Self::fingerprint_build_enabled`] takes precedence, since it produces the index
+    /// locally); set `false` to opt a self-host out of the scanner / any outbound pull.
+    /// **Not** a secret.
+    pub fingerprint_import_enabled: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -204,6 +231,11 @@ impl std::fmt::Debug for Config {
             // message is shown to end users), so both print plainly.
             .field("signups_enabled", &self.signups_enabled)
             .field("signups_disabled_message", &self.signups_disabled_message)
+            .field("fingerprint_build_enabled", &self.fingerprint_build_enabled)
+            .field("fingerprint_algo_version", &self.fingerprint_algo_version)
+            .field("fingerprint_top_k", &self.fingerprint_top_k)
+            .field("fingerprint_max_distance", &self.fingerprint_max_distance)
+            .field("fingerprint_import_enabled", &self.fingerprint_import_enabled)
             .finish()
     }
 }
@@ -464,6 +496,22 @@ impl Config {
         let signups_enabled = env_bool("SIGNUPS_ENABLED", true);
         let signups_disabled_message = env_trimmed("SIGNUPS_DISABLED_MESSAGE");
 
+        // The visual-scanner fingerprint build is opt-in and off by default (only the
+        // operator's index-building instance sets it); the match knobs have sane
+        // defaults and are clamped where read.
+        let fingerprint_build_enabled = env_bool("FINGERPRINT_BUILD_ENABLED", false);
+        let fingerprint_algo_version =
+            env_parse::<i32>("FINGERPRINT_ALGO_VERSION").unwrap_or(1);
+        let fingerprint_top_k = env_parse::<u32>("FINGERPRINT_TOP_K")
+            .filter(|k| *k > 0)
+            .unwrap_or(8)
+            .min(25);
+        let fingerprint_max_distance =
+            env_parse::<u32>("FINGERPRINT_MAX_DISTANCE").unwrap_or(96).min(256);
+        // On by default so an ordinary self-host's scanner just works (it pulls the tiny
+        // prebuilt index from the mirror); the build instance ignores it (it has its own).
+        let fingerprint_import_enabled = env_bool("FINGERPRINT_IMPORT_ENABLED", true);
+
         Config {
             database_url,
             jwt_secret,
@@ -496,6 +544,11 @@ impl Config {
             mirror_enabled,
             signups_enabled,
             signups_disabled_message,
+            fingerprint_build_enabled,
+            fingerprint_algo_version,
+            fingerprint_top_k,
+            fingerprint_max_distance,
+            fingerprint_import_enabled,
         }
     }
 

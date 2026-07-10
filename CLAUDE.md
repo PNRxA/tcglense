@@ -166,8 +166,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Moxfield **URL** import is deliberately disabled
   (`Provider::network_import_enabled()` is the switch; CSV upload is the supported
   path) — a 422 there is not a regression.
-- Card images are cached lazily on first view — **never bulk-download** (Scryfall
-  guideline); image fetches are host-allow-listed with redirects disabled.
+- Card images are cached lazily on first view — self-hosts **never bulk-download**;
+  image fetches are host-allow-listed with redirects disabled. The **one** sanctioned
+  bulk fetch is the **opt-in** visual-scanner fingerprint build
+  (`FINGERPRINT_BUILD_ENABLED`, default off): only the operator's index-building
+  instance runs it — a `small`-size, hash-and-discard walk of the catalogue (nothing
+  persisted to `<DATA_DIR>/images`) — and the tiny derived index is distributed via the
+  dataset mirror, so every ordinary self-host still fetches **zero** images. Scryfall's
+  documented rate limit governs the **API** (`api.scryfall.com`); the **image CDN**
+  (`cards.scryfall.io`) is **not** rate-limited and Scryfall explicitly supports
+  resolving many images from bulk-data URIs, so this fetch is within their guidance. The
+  build's only politeness bound is the shared 8-way image-fetch concurrency cap (no
+  artificial per-request delay). Don't add any other bulk image path.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false, features =
   ["rust_crypto"]` (panics at runtime otherwise); `reqwest` deliberately has **no**

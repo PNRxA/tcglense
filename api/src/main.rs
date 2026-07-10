@@ -14,6 +14,7 @@ mod handlers;
 mod migrator;
 mod mtgjson;
 mod openapi;
+mod phash;
 mod ratelimit;
 mod router;
 mod scryfall;
