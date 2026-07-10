@@ -356,10 +356,11 @@ alongside `/api/collection/*` and `/api/wishlist/*`.
   operator's index-building instance sets it),
   `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
   match index — bump to invalidate every fingerprint and force a rebuild + client
-  cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`5`; how many
-  ranked matches a scan returns, clamped `1..25`), `FINGERPRINT_MAX_DISTANCE` (`72`;
-  largest Hamming distance of 256 bits still returned as a candidate — beyond it a scan
-  resolves to no match rather than a distant false positive). See `api/.env.example`.
+  cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`8`; how many
+  ranked candidate matches a scan returns for the user to pick from, clamped `1..25`),
+  `FINGERPRINT_MAX_DISTANCE` (`96`; largest Hamming distance of 256 bits still offered as
+  a candidate — generous so a weak/off-angle scan still offers the right card; beyond it
+  a scan resolves to no match). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
   (The Turnstile site key is no longer a web build var — it's the API's runtime
   `TURNSTILE_SITE_KEY`, fetched by the SPA from `GET /api/config`.)

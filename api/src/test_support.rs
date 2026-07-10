@@ -54,8 +54,8 @@ pub(crate) fn test_config() -> Config {
         signups_disabled_message: None,
         fingerprint_build_enabled: false,
         fingerprint_algo_version: 1,
-        fingerprint_top_k: 5,
-        fingerprint_max_distance: 72,
+        fingerprint_top_k: 8,
+        fingerprint_max_distance: 96,
     }
 }
 

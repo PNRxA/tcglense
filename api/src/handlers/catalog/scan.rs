@@ -24,9 +24,11 @@ use crate::state::AppState;
 /// Hard cap on the requested match count, independent of the server's default.
 const MAX_SCAN_TOP_K: u32 = 25;
 
-/// Hard cap on how many variant fingerprints one scan may carry (the client sends the
-/// crop plus a few geometric corrections; bounds the per-request match work).
-const MAX_SCAN_FINGERPRINTS: usize = 32;
+/// Hard cap on how many fingerprints one scan may carry — the client pools a short burst
+/// of frames, each with a few geometric variants (crop quality varies frame-to-frame, so
+/// pooling catches a good moment). Bounds the per-request match work (index × N, still
+/// a few ms).
+const MAX_SCAN_FINGERPRINTS: usize = 64;
 
 /// A scan request: the client-computed fingerprint(s) and how many matches to return.
 #[derive(Debug, Deserialize)]
@@ -100,8 +102,10 @@ pub async fn scan_cards(
         .unwrap_or(state.config.fingerprint_top_k) as usize;
     let max_distance = state.config.fingerprint_max_distance;
 
-    // Nearest neighbours within the confidence radius; beyond it a hit is more likely a
-    // distant false positive than the card, so it's dropped (empty result = no match).
+    // The ranked nearest neighbours within the candidate radius (`FINGERPRINT_MAX_DISTANCE`);
+    // beyond it a hit is more likely garbage than the card. The client shows the whole
+    // ranked list as pickable candidates after a manual capture, so even a weak-but-
+    // plausible match is offered (the user picks the right one) rather than dropped.
     let hits: Vec<fingerprints::ScanHit> = index
         .nearest(&game, &queries, top_k)
         .into_iter()

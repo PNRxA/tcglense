@@ -158,11 +158,13 @@ pub struct Config {
     /// Bump it to invalidate every stored fingerprint and force a rebuild when the hash
     /// algorithm changes (it also cache-busts the client). Default `1`.
     pub fingerprint_algo_version: i32,
-    /// How many ranked matches a scan returns (clamped to `[1, 25]`). Default `5`.
+    /// How many ranked matches a scan returns (clamped to `[1, 25]`) — the candidate
+    /// list the manual scanner lets the user pick from. Default `8`.
     pub fingerprint_top_k: u32,
-    /// Largest Hamming distance (of 256 bits) still returned as a candidate match; a
-    /// query with no fingerprint within this radius resolves to no match rather than a
-    /// distant false positive. Default `72`.
+    /// Largest Hamming distance (of 256 bits) still returned as a **candidate** for the
+    /// user to pick from; a query with nothing within this radius resolves to no match
+    /// rather than a distant false positive. Generous so a weak (off-angle) but plausible
+    /// scan still offers the right card to pick. Default `96`.
     pub fingerprint_max_distance: u32,
 }
 
@@ -493,10 +495,10 @@ impl Config {
             env_parse::<i32>("FINGERPRINT_ALGO_VERSION").unwrap_or(1);
         let fingerprint_top_k = env_parse::<u32>("FINGERPRINT_TOP_K")
             .filter(|k| *k > 0)
-            .unwrap_or(5)
+            .unwrap_or(8)
             .min(25);
         let fingerprint_max_distance =
-            env_parse::<u32>("FINGERPRINT_MAX_DISTANCE").unwrap_or(72).min(256);
+            env_parse::<u32>("FINGERPRINT_MAX_DISTANCE").unwrap_or(96).min(256);
 
         Config {
             database_url,

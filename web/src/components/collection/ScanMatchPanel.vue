@@ -177,7 +177,7 @@ const rows = computed(() => [
       </div>
 
       <div class="flex items-center justify-between gap-2 pt-1">
-        <p class="text-muted-foreground text-xs">Show the next card to add this one.</p>
+        <p class="text-muted-foreground text-xs">Capture the next card to add this one.</p>
         <Button variant="ghost" size="sm" class="text-muted-foreground" @click="emit('discard')">
           <X class="size-4" aria-hidden="true" />
           Discard

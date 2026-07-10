@@ -68,6 +68,10 @@ export function useScanSession(game: Ref<string>) {
   const unrecognized = ref(false)
   const commitError = ref(false)
   const log = ref<SessionEntry[]>([])
+  // The ranked visual matches from the last capture (nearest first) — shown as a
+  // pickable strip so the user can correct a weak/wrong top match by tapping the right
+  // card (its art, not just a name).
+  const candidates = ref<ApiScanMatch[]>([])
 
   // Absolute counts to write on commit: owned + the scanned copy, then user-adjustable.
   const target = reactive<CollectionQuantities>({ quantity: 0, foil_quantity: 0 })
@@ -161,6 +165,14 @@ export function useScanSession(game: Ref<string>) {
     selectId('')
   }
 
+  /** Pick one of the ranked visual candidates (a tap on the pick strip): switch to its
+   * name if different, then select that exact printing. */
+  function pickCandidate(card: Card) {
+    if (!match.value) return
+    if (card.name !== match.value.name) setName(card.name)
+    selectId(card.id)
+  }
+
   function adjust(which: 'quantity' | 'foil_quantity', delta: number) {
     if (!seeded.value) return
     target[which] = Math.max(0, target[which] + delta)
@@ -172,6 +184,7 @@ export function useScanSession(game: Ref<string>) {
     selectId('')
     seeded.value = false
     commitError.value = false
+    candidates.value = []
   }
 
   /** Drop the on-screen match without adding it (a misread you don't want). */
@@ -247,6 +260,7 @@ export function useScanSession(game: Ref<string>) {
         const res = await scanMutation.mutateAsync({
           game: game.value,
           fingerprints: capture.fingerprints,
+          topK: NAME_CANDIDATE_LIMIT,
         })
         matches = res.data
       } catch {
@@ -260,6 +274,9 @@ export function useScanSession(game: Ref<string>) {
         unrecognized.value = true
         return 'unmatched'
       }
+      // Offer the ranked matches as a pickable strip (refreshed on every capture, so
+      // re-scanning the same card updates the choices too).
+      candidates.value = matches
       if (match.value && name === match.value.name) return 'same'
       await commitCurrent()
       // A failed save keeps the current card on screen rather than silently replacing (and
@@ -315,6 +332,7 @@ export function useScanSession(game: Ref<string>) {
     ready,
     resolving,
     ownedError,
+    candidates,
     // session
     log,
     addedCount,
@@ -330,5 +348,6 @@ export function useScanSession(game: Ref<string>) {
     adjust,
     undo,
     retryOwned,
+    pickCandidate,
   }
 }

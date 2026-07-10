@@ -1,36 +1,28 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import {
-  Camera,
-  CameraOff,
-  Loader2,
-  ScanLine,
-  SwitchCamera,
-  TriangleAlert,
-} from '@lucide/vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { Camera, CameraOff, Loader2, ScanLine, SwitchCamera, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import CardImage from '@/components/cards/CardImage.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import ScanSessionList from '@/components/collection/ScanSessionList.vue'
 import { useCardScanner } from '@/composables/useCardScanner'
 import { useScanSession } from '@/composables/useScanSession'
-import { hamming } from '@/lib/scan/phash'
 import { CARD_ASPECT, GUIDE_MARGIN, SET_REGION, rectToPercentStyle } from '@/lib/scan/regions'
 import { usePageMeta } from '@/lib/seo'
-import { cn } from '@/lib/utils'
 
-// Scan physical cards into the collection with the phone/webcam camera. The app detects and
-// deskews the card in the frame, identifies it **visually** (a perceptual-hash fingerprint
-// matched against the catalog index), and pins the exact printing from an OCR of the set
-// line. Showing the NEXT card commits the previous one — a hands-free bulk-add rhythm — with
-// a manual "Capture" mode as a fallback. The photo never leaves the device; only the small
-// fingerprint is sent. The route is auth-gated, so this view only renders for a signed-in user.
+// Scan physical cards into the collection with the phone/webcam camera. Tap the camera (or
+// the Capture button) to take a shot: the app detects + deskews the card, identifies it
+// visually (a perceptual-hash fingerprint), and offers the closest matches to pick from,
+// pinning the exact printing from an OCR of the set line. Capturing the NEXT card commits
+// the previous one — a deliberate bulk-add rhythm. The photo never leaves the device; only
+// the small fingerprint is sent. The route is auth-gated, so this only renders when signed in.
 usePageMeta({ title: 'Scan cards', canonicalPath: '/scan', noindex: true })
 
 const game = ref('mtg')
 
 const video = ref<HTMLVideoElement | null>(null)
-const { status, errorMessage, ocrLoading, start, stop, switchCamera, capture, captureFingerprint } =
+const { status, errorMessage, ocrLoading, start, stop, switchCamera, capture } =
   useCardScanner(video)
 
 const {
@@ -44,6 +36,7 @@ const {
   ready,
   resolving,
   ownedError,
+  candidates,
   log,
   addedCount,
   unrecognized,
@@ -56,34 +49,16 @@ const {
   adjust,
   undo,
   retryOwned,
+  pickCandidate,
 } = useScanSession(game)
 
-// Auto-detect a new card and commit the previous one, vs. tapping to capture each. Auto is
-// hands-free (continuous scanning); manual is lighter on the device.
-const autoMode = ref(true)
 // True while a frame is being processed — gates overlapping captures and drives the UI.
 const reading = ref(false)
-
-// Cadence of the continuous scan loop. Effective rate is max(interval, capture time) thanks
-// to the `reading` guard, so this just paces how often we try when idle.
-const SCAN_INTERVAL_MS = 400
-// A newly-seen card's fingerprint must hold steady across this many consecutive frames
-// before it's accepted, so a mid-swap blur never auto-commits the wrong card.
-const STABILITY_READS = 2
-// Max Hamming distance (of 256 bits) between two frame fingerprints for them to count as
-// the *same* card — tolerant of hand jitter / lighting, tight enough to notice a swap.
-const SAME_CARD_HAMMING = 44
-
-let loopTimer: number | null = null
-// The fingerprint of the frame currently accumulating stability, and of the card on screen.
-let pendingFp: Uint8Array | null = null
-let pendingReads = 0
-let currentFp: Uint8Array | null = null
 
 const isReady = computed(() => status.value === 'ready')
 
 // The viewport tracks the camera's aspect so the CSS guide box maps 1:1 to the pixels the
-// OCR crops from the frame (see regions.ts).
+// crop is taken from (see regions.ts).
 const videoAspect = ref(3 / 4)
 function onLoadedMetadata() {
   const el = video.value
@@ -106,60 +81,14 @@ const guideStyle = computed(() => {
 })
 const setStripStyle = rectToPercentStyle(SET_REGION)
 
-function startLoop() {
-  if (loopTimer !== null || !autoMode.value) return
-  loopTimer = window.setInterval(() => void tick(), SCAN_INTERVAL_MS)
-}
-function stopLoop() {
-  if (loopTimer !== null) {
-    clearInterval(loopTimer)
-    loopTimer = null
-  }
-  pendingFp = null
-  pendingReads = 0
-}
-
-// One continuous-scan step: fingerprint the frame (cheap, no OCR) and only run the full
-// match once a *new* card's fingerprint has held steady. The same card still in front of
-// the camera is ignored (no re-commit).
-async function tick() {
-  if (!isReady.value || reading.value) return
-  reading.value = true
-  try {
-    const fp = captureFingerprint()
-    if (!fp) return
-    // Current card still held? (its fingerprint is close to what we committed.)
-    if (match.value && currentFp && hamming(fp, currentFp) <= SAME_CARD_HAMMING) {
-      pendingFp = null
-      pendingReads = 0
-      return
-    }
-    // Stability: consecutive frames must agree before we commit.
-    if (pendingFp && hamming(fp, pendingFp) <= SAME_CARD_HAMMING) {
-      pendingReads += 1
-    } else {
-      pendingFp = fp
-      pendingReads = 1
-    }
-    if (pendingReads >= STABILITY_READS) {
-      pendingFp = null
-      pendingReads = 0
-      // The stable frame is worth a full capture (fingerprint + set-line OCR) and match.
-      const cap = await capture()
-      if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprints[0] ?? null
-    }
-  } finally {
-    reading.value = false
-  }
-}
-
-// Manual mode: capture + match one frame on demand (bypasses the stability gate).
+// Capture + match one frame on demand — tap the camera or the Capture button. Capturing a
+// new card first commits the previous one (the rapid-add rhythm), handled in the session.
 async function captureNow() {
   if (!isReady.value || reading.value) return
   reading.value = true
   try {
     const cap = await capture()
-    if (cap && (await handleCapture(cap)) === 'matched') currentFp = cap.fingerprints[0] ?? null
+    if (cap) await handleCapture(cap)
   } finally {
     reading.value = false
   }
@@ -167,38 +96,16 @@ async function captureNow() {
 
 async function startScanning() {
   await start()
-  if (isReady.value) startLoop()
 }
 
 async function stopScanning() {
-  stopLoop()
-  // Showing the next card commits the previous — so does stopping: save the last one.
+  // Capturing the next card commits the previous — so does stopping: save the last one.
   await commitCurrent()
   discardCurrent()
   stop()
 }
 
-function setAutoMode(on: boolean) {
-  autoMode.value = on
-  if (!isReady.value) return
-  if (on) startLoop()
-  else stopLoop()
-}
-
-// If the camera leaves 'ready' for any reason (stopped, switched, disconnected mid-session,
-// or a failed restart), disarm the scan loop so it isn't left firing at a dead frame.
-watch(status, (s) => {
-  if (s !== 'ready') stopLoop()
-})
-
-// When the on-screen match is cleared (discarded, or committed on stop), forget its
-// fingerprint so re-showing that same card scans it afresh rather than being suppressed.
-watch(match, (m) => {
-  if (!m) currentFp = null
-})
-
 onBeforeUnmount(() => {
-  stopLoop()
   // Best-effort save of the tentative card if the user navigates away mid-scan.
   void commitCurrent()
 })
@@ -206,8 +113,8 @@ onBeforeUnmount(() => {
 const statusHint = computed(() => {
   if (resolving.value) return 'Matching…'
   if (reading.value) return 'Scanning…'
-  if (match.value) return 'Show the next card to add this one.'
-  return 'Hold a card inside the frame.'
+  if (match.value) return 'Capture the next card to add this one.'
+  return 'Tap the camera (or Capture) to scan the card.'
 })
 </script>
 
@@ -218,9 +125,9 @@ const statusHint = computed(() => {
     <header class="mb-6">
       <h1 class="text-3xl font-semibold tracking-tight">Scan cards</h1>
       <p class="text-muted-foreground mt-1 max-w-2xl">
-        Point your camera at a Magic card to add it to your collection — it's identified from
-        its artwork. Show the next card and the previous one is added automatically; edit the
-        match first if you need to.
+        Hold a card flat and straight-on, filling the frame, then tap the camera to scan it —
+        it's identified from its artwork. Pick the right match, then capture the next card to add
+        the previous one.
       </p>
     </header>
 
@@ -229,7 +136,11 @@ const statusHint = computed(() => {
       <section>
         <div
           class="bg-muted relative mx-auto w-full max-w-md overflow-hidden rounded-xl border"
+          :class="{ 'cursor-pointer': isReady && !reading }"
           :style="{ aspectRatio: String(videoAspect) }"
+          role="button"
+          :aria-label="isReady ? 'Tap to scan the card in view' : undefined"
+          @click="isReady && captureNow()"
         >
           <!-- The live frame (always mounted so the ref/stream can attach); overlays sit on
                top per camera state. -->
@@ -254,6 +165,14 @@ const statusHint = computed(() => {
             </div>
           </div>
 
+          <!-- Tap-to-scan hint (idle-ready). -->
+          <div
+            v-if="isReady && !reading && !resolving"
+            class="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
+          >
+            Tap to scan
+          </div>
+
           <!-- Scanning / matching pulse. -->
           <div
             v-if="isReady && (reading || resolving)"
@@ -273,7 +192,7 @@ const statusHint = computed(() => {
               Camera access is needed to scan. Your photo never leaves your device — only a
               small fingerprint is sent to identify the card.
             </p>
-            <Button @click="startScanning">
+            <Button @click.stop="startScanning">
               <ScanLine class="size-4" aria-hidden="true" />
               Start scanning
             </Button>
@@ -295,7 +214,7 @@ const statusHint = computed(() => {
           >
             <CameraOff class="size-10 opacity-60" aria-hidden="true" />
             <p class="max-w-xs text-sm">{{ errorMessage }}</p>
-            <Button v-if="status !== 'denied'" variant="outline" @click="startScanning">
+            <Button v-if="status !== 'denied'" variant="outline" @click.stop="startScanning">
               Try again
             </Button>
           </div>
@@ -317,40 +236,7 @@ const statusHint = computed(() => {
           </p>
 
           <div class="flex flex-wrap items-center justify-center gap-2">
-            <!-- Auto / manual segmented toggle. -->
-            <div class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-sm">
-              <button
-                type="button"
-                :class="
-                  cn(
-                    'rounded px-3 py-1.5 font-medium transition-colors',
-                    autoMode ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-                  )
-                "
-                @click="setAutoMode(true)"
-              >
-                Auto
-              </button>
-              <button
-                type="button"
-                :class="
-                  cn(
-                    'rounded px-3 py-1.5 font-medium transition-colors',
-                    !autoMode ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-                  )
-                "
-                @click="setAutoMode(false)"
-              >
-                Manual
-              </button>
-            </div>
-
-            <Button
-              v-if="!autoMode"
-              :disabled="reading"
-              aria-label="Capture the card in view"
-              @click="captureNow"
-            >
+            <Button :disabled="reading" aria-label="Capture the card in view" @click="captureNow">
               <ScanLine class="size-4" aria-hidden="true" />
               Capture
             </Button>
@@ -386,6 +272,39 @@ const statusHint = computed(() => {
           <Button variant="outline" size="sm" class="ml-auto" @click="retryOwned">Retry</Button>
         </div>
 
+        <!-- Pickable strip of the closest matches — tap the right card (its art) if the top
+             pick is wrong or the match was weak. -->
+        <div v-if="match && candidates.length > 1" class="rounded-xl border p-3">
+          <p class="text-muted-foreground mb-2 text-xs font-medium">
+            Closest matches — tap the right card
+          </p>
+          <div class="flex gap-2 overflow-x-auto pb-1">
+            <button
+              v-for="candidate in candidates"
+              :key="candidate.card.id"
+              type="button"
+              class="group shrink-0 rounded-md focus-visible:ring-2 focus-visible:outline-none"
+              :aria-label="`Pick ${candidate.card.name}`"
+              :aria-pressed="candidate.card.id === selectedId"
+              @click="pickCandidate(candidate.card)"
+            >
+              <CardImage
+                :game="game"
+                :id="candidate.card.id"
+                :name="candidate.card.name"
+                :has-image="candidate.card.has_image"
+                size="small"
+                class="w-20 rounded-md ring-2 transition"
+                :class="
+                  candidate.card.id === selectedId
+                    ? 'ring-primary'
+                    : 'ring-transparent group-hover:ring-muted-foreground/40'
+                "
+              />
+            </button>
+          </div>
+        </div>
+
         <!-- The card being edited before it commits. -->
         <div v-if="match" class="rounded-xl border p-4">
           <ScanMatchPanel
@@ -412,8 +331,9 @@ const statusHint = computed(() => {
           class="text-muted-foreground rounded-xl border border-dashed p-6 text-center text-sm"
         >
           <template v-if="unrecognized">
-            Couldn't recognise that card. Try a straight-on, glare-free shot filling the frame —
-            or its set may not have been added to the catalog yet.
+            Couldn't recognise that card. Hold it flat and straight-on (not tilted), close and
+            filling the frame, with a contrasting background — or its set may not be in the
+            catalog yet.
           </template>
           <template v-else> The card you scan will appear here to review and edit. </template>
         </div>

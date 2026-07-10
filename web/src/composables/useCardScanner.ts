@@ -30,15 +30,20 @@ const WARP_H = 850
  * mid phone without hurting corner accuracy. */
 const FRAME_MAX = 1000
 
-// Geometric variants of the deskewed crop the match query carries. A hand-held scan has
+// Geometric variants of each deskewed crop the match query carries. A hand-held scan has
 // residual rotation and small framing error even after detection+warp, and pHash is very
-// sensitive to both (a 2° rotation or a 4%-loose crop alone can exceed the match budget).
-// Hashing this small grid of rotations × inset (zoom) corrections and letting the server
-// keep the best distance absorbs that — validated to drop distorted-query distances from
-// ~100 to ~30. Kept modest so the per-capture cost stays small (only runs on a commit).
-// The base crop (rot 0, inset 0) is FIRST so `fingerprints[0]` is the canonical hash.
-const VARIANT_ROTATIONS = [0, -3, 3, -6, 6]
+// sensitive to both, so we hash a small grid of rotations × inset (zoom) corrections and
+// let the server keep the closest. The base crop (rot 0, inset 0) is FIRST so
+// `fingerprints[0]` is the canonical hash (used by the same-card stability gate).
+const VARIANT_ROTATIONS = [0, -5, 5]
 const VARIANT_INSETS = [0, 0.05, 0.1]
+
+// Crop quality varies a lot frame-to-frame on a hand-held card (perspective from the hold
+// angle, focus, glare) — a card that scores 85 one frame scores 40 the next. So a single
+// capture pools a short BURST of frames (each × its variants) and the server keeps the
+// best match, turning "some frames match" into "the capture matches if any recent frame
+// was good". Only runs on a commit, so the cost is fine.
+const BURST_FRAMES = 4
 
 /** What one captured frame yields for the session. */
 export interface ScanCapture {
@@ -351,16 +356,33 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return data.text ?? ''
   }
 
-  /** A full capture for committing a match: the variant fingerprints of the deskewed card
-   * plus an OCR of the set line (which pins the exact printing). Null if the camera isn't
-   * ready / the frame has no dimensions yet; a transient OCR failure just yields an empty
-   * `setText` (the printing then falls back to the newest, and the next capture retries). */
+  /** Wait for the next animation frame so the camera can advance between burst grabs. */
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve())
+      else setTimeout(resolve, 30)
+    })
+  }
+
+  /** A full capture for committing a match: the pooled variant fingerprints of a short
+   * burst of frames plus an OCR of the set line (which pins the exact printing). Null if
+   * the camera isn't ready / no frame had dimensions; a transient OCR failure just yields
+   * an empty `setText` (the printing then falls back to the newest, next capture retries). */
   async function capture(): Promise<ScanCapture | null> {
-    const rgba = warpFrame()
-    if (!rgba || !drawCropToCanvas(rgba)) return null
-    const fingerprints = variantFingerprints()
-    // Fallback if canvas variants are unavailable: at least the base crop's fingerprint.
-    if (fingerprints.length === 0) fingerprints.push(phashFromRgba(rgba, WARP_W, WARP_H))
+    const fingerprints: Uint8Array[] = []
+    let lastRgba: Uint8ClampedArray | null = null
+    for (let f = 0; f < BURST_FRAMES; f++) {
+      const rgba = warpFrame()
+      if (rgba && drawCropToCanvas(rgba)) {
+        lastRgba = rgba
+        for (const fp of variantFingerprints()) fingerprints.push(fp)
+      }
+      if (f < BURST_FRAMES - 1) await nextFrame()
+    }
+    if (!lastRgba) return null
+    // Fallback if canvas variants were unavailable: at least the last crop's fingerprint.
+    if (fingerprints.length === 0) fingerprints.push(phashFromRgba(lastRgba, WARP_W, WARP_H))
+    // OCR the set line off the last frame's crop (still on cropCanvas).
     let setText = ''
     try {
       setText = await recognizeSetLine()
