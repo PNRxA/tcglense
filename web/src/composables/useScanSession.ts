@@ -192,6 +192,13 @@ export function useScanSession(game: Ref<string>) {
     clearCurrent()
   }
 
+  /** Explicitly add the current match now, then clear the panel for the next card. On a
+   * failed save the panel is kept (with the error) so it can be retried. */
+  async function confirmCurrent(): Promise<void> {
+    await commitCurrent()
+    if (!commitError.value) clearCurrent()
+  }
+
   /** The distinct card names of the ranked visual matches, best first, capped — the
    * correction dropdown (if the top visual match's name is wrong, a runner-up may be
    * right). */
@@ -342,6 +349,7 @@ export function useScanSession(game: Ref<string>) {
     // actions
     handleCapture,
     commitCurrent,
+    confirmCurrent,
     discardCurrent,
     selectId,
     setName,

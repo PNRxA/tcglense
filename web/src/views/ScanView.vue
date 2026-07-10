@@ -4,6 +4,7 @@ import { Camera, CameraOff, Loader2, ScanLine, SwitchCamera, TriangleAlert } fro
 import { Button } from '@/components/ui/button'
 import CardImage from '@/components/cards/CardImage.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import ScanSessionList from '@/components/collection/ScanSessionList.vue'
 import { useCardScanner } from '@/composables/useCardScanner'
@@ -43,6 +44,7 @@ const {
   commitError,
   handleCapture,
   commitCurrent,
+  confirmCurrent,
   discardCurrent,
   selectId,
   setName,
@@ -133,7 +135,7 @@ const statusHint = computed(() => {
 
     <div class="grid gap-6 lg:grid-cols-2">
       <!-- Camera + controls -->
-      <section>
+      <section class="min-w-0">
         <div
           class="bg-muted relative mx-auto w-full max-w-md overflow-hidden rounded-xl border"
           :class="{ 'cursor-pointer': isReady && !reading }"
@@ -254,7 +256,15 @@ const statusHint = computed(() => {
       </section>
 
       <!-- Current match + session tally -->
-      <section class="space-y-6">
+      <section class="min-w-0 space-y-6">
+        <!-- Manual fallback: type a card by name when the scan won't match it. -->
+        <div>
+          <label class="text-muted-foreground mb-1 block text-xs font-medium">
+            Not matching? Add a card by name
+          </label>
+          <QuickAddBox :game="game" />
+        </div>
+
         <div
           v-if="commitError"
           class="border-destructive/40 text-destructive flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
@@ -321,6 +331,7 @@ const statusHint = computed(() => {
             @name="setName"
             @select="selectId"
             @adjust="adjust"
+            @confirm="confirmCurrent"
             @discard="discardCurrent"
           />
         </div>

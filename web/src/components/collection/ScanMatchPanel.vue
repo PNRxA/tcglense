@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Loader2, Minus, Plus, Sparkles, X } from '@lucide/vue'
+import { Check, Loader2, Minus, Plus, Sparkles, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -35,6 +35,7 @@ const emit = defineEmits<{
   name: [string]
   select: [string]
   adjust: ['quantity' | 'foil_quantity', number]
+  confirm: []
   discard: []
 }>()
 
@@ -176,12 +177,18 @@ const rows = computed(() => [
         </div>
       </div>
 
-      <div class="flex items-center justify-between gap-2 pt-1">
-        <p class="text-muted-foreground text-xs">Capture the next card to add this one.</p>
-        <Button variant="ghost" size="sm" class="text-muted-foreground" @click="emit('discard')">
-          <X class="size-4" aria-hidden="true" />
-          Discard
-        </Button>
+      <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+        <p class="text-muted-foreground text-xs">Or capture the next card to add this one.</p>
+        <div class="flex items-center gap-2">
+          <Button size="sm" :disabled="!ready" @click="emit('confirm')">
+            <Check class="size-4" aria-hidden="true" />
+            Confirm
+          </Button>
+          <Button variant="ghost" size="sm" class="text-muted-foreground" @click="emit('discard')">
+            <X class="size-4" aria-hidden="true" />
+            Discard
+          </Button>
+        </div>
       </div>
     </div>
   </div>
