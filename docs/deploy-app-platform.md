@@ -64,10 +64,12 @@ spec portable.
 1. **DNS** — add an `A`/`CNAME` record for your domain pointing at the app's
    `*.ondigitalocean.app` hostname (from step 3), **proxied** (orange cloud).
 2. **SSL/TLS → Overview** — set **Full (strict)** and enable **Always Use HTTPS**.
-3. **Caching → Cache Rules** — add the same two rules as the Droplet guide
+3. **Caching → Cache Rules** — add the same three rules as the Droplet guide
    ([`deploy-digitalocean.md` §4](./deploy-digitalocean.md)) so Cloudflare caches the
-   catalog, **images**, and sitemaps by the origin's `Cache-Control`, and bypasses the
-   per-user/live routes. The image cache is what makes `CDN_MODE=true` correct.
+   catalog, **images**, sitemaps, and API docs by the origin's `Cache-Control`, and
+   bypasses the per-user/live routes. The image cache is what makes `CDN_MODE=true`
+   correct. (Rule 1's `/api/mirror/*` clause is a no-op here — App Platform runs with the
+   dataset mirror disabled.)
 
 > App Platform serves TLS on `*.ondigitalocean.app` directly, so this origin stays
 > publicly reachable even behind Cloudflare — you can't lock ingress to Cloudflare IPs
