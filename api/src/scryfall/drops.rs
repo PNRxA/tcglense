@@ -192,8 +192,10 @@ pub fn drop_for(game: &str, set_code: &str, collector_number: &str) -> Option<&'
 /// product overrides, because there's no upstream signal that separates a spend reward from
 /// an ordinary bonus card.
 const SPEND_INCENTIVES: &[(&str, &str, &str)] = &[
-    // Path of Ancestry — Avatar: The Last Airbender superdrop, one foil per $199 spent.
-    ("mtg", "sld", "914"),
+    // Each superdrop hands out one foil promo per qualifying spend threshold.
+    ("mtg", "sld", "905"), // Cryptic Command — Secret Scare superdrop (per $199)
+    ("mtg", "sld", "912"), // Sol Ring — PlayStation / Twisted Metal superdrop (per $199)
+    ("mtg", "sld", "914"), // Path of Ancestry — Avatar: The Last Airbender superdrop (per $199)
 ];
 
 /// Whether a printing is a curated Secret Lair spend-incentive promo (see [`SPEND_INCENTIVES`]).
@@ -226,7 +228,10 @@ mod tests {
 
     #[test]
     fn spend_incentives_are_recognised() {
-        // The Avatar superdrop's Path of Ancestry (#914) is a curated spend reward.
+        // Curated superdrop spend rewards (Cryptic Command #905, Sol Ring #912, Path of
+        // Ancestry #914) are recognised.
+        assert!(is_spend_incentive("mtg", "sld", "905"));
+        assert!(is_spend_incentive("mtg", "sld", "912"));
         assert!(is_spend_incentive("mtg", "sld", "914"));
         // An ordinary drop card is not; nor is the number in another set or game.
         assert!(!is_spend_incentive("mtg", "sld", "2658"));
