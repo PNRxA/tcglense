@@ -92,6 +92,16 @@ describe('CardMetaList Secret Lair relation', () => {
     expect(wrapper.text()).not.toContain('Chase card')
   })
 
+  it('shows the spend-reward badge even when the promo is not grouped into a drop', () => {
+    // e.g. Arcane Signet #908 — a spend reward the drop snapshot does not group.
+    const wrapper = mountMeta(
+      makeCard({ drop_name: null, drop_slug: null, secret_lair_spend_incentive: true }),
+    )
+    expect(wrapper.text()).toContain('Spend reward')
+    // No drop row, since it has no drop.
+    expect(wrapper.text()).not.toContain('Drop')
+  })
+
   it('shows no drop row for a card outside a drop-grouped set', () => {
     const wrapper = mountMeta(makeCard({ drop_name: null, drop_slug: null }))
     expect(wrapper.text()).not.toContain('Drop')

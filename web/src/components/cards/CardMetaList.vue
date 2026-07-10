@@ -38,26 +38,32 @@ const colorIdentityText = computed(() => colorLettersToText(props.card.color_ide
           {{ card.drop_name }}
         </RouterLink>
         <span v-else>{{ card.drop_name }}</span>
-        <!-- Spend reward: a promo handed out for reaching a cart spend threshold during
-             the superdrop, not included with a single drop (issue #331). More specific
-             than the generic chase-card tag, so it takes precedence. -->
+        <!-- Chase / bonus card: the optional card given with a qualifying drop purchase,
+             with no sealed product of its own (issue #295). A spend reward is the more
+             specific label, so it's suppressed here and shown in its own row below. -->
         <span
-          v-if="card.secret_lair_spend_incentive"
-          class="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
-          title="Spend reward — a promo card given for reaching a spend threshold during the Secret Lair superdrop, not included with a single drop."
-        >
-          <Coins class="size-3" />
-          Spend reward
-        </span>
-        <!-- Chase / bonus card: the optional card given with a qualifying drop
-             purchase, with no sealed product of its own (issue #295). -->
-        <span
-          v-else-if="card.secret_lair_bonus"
+          v-if="card.secret_lair_bonus && !card.secret_lair_spend_incentive"
           class="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400"
           title="Chase card — the optional bonus card given with a qualifying Secret Lair purchase."
         >
           <Sparkles class="size-3" />
           Chase card
+        </span>
+      </dd>
+    </template>
+
+    <!-- Spend reward: a promo handed out for reaching a cart spend threshold during the
+         superdrop, not tied to a single drop (issue #331). Its own row so it shows even for
+         a promo the drop snapshot doesn't group (e.g. one added after the snapshot). -->
+    <template v-if="card.secret_lair_spend_incentive">
+      <dt class="text-muted-foreground">Promo</dt>
+      <dd>
+        <span
+          class="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
+          title="Spend reward — a promo card given for reaching a spend threshold during the Secret Lair superdrop, not included with a single drop."
+        >
+          <Coins class="size-3" />
+          Spend reward
         </span>
       </dd>
     </template>

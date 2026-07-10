@@ -192,10 +192,16 @@ pub fn drop_for(game: &str, set_code: &str, collector_number: &str) -> Option<&'
 /// product overrides, because there's no upstream signal that separates a spend reward from
 /// an ordinary bonus card.
 const SPEND_INCENTIVES: &[(&str, &str, &str)] = &[
-    // Each superdrop hands out one foil promo per qualifying spend threshold.
-    ("mtg", "sld", "905"), // Cryptic Command — Secret Scare superdrop (per $199)
-    ("mtg", "sld", "912"), // Sol Ring — PlayStation / Twisted Metal superdrop (per $199)
-    ("mtg", "sld", "914"), // Path of Ancestry — Avatar: The Last Airbender superdrop (per $199)
+    // Each superdrop hands out one foil promo per qualifying spend threshold. All in `sld`.
+    ("mtg", "sld", "903"), // The Locust God — Secretversary 2023 superdrop
+    ("mtg", "sld", "905"), // Cryptic Command — Secret Scare superdrop
+    ("mtg", "sld", "906"), // Ignoble Hierarch — Equinox 2024 superdrop
+    ("mtg", "sld", "907"), // Seedborn Muse — Spring 2024 superdrop
+    ("mtg", "sld", "908"), // Arcane Signet ("Earth's Mightiest Emblem") — Marvel superdrop
+    ("mtg", "sld", "912"), // Sol Ring — PlayStation / Twisted Metal superdrop
+    ("mtg", "sld", "914"), // Path of Ancestry — Avatar: The Last Airbender superdrop
+    ("mtg", "sld", "915"), // Silver Shroud Costume — Fallout / Rad superdrop
+    ("mtg", "sld", "918"), // Food Token ("Lasagna") — Garfield superdrop
 ];
 
 /// Whether a printing is a curated Secret Lair spend-incentive promo (see [`SPEND_INCENTIVES`]).
@@ -228,11 +234,11 @@ mod tests {
 
     #[test]
     fn spend_incentives_are_recognised() {
-        // Curated superdrop spend rewards (Cryptic Command #905, Sol Ring #912, Path of
-        // Ancestry #914) are recognised.
-        assert!(is_spend_incentive("mtg", "sld", "905"));
-        assert!(is_spend_incentive("mtg", "sld", "912"));
+        // Curated superdrop spend rewards are recognised — the earliest (The Locust God
+        // #903), a token promo (Food Token #918), and one in between (Path of Ancestry #914).
+        assert!(is_spend_incentive("mtg", "sld", "903"));
         assert!(is_spend_incentive("mtg", "sld", "914"));
+        assert!(is_spend_incentive("mtg", "sld", "918"));
         // An ordinary drop card is not; nor is the number in another set or game.
         assert!(!is_spend_incentive("mtg", "sld", "2658"));
         assert!(!is_spend_incentive("mtg", "blb", "914"));
