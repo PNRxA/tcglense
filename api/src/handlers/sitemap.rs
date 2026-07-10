@@ -173,11 +173,13 @@ async fn sets_sitemap(state: &AppState, base: &str) -> Result<Response, AppError
 /// cards) is a `404` rather than an empty document, so a stale index entry reads as
 /// a clear miss. Only the three columns the URL needs are selected.
 ///
-/// The window is taken by **keyset** (seek), not `OFFSET`: a plain `OFFSET` makes the
-/// database scan and discard every row before the window, so later chunks got slower
-/// and slower (issue #334 — a card chunk taking >1.5 s in prod). Instead we resolve
-/// the chunk's first primary key with a light index-only lookup ([`chunk_start_id`])
-/// and range-scan forward from it, so every chunk costs the same regardless of `n`.
+/// The payload window is taken by **keyset** (seek), not `OFFSET`: a plain `OFFSET`
+/// made the database scan and discard every row *before* the window while dragging the
+/// wide, non-indexed columns through each one, so later chunks got slower and slower
+/// (issue #334 — a card chunk taking >1.5 s in prod). Instead we resolve the chunk's
+/// first primary key with a light id-only lookup ([`chunk_start_id`]) and range-scan
+/// forward with `id >= start`, so the payload reads exactly its 5 000-row window with
+/// no rows scanned and thrown away — the part that dominated the slow query.
 async fn cards_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response, AppError> {
     let Some(start_id) = chunk_start_id(&state.db, Card::find(), card::Column::Id, n).await? else {
         return Err(AppError::NotFound(format!(
@@ -251,9 +253,12 @@ fn chunk_count(total: u64) -> u64 {
 /// The primary key of the first row in chunk `n` (1-based), or `None` when the chunk
 /// starts past the last row (an out-of-range chunk, which the caller turns into a
 /// `404`). This is the seek anchor for the keyset windowing in `cards_sitemap` /
-/// `products_sitemap`: because it selects only the indexed `id` column it is an
-/// index-only lookup, far cheaper than the wide `OFFSET` scan it replaced (issue
-/// #334), and the caller then range-scans forward from the returned id.
+/// `products_sitemap`. It still uses `OFFSET`, so it is not free — but it selects only
+/// the narrow `id` column (an index-only skip of PK tuples on Postgres; a rowid-only
+/// walk on SQLite, where `id` is the rowid), far cheaper than the old payload `OFFSET`
+/// that pulled the wide `game`/`external_id`/`released_at` row through every discarded
+/// entry. The caller then range-scans forward from the returned id with no `OFFSET` at
+/// all — that payload seek is the actual fix for issue #334.
 async fn chunk_start_id<E>(
     db: &sea_orm::DatabaseConnection,
     query: sea_orm::Select<E>,
