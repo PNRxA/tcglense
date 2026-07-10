@@ -21,7 +21,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    EntityTrait, Order, PaginatorTrait, QueryOrder, QuerySelect, sea_query::NullOrdering,
+    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::NullOrdering,
 };
 
 use crate::catalog;
@@ -167,32 +168,33 @@ async fn sets_sitemap(state: &AppState, base: &str) -> Result<Response, AppError
 }
 
 /// One chunk of card detail pages (`n` is 1-based). Cards are ordered by the stable
-/// primary key and windowed with `OFFSET`/`LIMIT`, so chunk boundaries stay put
-/// across requests. `<lastmod>` is the card's release date. A chunk past the end
-/// (or any request when there are no cards) is a `404` rather than an empty
-/// document, so a stale index entry reads as a clear miss. Only the three columns
-/// the URL needs are selected.
+/// primary key so chunk boundaries stay put across requests. `<lastmod>` is the
+/// card's release date. A chunk past the end (or any request when there are no
+/// cards) is a `404` rather than an empty document, so a stale index entry reads as
+/// a clear miss. Only the three columns the URL needs are selected.
+///
+/// The window is taken by **keyset** (seek), not `OFFSET`: a plain `OFFSET` makes the
+/// database scan and discard every row before the window, so later chunks got slower
+/// and slower (issue #334 — a card chunk taking >1.5 s in prod). Instead we resolve
+/// the chunk's first primary key with a light index-only lookup ([`chunk_start_id`])
+/// and range-scan forward from it, so every chunk costs the same regardless of `n`.
 async fn cards_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response, AppError> {
-    // saturating so an absurd chunk number can't overflow the offset (it just
-    // windows past the end and 404s below).
-    let offset = n.saturating_sub(1).saturating_mul(MAX_URLS_PER_SITEMAP);
+    let Some(start_id) = chunk_start_id(&state.db, Card::find(), card::Column::Id, n).await? else {
+        return Err(AppError::NotFound(format!(
+            "sitemap card chunk {n} is out of range"
+        )));
+    };
     let rows: Vec<(String, String, Option<String>)> = Card::find()
         .select_only()
         .column(card::Column::Game)
         .column(card::Column::ExternalId)
         .column(card::Column::ReleasedAt)
+        .filter(card::Column::Id.gte(start_id))
         .order_by_asc(card::Column::Id)
-        .offset(offset)
         .limit(MAX_URLS_PER_SITEMAP)
         .into_tuple()
         .all(&state.db)
         .await?;
-
-    if rows.is_empty() {
-        return Err(AppError::NotFound(format!(
-            "sitemap card chunk {n} is out of range"
-        )));
-    }
 
     let mut body = String::new();
     for (game, external_id, released_at) in rows {
@@ -206,27 +208,27 @@ async fn cards_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response,
 }
 
 /// One chunk of sealed-product detail pages (`n` is 1-based) — `cards_sitemap`'s
-/// twin over the `products` table (issue #294). Same stable-window and 404-past-the-
-/// end behavior; the SPA's product route is `/sealed/{game}/{external_id}`.
+/// twin over the `products` table (issue #294). Same stable keyset window and
+/// 404-past-the-end behavior; the SPA's product route is `/sealed/{game}/{external_id}`.
 async fn products_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response, AppError> {
-    let offset = n.saturating_sub(1).saturating_mul(MAX_URLS_PER_SITEMAP);
+    let Some(start_id) =
+        chunk_start_id(&state.db, Product::find(), product::Column::Id, n).await?
+    else {
+        return Err(AppError::NotFound(format!(
+            "sitemap product chunk {n} is out of range"
+        )));
+    };
     let rows: Vec<(String, String, Option<String>)> = Product::find()
         .select_only()
         .column(product::Column::Game)
         .column(product::Column::ExternalId)
         .column(product::Column::ReleasedAt)
+        .filter(product::Column::Id.gte(start_id))
         .order_by_asc(product::Column::Id)
-        .offset(offset)
         .limit(MAX_URLS_PER_SITEMAP)
         .into_tuple()
         .all(&state.db)
         .await?;
-
-    if rows.is_empty() {
-        return Err(AppError::NotFound(format!(
-            "sitemap product chunk {n} is out of range"
-        )));
-    }
 
     let mut body = String::new();
     for (game, external_id, released_at) in rows {
@@ -244,6 +246,36 @@ async fn products_sitemap(state: &AppState, base: &str, n: u64) -> Result<Respon
 /// Pure chunk-count arithmetic, split out so it is unit-testable without a DB.
 fn chunk_count(total: u64) -> u64 {
     total.div_ceil(MAX_URLS_PER_SITEMAP)
+}
+
+/// The primary key of the first row in chunk `n` (1-based), or `None` when the chunk
+/// starts past the last row (an out-of-range chunk, which the caller turns into a
+/// `404`). This is the seek anchor for the keyset windowing in `cards_sitemap` /
+/// `products_sitemap`: because it selects only the indexed `id` column it is an
+/// index-only lookup, far cheaper than the wide `OFFSET` scan it replaced (issue
+/// #334), and the caller then range-scans forward from the returned id.
+async fn chunk_start_id<E>(
+    db: &sea_orm::DatabaseConnection,
+    query: sea_orm::Select<E>,
+    id_col: <E as EntityTrait>::Column,
+    n: u64,
+) -> Result<Option<i32>, AppError>
+where
+    E: EntityTrait,
+{
+    // Saturating so an absurd chunk number can't overflow the offset; the lookup just
+    // seeks past the end and returns None.
+    let offset = n.saturating_sub(1).saturating_mul(MAX_URLS_PER_SITEMAP);
+    let start_id: Option<i32> = query
+        .select_only()
+        .column(id_col)
+        .order_by_asc(id_col)
+        .offset(offset)
+        .limit(1)
+        .into_tuple()
+        .one(db)
+        .await?;
+    Ok(start_id)
 }
 
 /// The most recent card-data sync completion across games, as an RFC 3339 string,
