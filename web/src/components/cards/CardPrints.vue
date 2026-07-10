@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
+import { ChevronDown } from '@lucide/vue'
 import { useQuery } from '@tanstack/vue-query'
 import { getCardPrints } from '@/lib/api'
 import CardGrid from '@/components/cards/CardGrid.vue'
@@ -20,13 +21,36 @@ const query = useQuery({
 const prints = computed(() => query.data.value?.data ?? [])
 // Owned-count badges for signed-in users, overlaid on the printings grid.
 const { ownership } = useOwnedCounts(game, prints)
+
+// Collapsed by default (issue #332), matching the sealed product page's card sections:
+// the heading is a disclosure toggle showing the printing count, so a card with many
+// reprints doesn't push a long grid onto the page until asked. Section-local — the
+// component is reused across card-to-card navigation, so re-collapse when the id changes.
+const expanded = ref(false)
+watch(id, () => {
+  expanded.value = false
+})
 </script>
 
 <template>
   <!-- Hidden entirely until there's at least one other printing to show, so a
     one-printing card (the common case) adds nothing to the page. -->
   <section v-if="prints.length" class="mt-10">
-    <h2 class="mb-3 text-sm font-semibold">Other printings ({{ prints.length }})</h2>
-    <CardGrid :game="game" :cards="prints" :ownership="ownership" />
+    <button
+      type="button"
+      class="group -mx-1.5 mb-3 flex items-start gap-1.5 rounded-md px-1.5 py-1 text-left"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+    >
+      <ChevronDown
+        class="text-muted-foreground group-hover:text-foreground mt-0.5 size-4 shrink-0 transition-transform"
+        :class="expanded ? 'rotate-180' : ''"
+      />
+      <h2 class="text-sm font-semibold">
+        Other printings
+        <span class="text-muted-foreground font-normal">({{ prints.length }})</span>
+      </h2>
+    </button>
+    <CardGrid v-if="expanded" :game="game" :cards="prints" :ownership="ownership" />
   </section>
 </template>

@@ -55,12 +55,17 @@ async function mountPrints(id: string, prints: Card[]) {
 }
 
 describe('CardPrints', () => {
-  it('lists the other printings with a count when there are some', async () => {
+  it('lists the other printings with a count, revealed on expand (collapsed by default)', async () => {
     const wrapper = await mountPrints('dummy-dmb-0080', [
       makeCard('dummy-dmu-0013', 'dmu'),
       makeCard('dummy-dmb-0080', 'dmb'),
     ])
+    // The count shows on the (collapsed) header; the grid stays hidden until expanded (#332).
     expect(wrapper.text()).toContain('Other printings (2)')
+    expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('a[href="/cards/mtg/cards/dummy-dmu-0013"]').exists()).toBe(false)
+
+    await wrapper.get('button[aria-expanded]').trigger('click')
     // One tile link per printing, each pointing at that printing's detail page.
     expect(wrapper.find('a[href="/cards/mtg/cards/dummy-dmu-0013"]').exists()).toBe(true)
     expect(wrapper.find('a[href="/cards/mtg/cards/dummy-dmb-0080"]').exists()).toBe(true)
