@@ -38,7 +38,7 @@ use crate::state::AppState;
 /// 10 000, then to 5 000 (issue #318) for still-smaller documents that build and
 /// transfer even faster; the index grows by a few dozen more entries, which is nothing
 /// (an index may hold 50 000 sitemaps).
-const MAX_URLS_PER_SITEMAP: u64 = 5_000;
+pub(crate) const MAX_URLS_PER_SITEMAP: u64 = 5_000;
 
 /// `Content-Type` for a sitemap document.
 const SITEMAP_CONTENT_TYPE: &str = "application/xml; charset=utf-8";
