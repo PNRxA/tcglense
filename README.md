@@ -146,14 +146,15 @@ Pin a release across the whole stack with `IMAGE_TAG=vX.Y.Z` (defaults to `lates
 #### Behind a CDN (Cloudflare)
 
 The public catalog (`/api/games/*`), its image/icon proxy, the XML sitemaps
-(`/api/sitemap.xml`, `/api/sitemaps/*`), and the public OpenAPI document
-(`/api/openapi.json`) already emit CDN-friendly `Cache-Control` (`s-maxage` /
+(`/api/sitemap.xml`, `/api/sitemaps/*`), the public OpenAPI document
+(`/api/openapi.json`), and — on a mirror host (`MIRROR_ENABLED=true`) — the dataset
+mirror (`/api/mirror/*`) already emit CDN-friendly `Cache-Control` (`s-maxage` /
 `immutable`), so a CDN caches them with no code change. To put Cloudflare in front:
 
 - Set **`CDN_MODE=true`** on the `api` service — the origin then skips caching card
   images to disk (the CDN absorbs the repeats), so it needs no writable image dir.
   Leave it off if no CDN sits in front, or every view re-fetches upstream.
-- **Create the two Cache Rules below** — Cloudflare doesn't cache `/api/*` paths by
+- **Create the three Cache Rules below** — Cloudflare doesn't cache `/api/*` paths by
   default, so you have to tell it which responses are cacheable. The origin already
   sends the right `Cache-Control` on every response, so the rules only make Cloudflare
   **honor the origin header** — there are no per-route TTLs to keep in sync.
@@ -161,14 +162,16 @@ The public catalog (`/api/games/*`), its image/icon proxy, the XML sitemaps
   cert — a Cloudflare Origin CA cert, or Let's Encrypt via the DNS-01 challenge (the
   HTTP-01 challenge can be interfered with by Cloudflare's proxy).
 
-Add both under *Caching → Cache Rules* (included on the free plan). Because each is set
+Add all three under *Caching → Cache Rules* (included on the free plan). Because each is set
 to honor the origin, Cloudflare gives every response the exact lifetime the API already
 chose — catalog reads their hour at the edge (`s-maxage=3600`), the image/icon proxy its
-30 days (`immutable`), the sitemaps their day — and caches **no** `no-store` response
+30 days (`immutable`), the sitemaps their day, the dataset mirror its per-route window
+(the bulk-data catalog an hour, the streamed bulk file a deliberately shorter half-hour,
+MTGJSON's `AllPrintings` a cheap conditional revalidate) — and caches **no** `no-store` response
 (auth, the live `status` route, per-user collection/wishlist data, and every error), so
 you never have to enumerate those to keep them out.
 
-1. **Cache the public catalog, images, sitemaps, and API docs.** *Cache eligibility* →
+1. **Cache the public catalog, images, sitemaps, API docs, and the dataset mirror.** *Cache eligibility* →
    **Eligible for cache**; *Edge TTL* → **Use cache-control header if present, bypass
    cache if not** (the honor-the-origin option — pick the *bypass*-if-absent one, not
    *…use default Cloudflare caching…*); *Browser TTL* → **Respect origin**. When
@@ -179,7 +182,15 @@ you never have to enumerate those to keep them out.
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
    or http.request.uri.path eq "/api/openapi.json"
+   or starts_with(http.request.uri.path, "/api/mirror/")
    ```
+
+   *Note: `/api/mirror/*` (the dataset mirror) is served only on a mirror host
+   (`MIRROR_ENABLED=true`, like the public site) and is a harmless no-op otherwise. Keep
+   it under this honor-origin rule — **never a fixed Edge TTL** — so Cloudflare respects
+   each mirror route's own `s-maxage`; `docs/tradeoffs.md` (dataset-mirror trade-off)
+   explains why the bulk-file TTL is deliberately shorter than the catalog's, plus the
+   CDN object-size caveat for the large decompressed Scryfall bulk file.*
 
 2. **Bypass everything per-user or live.** *Cache eligibility* → **Bypass cache**. This
    is belt-and-braces — these routes are already `no-store` at the origin, so rule 1
