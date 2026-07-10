@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { Sparkles } from '@lucide/vue'
+import { Sparkles, Coins } from '@lucide/vue'
 import type { Card } from '@/lib/api'
 import { colorLettersToText } from '@/lib/mana'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
@@ -38,10 +38,21 @@ const colorIdentityText = computed(() => colorLettersToText(props.card.color_ide
           {{ card.drop_name }}
         </RouterLink>
         <span v-else>{{ card.drop_name }}</span>
+        <!-- Spend reward: a promo handed out for reaching a cart spend threshold during
+             the superdrop, not included with a single drop (issue #331). More specific
+             than the generic chase-card tag, so it takes precedence. -->
+        <span
+          v-if="card.secret_lair_spend_incentive"
+          class="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
+          title="Spend reward — a promo card given for reaching a spend threshold during the Secret Lair superdrop, not included with a single drop."
+        >
+          <Coins class="size-3" />
+          Spend reward
+        </span>
         <!-- Chase / bonus card: the optional card given with a qualifying drop
              purchase, with no sealed product of its own (issue #295). -->
         <span
-          v-if="card.secret_lair_bonus"
+          v-else-if="card.secret_lair_bonus"
           class="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400"
           title="Chase card — the optional bonus card given with a qualifying Secret Lair purchase."
         >

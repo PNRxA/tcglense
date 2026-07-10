@@ -40,17 +40,18 @@ const PRODUCT_DROP_OVERRIDES: &[(&str, &str)] = &[
 ];
 
 /// A shared "bonus cards" drop plus the base drops that ship it. Some Secret Lair
-/// *superdrops* include a fixed set of bonus cards with **every** drop in the superdrop —
-/// e.g. the Avatar: The Last Airbender superdrop bundled Command Tower + Fellwar Stone
-/// (their own gallery drop) with each of its drops. Those bonus cards live in a drop no
-/// sealed product is named after, so name-matching alone never attaches them; this folds
-/// the bonus drop's cards into every product that resolves to one of `base_slugs`.
+/// *superdrops* include a fixed set of bonus cards with **every individual drop** in the
+/// superdrop — e.g. the Avatar: The Last Airbender superdrop bundled Command Tower +
+/// Fellwar Stone (their own gallery drop) into each of its individual drop products. Those
+/// bonus cards live in a drop no sealed product is named after, so name-matching alone never
+/// attaches them; this folds the bonus drop's cards into every product that resolves to one
+/// of `base_slugs`.
 struct BonusAttachment {
     /// The gallery drop holding the shared bonus cards (matched by slug — no product is
     /// named after it).
     bonus_slug: &'static str,
-    /// The drops each product of which also receives the bonus cards, at the product's
-    /// own foilness (a foil drop ships foil bonus cards, a non-foil drop non-foil).
+    /// The individual drops each product of which also receives the bonus cards, at the
+    /// product's own foilness (a foil drop ships foil bonus cards, a non-foil drop non-foil).
     base_slugs: &'static [&'static str],
 }
 

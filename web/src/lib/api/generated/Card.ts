@@ -28,6 +28,15 @@ drop_slug: string | null,
  */
 secret_lair_bonus: boolean, 
 /**
+ * Whether this printing is a Secret Lair **spend-incentive** promo — the card handed
+ * out for reaching a cart spend threshold during a superdrop (e.g. the Avatar foil
+ * Path of Ancestry, one per $199 spent), rather than included with a specific drop.
+ * Scryfall tags these `sldbonus` like the per-drop bonus cards above, so the flag comes
+ * from a curated list (see [`crate::scryfall::drops::is_spend_incentive`]); it lets the
+ * SPA mark them as spend rewards instead of ordinary chase cards (issue #331).
+ */
+secret_lair_spend_incentive: boolean, 
+/**
  * Present for multi-faced cards; request face images via `?face=N`.
  */
 faces: Array<CardFace>, };
