@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
 };
 
 use crate::entities::prelude::{Card, CardFingerprint};
@@ -48,6 +48,23 @@ pub struct ScanHit {
     pub distance: u32,
 }
 
+/// One fingerprint borrowed from the live index for the dataset-mirror **export**
+/// (see [`crate::catalog::fingerprint_sync`]). Borrows the index's own storage so
+/// serializing the whole catalogue copies no strings/hashes.
+pub struct ExportEntry<'a> {
+    pub external_id: &'a str,
+    pub face_index: i32,
+    pub hash: &'a [u8; PHASH_BYTES],
+}
+
+/// One fingerprint parsed from a mirror payload for **import** into the local table
+/// (see [`crate::catalog::fingerprint_sync`] and [`replace_all`]).
+pub struct ImportRow {
+    pub external_id: String,
+    pub face_index: i32,
+    pub hash: [u8; PHASH_BYTES],
+}
+
 /// Read-only nearest-neighbour index over every current-version fingerprint.
 ///
 /// Rebuilt from the table at startup and after each build/sync pass, then swapped
@@ -68,6 +85,30 @@ impl FingerprintIndex {
     /// Whether the index holds no fingerprints (nothing to match against).
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Borrow every entry for `game` in a stable `(external_id, face_index)` order, for
+    /// the dataset-mirror export. Sorting makes the serialized payload — and thus the
+    /// `ETag` derived from it — deterministic regardless of the order the index was
+    /// built in, so an unchanged index always re-serializes to the same bytes and a
+    /// consumer's conditional request short-circuits to a `304`.
+    pub fn export_entries(&self, game: &str) -> Vec<ExportEntry<'_>> {
+        let mut rows: Vec<ExportEntry<'_>> = self
+            .entries
+            .iter()
+            .filter(|e| e.game == game)
+            .map(|e| ExportEntry {
+                external_id: &e.external_id,
+                face_index: e.face_index,
+                hash: &e.hash,
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            a.external_id
+                .cmp(b.external_id)
+                .then_with(|| a.face_index.cmp(&b.face_index))
+        });
+        rows
     }
 
     /// The `top_k` printings nearest to the query for `game`, nearest first. `queries` is
@@ -297,6 +338,61 @@ pub async fn upsert(
         }
     }
     Ok(())
+}
+
+/// Rows per `INSERT` when bulk-importing a mirror payload. Matches the sealed-product
+/// import's batch size; well under both backends' bound-parameter limits (9 columns ×
+/// 1000 = 9k params, vs SQLite's 32_766 and Postgres's 65_535).
+const IMPORT_BATCH: usize = 1000;
+
+/// Replace **all** current-version fingerprints for `game` with an imported set, in one
+/// transaction (delete-then-bulk-insert). Used by the dataset-mirror import path (see
+/// [`crate::catalog::fingerprint_sync`]): the mirror payload is the origin's complete,
+/// authoritative index, so a full replace is correct — it also drops rows for printings
+/// the origin has since removed, which an upsert-only merge never would. The imported
+/// rows carry no `source_image_hash` (only the origin that fetched the image has it);
+/// that field only gates an incremental *build*, which an importing self-host never runs.
+/// Returns how many rows were written.
+pub async fn replace_all(
+    db: &DatabaseConnection,
+    game: &str,
+    algo_version: i32,
+    source_size: &str,
+    rows: Vec<ImportRow>,
+) -> Result<usize, DbErr> {
+    let now = Utc::now();
+    let txn = db.begin().await?;
+    CardFingerprint::delete_many()
+        .filter(card_fingerprint::Column::Game.eq(game))
+        .filter(card_fingerprint::Column::AlgoVersion.eq(algo_version))
+        .exec(&txn)
+        .await?;
+    let count = rows.len();
+    let mut iter = rows.into_iter();
+    loop {
+        let chunk: Vec<card_fingerprint::ActiveModel> = iter
+            .by_ref()
+            .take(IMPORT_BATCH)
+            .map(|row| card_fingerprint::ActiveModel {
+                game: Set(game.to_string()),
+                external_id: Set(row.external_id),
+                face_index: Set(row.face_index),
+                algo_version: Set(algo_version),
+                fingerprint: Set(row.hash.to_vec()),
+                source_size: Set(source_size.to_string()),
+                source_image_hash: Set(String::new()),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            })
+            .collect();
+        if chunk.is_empty() {
+            break;
+        }
+        CardFingerprint::insert_many(chunk).exec(&txn).await?;
+    }
+    txn.commit().await?;
+    Ok(count)
 }
 
 /// Load the full card rows for a set of external ids in one query, keyed by external id

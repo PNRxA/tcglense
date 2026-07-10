@@ -40,7 +40,8 @@ use crate::{
         config::public_config,
         health::health,
         mirror::{
-            mtgjson_all_printings, scryfall_bulk_data, scryfall_file, scryfall_sets, tcgcsv_proxy,
+            fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
+            scryfall_sets, tcgcsv_proxy,
         },
         openapi::openapi_json,
         sitemap::{sitemap_child, sitemap_index},
@@ -309,6 +310,9 @@ pub fn build_router(state: AppState) -> Router {
                 get(mtgjson_all_printings),
             )
             .route("/api/mirror/tcgcsv/{*path}", get(tcgcsv_proxy))
+            // The visual-scanner fingerprint index — served from this origin's in-memory
+            // index (no upstream), so self-hosts import it instead of hashing images.
+            .route("/api/mirror/fingerprints/{game}", get(fingerprint_index))
             .layer(map_response(public_cache_layer));
         app = app.merge(mirror);
     }

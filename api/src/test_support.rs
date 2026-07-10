@@ -56,6 +56,7 @@ pub(crate) fn test_config() -> Config {
         fingerprint_algo_version: 1,
         fingerprint_top_k: 8,
         fingerprint_max_distance: 96,
+        fingerprint_import_enabled: false,
     }
 }
 

@@ -166,6 +166,14 @@ pub struct Config {
     /// rather than a distant false positive. Generous so a weak (off-angle) but plausible
     /// scan still offers the right card to pick. Default `96`.
     pub fingerprint_max_distance: u32,
+    /// Whether an ordinary self-host **imports** the prebuilt fingerprint index from the
+    /// dataset mirror ([`Self::dataset_mirror_url`]) so its visual scanner works without
+    /// ever fetching card images (see [`crate::catalog::fingerprint_sync`]). Default
+    /// `true` — the hassle-free posture. Ignored on the index-building operator instance
+    /// ([`Self::fingerprint_build_enabled`] takes precedence, since it produces the index
+    /// locally); set `false` to opt a self-host out of the scanner / any outbound pull.
+    /// **Not** a secret.
+    pub fingerprint_import_enabled: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -227,6 +235,7 @@ impl std::fmt::Debug for Config {
             .field("fingerprint_algo_version", &self.fingerprint_algo_version)
             .field("fingerprint_top_k", &self.fingerprint_top_k)
             .field("fingerprint_max_distance", &self.fingerprint_max_distance)
+            .field("fingerprint_import_enabled", &self.fingerprint_import_enabled)
             .finish()
     }
 }
@@ -499,6 +508,9 @@ impl Config {
             .min(25);
         let fingerprint_max_distance =
             env_parse::<u32>("FINGERPRINT_MAX_DISTANCE").unwrap_or(96).min(256);
+        // On by default so an ordinary self-host's scanner just works (it pulls the tiny
+        // prebuilt index from the mirror); the build instance ignores it (it has its own).
+        let fingerprint_import_enabled = env_bool("FINGERPRINT_IMPORT_ENABLED", true);
 
         Config {
             database_url,
@@ -536,6 +548,7 @@ impl Config {
             fingerprint_algo_version,
             fingerprint_top_k,
             fingerprint_max_distance,
+            fingerprint_import_enabled,
         }
     }
 

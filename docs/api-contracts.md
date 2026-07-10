@@ -664,9 +664,9 @@ same way the catalog's come from `/owned`.
 
 Optional public endpoints (`handlers::mirror`), wired **only when `MIRROR_ENABLED=true`**
 (off by default — an enabled mirror is a public read proxy to the upstream dataset
-hosts; rationale + trade-offs in `docs/tradeoffs.md`). Each streams the file from its
-fixed upstream host on demand — no disk persistence, the same fetch-and-serve model as
-`CDN_MODE` — with CDN-cacheable headers via the shared `public_cache_layer`. The
+hosts; rationale + trade-offs in `docs/tradeoffs.md`). Each dataset route streams the file
+from its fixed upstream host on demand — no disk persistence, the same fetch-and-serve
+model as `CDN_MODE` — with CDN-cacheable headers via the shared `public_cache_layer`. The
 `kind`/path inputs are sanitised (host-locked, no traversal). The MTGJSON route forwards
 `If-None-Match` and relays the upstream `304`, so an unchanged file stays a cheap
 conditional.
@@ -678,3 +678,15 @@ conditional.
 | `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated) |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives) |
+| `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
+
+The **fingerprint** route is not an upstream proxy: it serializes this origin's own
+in-memory index (built by the operator's `FINGERPRINT_BUILD_ENABLED` instance) into a
+self-describing little-endian payload — `magic "TCGLFP01"` · `algo_version i32` ·
+`count u32` · then `count` records of `id_len u16` · `external_id` · `face_index i32` ·
+`32-byte pHash` (see `catalog::fingerprint_sync`). It carries a strong content `ETag`, so
+a consumer with the current index gets a bodyless `304`. A self-host with
+`FINGERPRINT_IMPORT_ENABLED=true` (default) pulls this on the sync interval, version-gates
+it against its own `FINGERPRINT_ALGO_VERSION`, and replaces its local `card_fingerprint`
+rows in one transaction — the ~3–4 MB MTG index is fetched **once per change**, so every
+ordinary self-host runs the scanner while fetching **zero** card images.

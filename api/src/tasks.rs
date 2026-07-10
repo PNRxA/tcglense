@@ -197,11 +197,16 @@ fn fingerprint_build(state: &AppState) -> FingerprintBuild {
 }
 
 /// Load the current fingerprints from the table and swap them into the live match index.
-async fn reload_fingerprint_index(db: &DatabaseConnection, cfg: &FingerprintBuild) {
-    match crate::catalog::fingerprints::load_index(db, cfg.algo_version).await {
+/// Shared by the build and import paths (each holds the same index slot + algo version).
+async fn reload_fingerprint_index(
+    db: &DatabaseConnection,
+    algo_version: i32,
+    index_slot: &Arc<RwLock<Arc<FingerprintIndex>>>,
+) {
+    match crate::catalog::fingerprints::load_index(db, algo_version).await {
         Ok(index) => {
             tracing::info!(count = index.len(), "loaded card-fingerprint match index");
-            *cfg.index_slot.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(index);
+            *index_slot.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(index);
         }
         Err(err) => {
             tracing::error!(error = %err, "failed to load card-fingerprint match index")
@@ -283,7 +288,7 @@ async fn run_fingerprint_pass(
         // Publish partial progress so the scanner recognises the cards done so far while
         // the rest of the (long) first pass keeps running.
         if built - refreshed_at >= FINGERPRINT_INDEX_REFRESH_EVERY {
-            reload_fingerprint_index(db, cfg).await;
+            reload_fingerprint_index(db, cfg.algo_version, &cfg.index_slot).await;
             refreshed_at = built;
         }
     }
@@ -309,12 +314,108 @@ fn spawn_fingerprint_build(db: DatabaseConnection, cfg: FingerprintBuild) {
             }
             // Final refresh off the freshly-built table (partial refreshes happened
             // during the pass; this catches the tail).
-            reload_fingerprint_index(&db, &cfg).await;
+            reload_fingerprint_index(&db, cfg.algo_version, &cfg.index_slot).await;
             if cfg.rebuild_interval_hours == 0 {
                 break; // startup-only posture: one pass, no periodic re-scan
             }
             tokio::time::sleep(Duration::from_secs(
                 cfg.rebuild_interval_hours.saturating_mul(60 * 60),
+            ))
+            .await;
+        }
+    });
+}
+
+/// Everything the fingerprint **import** needs on a self-host that pulls the prebuilt
+/// index from the mirror instead of building it. Cheaply cloneable (an `Arc`, a `Client`,
+/// a short `String`).
+#[derive(Clone)]
+struct FingerprintImport {
+    /// Shared HTTP client used for the conditional mirror fetch.
+    http: Client,
+    /// Mirror origin to pull the index from (`DATASET_MIRROR_URL`), trailing slash trimmed.
+    mirror_base: String,
+    /// The live match index to republish after an import.
+    index_slot: Arc<RwLock<Arc<FingerprintIndex>>>,
+    /// The algo version this instance expects; a mirror index built at another is skipped.
+    algo_version: i32,
+    /// Hours between re-checks of the mirror (`0` = a single import at startup).
+    interval_hours: u64,
+}
+
+/// Assemble the import config from state (only meaningful when import is enabled).
+fn fingerprint_import(state: &AppState, http: &Client) -> FingerprintImport {
+    FingerprintImport {
+        http: http.clone(),
+        mirror_base: state.config.dataset_mirror_url.clone(),
+        index_slot: state.fingerprint_index.clone(),
+        algo_version: state.config.fingerprint_algo_version,
+        interval_hours: state.config.sync_interval_hours,
+    }
+}
+
+/// Spawn the detached fingerprint **import** (a self-host that isn't the builder): pull
+/// the prebuilt index from the mirror, replace the local table when it changed, and
+/// republish the match index. Conditional on the ETag stored in `ingest_state`, so an
+/// unchanged index costs a single cheap `304`. Loops on the sync interval (or runs once
+/// when it's `0`). Every failure is logged, never fatal — the scanner keeps serving
+/// whatever index it already had loaded at startup.
+fn spawn_fingerprint_import(db: DatabaseConnection, cfg: FingerprintImport) {
+    use crate::catalog::fingerprint_sync::{self, ImportOutcome};
+    let game = crate::scryfall::GAME;
+    tokio::spawn(async move {
+        loop {
+            let prev_etag = match fingerprint_sync::last_import_etag(&db, game).await {
+                Ok(etag) => etag,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to read fingerprint import state");
+                    None
+                }
+            };
+            match fingerprint_sync::import_from_mirror(
+                &db,
+                &cfg.http,
+                &cfg.mirror_base,
+                game,
+                cfg.algo_version,
+                prev_etag.as_deref(),
+            )
+            .await
+            {
+                Ok(ImportOutcome::Imported { count, etag }) => {
+                    tracing::info!(count, "imported card-fingerprint index from the mirror");
+                    if let Err(err) = fingerprint_sync::record_import(
+                        &db,
+                        game,
+                        etag.as_deref(),
+                        "complete",
+                        "imported from mirror",
+                        count as i32,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %err, "failed to record fingerprint import state");
+                    }
+                    reload_fingerprint_index(&db, cfg.algo_version, &cfg.index_slot).await;
+                }
+                Ok(ImportOutcome::Unchanged) => {
+                    tracing::debug!("card-fingerprint index unchanged on the mirror")
+                }
+                Ok(ImportOutcome::AlgoMismatch { served, expected }) => tracing::warn!(
+                    served,
+                    expected,
+                    "mirror fingerprint index was built at a different algo version; skipping \
+                     import (align FINGERPRINT_ALGO_VERSION with the mirror + the web bundle)"
+                ),
+                Err(err) => {
+                    tracing::warn!(error = %err, "card-fingerprint import from the mirror failed")
+                }
+            }
+            if cfg.interval_hours == 0 {
+                break; // startup-only posture: one import, no periodic re-check
+            }
+            tokio::time::sleep(Duration::from_secs(
+                cfg.interval_hours.saturating_mul(60 * 60),
             ))
             .await;
         }
@@ -458,5 +559,18 @@ pub async fn start(state: &AppState, http: &Client) {
         if state.config.fingerprint_build_enabled {
             spawn_fingerprint_build(state.db.clone(), fingerprint_build(state));
         }
+    }
+
+    // A self-host that doesn't build the index imports the prebuilt one from the dataset
+    // mirror, so its visual scanner works with **zero** card-image fetches — the whole
+    // point of the opt-in operator build. Skipped in dummy mode (offline) and on the
+    // builder instance itself (`fingerprint_build_enabled` produces the index locally, so
+    // importing would fight the build). Independent of the card sync: it needs no cards,
+    // only the tiny hash index. Off via `FINGERPRINT_IMPORT_ENABLED=false`.
+    if !state.config.seed_dummy_data
+        && state.config.fingerprint_import_enabled
+        && !state.config.fingerprint_build_enabled
+    {
+        spawn_fingerprint_import(state.db.clone(), fingerprint_import(state, http));
     }
 }

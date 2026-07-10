@@ -203,6 +203,22 @@ pub(super) async fn send_text(app: &Router, req: Request<Body>) -> (StatusCode, 
     (status, headers, String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Like [`send`] but returns the raw body bytes, for binary routes (e.g. the mirror's
+/// fingerprint-index payload) whose bodies are neither JSON nor UTF-8 text.
+pub(super) async fn send_bytes(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let res = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("router is infallible");
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("read response body");
+    (status, headers, bytes.to_vec())
+}
+
 /// The `Cache-Control` header value as a string, or `None` if absent.
 pub(super) fn cache_control(headers: &HeaderMap) -> Option<&str> {
     headers.get(CACHE_CONTROL).and_then(|v| v.to_str().ok())

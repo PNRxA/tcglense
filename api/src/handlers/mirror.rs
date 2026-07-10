@@ -30,7 +30,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::{error::AppError, extract::Path, state::AppState};
+use crate::{catalog::fingerprint_sync, error::AppError, extract::Path, state::AppState};
 
 /// `Cache-Control` for the small mirror **metadata** (the Scryfall bulk-data catalog and
 /// set list, and every TCGCSV JSON / `last-updated.txt`). Shared-cacheable for an hour —
@@ -279,6 +279,52 @@ pub async fn tcgcsv_proxy(
         MIRROR_META_CACHE,
     )
     .await
+}
+
+/// `GET /api/mirror/fingerprints/{game}` — the visual-scanner match index for `game`,
+/// serialized as a compact binary payload (see [`crate::catalog::fingerprint_sync`]) so
+/// other TCGLense instances import the finished index instead of fetching + hashing every
+/// card image themselves (the whole point of the opt-in operator build).
+///
+/// Unlike the dataset proxies above this touches **no upstream**: it serializes this
+/// origin's own in-memory index. It is version-gated by a strong content `ETag`, so a
+/// consumer whose index is current gets a bodyless `304`. The payload changes only when
+/// the origin rebuilds (about daily), so it is shared-cacheable like the other metadata.
+pub async fn fingerprint_index(
+    Path(game): Path<String>,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let algo_version = state.config.fingerprint_algo_version;
+    let index = state.fingerprint_index();
+    let entries = index.export_entries(&game);
+    let body = fingerprint_sync::serialize(algo_version, &entries);
+    let etag = fingerprint_sync::etag(&body);
+    // Provably ASCII (`"fp-<hex>"`); map the impossible failure to a 500 rather than panic.
+    let etag_value = HeaderValue::from_str(&etag)
+        .map_err(|_| AppError::Internal("fingerprint etag not header-safe".to_string()))?;
+
+    // Conditional request: an unchanged index is a cheap bodyless 304 carrying the ETag.
+    if let Some(inm) = headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+        if inm == etag {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::NOT_MODIFIED;
+            let out = response.headers_mut();
+            out.insert(ETAG, etag_value);
+            out.insert(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE));
+            return Ok(response);
+        }
+    }
+
+    let mut response = Response::new(Body::from(body));
+    let out = response.headers_mut();
+    out.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    out.insert(ETAG, etag_value);
+    out.insert(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE));
+    Ok(response)
 }
 
 #[cfg(test)]
