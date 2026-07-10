@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 // import (esModuleInterop) and the runtime via a lazy dynamic import().
 import type Tesseract from 'tesseract.js'
 import { detectCardQuad, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
+import { detectCardQuadCv, loadOpenCv } from '@/lib/scan/opencvDetect'
 import { phashFromRgba } from '@/lib/scan/phash'
 import { SET_REGION, guideRect, regionInRect } from '@/lib/scan/regions'
 
@@ -45,6 +46,13 @@ const VARIANT_INSETS = [0, 0.05, 0.1]
 // was good". Only runs on a commit, so the cost is fine.
 const BURST_FRAMES = 4
 
+/** Long edge (px) the live frame is downscaled to for continuous detection — small
+ * enough that OpenCV runs at a smooth few-fps, large enough for accurate corners. */
+const DETECT_MAX = 640
+
+/** How often the live detection loop runs (ms) — ~8 fps for a responsive outline. */
+const DETECT_INTERVAL_MS = 120
+
 /** What one captured frame yields for the session. */
 export interface ScanCapture {
   /** 256-bit perceptual hashes of the deskewed card — the base crop plus small geometric
@@ -65,6 +73,12 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   const facingMode = ref<'environment' | 'user'>('environment')
   /** True while the OCR worker's WASM/trained-data is still downloading/initialising. */
   const ocrLoading = ref(false)
+  /** True while OpenCV.js is still loading (detection uses the lightweight fallback until
+   * then). */
+  const cvLoading = ref(false)
+  /** The card the live loop currently detects, as NORMALISED corners (0..1 of the frame),
+   * or null when none is found — drives the on-screen outline and the capture crop. */
+  const detectedQuad = ref<Quad | null>(null)
 
   let stream: MediaStream | null = null
   let worker: Tesseract.Worker | null = null
@@ -86,6 +100,14 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   const ocrCanvas = makeCanvas()
   // Holds each rotated/inset variant while its fingerprint is computed.
   const variantCanvas = makeCanvas()
+  // Small canvas the live detection loop reads (downscaled to DETECT_MAX).
+  const detectCanvas = makeCanvas()
+
+  // The loaded OpenCV runtime (null until ready), a guard so it's only loaded once, and
+  // the live detection loop's timer.
+  let cv: Awaited<ReturnType<typeof loadOpenCv>> | null = null
+  let cvRequested = false
+  let detectTimer: number | null = null
 
   function cameraSupported(): boolean {
     return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
@@ -157,6 +179,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
       status.value = 'ready'
       // Warm the OCR worker so the first real scan isn't stalled behind the download.
       void ensureWorker().catch(() => {})
+      // Load OpenCV + start the live card-detection outline (uses the lightweight
+      // detector until OpenCV is ready).
+      ensureCv()
+      startDetectLoop()
     } catch (err) {
       if (gen !== generation) return // superseded — don't clobber a newer state
       stream = null
@@ -182,6 +208,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   function stop(): void {
     // Invalidate any in-flight start() so its late getUserMedia resolution cleans itself up.
     generation++
+    stopDetectLoop()
     if (stream) {
       for (const track of stream.getTracks()) {
         track.removeEventListener('ended', onTrackEnded)
@@ -232,7 +259,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   }
 
   // The guide box's four corners in frame pixels — the detection fallback: when no card
-  // is auto-detected we warp exactly the region the user aligned to.
+  // is detected we warp exactly the region the user aligned to.
   function guideQuad(frameW: number, frameH: number): Quad {
     const g = guideRect(frameW, frameH)
     return [
@@ -243,9 +270,70 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     ]
   }
 
-  // Draw the current frame (downscaled), detect the card (or fall back to the guide box),
-  // and warp it to an upright WARP_W×WARP_H crop. Returns the crop's RGBA, or null if the
-  // camera isn't ready / the frame has no dimensions yet.
+  /** Scale a normalised quad (0..1) up to the pixel coords of a `w`×`h` frame. */
+  function denormalizeQuad(quad: Quad, w: number, h: number): Quad {
+    return quad.map((p) => ({ x: p.x * w, y: p.y * h })) as Quad
+  }
+
+  // Warm the OpenCV runtime once (detection uses the lightweight detector until it's
+  // ready). A load failure is swallowed — the fallback keeps the scanner working.
+  function ensureCv(): void {
+    if (cv || cvRequested) return
+    cvRequested = true
+    cvLoading.value = true
+    loadOpenCv()
+      .then((loaded) => {
+        if (!disposed) cv = loaded
+      })
+      .catch(() => {
+        cvRequested = false // allow a retry on the next start
+      })
+      .finally(() => {
+        cvLoading.value = false
+      })
+  }
+
+  // One live-detection step: downscale the current frame and find the card's corners,
+  // updating `detectedQuad` (normalised) so the outline tracks the card. OpenCV when
+  // loaded, else the lightweight detector. Runs on a timer while the camera is live.
+  function detectFrame(): void {
+    const el = video.value
+    if (!detectCanvas || status.value !== 'ready' || !el) return
+    const vw = el.videoWidth
+    const vh = el.videoHeight
+    if (!vw || !vh) return
+    const scale = Math.min(1, DETECT_MAX / Math.max(vw, vh))
+    const dw = Math.max(1, Math.round(vw * scale))
+    const dh = Math.max(1, Math.round(vh * scale))
+    detectCanvas.width = dw
+    detectCanvas.height = dh
+    const ctx = detectCanvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) return
+    ctx.drawImage(el, 0, 0, dw, dh)
+    const image = ctx.getImageData(0, 0, dw, dh)
+    if (cv) {
+      detectedQuad.value = detectCardQuadCv(cv, image)
+    } else {
+      const q = detectCardQuad(toGray(image.data, dw, dh), dw, dh)
+      detectedQuad.value = q ? (q.map((p) => ({ x: p.x / dw, y: p.y / dh })) as Quad) : null
+    }
+  }
+
+  function startDetectLoop(): void {
+    if (detectTimer !== null) return
+    detectTimer = window.setInterval(detectFrame, DETECT_INTERVAL_MS)
+  }
+  function stopDetectLoop(): void {
+    if (detectTimer !== null) {
+      clearInterval(detectTimer)
+      detectTimer = null
+    }
+    detectedQuad.value = null
+  }
+
+  // Draw the current frame (downscaled), pick the card quad (the one the live loop is
+  // tracking, else a one-off lightweight detect, else the guide box), and warp it to an
+  // upright WARP_W×WARP_H crop. Null if the camera isn't ready / the frame has no size yet.
   function warpFrame(): Uint8ClampedArray | null {
     const el = video.value
     if (!frameCanvas || status.value !== 'ready' || !el) return null
@@ -263,8 +351,12 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     fctx.drawImage(el, 0, 0, fw, fh)
     const frame = fctx.getImageData(0, 0, fw, fh)
 
-    const detected = detectCardQuad(toGray(frame.data, fw, fh), fw, fh)
-    const quad = detected ?? guideQuad(fw, fh)
+    // Prefer the card the live loop is tracking (what the outline shows), scaled to the
+    // full-res frame; else a one-off lightweight detect; else the guide box.
+    const norm = detectedQuad.value
+    const quad: Quad = norm
+      ? denormalizeQuad(norm, fw, fh)
+      : (detectCardQuad(toGray(frame.data, fw, fh), fw, fh) ?? guideQuad(fw, fh))
     return warpToRect(frame.data, fw, fh, quad, WARP_W, WARP_H)
   }
 
@@ -410,6 +502,8 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     errorMessage,
     facingMode,
     ocrLoading,
+    cvLoading,
+    detectedQuad,
     start,
     stop,
     switchCamera,

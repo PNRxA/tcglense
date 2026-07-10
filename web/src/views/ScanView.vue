@@ -9,7 +9,6 @@ import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import ScanSessionList from '@/components/collection/ScanSessionList.vue'
 import { useCardScanner } from '@/composables/useCardScanner'
 import { useScanSession } from '@/composables/useScanSession'
-import { CARD_ASPECT, GUIDE_MARGIN, SET_REGION, rectToPercentStyle } from '@/lib/scan/regions'
 import { usePageMeta } from '@/lib/seo'
 
 // Scan physical cards into the collection with the phone/webcam camera. Tap the camera (or
@@ -23,7 +22,7 @@ usePageMeta({ title: 'Scan cards', canonicalPath: '/scan', noindex: true })
 const game = ref('mtg')
 
 const video = ref<HTMLVideoElement | null>(null)
-const { status, errorMessage, ocrLoading, start, stop, switchCamera, capture } =
+const { status, errorMessage, ocrLoading, cvLoading, detectedQuad, start, stop, switchCamera, capture } =
   useCardScanner(video)
 
 const {
@@ -59,29 +58,24 @@ const reading = ref(false)
 
 const isReady = computed(() => status.value === 'ready')
 
-// The viewport tracks the camera's aspect so the CSS guide box maps 1:1 to the pixels the
-// crop is taken from (see regions.ts).
+// The viewport tracks the camera's aspect (container matches the video, so the outline
+// overlay maps 1:1 to the frame).
 const videoAspect = ref(3 / 4)
 function onLoadedMetadata() {
   const el = video.value
   if (el?.videoWidth && el.videoHeight) videoAspect.value = el.videoWidth / el.videoHeight
 }
 
-// The card-shaped guide box as a fraction of the (aspect-matched) container — the largest
-// 61:85 rect that fits with the standard margin, mirroring guideRect(). The huge spread
-// box-shadow dims everything outside the box (clipped by the viewport's overflow-hidden).
-const guideStyle = computed(() => {
-  const avail = 1 - 2 * GUIDE_MARGIN
-  const heightLimited = videoAspect.value > CARD_ASPECT
-  const widthFrac = heightLimited ? (avail * CARD_ASPECT) / videoAspect.value : avail
-  const heightFrac = heightLimited ? avail : (avail * videoAspect.value) / CARD_ASPECT
-  return {
-    width: `${widthFrac * 100}%`,
-    height: `${heightFrac * 100}%`,
-    boxShadow: '0 0 0 100vmax rgba(0, 0, 0, 0.35)',
-  }
-})
-const setStripStyle = rectToPercentStyle(SET_REGION)
+// Whether a card is currently detected in the live frame.
+const cardDetected = computed(() => detectedQuad.value !== null)
+
+// The detected card's outline as an SVG polygon `points` string in a 0..100 viewBox
+// (normalised corners × 100), or '' when no card is detected.
+const outlinePoints = computed(() =>
+  detectedQuad.value
+    ? detectedQuad.value.map((p) => `${(p.x * 100).toFixed(2)},${(p.y * 100).toFixed(2)}`).join(' ')
+    : '',
+)
 
 // Capture + match one frame on demand — tap the camera or the Capture button. Capturing a
 // new card first commits the previous one (the rapid-add rhythm), handled in the session.
@@ -116,7 +110,8 @@ const statusHint = computed(() => {
   if (resolving.value) return 'Matching…'
   if (reading.value) return 'Scanning…'
   if (match.value) return 'Capture the next card to add this one.'
-  return 'Tap the camera (or Capture) to scan the card.'
+  if (cardDetected.value) return 'Card locked on — tap to scan.'
+  return 'Point at a card, flat and filling the frame.'
 })
 </script>
 
@@ -148,7 +143,7 @@ const statusHint = computed(() => {
                top per camera state. -->
           <video
             ref="video"
-            class="h-full w-full object-cover"
+            class="h-full w-full object-contain"
             :class="{ 'opacity-0': !isReady }"
             autoplay
             muted
@@ -156,23 +151,34 @@ const statusHint = computed(() => {
             @loadedmetadata="onLoadedMetadata"
           ></video>
 
-          <!-- Alignment guide (also the detection fallback) + the set-line strip the OCR
-               reads to pin the printing, shown while the camera is live. -->
-          <div
-            v-if="isReady"
-            class="pointer-events-none absolute inset-0 flex items-center justify-center"
+          <!-- Live detection outline: the four corners the detector found, tracking the
+               card in real time (green = locked on). Maps 1:1 to the frame (container
+               matches the video aspect); non-scaling stroke stays an even width. -->
+          <svg
+            v-if="isReady && cardDetected"
+            class="pointer-events-none absolute inset-0 h-full w-full"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
           >
-            <div class="relative rounded-lg border-2 border-white/70" :style="guideStyle">
-              <div class="border-primary/60 absolute rounded-sm border" :style="setStripStyle"></div>
-            </div>
-          </div>
+            <polygon
+              :points="outlinePoints"
+              fill="rgba(34, 197, 94, 0.12)"
+              stroke="rgb(34, 197, 94)"
+              stroke-width="3"
+              stroke-linejoin="round"
+              vector-effect="non-scaling-stroke"
+            />
+          </svg>
 
-          <!-- Tap-to-scan hint (idle-ready). -->
+          <!-- Tap-to-scan hint (idle-ready): green + "Tap to scan" when a card is locked
+               on, else a nudge to line one up. -->
           <div
             v-if="isReady && !reading && !resolving"
-            class="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
+            class="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full px-2.5 py-1 text-xs font-medium text-white"
+            :class="cardDetected ? 'bg-green-600/85' : 'bg-black/60'"
           >
-            Tap to scan
+            {{ cardDetected ? 'Tap to scan' : 'Point at a card' }}
           </div>
 
           <!-- Scanning / matching pulse. -->
@@ -221,9 +227,9 @@ const statusHint = computed(() => {
             </Button>
           </div>
 
-          <!-- Loading the OCR engine (first scan of the session). -->
+          <!-- Loading the detector / OCR engine (first scan of the session). -->
           <div
-            v-if="isReady && ocrLoading"
+            v-if="isReady && (ocrLoading || cvLoading)"
             class="absolute right-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white"
           >
             <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />

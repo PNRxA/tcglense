@@ -118,7 +118,7 @@ pub async fn scan_cards(
     // Dress each hit with its full card detail (one query), preserving the ranked order.
     let external_ids: Vec<String> = hits.iter().map(|hit| hit.external_id.clone()).collect();
     let cards = fingerprints::cards_by_external_id(&state.db, &game, external_ids).await?;
-    let data = hits
+    let data: Vec<ScanMatch> = hits
         .into_iter()
         .filter_map(|hit| {
             cards.get(&hit.external_id).cloned().map(|card| ScanMatch {
