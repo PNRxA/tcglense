@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, reactive, toRef, watch } from 'vue'
+import { ChevronDown } from '@lucide/vue'
 import type { SealedProductRef } from '@/lib/api'
 import { useCardSealedQuery } from '@/composables/useProducts'
 import ProductGrid from '@/components/products/ProductGrid.vue'
@@ -44,6 +45,15 @@ const sections = computed(() =>
     products: refs.value.filter((r) => r.membership === group.key).map((r) => r.product),
   })).filter((section) => section.products.length > 0),
 )
+
+// Each bucket collapses independently (issue #332), matching the sealed product page's
+// card sections — collapsed by default with a count on the heading, so a card in dozens of
+// products doesn't stack grid after grid until asked. Keyed by the bucket key (an absent
+// key reads as collapsed); card-to-card navigation re-collapses every bucket.
+const expanded = reactive<Record<string, boolean>>({})
+watch(id, () => {
+  for (const key of Object.keys(expanded)) expanded[key] = false
+})
 </script>
 
 <template>
@@ -51,11 +61,25 @@ const sections = computed(() =>
     <h2 class="mb-4 text-sm font-semibold">Sealed products</h2>
     <div class="space-y-8">
       <div v-for="section in sections" :key="section.key">
-        <div class="mb-3">
-          <h3 class="text-sm font-medium">{{ section.title }} ({{ section.products.length }})</h3>
-          <p class="text-muted-foreground text-xs">{{ section.blurb }}</p>
-        </div>
-        <ProductGrid :game="game" :products="section.products" />
+        <button
+          type="button"
+          class="group -mx-1.5 mb-3 flex items-start gap-1.5 rounded-md px-1.5 py-1 text-left"
+          :aria-expanded="!!expanded[section.key]"
+          @click="expanded[section.key] = !expanded[section.key]"
+        >
+          <ChevronDown
+            class="text-muted-foreground group-hover:text-foreground mt-0.5 size-4 shrink-0 transition-transform"
+            :class="expanded[section.key] ? 'rotate-180' : ''"
+          />
+          <span>
+            <h3 class="text-sm font-medium">
+              {{ section.title }}
+              <span class="text-muted-foreground font-normal">({{ section.products.length }})</span>
+            </h3>
+            <p class="text-muted-foreground text-xs">{{ section.blurb }}</p>
+          </span>
+        </button>
+        <ProductGrid v-if="expanded[section.key]" :game="game" :products="section.products" />
       </div>
     </div>
   </section>
