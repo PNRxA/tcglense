@@ -66,7 +66,14 @@ function makeProduct(over: Partial<Product> = {}): Product {
 }
 
 function makeComponent(over: Partial<ProductComponent> = {}): ProductComponent {
-  return { kind: 'sealed', name: 'Collector Booster', quantity: 12, product: null, card: null, ...over }
+  return {
+    kind: 'sealed',
+    name: 'Collector Booster',
+    quantity: 12,
+    product: null,
+    card: null,
+    ...over,
+  }
 }
 
 describe('capitalize', () => {
@@ -86,7 +93,12 @@ describe('assembleMetaDescription', () => {
   })
 
   it('drops the lowest-priority clause first when over budget, keeping the tail', () => {
-    const out = assembleMetaDescription('Lead.', ['High priority clause.', 'Low priority clause.'], 'Tail.', 40)
+    const out = assembleMetaDescription(
+      'Lead.',
+      ['High priority clause.', 'Low priority clause.'],
+      'Tail.',
+      40,
+    )
     expect(out).toContain('High priority')
     expect(out).not.toContain('Low priority')
     expect(out.endsWith('Tail.')).toBe(true)
@@ -95,7 +107,8 @@ describe('assembleMetaDescription', () => {
   it('stops at the first clause too long to fit — a lower-priority clause cannot leapfrog it', () => {
     // The high-priority clause overflows on its own; the short low-priority one WOULD fit, but
     // strict priority means it is dropped too (e.g. sealed contents never displaced by the price).
-    const longHigh = 'A high-priority clause that is definitely far too long to ever fit the budget.'
+    const longHigh =
+      'A high-priority clause that is definitely far too long to ever fit the budget.'
     const out = assembleMetaDescription('Lead.', [longHigh, 'Low.'], 'Tail.', 40)
     expect(out).toBe('Lead. Tail.')
   })
@@ -140,7 +153,11 @@ describe('cardMetaDescription', () => {
 
   it('omits the descriptor and the price when both type/rarity and price are absent', () => {
     const out = cardMetaDescription(
-      makeCard({ rarity: null, type_line: null, prices: { usd: null, usd_foil: null, eur: null, tix: null } }),
+      makeCard({
+        rarity: null,
+        type_line: null,
+        prices: { usd: null, usd_foil: null, eur: null, tix: null },
+      }),
     )
     expect(out).toBe("Assassin's Trophy — Guilds of Ravnica · #152. " + TAIL)
   })
@@ -207,7 +224,8 @@ describe('productMetaDescription', () => {
   it('does not repeat type/set context the product name already carries (anti-stuffing)', () => {
     const out = productMetaDescription(makeProduct(), 'Collector Booster Box', 'Kaldheim', contents)
     expect(out).toBe(
-      'Kaldheim Collector Booster Box. Contains 12× Collector Booster. Latest price $199.99. ' + TAIL,
+      'Kaldheim Collector Booster Box. Contains 12× Collector Booster. Latest price $199.99. ' +
+        TAIL,
     )
     expect(out).not.toContain('— Collector Booster Box')
   })
@@ -240,7 +258,12 @@ describe('productMetaDescription', () => {
   })
 
   it('places the contents summary before the price and drops both label prose when absent', () => {
-    const withContents = productMetaDescription(makeProduct(), 'Collector Booster Box', 'Kaldheim', contents)
+    const withContents = productMetaDescription(
+      makeProduct(),
+      'Collector Booster Box',
+      'Kaldheim',
+      contents,
+    )
     expect(withContents.indexOf('Contains')).toBeLessThan(withContents.indexOf('Latest price'))
 
     const withoutContents = productMetaDescription(
@@ -273,7 +296,10 @@ describe('cardProductNode', () => {
   })
 
   it('emits additionalProperty PropertyValues, omitting absent ones', () => {
-    const props = cardProductNode(makeCard()).additionalProperty as { name: string; value: unknown }[]
+    const props = cardProductNode(makeCard()).additionalProperty as {
+      name: string
+      value: unknown
+    }[]
     const byName = Object.fromEntries(props.map((p) => [p.name, p.value]))
     expect(byName['Rarity']).toBe('Rare')
     expect(byName['Set code']).toBe('GRN')
@@ -286,8 +312,9 @@ describe('cardProductNode', () => {
   })
 
   it('includes a non-default language and drops rarity when null', () => {
-    const props = cardProductNode(makeCard({ lang: 'ja', rarity: null }))
-      .additionalProperty as { name: string }[]
+    const props = cardProductNode(makeCard({ lang: 'ja', rarity: null })).additionalProperty as {
+      name: string
+    }[]
     const names = props.map((p) => p.name)
     expect(names).toContain('Language')
     expect(names).not.toContain('Rarity')
@@ -298,8 +325,24 @@ describe('cardProductNode', () => {
       makeCard({
         oracle_text: null,
         faces: [
-          { name: 'Front', mana_cost: '{G}', type_line: 'Creature', oracle_text: '{T}: Add {G}.', power: '1', toughness: '1', loyalty: null },
-          { name: 'Back', mana_cost: null, type_line: 'Land', oracle_text: 'Flying', power: null, toughness: null, loyalty: null },
+          {
+            name: 'Front',
+            mana_cost: '{G}',
+            type_line: 'Creature',
+            oracle_text: '{T}: Add {G}.',
+            power: '1',
+            toughness: '1',
+            loyalty: null,
+          },
+          {
+            name: 'Back',
+            mana_cost: null,
+            type_line: 'Land',
+            oracle_text: 'Flying',
+            power: null,
+            toughness: null,
+            loyalty: null,
+          },
         ],
       }),
     )
@@ -313,13 +356,25 @@ describe('cardProductNode', () => {
 describe('sealedProductNode', () => {
   const linked = [
     makeComponent({ name: 'Collector Booster', product: makeProduct({ id: 'sub-1' }) }),
-    makeComponent({ kind: 'card', name: 'Foil Promo', quantity: 1, card: makeCard({ id: 'card-9' }) }),
+    makeComponent({
+      kind: 'card',
+      name: 'Foil Promo',
+      quantity: 1,
+      card: makeCard({ id: 'card-9' }),
+    }),
     makeComponent({ kind: 'deck', name: 'Precon Deck', quantity: 1 }),
     makeComponent({ kind: 'other', name: 'Dice', quantity: 6 }),
   ]
 
   it('builds a valid Product with contents in the description and isRelatedTo', () => {
-    const node = sealedProductNode('mtg', makeProduct(), 'Collector Booster Box', 'Kaldheim', linked, 'https://cdn/x.jpg')
+    const node = sealedProductNode(
+      'mtg',
+      makeProduct(),
+      'Collector Booster Box',
+      'Kaldheim',
+      linked,
+      'https://cdn/x.jpg',
+    )
     expect(node['@type']).toBe('Product')
     expect(node.brand).toEqual({ '@type': 'Brand', name: 'Kaldheim' })
     expect(node.category).toBe('Collector Booster Box')
@@ -353,7 +408,15 @@ describe('sealedProductNode', () => {
 describe('no-storefront constraint guard', () => {
   // Neither node may claim purchasability — the deliberate price-tracker (not storefront)
   // stance. This fails the build if offers/availability/rating markup ever leaks back in.
-  const banned = ['offers', 'availability', 'aggregaterating', '"review"', 'pricecurrency', 'haspart', 'aggregateoffer']
+  const banned = [
+    'offers',
+    'availability',
+    'aggregaterating',
+    '"review"',
+    'pricecurrency',
+    'haspart',
+    'aggregateoffer',
+  ]
 
   it('the card node emits no offer/availability/rating markup', () => {
     const s = JSON.stringify(cardProductNode(makeCard(), 'https://cdn/x.jpg')).toLowerCase()
@@ -372,9 +435,19 @@ describe('no-storefront constraint guard', () => {
 describe('breadcrumbs', () => {
   it('cardCrumbs is a 4-level trail through the set page, terminating on the card', () => {
     const crumbs = cardCrumbs('mtg', makeCard())
-    expect(crumbs.map((c) => c.label)).toEqual(['Home', 'Cards', 'Guilds of Ravnica', "Assassin's Trophy"])
+    expect(crumbs.map((c) => c.label)).toEqual([
+      'Home',
+      'Cards',
+      'Guilds of Ravnica',
+      "Assassin's Trophy",
+    ])
     // Set page linked at index 2; the terminal card crumb has no link.
-    expect(crumbs.map((c) => c.to)).toEqual(['/', '/cards/mtg/cards', '/cards/mtg/sets/grn', undefined])
+    expect(crumbs.map((c) => c.to)).toEqual([
+      '/',
+      '/cards/mtg/cards',
+      '/cards/mtg/sets/grn',
+      undefined,
+    ])
   })
 
   it('sealedCrumbs is a 3-level trail (no set level)', () => {
@@ -386,7 +459,12 @@ describe('breadcrumbs', () => {
   it('breadcrumbList emits contiguous ListItems with absolute item URLs, terminal item omitted', () => {
     const bl = breadcrumbList(cardCrumbs('mtg', makeCard()))
     expect(bl['@type']).toBe('BreadcrumbList')
-    const items = bl.itemListElement as { '@type': string; position: number; name: string; item?: string }[]
+    const items = bl.itemListElement as {
+      '@type': string
+      position: number
+      name: string
+      item?: string
+    }[]
     expect(items.map((i) => i.position)).toEqual([1, 2, 3, 4])
     expect(items.every((i) => i['@type'] === 'ListItem')).toBe(true)
     expect(items.map((i) => i.item)).toEqual([

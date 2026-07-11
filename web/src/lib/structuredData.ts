@@ -146,7 +146,8 @@ export function cardProductNode(c: Card, image?: string): Record<string, unknown
   }
   if (image) node.image = image
   if (c.type_line) node.category = c.type_line
-  if (c.released_at && /^\d{4}-\d{2}-\d{2}/.test(c.released_at)) node.releaseDate = c.released_at.slice(0, 10)
+  if (c.released_at && /^\d{4}-\d{2}-\d{2}/.test(c.released_at))
+    node.releaseDate = c.released_at.slice(0, 10)
   return node
 }
 
@@ -224,7 +225,8 @@ export function sealedProductNode(
   if (typeLabel) node.category = typeLabel
   if (setName) node.brand = { '@type': 'Brand', name: setName }
   if (image) node.image = image
-  if (p.released_at && /^\d{4}-\d{2}-\d{2}/.test(p.released_at)) node.releaseDate = p.released_at.slice(0, 10)
+  if (p.released_at && /^\d{4}-\d{2}-\d{2}/.test(p.released_at))
+    node.releaseDate = p.released_at.slice(0, 10)
 
   // Only components that resolve to a catalog product/card become linked entities; textual
   // line items (decks, physical extras) are covered by the prose `description` above. Capped
@@ -234,7 +236,11 @@ export function sealedProductNode(
       c.product
         ? { '@type': 'Product', name: c.name, url: absoluteUrl(`/sealed/${game}/${c.product.id}`) }
         : c.card
-          ? { '@type': 'Product', name: c.name, url: absoluteUrl(`/cards/${game}/cards/${c.card.id}`) }
+          ? {
+              '@type': 'Product',
+              name: c.name,
+              url: absoluteUrl(`/cards/${game}/cards/${c.card.id}`),
+            }
           : null,
     )
     .filter((x): x is Record<string, unknown> => x !== null)
@@ -294,9 +300,5 @@ export function cardCrumbs(game: string, c: Card): Crumb[] {
 /** Home › Sealed › {Product} — 3 levels (there is no sealed-by-set route, so no Set crumb;
  * a Set crumb would have to point at the cards set page, cross-sectioning the trail). */
 export function sealedCrumbs(game: string, p: Product): Crumb[] {
-  return [
-    { label: 'Home', to: '/' },
-    { label: 'Sealed', to: `/sealed/${game}` },
-    { label: p.name },
-  ]
+  return [{ label: 'Home', to: '/' }, { label: 'Sealed', to: `/sealed/${game}` }, { label: p.name }]
 }

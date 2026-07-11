@@ -77,11 +77,7 @@ function editDistance(a: string, b: string, cost: (x: string, y: string) => numb
     const cur = [i]
     const ca = a.charAt(i - 1)
     for (let j = 1; j <= m; j++) {
-      cur[j] = Math.min(
-        prev[j]! + 1,
-        cur[j - 1]! + 1,
-        prev[j - 1]! + cost(ca, b.charAt(j - 1)),
-      )
+      cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + cost(ca, b.charAt(j - 1)))
     }
     prev = cur
   }
@@ -116,6 +112,10 @@ export function rankNames(ocrName: string, names: string[]): string[] {
  * missed (a letter was misread). Digit swaps are undone first; null when there's too little
  * clean text to query usefully. */
 export function namePoolPrefix(cleaned: string): string | null {
-  const prefix = deconfuseDigits(cleaned).replace(/\s+/g, ' ').trimStart().slice(0, POOL_PREFIX_LEN).trim()
+  const prefix = deconfuseDigits(cleaned)
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, POOL_PREFIX_LEN)
+    .trim()
   return prefix.length >= MIN_POOL_PREFIX ? prefix : null
 }

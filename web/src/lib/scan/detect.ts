@@ -25,7 +25,11 @@ export interface Point {
 export type Quad = [Point, Point, Point, Point]
 
 /** Rec. 601 integer luma (matches the hasher's grayscale), for a packed RGBA buffer. */
-export function toGray(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): Uint8Array {
+export function toGray(
+  rgba: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+): Uint8Array {
   const n = width * height
   const gray = new Uint8Array(n)
   for (let i = 0; i < n; i++) {
@@ -258,7 +262,15 @@ export function warpToRect(
   const h = solveHomography(rect, srcQuad)
   if (!h) return dst
   const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = h as [
-    number, number, number, number, number, number, number, number, number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
   ]
 
   for (let dy = 0; dy < dstH; dy++) {

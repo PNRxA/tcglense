@@ -22,7 +22,13 @@ type Cv = {
   Canny: (src: CvMat, dst: CvMat, t1: number, t2: number) => void
   getStructuringElement: (shape: number, ksize: unknown) => CvMat
   dilate: (src: CvMat, dst: CvMat, kernel: CvMat) => void
-  findContours: (img: CvMat, contours: CvMatVector, hierarchy: CvMat, mode: number, method: number) => void
+  findContours: (
+    img: CvMat,
+    contours: CvMatVector,
+    hierarchy: CvMat,
+    mode: number,
+    method: number,
+  ) => void
   arcLength: (curve: CvMat, closed: boolean) => number
   approxPolyDP: (curve: CvMat, approx: CvMat, epsilon: number, closed: boolean) => void
   isContourConvex: (contour: CvMat) => boolean
@@ -84,7 +90,7 @@ function isCardQuad(quad: Quad, frameAspect: number): boolean {
   if (Math.min(top, bottom, left, right) <= 0) return false
   if (Math.max(top, bottom) / Math.min(top, bottom) > 1.4) return false
   if (Math.max(left, right) / Math.min(left, right) > 1.4) return false
-  const aspect = ((top + bottom) / 2) / ((left + right) / 2)
+  const aspect = (top + bottom) / 2 / ((left + right) / 2)
   return Math.abs(aspect - CARD_ASPECT) <= ASPECT_TOLERANCE
 }
 
