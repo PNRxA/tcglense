@@ -16,7 +16,7 @@ import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // The mobile counterpart to MainNav: the top-bar's Cards/Collection/Wish list
 // dropdowns don't fit alongside the brand + theme + account controls at phone width,
-// so below `sm` they collapse into this single hamburger. It reuses the DropdownMenu
+// so below `md` they collapse into this single hamburger. It reuses the DropdownMenu
 // primitives (which open on tap) and folds the nav sections — Cards + Sealed (the
 // desktop "Products" menu, grouped together here), Collection and Wish list — into one
 // flat menu, driven by the same cached games registry as MainNav
