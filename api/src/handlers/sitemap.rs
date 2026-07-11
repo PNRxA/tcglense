@@ -63,8 +63,23 @@ pub const SITEMAP_CACHE_CONTROL: &str =
 pub async fn sitemap_index(State(state): State<AppState>) -> Result<Response, AppError> {
     let base = &state.config.public_site_url;
     let lastmod = latest_ingest_lastmod(&state.db).await?;
-    let card_chunks = chunk_count(Card::find().count(&state.db).await?);
-    let product_chunks = chunk_count(Product::find().count(&state.db).await?);
+    // Count over a single indexed column (`id`) rather than the full row so the count
+    // subquery stays narrow — the same `select_only()` shape this file's other queries
+    // use, letting the planner satisfy the count from an index rather than the wide heap.
+    let card_chunks = chunk_count(
+        Card::find()
+            .select_only()
+            .column(card::Column::Id)
+            .count(&state.db)
+            .await?,
+    );
+    let product_chunks = chunk_count(
+        Product::find()
+            .select_only()
+            .column(product::Column::Id)
+            .count(&state.db)
+            .await?,
+    );
 
     let mut body = String::new();
     push_sitemap(
