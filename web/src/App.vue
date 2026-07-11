@@ -102,7 +102,7 @@ onMounted(() => {
           <!-- Below md the two nav dropdowns don't fit alongside the brand + theme +
                account controls, so they collapse into MobileNav's hamburger. The brand
                itself is fixed-width and never truncates. The md:hidden lives on this
-               wrapper, not on <MobileNav>: reka's DropdownMenu root is renderless, so a
+               wrapper, not on <MobileNav>: reka's Sheet (Dialog) root is renderless, so a
                class set on the component is dropped and the hamburger would never hide —
                it would double up with MainNav from md up. -->
           <div class="md:hidden">
