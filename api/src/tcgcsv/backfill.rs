@@ -26,10 +26,9 @@ use super::BackfillError;
 use super::model::{DayPrice, PriceFile, aggregate_prices};
 use super::progress::SyncProgress;
 use super::{DATASET, GAME, MTG_CATEGORY_ID};
-use crate::entities::prelude::{
-    Card, CardPriceHistory, IngestState, Product, ProductPriceHistory,
-};
-use crate::entities::{card, card_price_history, ingest_state, product, product_price_history};
+use crate::catalog::ingest_state::{self, StateFields};
+use crate::entities::prelude::{Card, CardPriceHistory, Product, ProductPriceHistory};
+use crate::entities::{card, card_price_history, product, product_price_history};
 
 /// First day TCGCSV published a price archive.
 fn first_archive_date() -> NaiveDate {
@@ -60,7 +59,7 @@ pub async fn run(
     match run_inner(db, http, user_agent, days_cap, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
-            let _ = mark_error(db, &err.to_string()).await;
+            let _ = ingest_state::mark_error(db, GAME, DATASET, &err.to_string()).await;
             Err(err)
         }
     }
@@ -74,7 +73,7 @@ async fn run_inner(
     source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
     let base_url = source.tcgcsv_base_url();
-    let existing = load_state(db).await?;
+    let existing = ingest_state::load(db, GAME, DATASET).await?;
     if existing.as_ref().map(|s| s.status.as_str()) == Some("complete") {
         tracing::info!("tcgcsv price backfill already complete; skipping");
         return Ok(());
@@ -428,58 +427,12 @@ async fn load_product_map(
 }
 
 // ----- ingest_state bookkeeping (dataset = tcgcsv_price_backfill) -----
-
-async fn load_state(
-    db: &DatabaseConnection,
-) -> Result<Option<ingest_state::Model>, BackfillError> {
-    Ok(IngestState::find()
-        .filter(ingest_state::Column::Game.eq(GAME))
-        .filter(ingest_state::Column::Dataset.eq(DATASET))
-        .one(db)
-        .await?)
-}
-
-/// Upsert the backfill's `ingest_state` row. `last_date` is stored in
-/// `source_updated_at` as the resume cursor (the last completed archive date).
-async fn put_state(
-    db: &DatabaseConnection,
-    status: &str,
-    last_date: Option<&str>,
-    detail: &str,
-    started_at: DateTimeUtc,
-    finished_at: Option<DateTimeUtc>,
-    rows_total: i64,
-) -> Result<(), BackfillError> {
-    let model = ingest_state::ActiveModel {
-        id: NotSet,
-        game: Set(GAME.to_string()),
-        dataset: Set(DATASET.to_string()),
-        source_updated_at: Set(last_date.map(str::to_string)),
-        status: Set(status.to_string()),
-        detail: Set(Some(detail.to_string())),
-        sets_imported: Set(0),
-        // Cumulative history rows inserted; clamped to i32's range for the column.
-        cards_imported: Set(rows_total.min(i64::from(i32::MAX)) as i32),
-        started_at: Set(Some(started_at)),
-        finished_at: Set(finished_at),
-    };
-    IngestState::insert(model)
-        .on_conflict(
-            OnConflict::columns([ingest_state::Column::Game, ingest_state::Column::Dataset])
-                .update_columns([
-                    ingest_state::Column::SourceUpdatedAt,
-                    ingest_state::Column::Status,
-                    ingest_state::Column::Detail,
-                    ingest_state::Column::CardsImported,
-                    ingest_state::Column::StartedAt,
-                    ingest_state::Column::FinishedAt,
-                ])
-                .to_owned(),
-        )
-        .exec_without_returning(db)
-        .await?;
-    Ok(())
-}
+//
+// The load / upsert / mark-error mechanics are shared in `catalog::ingest_state`;
+// `put_running` and `finish` are thin backfill-specific wrappers over its `put`.
+// `last_date` is stored in `source_updated_at` as the resume cursor (the last completed
+// archive date), and `rows_total` is the cumulative history-row count, clamped into the
+// `i32` column.
 
 async fn put_running(
     db: &DatabaseConnection,
@@ -489,7 +442,22 @@ async fn put_running(
     rows_total: i64,
 ) -> Result<(), BackfillError> {
     let last = last_date.map(|d| d.format("%Y-%m-%d").to_string());
-    put_state(db, "running", last.as_deref(), detail, started, None, rows_total).await
+    ingest_state::put(
+        db,
+        StateFields {
+            game: GAME,
+            dataset: DATASET,
+            status: "running",
+            source_updated_at: last.as_deref(),
+            detail,
+            sets_imported: 0,
+            cards_imported: rows_total.min(i64::from(i32::MAX)) as i32,
+            started_at: started,
+            finished_at: None,
+        },
+    )
+    .await
+    .map_err(Into::into)
 }
 
 async fn finish(
@@ -500,30 +468,25 @@ async fn finish(
 ) -> Result<(), BackfillError> {
     // Preserve the resume cursor and the cumulative row count already stored (a fresh
     // read avoids clobbering them when this run added nothing, e.g. a resumed finish).
-    let existing = load_state(db).await?;
+    let existing = ingest_state::load(db, GAME, DATASET).await?;
     let last = existing.as_ref().and_then(|s| s.source_updated_at.clone());
     let total = rows_total.max(existing.map(|s| i64::from(s.cards_imported)).unwrap_or(0));
-    put_state(
+    ingest_state::put(
         db,
-        "complete",
-        last.as_deref(),
-        detail,
-        started,
-        Some(Utc::now()),
-        total,
+        StateFields {
+            game: GAME,
+            dataset: DATASET,
+            status: "complete",
+            source_updated_at: last.as_deref(),
+            detail,
+            sets_imported: 0,
+            cards_imported: total.min(i64::from(i32::MAX)) as i32,
+            started_at: started,
+            finished_at: Some(Utc::now()),
+        },
     )
     .await
-}
-
-async fn mark_error(db: &DatabaseConnection, message: &str) -> Result<(), BackfillError> {
-    let existing = load_state(db).await?;
-    let started = existing
-        .as_ref()
-        .and_then(|s| s.started_at)
-        .unwrap_or_else(Utc::now);
-    let last = existing.and_then(|s| s.source_updated_at);
-    let detail: String = message.chars().take(500).collect();
-    put_state(db, "error", last.as_deref(), &detail, started, Some(Utc::now()), 0).await
+    .map_err(Into::into)
 }
 
 #[cfg(test)]

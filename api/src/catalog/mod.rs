@@ -9,6 +9,7 @@
 pub mod fingerprint_sync;
 pub mod fingerprints;
 pub mod images;
+pub mod ingest_state;
 
 use reqwest::Client;
 use sea_orm::DatabaseConnection;

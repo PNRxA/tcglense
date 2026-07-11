@@ -26,8 +26,7 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, EntityTrait, Iterable, QueryFilter, QuerySelect,
-    TransactionTrait,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, TransactionTrait,
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
@@ -38,8 +37,9 @@ use super::model::{self, RawComponent, RawMembership};
 use super::progress::SyncProgress;
 use super::sld;
 use super::{DATASET, GAME, MtgjsonError};
-use crate::entities::prelude::{Card, IngestState, Product, SealedComponent, SealedContent};
-use crate::entities::{card, ingest_state, product, sealed_component, sealed_content};
+use crate::catalog::ingest_state::{self, StateFields};
+use crate::entities::prelude::{Card, Product, SealedComponent, SealedContent};
+use crate::entities::{card, product, sealed_component, sealed_content};
 
 /// Rows per external-id `IN` lookup — under SQLite's 32 766 bound-parameter limit.
 const IN_CHUNK: usize = 900;
@@ -89,7 +89,7 @@ pub async fn refresh(
     match refresh_inner(db, http, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
-            let _ = mark_error(db, &err.to_string()).await;
+            let _ = ingest_state::mark_error(db, GAME, DATASET, &err.to_string()).await;
             Err(err)
         }
     }
@@ -100,7 +100,7 @@ async fn refresh_inner(
     http: &Client,
     source: &crate::datasets::SyncSource,
 ) -> Result<(), MtgjsonError> {
-    let existing = load_state(db).await?;
+    let existing = ingest_state::load(db, GAME, DATASET).await?;
     // The stored version couples MTGJSON's ETag with the committed fallback file's hash
     // (see `compose_version`), so a fallback-data edit forces a rebuild even when
     // AllPrintings is byte-identical.
@@ -146,7 +146,21 @@ async fn refresh_inner(
         .as_ref()
         .and_then(|s| s.started_at)
         .unwrap_or_else(Utc::now);
-    put_state(db, "running", None, "resolving contents", started, None, 0, 0).await?;
+    ingest_state::put(
+        db,
+        StateFields {
+            game: GAME,
+            dataset: DATASET,
+            status: "running",
+            source_updated_at: None,
+            detail: "resolving contents",
+            sets_imported: 0,
+            cards_imported: 0,
+            started_at: started,
+            finished_at: None,
+        },
+    )
+    .await?;
 
     // Resolve contents -> per-card memberships + the structural composition off the async
     // runtime (CPU-bound over a big document). `all` is dropped when the closure returns,
@@ -310,15 +324,19 @@ async fn refresh_inner(
          {component_count} components ({components_from_mtgjson} from mtgjson, \
          {components_from_fallback} from fallback)"
     );
-    put_state(
+    ingest_state::put(
         db,
-        "complete",
-        Some(&version),
-        &detail,
-        started,
-        Some(Utc::now()),
-        product_count as i32,
-        matched as i32,
+        StateFields {
+            game: GAME,
+            dataset: DATASET,
+            status: "complete",
+            source_updated_at: Some(&version),
+            detail: &detail,
+            sets_imported: product_count as i32,
+            cards_imported: matched as i32,
+            started_at: started,
+            finished_at: Some(Utc::now()),
+        },
     )
     .await?;
     tracing::info!(
@@ -899,70 +917,6 @@ async fn resolve_cards_by_setnum(
         }
     }
     Ok(map)
-}
-
-// ----- ingest_state bookkeeping (dataset = mtgjson_sealed_contents) -----
-
-async fn load_state(db: &DatabaseConnection) -> Result<Option<ingest_state::Model>, MtgjsonError> {
-    Ok(IngestState::find()
-        .filter(ingest_state::Column::Game.eq(GAME))
-        .filter(ingest_state::Column::Dataset.eq(DATASET))
-        .one(db)
-        .await?)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn put_state(
-    db: &DatabaseConnection,
-    status: &str,
-    source_updated_at: Option<&str>,
-    detail: &str,
-    started_at: DateTimeUtc,
-    finished_at: Option<DateTimeUtc>,
-    products: i32,
-    memberships: i32,
-) -> Result<(), MtgjsonError> {
-    let model = ingest_state::ActiveModel {
-        id: NotSet,
-        game: Set(GAME.to_string()),
-        dataset: Set(DATASET.to_string()),
-        source_updated_at: Set(source_updated_at.map(str::to_string)),
-        status: Set(status.to_string()),
-        detail: Set(Some(detail.to_string())),
-        sets_imported: Set(products),
-        cards_imported: Set(memberships),
-        started_at: Set(Some(started_at)),
-        finished_at: Set(finished_at),
-    };
-    IngestState::insert(model)
-        .on_conflict(
-            OnConflict::columns([ingest_state::Column::Game, ingest_state::Column::Dataset])
-                .update_columns(ingest_state::Column::iter().filter(|c| {
-                    !matches!(
-                        c,
-                        ingest_state::Column::Id
-                            | ingest_state::Column::Game
-                            | ingest_state::Column::Dataset
-                    )
-                }))
-                .to_owned(),
-        )
-        .exec_without_returning(db)
-        .await?;
-    Ok(())
-}
-
-async fn mark_error(db: &DatabaseConnection, message: &str) -> Result<(), MtgjsonError> {
-    let existing = load_state(db).await?;
-    let started = existing
-        .as_ref()
-        .and_then(|s| s.started_at)
-        .unwrap_or_else(Utc::now);
-    // Keep the last known-good ETag so a transient failure doesn't force a full re-fetch
-    // *unless* the file also changed.
-    let last = existing.and_then(|s| s.source_updated_at);
-    let detail: String = message.chars().take(500).collect();
-    put_state(db, "error", last.as_deref(), &detail, started, Some(Utc::now()), 0, 0).await
 }
 
 #[cfg(test)]
