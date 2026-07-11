@@ -74,7 +74,7 @@ carried over near-verbatim from the audited source, with the sealed-product prov
 
 - **Auth anti-abuse (CAPTCHA + rate limiting):** the auth mutation endpoints are
   guarded by Cloudflare Turnstile (`captcha.rs`) and per-IP rate limiting
-  (`ratelimit.rs`, `governor`). The rate limiters are **in-memory by default**; set
+  (`ratelimit/per_ip.rs`, `governor`). The rate limiters are **in-memory by default**; set
   `REDIS_URL` to back them with Redis so the keyspace is **shared across instances** (a
   multi-instance deploy then enforces one global quota). On a Redis outage the limiter
   **fails open**, degrading to in-memory for that check (rate limiting is abuse
@@ -96,7 +96,7 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   limit.
 - **Per-user rate limiting (issue #168):** the *authenticated* API surface (the
   `/api/collection/*` + `/api/wishlist/*` endpoints + `GET /api/auth/me`) also carries a per-user limit
-  (`ratelimit.rs`'s `UserRateLimiters` + the `user_rate_limit` middleware), keyed by
+  (`ratelimit/per_user.rs`'s `UserRateLimiters` + the `user_rate_limit` middleware), keyed by
   the access-token user id rather than the IP, so it caps what a single account can
   do no matter how many IPs it comes from — the per-user complement to the per-IP
   auth limits above. Two classes: a generous `general` bucket (reads/edits/batch
@@ -122,7 +122,7 @@ carried over near-verbatim from the audited source, with the sealed-product prov
   is `DB_*` env vars (SQLite stays sea-orm's forced single connection). The default test
   suite + CI stay on in-memory SQLite; Postgres/Redis correctness is covered by opt-in
   `#[ignore]` integration tests (`src/integration_pg.rs` + the Redis tests in
-  `ratelimit.rs`, gated on `TCGLENSE_TEST_POSTGRES_URL` / `TCGLENSE_TEST_REDIS_URL`) run
+  `ratelimit/backend.rs`, gated on `TCGLENSE_TEST_POSTGRES_URL` / `TCGLENSE_TEST_REDIS_URL`) run
   locally against docker (`deploy/docker-compose.yml`) and in the `postgres-redis-tests`
   CI job. Three deliberate cross-backend divergences, all a consequence of keeping SQLite
   byte-identical rather than forcing a shared behaviour: (1) text **sort order**

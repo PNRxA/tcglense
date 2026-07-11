@@ -66,10 +66,10 @@ tasks.rs               6h maintenance loop + startup/periodic card-data sync, or
 config.rs / state.rs   env config (secrets redacted in Debug) · AppState — the one construction site, shared with the test harness
 db.rs                  SQLite (WAL + REGEXP UDF) or Postgres, picked at runtime; db::Dialect is the seam for any raw/backend-specific SQL
 datasets.rs            SyncSource seam: providers fetch datasets from upstream or from a TCGLense mirror
-captcha.rs / client_ip.rs / ratelimit.rs / email.rs   Turnstile CAPTCHA · client-IP resolution · per-IP + per-user rate limiters · Resend email (each enum-dispatched with Disabled/test variants)
+captcha.rs / client_ip.rs / ratelimit/ / email.rs   Turnstile CAPTCHA · client-IP resolution · per-IP + per-user rate limiters (split into per_ip/per_user/backend, with the optional Redis GCRA backend) · Resend email (each enum-dispatched with Disabled/test variants)
 error.rs / extract.rs  AppError → JSON { error } · JsonBody<T>, the JSON body extractor with JSON rejections
-auth/                  Argon2 passwords · HS256 JWTs · single-use rotating refresh tokens · purpose-scoped email tokens · scoped API keys (api_key.rs) · AuthUser/WritableUser/SessionUser extractors
-catalog/               GAMES registry + refresh_all/seed_all dispatch per game · images.rs = lazy on-disk image cache
+auth/                  Argon2 passwords · HS256 JWTs · single-use rotating refresh tokens · purpose-scoped email tokens · scoped API keys (api_key.rs) · shared opaque-secret primitives (secret.rs = CSPRNG token + SHA-256 hex, reused by refresh/email-token/api-key) · AuthUser/WritableUser/SessionUser extractors
+catalog/               GAMES registry + refresh_all/seed_all dispatch per game · images.rs = lazy on-disk image cache · ingest_state.rs = shared provider version-gate bookkeeping · fingerprint_tasks.rs = opt-in visual-scanner build/import tasks (extracted from tasks.rs)
 scryfall/              MTG provider: streaming bulk ingest, the search compiler (search/), daily price snapshots, Secret Lair drops, offline dummy seed
 tcgcsv/                sealed-product provider: product catalog + product price history + opt-in historic price backfill
 mtgjson/               card→sealed-product contents (AllPrintings.json)
@@ -104,12 +104,12 @@ Full annotations: `docs/architecture.md`.
 
 ```
 main.ts / App.vue / router/   shell (MainNav: Products [Cards + Sealed] · Collection · Wish list) + routes; guard handles requiresAuth/requiresGuest + one-time session restore
-lib/api/           typed fetch client, one module per API surface; generated/ = ts-rs wire types
+lib/api/           typed fetch client, one module per API surface (collection + wishlist share a holdings.ts factory — makeHoldingApi); generated/ = ts-rs wire types
 lib/queries.ts     useAuthedQuery/useAuthedMutation — vue-query wrappers routed through auth.authFetch
 lib/…              pure helpers (seo, mana, money, search, setGroups, buyLinks, turnstile, …)
 stores/            Pinia: auth (in-memory access token, hand-tuned single-flight refresh), theme, cardSize
-composables/       query hooks: useCatalog, useProducts, useCollection, useWishlist, useCollectionImport, …
-components/        cards/ · products/ · collection/ · wishlist/ · legal/ · ui/ (shadcn-vue primitives)
+composables/       query hooks: useCatalog, useProducts, useCollection, useWishlist, useCollectionImport, … (collection/wishlist share the holdingQueries.ts query factory + the useHoldingsLanding/useHoldingsBrowse view engines)
+components/        cards/ · products/ · collection/ · wishlist/ · home/ · legal/ · ui/ (shadcn-vue primitives)
 views/             public: /cards…, /sealed…, auth + email flows, terms/privacy; signed-in: /collection…, /wishlist…, profile
 test/              vitest fixtures (the Playwright e2e specs live one level up, at web/e2e/)
 ```
@@ -152,7 +152,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `WritableUser` (session or a `read_write` key — a read-only key is **403**), and
   key management (`/api/auth/api-keys`) uses `SessionUser` (**JWT only**; a key can't
   mint/list/revoke keys). A bad/expired/revoked key is **401**; a valid read-only key
-  on a write is **403**. Keep the per-user rate limiter key-aware (`ratelimit.rs`
+  on a write is **403**. Keep the per-user rate limiter key-aware (`ratelimit/per_user.rs`
   resolves a `tcgl_` token to its user) or keyed traffic bypasses the quota. Store
   only the SHA-256 hash; the plaintext is shown **once**.
 - Rate limiting **fails open** (Redis outage, unresolvable IP); CAPTCHA fails
