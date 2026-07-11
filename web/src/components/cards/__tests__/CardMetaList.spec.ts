@@ -31,6 +31,7 @@ function makeCard(overrides: Partial<Card> = {}): Card {
     drop_name: null,
     drop_slug: null,
     secret_lair_bonus: false,
+    secret_lair_spend_incentive: false,
     faces: [],
     ...overrides,
   }
@@ -75,6 +76,30 @@ describe('CardMetaList Secret Lair relation', () => {
     const dropLink = wrapper.findAll('a').find((a) => a.text() === 'Cats of Chaos')
     expect(dropLink, 'the drop should still be a link').toBeTruthy()
     expect(wrapper.text()).not.toContain('Chase card')
+  })
+
+  it('marks a spend-reward promo distinctly, in place of the chase badge (issue #331)', () => {
+    const wrapper = mountMeta(
+      makeCard({
+        drop_name: 'Promos / Special',
+        drop_slug: 'promos-special',
+        // A spend incentive is tagged sldbonus too, but the spend badge takes precedence.
+        secret_lair_bonus: true,
+        secret_lair_spend_incentive: true,
+      }),
+    )
+    expect(wrapper.text()).toContain('Spend reward')
+    expect(wrapper.text()).not.toContain('Chase card')
+  })
+
+  it('shows the spend-reward badge even when the promo is not grouped into a drop', () => {
+    // e.g. Arcane Signet #908 — a spend reward the drop snapshot does not group.
+    const wrapper = mountMeta(
+      makeCard({ drop_name: null, drop_slug: null, secret_lair_spend_incentive: true }),
+    )
+    expect(wrapper.text()).toContain('Spend reward')
+    // No drop row, since it has no drop.
+    expect(wrapper.text()).not.toContain('Drop')
   })
 
   it('shows no drop row for a card outside a drop-grouped set', () => {

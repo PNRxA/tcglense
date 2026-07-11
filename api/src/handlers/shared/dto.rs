@@ -70,6 +70,13 @@ pub(crate) struct CardResponse {
     /// in its "found in" section; the flag lets the SPA mark the card as a chase card
     /// and link it to its drop instead (issue #295).
     pub secret_lair_bonus: bool,
+    /// Whether this printing is a Secret Lair **spend-incentive** promo — the card handed
+    /// out for reaching a cart spend threshold during a superdrop (e.g. the Avatar foil
+    /// Path of Ancestry, one per $199 spent), rather than included with a specific drop.
+    /// Scryfall tags these `sldbonus` like the per-drop bonus cards above, so the flag comes
+    /// from a curated list (see [`crate::scryfall::drops::is_spend_incentive`]); it lets the
+    /// SPA mark them as spend rewards instead of ordinary chase cards (issue #331).
+    pub secret_lair_spend_incentive: bool,
     /// Present for multi-faced cards; request face images via `?face=N`.
     pub faces: Vec<CardFaceResponse>,
 }
@@ -80,6 +87,8 @@ impl From<card::Model> for CardResponse {
         let drop_name = drop.map(|d| d.title.clone());
         let drop_slug = drop.map(|d| d.slug.clone());
         let secret_lair_bonus = is_secret_lair_bonus(m.promo_types.as_deref());
+        let secret_lair_spend_incentive =
+            crate::scryfall::drops::is_spend_incentive(&m.game, &m.set_code, &m.collector_number);
 
         let stored_faces = stored_faces(&m);
 
@@ -132,6 +141,7 @@ impl From<card::Model> for CardResponse {
             drop_name,
             drop_slug,
             secret_lair_bonus,
+            secret_lair_spend_incentive,
             faces,
         }
     }

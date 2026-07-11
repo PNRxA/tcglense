@@ -183,6 +183,34 @@ pub fn drop_for(game: &str, set_code: &str, collector_number: &str) -> Option<&'
     table(game, set_code).and_then(|t| t.drop_for(collector_number))
 }
 
+/// Curated Secret Lair **spend-incentive** printings: promo cards handed out for reaching a
+/// cart spend threshold during a superdrop (e.g. the Avatar: The Last Airbender superdrop's
+/// foil Path of Ancestry, one per $199 spent) rather than included with a specific drop.
+/// Scryfall tags these `sldbonus` like the per-drop bonus cards, so on their own they read as
+/// ordinary chase cards; this list lets the UI call them out distinctly as spend rewards.
+/// Keyed by `(game, set_code, collector_number)` — kept tiny and curated, like the SLD
+/// product overrides, because there's no upstream signal that separates a spend reward from
+/// an ordinary bonus card.
+const SPEND_INCENTIVES: &[(&str, &str, &str)] = &[
+    // Each superdrop hands out one foil promo per qualifying spend threshold. All in `sld`.
+    ("mtg", "sld", "903"), // The Locust God — Secretversary 2023 superdrop
+    ("mtg", "sld", "905"), // Cryptic Command — Secret Scare superdrop
+    ("mtg", "sld", "906"), // Ignoble Hierarch — Equinox 2024 superdrop
+    ("mtg", "sld", "907"), // Seedborn Muse — Spring 2024 superdrop
+    ("mtg", "sld", "908"), // Arcane Signet ("Earth's Mightiest Emblem") — Marvel superdrop
+    ("mtg", "sld", "912"), // Sol Ring — PlayStation / Twisted Metal superdrop
+    ("mtg", "sld", "914"), // Path of Ancestry — Avatar: The Last Airbender superdrop
+    ("mtg", "sld", "915"), // Silver Shroud Costume — Fallout / Rad superdrop
+    ("mtg", "sld", "918"), // Food Token ("Lasagna") — Garfield superdrop
+];
+
+/// Whether a printing is a curated Secret Lair spend-incentive promo (see [`SPEND_INCENTIVES`]).
+pub fn is_spend_incentive(game: &str, set_code: &str, collector_number: &str) -> bool {
+    SPEND_INCENTIVES
+        .iter()
+        .any(|&(g, s, cn)| g == game && s == set_code && cn == collector_number)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +230,19 @@ mod tests {
         assert_eq!(drop_for("mtg", "sld", "168").map(|d| d.title.as_str()), Some("Inked"));
         // A collector number the snapshot doesn't list -> no drop (folds to "Other").
         assert!(drop_for("mtg", "sld", "this-cn-does-not-exist").is_none());
+    }
+
+    #[test]
+    fn spend_incentives_are_recognised() {
+        // Curated superdrop spend rewards are recognised — the earliest (The Locust God
+        // #903), a token promo (Food Token #918), and one in between (Path of Ancestry #914).
+        assert!(is_spend_incentive("mtg", "sld", "903"));
+        assert!(is_spend_incentive("mtg", "sld", "914"));
+        assert!(is_spend_incentive("mtg", "sld", "918"));
+        // An ordinary drop card is not; nor is the number in another set or game.
+        assert!(!is_spend_incentive("mtg", "sld", "2658"));
+        assert!(!is_spend_incentive("mtg", "blb", "914"));
+        assert!(!is_spend_incentive("pokemon", "sld", "914"));
     }
 
     #[test]

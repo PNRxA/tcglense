@@ -28,6 +28,7 @@ function print(
     drop_name: null,
     drop_slug: null,
     secret_lair_bonus: false,
+    secret_lair_spend_incentive: false,
     faces: [],
     ...overrides,
   }
