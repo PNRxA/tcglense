@@ -44,7 +44,7 @@ mod fallback;
 pub mod ingest;
 pub mod model;
 mod progress;
-mod sld;
+pub(crate) mod sld;
 
 pub use error::MtgjsonError;
 /// Name of the sync progress span; `main.rs` scopes the `IndicatifLayer` to it

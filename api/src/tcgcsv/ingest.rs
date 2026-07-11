@@ -81,10 +81,15 @@ async fn refresh_inner(
     let base_url = source.tcgcsv_base_url();
     // Version gate: one cheap request. Skip the whole sweep if TCGCSV hasn't refreshed
     // since our last complete sync. The stored version couples TCGCSV's `last-updated`
-    // value with the curated MSRP file's content hash (see `compose_version`), so editing
-    // `msrp.json` re-applies MSRP on the next sync even when TCGCSV itself is unchanged.
+    // value with the curated MSRP hashes (see `compose_version`), so editing `msrp.json`
+    // or the Secret Lair Drop MSRP defaults re-applies MSRP on the next sync even when
+    // TCGCSV itself is unchanged.
     let remote_version = super::client::last_updated(http, &base_url, user_agent).await?;
-    let version = compose_version(&remote_version, super::msrp::version());
+    // Both curated MSRP hashes gate the sweep: the hand-curated `msrp.json` and the derived
+    // Secret Lair Drop defaults (`sld_msrp`, which also covers the drop snapshot). Editing
+    // either re-applies MSRP on the next tick even when TCGCSV itself is unchanged.
+    let curated = format!("{}{}", super::msrp::version(), super::sld_msrp::version());
+    let version = compose_version(&remote_version, &curated);
     let existing = ingest_state::load(db, GAME, PRODUCTS_DATASET).await?;
     if let Some(state) = &existing
         && state.status == "complete"
@@ -202,9 +207,11 @@ async fn refresh_inner(
 }
 
 /// Build product `ActiveModel`s for a group's **sealed** products, attaching each
-/// product's current market prices from `prices` and its curated retail price from `msrp`
-/// (both keyed by TCGplayer product id). Cards (products with a `Rarity`/`Number`
-/// attribute) are filtered out. Pure so it's unit-testable without a DB.
+/// product's current market prices from `prices` and its retail price. The curated `msrp`
+/// map (keyed by TCGplayer product id) wins; a Secret Lair Drop product not listed there
+/// falls back to a price *derived* from its gallery drop (see [`super::sld_msrp`]), so
+/// individual drops get MSRP without a per-product curated entry. Cards (products with a
+/// `Rarity`/`Number` attribute) are filtered out. Pure so it's unit-testable without a DB.
 fn build_group_products(
     group: &Group,
     products: Vec<super::model::Product>,
@@ -225,10 +232,17 @@ fn build_group_products(
         .map(|p| {
             let product_type = super::classify::classify_product_type(&p.name);
             let day = prices.get(&p.product_id);
+            let external_id = p.product_id.to_string();
+            // Curated MSRP wins; otherwise derive it for individual Secret Lair Drops from
+            // their gallery drop. Computed before the struct literal moves `p.name`.
+            let msrp_value = msrp
+                .get(&p.product_id)
+                .cloned()
+                .or_else(|| super::sld_msrp::derive(&set_code, &external_id, &p.name));
             product::ActiveModel {
                 id: NotSet,
                 game: Set(GAME.to_string()),
-                external_id: Set(p.product_id.to_string()),
+                external_id: Set(external_id),
                 name: Set(p.name),
                 clean_name: Set(p.clean_name),
                 set_code: Set(set_code.clone()),
@@ -237,7 +251,7 @@ fn build_group_products(
                 image_url: Set(p.image_url),
                 price_usd: Set(day.and_then(|d| d.usd.clone())),
                 price_usd_foil: Set(day.and_then(|d| d.usd_foil.clone())),
-                msrp: Set(msrp.get(&p.product_id).cloned()),
+                msrp: Set(msrp_value),
                 released_at: Set(released_at.clone()),
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -425,6 +439,59 @@ mod tests {
         let all = Product::find().all(&db).await.unwrap();
         assert_eq!(all.len(), 1, "same (game, external_id) upserts, not duplicates");
         assert_eq!(all[0].price_usd.as_deref(), Some("149.99"));
+    }
+
+    /// The `SLD` group name/abbreviation TCGCSV uses for Secret Lair; `set_code` derives
+    /// from the abbreviation (lowercased), so this gates the derivation on `"sld"`.
+    fn sld_group() -> Group {
+        Group {
+            group_id: 2350,
+            name: Some("Secret Lair".to_string()),
+            abbreviation: Some("SLD".to_string()),
+            published_on: None,
+        }
+    }
+
+    #[test]
+    fn derives_sld_msrp_for_uncurated_drop_products() {
+        // Two editions of a real drop present in the shipped snapshot, neither in the
+        // curated map: MSRP is derived from the gallery drop by foilness.
+        let products = vec![
+            src_product(700795, "Secret Lair Drop: Cats of Chaos - Non-Foil Edition", &[]),
+            src_product(700796, "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition", &[]),
+        ];
+        let models = build_group_products(
+            &sld_group(),
+            products,
+            &HashMap::new(),
+            &HashMap::new(),
+            Utc::now(),
+        );
+        let non_foil = models
+            .iter()
+            .find(|m| m.external_id.as_ref() == "700795")
+            .expect("non-foil drop present");
+        assert_eq!(non_foil.set_code.as_ref(), "sld");
+        assert_eq!(non_foil.msrp.as_ref().as_deref(), Some("29.99"));
+        let foil = models
+            .iter()
+            .find(|m| m.external_id.as_ref() == "700796")
+            .expect("foil drop present");
+        assert_eq!(foil.msrp.as_ref().as_deref(), Some("39.99"));
+    }
+
+    #[test]
+    fn curated_msrp_wins_over_sld_derivation() {
+        // A curated entry for the drop product overrides the derived default.
+        let msrp: HashMap<i64, String> = HashMap::from([(700795, "49.99".to_string())]);
+        let models = build_group_products(
+            &sld_group(),
+            vec![src_product(700795, "Secret Lair Drop: Cats of Chaos - Non-Foil Edition", &[])],
+            &HashMap::new(),
+            &msrp,
+            Utc::now(),
+        );
+        assert_eq!(models[0].msrp.as_ref().as_deref(), Some("49.99"));
     }
 
     #[test]
