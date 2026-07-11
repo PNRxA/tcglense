@@ -9,12 +9,10 @@
 //! once (an atomic conditional `UPDATE` on `consumed_at`) and never replaced.
 
 use chrono::{Duration, Utc};
-use rand::Rng;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
     Set, Statement, sea_query::Expr,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     entities::{email_token, prelude::EmailToken},
@@ -71,18 +69,6 @@ impl EmailTokenPurpose {
     }
 }
 
-/// Generate a new opaque email token: 32 CSPRNG bytes, hex-encoded.
-fn generate_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
-/// SHA-256 hex digest of the opaque token (what we store / look up by).
-fn hash_token(plaintext: &str) -> String {
-    hex::encode(Sha256::digest(plaintext.as_bytes()))
-}
-
 /// Insert a token row for `user_id` expiring at `now + expiry`, persisting only
 /// its hash. Split from [`issue`] so tests can plant an already-expired row.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -92,13 +78,13 @@ async fn insert_token(
     purpose: EmailTokenPurpose,
     expiry: Duration,
 ) -> Result<String, AppError> {
-    let plaintext = generate_token();
+    let plaintext = super::secret::generate_secret();
     let now = Utc::now();
 
     email_token::ActiveModel {
         user_id: Set(user_id),
         purpose: Set(purpose.as_str().to_string()),
-        token_hash: Set(hash_token(&plaintext)),
+        token_hash: Set(super::secret::sha256_hex(&plaintext)),
         expires_at: Set(now + expiry),
         consumed_at: Set(None),
         created_at: Set(now),
@@ -154,7 +140,7 @@ pub async fn issue_with_cooldown(
 ) -> Result<Option<String>, AppError> {
     use sea_orm::{DatabaseBackend, TransactionTrait};
 
-    let plaintext = generate_token();
+    let plaintext = super::secret::generate_secret();
     let now = Utc::now();
     let cutoff = now - Duration::seconds(ISSUE_COOLDOWN_SECONDS);
     let backend = db.get_database_backend();
@@ -176,7 +162,7 @@ pub async fn issue_with_cooldown(
     let vals = [
         user_id.into(),
         purpose.as_str().into(),
-        hash_token(&plaintext).into(),
+        super::secret::sha256_hex(&plaintext).into(),
         (now + purpose.expiry()).into(),
         now.into(),
         user_id.into(),
@@ -216,7 +202,7 @@ pub async fn consume(
     presented_plaintext: &str,
     purpose: EmailTokenPurpose,
 ) -> Result<email_token::Model, AppError> {
-    let token_hash = hash_token(presented_plaintext);
+    let token_hash = super::secret::sha256_hex(presented_plaintext);
     let now = Utc::now();
     let invalid = || AppError::Unauthorized("invalid or expired token".to_string());
 

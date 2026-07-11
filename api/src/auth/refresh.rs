@@ -8,12 +8,10 @@
 //! (SHA-256) is the correct choice here — argon2 is for low-entropy passwords.
 
 use chrono::{Duration, Utc};
-use rand::Rng;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
     sea_query::Expr,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     entities::{prelude::RefreshToken, refresh_token},
@@ -26,18 +24,6 @@ use crate::{
 pub struct RotatedToken {
     pub plaintext: String,
     pub user_id: i32,
-}
-
-/// Generate a new opaque refresh token: 32 CSPRNG bytes, hex-encoded.
-fn generate_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
-/// SHA-256 hex digest of the opaque token (what we store / look up by).
-fn hash_token(plaintext: &str) -> String {
-    hex::encode(Sha256::digest(plaintext.as_bytes()))
 }
 
 /// A freshly-inserted refresh token: the plaintext (for the cookie) and the new
@@ -53,12 +39,12 @@ async fn insert_token(
     user_id: i32,
     expiry_days: i64,
 ) -> Result<InsertedToken, AppError> {
-    let plaintext = generate_token();
+    let plaintext = super::secret::generate_secret();
     let now = Utc::now();
 
     let model = refresh_token::ActiveModel {
         user_id: Set(user_id),
-        token_hash: Set(hash_token(&plaintext)),
+        token_hash: Set(super::secret::sha256_hex(&plaintext)),
         expires_at: Set(now + Duration::days(expiry_days)),
         revoked_at: Set(None),
         created_at: Set(now),
@@ -94,7 +80,7 @@ pub async fn rotate(
     presented_plaintext: &str,
     expiry_days: i64,
 ) -> Result<RotatedToken, AppError> {
-    let token_hash = hash_token(presented_plaintext);
+    let token_hash = super::secret::sha256_hex(presented_plaintext);
     let now = Utc::now();
 
     // Atomically claim the token by flipping revoked_at NULL -> now in a single
@@ -170,7 +156,7 @@ pub async fn revoke_one(
     db: &DatabaseConnection,
     presented_plaintext: &str,
 ) -> Result<(), AppError> {
-    let token_hash = hash_token(presented_plaintext);
+    let token_hash = super::secret::sha256_hex(presented_plaintext);
 
     let row = RefreshToken::find()
         .filter(refresh_token::Column::TokenHash.eq(&token_hash))
@@ -216,6 +202,7 @@ pub async fn prune_expired(db: &DatabaseConnection) -> Result<u64, AppError> {
 mod tests {
     use super::*;
     use crate::test_support::insert_user;
+    use crate::auth::secret::{generate_secret as generate_token, sha256_hex as hash_token};
 
     async fn setup_db() -> DatabaseConnection {
         crate::test_support::migrated_memory_db().await
