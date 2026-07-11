@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
 import { LayoutGrid, ScanLine } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
@@ -12,29 +11,55 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
-import { useGameName, useSetsQuery } from '@/composables/useCatalog'
-import { useFilteredSetGroups } from '@/composables/useSetGrouping'
+import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import { useGameName } from '@/composables/useCatalog'
 import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
+import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { getCollectionValueHistory } from '@/lib/api'
-import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
-import { groupByYear, partitionPinned } from '@/lib/setGroups'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
-import type { CardSet, PriceRange } from '@/lib/api'
+import type { PriceRange } from '@/lib/api'
 
 // The per-game collection landing: pick a set to see just your cards from it, or "All
 // cards" for the whole collection. By default it lists just the sets you own cards in;
 // a segmented toggle (`?sets=all`) flips it to the catalog game view's FULL set list —
 // featured + year sections and all — the same Collected/All-sets control as the
 // wish-list landing. Either way the per-set owned counts/values overlay the tiles that
-// have any. The header carries the value/count summary plus the import / re-sync
-// controls; the actual card grids live on CollectionBrowseView
-// (`/collection/:game/cards` + `.../sets/:code`).
+// have any. The shared landing pipeline (scope toggle, filter + grouping, sectioning,
+// ownership map, header stats) lives in `useHoldingsLanding`; this view layers on the
+// collection-only extras (sync controls, camera scan, value-history chart, bulk-value
+// stat). The actual card grids live on CollectionBrowseView (`/collection/:game/cards` +
+// `.../sets/:code`).
 const props = defineProps<{ game: string }>()
-const game = toRef(props, 'game')
-const gameName = useGameName(game)
 
+const {
+  game,
+  summary,
+  heldSets: ownedSets,
+  showAllSets,
+  setShowAllSets,
+  catalogSets,
+  sourceSets,
+  filter,
+  trimmedFilter,
+  filtering,
+  groups,
+  relatedCount,
+  activePending,
+  activeError,
+  sections,
+  ownership,
+  totalValue,
+  bulkValue,
+  hasStats,
+} = useHoldingsLanding(props, {
+  useSummaryQuery: useCollectionSummaryQuery,
+  useHeldSetsQuery: useCollectionSetsQuery,
+  basePath: '/collection',
+  withBulk: true,
+})
+
+const gameName = useGameName(game)
 const auth = useAuthStore()
 
 // Per-account page — kept out of search indexes.
@@ -43,97 +68,6 @@ usePageMeta({
   canonicalPath: () => `/collection/${game.value}`,
   noindex: true,
 })
-
-const summaryQuery = useCollectionSummaryQuery(game)
-// The sets holding owned cards — the default mode's list and the per-set overlay
-// either mode shows.
-const collectionSetsQuery = useCollectionSetsQuery(game)
-
-const summary = computed(() => summaryQuery.data.value)
-const ownedSets = computed(() => collectionSetsQuery.data.value?.data ?? [])
-
-// Which sets the grid lists: just the owned ones (default) or the whole catalog
-// (`?sets=all`). A URL param, like the browse views' `?ghosts`, so the choice survives
-// navigation and the back button.
-const route = useRoute()
-const router = useRouter()
-const showAllSets = computed(() => route.query.sets === 'all')
-function setShowAllSets(on: boolean) {
-  const next = { ...route.query }
-  if (on) next.sets = 'all'
-  else delete next.sets
-  router.replace({ query: next })
-}
-
-// The FULL public set list (shared, cached with the catalog game view) — the all-sets
-// mode's source, fetched unconditionally so toggling never starts from a spinner.
-const catalogSetsQuery = useSetsQuery(game)
-const catalogSets = computed(() => catalogSetsQuery.data.value?.data ?? [])
-
-// The active mode's sets, grouped and filterable exactly like the catalog game view:
-// nested sub-sets, instant name/code narrowing, groups kept whole when any member
-// matches (issues #127/#128). One grouping instance over the switched source, so the
-// filter box and header counts track whichever mode is on.
-const sourceSets = computed<CardSet[]>(() =>
-  showAllSets.value ? catalogSets.value : ownedSets.value,
-)
-const { filter, trimmedFilter, filtering, groups, relatedCount } = useFilteredSetGroups(
-  game,
-  sourceSets,
-)
-
-// The active mode's query state, for the loading/error rows below.
-const activePending = computed(() =>
-  showAllSets.value ? catalogSetsQuery.isPending.value : collectionSetsQuery.isPending.value,
-)
-const activeError = computed(() =>
-  showAllSets.value ? catalogSetsQuery.isError.value : collectionSetsQuery.isError.value,
-)
-
-// Pinned sets (e.g. Secret Lair) lead as a "Featured" section; the rest break into
-// release-year sections — the same scannable layout as the catalog game view. Used by
-// the all-sets mode only (the owned-sets default is a flat newest-first grid).
-const partitioned = computed(() => partitionPinned(groups.value))
-const years = computed(() => groupByYear(partitioned.value.rest))
-const yearLabel = (year: number | null) => (year === null ? 'Unknown year' : String(year))
-const sections = computed(() => {
-  const featured = partitioned.value.pinned
-  const yearSections = years.value.map((section) => ({
-    key: section.year === null ? 'unknown' : String(section.year),
-    label: yearLabel(section.year),
-    groups: section.groups,
-  }))
-  return featured.length
-    ? [{ key: 'featured', label: 'Featured', groups: featured }, ...yearSections]
-    : yearSections
-})
-
-// Per-set-code owned stats each tile shows next to its name: the "N/M owned" completion
-// count, the "N copies" total (when you own duplicates, issue #125), and the preformatted
-// owned value (issue #119; null/unpriced sets carry a null the tile omits) plus its bulk
-// slice. Built in one pass and passed to SetGroupGrid as a single `ownership` object;
-// sets you own nothing in are simply absent, so in all-sets mode their tiles keep the
-// plain catalog card count.
-const ownership = computed(() => {
-  const counts: Record<string, number> = {}
-  const copies: Record<string, number> = {}
-  const values: Record<string, string | null> = {}
-  const bulkValues: Record<string, string | null> = {}
-  for (const set of ownedSets.value) {
-    counts[set.code] = set.owned_cards
-    copies[set.code] = set.owned_copies
-    values[set.code] = formatUsd(set.owned_value_usd)
-    bulkValues[set.code] = formatUsd(set.owned_bulk_value_usd)
-  }
-  return { counts, copies, values, bulkValues }
-})
-const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
-// The bulk (< $1/card) slice of the total value (issue: bulk-card value). Present
-// whenever the total is (both gate on something being priced).
-const bulkValue = computed(() => formatUsd(summary.value?.bulk_value_usd))
-
-// Stats are worth showing only once something is owned.
-const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 
 // Value-over-time chart fetcher. PriceChart owns its own query (it appends the selected
 // range to the base key); the read goes through the auth store so an expired access token
@@ -233,32 +167,11 @@ function fetchValueHistory(range: PriceRange) {
            mirroring the catalog game view. -->
       <StickySearchBar class="mb-6 flex flex-wrap items-center gap-3">
         <!-- Which sets to list — the GroupViewToggle-style segmented control. -->
-        <div class="bg-muted text-muted-foreground inline-flex shrink-0 rounded-md p-0.5 text-sm">
-          <button
-            type="button"
-            :class="
-              cn(
-                'rounded px-3 py-1.5 font-medium transition-colors',
-                !showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-              )
-            "
-            @click="setShowAllSets(false)"
-          >
-            Collected
-          </button>
-          <button
-            type="button"
-            :class="
-              cn(
-                'rounded px-3 py-1.5 font-medium transition-colors',
-                showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-              )
-            "
-            @click="setShowAllSets(true)"
-          >
-            All sets
-          </button>
-        </div>
+        <SetsScopeToggle
+          :model-value="showAllSets"
+          collected-label="Collected"
+          @update:model-value="setShowAllSets"
+        />
         <CardSearchBox
           v-if="sourceSets.length"
           v-model="filter"
