@@ -65,7 +65,7 @@ impl Modify for SecurityAddon {
 #[openapi(
     info(
         title = "TCGLense API",
-        version = "0.3.6",
+        version = env!("CARGO_PKG_VERSION"),
         description = "Public HTTP JSON API for TCGLense: a game-agnostic card catalog \
 (cards + sealed products, MTG first) with singles/sealed price history, plus per-user \
 collection and wish-list holdings. Read endpoints are unauthenticated and CDN-cacheable; \
