@@ -1,0 +1,141 @@
+{
+  "//": "Curated Secret Lair Drop INITIAL-SALE MSRP overrides, keyed by the drop slug in api/src/scryfall/sld_drops.json. Only drops whose price on secretlair.wizards.com at initial sale DIFFERED from the standard ($29.99 non-foil / $39.99 foil, see sld_msrp.rs) are listed; every other drop uses the standard. Per edition: set 'non_foil' and/or 'foil' to the drop's initial-sale price for that edition (omit an edition that sold at the standard). 'name' and 'source' are documentation only. Every slug must exist in sld_drops.json and every price must be a positive 2-decimal USD string (guarded by the bundled_data_is_valid test).",
+  "overrides": {
+    "stranger-things": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Stranger Things",
+      "source": "https://magic.wizards.com/en/news/announcements/stranger-things-are-happening-in-the-secret-lair"
+    },
+    "street-fighter": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Street Fighter",
+      "source": "https://comicbook.com/gaming/news/magic-the-gathering-street-fighter-secret-lair-cards/"
+    },
+    "pride-across-the-multiverse": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Pride Across the Multiverse",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_Pride_Across_the_Multiverse"
+    },
+    "tomb-raider": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Tomb Raider",
+      "source": "https://mtgrocks.com/mtg-secret-lair-secretversary-2023/"
+    },
+    "ponies-the-galloping-2": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Ponies: The Galloping 2",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_Ponies:_The_Galloping_2_-_Extra_Life_2023"
+    },
+    "extra-life-2024-pixel-perfect": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Extra Life 2024: Pixel Perfect",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_Pixel_Perfect_-_Extra_Life_2024"
+    },
+    "secret-lair-presents-nuestra-magia": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Secret Lair Presents: Nuestra Magia",
+      "source": "https://edhrec.com/articles/secret-lair-x-nuestra-magia-drop-launches-monday-june-16th"
+    },
+    "jaws-terror-of-amity-island": {
+      "non_foil": "39.99",
+      "foil": "49.99",
+      "name": "Jaws: Terror of Amity Island",
+      "source": "https://articles.starcitygames.com/magic-the-gathering/full-contents-of-mtg-secret-lair-secret-scare-superdrop-revealed/"
+    },
+    "the-walking-dead": {
+      "non_foil": "49.99",
+      "foil": "49.99",
+      "name": "The Walking Dead",
+      "source": "https://magic.wizards.com/en/news/announcements/walking-dead-shambles-secret-lair-2020-09-28"
+    },
+    "showcase-neon-dynasty": {
+      "foil": "49.99",
+      "name": "Showcase: Neon Dynasty",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_February_Superdrop_2022"
+    },
+    "showcase-streets-of-new-capenna": {
+      "foil": "49.99",
+      "name": "Showcase: Streets of New Capenna",
+      "source": "https://magic.wizards.com/en/news/announcements/secret-lair-april-superdrop-2022-04-06"
+    },
+    "showcase-dominaria-united": {
+      "foil": "49.99",
+      "name": "Showcase: Dominaria United",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_August_Superdrop_2022"
+    },
+    "showcase-march-of-the-machine-vol-1": {
+      "foil": "49.99",
+      "name": "Showcase: March of the Machine Vol. 1",
+      "source": "https://icv2.com/articles/news/view/53977/magic-the-gathering-secret-lair-spring-superdrop-2023-now-preorder"
+    },
+    "showcase-march-of-the-machine-vol-2": {
+      "foil": "49.99",
+      "name": "Showcase: March of the Machine Vol. 2",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_Spring_Superdrop_2023"
+    },
+    "showcase-march-of-the-machine-vol-3": {
+      "foil": "49.99",
+      "name": "Showcase: March of the Machine Vol. 3",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_Spring_Superdrop_2023"
+    },
+    "through-the-wormhole": {
+      "foil": "49.99",
+      "name": "Through the Wormhole",
+      "source": "https://mtg.fandom.com/wiki/Secret_Lair_Drop_Series:_Secretversary_2023"
+    },
+    "adventures-of-the-little-witch": {
+      "foil": "59.99",
+      "name": "Adventures of the Little Witch",
+      "source": "https://mtgrocks.com/mtg-players-push-back-after-bizarre-secret-lair-price-increase/"
+    },
+    "marvel-s-spider-man-mana-symbiote": {
+      "foil": "59.99",
+      "name": "Marvel's Spider-Man: Mana Symbiote",
+      "source": "https://articles.starcitygames.com/magic-the-gathering/full-contents-of-mtg-secret-lair-x-marvels-spider-man-superdrop-revealed/"
+    },
+    "featuring-deathburger": {
+      "foil": "59.99",
+      "name": "Featuring: Deathburger",
+      "source": "https://articles.starcitygames.com/magic-the-gathering/new-secret-lair-drops-provide-upgrades-to-edge-of-eternities-commander-decks/"
+    },
+    "alien-auroras": {
+      "foil": "59.99",
+      "name": "Alien Auroras",
+      "source": "https://techraptor.net/tabletop/news/surprise-magic-gathering-secret-lair-chaos-vault-drop-packed-with-cosmic-greatness"
+    },
+    "furby-doo-ay-noo-lah-confetti-foil": {
+      "foil": "59.99",
+      "name": "Furby: Doo-ay Noo-lah (Confetti Foil)",
+      "source": "https://edhrec.com/articles/secret-lair-secret-scare-superdrop-launches-october-13th"
+    },
+    "furbys-the-gathering-confetti-foil": {
+      "foil": "59.99",
+      "name": "Furbys: The Gathering (Confetti Foil)",
+      "source": "https://articles.starcitygames.com/magic-the-gathering/full-contents-of-mtg-secret-lair-secret-scare-superdrop-revealed/"
+    },
+    "furby-the-oddbodies-confetti-foil": {
+      "foil": "59.99",
+      "name": "Furby: The OddBodies (Confetti Foil)",
+      "source": "https://edhrec.com/articles/secret-lair-secret-scare-superdrop-launches-october-13th"
+    },
+    "extra-life-2020": {
+      "non_foil": "60.00",
+      "foil": "60.00",
+      "name": "Extra Life 2020",
+      "source": "https://magic.wizards.com/en/news/announcements/secret-lair-extra-life-2020-10-19"
+    },
+    "showcase-kaldheim-part-1": {
+      "non_foil": "24.99",
+      "foil": "34.99",
+      "name": "Showcase: Kaldheim - Part 1",
+      "source": "https://magic.wizards.com/en/news/announcements/announcing-secret-lairs-smitten-superdrop-2021-02-10"
+    }
+  }
+}
