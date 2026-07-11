@@ -196,13 +196,11 @@ const selectClass =
             <Plus />
             New key
           </DialogTrigger>
-          <DialogContent
-            class="bg-background w-[min(92vw,28rem)] rounded-xl border p-6 shadow-xl"
-          >
+          <DialogContent class="bg-background w-[min(92vw,28rem)] rounded-xl border p-6 shadow-xl">
             <DialogTitle class="text-lg font-semibold">Create an API key</DialogTitle>
             <DialogDescription class="text-muted-foreground mt-1 text-sm">
-              The full key is shown only once, right after you create it. Store it somewhere
-              safe — you can't see it again.
+              The full key is shown only once, right after you create it. Store it somewhere safe —
+              you can't see it again.
             </DialogDescription>
 
             <form class="mt-4 space-y-4" @submit.prevent="submitCreate">
@@ -215,7 +213,9 @@ const selectClass =
                   maxlength="100"
                   autocomplete="off"
                 />
-                <p class="text-muted-foreground text-xs">A label so you can tell your keys apart.</p>
+                <p class="text-muted-foreground text-xs">
+                  A label so you can tell your keys apart.
+                </p>
               </div>
 
               <div class="space-y-1.5">
@@ -262,21 +262,17 @@ const selectClass =
 
     <CardContent class="space-y-4">
       <!-- One-time plaintext banner for a freshly created key. -->
-      <div
-        v-if="createdKey"
-        class="border-primary/40 bg-primary/5 space-y-2 rounded-lg border p-4"
-      >
+      <div v-if="createdKey" class="border-primary/40 bg-primary/5 space-y-2 rounded-lg border p-4">
         <div class="flex items-center gap-2 text-sm font-medium">
           <Check class="text-primary size-4" />
           Key “{{ createdKey.name }}” created
         </div>
-        <p class="text-muted-foreground text-xs">
-          Copy it now — this is the only time it's shown.
-        </p>
+        <p class="text-muted-foreground text-xs">Copy it now — this is the only time it's shown.</p>
         <div class="flex items-center gap-2">
           <code
             class="bg-background min-w-0 flex-1 overflow-x-auto rounded-md border px-2 py-1.5 font-mono text-xs whitespace-nowrap"
-          >{{ createdKey.key }}</code>
+            >{{ createdKey.key }}</code
+          >
           <Button variant="outline" size="sm" type="button" @click="copyKey">
             <component :is="copied ? Check : Copy" class="size-4" />
             {{ copied ? 'Copied' : 'Copy' }}
@@ -349,8 +345,8 @@ const selectClass =
       <DialogContent class="bg-background w-[min(92vw,26rem)] rounded-xl border p-6 shadow-xl">
         <DialogTitle class="text-lg font-semibold">Revoke this key?</DialogTitle>
         <DialogDescription class="text-muted-foreground mt-1 text-sm">
-          “{{ revokeName }}” will stop working immediately. Any script using it will need a new
-          key. This can't be undone.
+          “{{ revokeName }}” will stop working immediately. Any script using it will need a new key.
+          This can't be undone.
         </DialogDescription>
         <p
           v-if="revokeError"

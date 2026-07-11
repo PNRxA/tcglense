@@ -1,10 +1,5 @@
 import { useQueryClient } from '@tanstack/vue-query'
-import {
-  createApiKey,
-  listApiKeys,
-  revokeApiKey,
-  type CreateApiKeyArgs,
-} from '@/lib/api'
+import { createApiKey, listApiKeys, revokeApiKey, type CreateApiKeyArgs } from '@/lib/api'
 import type { ApiKeyList, CreatedApiKey } from '@/lib/api/generated'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 

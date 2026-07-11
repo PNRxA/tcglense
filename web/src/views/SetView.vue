@@ -161,7 +161,11 @@ const isEmpty = computed(() =>
 // The active view sets the pagination unit: groups (grouped) or printings (flat).
 useClampPage(page, () =>
   grouped.value
-    ? { ready: groupQuery.value.isSuccess.value, total: groupTotal.value, pageSize: groupPageSize.value }
+    ? {
+        ready: groupQuery.value.isSuccess.value,
+        total: groupTotal.value,
+        pageSize: groupPageSize.value,
+      }
     : { ready: cardsQuery.isSuccess.value, total: total.value, pageSize: CARD_PAGE_SIZE },
 )
 

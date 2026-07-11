@@ -27,19 +27,21 @@ export const MIN_NAME_LENGTH = 3
  * *substrings*, so minor edge noise is tolerated as long as a clean run survives.
  */
 export function cleanCardName(raw: string): string {
-  return raw
-    .replace(/[’`´]/g, "'")
-    .replace(/\s+/g, ' ')
-    // Keep letters (with combining accents), digits, spaces, and the punctuation that
-    // actually shows up in card names ( ' , - ! & . ); replace everything else with a space.
-    .replace(/[^\p{L}\p{M}\p{N} '\-,!&.]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    // Trim leading/trailing punctuation that isn't part of a name (a name starts with a
-    // letter/number; a trailing lone symbol is OCR noise).
-    .replace(/^[^\p{L}\p{N}]+/u, '')
-    .replace(/[^\p{L}\p{N}!)]+$/u, '')
-    .trim()
+  return (
+    raw
+      .replace(/[’`´]/g, "'")
+      .replace(/\s+/g, ' ')
+      // Keep letters (with combining accents), digits, spaces, and the punctuation that
+      // actually shows up in card names ( ' , - ! & . ); replace everything else with a space.
+      .replace(/[^\p{L}\p{M}\p{N} '\-,!&.]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      // Trim leading/trailing punctuation that isn't part of a name (a name starts with a
+      // letter/number; a trailing lone symbol is OCR noise).
+      .replace(/^[^\p{L}\p{N}]+/u, '')
+      .replace(/[^\p{L}\p{N}!)]+$/u, '')
+      .trim()
+  )
 }
 
 /**
@@ -65,14 +67,35 @@ export function nameQueryCandidates(cleaned: string): string[] {
 /** Language codes printed on the info line — excluded when hunting for the set code, so
  * `NEO • EN` yields `NEO`, not `EN`. */
 const LANGUAGE_CODES = new Set([
-  'EN', 'DE', 'FR', 'IT', 'ES', 'PT', 'JA', 'JP', 'KO', 'RU',
-  'ZH', 'ZHS', 'ZHT', 'CS', 'PH', 'HE', 'LA', 'AR', 'GR', 'SA',
+  'EN',
+  'DE',
+  'FR',
+  'IT',
+  'ES',
+  'PT',
+  'JA',
+  'JP',
+  'KO',
+  'RU',
+  'ZH',
+  'ZHS',
+  'ZHT',
+  'CS',
+  'PH',
+  'HE',
+  'LA',
+  'AR',
+  'GR',
+  'SA',
 ])
 
 /** Strip zero-padding from a collector number (`0123` -> `123`) while leaving a bare `0`
  * and any letter suffix (`0123a` -> `123a`) intact. */
 export function normalizeCollectorNumber(value: string): string {
-  return value.trim().toLowerCase().replace(/^0+(?=[0-9])/, '')
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^0+(?=[0-9])/, '')
 }
 
 /**

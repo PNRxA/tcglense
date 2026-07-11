@@ -22,8 +22,17 @@ usePageMeta({ title: 'Scan cards', canonicalPath: '/scan', noindex: true })
 const game = ref('mtg')
 
 const video = ref<HTMLVideoElement | null>(null)
-const { status, errorMessage, ocrLoading, cvLoading, detectedQuad, start, stop, switchCamera, capture } =
-  useCardScanner(video)
+const {
+  status,
+  errorMessage,
+  ocrLoading,
+  cvLoading,
+  detectedQuad,
+  start,
+  stop,
+  switchCamera,
+  capture,
+} = useCardScanner(video)
 
 const {
   match,
@@ -122,9 +131,9 @@ const statusHint = computed(() => {
     <header class="mb-6">
       <h1 class="text-3xl font-semibold tracking-tight">Scan cards</h1>
       <p class="text-muted-foreground mt-1 max-w-2xl">
-        Hold a card flat and straight-on, filling the frame, then tap the camera to scan it —
-        it's identified from its artwork. Pick the right match, then capture the next card to add
-        the previous one.
+        Hold a card flat and straight-on, filling the frame, then tap the camera to scan it — it's
+        identified from its artwork. Pick the right match, then capture the next card to add the
+        previous one.
       </p>
     </header>
 
@@ -197,8 +206,8 @@ const statusHint = computed(() => {
           >
             <Camera class="size-10 opacity-60" aria-hidden="true" />
             <p class="max-w-xs text-sm">
-              Camera access is needed to scan. Your photo never leaves your device — only a
-              small fingerprint is sent to identify the card.
+              Camera access is needed to scan. Your photo never leaves your device — only a small
+              fingerprint is sent to identify the card.
             </p>
             <Button @click.stop="startScanning">
               <ScanLine class="size-4" aria-hidden="true" />
@@ -349,8 +358,8 @@ const statusHint = computed(() => {
         >
           <template v-if="unrecognized">
             Couldn't recognise that card. Hold it flat and straight-on (not tilted), close and
-            filling the frame, with a contrasting background — or its set may not be in the
-            catalog yet.
+            filling the frame, with a contrasting background — or its set may not be in the catalog
+            yet.
           </template>
           <template v-else> The card you scan will appear here to review and edit. </template>
         </div>

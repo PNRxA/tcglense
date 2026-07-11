@@ -59,7 +59,9 @@ describe('sort option lists', () => {
     // layer maps it to *no* sort param, so it must never be handed to `toSortParam` (which
     // would emit {sort:'default'} → the API rejects it as an unknown sort). It's the default.
     expect(PRODUCT_CARDS_DEFAULT_SORT).toBe('default')
-    expect(PRODUCT_CARDS_SORT_OPTIONS.some((o) => o.value === PRODUCT_CARDS_DEFAULT_SORT)).toBe(true)
+    expect(PRODUCT_CARDS_SORT_OPTIONS.some((o) => o.value === PRODUCT_CARDS_DEFAULT_SORT)).toBe(
+      true,
+    )
 
     // Every *other* option is a real `field:dir` that parses to a valid, non-sentinel param.
     const realOptions = PRODUCT_CARDS_SORT_OPTIONS.filter(

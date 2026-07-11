@@ -217,10 +217,7 @@ export function useScanSession(game: Ref<string>) {
     const card = selectedCard.value
     if (!card || !seeded.value) return false
     const previous = { ...owned.value }
-    if (
-      target.quantity === previous.quantity &&
-      target.foil_quantity === previous.foil_quantity
-    ) {
+    if (target.quantity === previous.quantity && target.foil_quantity === previous.foil_quantity) {
       return false
     }
     // A concurrent commit is already writing this same match (Stop/unmount racing an in-flight

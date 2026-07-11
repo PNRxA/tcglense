@@ -39,7 +39,9 @@ const emit = defineEmits<{
   discard: []
 }>()
 
-const price = computed(() => (props.selectedCard ? displayUsdPrice(props.selectedCard.prices) : null))
+const price = computed(() =>
+  props.selectedCard ? displayUsdPrice(props.selectedCard.prices) : null,
+)
 
 // Newest-first printings labelled for the picker (set code · #number · rarity).
 function printingLabel(card: Card): string {
@@ -49,7 +51,13 @@ function printingLabel(card: Card): string {
 }
 
 const rows = computed(() => [
-  { key: 'quantity' as const, label: 'Regular', value: props.target.quantity, was: props.owned.quantity, icon: null },
+  {
+    key: 'quantity' as const,
+    label: 'Regular',
+    value: props.target.quantity,
+    was: props.owned.quantity,
+    icon: null,
+  },
   {
     key: 'foil_quantity' as const,
     label: 'Foil',
@@ -83,7 +91,8 @@ const rows = computed(() => [
     <div class="min-w-0 space-y-3">
       <div>
         <p class="text-muted-foreground text-xs">
-          Read as “<span class="font-medium">{{ match.ocrName }}</span>”
+          Read as “<span class="font-medium">{{ match.ocrName }}</span
+          >”
         </p>
 
         <!-- Name: a heading when unambiguous, a corrector when the OCR had alternatives. -->
@@ -142,7 +151,9 @@ const rows = computed(() => [
           <span class="flex items-center gap-1.5 text-sm">
             <component :is="row.icon" v-if="row.icon" class="size-3.5" aria-hidden="true" />
             {{ row.label }}
-            <span v-if="row.was > 0" class="text-muted-foreground text-xs">(had {{ row.was }})</span>
+            <span v-if="row.was > 0" class="text-muted-foreground text-xs"
+              >(had {{ row.was }})</span
+            >
           </span>
           <div class="flex items-center gap-1.5">
             <Button
