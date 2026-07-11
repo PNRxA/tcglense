@@ -80,8 +80,10 @@ const sectionLinkClass =
 const gameLinkClass =
   'flex min-h-11 items-center py-2 pl-12 pr-4 text-[15px] leading-snug ' +
   `hover:bg-accent/50 active:bg-accent transition-colors ${focusRing}`
+// px-3 matches the Scan button's has-[>svg]:px-3 content inset so the two rows share a
+// left edge; mx-0.5 on the icon centers the 16px glyph in the button icon's 20px column.
 const docsLinkClass =
-  'flex min-h-11 items-center gap-3 px-1 text-sm text-muted-foreground ' +
+  'flex min-h-11 items-center gap-3 px-3 text-sm text-muted-foreground ' +
   `hover:text-foreground ${focusRing}`
 </script>
 
@@ -156,7 +158,7 @@ const docsLinkClass =
           </RouterLink>
         </Button>
         <RouterLink to="/docs" :class="docsLinkClass">
-          <Code class="size-4" aria-hidden="true" />
+          <Code class="mx-0.5 size-4" aria-hidden="true" />
           API docs
         </RouterLink>
       </div>
