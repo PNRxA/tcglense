@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
 import { LayoutGrid } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
@@ -10,28 +9,52 @@ import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
-import { useGameName, useSetsQuery } from '@/composables/useCatalog'
-import { useFilteredSetGroups } from '@/composables/useSetGrouping'
+import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import { useGameName } from '@/composables/useCatalog'
+import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { useWishlistSetsQuery, useWishlistSummaryQuery } from '@/composables/useWishlist'
-import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
-import { groupByYear, partitionPinned } from '@/lib/setGroups'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
-import type { CardSet } from '@/lib/api'
 
 // The per-game wish-list landing (issue #167). By default it lists just the sets
 // holding wishlisted cards (like the collection landing lists only owned sets); a
 // segmented toggle (`?sets=all`) flips it to the catalog game view's FULL set list —
 // featured + year sections and all — so there's always somewhere to click through and
 // start wishing. Either way the user's per-set wanted counts/values overlay the tiles
-// that have any. The header carries the value/count summary and a quick-add box (no
-// import/sync — a wish list has nothing to sync from); the card grids live on
+// that have any. The shared landing pipeline lives in `useHoldingsLanding` (the collection
+// landing's twin); this view keeps the wish-list wording and the header's quick-add box
+// (no import/sync — a wish list has nothing to sync from). The card grids live on
 // WishlistBrowseView (`/wishlist/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
-const game = toRef(props, 'game')
-const gameName = useGameName(game)
 
+const {
+  game,
+  summary,
+  heldSets: wishlistSets,
+  showAllSets,
+  setShowAllSets,
+  catalogSets,
+  sourceSets,
+  filter,
+  trimmedFilter,
+  filtering,
+  groups,
+  relatedCount,
+  activePending,
+  activeError,
+  sections,
+  ownership,
+  totalValue,
+  hasStats,
+} = useHoldingsLanding(props, {
+  useSummaryQuery: useWishlistSummaryQuery,
+  useHeldSetsQuery: useWishlistSetsQuery,
+  basePath: '/wishlist',
+  countNoun: 'wanted',
+  withBulk: false,
+})
+
+const gameName = useGameName(game)
 const auth = useAuthStore()
 
 // Per-account page — kept out of search indexes.
@@ -40,91 +63,6 @@ usePageMeta({
   canonicalPath: () => `/wishlist/${game.value}`,
   noindex: true,
 })
-
-const summaryQuery = useWishlistSummaryQuery(game)
-// The sets holding wishlisted cards — only the per-set counts/values overlay, since the
-// grid itself lists the whole catalog.
-const wishlistSetsQuery = useWishlistSetsQuery(game)
-
-const summary = computed(() => summaryQuery.data.value)
-const wishlistSets = computed(() => wishlistSetsQuery.data.value?.data ?? [])
-
-// Which sets the grid lists: just the wishlisted ones (default) or the whole catalog
-// (`?sets=all`). A URL param, like the browse views' `?ghosts`, so the choice survives
-// navigation and the back button.
-const route = useRoute()
-const router = useRouter()
-const showAllSets = computed(() => route.query.sets === 'all')
-function setShowAllSets(on: boolean) {
-  const next = { ...route.query }
-  if (on) next.sets = 'all'
-  else delete next.sets
-  router.replace({ query: next })
-}
-
-// The FULL public set list (shared, cached with the catalog game view) — the all-sets
-// mode's source, fetched unconditionally so toggling never starts from a spinner.
-const setsQuery = useSetsQuery(game)
-const sets = computed(() => setsQuery.data.value?.data ?? [])
-
-// The active mode's sets, grouped and filterable exactly like the catalog game view:
-// nested sub-sets, instant name/code narrowing, groups kept whole when any member
-// matches (issues #127/#128). One grouping instance over the switched source, so the
-// filter box and header counts track whichever mode is on.
-const sourceSets = computed<CardSet[]>(() => (showAllSets.value ? sets.value : wishlistSets.value))
-const { filter, trimmedFilter, filtering, groups, relatedCount } = useFilteredSetGroups(
-  game,
-  sourceSets,
-)
-
-// The active mode's query state, for the loading/error rows below.
-const activePending = computed(() =>
-  showAllSets.value ? setsQuery.isPending.value : wishlistSetsQuery.isPending.value,
-)
-const activeError = computed(() =>
-  showAllSets.value ? setsQuery.isError.value : wishlistSetsQuery.isError.value,
-)
-
-// Pinned sets (e.g. Secret Lair) lead as a "Featured" section; the rest break into
-// release-year sections — the same scannable layout as the catalog game view.
-const partitioned = computed(() => partitionPinned(groups.value))
-const years = computed(() => groupByYear(partitioned.value.rest))
-const yearLabel = (year: number | null) => (year === null ? 'Unknown year' : String(year))
-const sections = computed(() => {
-  const featured = partitioned.value.pinned
-  const yearSections = years.value.map((section) => ({
-    key: section.year === null ? 'unknown' : String(section.year),
-    label: yearLabel(section.year),
-    groups: section.groups,
-  }))
-  return featured.length
-    ? [{ key: 'featured', label: 'Featured', groups: featured }, ...yearSections]
-    : yearSections
-})
-
-// Per-set-code wanted stats each tile shows next to its name: the "N/M wanted"
-// completion count, the "N copies" total (duplicates), and the preformatted value
-// its wanted cards would cost (null/unpriced sets carry a null the tile omits) — the
-// wish-list mirror of the collection landing's ownership object, built in one pass
-// and passed to SetGroupGrid. Sets with nothing wishlisted are simply absent, so
-// their tiles keep the plain catalog card count.
-const ownership = computed(() => {
-  const counts: Record<string, number> = {}
-  const copies: Record<string, number> = {}
-  const values: Record<string, string | null> = {}
-  for (const set of wishlistSets.value) {
-    counts[set.code] = set.owned_cards
-    copies[set.code] = set.owned_copies
-    values[set.code] = formatUsd(set.owned_value_usd)
-  }
-  // No bulkValues map (unlike the collection landing): a wish list is a shopping list,
-  // so its tiles show only what buying the set's wanted cards would cost.
-  return { counts, copies, values }
-})
-const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
-
-// Stats are worth showing only once something is wanted.
-const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 </script>
 
 <template>
@@ -191,32 +129,11 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
            mirroring the catalog game view. -->
       <StickySearchBar class="mb-6 flex flex-wrap items-center gap-3">
         <!-- Which sets to list — the GroupViewToggle-style segmented control. -->
-        <div class="bg-muted text-muted-foreground inline-flex shrink-0 rounded-md p-0.5 text-sm">
-          <button
-            type="button"
-            :class="
-              cn(
-                'rounded px-3 py-1.5 font-medium transition-colors',
-                !showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-              )
-            "
-            @click="setShowAllSets(false)"
-          >
-            Wishlisted
-          </button>
-          <button
-            type="button"
-            :class="
-              cn(
-                'rounded px-3 py-1.5 font-medium transition-colors',
-                showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-              )
-            "
-            @click="setShowAllSets(true)"
-          >
-            All sets
-          </button>
-        </div>
+        <SetsScopeToggle
+          :model-value="showAllSets"
+          collected-label="Wishlisted"
+          @update:model-value="setShowAllSets"
+        />
         <CardSearchBox
           v-if="sourceSets.length"
           v-model="filter"
@@ -238,7 +155,7 @@ const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
       <p v-else-if="activeError" class="text-destructive py-12">
         Couldn't load sets. Please retry.
       </p>
-      <p v-else-if="showAllSets && !sets.length" class="text-muted-foreground py-12">
+      <p v-else-if="showAllSets && !catalogSets.length" class="text-muted-foreground py-12">
         No sets available yet.
       </p>
       <!-- Wishlisted mode with nothing wishlisted anywhere: offer the all-sets view,

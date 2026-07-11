@@ -20,10 +20,13 @@ use crate::entities::{card, card_set, collection_item, wishlist_item};
 use crate::error::AppError;
 use crate::state::AppState;
 
+use crate::scryfall::drops::DropTable;
+
 use super::dto::CardResponse;
+use super::grouping::{group_into_drops, group_into_subtypes, paginate_buckets};
 use super::lookup::load_group_set_codes;
 use super::pagination::{
-    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE,
+    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
     resolve_page, trim_query,
 };
 use super::sort::{SortDir, SortField};
@@ -531,4 +534,73 @@ pub(crate) fn build_collection_sets<H: HoldingCounts>(
             .then_with(|| a.code.cmp(&b.code))
     });
     out
+}
+
+/// Shape already-fetched holdings rows (each left-joined to its card) into a by-drop
+/// page: group the owned/wanted cards into Secret Lair drops, then paginate over drops.
+/// A holding whose card row is gone (a catalog re-import) left-joins to `None` — skip it,
+/// exactly as the list/summary reads do. Entity-agnostic over [`HoldingCounts`] so the
+/// collection and wish list share the identical post-fetch shaping; only the SeaORM query
+/// stays with each caller.
+pub(crate) fn holding_drop_page<H: HoldingCounts>(
+    table: &'static DropTable,
+    rows: Vec<(H, Option<card::Model>)>,
+    page: u64,
+    page_size: u64,
+) -> Page<CollectionDropGroup> {
+    let pairs: Vec<(H, card::Model)> = rows
+        .into_iter()
+        .filter_map(|(item, card)| card.map(|c| (item, c)))
+        .collect();
+
+    let buckets = group_into_drops(table, pairs, |(_, card)| card.collector_number.as_str());
+
+    paginate_buckets(buckets, page, page_size, |bucket| CollectionDropGroup {
+        slug: bucket.slug,
+        title: bucket.title,
+        card_count: bucket.cards.len(),
+        cards: bucket
+            .cards
+            .into_iter()
+            .map(|(item, card)| CollectionEntry {
+                card: CardResponse::from(card),
+                quantity: item.quantity(),
+                foil_quantity: item.foil_quantity(),
+            })
+            .collect(),
+    })
+}
+
+/// Shape already-fetched holdings rows (each left-joined to its card) into a by-sub-type
+/// page: group the owned/wanted cards by card treatment, then paginate over sub-types.
+/// A holding whose card row is gone (a catalog re-import) left-joins to `None` — skip it,
+/// exactly as the list/summary reads do. Entity-agnostic over [`HoldingCounts`] so the
+/// collection and wish list share the identical post-fetch shaping; only the SeaORM query
+/// stays with each caller.
+pub(crate) fn holding_subtype_page<H: HoldingCounts>(
+    rows: Vec<(H, Option<card::Model>)>,
+    page: u64,
+    page_size: u64,
+) -> Page<CollectionSubtypeGroup> {
+    let pairs: Vec<(H, card::Model)> = rows
+        .into_iter()
+        .filter_map(|(item, card)| card.map(|c| (item, c)))
+        .collect();
+
+    let buckets = group_into_subtypes(pairs, |(_, card)| card);
+
+    paginate_buckets(buckets, page, page_size, |bucket| CollectionSubtypeGroup {
+        slug: bucket.slug,
+        title: bucket.title,
+        card_count: bucket.cards.len(),
+        cards: bucket
+            .cards
+            .into_iter()
+            .map(|(item, card)| CollectionEntry {
+                card: CardResponse::from(card),
+                quantity: item.quantity(),
+                foil_quantity: item.foil_quantity(),
+            })
+            .collect(),
+    })
 }

@@ -9,20 +9,18 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::CardSet;
-use crate::entities::{card, card_set, collection_item};
+use crate::entities::card_set;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CardResponse, Page, SetsParams, SortDir, SortField, build_collection_sets, group_into_drops,
-    group_into_subtypes, load_set, paginate_buckets, require_drop_table, require_game,
-    search_condition,
+    Page, SetsParams, SortDir, SortField, build_collection_sets, holding_drop_page,
+    holding_subtype_page, load_set, require_drop_table, require_game, search_condition,
 };
 use crate::state::AppState;
 
 use super::read::{collection_query, owned_with_cards};
 use super::{
-    CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSort,
-    CollectionSubtypeGroup, ListParams,
+    CollectionDropGroup, CollectionSetsResponse, CollectionSort, CollectionSubtypeGroup, ListParams,
 };
 
 /// `GET /api/collection/{game}/sets` -> the sets the signed-in user owns cards in,
@@ -95,32 +93,8 @@ pub async fn collection_set_drops(
     .all(&state.db)
     .await?;
 
-    // A holding whose card row is gone (a catalog re-import) left-joins to `None` — skip
-    // it, exactly as the list/summary reads do.
-    let pairs: Vec<(collection_item::Model, card::Model)> = rows
-        .into_iter()
-        .filter_map(|(item, card)| card.map(|c| (item, c)))
-        .collect();
-
-    let buckets = group_into_drops(table, pairs, |(_, card)| card.collector_number.as_str());
-
     let (page, page_size) = params.drop_page_and_size();
-    Ok(Json(paginate_buckets(buckets, page, page_size, |bucket| {
-        CollectionDropGroup {
-            slug: bucket.slug,
-            title: bucket.title,
-            card_count: bucket.cards.len(),
-            cards: bucket
-                .cards
-                .into_iter()
-                .map(|(item, card)| CollectionEntry {
-                    card: CardResponse::from(card),
-                    quantity: item.quantity,
-                    foil_quantity: item.foil_quantity,
-                })
-                .collect(),
-        }
-    })))
+    Ok(Json(holding_drop_page(table, rows, page, page_size)))
 }
 
 /// `GET /api/collection/{game}/sets/{code}/subtypes` -> the signed-in user's owned cards
@@ -164,29 +138,6 @@ pub async fn collection_set_subtypes(
     .all(&state.db)
     .await?;
 
-    // A holding whose card row is gone (a catalog re-import) left-joins to `None` — skip it.
-    let pairs: Vec<(collection_item::Model, card::Model)> = rows
-        .into_iter()
-        .filter_map(|(item, card)| card.map(|c| (item, c)))
-        .collect();
-
-    let buckets = group_into_subtypes(pairs, |(_, card)| card);
-
     let (page, page_size) = params.drop_page_and_size();
-    Ok(Json(paginate_buckets(buckets, page, page_size, |bucket| {
-        CollectionSubtypeGroup {
-            slug: bucket.slug,
-            title: bucket.title,
-            card_count: bucket.cards.len(),
-            cards: bucket
-                .cards
-                .into_iter()
-                .map(|(item, card)| CollectionEntry {
-                    card: CardResponse::from(card),
-                    quantity: item.quantity,
-                    foil_quantity: item.foil_quantity,
-                })
-                .collect(),
-        }
-    })))
+    Ok(Json(holding_subtype_page(rows, page, page_size)))
 }

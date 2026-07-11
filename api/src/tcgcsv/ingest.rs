@@ -20,7 +20,7 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, EntityTrait, Iterable, QueryFilter,
+    DatabaseConnection, EntityTrait, Iterable,
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
@@ -28,9 +28,10 @@ use sea_orm::{
 use super::model::{Group, aggregate_prices, published_on_to_date};
 use super::progress::SyncProgress;
 use super::{BackfillError, GAME, MTG_CATEGORY_ID, PRODUCTS_DATASET};
+use crate::catalog::ingest_state::{self, StateFields};
 use crate::db::upsert_changed_guard;
-use crate::entities::prelude::{IngestState, Product};
-use crate::entities::{ingest_state, product};
+use crate::entities::prelude::Product;
+use crate::entities::product;
 
 /// Courtesy pacing between provider requests (TCGCSV asks for < 10k req/day; a full
 /// sweep is ~900 requests, so this keeps us well-behaved).
@@ -65,7 +66,7 @@ pub async fn refresh(
     match refresh_inner(db, http, user_agent, source).await {
         Ok(()) => Ok(()),
         Err(err) => {
-            let _ = mark_error(db, &err.to_string()).await;
+            let _ = ingest_state::mark_error(db, GAME, PRODUCTS_DATASET, &err.to_string()).await;
             Err(err)
         }
     }
@@ -84,7 +85,7 @@ async fn refresh_inner(
     // `msrp.json` re-applies MSRP on the next sync even when TCGCSV itself is unchanged.
     let remote_version = super::client::last_updated(http, &base_url, user_agent).await?;
     let version = compose_version(&remote_version, super::msrp::version());
-    let existing = load_state(db).await?;
+    let existing = ingest_state::load(db, GAME, PRODUCTS_DATASET).await?;
     if let Some(state) = &existing
         && state.status == "complete"
         && state.source_updated_at.as_deref() == Some(version.as_str())
@@ -97,7 +98,21 @@ async fn refresh_inner(
         .as_ref()
         .and_then(|s| s.started_at)
         .unwrap_or_else(Utc::now);
-    put_state(db, "running", None, "fetching groups", started, None, 0, 0).await?;
+    ingest_state::put(
+        db,
+        StateFields {
+            game: GAME,
+            dataset: PRODUCTS_DATASET,
+            status: "running",
+            source_updated_at: None,
+            detail: "fetching groups",
+            sets_imported: 0,
+            cards_imported: 0,
+            started_at: started,
+            finished_at: None,
+        },
+    )
+    .await?;
 
     let groups = super::client::fetch_groups(http, &base_url, user_agent, MTG_CATEGORY_ID)
         .await?
@@ -143,15 +158,19 @@ async fn refresh_inner(
         // Periodic progress so the sweep is observable and a crash resumes cleanly
         // (the version gate re-runs the whole sweep — idempotent upserts make that safe).
         if i % 25 == 0 {
-            put_state(
+            ingest_state::put(
                 db,
-                "running",
-                None,
-                &format!("swept {} of {groups_total} groups", i + 1),
-                started,
-                None,
-                groups_total,
-                total_products,
+                StateFields {
+                    game: GAME,
+                    dataset: PRODUCTS_DATASET,
+                    status: "running",
+                    source_updated_at: None,
+                    detail: &format!("swept {} of {groups_total} groups", i + 1),
+                    sets_imported: groups_total,
+                    cards_imported: total_products,
+                    started_at: started,
+                    finished_at: None,
+                },
             )
             .await?;
         }
@@ -159,15 +178,19 @@ async fn refresh_inner(
 
     // Clear the progress bar before the completion line so it prints cleanly.
     drop(progress);
-    put_state(
+    ingest_state::put(
         db,
-        "complete",
-        Some(&version),
-        &format!("imported {total_products} sealed products from {groups_total} groups"),
-        started,
-        Some(Utc::now()),
-        groups_total,
-        total_products,
+        StateFields {
+            game: GAME,
+            dataset: PRODUCTS_DATASET,
+            status: "complete",
+            source_updated_at: Some(&version),
+            detail: &format!("imported {total_products} sealed products from {groups_total} groups"),
+            sets_imported: groups_total,
+            cards_imported: total_products,
+            started_at: started,
+            finished_at: Some(Utc::now()),
+        },
     )
     .await?;
     tracing::info!(
@@ -269,70 +292,6 @@ async fn upsert_products(
             .await?;
     }
     Ok(total)
-}
-
-// ----- ingest_state bookkeeping (dataset = tcgcsv_products) -----
-
-async fn load_state(
-    db: &DatabaseConnection,
-) -> Result<Option<ingest_state::Model>, BackfillError> {
-    Ok(IngestState::find()
-        .filter(ingest_state::Column::Game.eq(GAME))
-        .filter(ingest_state::Column::Dataset.eq(PRODUCTS_DATASET))
-        .one(db)
-        .await?)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn put_state(
-    db: &DatabaseConnection,
-    status: &str,
-    source_updated_at: Option<&str>,
-    detail: &str,
-    started_at: DateTimeUtc,
-    finished_at: Option<DateTimeUtc>,
-    groups: i32,
-    products: i32,
-) -> Result<(), BackfillError> {
-    let model = ingest_state::ActiveModel {
-        id: NotSet,
-        game: Set(GAME.to_string()),
-        dataset: Set(PRODUCTS_DATASET.to_string()),
-        source_updated_at: Set(source_updated_at.map(str::to_string)),
-        status: Set(status.to_string()),
-        detail: Set(Some(detail.to_string())),
-        sets_imported: Set(groups),
-        cards_imported: Set(products),
-        started_at: Set(Some(started_at)),
-        finished_at: Set(finished_at),
-    };
-    IngestState::insert(model)
-        .on_conflict(
-            OnConflict::columns([ingest_state::Column::Game, ingest_state::Column::Dataset])
-                .update_columns(ingest_state::Column::iter().filter(|c| {
-                    !matches!(
-                        c,
-                        ingest_state::Column::Id
-                            | ingest_state::Column::Game
-                            | ingest_state::Column::Dataset
-                    )
-                }))
-                .to_owned(),
-        )
-        .exec_without_returning(db)
-        .await?;
-    Ok(())
-}
-
-async fn mark_error(db: &DatabaseConnection, message: &str) -> Result<(), BackfillError> {
-    let existing = load_state(db).await?;
-    let started = existing
-        .as_ref()
-        .and_then(|s| s.started_at)
-        .unwrap_or_else(Utc::now);
-    let last = existing.and_then(|s| s.source_updated_at);
-    let detail: String = message.chars().take(500).collect();
-    put_state(db, "error", last.as_deref(), &detail, started, Some(Utc::now()), 0, 0).await
 }
 
 #[cfg(test)]

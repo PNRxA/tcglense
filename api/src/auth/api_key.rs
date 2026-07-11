@@ -19,12 +19,10 @@
 //! key's lifetime.
 
 use chrono::{DateTime, Duration, Utc};
-use rand::Rng;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, Set, prelude::DateTimeUtc,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     entities::{api_key, prelude::ApiKey, prelude::User, user},
@@ -92,14 +90,7 @@ impl ApiKeyScope {
 
 /// Generate a new opaque API key: the `tcgl_` label + 32 CSPRNG bytes, hex-encoded.
 fn generate_key() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    format!("{KEY_PLAINTEXT_PREFIX}{}", hex::encode(bytes))
-}
-
-/// SHA-256 hex digest of the opaque key (what we store / look up by).
-fn hash_key(plaintext: &str) -> String {
-    hex::encode(Sha256::digest(plaintext.as_bytes()))
+    format!("{KEY_PLAINTEXT_PREFIX}{}", super::secret::generate_secret())
 }
 
 /// The stored display prefix: `tcgl_` + the first [`PREFIX_DISPLAY_HEX_LEN`] hex
@@ -140,7 +131,7 @@ pub async fn issue_api_key(
 
     let model = api_key::ActiveModel {
         user_id: Set(user_id),
-        token_hash: Set(hash_key(&plaintext)),
+        token_hash: Set(super::secret::sha256_hex(&plaintext)),
         name: Set(name.to_string()),
         key_prefix: Set(display_prefix(&plaintext)),
         scope: Set(scope.as_str().to_string()),
@@ -161,7 +152,7 @@ async fn find_live(
     db: &DatabaseConnection,
     presented: &str,
 ) -> Result<Option<api_key::Model>, AppError> {
-    let hash = hash_key(presented);
+    let hash = super::secret::sha256_hex(presented);
     let row = ApiKey::find()
         .filter(api_key::Column::TokenHash.eq(hash))
         .filter(api_key::Column::RevokedAt.is_null())
@@ -325,8 +316,8 @@ mod tests {
         // "tcgl_" (5) + 32 bytes -> 64 hex chars.
         assert_eq!(a.len(), 5 + 64);
         assert_ne!(a, b);
-        assert_eq!(hash_key(&a), hash_key(&a));
-        assert_ne!(hash_key(&a), hash_key(&b));
+        assert_eq!(crate::auth::secret::sha256_hex(&a), crate::auth::secret::sha256_hex(&a));
+        assert_ne!(crate::auth::secret::sha256_hex(&a), crate::auth::secret::sha256_hex(&b));
         // The display prefix is the label + 8 hex chars and is a strict prefix.
         let prefix = display_prefix(&a);
         assert_eq!(prefix.len(), 5 + 8);

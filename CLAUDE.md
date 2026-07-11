@@ -110,7 +110,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `AuthUser` (session JWT or any `tcgl_` key), writes take `WritableUser` (read-only
   key = **403**), key management (`/api/auth/api-keys`) takes `SessionUser` (JWT
   only — a key can't mint/list/revoke keys). A bad/expired/revoked key is **401**.
-  Keep the per-user rate limiter key-aware (`ratelimit.rs` resolves `tcgl_` → user)
+  Keep the per-user rate limiter key-aware (`ratelimit/per_user.rs` resolves `tcgl_` → user)
   or keyed traffic bypasses the quota. Store only the SHA-256 hash; the plaintext is
   shown **once**.
 - Rate limiting **fails open** (Redis outage, unresolvable IP); CAPTCHA fails

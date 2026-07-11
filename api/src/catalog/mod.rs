@@ -7,8 +7,10 @@
 //! routes, the SPA) is already generic over `game`.
 
 pub mod fingerprint_sync;
+pub(crate) mod fingerprint_tasks;
 pub mod fingerprints;
 pub mod images;
+pub mod ingest_state;
 
 use reqwest::Client;
 use sea_orm::DatabaseConnection;
