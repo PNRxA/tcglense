@@ -16,13 +16,13 @@ import {
   Lock,
   Package,
   PackageOpen,
-  Plus,
   Search,
-  Sparkles,
   TrendingUp,
 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
+import DemoCardTile from '@/components/home/DemoCardTile.vue'
+import FeatureDemoRow from '@/components/home/FeatureDemoRow.vue'
 import { buttonVariants } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useGamesQuery } from '@/composables/useCatalog'
@@ -98,12 +98,6 @@ const otherFeatures: FeatureLink[] = [
     to: '/docs',
   },
 ]
-
-// The owned-count / quick-add chip style, verbatim from OwnedCountBadge.vue so the demo
-// badges match the real ones.
-const badgeChipClass =
-  'bg-primary text-primary-foreground inline-flex items-center gap-0.5 rounded-md px-1.5 ' +
-  'py-0.5 text-xs font-semibold shadow tabular-nums'
 
 // Text-link CTA style under each feature demo row (buttons stay reserved for the hero and
 // the closing band).
@@ -186,96 +180,17 @@ const rowLinkClass =
         <div class="bg-card rounded-2xl border p-4 shadow-sm sm:p-5">
           <div class="grid grid-cols-3 gap-3">
             <!-- Tile 1: owned (badge: 3 + 1 foil). -->
-            <div class="relative">
-              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                <div
-                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                ></div>
-                <div class="space-y-1.5 p-2">
-                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                </div>
-              </div>
-              <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-                <span :class="badgeChipClass">
-                  <Layers class="size-3" aria-hidden="true" />
-                  3
-                </span>
-                <span :class="badgeChipClass">
-                  <Sparkles class="size-3" aria-hidden="true" />
-                  1
-                </span>
-              </div>
-            </div>
+            <DemoCardTile :layers="3" :foil="1" />
             <!-- Tile 2. -->
-            <div class="relative">
-              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                <div
-                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
-                ></div>
-                <div class="space-y-1.5 p-2">
-                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                </div>
-              </div>
-            </div>
+            <DemoCardTile gradient="muted" />
             <!-- Tile 3. -->
-            <div class="relative">
-              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                <div
-                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
-                ></div>
-                <div class="space-y-1.5 p-2">
-                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                </div>
-              </div>
-            </div>
+            <DemoCardTile gradient="muted" />
             <!-- Tile 4. -->
-            <div class="relative">
-              <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                <div
-                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                ></div>
-                <div class="space-y-1.5 p-2">
-                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                </div>
-              </div>
-            </div>
+            <DemoCardTile />
             <!-- Tile 5: ghost (missing). -->
-            <div class="relative">
-              <div
-                class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
-              >
-                <div
-                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
-                ></div>
-                <div class="space-y-1.5 p-2">
-                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                </div>
-              </div>
-            </div>
+            <DemoCardTile gradient="muted" ghost />
             <!-- Tile 6: ghost with a crisp quick-add chip (not dimmed). -->
-            <div class="relative">
-              <div
-                class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
-              >
-                <div
-                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                ></div>
-                <div class="space-y-1.5 p-2">
-                  <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                  <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                </div>
-              </div>
-              <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-                <span :class="badgeChipClass">
-                  <Plus class="size-3" aria-hidden="true" />
-                </span>
-              </div>
-            </div>
+            <DemoCardTile ghost quick-add />
           </div>
         </div>
 
@@ -327,33 +242,27 @@ const rowLinkClass =
     <section class="mt-20 sm:mt-24">
       <div class="space-y-20 sm:space-y-24">
         <!-- Row A — Prices (demo right). -->
-        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
-          <div>
-            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
-              <TrendingUp class="size-4" aria-hidden="true" />
-              Price history
-            </p>
-            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              Every price, charted every day
-            </h2>
-            <p class="text-muted-foreground mt-3 text-pretty">
-              TCGLense captures singles prices daily — USD, EUR, and foil — and charts USD and foil
-              on every card, windowed from the last 7 days to the full history. Sealed products get
-              the same treatment: current prices and price history for booster boxes, bundles, and
-              decks.
-            </p>
-            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
-              <RouterLink to="/cards" :class="rowLinkClass">
-                Browse cards
-                <ArrowRight class="size-4" aria-hidden="true" />
-              </RouterLink>
-              <RouterLink to="/sealed" :class="rowLinkClass">
-                Browse sealed products
-                <ArrowRight class="size-4" aria-hidden="true" />
-              </RouterLink>
-            </div>
-          </div>
-          <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
+        <FeatureDemoRow
+          :icon="TrendingUp"
+          eyebrow="Price history"
+          heading="Every price, charted every day"
+          :body="
+            'TCGLense captures singles prices daily — USD, EUR, and foil — and charts USD and foil ' +
+            'on every card, windowed from the last 7 days to the full history. Sealed products get ' +
+            'the same treatment: current prices and price history for booster boxes, bundles, and ' +
+            'decks.'
+          "
+          demo-side="right"
+        >
+          <RouterLink to="/cards" :class="rowLinkClass">
+            Browse cards
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <RouterLink to="/sealed" :class="rowLinkClass">
+            Browse sealed products
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
             <!-- Decorative mock UI — illustrative values, not real market data. -->
             <div class="flex items-center justify-between">
               <span class="text-sm font-semibold">Price history</span>
@@ -398,35 +307,29 @@ const rowLinkClass =
               <span>Jun 19</span>
               <span>Jul 3</span>
             </div>
-          </div>
-        </div>
+          </template>
+        </FeatureDemoRow>
 
         <!-- Row B — Collection (demo left at md+). -->
-        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
-          <div>
-            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
-              <Library class="size-4" aria-hidden="true" />
-              Collection
-            </p>
-            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              Know exactly what you own
-            </h2>
-            <p class="text-muted-foreground mt-3 text-pretty">
-              Count regular and foil copies per game and watch the totals move — unique cards, total
-              copies, and a live estimated value. As you browse the catalog, owned-count badges mark
-              the cards already in your collection, and quick-add drops a card in by name without
-              leaving the page.
-            </p>
-            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
-              <RouterLink to="/collection" :class="rowLinkClass">
-                <template v-if="auth.isAuthenticated">Open your collection</template>
-                <template v-else-if="auth.sessionResolved">Start a collection</template>
-                <Skeleton v-else class="h-4 w-32" />
-                <ArrowRight class="size-4" aria-hidden="true" />
-              </RouterLink>
-            </div>
-          </div>
-          <div class="bg-card rounded-2xl border p-5 sm:p-6 md:order-first" aria-hidden="true">
+        <FeatureDemoRow
+          :icon="Library"
+          eyebrow="Collection"
+          heading="Know exactly what you own"
+          :body="
+            'Count regular and foil copies per game and watch the totals move — unique cards, ' +
+            'total copies, and a live estimated value. As you browse the catalog, owned-count ' +
+            'badges mark the cards already in your collection, and quick-add drops a card in by ' +
+            'name without leaving the page.'
+          "
+          demo-side="left"
+        >
+          <RouterLink to="/collection" :class="rowLinkClass">
+            <template v-if="auth.isAuthenticated">Open your collection</template>
+            <template v-else-if="auth.sessionResolved">Start a collection</template>
+            <Skeleton v-else class="h-4 w-32" />
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
             <!-- Decorative mock UI — illustrative values, not real market data. -->
             <dl class="flex flex-wrap gap-x-8 gap-y-3">
               <div>
@@ -444,94 +347,42 @@ const rowLinkClass =
             </dl>
             <div class="mt-5 grid grid-cols-3 gap-3">
               <!-- Tile 1: 4 owned. -->
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                  <div class="space-y-1.5 p-2">
-                    <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                    <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                  </div>
-                </div>
-                <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-                  <span :class="badgeChipClass">
-                    <Layers class="size-3" aria-hidden="true" />
-                    4
-                  </span>
-                </div>
-              </div>
+              <DemoCardTile :layers="4" />
               <!-- Tile 2: 2 + 1 foil. -->
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                  <div class="space-y-1.5 p-2">
-                    <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                    <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                  </div>
-                </div>
-                <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-                  <span :class="badgeChipClass">
-                    <Layers class="size-3" aria-hidden="true" />
-                    2
-                  </span>
-                  <span :class="badgeChipClass">
-                    <Sparkles class="size-3" aria-hidden="true" />
-                    1
-                  </span>
-                </div>
-              </div>
+              <DemoCardTile :layers="2" :foil="1" />
               <!-- Tile 3: unbadged. -->
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                  <div class="space-y-1.5 p-2">
-                    <div class="bg-foreground/15 h-1.5 w-3/4 rounded-full"></div>
-                    <div class="bg-foreground/10 h-1.5 w-1/2 rounded-full"></div>
-                  </div>
-                </div>
-              </div>
+              <DemoCardTile />
             </div>
-          </div>
-        </div>
+          </template>
+        </FeatureDemoRow>
 
         <!-- Row C — Ghost mode (demo right). -->
-        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
-          <div>
-            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
-              <Ghost class="size-4" aria-hidden="true" />
-              Ghost mode
-            </p>
-            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              See the gaps in every set
-            </h2>
-            <p class="text-muted-foreground mt-3 text-pretty">
-              Flip on "Show ghosts" in any set to dim the cards you're missing, with a live "X of Y
-              owned" count. The gaps read at a glance — and every ghost carries a quick-add button
-              right where it sits. It works across your collection and your wish list, including
-              Secret Lair by-drop views.
-            </p>
-            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
-              <template v-if="auth.isAuthenticated">
-                <RouterLink to="/collection" :class="rowLinkClass">
-                  See your set gaps
-                  <ArrowRight class="size-4" aria-hidden="true" />
-                </RouterLink>
-              </template>
-              <template v-else-if="auth.sessionResolved">
-                <RouterLink to="/register" :class="rowLinkClass">
-                  Create a free account to try it
-                  <ArrowRight class="size-4" aria-hidden="true" />
-                </RouterLink>
-              </template>
-              <Skeleton v-else class="h-5 w-48" />
-            </div>
-          </div>
-          <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
+        <FeatureDemoRow
+          :icon="Ghost"
+          eyebrow="Ghost mode"
+          heading="See the gaps in every set"
+          :body="
+            'Flip on \u0022Show ghosts\u0022 in any set to dim the cards you\'re missing, with a ' +
+            'live \u0022X of Y owned\u0022 count. The gaps read at a glance — and every ghost ' +
+            'carries a quick-add button right where it sits. It works across your collection and ' +
+            'your wish list, including Secret Lair by-drop views.'
+          "
+          demo-side="right"
+        >
+          <template v-if="auth.isAuthenticated">
+            <RouterLink to="/collection" :class="rowLinkClass">
+              See your set gaps
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <template v-else-if="auth.sessionResolved">
+            <RouterLink to="/register" :class="rowLinkClass">
+              Create a free account to try it
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <Skeleton v-else class="h-5 w-48" />
+          <template #demo>
             <!-- Decorative mock UI — illustrative values, not real market data. -->
             <div class="flex items-center justify-between">
               <div
@@ -549,103 +400,38 @@ const rowLinkClass =
             </div>
             <div class="mt-4 grid grid-cols-4 gap-2.5">
               <!-- 5 owned. -->
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
-              <div class="relative">
-                <div class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
+              <DemoCardTile :bars="false" />
+              <DemoCardTile :bars="false" />
+              <DemoCardTile :bars="false" />
+              <DemoCardTile :bars="false" />
+              <DemoCardTile :bars="false" />
               <!-- Ghost with a crisp quick-add chip. -->
-              <div class="relative">
-                <div
-                  class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
-                >
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-                <div class="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-                  <span :class="badgeChipClass">
-                    <Plus class="size-3" aria-hidden="true" />
-                  </span>
-                </div>
-              </div>
+              <DemoCardTile :bars="false" ghost quick-add />
               <!-- 2 more ghosts. -->
-              <div class="relative">
-                <div
-                  class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
-                >
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
-              <div class="relative">
-                <div
-                  class="bg-muted aspect-[5/7] overflow-hidden rounded-lg border border-dashed opacity-40"
-                >
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-              </div>
+              <DemoCardTile :bars="false" ghost />
+              <DemoCardTile :bars="false" ghost />
             </div>
-          </div>
-        </div>
+          </template>
+        </FeatureDemoRow>
 
         <!-- Row D — Import & sync (demo left at md+). -->
-        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
-          <div>
-            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
-              <Import class="size-4" aria-hidden="true" />
-              Import &amp; sync
-            </p>
-            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              Bring your collection with you
-            </h2>
-            <p class="text-muted-foreground mt-3 text-pretty">
-              Import from Archidekt by link and pick how it reconciles — overwrite matched cards,
-              mirror-replace, add-merge, or a smart incremental sync — then save the link and
-              re-sync on demand. Prefer a file? Upload a CSV export from Archidekt or Moxfield and
-              it reconciles on the spot.
-            </p>
-            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
-              <RouterLink to="/collection" :class="rowLinkClass">
-                Import into your collection
-                <ArrowRight class="size-4" aria-hidden="true" />
-              </RouterLink>
-            </div>
-          </div>
-          <div class="bg-card rounded-2xl border p-5 sm:p-6 md:order-first" aria-hidden="true">
+        <FeatureDemoRow
+          :icon="Import"
+          eyebrow="Import & sync"
+          heading="Bring your collection with you"
+          :body="
+            'Import from Archidekt by link and pick how it reconciles — overwrite matched cards, ' +
+            'mirror-replace, add-merge, or a smart incremental sync — then save the link and ' +
+            're-sync on demand. Prefer a file? Upload a CSV export from Archidekt or Moxfield and ' +
+            'it reconciles on the spot.'
+          "
+          demo-side="left"
+        >
+          <RouterLink to="/collection" :class="rowLinkClass">
+            Import into your collection
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
             <!-- Decorative mock UI — illustrative values, not real market data. -->
             <div
               class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-xs font-medium"
@@ -680,34 +466,28 @@ const rowLinkClass =
               <CircleCheck class="text-primary size-3.5" aria-hidden="true" />
               Matched 1,204 cards · 96 foil
             </div>
-          </div>
-        </div>
+          </template>
+        </FeatureDemoRow>
 
         <!-- Row E — Wish list (demo right). -->
-        <div class="grid items-center gap-8 md:grid-cols-2 md:gap-12">
-          <div>
-            <p class="text-primary flex items-center gap-2 text-sm font-semibold">
-              <Heart class="size-4" aria-hidden="true" />
-              Wish lists
-            </p>
-            <h2 class="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-              Price the cards you want next
-            </h2>
-            <p class="text-muted-foreground mt-3 text-pretty">
-              A wish list works just like your collection — regular and foil counts, per-set views,
-              ghosts across whole sets — but for the cards you're still hunting. It keeps a running
-              USD total, so you always know what buying the list would cost.
-            </p>
-            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2">
-              <RouterLink to="/wishlist" :class="rowLinkClass">
-                <template v-if="auth.isAuthenticated">Open your wish list</template>
-                <template v-else-if="auth.sessionResolved">Start a wish list</template>
-                <Skeleton v-else class="h-4 w-32" />
-                <ArrowRight class="size-4" aria-hidden="true" />
-              </RouterLink>
-            </div>
-          </div>
-          <div class="bg-card rounded-2xl border p-5 sm:p-6" aria-hidden="true">
+        <FeatureDemoRow
+          :icon="Heart"
+          eyebrow="Wish lists"
+          heading="Price the cards you want next"
+          :body="
+            'A wish list works just like your collection — regular and foil counts, per-set ' +
+            'views, ghosts across whole sets — but for the cards you\'re still hunting. It keeps ' +
+            'a running USD total, so you always know what buying the list would cost.'
+          "
+          demo-side="right"
+        >
+          <RouterLink to="/wishlist" :class="rowLinkClass">
+            <template v-if="auth.isAuthenticated">Open your wish list</template>
+            <template v-else-if="auth.sessionResolved">Start a wish list</template>
+            <Skeleton v-else class="h-4 w-32" />
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
             <!-- Decorative mock UI — illustrative values, not real market data. -->
             <span class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
               Your wish list
@@ -745,8 +525,8 @@ const rowLinkClass =
               <span class="text-sm font-medium">List total</span>
               <span class="text-sm font-semibold tabular-nums">$86.20</span>
             </div>
-          </div>
-        </div>
+          </template>
+        </FeatureDemoRow>
       </div>
     </section>
 
