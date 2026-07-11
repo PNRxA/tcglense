@@ -95,6 +95,32 @@ Adding a TCG = a `Game` in `catalog::GAMES` + a provider module + one arm each i
   `components/ui/button/Button.vue` idiom. `@vueuse/core` is only a transitive dep —
   don't import it; use `defineModel` for v-model.
 
+## Keep it maintainable
+
+Hard-won from the 2026-07 refactor — these are the habits that previously grew
+1,700-line files and six copy-pasted collection/wishlist twins:
+
+- **Collection and wish list are twin surfaces — extend the shared engine, never
+  copy-paste one to build the other.** The seams: `handlers/shared/holdings.rs`
+  (DTOs + post-fetch shaping; only the per-entity SeaORM queries stay duplicated),
+  `web/src/lib/api/holdings.ts` (`makeHoldingApi`), `composables/holdingQueries.ts`
+  (`makeHoldingQueries`), and `useHoldingsLanding`/`useHoldingsBrowse` (view
+  engines; templates stay per-view). A feature added to one surface lands in the
+  seam, parameterized — asymmetries are flags/config there, not a forked file.
+- **Rule of three:** before hand-rolling a helper, grep for an existing seam
+  (`auth/secret.rs` for token generation/hashing, `catalog/ingest_state.rs` for
+  provider sync bookkeeping); a third copy of anything means extract it.
+- **One concern per file.** When a module mixes orchestration + pure algorithm +
+  bookkeeping, split it (the `ratelimit/` and `mtgjson/ingest/` directory modules
+  are the pattern: submodules `pub(super)`, public surface re-exported from
+  `mod.rs` so external paths don't change). ~500 lines is the smell threshold —
+  judge cohesion, not length; a long table of data constants is fine.
+- **Views stay thin:** reactive engines belong in composables, repeated static
+  markup in presentational components (`components/home/` is the pattern) — a
+  `<script setup>` past ~150 lines is probably an unextracted engine.
+- **Refactors are pure moves:** behavior-preserving, verified by the full suites
+  and a zero-diff `web/src/lib/api/generated/` after `cargo test`.
+
 ## Don't break these
 
 Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
