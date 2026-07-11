@@ -124,6 +124,18 @@
       "foil": "59.99",
       "name": "Furby: The OddBodies (Confetti Foil)",
       "source": "https://edhrec.com/articles/secret-lair-secret-scare-superdrop-launches-october-13th"
+    },
+    "extra-life-2020": {
+      "non_foil": "60.00",
+      "foil": "60.00",
+      "name": "Extra Life 2020",
+      "source": "https://magic.wizards.com/en/news/announcements/secret-lair-extra-life-2020-10-19"
+    },
+    "showcase-kaldheim-part-1": {
+      "non_foil": "24.99",
+      "foil": "34.99",
+      "name": "Showcase: Kaldheim - Part 1",
+      "source": "https://magic.wizards.com/en/news/announcements/announcing-secret-lairs-smitten-superdrop-2021-02-10"
     }
   }
 }
