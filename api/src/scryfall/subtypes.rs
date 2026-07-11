@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use sea_orm::sea_query::{Expr, SimpleExpr};
+use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, Condition, DbErr, EntityTrait, QueryFilter, QuerySelect};
 use serde::Deserialize;
 
@@ -187,27 +187,41 @@ fn override_set_codes(game: &str) -> HashSet<String> {
 
 // ---------- `has_subtypes` (the by-treatment gate) ----------
 
-/// `frame_effects` comma-membership as a raw, backend-portable SQL fragment (`||` concat +
-/// `LIKE` work identically on SQLite and Postgres). `token` is a compile-time constant, so
-/// inlining it is injection-safe.
-fn frame_effect_is(token: &str) -> SimpleExpr {
-    Expr::cust(format!(
-        "(',' || LOWER(COALESCE(frame_effects, '')) || ',') LIKE '%,{token},%'"
-    ))
-}
+/// The SQL disjuncts that select a card with a special ("non-Normal") treatment — the
+/// **single source of truth** for the by-treatment gate's predicate. Both
+/// [`has_subtype_condition`] (the runtime query filter) and the partial index in migration
+/// `m20240101_000034_add_cards_subtype_partial_index` render from *this exact array*, so the
+/// query predicate and the index predicate cannot drift: Postgres only uses a partial index
+/// when the query's `WHERE` provably implies the index's `WHERE`, so any byte-level mismatch
+/// silently drops the index and reverts to a full-partition scan — the regression the partial
+/// index replaced (see that migration's note). Changing an arm therefore requires a *new*
+/// migration to rebuild the index; the `has_subtype_condition_renders_the_index_arms` test is
+/// the drift canary.
+///
+/// Constraints each arm satisfies: **immutable** (`||`, `LOWER`, `COALESCE`, `LIKE`, `=`) —
+/// required of a partial-index predicate; **backend-portable** — renders identically on
+/// SQLite and Postgres; **injection-safe** — the tokens are compile-time constants. Kept in
+/// lock-step with [`derive`] (any card matching an arm classifies special and vice versa) via
+/// the same `LOWER`-folded, comma-membership tests, so a set's `has_subtypes` flag agrees with
+/// what its grouped view shows.
+pub const HAS_SUBTYPE_SQL_ARMS: [&str; 4] = [
+    "(',' || LOWER(COALESCE(frame_effects, '')) || ',') LIKE '%,showcase,%'",
+    "(',' || LOWER(COALESCE(frame_effects, '')) || ',') LIKE '%,extendedart,%'",
+    "LOWER(COALESCE(border_color, '')) = 'borderless'",
+    // Literal `true`, not the parameterized `full_art = $N` that `Column::FullArt.eq(true)`
+    // would emit: Postgres cannot prove `full_art = $N` implies `full_art = true`, so the
+    // parameterized form would forfeit the partial index. `full_art` is nullable, and
+    // `full_art = true` excludes NULLs identically to `.eq(true)`.
+    "full_art = true",
+];
 
-/// The SQL predicate selecting cards that [`derive`] to a non-Normal sub-type. Kept in
-/// lock-step with `derive`: any card matching this is classified special and vice versa,
-/// so a set's `has_subtypes` flag agrees with what its grouped view actually shows. Each
-/// arm mirrors `derive`'s case-insensitive comparisons (`has_token`/`eq_ci`) via `LOWER`,
-/// so the two can't desync if a printing ever stores a non-lowercase border/frame token.
-/// Applied only to single-table `cards` queries, so the bare column names are unambiguous.
+/// The SQL predicate selecting cards that [`derive`] to a non-Normal sub-type — the OR-fold
+/// of [`HAS_SUBTYPE_SQL_ARMS`]. Applied only to single-table `cards` queries, so the bare
+/// column names are unambiguous.
 pub fn has_subtype_condition() -> Condition {
-    Condition::any()
-        .add(frame_effect_is("showcase"))
-        .add(frame_effect_is("extendedart"))
-        .add(Expr::cust("LOWER(COALESCE(border_color, '')) = 'borderless'"))
-        .add(card::Column::FullArt.eq(true))
+    HAS_SUBTYPE_SQL_ARMS
+        .iter()
+        .fold(Condition::any(), |cond, arm| cond.add(Expr::cust(*arm)))
 }
 
 /// The set codes in a game that have at least one card with a special treatment — the
@@ -319,6 +333,36 @@ mod tests {
     fn is_special_matches_classify() {
         assert!(!is_special(&treated(1, None, None, None)));
         assert!(is_special(&treated(2, Some("borderless"), None, None)));
+    }
+
+    #[test]
+    fn has_subtype_condition_renders_the_index_arms() {
+        // The partial index in `m20240101_000034_add_cards_subtype_partial_index` is built from
+        // `HAS_SUBTYPE_SQL_ARMS.join(" OR ")`. Postgres only uses that index while this query
+        // filter renders the *identical* predicate; a byte-level drift silently reverts the hot
+        // `sets_with_subtypes` query to a full-partition scan. This is the drift canary: if you
+        // change an arm, this fails — add a new migration to rebuild the index in lock-step.
+        use sea_orm::QueryTrait;
+        let sql = Card::find()
+            .select_only()
+            .column(card::Column::SetCode)
+            .distinct()
+            .filter(has_subtype_condition())
+            .build(sea_orm::DatabaseBackend::Postgres)
+            .sql;
+        // Each arm must render verbatim into the filter. SeaORM parenthesizes each `OR` operand
+        // (`(arm1) OR (arm2) …`) while the migration joins the arms bare (`arm1 OR arm2 …`); the
+        // two are the same expression tree (`||`/`LIKE`/`=` all bind tighter than `OR`), so
+        // Postgres's predicate-implication prover — which normalizes before matching — accepts
+        // either, and both derive from `HAS_SUBTYPE_SQL_ARMS` so they cannot textually diverge.
+        for arm in HAS_SUBTYPE_SQL_ARMS {
+            assert!(sql.contains(arm), "arm missing from query filter\n  arm: {arm}\n  sql: {sql}");
+        }
+        // The `full_art` arm must render as a literal, never the parameterized `full_art = $N`
+        // that `Column::FullArt.eq(true)` would emit — Postgres can't prove a parameter implies
+        // the index predicate, so the parameterized form would forfeit the partial index.
+        assert!(sql.contains("full_art = true"), "full_art arm must be a literal: {sql}");
+        assert!(!sql.contains("full_art\" = $"), "full_art must not be parameterized: {sql}");
     }
 
     #[test]
