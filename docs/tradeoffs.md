@@ -9,6 +9,9 @@ production deploy must account for. Grouped for navigability; the content is oth
 carried over near-verbatim from the audited source, with the sealed-product provider
 (TCGCSV) trade-offs added.
 
+**Not yet built:** set-completion progress (per-set completion tracking against the
+catalog) is planned but not implemented.
+
 ---
 
 ## Auth & sessions
@@ -560,7 +563,7 @@ carried over near-verbatim from the audited source, with the sealed-product prov
     and a few hundred buffer hits, sub-millisecond — exactly the shape the weak prod
     Postgres wants, and the same access pattern on SQLite.
   - **Downsampling is app-side, not a DB rollup.** Longer `?range` windows are thinned to
-    one representative row per bucket by `handlers::catalog::pricing::downsample_rows`
+    one representative row per bucket by `handlers::shared::pricing::downsample_rows`
     (keep the *last* real row per `bucket_days`-wide bucket — never averaged, so every
     returned point is a genuine snapshot), so the wire payload and plotted line stay light
     however much history accrues. The DB just returns the windowed, ordered run; the result

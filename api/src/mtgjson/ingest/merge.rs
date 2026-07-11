@@ -193,15 +193,16 @@ pub(super) async fn merge_sld_derived(
     };
     let products = load_sld_products(db).await?;
 
-    // Resolve each still-empty SLD product to its drop, keeping the drop's collector
-    // numbers (a `'static` slice — the drop table is `'static`) and the product's foilness.
-    let mut resolved: Vec<(i32, bool, &'static [String])> = Vec::new();
+    // Resolve each still-empty SLD product to its drop, keeping the collector numbers it
+    // contains — the drop's cards plus any shared superdrop bonus cards (a `'static` drop
+    // table, so the strs are `'static`) — and the product's foilness.
+    let mut resolved: Vec<(i32, bool, Vec<&'static str>)> = Vec::new();
     for (product_id, external_id, name) in &products {
         if covered.contains(product_id) {
             continue;
         }
         if let Some(pd) = sld::resolve_product_drop(table, external_id, name) {
-            resolved.push((*product_id, pd.foil, pd.drop.collector_numbers.as_slice()));
+            resolved.push((*product_id, pd.foil, pd.collector_numbers().collect()));
         }
     }
     if resolved.is_empty() {
@@ -211,19 +212,19 @@ pub(super) async fn merge_sld_derived(
     // Resolve just the needed collector numbers (all in the `sld` set) to internal card ids
     // — bounded to the drops in play, not the whole set.
     let mut numbers: Vec<&str> =
-        resolved.iter().flat_map(|(_, _, cns)| cns.iter().map(String::as_str)).collect();
+        resolved.iter().flat_map(|(_, _, cns)| cns.iter().copied()).collect();
     numbers.sort_unstable();
     numbers.dedup();
     let cards = resolve_sld_cards(db, &numbers).await?;
 
     let membership = sealed_content::Membership::Contains.as_str();
     let mut added = 0;
-    for &(product_id, foil, cns) in &resolved {
+    for (product_id, foil, cns) in &resolved {
         for cn in cns {
-            let Some(&card_id) = cards.get(cn.as_str()) else {
+            let Some(&card_id) = cards.get(*cn) else {
                 continue;
             };
-            if rows.insert((product_id, card_id, membership, foil)) {
+            if rows.insert((*product_id, card_id, membership, *foil)) {
                 added += 1;
             }
         }

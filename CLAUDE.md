@@ -5,27 +5,20 @@ detail lives in `docs/` — read the relevant one before working in its area:
 
 - [`docs/api-contracts.md`](./docs/api-contracts.md) — every HTTP endpoint, wire shape, the search syntax, caching/ETag/sitemaps, import/sync mechanics
 - [`docs/architecture.md`](./docs/architecture.md) — the fully annotated file map for `api/src/` and `web/src/`, plus test organization
-- [`docs/operations.md`](./docs/operations.md) — running, CI, releases, Docker/deploy, and the full environment-variable reference
+- [`docs/operations.md`](./docs/operations.md) — running, commands, CI, releases, Docker, and the full environment-variable reference (authoritative: `api/src/config.rs`, `api/.env.example`)
 - [`docs/tradeoffs.md`](./docs/tradeoffs.md) — known trade-offs and design rationale; read it before "fixing" anything that looks odd
+- Deploying: [`docs/deploy-digitalocean.md`](./docs/deploy-digitalocean.md) (Droplet, recommended) · [`docs/deploy-app-platform.md`](./docs/deploy-app-platform.md) (PaaS)
 
 **TCGLense** tracks trading-card games: a card catalog (MTG first, via Scryfall),
-singles + sealed-product price history (TCGCSV, MTGJSON), per-user collections
-(Archidekt/Moxfield import + CSV upload) and a wish list, behind email-first auth
-(Turnstile CAPTCHA + rate limiting). A **public API** (issue #284) documents the
-anonymous catalog reads and lets account holders mint scoped **API keys**
-(`Authorization: Bearer tcgl_…`) for their collection/wish list — OpenAPI at
-`/api/openapi.json`, rendered as an interactive Scalar reference in-app at the SPA's
-`/docs` route (`DocsView.vue`). Not yet built: set-completion progress.
-
-## Layout
+singles + sealed-product price history (TCGCSV, MTGJSON), per-user collections and a
+wish list (Archidekt/Moxfield/CSV import), email-first auth (Turnstile + rate
+limiting), and a public API with scoped `tcgl_` API keys (OpenAPI at
+`/api/openapi.json`, Scalar UI at the SPA's `/docs`).
 
 | Dir    | App                     | Stack |
 |--------|-------------------------|-------|
 | `api/` | Backend (HTTP JSON API) | Rust 2024 · axum 0.8 · SeaORM 1.1 · SQLite by default, Postgres picked at runtime by the `DATABASE_URL` scheme · JWT (HS256) · Argon2 |
 | `web/` | Frontend (SPA)          | Vue 3.5 · Vite 8 · Pinia · TanStack Query (vue-query) · vue-router · Tailwind 4 · shadcn-vue · TypeScript |
-
-Dev: API on `:8080`, web on `:5173`; the Vite dev server proxies `/api` → the API so
-the browser is same-origin and the httpOnly refresh cookie stays first-party.
 
 **Search trap:** `.claude/` is gitignored but holds nested full-repo worktrees. Scope
 repo-wide greps/finds to `api/` and `web/`, and never edit a file through a
@@ -34,52 +27,36 @@ repo-wide greps/finds to `api/` and `web/`, and never edit a file through a
 ## Run & verify
 
 ```sh
-# API, from api/:   cp .env.example .env   # first run only
-cargo run        # :8080; migrations run on boot; refuses to start without a real JWT_SECRET (≥ 32 bytes)
-# Web, from web/:   npm install            # first run only (Node ^22.18 or ≥24.12)
-npm run dev      # :5173
+cargo run        # api/ — :8080; migrations on boot; needs a real JWT_SECRET; first run: cp .env.example .env
+npm run dev      # web/ — :5173, Vite proxies /api; first run: npm install (Node ^22.18 or ≥24.12)
 ```
 
-`./scripts/dev.sh` runs both (and refuses to start if the ports are already taken —
-a stale server holds the port). The default DB is `api/tcglense.db` (SQLite; WAL
-sidecar files are normal).
+`./scripts/dev.sh` runs both (and refuses already-taken ports — a stale server holds
+the port). Default DB: `api/tcglense.db` (SQLite; WAL sidecars are normal).
+Everything else (Postgres, command matrix, CI, releases): `docs/operations.md`.
 
 **Before calling a change done:** `cargo check` + `cargo test` for `api/` work;
 `npm run type-check && npm run lint && npm run test:unit -- --run` for `web/` work.
-
-**CI** runs `cargo test --locked` **plus a ts-rs drift check** (the generated types
-in `web/src/lib/api/generated/` must match the Rust DTOs), the env-gated
-Postgres/Redis tests, web type-check + vitest, and Playwright e2e. CI does **not**
-run lint/format/clippy — the checklist above is the only thing catching those.
+CI runs the test suites **plus a ts-rs drift check** (generated types in
+`web/src/lib/api/generated/` must match the Rust DTOs) but does **not** run
+lint/format/clippy — the checklist above is the only thing catching those.
 
 **e2e gotcha:** Playwright starts only the *web* server. Start the API yourself with
 `SEED_DUMMY_DATA=true` first — the specs probe `/api/health` and **silently skip**
 when it's unreachable, so the suite can "pass" without testing anything.
 
-## Backend map (`api/src/`)
+## Where code lives
 
-Full annotations: `docs/architecture.md`.
+Skeleton only — the full annotated map is [`docs/architecture.md`](./docs/architecture.md).
 
-```
-main.rs / router.rs    bootstrap · every route + the middleware stack (router.rs is factored out of main so the security tests drive the exact same router in-process)
-tasks.rs               6h maintenance loop + startup/periodic card-data sync, or the offline dummy seed
-config.rs / state.rs   env config (secrets redacted in Debug) · AppState — the one construction site, shared with the test harness
-db.rs                  SQLite (WAL + REGEXP UDF) or Postgres, picked at runtime; db::Dialect is the seam for any raw/backend-specific SQL
-datasets.rs            SyncSource seam: providers fetch datasets from upstream or from a TCGLense mirror
-captcha.rs / client_ip.rs / ratelimit/ / email.rs   Turnstile CAPTCHA · client-IP resolution · per-IP + per-user rate limiters (split into per_ip/per_user/backend, with the optional Redis GCRA backend) · Resend email (each enum-dispatched with Disabled/test variants)
-error.rs / extract.rs  AppError → JSON { error } · JsonBody<T>, the JSON body extractor with JSON rejections
-auth/                  Argon2 passwords · HS256 JWTs · single-use rotating refresh tokens · purpose-scoped email tokens · scoped API keys (api_key.rs) · shared opaque-secret primitives (secret.rs = CSPRNG token + SHA-256 hex, reused by refresh/email-token/api-key) · AuthUser/WritableUser/SessionUser extractors
-catalog/               GAMES registry + refresh_all/seed_all dispatch per game · images.rs = lazy on-disk image cache · ingest_state.rs = shared provider version-gate bookkeeping · fingerprint_tasks.rs = opt-in visual-scanner build/import tasks (extracted from tasks.rs)
-scryfall/              MTG provider: streaming bulk ingest, the search compiler (search/), daily price snapshots, Secret Lair drops, offline dummy seed
-tcgcsv/                sealed-product provider: product catalog + product price history + opt-in historic price backfill
-mtgjson/               card→sealed-product contents (AllPrintings.json)
-collection_import/     Archidekt + Moxfield + CSV → one aggregate/resolve/reconcile engine; in-memory job queue
-handlers/              auth · api_keys · cache · catalog/ (incl. products.rs + pricing.rs) · collection/ · wishlist/ · shared/ (cross-cutting DTOs + the holdings core) · openapi (spec + Scalar UI) · sitemap · mirror · health
-entities/ migrator/    SeaORM entities · one migration per file + the migrations() registry
-security_tests/        HTTP-level suites driving build_router in-process; Postgres/Redis tests env-gated behind --ignored
-```
+- `api/src/`: `router.rs` (every route + middleware) · `handlers/` · `entities/` +
+  `migrator/` · `auth/` · `catalog/` (GAMES registry + per-game dispatch) · providers
+  (`scryfall/`, `tcgcsv/`, `mtgjson/`) · `collection_import/` · `security_tests/`
+  (HTTP-level suites driving the real router).
+- `web/src/`: `views/` + `router/` · `components/` · `composables/` (query hooks) ·
+  `stores/` (Pinia) · `lib/api/` (typed client; `generated/` = ts-rs wire types).
 
-### Adding a backend feature
+## Adding a backend feature
 
 1. **Entity:** `entities/<name>.rs` (`DeriveEntityModel`); export from
    `entities/mod.rs` **and** `entities/prelude.rs`.
@@ -98,23 +75,7 @@ security_tests/        HTTP-level suites driving build_router in-process; Postgr
 Adding a TCG = a `Game` in `catalog::GAMES` + a provider module + one arm each in
 `catalog::refresh_all` and `catalog::seed_all`.
 
-## Frontend map (`web/src/`)
-
-Full annotations: `docs/architecture.md`.
-
-```
-main.ts / App.vue / router/   shell (MainNav: Products [Cards + Sealed] · Collection · Wish list) + routes; guard handles requiresAuth/requiresGuest + one-time session restore
-lib/api/           typed fetch client, one module per API surface (collection + wishlist share a holdings.ts factory — makeHoldingApi); generated/ = ts-rs wire types
-lib/queries.ts     useAuthedQuery/useAuthedMutation — vue-query wrappers routed through auth.authFetch
-lib/…              pure helpers (seo, mana, money, search, setGroups, buyLinks, turnstile, …)
-stores/            Pinia: auth (in-memory access token, hand-tuned single-flight refresh), theme, cardSize
-composables/       query hooks: useCatalog, useProducts, useCollection, useWishlist, useCollectionImport, … (collection/wishlist share the holdingQueries.ts query factory + the useHoldingsLanding/useHoldingsBrowse view engines)
-components/        cards/ · products/ · collection/ · wishlist/ · home/ · legal/ · ui/ (shadcn-vue primitives)
-views/             public: /cards…, /sealed…, auth + email flows, terms/privacy; signed-in: /collection…, /wishlist…, profile
-test/              vitest fixtures (the Playwright e2e specs live one level up, at web/e2e/)
-```
-
-### Adding a frontend feature
+## Adding a frontend feature
 
 - **Wire types are generated:** derive `ts_rs::TS` on the Rust DTO, run `cargo test`
   from `api/` (only `cargo test` regenerates — not check/build; config in
@@ -138,46 +99,36 @@ test/              vitest fixtures (the Playwright e2e specs live one level up, 
 
 Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
 
-- Auth answers **generically** (register/resend/forgot reveal nothing; login is a
-  generic 401 whose dummy-hash verify on unknown users is timing equalization, not
-  dead code). Password rules are validated **before** an email token is consumed. A
-  missing/bad CAPTCHA token is deliberately **400** (never 401/403).
-- No `RESEND_API_KEY` = register returns the completion token in the response and
-  login skips the verified gate — the dev/CI posture. **Never run prod without the
-  key** (anyone could activate any address).
-- **API keys** authenticate via `Authorization: Bearer tcgl_…` on the *same*
-  collection/wish-list routes as a JWT (the `AuthUser` extractor branches on the
-  `tcgl_` label). Scope is enforced by **extractor choice**, not by HTTP method:
-  read handlers use `AuthUser` (session or any key), write handlers use
-  `WritableUser` (session or a `read_write` key — a read-only key is **403**), and
-  key management (`/api/auth/api-keys`) uses `SessionUser` (**JWT only**; a key can't
-  mint/list/revoke keys). A bad/expired/revoked key is **401**; a valid read-only key
-  on a write is **403**. Keep the per-user rate limiter key-aware (`ratelimit/per_user.rs`
-  resolves a `tcgl_` token to its user) or keyed traffic bypasses the quota. Store
-  only the SHA-256 hash; the plaintext is shown **once**.
+- Auth answers **generically** (register/resend/forgot reveal nothing; login's
+  dummy-hash verify on unknown users is timing equalization, not dead code).
+  Password rules are validated **before** an email token is consumed. A missing/bad
+  CAPTCHA token is deliberately **400** (never 401/403).
+- No `RESEND_API_KEY` = the email dev bypass (register returns the completion token;
+  login skips the verified gate). **Never run prod without the key** (anyone could
+  activate any address).
+- **API-key scope is enforced by extractor choice, not HTTP method:** reads take
+  `AuthUser` (session JWT or any `tcgl_` key), writes take `WritableUser` (read-only
+  key = **403**), key management (`/api/auth/api-keys`) takes `SessionUser` (JWT
+  only — a key can't mint/list/revoke keys). A bad/expired/revoked key is **401**.
+  Keep the per-user rate limiter key-aware (`ratelimit/per_user.rs` resolves `tcgl_` → user)
+  or keyed traffic bypasses the quota. Store only the SHA-256 hash; the plaintext is
+  shown **once**.
 - Rate limiting **fails open** (Redis outage, unresolvable IP); CAPTCHA fails
-  closed. Behind a proxy set `TRUST_PROXY_HEADERS=true`, and only behind one that
-  overwrites `X-Forwarded-For` (else clients spoof their IP).
+  **closed**. `TRUST_PROXY_HEADERS=true` only behind a proxy that overwrites
+  `X-Forwarded-For` (else clients spoof their IP).
 - Collection and wish list are **independent tables** that share the ts-rs DTOs in
   `handlers/shared/holdings.rs` — editing a shared shape changes both wire surfaces.
   Holdings use **external** card ids; both counts zero deletes the row.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled
-  (`Provider::network_import_enabled()` is the switch; CSV upload is the supported
-  path) — a 422 there is not a regression.
+  (`Provider::network_import_enabled()` is the switch; CSV is the supported path) —
+  a 422 there is not a regression.
 - Card images are cached lazily on first view — self-hosts **never bulk-download**;
-  image fetches are host-allow-listed with redirects disabled. The **one** sanctioned
-  bulk fetch is the **opt-in** visual-scanner fingerprint build
-  (`FINGERPRINT_BUILD_ENABLED`, default off): only the operator's index-building
-  instance runs it — a `small`-size, hash-and-discard walk of the catalogue (nothing
-  persisted to `<DATA_DIR>/images`) — and the tiny derived index is distributed via the
-  dataset mirror, so every ordinary self-host still fetches **zero** images. Scryfall's
-  documented rate limit governs the **API** (`api.scryfall.com`); the **image CDN**
-  (`cards.scryfall.io`) is **not** rate-limited and Scryfall explicitly supports
-  resolving many images from bulk-data URIs, so this fetch is within their guidance. The
-  build's only politeness bound is the shared 8-way image-fetch concurrency cap (no
-  artificial per-request delay). Don't add any other bulk image path.
+  image fetches are host-allow-listed with redirects disabled. **Don't add any bulk
+  image path** — the one sanctioned exception is the opt-in fingerprint build
+  (`FINGERPRINT_BUILD_ENABLED`, default off); read `docs/tradeoffs.md` §Visual card
+  scanner before touching it.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false, features =
   ["rust_crypto"]` (panics at runtime otherwise); `reqwest` deliberately has **no**
@@ -193,14 +144,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
 
 ## Environment variables
 
-Full reference: `docs/operations.md` (authoritative: `api/src/config.rs`,
-`api/.env.example`). The behavior-changing ones: `JWT_SECRET` (required;
-`ALLOW_INSECURE_DEV_SECRET=true` for local dev) · `RESEND_API_KEY` (unset = the
-email dev bypass above) · `TURNSTILE_SECRET_KEY` pairs with `TURNSTILE_SITE_KEY`
-(both API env vars, both set or both unset — a mismatch fails the boot closed; the
-public site key is served to the SPA at runtime via `GET /api/config`, so the
-published web image needs no rebuild) · `SIGNUPS_ENABLED=false` (temporarily
-refuse new registrations — `register`/`complete-registration` 403 with
-`SIGNUPS_DISABLED_MESSAGE`; existing logins are unaffected) · `SEED_DUMMY_DATA=true`
+Full reference: `docs/operations.md`. Dev essentials: `JWT_SECRET` (required,
+≥ 32 bytes; `ALLOW_INSECURE_DEV_SECRET=true` for local dev) · `SEED_DUMMY_DATA=true`
 (offline dummy catalog + the seeded e2e account; overrides syncing) ·
-`TRUST_PROXY_HEADERS` (see above) · `REDIS_URL` (cross-instance rate limiters).
+`RESEND_API_KEY` (unset = the email dev bypass above).
