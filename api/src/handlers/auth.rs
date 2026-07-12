@@ -18,7 +18,7 @@ use crate::{
         extractor::AuthUser,
         jwt::encode_token,
         password::{hash_password, verify_password},
-        refresh::{issue_refresh_token, revoke_all_for_user, revoke_one, rotate},
+        refresh::{RotateOutcome, issue_refresh_token, revoke_all_for_user, revoke_one, rotate},
     },
     client_ip::ClientIp,
     email::{OutgoingEmail, password_reset_email, registration_email, verification_email},
@@ -452,30 +452,62 @@ pub async fn refresh(State(state): State<AppState>, jar: CookieJar) -> Response 
     };
     let presented = cookie.value().to_string();
 
-    match issue_rotated_access_token(&state, &presented).await {
-        Ok((access_token, new_refresh)) => {
-            let jar = jar.add(build_refresh_cookie(new_refresh, &state.config));
-            (jar, Json(AccessTokenResponse { access_token })).into_response()
+    match rotate(
+        &state.db,
+        &presented,
+        state.config.refresh_token_expiry_days,
+    )
+    .await
+    {
+        Ok(RotateOutcome::Rotated(rotated)) => {
+            match mint_access_token(&state, rotated.user_id).await {
+                Ok(access_token) => {
+                    let jar = jar.add(build_refresh_cookie(rotated.plaintext, &state.config));
+                    (jar, Json(AccessTokenResponse { access_token })).into_response()
+                }
+                Err(err) => refresh_error_response(jar, err),
+            }
         }
-        Err(err) => (jar.remove(removal_cookie()), err).into_response(),
+        // Benign concurrent double-submit: a sibling request/tab already rotated
+        // this cookie and its successor is still live, so the browser already holds
+        // the newer valid cookie. Return 401 but send NO Set-Cookie — clearing here
+        // would race the winning request's rotated cookie and, when the clear lands
+        // last, wipe the live cookie and log every tab out (the intermittent
+        // "randomly signed out" bug). The caller simply refreshes again and picks
+        // up the current cookie. See `RotateOutcome::Superseded`.
+        Ok(RotateOutcome::Superseded) => {
+            AppError::Unauthorized("refresh token superseded".to_string()).into_response()
+        }
+        Err(err) => refresh_error_response(jar, err),
     }
 }
 
-/// Rotate the presented refresh token and mint a fresh access token for the
-/// owning user. Returns `(access_token, new_refresh_plaintext)`.
-async fn issue_rotated_access_token(
-    state: &AppState,
-    presented: &str,
-) -> Result<(String, String), AppError> {
-    let rotated = rotate(&state.db, presented, state.config.refresh_token_expiry_days).await?;
+/// Build the response for a refresh that minted no new token.
+///
+/// The browser's refresh cookie is cleared ONLY for a *definitive* auth failure
+/// (a 401 — an unknown/expired/reuse-detected token, or a vanished user): the
+/// session is genuinely dead, so removing the cookie stops the SPA re-trying a
+/// hopeless refresh. A *transient* failure (a 5xx — e.g. a momentary database
+/// error on the refresh path, which prod's cold Postgres makes real) leaves the
+/// cookie in place: otherwise a brief infra blip during a refresh would wipe the
+/// cookie and turn a recoverable hiccup into a permanent, browser-wide logout.
+fn refresh_error_response(jar: CookieJar, err: AppError) -> Response {
+    if matches!(err, AppError::Unauthorized(_)) {
+        (jar.remove(removal_cookie()), err).into_response()
+    } else {
+        err.into_response()
+    }
+}
 
-    let user = User::find_by_id(rotated.user_id)
+/// Load the owner of a just-rotated refresh token and mint them a fresh access
+/// token.
+async fn mint_access_token(state: &AppState, user_id: i32) -> Result<String, AppError> {
+    let user = User::find_by_id(user_id)
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::Unauthorized("user no longer exists".to_string()))?;
 
-    let access_token = encode_token(&user, &state.config)?;
-    Ok((access_token, rotated.plaintext))
+    encode_token(&user, &state.config)
 }
 
 /// `POST /api/auth/logout`

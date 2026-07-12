@@ -14,11 +14,23 @@ async fn refresh_rotates_single_use_and_detects_token_theft() {
     let t2 = refresh_token_from(&h2).expect("rotated cookie t2");
     assert_ne!(t1, t2, "rotation must mint a new token");
 
-    // Replaying t1 now (its successor t2 is still active) is a benign double-submit:
-    // rejected and the cookie cleared, but the family is NOT burned.
+    // Replaying t1 now (its successor t2 is still active) is a BENIGN concurrent
+    // double-submit — exactly what happens when two tabs (or a browser session-
+    // restore, or a refetch-on-reconnect firing in every tab) present the same
+    // not-yet-rotated cookie at once. It is rejected (401) and the family is NOT
+    // burned, but crucially it must NOT emit a Set-Cookie: the browser already
+    // holds the live t2 that the winning request set, and clearing it here would
+    // race that Set-Cookie and log every tab out. So no refresh cookie is touched.
     let (s, h, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
-    assert!(refresh_cookie_cleared(&h), "failed refresh must clear the cookie");
+    assert!(
+        !refresh_cookie_cleared(&h),
+        "a benign concurrent double-submit must not clear the browser's live cookie"
+    );
+    assert!(
+        refresh_token_from(&h).is_none(),
+        "a benign double-submit mints no new cookie either — it leaves the jar alone"
+    );
 
     // t2 still works -> t3 (proves the family survived the benign replay).
     let (s, h3, _) = send(&app, post_with_cookie("/api/auth/refresh", &t2)).await;
@@ -26,13 +38,34 @@ async fn refresh_rotates_single_use_and_detects_token_theft() {
     let t3 = refresh_token_from(&h3).expect("rotated cookie t3");
 
     // Now replay t1 again: its successor t2 has itself been revoked, so this is
-    // unambiguous theft — the whole family is burned.
-    let (s, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
+    // unambiguous theft — the whole family is burned AND the cookie is cleared
+    // (a genuine dead session, unlike the benign replay above).
+    let (s, h, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
+    assert!(
+        refresh_cookie_cleared(&h),
+        "detected token reuse must clear the cookie"
+    );
 
     // The live t3 is now dead too.
     let (s, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &t3)).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+/// A genuinely unknown/invalid refresh cookie is a dead session: 401 AND the
+/// cookie is cleared (distinct from the benign concurrent double-submit above,
+/// which leaves the cookie intact).
+#[tokio::test]
+async fn refresh_with_an_unknown_cookie_clears_it() {
+    let app = test_app().await;
+    let (s, h, _) = send(
+        &app,
+        post_with_cookie("/api/auth/refresh", "deadbeefdeadbeefdeadbeefdeadbeef"),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    assert!(refresh_cookie_cleared(&h), "an unknown cookie is cleared");
+    assert!(refresh_token_from(&h).is_none());
 }
 
 #[tokio::test]
