@@ -278,14 +278,21 @@ export function useScanSession(game: Ref<string>) {
         unrecognized.value = true
         return 'unmatched'
       }
-      // Offer the ranked matches as a pickable strip (refreshed on every capture, so
-      // re-scanning the same card updates the choices too).
-      candidates.value = matches
-      if (match.value && name === match.value.name) return 'same'
+      // Same card re-scanned: refresh the pickable strip in place — the match is unchanged,
+      // so candidates and match stay consistent.
+      if (match.value && name === match.value.name) {
+        candidates.value = matches
+        return 'same'
+      }
       await commitCurrent()
       // A failed save keeps the current card on screen rather than silently replacing (and
-      // losing) it; the next capture retries the commit once the connection recovers.
+      // losing) it; the next capture retries the commit once the connection recovers. Leave
+      // candidates untouched so the strip keeps showing the retained match, not the (not yet
+      // committed) new scan — otherwise a tap on the strip would edit the wrong card.
       if (commitError.value) return 'busy'
+      // Swap the strip together with the match so the candidate strip never shows a different
+      // card than the match panel.
+      candidates.value = matches
       // Visual match gives identity (name); the OCR'd set line pins the printing via the
       // existing hint → matchPrinting flow (see the auto-pick watch above).
       startMatch({

@@ -37,6 +37,13 @@ pub const SET_CODE: &str = "sld";
 const PRODUCT_DROP_OVERRIDES: &[(&str, &str)] = &[
     ("638088", "secret-lair-presents-nuestra-magia"), // Nuestra Magia (SP Non-Foil)
     ("638089", "secret-lair-presents-nuestra-magia"), // Nuestra Magia (SP Rainbow Foil)
+    // Confetti Foil siblings: their "(Confetti Foil)" clause is a finish clause, so
+    // [`strip_finish`] removes it and the residual title collides with the base drop's key
+    // — name matching can only ever reach the base drop. Pin them by id to their own drop
+    // (distinct collector numbers + a curated MSRP override that would otherwise be dead).
+    ("656357", "furby-doo-ay-noo-lah-confetti-foil"), // Furby: Doo-ay Noo-lah (Confetti Foil)
+    ("656361", "furbys-the-gathering-confetti-foil"), // Furbys: The Gathering (Confetti Foil)
+    ("656371", "furby-the-oddbodies-confetti-foil"),  // Furby: The OddBodies (Confetti Foil)
 ];
 
 /// A shared "bonus cards" drop plus the base drops that ship it. Some Secret Lair
@@ -138,6 +145,26 @@ fn override_slug(external_id: &str) -> Option<&'static str> {
         .iter()
         .find(|(id, _)| *id == external_id)
         .map(|(_, slug)| *slug)
+}
+
+/// Whether a drop slug can ever be reached by product resolution — either it's a curated
+/// id-override target, or its own gallery title round-trips back to it through the same
+/// finish/prefix stripping a product name undergoes. A slug that fails both is unreachable
+/// dead data: the confetti-foil trap where [`strip_finish`] removes the "(Confetti Foil)"
+/// clause that distinguishes a drop from its base sibling, so name matching only ever hits
+/// the base. Test-only guard against curated MSRP overrides (or bonus attachments) keyed on
+/// a slug no product can resolve to.
+#[cfg(test)]
+pub fn slug_is_reachable(table: &DropTable, slug: &str) -> bool {
+    if PRODUCT_DROP_OVERRIDES.iter().any(|(_, s)| *s == slug) {
+        return true;
+    }
+    let Some(drop) = table.drop_by_slug(slug) else {
+        return false;
+    };
+    let (base, _) = strip_finish(&drop.title);
+    let core = strip_prefixes(&base);
+    table.drop_by_title(&drops::normalize_title(&core)).is_some_and(|d| d.slug == slug)
 }
 
 /// Whether a stripped finish clause denotes a foil printing: an explicit "non-foil" wins

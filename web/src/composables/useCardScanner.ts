@@ -224,7 +224,11 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
 
   async function switchCamera(): Promise<void> {
     facingMode.value = facingMode.value === 'environment' ? 'user' : 'environment'
-    if (status.value === 'ready') {
+    // Restart while the camera is live OR still coming up: a tap during the (slow, on mobile)
+    // 'starting' window must still take effect, or facingMode desyncs from the live camera.
+    // stop() bumps the generation (so the in-flight start()'s late getUserMedia self-cleans)
+    // and flips 'starting' → 'idle', so this start() passes its guard and re-reads facingMode.
+    if (status.value === 'ready' || status.value === 'starting') {
       stop()
       await start()
     }
