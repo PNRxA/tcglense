@@ -208,18 +208,12 @@ async fn refresh_inner(
     // deduplicated row set, tracking which products MTGJSON actually described.
     let mut rows: HashSet<Row> = HashSet::new();
     let mut mtgjson_products: HashSet<i32> = HashSet::new();
-    // Products MTGJSON gave a `variable` ("may be in") row of its own — the curated Secret Lair
-    // bonus-pool derivation steps aside for these, so an upstream-authored pool always wins.
-    let mut mtgjson_variable_products: HashSet<i32> = HashSet::new();
     for m in &memberships {
         if let (Some(&product_id), Some(&card_id)) =
             (products.get(&m.tcgplayer_product_id), cards.get(&m.scryfall_id))
         {
             rows.insert((product_id, card_id, m.membership, m.foil));
             mtgjson_products.insert(product_id);
-            if m.membership == sealed_content::Membership::Variable.as_str() {
-                mtgjson_variable_products.insert(product_id);
-            }
         }
     }
     let from_mtgjson = rows.len();
@@ -233,13 +227,13 @@ async fn refresh_inner(
     let covered: HashSet<i32> = rows.iter().map(|&(pid, ..)| pid).collect();
     let from_sld = merge_sld_derived(db, &covered, &mut rows).await?;
 
-    // Attach each Secret Lair drop's random bonus-card pool to every product of the drop as
-    // `variable` ("may be in") — the "Bonus card unknown" cards MTGJSON never names (e.g. Avatar's
-    // Command Tower / Fellwar Stone, one per drop at random). Unlike the drop-cards derivation this
-    // is a distinct axis (not a product's own contents), so it is *not* gated on `covered` — it
-    // stays linked even after MTGJSON authors the drop's deck — and it steps aside for a product
-    // MTGJSON gave its own `variable` row, so an upstream-authored pool wins.
-    let from_sld_bonus = merge_sld_bonus_cards(db, &mtgjson_variable_products, &mut rows).await?;
+    // Attach each Secret Lair superdrop's shared random bonus-card pool to every product of the drop
+    // as `variable` ("may be in") — the bonus cards MTGJSON's `AllPrintings` doesn't surface (e.g.
+    // Avatar's Command Tower / Fellwar Stone, one per drop at random). Unlike the drop-cards
+    // derivation this is a distinct axis (not a product's own contents), so it is *not* gated on
+    // `covered` — it stays linked even after MTGJSON authors the drop's deck — and it self-retires
+    // per card via the row-set dedup: a card MTGJSON already authored as `variable` isn't re-added.
+    let from_sld_bonus = merge_sld_bonus_cards(db, &mut rows).await?;
 
     // Resolve the composition rows (positions assigned per resolved product id, so a
     // duplicate-tcgId product's sequences union in order rather than colliding on the unique
@@ -1257,62 +1251,93 @@ mod tests {
     #[tokio::test]
     async fn attaches_random_bonus_pool_as_variable() {
         let db = migrated_memory_db().await;
-        // "Brain Dead: Creatures" draws its bonus from the shared 821–824 pool; its own cards
-        // (1657–1661) are unrelated and not seeded here — the pool is a distinct axis.
-        seed_sld_cards(&db, &["821", "822", "823", "824"]).await;
+        // Avatar's shared random bonus: one of Fellwar Stone (7062) / Command Tower (7063); its
+        // own drop cards are a distinct axis and not seeded here.
+        seed_sld_cards(&db, &["7062", "7063"]).await;
         let pid = insert_sld_product(
             &db,
-            "930001",
-            "Secret Lair Drop: Brain Dead: Creatures - Non-Foil Edition",
+            "930010",
+            "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition",
         )
         .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
-        // Exactly the four pool cards, as non-foil `variable` ("may be in") memberships.
-        assert_eq!(added, 4);
-        assert_eq!(rows.len(), 4);
+        // Exactly the two pool cards, as non-foil `variable` ("may be in") memberships.
+        assert_eq!(added, 2);
+        assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "variable" && !f));
     }
 
     #[tokio::test]
     async fn bonus_pool_foil_edition_marks_pool_foil() {
         let db = migrated_memory_db().await;
-        seed_sld_cards(&db, &["821", "822", "823", "824"]).await;
+        // A foil Spider-Man drop ships its shared bonus pool (7013–7021) foil.
+        seed_sld_cards(
+            &db,
+            &["7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021"],
+        )
+        .await;
         insert_sld_product(
             &db,
-            "930002",
-            "Secret Lair Drop: Brain Dead: Staples - Traditional Foil Edition",
+            "930030",
+            "Secret Lair Drop: Marvel's Spider-Man: Daily Bugle Breaking News - Traditional Foil Edition",
         )
         .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
+        merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 9);
         assert!(rows.iter().all(|&(_, _, m, f)| m == "variable" && f));
     }
 
     #[tokio::test]
-    async fn bonus_pool_steps_aside_when_mtgjson_enumerated_it() {
+    async fn bonus_pool_self_retires_per_card_for_a_card_mtgjson_already_authored() {
         let db = migrated_memory_db().await;
-        seed_sld_cards(&db, &["821", "822", "823", "824"]).await;
+        let c7062 = insert_card_at(&db, "sf-7062", "sld", "7062").await;
+        insert_card_at(&db, "sf-7063", "sld", "7063").await;
         let pid = insert_sld_product(
             &db,
-            "930001",
-            "Secret Lair Drop: Brain Dead: Creatures - Non-Foil Edition",
+            "930010",
+            "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition",
         )
         .await;
 
-        // MTGJSON already authored this product's own `variable` pool -> the curated pool self-
-        // retires for it, so upstream stays authoritative and rows aren't doubled.
-        let mtgjson_variable = HashSet::from([pid]);
+        // MTGJSON already authored Fellwar Stone (7062) as this product's `variable`. The pass is
+        // add-only and dedups per card via the row set: 7062 is not re-counted, only the missing
+        // 7063 is added, and the row is never doubled.
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_cards(&db, &mtgjson_variable, &mut rows).await.unwrap();
+        rows.insert((pid, c7062, "variable", false));
+        let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
-        assert_eq!(added, 0);
-        assert!(rows.is_empty());
+        assert_eq!(added, 1, "only the un-authored pool card (7063) is added");
+        assert_eq!(rows.len(), 2, "7062 stays a single row, not doubled");
+    }
+
+    #[tokio::test]
+    async fn bonus_pool_surfaces_shared_pool_alongside_mtgjson_per_drop_card() {
+        let db = migrated_memory_db().await;
+        // MTGJSON authors only each FF drop's *own* per-drop card (Game Over -> 7001) as `variable`,
+        // not the five shared Evoke rares (7004–7008). The pass must add the shared pool on top —
+        // the regression the FF entry guards against (a per-product self-retire would suppress it).
+        let c7001 = insert_card_at(&db, "sf-7001", "sld", "7001").await;
+        seed_sld_cards(&db, &["7004", "7005", "7006", "7007", "7008"]).await;
+        let pid = insert_sld_product(
+            &db,
+            "930020",
+            "Secret Lair Drop: FINAL FANTASY: Game Over - Non-Foil Edition",
+        )
+        .await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        rows.insert((pid, c7001, "variable", false)); // MTGJSON's per-drop card
+        let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
+
+        assert_eq!(added, 5, "the five shared Evoke rares surface");
+        assert_eq!(rows.len(), 6, "alongside MTGJSON's per-drop 7001");
+        assert!(rows.iter().all(|&(p, _, m, _)| p == pid && m == "variable"));
     }
 
     #[tokio::test]
@@ -1324,29 +1349,9 @@ mod tests {
             .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
         assert_eq!(added, 0);
-    }
-
-    #[tokio::test]
-    async fn avatar_bonus_pool_attaches_as_variable() {
-        let db = migrated_memory_db().await;
-        // Avatar's shared random bonus: one of Fellwar Stone (7062) / Command Tower (7063).
-        seed_sld_cards(&db, &["7062", "7063"]).await;
-        let pid = insert_sld_product(
-            &db,
-            "930010",
-            "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition",
-        )
-        .await;
-
-        let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
-
-        // Both pool cards linked as `variable` ("may be in"), at the edition's foil.
-        assert_eq!(added, 2);
-        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "variable" && !f));
     }
 
     #[tokio::test]
@@ -1367,7 +1372,7 @@ mod tests {
         let covered = HashSet::from([pid]);
         let mut rows: HashSet<Row> = HashSet::new();
         assert_eq!(merge_sld_derived(&db, &covered, &mut rows).await.unwrap(), 0);
-        merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
+        merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
         // Only the bonus pool is present, as `variable` — the drop's own cards came from (skipped)
         // MTGJSON, so a covered product still surfaces its "may be in" bonus.

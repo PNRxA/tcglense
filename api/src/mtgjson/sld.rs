@@ -39,16 +39,19 @@ const PRODUCT_DROP_OVERRIDES: &[(&str, &str)] = &[
     ("638089", "secret-lair-presents-nuestra-magia"), // Nuestra Magia (SP Rainbow Foil)
 ];
 
-/// A curated **random bonus-card pool** shared by the drops of a superdrop. MTGJSON marks the
-/// affected products `other: "Bonus card unknown"`: each ships **one unpredictable bonus card**
-/// drawn from a pool MTGJSON never enumerates, so the bonus card surfaces on *no* product. This
-/// spells the pool out so it shows as a "may be included" section ([`Membership::Variable`]).
+/// A curated **random bonus-card pool** shared by the drops of a superdrop. Some Secret Lair
+/// superdrops ship **one unpredictable bonus card** with every drop, drawn from a pool that
+/// MTGJSON's `AllPrintings` doesn't surface on the affected products — it marks them
+/// `other: "Bonus card unknown"`, omits the axis entirely, or authors only a *partial* per-drop
+/// `variable` that misses the shared pool. Left alone the pooled cards surface on *no* product;
+/// this spells the pool out so it shows as a "may be included" section ([`Membership::Variable`]).
 ///
 /// A pool card is only *possible* (the buyer gets **one** of the pool per drop, e.g. Avatar's
-/// Command Tower **or** Fellwar Stone — not both), so the derivation records it `variable` ("may be
-/// included"). Like the other SLD derivations it is a **stopgap**: the ingest skips any product
-/// MTGJSON already gave a `variable` row (upstream enumerated the real pool), so an entry
-/// self-retires with no code edit.
+/// Command Tower **or** Fellwar Stone — not both), so the derivation records it `variable`. The
+/// ingest is add-only and self-retires **per card**: a card MTGJSON already authored as `variable`
+/// for the product is deduplicated away by the row set, so upstream wins for every card it names
+/// while a genuinely-additive pool it omits (e.g. FINAL FANTASY's shared Evoke rares) still
+/// surfaces — see [`super::ingest::merge::merge_sld_bonus_cards`].
 ///
 /// [`Membership::Variable`]: crate::entities::sealed_content::Membership::Variable
 struct RandomBonusPool {
@@ -61,33 +64,34 @@ struct RandomBonusPool {
     pool: &'static [&'static str],
 }
 
-/// Curated random bonus-card pools for Secret Lair drops. MTGJSON marks the affected products
-/// `other: "Bonus card unknown"` — a real bonus card the buyer receives, drawn at random from a
-/// pool MTGJSON doesn't enumerate on those products. This table names that pool so it surfaces as
-/// "may be included".
+/// Curated random bonus-card pools for the handful of Secret Lair superdrops whose shared bonus
+/// MTGJSON's `AllPrintings` doesn't already deliver as a `variable` membership. Everything MTGJSON
+/// *does* enumerate (the bulk of SLD bonus pools, e.g. A Box of Rocks, Brain Dead, the Marvel
+/// singles) is deliberately **left to upstream** — the ingest surfaces those directly and a curated
+/// duplicate would only add maintenance surface — so this table stays intentionally tiny, like
+/// [`PRODUCT_DROP_OVERRIDES`].
 ///
-/// Provenance: two corroborating sources. (1) The **authoritative** `mtgjson/mtg-sealed-content`
-/// `data/contents/SLD.yaml` `variable` sections — the pools MTGJSON *does* enumerate for sibling
-/// products of the same drop. (2) Scryfall's own `sld` **"Bonus Cards" gallery drops** already in
-/// the snapshot (`sld_drops.json`), which are *superdrop-wide* pools no single product is named
-/// after — e.g. Marvel's Spider-Man `7013`–`7021`, FINAL FANTASY `7004`–`7008` (the five shared
-/// Evoke-Elemental rares), the TMNT Slime Against Humanity chase `7077`/`7078`/`7083` — so those
-/// attach to *every* drop of the superdrop (web-research-confirmed as shared, not per-drop).
-/// (3) A superdrop's own **"Bonus Cards" gallery drop** that no product is named after, folded
-/// into every base drop of the superdrop — e.g. Avatar's Command Tower / Fellwar Stone
-/// (`7062`/`7063`), the pool each Avatar drop draws one card from.
-/// Only pure-numeric `sld` printings are included; booster-pack pool options and unverifiable
-/// printings are deliberately excluded.
-/// A number is also excluded when it's already in **every** listed drop's own gallery
-/// (`sld_drops.json`): the drop derivation records those as `contains`, and the read path collapses
-/// a card to its strongest membership, so a `variable` row for them would be shadowed and inert
-/// (only the bonus cards Scryfall groups *separately* from the drop actually surface as "may be
-/// in"). `random_bonus_pools_have_no_shadowed_numbers` guards this. Kept curated like
-/// [`PRODUCT_DROP_OVERRIDES`]; a drop absent here (or from the drop snapshot) simply shows no bonus
-/// pool — never a wrong one.
+/// Every pool below was verified card-for-card against Scryfall's `sld` set (`promo_types`
+/// includes `sldbonus`) and the drops' published bonus mechanics:
+///  - **Avatar: The Last Airbender** (`7062`/`7063`, Fellwar Stone / Command Tower) — a separate
+///    "Bonus Cards" gallery drop no product is named after; MTGJSON marks the drop products
+///    `other: "Bonus card unknown"`.
+///  - **FINAL FANTASY** (`7004`–`7008`, the five shared Evoke-Elemental rares
+///    Solitude/Subtlety/Grief/Fury/Endurance) — any FF drop can contain one at random. MTGJSON
+///    authors only each drop's *own* per-drop card (`7001`/`7002`/`7003`) as `variable`, so this
+///    shared pool is genuinely additive; the per-card dedup keeps the upstream per-drop card intact
+///    alongside it.
+///  - **Marvel's Spider-Man** (`7013`–`7021`) — a separate "Bonus Cards" gallery drop; MTGJSON
+///    leaves the axis off the drop products.
+///  - **TMNT "Totally TubuLair"** (`7077`/`7078`/`7083`, the Slime Against Humanity chase) —
+///    MTGJSON marks the drop products `other: "Bonus card unknown"`.
+///
+/// A number already in **every** listed drop's own gallery (`sld_drops.json`) is excluded: the drop
+/// derivation records those `contains`, and the read path collapses a card to its strongest
+/// membership, so a `variable` row for them would be shadowed and inert.
+/// `random_bonus_pools_have_no_shadowed_numbers` guards this. A drop absent here (or from the drop
+/// snapshot) simply shows no bonus pool — never a wrong one.
 const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
-    RandomBonusPool { drop_slugs: &["a-box-of-rocks"], pool: &["507", "511", "512", "523", "535"] },
-    RandomBonusPool { drop_slugs: &["absolute-annihilation"], pool: &["645", "642", "629", "686"] },
     // Avatar: The Last Airbender superdrop — each drop draws one of Command Tower (7063) /
     // Fellwar Stone (7062), the "Avatar: ...: Bonus Cards" gallery drop no product is named after.
     RandomBonusPool {
@@ -100,55 +104,15 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         ],
         pool: &["7062", "7063"],
     },
+    // FINAL FANTASY superdrop — any drop can contain one of the five shared Evoke-Elemental rares
+    // (7004–7008). MTGJSON authors only each drop's own per-drop card (7001/7002/7003), so this
+    // shared pool is added on top; per-card dedup keeps the upstream card too.
     RandomBonusPool {
-        drop_slugs: &["alien-auroras", "featuring-deathburger", "magiccon-the-gathering"],
-        pool: &["818"],
-    },
-    RandomBonusPool {
-        drop_slugs: &["bitterblossom-dreams"],
-        pool: &["503", "520", "521", "523", "524", "530"],
-    },
-    RandomBonusPool { drop_slugs: &["black-is-magic"], pool: &["519", "526", "531", "535"] },
-    RandomBonusPool {
-        drop_slugs: &["brain-dead-creatures", "brain-dead-lands", "brain-dead-staples"],
-        pool: &["821", "822", "823", "824"],
-    },
-    RandomBonusPool {
-        drop_slugs: &["brain-dead-new-earth-mentality"],
-        pool: &["7107", "7105", "7106", "7108"],
-    },
-    RandomBonusPool { drop_slugs: &["buggin-out"], pool: &["641", "621", "622"] },
-    RandomBonusPool { drop_slugs: &["calling-all-hydra-heads"], pool: &["653", "624", "622"] },
-    RandomBonusPool { drop_slugs: &["city-styles"], pool: &["615", "645", "640", "681"] },
-    RandomBonusPool { drop_slugs: &["eldraine-wonderland"], pool: &["503", "504", "505"] },
-    RandomBonusPool { drop_slugs: &["faerie-faerie-faerie-rad"], pool: &["512", "529", "534"] },
-    RandomBonusPool {
-        drop_slugs: &["final-fantasy-game-over"],
+        drop_slugs: &["final-fantasy-game-over", "final-fantasy-grimoire", "final-fantasy-weapons"],
         pool: &["7004", "7005", "7006", "7007", "7008"],
     },
-    RandomBonusPool {
-        drop_slugs: &["final-fantasy-grimoire"],
-        pool: &["7004", "7005", "7006", "7007", "7008"],
-    },
-    RandomBonusPool {
-        drop_slugs: &["final-fantasy-weapons"],
-        pool: &["7004", "7005", "7006", "7007", "7008"],
-    },
-    RandomBonusPool { drop_slugs: &["flower-power"], pool: &["819"] },
-    RandomBonusPool {
-        drop_slugs: &["just-some-totally-normal-guys"],
-        pool: &["618", "650", "652"],
-    },
-    RandomBonusPool {
-        drop_slugs: &["kaleidoscope-killers"],
-        pool: &["520", "522", "523", "525", "526"],
-    },
-    RandomBonusPool { drop_slugs: &["kamigawa-ink"], pool: &["553"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-black-panther"], pool: &["870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-captain-america"], pool: &["870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-iron-man"], pool: &["870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-storm"], pool: &["870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-wolverine"], pool: &["870"] },
+    // Marvel's Spider-Man superdrop — shared "Bonus Cards" gallery (7013–7021) no product is
+    // named after.
     RandomBonusPool {
         drop_slugs: &[
             "marvel-s-spider-man-daily-bugle-breaking-news",
@@ -160,26 +124,8 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         ],
         pool: &["7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021"],
     },
-    RandomBonusPool { drop_slugs: &["mother-s-day-2021"], pool: &["552", "556", "571"] },
-    RandomBonusPool { drop_slugs: &["ornithological-studies"], pool: &["502", "511", "522"] },
-    RandomBonusPool { drop_slugs: &["our-show-is-on-friday-can-you-make-it"], pool: &["516"] },
-    RandomBonusPool { drop_slugs: &["pride-across-the-multiverse"], pool: &["530", "534"] },
-    RandomBonusPool { drop_slugs: &["restless-in-peace"], pool: &["506", "524", "525", "528"] },
-    RandomBonusPool { drop_slugs: &["showcase-kaldheim-part-1"], pool: &["555", "573"] },
-    RandomBonusPool { drop_slugs: &["showcase-kaldheim-part-2"], pool: &["557", "566"] },
-    RandomBonusPool { drop_slugs: &["showcase-zendikar-revisited"], pool: &["518", "532", "533"] },
-    RandomBonusPool { drop_slugs: &["special-guest-fiona-staples"], pool: &["513", "514"] },
-    RandomBonusPool { drop_slugs: &["special-guest-matt-jukes"], pool: &["662", "665", "667"] },
-    RandomBonusPool {
-        drop_slugs: &[
-            "spongebob-squarepants-internet-sensation",
-            "spongebob-squarepants-lands-under-the-sea",
-            "spongebob-squarepants-legends-of-bikini-bottom",
-        ],
-        pool: &["7012", "7009", "7010", "7011"],
-    },
-    RandomBonusPool { drop_slugs: &["thalia-beyond-the-helvault"], pool: &["529", "507"] },
-    RandomBonusPool { drop_slugs: &["the-path-not-traveled"], pool: &["520", "521", "525", "536"] },
+    // TMNT "Totally TubuLair" superdrop — the shared Slime Against Humanity chase (7077/7078/7083)
+    // can appear in any drop; MTGJSON marks these products `other: "Bonus card unknown"`.
     RandomBonusPool {
         drop_slugs: &[
             "teenage-mutant-ninja-turtles-vhs-villains",
@@ -191,7 +137,6 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         ],
         pool: &["7077", "7078", "7083"],
     },
-    RandomBonusPool { drop_slugs: &["year-of-the-rat"], pool: &["504", "514", "516", "523"] },
 ];
 
 /// The random bonus-card pool for a drop (by slug): the `sld` collector number of every card the
@@ -593,10 +538,11 @@ mod tests {
 
     #[test]
     fn random_bonus_pool_resolves_by_slug_and_shares_across_a_superdrop() {
-        // A shared-pool superdrop: each Brain Dead drop draws from the same four-card pool.
-        let creatures = random_bonus_pool("brain-dead-creatures");
-        assert_eq!(creatures, ["821", "822", "823", "824"]);
-        assert_eq!(random_bonus_pool("brain-dead-staples"), creatures);
+        // A shared-pool superdrop: every FF drop draws from the same five Evoke rares (7004–7008).
+        let game_over = random_bonus_pool("final-fantasy-game-over");
+        assert_eq!(game_over, ["7004", "7005", "7006", "7007", "7008"]);
+        assert_eq!(random_bonus_pool("final-fantasy-weapons"), game_over);
+        assert_eq!(random_bonus_pool("final-fantasy-grimoire"), game_over);
         // A drop with no curated pool resolves to nothing (folds to no bonus, never a wrong one).
         assert!(random_bonus_pool("cats-of-chaos").is_empty());
         assert!(random_bonus_pool("no-such-drop").is_empty());

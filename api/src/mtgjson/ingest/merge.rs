@@ -2,10 +2,10 @@
 //! memberships/components, Secret Lair drop→cards derivation, and the contained/sibling
 //! booster-pool synthesis (issue #290). Most rules are gated on "the product has no rows of
 //! its own", so MTGJSON / the fallback stay authoritative and each source fills only genuine
-//! gaps. The one deliberate exception is [`merge_sld_bonus_cards`]: a drop's *shared bonus
-//! cards* are an axis MTGJSON never lists, so that pass is add-only and **ungated** — it must
-//! attach even after a product flips to "covered" (see its doc), relying on the row set's
-//! dedup instead of a coverage gate.
+//! gaps. The one deliberate exception is [`merge_sld_bonus_cards`]: a superdrop's *shared bonus
+//! pool* is an axis MTGJSON doesn't surface on the drop products, so that pass is add-only and
+//! **ungated** — it must attach even after a product flips to "covered" (see its doc), and it
+//! self-retires **per card** through the row set's dedup rather than a coverage gate.
 
 use std::collections::{HashMap, HashSet};
 
@@ -239,18 +239,19 @@ pub(super) async fn merge_sld_derived(
 }
 
 /// Attach each Secret Lair drop's curated **random bonus-card pool** to every product of the drop
-/// as `variable` ("may be included") memberships — the "Bonus card unknown" cards MTGJSON never
-/// names (e.g. Avatar's Command Tower / Fellwar Stone, one drawn at random per drop). Unlike
-/// [`merge_sld_derived`], which fills a product's *own* drop cards, this runs even for products
-/// whose drop cards MTGJSON already describes: the bonus pool is a distinct axis, absent from
-/// upstream regardless, so it is **not** gated on `covered` (the cards stay linked even after
-/// MTGJSON authors the deck). It is add-only (never rewrites a product's own `contains` cards — a
-/// card already recorded is deduplicated by `rows`) and skipped per-product for any product MTGJSON
-/// gave a `variable` row of its own (`mtgjson_variable_products`), so an authored pool wins and the
-/// curated entry self-retires. Returns rows added.
+/// as `variable` ("may be included") memberships — the shared bonus cards MTGJSON's `AllPrintings`
+/// doesn't surface (e.g. Avatar's Command Tower / Fellwar Stone, one drawn at random per drop).
+/// Unlike [`merge_sld_derived`], which fills a product's *own* drop cards, this runs even for
+/// products whose drop cards MTGJSON already describes: the bonus pool is a distinct axis, so it is
+/// **not** gated on `covered` (the cards stay linked even after MTGJSON authors the deck).
+///
+/// It is **add-only and self-retires per card**: `rows` is a set, so a `(product, card, variable,
+/// foil)` MTGJSON already authored is deduplicated away and not re-counted — upstream wins for every
+/// card it names, while a pool card it omits (e.g. FINAL FANTASY's shared Evoke rares, where MTGJSON
+/// authors only the per-drop card) still surfaces. Never rewrites a product's own `contains` cards
+/// (a shadowing number is excluded from [`sld::random_bonus_pool`] by curation). Returns rows added.
 pub(super) async fn merge_sld_bonus_cards(
     db: &DatabaseConnection,
-    mtgjson_variable_products: &HashSet<i32>,
     rows: &mut HashSet<Row>,
 ) -> Result<usize, MtgjsonError> {
     let Some(table) = sld::table() else {
@@ -261,9 +262,6 @@ pub(super) async fn merge_sld_bonus_cards(
     // (product_id, foil, collector number) for every random bonus card a product may carry.
     let mut resolved: Vec<(i32, bool, &'static str)> = Vec::new();
     for (product_id, external_id, name) in &products {
-        if mtgjson_variable_products.contains(product_id) {
-            continue;
-        }
         let Some(pd) = sld::resolve_product_drop(table, external_id, name) else {
             continue;
         };
