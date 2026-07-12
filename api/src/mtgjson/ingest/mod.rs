@@ -233,12 +233,13 @@ async fn refresh_inner(
     let covered: HashSet<i32> = rows.iter().map(|&(pid, ..)| pid).collect();
     let from_sld = merge_sld_derived(db, &covered, &mut rows).await?;
 
-    // Attach each Secret Lair drop's curated random bonus-card pool as `variable` ("may be in")
-    // memberships — the "Bonus card unknown" cards MTGJSON never names. Unlike the drop-cards
-    // derivation this is additive (it fills a distinct axis, not a product's own contents), so it
-    // is *not* gated on `covered`; it only steps aside for a product MTGJSON gave its own
-    // `variable` row, so an upstream-authored pool wins and the curated pool self-retires.
-    let from_sld_bonus = merge_sld_bonus_pool(db, &mtgjson_variable_products, &mut rows).await?;
+    // Attach each Secret Lair drop's shared bonus cards to every product of the drop: the
+    // guaranteed ones (Avatar's Command Tower + Fellwar Stone) as `contains`, the random "Bonus
+    // card unknown" pool as `variable`. Unlike the drop-cards derivation this is additive (a
+    // distinct axis, not a product's own contents), so it is *not* gated on `covered` — the bonus
+    // cards stay linked even after MTGJSON authors the drop's own deck. The random pool steps aside
+    // for a product MTGJSON gave its own `variable` row, so an upstream-authored pool wins.
+    let from_sld_bonus = merge_sld_bonus_cards(db, &mtgjson_variable_products, &mut rows).await?;
 
     // Resolve the composition rows (positions assigned per resolved product id, so a
     // duplicate-tcgId product's sequences union in order rather than colliding on the unique
@@ -1244,7 +1245,7 @@ mod tests {
         assert_eq!(added, 0);
     }
 
-    // ---- Secret Lair random bonus-card pools (`merge_sld_bonus_pool`) ----
+    // ---- Secret Lair shared bonus cards (`merge_sld_bonus_cards`) ----
 
     /// Seed a set of `sld` cards by collector number so the bonus-pool derivation can attach them.
     async fn seed_sld_cards(db: &DatabaseConnection, numbers: &[&str]) {
@@ -1267,7 +1268,7 @@ mod tests {
         .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_pool(&db, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
 
         // Exactly the four pool cards, as non-foil `variable` ("may be in") memberships.
         assert_eq!(added, 4);
@@ -1287,7 +1288,7 @@ mod tests {
         .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        merge_sld_bonus_pool(&db, &HashSet::new(), &mut rows).await.unwrap();
+        merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
 
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|&(_, _, m, f)| m == "variable" && f));
@@ -1308,7 +1309,7 @@ mod tests {
         // retires for it, so upstream stays authoritative and rows aren't doubled.
         let mtgjson_variable = HashSet::from([pid]);
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_pool(&db, &mtgjson_variable, &mut rows).await.unwrap();
+        let added = merge_sld_bonus_cards(&db, &mtgjson_variable, &mut rows).await.unwrap();
 
         assert_eq!(added, 0);
         assert!(rows.is_empty());
@@ -1323,8 +1324,29 @@ mod tests {
             .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_bonus_pool(&db, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
 
         assert_eq!(added, 0);
+    }
+
+    #[tokio::test]
+    async fn guaranteed_bonus_cards_attach_as_contains_regardless_of_coverage() {
+        let db = migrated_memory_db().await;
+        // Avatar's guaranteed shared bonus: Fellwar Stone (7062) + Command Tower (7063).
+        seed_sld_cards(&db, &["7062", "7063"]).await;
+        let pid = insert_sld_product(
+            &db,
+            "930010",
+            "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition",
+        )
+        .await;
+
+        // This pass takes no `covered` set — so even a product MTGJSON already described (its own
+        // deck) still gets the guaranteed bonus pair linked as `contains`, at the edition's foil.
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        assert_eq!(added, 2);
+        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "contains" && !f));
     }
 }

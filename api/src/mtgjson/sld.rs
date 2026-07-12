@@ -226,6 +226,21 @@ pub fn random_bonus_pool(slug: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The guaranteed shared bonus cards every product of a drop contains (by `sld` collector number):
+/// the fixed [`BONUS_CARD_ATTACHMENTS`] pool for the drop's superdrop (e.g. Avatar's Command Tower
+/// + Fellwar Stone, which ship with every Avatar drop). Empty unless the drop is a base of an
+/// attachment, or the bonus drop isn't in the snapshot. Unlike [`random_bonus_pool`] these are
+/// *guaranteed*, so callers record them `contains`.
+pub fn guaranteed_bonus_cards(base_slug: &str) -> Vec<&'static str> {
+    let Some(table) = table() else {
+        return Vec::new();
+    };
+    bonus_drops_for(table, base_slug)
+        .into_iter()
+        .flat_map(|d| d.collector_numbers.iter().map(String::as_str))
+        .collect()
+}
+
 /// Curated superdrop bonus-card attachments. Kept intentionally tiny, like
 /// [`PRODUCT_DROP_OVERRIDES`]: a superdrop that shares bonus cards across its drops is a
 /// genuine oddball name-matching can't express, so it's spelled out here.
@@ -634,6 +649,16 @@ mod tests {
                 assert!(cn.bytes().all(|b| b.is_ascii_digit()), "pool number {cn:?} is numeric");
             }
         }
+    }
+
+    #[test]
+    fn guaranteed_bonus_cards_resolve_from_the_attachment() {
+        // Every Avatar drop guarantees the shared Command Tower + Fellwar Stone (7062/7063).
+        let cards = guaranteed_bonus_cards("avatar-the-last-airbender-my-cabbages");
+        assert!(cards.contains(&"7062") && cards.contains(&"7063"));
+        // A drop with no attachment (and an unknown one) has no guaranteed bonus.
+        assert!(guaranteed_bonus_cards("cats-of-chaos").is_empty());
+        assert!(guaranteed_bonus_cards("no-such-drop").is_empty());
     }
 
     #[test]

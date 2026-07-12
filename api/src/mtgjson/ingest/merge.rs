@@ -235,15 +235,21 @@ pub(super) async fn merge_sld_derived(
     Ok(added)
 }
 
-/// Attach each Secret Lair drop's curated **random bonus-card pool** as `variable` ("may be
-/// included") memberships. MTGJSON marks the affected products `other: "Bonus card unknown"` and
-/// never names the pooled cards, so — unlike [`merge_sld_derived`], which fills a product's *own*
-/// drop cards — this runs even for products whose drop cards MTGJSON already describes: the bonus
-/// pool is a distinct axis, absent from upstream regardless. It is add-only (never rewrites a
-/// product's `contains` cards) and skipped per-product for any product MTGJSON gave a `variable`
-/// row of its own (`mtgjson_variable_products`), so an authored upstream pool wins and the curated
-/// entry self-retires. Returns rows added.
-pub(super) async fn merge_sld_bonus_pool(
+/// Attach a Secret Lair drop's shared **bonus cards** to every product of the drop — the cards
+/// that come *in addition to* the drop's own cards. Two kinds:
+///
+/// - **Guaranteed** ([`sld::guaranteed_bonus_cards`], e.g. Avatar's Command Tower + Fellwar Stone):
+///   recorded `contains`. Crucially this is **not** gated on `covered` like [`merge_sld_derived`],
+///   so the bonus cards stay linked even once MTGJSON authors the drop's *own* deck — which flips
+///   the product to "covered", making `merge_sld_derived` skip it. A card MTGJSON already recorded
+///   is deduplicated away by `rows`.
+/// - **Random pool** ([`sld::random_bonus_pool`], the "Bonus card unknown" cards MTGJSON never
+///   names): recorded `variable` ("may be included"), and skipped per-product for any product
+///   MTGJSON gave a `variable` row of its own (`mtgjson_variable_products`), so an authored pool
+///   wins and the curated entry self-retires.
+///
+/// Both are add-only (never rewrite a product's own `contains` cards). Returns rows added.
+pub(super) async fn merge_sld_bonus_cards(
     db: &DatabaseConnection,
     mtgjson_variable_products: &HashSet<i32>,
     rows: &mut HashSet<Row>,
@@ -253,17 +259,21 @@ pub(super) async fn merge_sld_bonus_pool(
     };
     let products = load_sld_products(db).await?;
 
-    // Resolve each SLD product to its drop and that drop's bonus pool, at the product's foilness.
-    // Products MTGJSON already enumerated a `variable` pool for are left to upstream.
-    let mut resolved: Vec<(i32, bool, Vec<&'static str>)> = Vec::new();
+    let contains = sealed_content::Membership::Contains.as_str();
+    let variable = sealed_content::Membership::Variable.as_str();
+
+    // (product_id, foil, membership, collector number) for every bonus card a product carries.
+    let mut resolved: Vec<(i32, bool, &'static str, &'static str)> = Vec::new();
     for (product_id, external_id, name) in &products {
-        if mtgjson_variable_products.contains(product_id) {
+        let Some(pd) = sld::resolve_product_drop(table, external_id, name) else {
             continue;
+        };
+        for cn in sld::guaranteed_bonus_cards(&pd.drop.slug) {
+            resolved.push((*product_id, pd.foil, contains, cn));
         }
-        if let Some(pd) = sld::resolve_product_drop(table, external_id, name) {
-            let pool = sld::random_bonus_pool(&pd.drop.slug);
-            if !pool.is_empty() {
-                resolved.push((*product_id, pd.foil, pool));
+        if !mtgjson_variable_products.contains(product_id) {
+            for cn in sld::random_bonus_pool(&pd.drop.slug) {
+                resolved.push((*product_id, pd.foil, variable, cn));
             }
         }
     }
@@ -271,26 +281,22 @@ pub(super) async fn merge_sld_bonus_pool(
         return Ok(0);
     }
 
-    let mut numbers: Vec<&str> =
-        resolved.iter().flat_map(|(_, _, pool)| pool.iter().copied()).collect();
+    let mut numbers: Vec<&str> = resolved.iter().map(|(_, _, _, cn)| *cn).collect();
     numbers.sort_unstable();
     numbers.dedup();
     let cards = resolve_sld_cards(db, &numbers).await?;
 
-    let membership = sealed_content::Membership::Variable.as_str();
     let mut added = 0;
-    for (product_id, foil, pool) in &resolved {
-        for cn in pool {
-            let Some(&card_id) = cards.get(*cn) else {
-                continue;
-            };
-            if rows.insert((*product_id, card_id, membership, *foil)) {
-                added += 1;
-            }
+    for (product_id, foil, membership, cn) in &resolved {
+        let Some(&card_id) = cards.get(*cn) else {
+            continue;
+        };
+        if rows.insert((*product_id, card_id, membership, *foil)) {
+            added += 1;
         }
     }
     if added > 0 {
-        tracing::info!(rows = added, "mtgjson: derived Secret Lair random bonus-card pools");
+        tracing::info!(rows = added, "mtgjson: derived Secret Lair bonus-card memberships");
     }
     Ok(added)
 }
