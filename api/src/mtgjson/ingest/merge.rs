@@ -1,8 +1,11 @@
 //! Multi-source merge logic layered on top of the MTGJSON pass: curated fallback
 //! memberships/components, Secret Lair drop→cards derivation, and the contained/sibling
-//! booster-pool synthesis (issue #290). Every rule is gated on "the product has no rows of
+//! booster-pool synthesis (issue #290). Most rules are gated on "the product has no rows of
 //! its own", so MTGJSON / the fallback stay authoritative and each source fills only genuine
-//! gaps.
+//! gaps. The one deliberate exception is [`merge_sld_bonus_cards`]: a superdrop's *shared bonus
+//! pool* is an axis MTGJSON doesn't surface on the drop products, so that pass is add-only and
+//! **ungated** — it must attach even after a product flips to "covered" (see its doc), and it
+//! self-retires **per card** through the row set's dedup rather than a coverage gate.
 
 use std::collections::{HashMap, HashSet};
 
@@ -231,6 +234,62 @@ pub(super) async fn merge_sld_derived(
     }
     if added > 0 {
         tracing::info!(rows = added, "mtgjson: derived Secret Lair drop card contents");
+    }
+    Ok(added)
+}
+
+/// Attach each Secret Lair drop's curated **random bonus-card pool** to every product of the drop
+/// as `variable` ("may be included") memberships — the shared bonus cards MTGJSON's `AllPrintings`
+/// doesn't surface (e.g. Avatar's Command Tower / Fellwar Stone, one drawn at random per drop).
+/// Unlike [`merge_sld_derived`], which fills a product's *own* drop cards, this runs even for
+/// products whose drop cards MTGJSON already describes: the bonus pool is a distinct axis, so it is
+/// **not** gated on `covered` (the cards stay linked even after MTGJSON authors the deck).
+///
+/// It is **add-only and self-retires per card**: `rows` is a set, so a `(product, card, variable,
+/// foil)` MTGJSON already authored is deduplicated away and not re-counted — upstream wins for every
+/// card it names, while a pool card it omits (e.g. FINAL FANTASY's shared Evoke rares, where MTGJSON
+/// authors only the per-drop card) still surfaces. Never rewrites a product's own `contains` cards
+/// (a shadowing number is excluded from [`sld::random_bonus_pool`] by curation). Returns rows added.
+pub(super) async fn merge_sld_bonus_cards(
+    db: &DatabaseConnection,
+    rows: &mut HashSet<Row>,
+) -> Result<usize, MtgjsonError> {
+    let Some(table) = sld::table() else {
+        return Ok(0);
+    };
+    let products = load_sld_products(db).await?;
+
+    // (product_id, foil, collector number) for every random bonus card a product may carry.
+    let mut resolved: Vec<(i32, bool, &'static str)> = Vec::new();
+    for (product_id, external_id, name) in &products {
+        let Some(pd) = sld::resolve_product_drop(table, external_id, name) else {
+            continue;
+        };
+        for cn in sld::random_bonus_pool(&pd.drop.slug) {
+            resolved.push((*product_id, pd.foil, cn));
+        }
+    }
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+
+    let mut numbers: Vec<&str> = resolved.iter().map(|(_, _, cn)| *cn).collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    let cards = resolve_sld_cards(db, &numbers).await?;
+
+    let variable = sealed_content::Membership::Variable.as_str();
+    let mut added = 0;
+    for (product_id, foil, cn) in &resolved {
+        let Some(&card_id) = cards.get(*cn) else {
+            continue;
+        };
+        if rows.insert((*product_id, card_id, variable, *foil)) {
+            added += 1;
+        }
+    }
+    if added > 0 {
+        tracing::info!(rows = added, "mtgjson: derived Secret Lair random bonus-card pools");
     }
     Ok(added)
 }

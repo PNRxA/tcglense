@@ -507,6 +507,33 @@ catalog) is planned but not implemented.
   isn't derivable from the drop snapshot and MTGJSON leaves it `null`, so it's hand-authored in
   `fallback_sealed.json` as linked `sealed` components (the drops the bundle contains) — the
   usual fallback stopgap, self-retiring when `mtgjson/mtg-sealed-content` authors it upstream.
+  (5) **Random bonus cards (`merge_sld_bonus_cards` in `mtgjson::ingest`).** Some Secret Lair
+  superdrops ship **one unpredictable bonus card** with every drop, drawn *at random* from a pool,
+  *in addition to* the drop's own cards. They're recorded `variable` ("may be included") from a
+  curated `RANDOM_BONUS_POOLS` table keyed by `sld_drops.json` slug, with the pool shared across a
+  superdrop's drops (e.g. each Avatar drop draws one of Command Tower / Fellwar Stone — *one*, not
+  both, so `variable` not `contains`). The key design point: this pass is **not gated on `covered`**
+  the way `merge_sld_derived` (the drop's *own* cards) is — the bonus pool is a separate axis, so it
+  must attach even once MTGJSON authors the drop's deck and flips the product to "covered"
+  (otherwise the bonus would *vanish* exactly when upstream fills in the deck). It stays **add-only
+  and self-retires _per card_**: `rows` is a set, so a `(product, card, variable, foil)` MTGJSON
+  already authored is deduplicated away — upstream wins for every card it names, while a pool card it
+  *omits* still surfaces. (A per-**product** self-retire was rejected: MTGJSON authors only each
+  FINAL FANTASY drop's *own* per-drop card `7001`/`7002`/`7003` as `variable`, so skipping the whole
+  product would suppress the genuinely-additive shared Evoke pool `7004`–`7008` — the valuable
+  chase.)
+  **The table is deliberately tiny.** The bulk of SLD bonus pools *are* enumerated by MTGJSON's
+  `AllPrintings` `variable` contents (e.g. A Box of Rocks, Brain Dead, the Marvel singles); the
+  ingest already surfaces those directly, so duplicating them here would only be maintenance
+  surface that self-retires anyway. Only the superdrops MTGJSON does **not** deliver are curated:
+  **Avatar** (`7062`/`7063`, marked `other: "Bonus card unknown"`), **Marvel's Spider-Man**
+  (`7013`–`7021`, axis omitted), **FINAL FANTASY** (`7004`–`7008`, only the per-drop card authored),
+  and **TMNT** (`7077`/`7078`/`7083` Slime Against Humanity, `other: "Bonus card unknown"`). Every
+  pool was verified card-for-card against Scryfall's `sld` set (`promo_types` includes `sldbonus`)
+  and each drop's published bonus mechanics; a number already in **every** listed drop's own gallery
+  is excluded so it can't be shadowed, and a drop absent from the table simply shows no bonus pool —
+  never a wrong one. The table is hashed into the derivation version alongside the drop snapshot, so
+  editing it re-runs the pass on the next sync.
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that
