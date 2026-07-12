@@ -175,6 +175,15 @@ mod tests {
     }
 
     #[test]
+    fn confetti_foil_products_resolve_to_their_own_drop_and_curated_msrp() {
+        // Regression: "(Confetti Foil)" is a finish clause, so name matching strips it and
+        // collides with the base drop — these products must be pinned by id to reach their
+        // own drop and the curated $59.99 foil MSRP (not the $39.99 standard foil fallback).
+        let name = "Secret Lair x Furby: Doo-ay Noo-lah - Confetti Foil Edition";
+        assert_eq!(derive("sld", "656357", name).as_deref(), Some("59.99"));
+    }
+
+    #[test]
     fn bundled_data_is_valid() {
         // The shipped overrides file parses; every entry keys a real drop slug (a typo'd slug
         // would silently never apply), sets at least one edition, and every price is a
@@ -187,6 +196,12 @@ mod tests {
             assert!(
                 table.drop_by_slug(slug).is_some(),
                 "override slug {slug:?} exists in the drop snapshot"
+            );
+            assert!(
+                sld::slug_is_reachable(table, slug),
+                "override slug {slug:?} is reachable by product resolution (else the price is \
+                 dead data — pin the product id in PRODUCT_DROP_OVERRIDES, as the Confetti \
+                 Foil drops require)"
             );
             assert!(
                 e.non_foil.is_some() || e.foil.is_some(),
