@@ -81,15 +81,18 @@ struct RandomBonusPool {
 /// pool MTGJSON doesn't enumerate on those products. This table names that pool so it surfaces as
 /// "may be included".
 ///
-/// Provenance: extracted from the **authoritative** `mtgjson/mtg-sealed-content`
-/// `data/contents/SLD.yaml` `variable` sections (the pools MTGJSON *does* enumerate for sibling
-/// products of the same drop), keyed to `sld_drops.json` drop slugs; many are cross-corroborated
-/// by Scryfall's own `sld` "Bonus Cards" gallery groupings already in the snapshot (e.g. Brain
-/// Dead `821`–`824`, FINAL FANTASY / SpongeBob / The Office `70xx`). Only pure-numeric `sld`
-/// printings from that source are included; booster-pack pool options, unverifiable printings, and
-/// the fixed (guaranteed) attachments in [`BONUS_CARD_ATTACHMENTS`] are deliberately excluded. Kept
-/// curated like [`PRODUCT_DROP_OVERRIDES`]; a drop absent here (or from the drop snapshot) simply
-/// shows no bonus pool — never a wrong one.
+/// Provenance: two corroborating sources. (1) The **authoritative** `mtgjson/mtg-sealed-content`
+/// `data/contents/SLD.yaml` `variable` sections — the pools MTGJSON *does* enumerate for sibling
+/// products of the same drop. (2) Scryfall's own `sld` **"Bonus Cards" gallery drops** already in
+/// the snapshot (`sld_drops.json`), which are *superdrop-wide* pools no single product is named
+/// after — e.g. Marvel's Spider-Man `7013`–`7021`, FINAL FANTASY `7004`–`7008` (the five shared
+/// Evoke-Elemental rares), the TMNT Slime Against Humanity chase `7077`/`7078`/`7083` — so those
+/// attach to *every* drop of the superdrop (web-research-confirmed as shared, not per-drop).
+/// Only pure-numeric `sld` printings are included; booster-pack pool options, unverifiable
+/// printings, and the fixed (guaranteed) attachments in [`BONUS_CARD_ATTACHMENTS`] (e.g. Avatar's
+/// Command Tower + Fellwar Stone, which come with every Avatar drop) are deliberately excluded.
+/// Kept curated like [`PRODUCT_DROP_OVERRIDES`]; a drop absent here (or from the drop snapshot)
+/// simply shows no bonus pool — never a wrong one.
 const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
     RandomBonusPool { drop_slugs: &["a-box-of-rocks"], pool: &["507", "511", "512", "523", "535"] },
     RandomBonusPool { drop_slugs: &["absolute-annihilation"], pool: &["645", "642", "629", "686"] },
@@ -122,9 +125,21 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         drop_slugs: &["featuring-imiri-sakabashira"],
         pool: &["7023", "7024", "7025", "7026"],
     },
-    RandomBonusPool { drop_slugs: &["final-fantasy-game-over"], pool: &["7001"] },
-    RandomBonusPool { drop_slugs: &["final-fantasy-grimoire"], pool: &["7003"] },
-    RandomBonusPool { drop_slugs: &["final-fantasy-weapons"], pool: &["7002"] },
+    // Each FINAL FANTASY drop's fixed bonus (7001/7002/7003) plus the five shared rare Evoke
+    // Elemental reprints (7004–7008, the "FINAL FANTASY: Bonus Cards" gallery drop) found in *any*
+    // FF drop — a superdrop-wide pool, so every drop lists all five.
+    RandomBonusPool {
+        drop_slugs: &["final-fantasy-game-over"],
+        pool: &["7001", "7004", "7005", "7006", "7007", "7008"],
+    },
+    RandomBonusPool {
+        drop_slugs: &["final-fantasy-grimoire"],
+        pool: &["7003", "7004", "7005", "7006", "7007", "7008"],
+    },
+    RandomBonusPool {
+        drop_slugs: &["final-fantasy-weapons"],
+        pool: &["7002", "7004", "7005", "7006", "7007", "7008"],
+    },
     RandomBonusPool { drop_slugs: &["flower-power"], pool: &["819"] },
     RandomBonusPool {
         drop_slugs: &["just-some-totally-normal-guys"],
@@ -144,6 +159,19 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
     RandomBonusPool { drop_slugs: &["marvel-s-iron-man"], pool: &["864", "870"] },
     RandomBonusPool { drop_slugs: &["marvel-s-storm"], pool: &["866", "870"] },
     RandomBonusPool { drop_slugs: &["marvel-s-wolverine"], pool: &["865", "870"] },
+    // Marvel's Spider-Man superdrop: nine shared bonus cards (the "Marvel's Spider-Man: Bonus
+    // Cards" gallery drop, 7013–7021) come with every drop of the superdrop.
+    RandomBonusPool {
+        drop_slugs: &[
+            "marvel-s-spider-man-daily-bugle-breaking-news",
+            "marvel-s-spider-man-heroic-deeds",
+            "marvel-s-spider-man-mana-symbiote",
+            "marvel-s-spider-man-venom-unleashed-colors",
+            "marvel-s-spider-man-venom-unleashed-inks",
+            "marvel-s-spider-man-villainous-plots",
+        ],
+        pool: &["7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021"],
+    },
     RandomBonusPool { drop_slugs: &["math-is-for-blockers"], pool: &["584"] },
     RandomBonusPool { drop_slugs: &["mother-s-day-2021"], pool: &["552", "556", "571"] },
     RandomBonusPool { drop_slugs: &["mschf"], pool: &["670", "669"] },
@@ -170,6 +198,20 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         pool: &["7041", "7042", "7043", "7044"],
     },
     RandomBonusPool { drop_slugs: &["the-path-not-traveled"], pool: &["520", "521", "525", "536"] },
+    // Teenage Mutant Ninja Turtles "Totally TubuLair" superdrop: the shared ultra-rare Slime
+    // Against Humanity chase (the "Slimes Against Humanity" gallery drop, 7077/7078/7083) can turn
+    // up in any of the superdrop's drops. Each drop's own themed reprint is already its `contains`.
+    RandomBonusPool {
+        drop_slugs: &[
+            "teenage-mutant-ninja-turtles-vhs-villains",
+            "teenage-mutant-ninja-turtles-the-might-mutanimals",
+            "teenage-mutant-ninja-turtles-the-last-ronin",
+            "featuring-kevin-eastman-colors",
+            "featuring-kevin-eastman-inks",
+            "featuring-stan-sakai",
+        ],
+        pool: &["7077", "7078", "7083"],
+    },
     RandomBonusPool { drop_slugs: &["twisted-toons"], pool: &["881", "882", "883", "884", "885"] },
     RandomBonusPool { drop_slugs: &["year-of-the-rat"], pool: &["504", "514", "516", "523"] },
 ];
