@@ -7,6 +7,8 @@ pub mod config;
 pub mod health;
 pub mod mirror;
 pub mod openapi;
+pub mod prerender;
+pub mod robots;
 pub mod shared;
 pub mod sitemap;
 pub mod wishlist;

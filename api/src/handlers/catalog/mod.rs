@@ -51,6 +51,11 @@ pub use products::{
 pub use sets::{get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon};
 pub use status::{ingest_status, list_games};
 
+// The product DTO + a resolve helper, reused by the server-side prerenderer
+// (`crate::handlers::prerender`) to build a product page's meta without re-implementing
+// `get_product`'s load + set-name dressing.
+pub(crate) use products::{ProductResponse, product_response};
+
 // The `#[utoipa::path]`-generated route metadata structs, re-exported alongside the
 // handlers they document so `crate::openapi::ApiDoc`'s `paths(...)` list can name them
 // at `crate::handlers::catalog::__path_<fn>` (utoipa rewrites each handler path to its

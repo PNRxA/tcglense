@@ -114,6 +114,14 @@ pub struct Config {
     /// and SPA in one container); the split deployment (Caddy serving the SPA and
     /// proxying `/api`) leaves it unset. See [`crate::router`].
     pub web_root: Option<PathBuf>,
+    /// Serve the bot prerender (see [`crate::handlers::prerender`]) to **every** client on
+    /// an HTML navigation, not just recognised crawler User-Agents. Default `false` (only
+    /// crawlers are prerendered; browsers get the SPA). Enable it for a setup that can't
+    /// rely on UA detection or that deliberately wants server-rendered pages for everyone —
+    /// but note that with `WEB_ROOT` set, real browsers then receive the minimal prerender
+    /// document instead of the interactive SPA. Only affects the combined image's in-process
+    /// fallback; a split deploy gates prerendering in Caddy (`@crawlerHtml`) instead.
+    pub prerender_all_user_agents: bool,
     /// Fetch the raw provider datasets (Scryfall bulk cards + sets, MTGJSON
     /// `AllPrintings`, TCGCSV catalog/prices) **directly from the upstream services**
     /// rather than from a TCGLense mirror. Default `false`: a self-host reads from the
@@ -224,6 +232,7 @@ impl std::fmt::Debug for Config {
             .field("seed_dummy_data", &self.seed_dummy_data)
             .field("cdn_mode", &self.cdn_mode)
             .field("web_root", &self.web_root)
+            .field("prerender_all_user_agents", &self.prerender_all_user_agents)
             .field("sync_from_upstream", &self.sync_from_upstream)
             .field("dataset_mirror_url", &self.dataset_mirror_url)
             .field("mirror_enabled", &self.mirror_enabled)
@@ -478,6 +487,9 @@ impl Config {
         // combined image); unset = the API serves only /api (see the field docs).
         let web_root = env_trimmed("WEB_ROOT").map(PathBuf::from);
 
+        // Drop the crawler-UA gate and prerender for every client (see the field docs).
+        let prerender_all_user_agents = env_bool("PRERENDER_ALL_USER_AGENTS", false);
+
         // Dataset source: a self-host reads the big provider files from the TCGLense
         // mirror by default (offloading the upstreams / riding the mirror CDN). The
         // mirror host sets SYNC_FROM_UPSTREAM=true to talk to the real services.
@@ -539,6 +551,7 @@ impl Config {
             seed_dummy_data,
             cdn_mode,
             web_root,
+            prerender_all_user_agents,
             sync_from_upstream,
             dataset_mirror_url,
             mirror_enabled,

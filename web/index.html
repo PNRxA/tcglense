@@ -10,13 +10,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TCGLense</title>
     <!--
-      Baseline SEO / social-preview tags. These are what crawlers that DON'T run
-      JavaScript see (most social/link-unfurl bots). `usePageMeta` (src/lib/seo.ts)
-      overrides them per-route at runtime for JS-capable crawlers (e.g. Googlebot)
-      and the browser tab. Keep the values here in sync with SITE_DESCRIPTION and
-      DEFAULT_OG_IMAGE. The og:image/twitter:image path is rewritten to an absolute
-      URL at build/serve time by the seoDiscoveryFiles plugin (vite.config.ts), since
-      unfurlers that don't run JS need an absolute image URL.
+      Baseline SEO / social-preview tags — the homepage defaults. Two things now
+      supersede these per route: `usePageMeta` (src/lib/seo.ts) rewrites the live
+      <head> at runtime for JS-capable clients (Googlebot, the browser tab), and the
+      API's server-side prerenderer (api/src/handlers/prerender) serves a per-route
+      head/body to known non-JS crawlers (the social/link unfurlers — Discord, Slack,
+      Facebook, X, …). This baseline is the fallback for a UA not on the prerender list
+      or when the renderer is unavailable. Keep the values here in sync with
+      SITE_DESCRIPTION and DEFAULT_OG_IMAGE. The og:image/twitter:image path is
+      rewritten to an absolute URL at build/serve time by the seoDiscoveryFiles plugin
+      (vite.config.ts), since unfurlers that don't run JS need an absolute image URL.
     -->
     <meta
       name="description"
