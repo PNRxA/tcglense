@@ -88,6 +88,45 @@ describe('auth store: single-flight refresh', () => {
   })
 })
 
+describe('auth store: cross-tab refresh coordination', () => {
+  it('rotates inside the tcglense-refresh Web Lock when the API is available', async () => {
+    // Serializing refreshes across tabs is what stops two tabs submitting the same
+    // single-use cookie at once (the race that logged users out). Stub the Web Locks
+    // API (jsdom has none) and prove the rotation runs inside the named lock.
+    const request = vi.fn<
+      (name: string, opts: unknown, fn: () => Promise<unknown>) => Promise<unknown>
+    >((_name, _opts, fn) => fn())
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })
+    try {
+      vi.mocked(refresh).mockResolvedValue({ access_token: 'locked-fresh' })
+
+      const store = useAuthStore()
+      expect(await store.refresh()).toBe(true)
+
+      expect(store.accessToken).toBe('locked-fresh')
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(request).toHaveBeenCalledWith(
+        'tcglense-refresh',
+        expect.anything(),
+        expect.any(Function),
+      )
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks')
+    }
+  })
+
+  it('falls open to an unsynchronized refresh when Web Locks is unavailable', async () => {
+    // Older browsers (Safari < 15.4) expose no navigator.locks; refresh must still
+    // work — the server-side fix keeps an unsynchronized refresh race-safe.
+    expect('locks' in navigator).toBe(false)
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'unlocked-fresh' })
+
+    const store = useAuthStore()
+    expect(await store.refresh()).toBe(true)
+    expect(store.accessToken).toBe('unlocked-fresh')
+  })
+})
+
 describe('auth store: authFetch refresh-and-retry', () => {
   it('refreshes once on a 401 and retries the call', async () => {
     vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh' })

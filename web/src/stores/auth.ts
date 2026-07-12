@@ -9,6 +9,45 @@ import {
   refresh as apiRefresh,
 } from '@/lib/api'
 
+// Cross-tab refresh coordination.
+//
+// The access token lives in memory (per tab), but the rotating, single-use
+// refresh cookie is shared by the whole browser. When two tabs refresh at once —
+// a browser session-restore opening several tabs, a `refetchOnReconnect` that
+// fires in *every* open tab on a network blip, or just two tabs whose 15-minute
+// access tokens expired together — they submit the *same* not-yet-rotated cookie
+// in parallel. The server can only rotate it for the winner; the loser gets a
+// 401 it would otherwise treat as a dead session (clearing local state, bouncing
+// to /login). Serialize refreshes across tabs with the Web Locks API so they
+// rotate the shared cookie one at a time: each waiter re-reads the cookie the
+// previous holder just set and succeeds in turn, so no tab is spuriously logged
+// out. Feature-detected — where Web Locks is unavailable (older Safari) we fall
+// back to an unsynchronized refresh, which the server keeps race-safe (it no
+// longer clears a live cookie on a benign concurrent double-submit).
+const REFRESH_LOCK_NAME = 'tcglense-refresh'
+// A refresh POST has no client-side timeout (large uploads share the path), so a
+// half-open socket could otherwise make one tab hold the lock forever. Bound how
+// long a sibling waits before giving up and refreshing unsynchronized.
+const REFRESH_LOCK_WAIT_MS = 5_000
+
+function withRefreshLock<T>(run: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' && 'locks' in navigator ? navigator.locks : null
+  if (!locks) return run()
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REFRESH_LOCK_WAIT_MS)
+  return locks
+    .request(REFRESH_LOCK_NAME, { signal: controller.signal }, run)
+    .catch((error: unknown) => {
+      // We waited too long for the lock (a sibling's refresh hung): give up on
+      // coordination and refresh anyway — the server keeps concurrent refreshes
+      // race-safe. Any other rejection is the refresh itself failing; rethrow it.
+      if (error instanceof DOMException && error.name === 'AbortError') return run()
+      throw error
+    })
+    .finally(() => clearTimeout(timer))
+}
+
 export const useAuthStore = defineStore('auth', () => {
   // Access token lives in memory only. The refresh token is an httpOnly cookie
   // (tcglense_refresh) and is invisible to JS.
@@ -72,7 +111,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** Mint a fresh access token from the refresh cookie. Clears state on failure. */
   function refresh(): Promise<boolean> {
-    refreshInFlight ??= doRefresh().finally(() => {
+    // Two guards, inner then outer: `refreshInFlight` coalesces concurrent callers
+    // *within this tab* into one rotation of the single-use cookie; `withRefreshLock`
+    // serializes rotations *across tabs* so siblings never submit the same cookie in
+    // parallel (which the server can only honour for one of them).
+    refreshInFlight ??= withRefreshLock(doRefresh).finally(() => {
       refreshInFlight = null
     })
     return refreshInFlight

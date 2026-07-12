@@ -363,13 +363,21 @@ async fn refresh_rotation_is_single_use_on_pg() {
     let original = refresh::issue_refresh_token(conn, uid, 30)
         .await
         .expect("issue");
-    let rotated = refresh::rotate(conn, &original, 30).await.expect("rotate");
+    let refresh::RotateOutcome::Rotated(rotated) =
+        refresh::rotate(conn, &original, 30).await.expect("rotate")
+    else {
+        panic!("first rotation should mint a fresh token");
+    };
 
-    // Replaying the now-superseded original is rejected (the conditional UPDATE claim,
-    // `rows_affected`-gated, works under a real Postgres pool)...
+    // Replaying the now-superseded original is not exchanged for a new token — and
+    // because its successor is still live this is a benign concurrent double-submit,
+    // reported as `Superseded` (not an error) so the refresh handler leaves the live
+    // cookie alone. The `rows_affected`-gated conditional UPDATE claim that makes this
+    // sound works under a real Postgres pool.
+    let replay = refresh::rotate(conn, &original, 30).await.expect("benign superseded");
     assert!(
-        refresh::rotate(conn, &original, 30).await.is_err(),
-        "a superseded refresh token can't be rotated again"
+        matches!(replay, refresh::RotateOutcome::Superseded),
+        "a superseded refresh token can't be rotated again, but is a benign double-submit"
     );
     // ...while the freshly-minted successor still rotates.
     refresh::rotate(conn, &rotated.plaintext, 30)

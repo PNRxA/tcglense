@@ -26,6 +26,29 @@ pub struct RotatedToken {
     pub user_id: i32,
 }
 
+/// The result of presenting a refresh token to [`rotate`].
+///
+/// A `Superseded` result is deliberately NOT an error: it is the *benign*
+/// concurrent double-submit — the presented token was already rotated by a
+/// sibling request (another tab, a browser session-restore, or a
+/// `refetchOnReconnect` that fired in every open tab at once) whose successor is
+/// still live. The browser therefore already holds a newer, valid refresh
+/// cookie, so the caller must leave that cookie untouched. Clearing it here would
+/// race the winning request's rotated `Set-Cookie` and, when the clear lands
+/// last, wipe the live cookie — logging every tab out (the intermittent
+/// "logged out for no reason" bug). Genuine dead-session cases (unknown / expired
+/// token, or detected reuse that burned the family) stay as `Err(Unauthorized)`,
+/// for which the caller DOES clear the cookie.
+#[derive(Debug)]
+pub enum RotateOutcome {
+    /// The presented token was valid and single-use-claimed: it has been revoked
+    /// and replaced. Carries the replacement (for the cookie) and owning user.
+    Rotated(RotatedToken),
+    /// A benign concurrent double-submit — see the enum docs. The caller returns
+    /// 401 but must NOT clear the client's refresh cookie.
+    Superseded,
+}
+
 /// A freshly-inserted refresh token: the plaintext (for the cookie) and the new
 /// row's id (so a rotated predecessor can record it as its successor).
 struct InsertedToken {
@@ -71,15 +94,16 @@ pub async fn issue_refresh_token(
 
 /// Rotate the presented refresh token.
 ///
-/// * not found            -> `Unauthorized`
-/// * found but revoked     -> REUSE/theft: revoke ALL of the user's tokens, then `Unauthorized`
-/// * found but expired     -> `Unauthorized`
-/// * valid                 -> mark revoked, issue a replacement, return it
+/// * not found                 -> `Err(Unauthorized)` (dead session; caller clears the cookie)
+/// * found, revoked, reuse      -> REUSE/theft: revoke ALL of the user's tokens, then `Err(Unauthorized)`
+/// * found, revoked, benign     -> `Ok(Superseded)` — a sibling already rotated it; caller KEEPS the cookie
+/// * found but expired          -> `Err(Unauthorized)`
+/// * valid                      -> mark revoked, issue a replacement, `Ok(Rotated(..))`
 pub async fn rotate(
     db: &DatabaseConnection,
     presented_plaintext: &str,
     expiry_days: i64,
-) -> Result<RotatedToken, AppError> {
+) -> Result<RotateOutcome, AppError> {
     let token_hash = super::secret::sha256_hex(presented_plaintext);
     let now = Utc::now();
 
@@ -104,11 +128,10 @@ pub async fn rotate(
             .await?
         {
             // A rotated token records its successor. If that successor has ITSELF
-            // been revoked (used/rotated/logged out), replaying this superseded
-            // token is genuine reuse — burn the whole family. A still-active
-            // successor (or none at all, e.g. a logged-out or concurrently-claimed
-            // token) is not evidence of theft, so we just reject this request.
-            // Either way a revoked token is NEVER exchanged for a new one.
+            // been revoked (used/rotated/logged out), replaying this long-
+            // superseded token is genuine reuse — burn the whole family and treat
+            // it as a dead session (the caller clears the cookie). A revoked token
+            // is NEVER exchanged for a new one.
             if let Some(successor_id) = row.replaced_by_id {
                 let successor_revoked = RefreshToken::find_by_id(successor_id)
                     .one(db)
@@ -116,9 +139,26 @@ pub async fn rotate(
                     .is_some_and(|s| s.revoked_at.is_some());
                 if successor_revoked {
                     revoke_all_for_user(db, row.user_id).await?;
+                    return Err(AppError::Unauthorized("invalid refresh token".to_string()));
                 }
             }
+            // The row exists and we detected no theft. Report `Superseded` so the
+            // caller leaves the client's refresh cookie ALONE. This covers:
+            //   * a live successor  -> a sibling tab/request already rotated this
+            //     token; the browser holds that newer valid cookie, and clearing
+            //     it here would race the winner's Set-Cookie and log every tab out.
+            //   * no successor yet (`replaced_by_id` is None) -> either the winning
+            //     rotation has claimed the token but not yet linked its successor
+            //     (a live cookie is imminent — clearing would clobber it), OR the
+            //     token was logged out / revoked by a password reset. In the latter
+            //     case the cookie is already gone (logout clears it) or inert (a
+            //     revoked token can never be exchanged — the reset "ends every
+            //     session" invariant still holds via the 401), so NOT clearing is
+            //     harmless. Choosing `Superseded` over an error here is what closes
+            //     the winner's revoke-then-link window without a cookie clobber.
+            return Ok(RotateOutcome::Superseded);
         }
+        // No such token at all: a genuinely invalid/unknown cookie.
         return Err(AppError::Unauthorized("invalid refresh token".to_string()));
     }
 
@@ -144,10 +184,10 @@ pub async fn rotate(
     rotated.replaced_by_id = Set(Some(successor.id));
     rotated.update(db).await?;
 
-    Ok(RotatedToken {
+    Ok(RotateOutcome::Rotated(RotatedToken {
         plaintext: successor.plaintext,
         user_id,
-    })
+    }))
 }
 
 /// Revoke the single refresh token matching `presented_plaintext` (logout).
@@ -217,6 +257,14 @@ mod tests {
             .expect("row exists")
     }
 
+    /// Unwrap a rotation that was expected to mint a fresh token.
+    fn expect_rotated(outcome: RotateOutcome) -> RotatedToken {
+        match outcome {
+            RotateOutcome::Rotated(token) => token,
+            RotateOutcome::Superseded => panic!("expected a fresh rotation, got Superseded"),
+        }
+    }
+
     #[test]
     fn generated_tokens_are_distinct_and_hash_is_deterministic() {
         let a = generate_token();
@@ -236,7 +284,7 @@ mod tests {
         let original = issue_refresh_token(&db, user_id, 30).await.expect("issue");
         let original_hash = hash_token(&original);
 
-        let rotated = rotate(&db, &original, 30).await.expect("rotate");
+        let rotated = expect_rotated(rotate(&db, &original, 30).await.expect("rotate"));
 
         assert_eq!(rotated.user_id, user_id);
         // A rotated (revoked) token's replacement has a different hash.
@@ -280,12 +328,16 @@ mod tests {
             .expect("t2 (other device)");
 
         // Rotate t1 -> t3, then t3 -> t4, so t1's successor (t3) is itself revoked.
-        let r3 = rotate(&db, &t1, 30).await.expect("rotate t1 -> t3");
-        let r4 = rotate(&db, &r3.plaintext, 30)
-            .await
-            .expect("rotate t3 -> t4");
+        let r3 = expect_rotated(rotate(&db, &t1, 30).await.expect("rotate t1 -> t3"));
+        let r4 = expect_rotated(
+            rotate(&db, &r3.plaintext, 30)
+                .await
+                .expect("rotate t3 -> t4"),
+        );
 
-        // Replaying the long-superseded t1 is now unambiguous reuse/theft.
+        // Replaying the long-superseded t1 is now unambiguous reuse/theft: its
+        // successor t3 has itself been revoked, so this is a hard error (not a
+        // benign Superseded), and the whole family is burned.
         let err = rotate(&db, &t1, 30).await.unwrap_err();
         assert!(matches!(err, AppError::Unauthorized(_)));
 
@@ -302,19 +354,48 @@ mod tests {
         let t1 = issue_refresh_token(&db, user_id, 30).await.expect("t1");
 
         // First rotation wins and issues the successor t2.
-        let r2 = rotate(&db, &t1, 30).await.expect("rotate t1 -> t2");
+        let r2 = expect_rotated(rotate(&db, &t1, 30).await.expect("rotate t1 -> t2"));
 
         // A near-simultaneous second request carried the same just-rotated t1. Its
-        // successor t2 is still active, so this is a benign retry: the request is
-        // rejected but the family is NOT burned.
-        let err = rotate(&db, &t1, 30).await.unwrap_err();
-        assert!(matches!(err, AppError::Unauthorized(_)));
+        // successor t2 is still active, so this is a benign double-submit: reported
+        // as `Superseded` (NOT an error), the family is NOT burned, and — crucially
+        // — the refresh handler leaves the browser's live cookie (t2) untouched
+        // instead of clearing it. Clearing here is what logged multi-tab users out.
+        let outcome = rotate(&db, &t1, 30)
+            .await
+            .expect("benign superseded, not an error");
+        assert!(matches!(outcome, RotateOutcome::Superseded));
 
         // t2 remains usable — the session survives the concurrent refresh.
         assert!(find_by_hash(&db, &r2.plaintext).await.revoked_at.is_none());
-        rotate(&db, &r2.plaintext, 30)
+        expect_rotated(
+            rotate(&db, &r2.plaintext, 30)
+                .await
+                .expect("t2 still rotatable"),
+        );
+    }
+
+    #[tokio::test]
+    async fn revoked_token_without_a_successor_is_superseded_not_reuse() {
+        // A logged-out (or password-reset-revoked) token has `revoked_at` set but
+        // no `replaced_by_id`. Replaying it must NOT be exchanged for a new token,
+        // and it is NOT theft (no successor was ever revoked), so it reports
+        // `Superseded` rather than an error — letting the refresh handler leave the
+        // client's cookie alone instead of racing a sibling's live cookie. The
+        // session stays effectively dead: the token is never rotated (the handler
+        // still answers 401), it just does not clobber a cookie.
+        let db = setup_db().await;
+        let user_id = insert_user(&db, "loggedout@example.com").await;
+        let token = issue_refresh_token(&db, user_id, 30).await.expect("issue");
+
+        revoke_one(&db, &token)
             .await
-            .expect("t2 still rotatable");
+            .expect("logout revokes the token");
+
+        let outcome = rotate(&db, &token, 30)
+            .await
+            .expect("a revoked-but-not-reused token is Superseded, not an error");
+        assert!(matches!(outcome, RotateOutcome::Superseded));
     }
 
     #[tokio::test]
