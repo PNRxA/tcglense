@@ -155,6 +155,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   image path** — the one sanctioned exception is the opt-in fingerprint build
   (`FINGERPRINT_BUILD_ENABLED`, default off); read `docs/tradeoffs.md` §Visual card
   scanner before touching it.
+- Social/link **previews** are server-rendered by `handlers::prerender` ("dynamic
+  rendering for bots"): a crawler UA on an HTML nav gets a per-route head/body
+  reproducing `usePageMeta` (`web/src/lib/seo.ts` + `structuredData.ts`), built from
+  `PUBLIC_SITE_URL` and **one** `load_*` read — **never** a client origin, **never** an
+  image fetch (`og:image` is only a URL string; don't add one). Keep the Rust
+  `structured_data` port in sync with the TS (same constants; keep the "no
+  `offers`/price" JSON-LD guard). It's a real route (`/api/prerender/{*path}`, always
+  on) so split deploys proxy to it; the combined image branches in the SPA fallback. Bot
+  HTML is `private, no-store` + `Vary: User-Agent` and the shell carries `Vary:
+  User-Agent`, so a shared CDN can't cross-serve. Keep the Caddy `@crawlerHtml` UA regex
+  in sync with `CRAWLER_UA_NEEDLES`.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false, features =
   ["rust_crypto"]` (panics at runtime otherwise); `reqwest` deliberately has **no**

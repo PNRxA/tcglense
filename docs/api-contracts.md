@@ -335,6 +335,40 @@ already-submitted URLs. The web build's `robots.txt` points crawlers at
 stale-while-revalidate, preserved by the cache layer); an unknown/out-of-range child
 is a `no-store` `404`.
 
+### Dynamic rendering for bots (social/link previews)
+
+The SPA is client-rendered, so `usePageMeta` (`web/src/lib/seo.ts`) only sets per-route
+`<head>` tags for JS-capable clients (Googlebot, the browser tab). Non-JS crawlers —
+the social/link unfurlers (Discord, Slack, Facebook, X, WhatsApp, iMessage/Applebot, …)
+— fetch raw `index.html` and so unfurl **every** URL as the homepage. `handlers::prerender`
+fixes this by *dynamic rendering*: a crawler User-Agent on an HTML navigation gets a
+small, complete, escaped HTML document whose `<head>` reproduces exactly what
+`usePageMeta` would set (title, description, canonical, Open Graph / Twitter, and the
+card/product JSON-LD from `structuredData.ts`), plus a faithful `<body>` (h1 +
+description + image + canonical link). Browsers are untouched — they still get the SPA.
+
+- **Route knowledge** mirrors `web/src/router/index.ts` (the same routes the sitemap
+  lists). Absolute URLs are built from `PUBLIC_SITE_URL` (never a client origin); the
+  `og:image` is only ever a **URL string** (the existing image proxy) — the renderer
+  performs **at most one indexed DB read and zero image/HTTP fetches** per hit.
+- **`GET /api/prerender/{*path}`** is the always-on entry point (registered regardless
+  of `WEB_ROOT`) that split deploys reverse-proxy crawler HTML requests to; the combined
+  image additionally branches inside the SPA fallback (`prerender_fallback`) on the UA.
+  Both call one core, so it works whether or not the API serves the SPA. `{*path}` is
+  the SPA path (query ignored; the canonical drops it).
+- An unknown entity id / unrouted path → a `404` `noindex` soft-404; noindex app/auth
+  pages → `200` with `robots: noindex, nofollow`; a valid page → `200`.
+- Responses are `Cache-Control: private, no-store` + `Vary: User-Agent`, and the SPA
+  shell also carries `Vary: User-Agent`, so a shared CDN can never hand a bot's HTML to
+  a browser (or vice-versa). The crawler UA list is a `const` in `handlers::prerender`;
+  the split-deploy Caddyfiles carry a matching `@crawlerHtml` regex (keep them in sync).
+- **`PRERENDER_ALL_USER_AGENTS`** (`false`) drops the crawler-UA gate on the combined
+  image's in-process fallback and prerenders every client on an HTML navigation — for a
+  setup that can't rely on UA detection or wants server-rendered pages for everyone.
+  Caveat: with `WEB_ROOT` set, browsers then receive the minimal prerender document
+  instead of the SPA. The always-on `/api/prerender/{*path}` route is UA-agnostic by
+  design regardless of this flag; a split deploy controls the gate in Caddy.
+
 ### Image proxy
 
 `size` ∈ `small|normal|large|png|art_crop` (default `normal`), `face` is a 0-based face

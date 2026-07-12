@@ -26,6 +26,7 @@ mod mirror;
 mod openapi;
 mod pagination;
 mod password_reset;
+mod prerender;
 mod products;
 mod rate_limit;
 mod refresh;

@@ -19,10 +19,28 @@
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 
+	# Social/link unfurlers + search bots asking for an HTML page get server-rendered
+	# per-page meta from the API (issue #302 dynamic rendering). Without this, a non-JS
+	# crawler sees index.html's static homepage tags for every URL. The `not path`
+	# excludes asset/file extensions so a crawler's /assets/*.js etc. still hit the
+	# static SPA below. Keep this UA regex in sync with CRAWLER_UA_NEEDLES in
+	# api/src/handlers/prerender/mod.rs. `handle` (not `handle_path`) preserves the
+	# /api/prerender prefix the route expects; {uri} carries path+query (query ignored).
+	@crawlerHtml {
+		header_regexp User-Agent (?i)(facebookexternalhit|facebot|twitterbot|slackbot|slack-imgproxy|discordbot|linkedinbot|whatsapp|telegrambot|redditbot|pinterest|applebot|skypeuripreview|embedly|quora link preview|nuzzel|flipboard|tumblr|mastodon|bluesky|cardyb|iframely|google-inspectiontool|googlebot|bingbot|duckduckbot|yandexbot|baiduspider)
+		not path *.js *.mjs *.css *.map *.png *.jpg *.jpeg *.gif *.svg *.webp *.avif *.ico *.json *.xml *.txt *.woff *.woff2 *.ttf
+	}
+	handle @crawlerHtml {
+		rewrite * /api/prerender{uri}
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
 	# SPA: serve the static build, falling back to index.html so client-side routes
-	# (/login, /cards, ...) resolve.
+	# (/login, /cards, ...) resolve. `Vary: User-Agent` so a shared CDN keeps the
+	# browser shell and the crawler prerender (above) separate.
 	handle {
 		root * /srv
+		header Vary User-Agent
 		try_files {path} /index.html
 		file_server
 	}

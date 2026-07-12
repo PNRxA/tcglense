@@ -44,6 +44,7 @@ use crate::{
             scryfall_sets, tcgcsv_proxy,
         },
         openapi::openapi_json,
+        prerender::{prerender_fallback, prerender_root, prerender_route},
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
@@ -317,6 +318,24 @@ pub fn build_router(state: AppState) -> Router {
         app = app.merge(mirror);
     }
 
+    // Server-side "dynamic rendering for bots" (see `handlers::prerender`): a crawler
+    // User-Agent on an HTML navigation gets a per-route head/body reproducing
+    // `usePageMeta`, so social/link unfurls stop showing the homepage for every URL.
+    // Registered unconditionally — independent of `web_root` — so the split deploy
+    // (Caddy) can reverse-proxy crawler doc requests here even when the API serves no
+    // SPA. `/api/prerender/{*path}` has a static first segment, so it wins over the
+    // lowest-priority `/api/{*rest}` catch-all below (as the other explicit `/api`
+    // routes do). It sets its own headers, so it rides outside the cache layers. The two
+    // bare-prefix routes render the homepage: the split-deploy Caddy rewrites `/` to
+    // `/api/prerender/` (empty tail), which `{*path}` won't match (matchit needs >=1
+    // segment), so without them the most-shared URL would 404 on the api-only image.
+    app = app.merge(
+        Router::new()
+            .route("/api/prerender", get(prerender_root))
+            .route("/api/prerender/", get(prerender_root))
+            .route("/api/prerender/{*path}", get(prerender_route)),
+    );
+
     // Optional static-SPA fallback (see `Config::web_root`). When `WEB_ROOT` is set,
     // any request the `/api/...` routes above didn't match is served from that
     // directory: a real file (e.g. `/assets/index-abc.js`) is returned directly, and
@@ -337,9 +356,13 @@ pub fn build_router(state: AppState) -> Router {
         // (unknown game/set/card) — are more specific and still take precedence.
         let serve_spa =
             ServeDir::new(&web_root).fallback(ServeFile::new(web_root.join("index.html")));
+        // Inner: cache headers on the shell/assets. Outer: the crawler branch, which
+        // runs *first* and, for a crawler UA on an HTML nav, returns the prerendered
+        // document instead of `index.html` (browsers pass straight through, unchanged).
         let serve_spa = Router::new()
             .fallback_service(serve_spa)
-            .layer(from_fn(spa_headers_middleware));
+            .layer(from_fn(spa_headers_middleware))
+            .layer(from_fn_with_state(state.clone(), prerender_fallback));
 
         app = app
             .route(
@@ -377,6 +400,10 @@ async fn spa_headers_middleware(
                 header::CACHE_CONTROL,
                 HeaderValue::from_static("public, no-cache"),
             );
+            // The SPA shell and the crawler prerender differ by User-Agent, so a shared
+            // cache must key HTML on it (the prerender responses carry the same header).
+            // Assets are UA-independent + immutable, so they get no `Vary`.
+            headers.insert(header::VARY, HeaderValue::from_static("User-Agent"));
         }
     }
     response

@@ -298,6 +298,11 @@ alongside `/api/collection/*` and `/api/wishlist/*`.
   files from this dir with an `index.html` fallback for client-side routes — the
   single-process "combined" Docker image sets `WEB_ROOT=/srv/web`; unset = the API
   serves only `/api`, so existing deployments are unaffected — see `router.rs`),
+  `PRERENDER_ALL_USER_AGENTS` (`false`; when `true`, drops the crawler-UA gate on the
+  bot prerenderer and serves per-route meta to **every** client on an HTML navigation
+  — note that with `WEB_ROOT` set, browsers then get the minimal prerender document
+  instead of the interactive SPA; only affects the combined image, a split deploy gates
+  in Caddy — see `handlers::prerender`),
   `CDN_MODE` (`false`; when `true` the image/icon proxy skips the
   on-disk cache and only fetch-and-serves — for origins behind a caching CDN),
   `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),

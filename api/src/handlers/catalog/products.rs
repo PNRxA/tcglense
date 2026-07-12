@@ -1473,6 +1473,19 @@ fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductR
     }
 }
 
+/// Resolve a product to its wire DTO (the pieces [`get_product`] assembles: load +
+/// set-name dressing), for reuse by the server-side prerenderer
+/// ([`crate::handlers::prerender`]). 404 if the game/product is unknown.
+pub(crate) async fn product_response(
+    state: &AppState,
+    game: &str,
+    id: &str,
+) -> Result<ProductResponse, AppError> {
+    let product = load_product(state, game, id).await?;
+    let names = set_name_map(state, game).await?;
+    Ok(into_response(product, &names))
+}
+
 /// The TCGplayer CDN URL for a product image at the requested size.
 fn product_cdn_url(product_id: &str, size: &str) -> String {
     let variant = match size {
