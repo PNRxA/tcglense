@@ -20,10 +20,15 @@
 //! `ETag` so an unchanged file costs one conditional request.
 //!
 //! MTGJSON's contents are hand-curated upstream and lag: some products ship with
-//! `contents: null` (e.g. Avatar's "Commander's Bundle"), so the cards physically inside
-//! them would show no sealed product at all. [`fallback`] holds a small committed snapshot
-//! of curated memberships that the ingest merges in **only for products MTGJSON left
-//! empty**, so upstream stays authoritative and the fallback self-retires as gaps fill.
+//! `contents: null` (e.g. Avatar's "Commander's Bundle" originally), so the cards
+//! physically inside them would show no sealed product at all. [`fallback`] holds a small
+//! committed snapshot of curated memberships that the ingest merges in **only for
+//! products MTGJSON left empty**, so upstream stays authoritative and the fallback
+//! self-retires as gaps fill. An entry flagged `supplement` merges its rows even into a
+//! product upstream *does* describe — for an axis upstream is missing (the Commander's
+//! Bundle again: its contents became a `deck` reference that resolves to no deck data,
+//! plus textual-only land packs; issue #352) — add-only and per-card self-retiring via
+//! the row dedup, like the SLD bonus-pool pass.
 //!
 //! Secret Lair Drop (`SLD`) products are the same gap with a twist: a drop's real contents
 //! is the *cards in that drop*, which the app already tracks ([`crate::scryfall::drops`]),

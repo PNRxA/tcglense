@@ -537,10 +537,18 @@ mod tests {
             products: vec![FallbackProduct {
                 tcgplayer_product_id: tcg.to_string(),
                 name: format!("Product {tcg}"),
+                supplement: false,
                 contents,
                 components: Vec::new(),
             }],
         }
+    }
+
+    /// Like [`one_product`], but flagged `supplement` (merges alongside upstream's rows).
+    fn one_supplement_product(tcg: &str, contents: Vec<FallbackCard>) -> FallbackData {
+        let mut data = one_product(tcg, contents);
+        data.products[0].supplement = true;
+        data
     }
 
     /// Build a one-product fallback dataset with authored composition components.
@@ -549,6 +557,7 @@ mod tests {
             products: vec![FallbackProduct {
                 tcgplayer_product_id: tcg.to_string(),
                 name: format!("Product {tcg}"),
+                supplement: false,
                 contents: Vec::new(),
                 components,
             }],
@@ -626,6 +635,35 @@ mod tests {
         let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
         assert_eq!(added, 0);
         assert!(rows.is_empty());
+    }
+
+    /// A `supplement` entry merges its rows into a covered product **alongside**
+    /// upstream's (which are untouched); a row upstream also emits dedups away, so the
+    /// entry self-retires per card as upstream fills in.
+    #[tokio::test]
+    async fn merge_fallback_supplement_merges_into_covered_product() {
+        let db = migrated_memory_db().await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let swat = insert_card_at(&db, "sf-swat", "tle", "311").await;
+        let bundle = insert_product(&db, "648686").await;
+        let data = one_supplement_product(
+            "648686",
+            vec![
+                fb_card("tle", "316", "contains", false),
+                fb_card("tle", "311", "variable", false),
+            ],
+        );
+
+        // Upstream described the bundle: a booster row (its sealed recursion) plus one
+        // row identical to a supplement row (as if upstream had started authoring it).
+        let mut rows =
+            HashSet::from([(bundle, sol, "booster", true), (bundle, sol, "contains", false)]);
+        let covered = HashSet::from([bundle]);
+        let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
+        assert_eq!(added, 1, "the upstream-duplicated row dedups away");
+        assert!(rows.contains(&(bundle, sol, "booster", true)), "upstream rows untouched");
+        assert!(rows.contains(&(bundle, sol, "contains", false)));
+        assert!(rows.contains(&(bundle, swat, "variable", false)));
     }
 
     /// An unresolved product or card (not in our catalog) is skipped, not fatal.
@@ -818,6 +856,75 @@ mod tests {
         let pool = cards.last().expect("a pool line");
         assert_eq!(pool.quantity, 2);
         assert_eq!(pool.child_card_id, None, "the 2-of-10 pool stays unlinked");
+    }
+
+    /// Regression test for issue #352: MTGJSON stopped shipping the Commander's Bundle as
+    /// `contents: null` and now describes it with a `deck` reference that resolves to no
+    /// deck ("Commander's Bundle", set tla) plus its boosters — so the product is covered,
+    /// the zero-rows gate never engages, and the guaranteed staples / 2-of-10 pool / land
+    /// cards vanished. The shipped fallback entry is flagged `supplement`, so its rows
+    /// must merge **alongside** upstream's: memberships gain the staples (`contains`,
+    /// incl. the land printings) and the pool (`variable`) while upstream's booster rows
+    /// and its composition — the "1× Commander's Bundle" deck line included — stay as-is.
+    #[tokio::test]
+    async fn shipped_avatar_bundle_supplements_upstream_rows() {
+        let db = migrated_memory_db().await;
+        let bundle = insert_product(&db, "648686").await;
+        let play = insert_product(&db, "648640").await;
+        let signet = insert_card_at(&db, "sf-signet", "tle", "315").await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let swat = insert_card_at(&db, "sf-swat", "tle", "311").await;
+        let plains = insert_card_at(&db, "sf-plains", "tla", "282").await;
+        let appa = insert_card_at(&db, "sf-appa-forest", "tla", "291").await;
+        let pull = insert_card_at(&db, "sf-pull", "tla", "1").await;
+
+        // What the new upstream emits: booster membership rows via the sealed recursion
+        // (covering the product), and a composition with the bare textual deck line plus
+        // the linked boosters.
+        let mut rows = HashSet::from([(bundle, pull, "booster", false)]);
+        let mut components = vec![
+            ComponentRow {
+                product_id: bundle,
+                position: 0,
+                kind: "deck".to_string(),
+                name: "Commander's Bundle".to_string(),
+                quantity: 1,
+                child_product_id: None,
+                child_card_id: None,
+            },
+            ComponentRow {
+                product_id: bundle,
+                position: 1,
+                kind: "sealed".to_string(),
+                name: "Avatar The Last Airbender Play Booster Pack".to_string(),
+                quantity: 9,
+                child_product_id: Some(play),
+                child_card_id: None,
+            },
+        ];
+        let covered = HashSet::from([bundle]);
+
+        merge_fallback(&db, fallback::data(), &covered, &mut rows).await.unwrap();
+        merge_fallback_components(&db, fallback::data(), &covered, &mut components)
+            .await
+            .unwrap();
+
+        // The supplement lands alongside upstream: guaranteed staples + land printings as
+        // `contains` (lands in both finishes), the pool as `variable`, and upstream's own
+        // booster row untouched.
+        assert!(rows.contains(&(bundle, signet, "contains", false)));
+        assert!(rows.contains(&(bundle, sol, "contains", false)));
+        assert!(rows.contains(&(bundle, swat, "variable", false)));
+        assert!(rows.contains(&(bundle, plains, "contains", false)));
+        assert!(rows.contains(&(bundle, plains, "contains", true)));
+        assert!(rows.contains(&(bundle, appa, "contains", true)));
+        assert!(rows.contains(&(bundle, pull, "booster", false)), "upstream row untouched");
+        // The composition is upstream's, verbatim: the deck line stays and the entry's
+        // authored components stay gated out (they only fill a null-contents regression).
+        let bundle_components: Vec<&ComponentRow> =
+            components.iter().filter(|r| r.product_id == bundle).collect();
+        assert_eq!(bundle_components.len(), 2, "upstream composition untouched");
+        assert!(bundle_components.iter().any(|r| r.kind == "deck"));
     }
 
     /// The component write path: delete-then-insert replaces (not duplicates) the game's

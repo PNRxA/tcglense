@@ -471,7 +471,16 @@ catalog) is planned but not implemented.
   like `scryfall/sld_drops.json`, keyed by `(set, number)` + membership) fills those gaps,
   merged **per-product only when MTGJSON emitted zero rows for that product** — so MTGJSON
   stays authoritative and a fallback entry self-retires the moment upstream authors the
-  product's contents (no code change). The file's content hash is folded into the version
+  product's contents (no code change). The escape hatch is an entry flagged
+  `supplement: true` (issue #352): when upstream *does* describe a product but is missing an
+  axis — the Commander's Bundle's contents became a `deck` reference that resolves to no
+  deck data (its guaranteed staples and 2-of-10 pool vanished while the product still
+  counted as "described"), and its land packs are textual-only — the entry's memberships
+  merge **alongside** upstream's rows instead of stepping aside. Strictly add-only: upstream
+  rows are untouched, a row upstream later authors dedups away (per-card self-retirement,
+  the same pattern as the SLD bonus-pool pass), and the entry's `components` keep the
+  usual only-when-upstream-empty gate — so upstream's composition (e.g. its
+  "1× Commander's Bundle" deck line) renders as-is. The file's content hash is folded into the version
   gate alongside the ETag (`ingest::compose_version`), so editing the fallback data rebuilds
   on the next sync even when `AllPrintings.json` is unchanged (which forces one full re-fetch
   to rebuild the merged table — rare, only on a fallback edit). The correct long-term fix for
