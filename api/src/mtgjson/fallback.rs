@@ -12,7 +12,12 @@
 //! It is applied **per-product only when MTGJSON emitted zero rows for that product**
 //! (see [`super::ingest`]), so MTGJSON always wins where it has data and this file
 //! silently steps aside the moment upstream starts describing a product — no code change,
-//! no migration. Cards are keyed by `(set, collector_number)` so entries are
+//! no migration. The exception is an entry flagged [`FallbackProduct::supplement`]: its
+//! `contents` are merged **even when** upstream describes the product, adding an axis
+//! upstream is missing (a deck reference that resolves to no deck data, land packs it
+//! keeps textual) alongside — never instead of — upstream's rows; identical rows dedup
+//! away, so it self-retires per card as upstream fills in (like
+//! [`super::ingest`]'s SLD bonus-pool pass). Cards are keyed by `(set, collector_number)` so entries are
 //! human-authorable and reviewable; the ingest resolves them to internal ids the same way
 //! it resolves MTGJSON rows.
 //!
@@ -47,6 +52,16 @@ pub struct FallbackProduct {
     pub tcgplayer_product_id: String,
     #[serde(default)]
     pub name: String,
+    /// Merge this entry's `contents` even when MTGJSON describes the product, instead of
+    /// only filling a zero-row gap — for a product whose upstream description is missing
+    /// an axis the curated rows carry (e.g. the Avatar Commander's Bundle: a `deck`
+    /// reference that resolves to no deck data, so its guaranteed/pool cards vanish, and
+    /// land packs upstream keeps textual; issue #352). Strictly additive: upstream's own
+    /// rows are never touched, a row upstream also emits dedups away (so the entry
+    /// self-retires per card as upstream fills in), and `components` are unaffected —
+    /// the composition keeps the usual only-when-upstream-empty gate.
+    #[serde(default)]
+    pub supplement: bool,
     #[serde(default)]
     pub contents: Vec<FallbackCard>,
     #[serde(default)]
@@ -211,7 +226,10 @@ mod tests {
 
     /// Pin the reported cards: the Avatar Commander's Bundle covers the borderless
     /// Commander staples, with the guaranteed three as `contains` and the randomised pool
-    /// (incl. Deflecting Swat) as `variable`.
+    /// (incl. Deflecting Swat) as `variable` — plus the land packs' printings (5 full-art
+    /// Appa + 5 default basics, both finishes each) as `contains`. The entry is a
+    /// `supplement`: upstream describes the product but its deck reference resolves to no
+    /// deck and its land packs stay textual, so these rows merge alongside (#352).
     #[test]
     fn covers_avatar_commander_bundle() {
         let bundle = data()
@@ -219,6 +237,10 @@ mod tests {
             .iter()
             .find(|p| p.tcgplayer_product_id == "648686")
             .expect("Commander's Bundle is present");
+        assert!(
+            bundle.supplement,
+            "the entry merges alongside upstream's dangling-deck description"
+        );
         let find = |num: &str| bundle.contents.iter().find(|c| c.number == num);
         assert_eq!(
             find("316").map(|c| c.membership.as_str()),
@@ -230,11 +252,34 @@ mod tests {
             Some("variable"),
             "Deflecting Swat (tle #311) is a may-be-in inclusion"
         );
+        // The land packs: tla 282-291 in both finishes (20 rows), and none of the
+        // Avatar's Journey cycle (292-296), which Wizards excludes from this bundle.
+        let lands: Vec<&FallbackCard> = bundle.contents.iter().filter(|c| c.set == "tla").collect();
+        assert_eq!(lands.len(), 20, "10 land printings x both finishes");
+        for num in 282..=291 {
+            let num = num.to_string();
+            for foil in [false, true] {
+                assert!(
+                    lands.iter().any(|c| c.number == num
+                        && c.foil == foil
+                        && c.membership == "contains"),
+                    "land tla #{num} (foil: {foil}) is a guaranteed inclusion"
+                );
+            }
+        }
+        assert!(
+            !bundle.contents.iter().any(|c| {
+                c.set == "tla" && (292..=296).contains(&c.number.parse::<i32>().unwrap_or(0))
+            }),
+            "the Avatar's Journey cycle is not in the packs"
+        );
     }
 
-    /// Pin the Commander's Bundle composition: MTGJSON ships it `contents: null`, so the
-    /// "what's in the box" (9 Play Boosters + 1 Collector Booster, both linked, + extras)
-    /// comes from the fallback's `components`.
+    /// Pin the Commander's Bundle composition kept as the safety net: upstream authors a
+    /// composition today (so these `components` are gated out and its "1× Commander's
+    /// Bundle" deck line + booster links render), but if it ever regresses to
+    /// `contents: null` this authored box (9 Play Boosters + 1 Collector Booster, both
+    /// linked, + extras) fills the gap again.
     #[test]
     fn covers_avatar_commander_bundle_components() {
         let bundle = data()

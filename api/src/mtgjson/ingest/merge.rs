@@ -2,10 +2,11 @@
 //! memberships/components, Secret Lair drop→cards derivation, and the contained/sibling
 //! booster-pool synthesis (issue #290). Most rules are gated on "the product has no rows of
 //! its own", so MTGJSON / the fallback stay authoritative and each source fills only genuine
-//! gaps. The one deliberate exception is [`merge_sld_bonus_cards`]: a superdrop's *shared bonus
-//! pool* is an axis MTGJSON doesn't surface on the drop products, so that pass is add-only and
-//! **ungated** — it must attach even after a product flips to "covered" (see its doc), and it
-//! self-retires **per card** through the row set's dedup rather than a coverage gate.
+//! gaps. The deliberate exceptions are the add-only passes that attach an axis MTGJSON doesn't
+//! surface, and so must apply even to a "covered" product, self-retiring **per card** through
+//! the row set's dedup rather than a coverage gate: [`merge_sld_bonus_cards`] (a superdrop's
+//! *shared bonus pool*) and a fallback entry flagged `supplement` (see [`merge_fallback`] —
+//! e.g. cards upstream models as a deck reference that resolves to no deck data; issue #352).
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,8 +23,14 @@ use crate::entities::{card, product, sealed_component, sealed_content};
 /// Merge curated [`fallback`](super::super::fallback) memberships into `rows`, returning the
 /// number of new rows added. A fallback product is applied **only when MTGJSON emitted no
 /// rows for it** (`mtgjson_products`), so upstream stays authoritative and the fallback fills
-/// genuine gaps (e.g. Avatar's `contents: null` Commander's Bundle). A fallback product or
-/// card absent from our catalog, or carrying an unknown membership, is skipped and logged.
+/// genuine gaps (e.g. Avatar's originally-`contents: null` Commander's Bundle) — except an
+/// entry flagged `supplement`, whose rows merge **even when** upstream describes the product:
+/// they carry an axis upstream is missing (that same bundle again, once its contents became a
+/// `deck` reference that resolves to no deck data plus textual-only land packs; issue #352).
+/// A supplement is strictly additive — upstream's rows are untouched and a row upstream also
+/// emits dedups away, so it self-retires per card like [`merge_sld_bonus_cards`]. A fallback
+/// product or card absent from our catalog, or carrying an unknown membership, is skipped
+/// and logged.
 pub(super) async fn merge_fallback(
     db: &DatabaseConnection,
     data: &FallbackData,
@@ -55,7 +62,9 @@ pub(super) async fn merge_fallback(
             continue;
         };
         // MTGJSON already describes this product — it wins, skip the whole fallback entry.
-        if mtgjson_products.contains(&product_id) {
+        // A `supplement` entry is the exception: its rows carry an axis upstream is
+        // missing, so they merge alongside (add-only; duplicates dedup via the row set).
+        if mtgjson_products.contains(&product_id) && !product.supplement {
             continue;
         }
         for card in &product.contents {
