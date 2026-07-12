@@ -1349,4 +1349,34 @@ mod tests {
         assert_eq!(added, 2);
         assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "contains" && !f));
     }
+
+    #[tokio::test]
+    async fn covered_avatar_product_keeps_its_bonus_pair_through_the_pass_sequence() {
+        let db = migrated_memory_db().await;
+        // The drop's own cards (2295–2299) plus the guaranteed bonus pair (7062/7063).
+        seed_sld_cards(&db, &["2295", "2296", "2297", "2298", "2299", "7062", "7063"]).await;
+        let pid = insert_sld_product(
+            &db,
+            "930011",
+            "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Non-Foil Edition",
+        )
+        .await;
+
+        // Run the two passes in orchestration order for a product MTGJSON already covered (its own
+        // deck): merge_sld_derived must skip it, but merge_sld_bonus_cards must still link the
+        // guaranteed bonus pair. This is the regression the feature guards against.
+        let covered = HashSet::from([pid]);
+        let mut rows: HashSet<Row> = HashSet::new();
+        assert_eq!(merge_sld_derived(&db, &covered, &mut rows).await.unwrap(), 0);
+        merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        // Only the bonus pair is present — the drop's own cards came from (skipped) MTGJSON.
+        let bonus: HashSet<i32> = rows
+            .iter()
+            .filter(|&&(_, _, m, _)| m == "contains")
+            .map(|&(_, card, _, _)| card)
+            .collect();
+        assert_eq!(bonus.len(), 2, "the two guaranteed bonus cards are linked");
+        assert!(rows.iter().all(|&(p, _, m, _)| p == pid && m == "contains"));
+    }
 }

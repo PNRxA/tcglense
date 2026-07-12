@@ -91,8 +91,13 @@ struct RandomBonusPool {
 /// Only pure-numeric `sld` printings are included; booster-pack pool options, unverifiable
 /// printings, and the fixed (guaranteed) attachments in [`BONUS_CARD_ATTACHMENTS`] (e.g. Avatar's
 /// Command Tower + Fellwar Stone, which come with every Avatar drop) are deliberately excluded.
-/// Kept curated like [`PRODUCT_DROP_OVERRIDES`]; a drop absent here (or from the drop snapshot)
-/// simply shows no bonus pool — never a wrong one.
+/// A number is also excluded when it's already in **every** listed drop's own gallery
+/// (`sld_drops.json`): the drop derivation records those as `contains`, and the read path collapses
+/// a card to its strongest membership, so a `variable` row for them would be shadowed and inert
+/// (only the bonus cards Scryfall groups *separately* from the drop actually surface as "may be
+/// in"). `random_bonus_pools_have_no_shadowed_numbers` guards this. Kept curated like
+/// [`PRODUCT_DROP_OVERRIDES`]; a drop absent here (or from the drop snapshot) simply shows no bonus
+/// pool — never a wrong one.
 const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
     RandomBonusPool { drop_slugs: &["a-box-of-rocks"], pool: &["507", "511", "512", "523", "535"] },
     RandomBonusPool { drop_slugs: &["absolute-annihilation"], pool: &["645", "642", "629", "686"] },
@@ -100,8 +105,6 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         drop_slugs: &["alien-auroras", "featuring-deathburger", "magiccon-the-gathering"],
         pool: &["818"],
     },
-    RandomBonusPool { drop_slugs: &["artist-series-johannes-voss"], pool: &["588"] },
-    RandomBonusPool { drop_slugs: &["artist-series-mark-poole"], pool: &["582"] },
     RandomBonusPool {
         drop_slugs: &["bitterblossom-dreams"],
         pool: &["503", "520", "521", "523", "524", "530"],
@@ -118,27 +121,19 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
     RandomBonusPool { drop_slugs: &["buggin-out"], pool: &["641", "621", "622"] },
     RandomBonusPool { drop_slugs: &["calling-all-hydra-heads"], pool: &["653", "624", "622"] },
     RandomBonusPool { drop_slugs: &["city-styles"], pool: &["615", "645", "640", "681"] },
-    RandomBonusPool { drop_slugs: &["dwarf-fortress-create-new-world"], pool: &["7162", "7161"] },
     RandomBonusPool { drop_slugs: &["eldraine-wonderland"], pool: &["503", "504", "505"] },
     RandomBonusPool { drop_slugs: &["faerie-faerie-faerie-rad"], pool: &["512", "529", "534"] },
     RandomBonusPool {
-        drop_slugs: &["featuring-imiri-sakabashira"],
-        pool: &["7023", "7024", "7025", "7026"],
-    },
-    // Each FINAL FANTASY drop's fixed bonus (7001/7002/7003) plus the five shared rare Evoke
-    // Elemental reprints (7004–7008, the "FINAL FANTASY: Bonus Cards" gallery drop) found in *any*
-    // FF drop — a superdrop-wide pool, so every drop lists all five.
-    RandomBonusPool {
         drop_slugs: &["final-fantasy-game-over"],
-        pool: &["7001", "7004", "7005", "7006", "7007", "7008"],
+        pool: &["7004", "7005", "7006", "7007", "7008"],
     },
     RandomBonusPool {
         drop_slugs: &["final-fantasy-grimoire"],
-        pool: &["7003", "7004", "7005", "7006", "7007", "7008"],
+        pool: &["7004", "7005", "7006", "7007", "7008"],
     },
     RandomBonusPool {
         drop_slugs: &["final-fantasy-weapons"],
-        pool: &["7002", "7004", "7005", "7006", "7007", "7008"],
+        pool: &["7004", "7005", "7006", "7007", "7008"],
     },
     RandomBonusPool { drop_slugs: &["flower-power"], pool: &["819"] },
     RandomBonusPool {
@@ -150,17 +145,11 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         pool: &["520", "522", "523", "525", "526"],
     },
     RandomBonusPool { drop_slugs: &["kamigawa-ink"], pool: &["553"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-black-panther"], pool: &["867", "870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-captain-america"], pool: &["863", "870"] },
-    RandomBonusPool {
-        drop_slugs: &["marvel-s-deadpool-i-fixed-it-you-re-welcome"],
-        pool: &["7126", "7127"],
-    },
-    RandomBonusPool { drop_slugs: &["marvel-s-iron-man"], pool: &["864", "870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-storm"], pool: &["866", "870"] },
-    RandomBonusPool { drop_slugs: &["marvel-s-wolverine"], pool: &["865", "870"] },
-    // Marvel's Spider-Man superdrop: nine shared bonus cards (the "Marvel's Spider-Man: Bonus
-    // Cards" gallery drop, 7013–7021) come with every drop of the superdrop.
+    RandomBonusPool { drop_slugs: &["marvel-s-black-panther"], pool: &["870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-captain-america"], pool: &["870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-iron-man"], pool: &["870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-storm"], pool: &["870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-wolverine"], pool: &["870"] },
     RandomBonusPool {
         drop_slugs: &[
             "marvel-s-spider-man-daily-bugle-breaking-news",
@@ -172,9 +161,7 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         ],
         pool: &["7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021"],
     },
-    RandomBonusPool { drop_slugs: &["math-is-for-blockers"], pool: &["584"] },
     RandomBonusPool { drop_slugs: &["mother-s-day-2021"], pool: &["552", "556", "571"] },
-    RandomBonusPool { drop_slugs: &["mschf"], pool: &["670", "669"] },
     RandomBonusPool { drop_slugs: &["ornithological-studies"], pool: &["502", "511", "522"] },
     RandomBonusPool { drop_slugs: &["our-show-is-on-friday-can-you-make-it"], pool: &["516"] },
     RandomBonusPool { drop_slugs: &["pride-across-the-multiverse"], pool: &["530", "534"] },
@@ -193,14 +180,7 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         pool: &["7012", "7009", "7010", "7011"],
     },
     RandomBonusPool { drop_slugs: &["thalia-beyond-the-helvault"], pool: &["529", "507"] },
-    RandomBonusPool {
-        drop_slugs: &["the-office-dwight-s-destiny"],
-        pool: &["7041", "7042", "7043", "7044"],
-    },
     RandomBonusPool { drop_slugs: &["the-path-not-traveled"], pool: &["520", "521", "525", "536"] },
-    // Teenage Mutant Ninja Turtles "Totally TubuLair" superdrop: the shared ultra-rare Slime
-    // Against Humanity chase (the "Slimes Against Humanity" gallery drop, 7077/7078/7083) can turn
-    // up in any of the superdrop's drops. Each drop's own themed reprint is already its `contains`.
     RandomBonusPool {
         drop_slugs: &[
             "teenage-mutant-ninja-turtles-vhs-villains",
@@ -212,7 +192,6 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
         ],
         pool: &["7077", "7078", "7083"],
     },
-    RandomBonusPool { drop_slugs: &["twisted-toons"], pool: &["881", "882", "883", "884", "885"] },
     RandomBonusPool { drop_slugs: &["year-of-the-rat"], pool: &["504", "514", "516", "523"] },
 ];
 
@@ -647,6 +626,28 @@ mod tests {
                 // Pool numbers are `sld` collector numbers; guard a stray non-numeric typo (all
                 // curated entries are plain digits — the derivation would just skip others).
                 assert!(cn.bytes().all(|b| b.is_ascii_digit()), "pool number {cn:?} is numeric");
+            }
+        }
+    }
+
+    #[test]
+    fn random_bonus_pools_have_no_shadowed_numbers() {
+        // A pool number that's in EVERY listed drop's own gallery is recorded `contains` by the
+        // drop derivation and would shadow the `variable` row (strongest membership wins), making
+        // the entry inert. Curated entries must carry only genuinely-additive bonus cards.
+        let table = table().expect("sld drop table present");
+        for entry in RANDOM_BONUS_POOLS {
+            for cn in entry.pool {
+                let in_all = entry.drop_slugs.iter().all(|slug| {
+                    table
+                        .drop_by_slug(slug)
+                        .is_some_and(|d| d.collector_numbers.iter().any(|c| c.as_str() == *cn))
+                });
+                assert!(
+                    !in_all,
+                    "pool number {cn:?} is in every gallery of {:?}; it would be shadowed",
+                    entry.drop_slugs
+                );
             }
         }
     }

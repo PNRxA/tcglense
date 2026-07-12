@@ -1,8 +1,11 @@
 //! Multi-source merge logic layered on top of the MTGJSON pass: curated fallback
 //! memberships/components, Secret Lair drop→cards derivation, and the contained/sibling
-//! booster-pool synthesis (issue #290). Every rule is gated on "the product has no rows of
+//! booster-pool synthesis (issue #290). Most rules are gated on "the product has no rows of
 //! its own", so MTGJSON / the fallback stay authoritative and each source fills only genuine
-//! gaps.
+//! gaps. The one deliberate exception is [`merge_sld_bonus_cards`]: a drop's *shared bonus
+//! cards* are an axis MTGJSON never lists, so that pass is add-only and **ungated** — it must
+//! attach even after a product flips to "covered" (see its doc), relying on the row set's
+//! dedup instead of a coverage gate.
 
 use std::collections::{HashMap, HashSet};
 
