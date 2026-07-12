@@ -45,6 +45,7 @@ use crate::{
         },
         openapi::openapi_json,
         prerender::{prerender_fallback, prerender_root, prerender_route},
+        robots::robots_txt,
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
@@ -283,6 +284,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/sitemaps/{name}", get(sitemap_child))
         .route("/api/sitemap.xml", get(sitemap_index))
         .route("/api/sitemaps/{name}", get(sitemap_child))
+        // robots.txt served here too (issue #294 rationale) so its Sitemap: line is an
+        // absolute PUBLIC_SITE_URL at runtime; the web build no longer emits it (dev/split
+        // Caddy proxy /robots.txt to the API, the combined image routes it natively).
+        .route("/robots.txt", get(robots_txt))
         // Public API documentation (issue #284): the machine-readable OpenAPI 3.1
         // document plus the interactive Scalar "try it out" UI. Both are the same for
         // every visitor and change only on redeploy, so they ride the shared CDN cache

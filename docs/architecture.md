@@ -81,6 +81,7 @@ handlers/
   openapi.rs       GET /api/openapi.json — the OpenAPI 3.1 document (materialized from utoipa's ApiDoc), a public CDN-cacheable read; the interactive Scalar reference is rendered by the SPA's /docs route (web/src/views/DocsView.vue), which embeds this same document
   prerender/       server-side "dynamic rendering for bots" (issue #302): a crawler UA on an HTML nav gets a per-route <head>/<body> reproducing usePageMeta, so social/link previews stop unfurling as the homepage. mod.rs (path classifier mirroring the SPA router + PageMeta resolvers reusing load_card/load_set/product_response + UA/nav detection + the /api/prerender/{*path} route and the combined-image prerender_fallback middleware), structured_data.rs (byte-faithful port of web's structuredData.ts/money.ts/productType.ts — meta descriptions + Product/BreadcrumbList JSON-LD, no offers/price), template.rs (the embedded, escaped HTML document). One DB read, zero image fetches; bot HTML is no-store + Vary: User-Agent
   sitemap.rs       DB-backed XML sitemaps for crawlers: index + child sitemaps (pages / sets / chunked cards), <loc>s built against PUBLIC_SITE_URL
+  robots.rs        GET /robots.txt — the crawl policy with an absolute Sitemap: line built from PUBLIC_SITE_URL at runtime (was emitted VITE_SITE_URL-relative by the web build); the web build no longer emits it
   mirror.rs        dataset mirror (issue #192): re-serve the raw provider datasets — scryfall bulk-data/sets/file, mtgjson AllPrintings.json.gz, tcgcsv {*path} — by streaming each from upstream on demand with CDN-cacheable headers (no disk, like CDN_MODE). Routes wired only when MIRROR_ENABLED; path/kind inputs sanitised (host-locked, no traversal). The file cache TTL is deliberately shorter than the catalog's so a consumer never pairs a fresh updated_at with a stale file
   health.rs        health
   config.rs        GET /api/config — public runtime config for the SPA (the Turnstile site key), so the built bundle needs no rebuild to change it; no-store
@@ -115,8 +116,8 @@ deterministic offline catalog and skips all syncing.
   SQLite DB, and the full middleware stack): `caching`, `captcha`, `collection`,
   `collection_import`, `cors`, `email_verification`, `login`, `mirror`, `pagination`,
   `password_reset`, `prerender`, `products`, `rate_limit`, `refresh`, `registration`,
-  `request_body`, `search`, `sitemap`, `web_root`, `wishlist` (`harness` itself is shared
-  support, not a suite) — ~20 suites. They assert the security-relevant behaviour no single-module unit
+  `robots`, `request_body`, `search`, `sitemap`, `web_root`, `wishlist` (`harness` itself
+  is shared support, not a suite) — ~21 suites. They assert the security-relevant behaviour no single-module unit
   test can see: end-to-end refresh rotation + reuse detection, generic login failures (no
   enumeration), the hardened refresh cookie on the wire, malformed-body status codes, the
   CORS + cache-header contracts, wishlist↔collection independence, and that secret

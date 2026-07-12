@@ -31,6 +31,7 @@ mod products;
 mod rate_limit;
 mod refresh;
 mod registration;
+mod robots;
 mod request_body;
 mod scan;
 mod request_params;

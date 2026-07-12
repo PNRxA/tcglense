@@ -330,10 +330,17 @@ not the API's `/api/...` URLs — with a `<lastmod>` from the set/card/product
 scope rule covers the whole site (dev Vite and the split-deploy Caddyfiles proxy
 `/sitemap.xml` + `/sitemaps/*` to the API; the combined image routes them natively);
 `/api/sitemap.xml` and `/api/sitemaps/{name}` still answer as aliases for
-already-submitted URLs. The web build's `robots.txt` points crawlers at
-`/sitemap.xml`. Each success carries a long `Cache-Control` (a day fresh, a week
+already-submitted URLs. Each success carries a long `Cache-Control` (a day fresh, a week
 stale-while-revalidate, preserved by the cache layer); an unknown/out-of-range child
 is a `no-store` `404`.
+
+`GET /robots.txt` (`handlers::robots`) is served by the API for the same reason
+(issue #294): its `Sitemap:` line is an **absolute** `PUBLIC_SITE_URL/sitemap.xml`
+built at runtime. The web build previously emitted it at build time, but that line was
+`VITE_SITE_URL`-relative and came out as a bare `Sitemap: /sitemap.xml` (invalid) when
+that build arg was unset. It disallows the auth/app + email-token routes and carries the
+same long `Cache-Control`; dev Vite and the split Caddyfiles proxy `/robots.txt` to the
+API, the combined image routes it natively.
 
 ### Dynamic rendering for bots (social/link previews)
 

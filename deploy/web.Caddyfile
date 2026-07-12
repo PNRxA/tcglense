@@ -18,6 +18,11 @@
 	handle /sitemaps/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# robots.txt is API-served too, so its Sitemap: line is an absolute PUBLIC_SITE_URL
+	# (the web build no longer emits a static one).
+	handle /robots.txt {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 
 	# Social/link unfurlers + search bots asking for an HTML page get server-rendered
 	# per-page meta from the API (issue #302 dynamic rendering). Without this, a non-JS
