@@ -55,6 +55,135 @@ struct BonusAttachment {
     base_slugs: &'static [&'static str],
 }
 
+/// A curated **random bonus-card pool** shared by the drops of a superdrop. MTGJSON marks the
+/// affected products `other: "Bonus card unknown"`: each ships **one unpredictable bonus card**
+/// drawn from a pool MTGJSON never enumerates, so the bonus card surfaces on *no* product. This
+/// spells the pool out so it shows as a "may be included" section ([`Membership::Variable`]).
+///
+/// Unlike [`BonusAttachment`] — a *fixed* set of bonus cards guaranteed with every drop, recorded
+/// `contains` — a pool card is only *possible*, so the derivation records it `variable`. Like the
+/// other SLD derivations it is a **stopgap**: the ingest skips any product MTGJSON already gave a
+/// `variable` row (upstream enumerated the real pool), so an entry self-retires with no code edit.
+///
+/// [`Membership::Variable`]: crate::entities::sealed_content::Membership::Variable
+struct RandomBonusPool {
+    /// The drops (by slug, as in `sld_drops.json`) whose products each draw **one random** card
+    /// from `pool`. Several drops of a superdrop usually share a pool (so they group here).
+    drop_slugs: &'static [&'static str],
+    /// The pool's possible bonus cards, by collector number in the `sld` set. Recorded at the
+    /// resolving product's own foilness (a foil edition ships a foil bonus, a non-foil a non-foil),
+    /// mirroring how a drop's own cards are recorded. A number absent from the catalog is skipped.
+    pool: &'static [&'static str],
+}
+
+/// Curated random bonus-card pools for Secret Lair drops. MTGJSON marks the affected products
+/// `other: "Bonus card unknown"` — a real bonus card the buyer receives, drawn at random from a
+/// pool MTGJSON doesn't enumerate on those products. This table names that pool so it surfaces as
+/// "may be included".
+///
+/// Provenance: extracted from the **authoritative** `mtgjson/mtg-sealed-content`
+/// `data/contents/SLD.yaml` `variable` sections (the pools MTGJSON *does* enumerate for sibling
+/// products of the same drop), keyed to `sld_drops.json` drop slugs; many are cross-corroborated
+/// by Scryfall's own `sld` "Bonus Cards" gallery groupings already in the snapshot (e.g. Brain
+/// Dead `821`–`824`, FINAL FANTASY / SpongeBob / The Office `70xx`). Only pure-numeric `sld`
+/// printings from that source are included; booster-pack pool options, unverifiable printings, and
+/// the fixed (guaranteed) attachments in [`BONUS_CARD_ATTACHMENTS`] are deliberately excluded. Kept
+/// curated like [`PRODUCT_DROP_OVERRIDES`]; a drop absent here (or from the drop snapshot) simply
+/// shows no bonus pool — never a wrong one.
+const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
+    RandomBonusPool { drop_slugs: &["a-box-of-rocks"], pool: &["507", "511", "512", "523", "535"] },
+    RandomBonusPool { drop_slugs: &["absolute-annihilation"], pool: &["645", "642", "629", "686"] },
+    RandomBonusPool {
+        drop_slugs: &["alien-auroras", "featuring-deathburger", "magiccon-the-gathering"],
+        pool: &["818"],
+    },
+    RandomBonusPool { drop_slugs: &["artist-series-johannes-voss"], pool: &["588"] },
+    RandomBonusPool { drop_slugs: &["artist-series-mark-poole"], pool: &["582"] },
+    RandomBonusPool {
+        drop_slugs: &["bitterblossom-dreams"],
+        pool: &["503", "520", "521", "523", "524", "530"],
+    },
+    RandomBonusPool { drop_slugs: &["black-is-magic"], pool: &["519", "526", "531", "535"] },
+    RandomBonusPool {
+        drop_slugs: &["brain-dead-creatures", "brain-dead-lands", "brain-dead-staples"],
+        pool: &["821", "822", "823", "824"],
+    },
+    RandomBonusPool {
+        drop_slugs: &["brain-dead-new-earth-mentality"],
+        pool: &["7107", "7105", "7106", "7108"],
+    },
+    RandomBonusPool { drop_slugs: &["buggin-out"], pool: &["641", "621", "622"] },
+    RandomBonusPool { drop_slugs: &["calling-all-hydra-heads"], pool: &["653", "624", "622"] },
+    RandomBonusPool { drop_slugs: &["city-styles"], pool: &["615", "645", "640", "681"] },
+    RandomBonusPool { drop_slugs: &["dwarf-fortress-create-new-world"], pool: &["7162", "7161"] },
+    RandomBonusPool { drop_slugs: &["eldraine-wonderland"], pool: &["503", "504", "505"] },
+    RandomBonusPool { drop_slugs: &["faerie-faerie-faerie-rad"], pool: &["512", "529", "534"] },
+    RandomBonusPool {
+        drop_slugs: &["featuring-imiri-sakabashira"],
+        pool: &["7023", "7024", "7025", "7026"],
+    },
+    RandomBonusPool { drop_slugs: &["final-fantasy-game-over"], pool: &["7001"] },
+    RandomBonusPool { drop_slugs: &["final-fantasy-grimoire"], pool: &["7003"] },
+    RandomBonusPool { drop_slugs: &["final-fantasy-weapons"], pool: &["7002"] },
+    RandomBonusPool { drop_slugs: &["flower-power"], pool: &["819"] },
+    RandomBonusPool {
+        drop_slugs: &["just-some-totally-normal-guys"],
+        pool: &["618", "650", "652"],
+    },
+    RandomBonusPool {
+        drop_slugs: &["kaleidoscope-killers"],
+        pool: &["520", "522", "523", "525", "526"],
+    },
+    RandomBonusPool { drop_slugs: &["kamigawa-ink"], pool: &["553"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-black-panther"], pool: &["867", "870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-captain-america"], pool: &["863", "870"] },
+    RandomBonusPool {
+        drop_slugs: &["marvel-s-deadpool-i-fixed-it-you-re-welcome"],
+        pool: &["7126", "7127"],
+    },
+    RandomBonusPool { drop_slugs: &["marvel-s-iron-man"], pool: &["864", "870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-storm"], pool: &["866", "870"] },
+    RandomBonusPool { drop_slugs: &["marvel-s-wolverine"], pool: &["865", "870"] },
+    RandomBonusPool { drop_slugs: &["math-is-for-blockers"], pool: &["584"] },
+    RandomBonusPool { drop_slugs: &["mother-s-day-2021"], pool: &["552", "556", "571"] },
+    RandomBonusPool { drop_slugs: &["mschf"], pool: &["670", "669"] },
+    RandomBonusPool { drop_slugs: &["ornithological-studies"], pool: &["502", "511", "522"] },
+    RandomBonusPool { drop_slugs: &["our-show-is-on-friday-can-you-make-it"], pool: &["516"] },
+    RandomBonusPool { drop_slugs: &["pride-across-the-multiverse"], pool: &["530", "534"] },
+    RandomBonusPool { drop_slugs: &["restless-in-peace"], pool: &["506", "524", "525", "528"] },
+    RandomBonusPool { drop_slugs: &["showcase-kaldheim-part-1"], pool: &["555", "573"] },
+    RandomBonusPool { drop_slugs: &["showcase-kaldheim-part-2"], pool: &["557", "566"] },
+    RandomBonusPool { drop_slugs: &["showcase-zendikar-revisited"], pool: &["518", "532", "533"] },
+    RandomBonusPool { drop_slugs: &["special-guest-fiona-staples"], pool: &["513", "514"] },
+    RandomBonusPool { drop_slugs: &["special-guest-matt-jukes"], pool: &["662", "665", "667"] },
+    RandomBonusPool {
+        drop_slugs: &[
+            "spongebob-squarepants-internet-sensation",
+            "spongebob-squarepants-lands-under-the-sea",
+            "spongebob-squarepants-legends-of-bikini-bottom",
+        ],
+        pool: &["7012", "7009", "7010", "7011"],
+    },
+    RandomBonusPool { drop_slugs: &["thalia-beyond-the-helvault"], pool: &["529", "507"] },
+    RandomBonusPool {
+        drop_slugs: &["the-office-dwight-s-destiny"],
+        pool: &["7041", "7042", "7043", "7044"],
+    },
+    RandomBonusPool { drop_slugs: &["the-path-not-traveled"], pool: &["520", "521", "525", "536"] },
+    RandomBonusPool { drop_slugs: &["twisted-toons"], pool: &["881", "882", "883", "884", "885"] },
+    RandomBonusPool { drop_slugs: &["year-of-the-rat"], pool: &["504", "514", "516", "523"] },
+];
+
+/// The random bonus-card pool for a drop (by slug): the `sld` collector number of every card the
+/// drop's unknown bonus card could be. Empty unless the drop is listed in [`RANDOM_BONUS_POOLS`].
+pub fn random_bonus_pool(slug: &str) -> Vec<&'static str> {
+    RANDOM_BONUS_POOLS
+        .iter()
+        .filter(|p| p.drop_slugs.contains(&slug))
+        .flat_map(|p| p.pool.iter().copied())
+        .collect()
+}
+
 /// Curated superdrop bonus-card attachments. Kept intentionally tiny, like
 /// [`PRODUCT_DROP_OVERRIDES`]: a superdrop that shares bonus cards across its drops is a
 /// genuine oddball name-matching can't express, so it's spelled out here.
@@ -263,6 +392,18 @@ pub fn derivation_version() -> &'static str {
             }
             hasher.update(b";");
         }
+        for pool in RANDOM_BONUS_POOLS {
+            for slug in pool.drop_slugs {
+                hasher.update(slug.as_bytes());
+                hasher.update(b",");
+            }
+            hasher.update(b"<-");
+            for cn in pool.pool {
+                hasher.update(cn.as_bytes());
+                hasher.update(b",");
+            }
+            hasher.update(b";");
+        }
         hex::encode(&hasher.finalize()[..8])
     });
     &VERSION
@@ -427,5 +568,40 @@ mod tests {
     fn derivation_version_is_stable_and_nonempty() {
         assert_eq!(derivation_version(), derivation_version());
         assert_eq!(derivation_version().len(), 16); // 8 bytes hex-encoded
+    }
+
+    #[test]
+    fn random_bonus_pools_reference_real_drops_and_are_nonempty() {
+        let table = table().expect("sld drop table present");
+        let mut slugs = std::collections::HashSet::new();
+        for entry in RANDOM_BONUS_POOLS {
+            assert!(!entry.pool.is_empty(), "a bonus pool is never empty");
+            assert!(!entry.drop_slugs.is_empty(), "a bonus pool attaches to a drop");
+            for slug in entry.drop_slugs {
+                // Every attached drop must exist in the shipped snapshot, else the pool is dead
+                // weight (no product can ever resolve to that slug).
+                assert!(
+                    table.drop_by_slug(slug).is_some(),
+                    "bonus-pool drop slug {slug:?} is present in sld_drops.json"
+                );
+                assert!(slugs.insert(*slug), "drop slug {slug:?} appears in one pool entry only");
+            }
+            for cn in entry.pool {
+                // Pool numbers are `sld` collector numbers; guard a stray non-numeric typo (all
+                // curated entries are plain digits — the derivation would just skip others).
+                assert!(cn.bytes().all(|b| b.is_ascii_digit()), "pool number {cn:?} is numeric");
+            }
+        }
+    }
+
+    #[test]
+    fn random_bonus_pool_resolves_by_slug_and_shares_across_a_superdrop() {
+        // A shared-pool superdrop: each Brain Dead drop draws from the same four-card pool.
+        let creatures = random_bonus_pool("brain-dead-creatures");
+        assert_eq!(creatures, ["821", "822", "823", "824"]);
+        assert_eq!(random_bonus_pool("brain-dead-staples"), creatures);
+        // A drop with no curated pool resolves to nothing (folds to no bonus, never a wrong one).
+        assert!(random_bonus_pool("cats-of-chaos").is_empty());
+        assert!(random_bonus_pool("no-such-drop").is_empty());
     }
 }

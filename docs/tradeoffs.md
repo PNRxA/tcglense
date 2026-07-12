@@ -507,6 +507,25 @@ catalog) is planned but not implemented.
   isn't derivable from the drop snapshot and MTGJSON leaves it `null`, so it's hand-authored in
   `fallback_sealed.json` as linked `sealed` components (the drops the bundle contains) — the
   usual fallback stopgap, self-retiring when `mtgjson/mtg-sealed-content` authors it upstream.
+  (5) **Random "unknown" bonus cards (`RANDOM_BONUS_POOLS` in `mtgjson::sld`).** Many drops ship a
+  bonus card the buyer receives *at random* from a pool; the community `mtgjson/mtg-sealed-content`
+  repo marks these products `other: "Bonus card unknown"` (a bonus is known to exist, its pool
+  isn't enumerated *on that product*), so the pooled cards surface on no product. A curated table
+  maps each such drop (by `sld_drops.json` slug) to its pool of possible bonus cards (by `sld`
+  collector number), and a dedicated ingest pass (`merge_sld_bonus_pool`) records them as
+  **`variable`** ("may be included") memberships — distinct from the *fixed* `BONUS_CARD_ATTACHMENTS`
+  (guaranteed, `contains`). It is **add-only** (never rewrites a drop's `contains` cards, so a pool
+  entry can't drop a real drop card — the read path already collapses a card to its strongest
+  membership) and runs even for products whose drop cards MTGJSON already describes (the bonus pool
+  is a separate axis), but **self-retires per product** for any product MTGJSON gave a `variable`
+  row of its own (upstream's authored pool wins). The pool data was extracted from that repo's
+  authoritative `variable` sections (the pools it *does* enumerate for sibling products of the same
+  drop), cross-corroborated by Scryfall's own `sld` "Bonus Cards" gallery groupings already in the
+  snapshot (e.g. Brain Dead `821`–`824`, FINAL FANTASY / SpongeBob / The Office `70xx`); pools that
+  couldn't be corroborated to specific `sld` printings (e.g. the Astrology Lands basics, the full
+  Avatar bonus set) were **left unauthored rather than guessed**, so a drop absent from the table
+  simply shows no bonus pool. The table is hashed into the derivation version alongside the drop
+  snapshot, so editing it re-runs the pass on the next sync.
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that

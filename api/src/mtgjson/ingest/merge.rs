@@ -235,6 +235,66 @@ pub(super) async fn merge_sld_derived(
     Ok(added)
 }
 
+/// Attach each Secret Lair drop's curated **random bonus-card pool** as `variable` ("may be
+/// included") memberships. MTGJSON marks the affected products `other: "Bonus card unknown"` and
+/// never names the pooled cards, so — unlike [`merge_sld_derived`], which fills a product's *own*
+/// drop cards — this runs even for products whose drop cards MTGJSON already describes: the bonus
+/// pool is a distinct axis, absent from upstream regardless. It is add-only (never rewrites a
+/// product's `contains` cards) and skipped per-product for any product MTGJSON gave a `variable`
+/// row of its own (`mtgjson_variable_products`), so an authored upstream pool wins and the curated
+/// entry self-retires. Returns rows added.
+pub(super) async fn merge_sld_bonus_pool(
+    db: &DatabaseConnection,
+    mtgjson_variable_products: &HashSet<i32>,
+    rows: &mut HashSet<Row>,
+) -> Result<usize, MtgjsonError> {
+    let Some(table) = sld::table() else {
+        return Ok(0);
+    };
+    let products = load_sld_products(db).await?;
+
+    // Resolve each SLD product to its drop and that drop's bonus pool, at the product's foilness.
+    // Products MTGJSON already enumerated a `variable` pool for are left to upstream.
+    let mut resolved: Vec<(i32, bool, Vec<&'static str>)> = Vec::new();
+    for (product_id, external_id, name) in &products {
+        if mtgjson_variable_products.contains(product_id) {
+            continue;
+        }
+        if let Some(pd) = sld::resolve_product_drop(table, external_id, name) {
+            let pool = sld::random_bonus_pool(&pd.drop.slug);
+            if !pool.is_empty() {
+                resolved.push((*product_id, pd.foil, pool));
+            }
+        }
+    }
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+
+    let mut numbers: Vec<&str> =
+        resolved.iter().flat_map(|(_, _, pool)| pool.iter().copied()).collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    let cards = resolve_sld_cards(db, &numbers).await?;
+
+    let membership = sealed_content::Membership::Variable.as_str();
+    let mut added = 0;
+    for (product_id, foil, pool) in &resolved {
+        for cn in pool {
+            let Some(&card_id) = cards.get(*cn) else {
+                continue;
+            };
+            if rows.insert((*product_id, card_id, membership, *foil)) {
+                added += 1;
+            }
+        }
+    }
+    if added > 0 {
+        tracing::info!(rows = added, "mtgjson: derived Secret Lair random bonus-card pools");
+    }
+    Ok(added)
+}
+
 /// Resolve `sld`-set cards by collector number -> internal `cards.id`, for just the numbers
 /// requested (chunked under the bind limit). The set is always `sld`, so the returned map is
 /// keyed by collector number alone.

@@ -208,12 +208,18 @@ async fn refresh_inner(
     // deduplicated row set, tracking which products MTGJSON actually described.
     let mut rows: HashSet<Row> = HashSet::new();
     let mut mtgjson_products: HashSet<i32> = HashSet::new();
+    // Products MTGJSON gave a `variable` ("may be in") row of its own — the curated Secret Lair
+    // bonus-pool derivation steps aside for these, so an upstream-authored pool always wins.
+    let mut mtgjson_variable_products: HashSet<i32> = HashSet::new();
     for m in &memberships {
         if let (Some(&product_id), Some(&card_id)) =
             (products.get(&m.tcgplayer_product_id), cards.get(&m.scryfall_id))
         {
             rows.insert((product_id, card_id, m.membership, m.foil));
             mtgjson_products.insert(product_id);
+            if m.membership == sealed_content::Membership::Variable.as_str() {
+                mtgjson_variable_products.insert(product_id);
+            }
         }
     }
     let from_mtgjson = rows.len();
@@ -226,6 +232,13 @@ async fn refresh_inner(
     // the same "only when nothing described it" gate — so upstream stays authoritative.
     let covered: HashSet<i32> = rows.iter().map(|&(pid, ..)| pid).collect();
     let from_sld = merge_sld_derived(db, &covered, &mut rows).await?;
+
+    // Attach each Secret Lair drop's curated random bonus-card pool as `variable` ("may be in")
+    // memberships — the "Bonus card unknown" cards MTGJSON never names. Unlike the drop-cards
+    // derivation this is additive (it fills a distinct axis, not a product's own contents), so it
+    // is *not* gated on `covered`; it only steps aside for a product MTGJSON gave its own
+    // `variable` row, so an upstream-authored pool wins and the curated pool self-retires.
+    let from_sld_bonus = merge_sld_bonus_pool(db, &mtgjson_variable_products, &mut rows).await?;
 
     // Resolve the composition rows (positions assigned per resolved product id, so a
     // duplicate-tcgId product's sequences union in order rather than colliding on the unique
@@ -326,6 +339,7 @@ async fn refresh_inner(
     let detail = format!(
         "{matched} memberships across {product_count} products \
          ({from_mtgjson} from mtgjson, {from_fallback} from fallback, {from_sld} from sld drops, \
+         {from_sld_bonus} from sld bonus pools, \
          {from_contained} from contained boosters, {from_siblings} from sibling boosters); \
          {component_count} components ({components_from_mtgjson} from mtgjson, \
          {components_from_fallback} from fallback)"
@@ -351,6 +365,7 @@ async fn refresh_inner(
         products = product_count,
         fallback = from_fallback,
         sld_derived = from_sld,
+        sld_bonus_pools = from_sld_bonus,
         contained_boosters = from_contained,
         sibling_boosters = from_siblings,
         fallback_components = components_from_fallback,
@@ -1225,6 +1240,90 @@ mod tests {
 
         let mut rows: HashSet<Row> = HashSet::new();
         let added = merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        assert_eq!(added, 0);
+    }
+
+    // ---- Secret Lair random bonus-card pools (`merge_sld_bonus_pool`) ----
+
+    /// Seed a set of `sld` cards by collector number so the bonus-pool derivation can attach them.
+    async fn seed_sld_cards(db: &DatabaseConnection, numbers: &[&str]) {
+        for cn in numbers {
+            insert_card_at(db, &format!("sf-{cn}"), "sld", cn).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn attaches_random_bonus_pool_as_variable() {
+        let db = migrated_memory_db().await;
+        // "Brain Dead: Creatures" draws its bonus from the shared 821–824 pool; its own cards
+        // (1657–1661) are unrelated and not seeded here — the pool is a distinct axis.
+        seed_sld_cards(&db, &["821", "822", "823", "824"]).await;
+        let pid = insert_sld_product(
+            &db,
+            "930001",
+            "Secret Lair Drop: Brain Dead: Creatures - Non-Foil Edition",
+        )
+        .await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_bonus_pool(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        // Exactly the four pool cards, as non-foil `variable` ("may be in") memberships.
+        assert_eq!(added, 4);
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "variable" && !f));
+    }
+
+    #[tokio::test]
+    async fn bonus_pool_foil_edition_marks_pool_foil() {
+        let db = migrated_memory_db().await;
+        seed_sld_cards(&db, &["821", "822", "823", "824"]).await;
+        insert_sld_product(
+            &db,
+            "930002",
+            "Secret Lair Drop: Brain Dead: Staples - Traditional Foil Edition",
+        )
+        .await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        merge_sld_bonus_pool(&db, &HashSet::new(), &mut rows).await.unwrap();
+
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|&(_, _, m, f)| m == "variable" && f));
+    }
+
+    #[tokio::test]
+    async fn bonus_pool_steps_aside_when_mtgjson_enumerated_it() {
+        let db = migrated_memory_db().await;
+        seed_sld_cards(&db, &["821", "822", "823", "824"]).await;
+        let pid = insert_sld_product(
+            &db,
+            "930001",
+            "Secret Lair Drop: Brain Dead: Creatures - Non-Foil Edition",
+        )
+        .await;
+
+        // MTGJSON already authored this product's own `variable` pool -> the curated pool self-
+        // retires for it, so upstream stays authoritative and rows aren't doubled.
+        let mtgjson_variable = HashSet::from([pid]);
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_bonus_pool(&db, &mtgjson_variable, &mut rows).await.unwrap();
+
+        assert_eq!(added, 0);
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bonus_pool_ignores_drops_without_a_curated_pool() {
+        let db = migrated_memory_db().await;
+        seed_cats_of_chaos_cards(&db).await;
+        // Cats of Chaos has no curated bonus pool -> nothing attaches (never a wrong card).
+        insert_sld_product(&db, "930003", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition")
+            .await;
+
+        let mut rows: HashSet<Row> = HashSet::new();
+        let added = merge_sld_bonus_pool(&db, &HashSet::new(), &mut rows).await.unwrap();
 
         assert_eq!(added, 0);
     }
