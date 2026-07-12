@@ -17,6 +17,7 @@
     "format": "oxfmt src/"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@lucide/vue": "^1.22.0",
     "@scalar/api-reference": "^1.48.7",
     "@tailwindcss/vite": "^4.3.1",
