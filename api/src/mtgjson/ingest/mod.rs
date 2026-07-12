@@ -233,12 +233,12 @@ async fn refresh_inner(
     let covered: HashSet<i32> = rows.iter().map(|&(pid, ..)| pid).collect();
     let from_sld = merge_sld_derived(db, &covered, &mut rows).await?;
 
-    // Attach each Secret Lair drop's shared bonus cards to every product of the drop: the
-    // guaranteed ones (Avatar's Command Tower + Fellwar Stone) as `contains`, the random "Bonus
-    // card unknown" pool as `variable`. Unlike the drop-cards derivation this is additive (a
-    // distinct axis, not a product's own contents), so it is *not* gated on `covered` — the bonus
-    // cards stay linked even after MTGJSON authors the drop's own deck. The random pool steps aside
-    // for a product MTGJSON gave its own `variable` row, so an upstream-authored pool wins.
+    // Attach each Secret Lair drop's random bonus-card pool to every product of the drop as
+    // `variable` ("may be in") — the "Bonus card unknown" cards MTGJSON never names (e.g. Avatar's
+    // Command Tower / Fellwar Stone, one per drop at random). Unlike the drop-cards derivation this
+    // is a distinct axis (not a product's own contents), so it is *not* gated on `covered` — it
+    // stays linked even after MTGJSON authors the drop's deck — and it steps aside for a product
+    // MTGJSON gave its own `variable` row, so an upstream-authored pool wins.
     let from_sld_bonus = merge_sld_bonus_cards(db, &mtgjson_variable_products, &mut rows).await?;
 
     // Resolve the composition rows (positions assigned per resolved product id, so a
@@ -1330,9 +1330,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guaranteed_bonus_cards_attach_as_contains_regardless_of_coverage() {
+    async fn avatar_bonus_pool_attaches_as_variable() {
         let db = migrated_memory_db().await;
-        // Avatar's guaranteed shared bonus: Fellwar Stone (7062) + Command Tower (7063).
+        // Avatar's shared random bonus: one of Fellwar Stone (7062) / Command Tower (7063).
         seed_sld_cards(&db, &["7062", "7063"]).await;
         let pid = insert_sld_product(
             &db,
@@ -1341,19 +1341,18 @@ mod tests {
         )
         .await;
 
-        // This pass takes no `covered` set — so even a product MTGJSON already described (its own
-        // deck) still gets the guaranteed bonus pair linked as `contains`, at the edition's foil.
         let mut rows: HashSet<Row> = HashSet::new();
         let added = merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
 
+        // Both pool cards linked as `variable` ("may be in"), at the edition's foil.
         assert_eq!(added, 2);
-        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "contains" && !f));
+        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "variable" && !f));
     }
 
     #[tokio::test]
-    async fn covered_avatar_product_keeps_its_bonus_pair_through_the_pass_sequence() {
+    async fn covered_avatar_product_keeps_its_bonus_pool_through_the_pass_sequence() {
         let db = migrated_memory_db().await;
-        // The drop's own cards (2295–2299) plus the guaranteed bonus pair (7062/7063).
+        // The drop's own cards (2295–2299) plus the shared bonus pool (7062/7063).
         seed_sld_cards(&db, &["2295", "2296", "2297", "2298", "2299", "7062", "7063"]).await;
         let pid = insert_sld_product(
             &db,
@@ -1364,19 +1363,15 @@ mod tests {
 
         // Run the two passes in orchestration order for a product MTGJSON already covered (its own
         // deck): merge_sld_derived must skip it, but merge_sld_bonus_cards must still link the
-        // guaranteed bonus pair. This is the regression the feature guards against.
+        // bonus pool as `variable`. This is the regression the feature guards against.
         let covered = HashSet::from([pid]);
         let mut rows: HashSet<Row> = HashSet::new();
         assert_eq!(merge_sld_derived(&db, &covered, &mut rows).await.unwrap(), 0);
         merge_sld_bonus_cards(&db, &HashSet::new(), &mut rows).await.unwrap();
 
-        // Only the bonus pair is present — the drop's own cards came from (skipped) MTGJSON.
-        let bonus: HashSet<i32> = rows
-            .iter()
-            .filter(|&&(_, _, m, _)| m == "contains")
-            .map(|&(_, card, _, _)| card)
-            .collect();
-        assert_eq!(bonus.len(), 2, "the two guaranteed bonus cards are linked");
-        assert!(rows.iter().all(|&(p, _, m, _)| p == pid && m == "contains"));
+        // Only the bonus pool is present, as `variable` — the drop's own cards came from (skipped)
+        // MTGJSON, so a covered product still surfaces its "may be in" bonus.
+        assert_eq!(rows.len(), 2, "the two bonus-pool cards are linked");
+        assert!(rows.iter().all(|&(p, _, m, _)| p == pid && m == "variable"));
     }
 }

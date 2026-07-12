@@ -507,28 +507,29 @@ catalog) is planned but not implemented.
   isn't derivable from the drop snapshot and MTGJSON leaves it `null`, so it's hand-authored in
   `fallback_sealed.json` as linked `sealed` components (the drops the bundle contains) — the
   usual fallback stopgap, self-retiring when `mtgjson/mtg-sealed-content` authors it upstream.
-  (5) **Shared bonus cards (`merge_sld_bonus_cards` in `mtgjson::ingest`).** A drop's products
-  carry bonus cards *in addition to* the drop's own cards, in two flavours. **Guaranteed** ones
-  (`BONUS_CARD_ATTACHMENTS`, e.g. Avatar's Command Tower + Fellwar Stone, which ship with every
-  Avatar drop) are recorded `contains`. **Random** ones — a bonus card the buyer receives *at
-  random* from a pool, which the community `mtgjson/mtg-sealed-content` repo marks
-  `other: "Bonus card unknown"` (a bonus is known to exist, its pool isn't enumerated *on that
-  product*) — are recorded `variable` ("may be included") from a curated `RANDOM_BONUS_POOLS` table
-  keyed by `sld_drops.json` slug. The key design point: this pass is **not gated on `covered`** the
-  way `merge_sld_derived` (the drop's *own* cards) is — the bonus cards are a separate axis MTGJSON
-  never lists, so they must attach even once MTGJSON authors the drop's deck and flips the product
-  to "covered" (otherwise the guaranteed bonus would *vanish* exactly when upstream fills in the
-  deck). It stays **add-only** (never rewrites a drop's `contains` cards — the read path collapses a
-  card to its strongest membership, and a card MTGJSON already recorded is deduplicated away), and
-  the random pool **self-retires per product** for any product MTGJSON gave a `variable` row of its
-  own (upstream's authored pool wins). The random-pool data was extracted from that repo's
-  authoritative `variable` sections (the pools it *does* enumerate for sibling products of the same
-  drop), cross-corroborated by Scryfall's own `sld` "Bonus Cards" gallery groupings already in the
-  snapshot (e.g. Brain Dead `821`–`824`, FINAL FANTASY / SpongeBob / The Office `70xx`); pools that
-  couldn't be corroborated to specific `sld` printings (e.g. the Astrology Lands basics, the full
-  Avatar bonus set) were **left unauthored rather than guessed**, so a drop absent from the table
-  simply shows no bonus pool. The table is hashed into the derivation version alongside the drop
-  snapshot, so editing it re-runs the pass on the next sync.
+  (5) **Random bonus cards (`merge_sld_bonus_cards` in `mtgjson::ingest`).** A drop's products carry
+  a bonus card the buyer receives *at random* from a pool, *in addition to* the drop's own cards —
+  the community `mtgjson/mtg-sealed-content` repo marks these `other: "Bonus card unknown"` (a bonus
+  is known to exist, its pool isn't enumerated *on that product*), so the pooled cards surface on no
+  product. They're recorded `variable` ("may be included") from a curated `RANDOM_BONUS_POOLS` table
+  keyed by `sld_drops.json` slug, with a pool shared across the drops of a superdrop when
+  applicable (e.g. each Avatar drop draws one of Command Tower / Fellwar Stone — *one*, not both, so
+  `variable` not `contains`). The key design point: this pass is **not gated on `covered`** the way
+  `merge_sld_derived` (the drop's *own* cards) is — the bonus pool is a separate axis MTGJSON never
+  lists, so it must attach even once MTGJSON authors the drop's deck and flips the product to
+  "covered" (otherwise the bonus would *vanish* exactly when upstream fills in the deck). It stays
+  **add-only** (never rewrites a drop's `contains` cards — the read path collapses a card to its
+  strongest membership, and a card MTGJSON already recorded is deduplicated away; a pool number
+  already in every listed drop's own gallery is excluded so it can't be shadowed), and
+  **self-retires per product** for any product MTGJSON gave a `variable` row of its own (upstream's
+  authored pool wins). The data was extracted from that repo's authoritative `variable` sections
+  (the pools it *does* enumerate for sibling products of the same drop), cross-corroborated by
+  Scryfall's own `sld` "Bonus Cards" gallery groupings already in the snapshot (e.g. Brain Dead
+  `821`–`824`, FINAL FANTASY / SpongeBob / The Office `70xx`, Avatar `7062`/`7063`); pools that
+  couldn't be corroborated to specific `sld` printings (e.g. the Astrology Lands basics) were
+  **left unauthored rather than guessed**, so a drop absent from the table simply shows no bonus
+  pool. The table is hashed into the derivation version alongside the drop snapshot, so editing it
+  re-runs the pass on the next sync.
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that

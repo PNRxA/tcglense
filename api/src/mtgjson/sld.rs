@@ -39,31 +39,16 @@ const PRODUCT_DROP_OVERRIDES: &[(&str, &str)] = &[
     ("638089", "secret-lair-presents-nuestra-magia"), // Nuestra Magia (SP Rainbow Foil)
 ];
 
-/// A shared "bonus cards" drop plus the base drops that ship it. Some Secret Lair
-/// *superdrops* include a fixed set of bonus cards with **every individual drop** in the
-/// superdrop — e.g. the Avatar: The Last Airbender superdrop bundled Command Tower +
-/// Fellwar Stone (their own gallery drop) into each of its individual drop products. Those
-/// bonus cards live in a drop no sealed product is named after, so name-matching alone never
-/// attaches them; this folds the bonus drop's cards into every product that resolves to one
-/// of `base_slugs`.
-struct BonusAttachment {
-    /// The gallery drop holding the shared bonus cards (matched by slug — no product is
-    /// named after it).
-    bonus_slug: &'static str,
-    /// The individual drops each product of which also receives the bonus cards, at the
-    /// product's own foilness (a foil drop ships foil bonus cards, a non-foil drop non-foil).
-    base_slugs: &'static [&'static str],
-}
-
 /// A curated **random bonus-card pool** shared by the drops of a superdrop. MTGJSON marks the
 /// affected products `other: "Bonus card unknown"`: each ships **one unpredictable bonus card**
 /// drawn from a pool MTGJSON never enumerates, so the bonus card surfaces on *no* product. This
 /// spells the pool out so it shows as a "may be included" section ([`Membership::Variable`]).
 ///
-/// Unlike [`BonusAttachment`] — a *fixed* set of bonus cards guaranteed with every drop, recorded
-/// `contains` — a pool card is only *possible*, so the derivation records it `variable`. Like the
-/// other SLD derivations it is a **stopgap**: the ingest skips any product MTGJSON already gave a
-/// `variable` row (upstream enumerated the real pool), so an entry self-retires with no code edit.
+/// A pool card is only *possible* (the buyer gets **one** of the pool per drop, e.g. Avatar's
+/// Command Tower **or** Fellwar Stone — not both), so the derivation records it `variable` ("may be
+/// included"). Like the other SLD derivations it is a **stopgap**: the ingest skips any product
+/// MTGJSON already gave a `variable` row (upstream enumerated the real pool), so an entry
+/// self-retires with no code edit.
 ///
 /// [`Membership::Variable`]: crate::entities::sealed_content::Membership::Variable
 struct RandomBonusPool {
@@ -88,9 +73,11 @@ struct RandomBonusPool {
 /// after — e.g. Marvel's Spider-Man `7013`–`7021`, FINAL FANTASY `7004`–`7008` (the five shared
 /// Evoke-Elemental rares), the TMNT Slime Against Humanity chase `7077`/`7078`/`7083` — so those
 /// attach to *every* drop of the superdrop (web-research-confirmed as shared, not per-drop).
-/// Only pure-numeric `sld` printings are included; booster-pack pool options, unverifiable
-/// printings, and the fixed (guaranteed) attachments in [`BONUS_CARD_ATTACHMENTS`] (e.g. Avatar's
-/// Command Tower + Fellwar Stone, which come with every Avatar drop) are deliberately excluded.
+/// (3) A superdrop's own **"Bonus Cards" gallery drop** that no product is named after, folded
+/// into every base drop of the superdrop — e.g. Avatar's Command Tower / Fellwar Stone
+/// (`7062`/`7063`), the pool each Avatar drop draws one card from.
+/// Only pure-numeric `sld` printings are included; booster-pack pool options and unverifiable
+/// printings are deliberately excluded.
 /// A number is also excluded when it's already in **every** listed drop's own gallery
 /// (`sld_drops.json`): the drop derivation records those as `contains`, and the read path collapses
 /// a card to its strongest membership, so a `variable` row for them would be shadowed and inert
@@ -101,6 +88,18 @@ struct RandomBonusPool {
 const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
     RandomBonusPool { drop_slugs: &["a-box-of-rocks"], pool: &["507", "511", "512", "523", "535"] },
     RandomBonusPool { drop_slugs: &["absolute-annihilation"], pool: &["645", "642", "629", "686"] },
+    // Avatar: The Last Airbender superdrop — each drop draws one of Command Tower (7063) /
+    // Fellwar Stone (7062), the "Avatar: ...: Bonus Cards" gallery drop no product is named after.
+    RandomBonusPool {
+        drop_slugs: &[
+            "avatar-the-last-airbender-one-with-the-elements",
+            "avatar-the-last-airbender-the-ember-island-players",
+            "avatar-the-last-airbender-a-lot-to-learn",
+            "avatar-the-last-airbender-everything-changed",
+            "avatar-the-last-airbender-my-cabbages",
+        ],
+        pool: &["7062", "7063"],
+    },
     RandomBonusPool {
         drop_slugs: &["alien-auroras", "featuring-deathburger", "magiccon-the-gathering"],
         pool: &["818"],
@@ -205,56 +204,18 @@ pub fn random_bonus_pool(slug: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// The guaranteed shared bonus cards every product of a drop contains (by `sld` collector number):
-/// the fixed [`BONUS_CARD_ATTACHMENTS`] pool for the drop's superdrop (e.g. Avatar's Command Tower
-/// + Fellwar Stone, which ship with every Avatar drop). Empty unless the drop is a base of an
-/// attachment, or the bonus drop isn't in the snapshot. Unlike [`random_bonus_pool`] these are
-/// *guaranteed*, so callers record them `contains`.
-pub fn guaranteed_bonus_cards(base_slug: &str) -> Vec<&'static str> {
-    let Some(table) = table() else {
-        return Vec::new();
-    };
-    bonus_drops_for(table, base_slug)
-        .into_iter()
-        .flat_map(|d| d.collector_numbers.iter().map(String::as_str))
-        .collect()
-}
-
-/// Curated superdrop bonus-card attachments. Kept intentionally tiny, like
-/// [`PRODUCT_DROP_OVERRIDES`]: a superdrop that shares bonus cards across its drops is a
-/// genuine oddball name-matching can't express, so it's spelled out here.
-const BONUS_CARD_ATTACHMENTS: &[BonusAttachment] = &[BonusAttachment {
-    // Avatar: The Last Airbender superdrop — Command Tower (7063) + Fellwar Stone (7062)
-    // came with each drop (issue #331).
-    bonus_slug: "avatar-the-last-airbender-bonus-cards",
-    base_slugs: &[
-        "avatar-the-last-airbender-one-with-the-elements",
-        "avatar-the-last-airbender-the-ember-island-players",
-        "avatar-the-last-airbender-a-lot-to-learn",
-        "avatar-the-last-airbender-everything-changed",
-        "avatar-the-last-airbender-my-cabbages",
-    ],
-}];
-
 /// A Secret Lair sealed product resolved to the drop whose cards it contains, plus whether
 /// the product is a foil edition (so its cards are recorded foil / non-foil accordingly).
 pub struct ProductDrop<'a> {
     pub drop: &'a Drop,
     pub foil: bool,
-    /// Shared "bonus card" drops this product also contains (see [`BonusAttachment`]),
-    /// recorded at the same foilness as the main drop.
-    pub bonus_drops: Vec<&'a Drop>,
 }
 
 impl<'a> ProductDrop<'a> {
-    /// Every collector number whose card this product contains: the main drop's cards
-    /// followed by any attached bonus-card drops'. All resolve within the `sld` set.
+    /// Every collector number whose card this product contains — the drop's own cards. (The shared
+    /// random bonus pool is a separate axis, see [`random_bonus_pool`].) All in the `sld` set.
     pub fn collector_numbers(&self) -> impl Iterator<Item = &'a str> + '_ {
-        self.drop
-            .collector_numbers
-            .iter()
-            .chain(self.bonus_drops.iter().flat_map(|d| d.collector_numbers.iter()))
-            .map(String::as_str)
+        self.drop.collector_numbers.iter().map(String::as_str)
     }
 }
 
@@ -270,27 +231,14 @@ pub fn resolve_product_drop<'a>(
     let (base, foil) = strip_finish(name);
     if let Some(slug) = override_slug(external_id) {
         if let Some(drop) = table.drop_by_slug(slug) {
-            let bonus_drops = bonus_drops_for(table, &drop.slug);
-            return Some(ProductDrop { drop, foil, bonus_drops });
+            return Some(ProductDrop { drop, foil });
         }
     }
     // Exact title match on the finish-stripped, prefix-stripped core, so a product never
     // resolves to the *wrong* drop — worst case is no match at all.
     let core = strip_prefixes(&base);
     let drop = table.drop_by_title(&drops::normalize_title(&core))?;
-    let bonus_drops = bonus_drops_for(table, &drop.slug);
-    Some(ProductDrop { drop, foil, bonus_drops })
-}
-
-/// The shared bonus-card drops attached to a base drop (by slug), resolved against the
-/// table. Empty unless the base drop is listed in [`BONUS_CARD_ATTACHMENTS`]; a bonus slug
-/// the snapshot doesn't carry is skipped (degrades to no bonus, never a wrong card).
-fn bonus_drops_for<'a>(table: &'a DropTable, base_slug: &str) -> Vec<&'a Drop> {
-    BONUS_CARD_ATTACHMENTS
-        .iter()
-        .filter(|a| a.base_slugs.contains(&base_slug))
-        .filter_map(|a| table.drop_by_slug(a.bonus_slug))
-        .collect()
+    Some(ProductDrop { drop, foil })
 }
 
 /// The drop-table for the Secret Lair set, or `None` if the snapshot doesn't cover it.
@@ -419,15 +367,6 @@ pub fn derivation_version() -> &'static str {
             hasher.update(slug.as_bytes());
             hasher.update(b";");
         }
-        for attachment in BONUS_CARD_ATTACHMENTS {
-            hasher.update(attachment.bonus_slug.as_bytes());
-            hasher.update(b"<-");
-            for base in attachment.base_slugs {
-                hasher.update(base.as_bytes());
-                hasher.update(b",");
-            }
-            hasher.update(b";");
-        }
         for pool in RANDOM_BONUS_POOLS {
             for slug in pool.drop_slugs {
                 hasher.update(slug.as_bytes());
@@ -551,43 +490,43 @@ mod tests {
     }
 
     #[test]
-    fn superdrop_bonus_cards_attach_to_every_avatar_drop_product() {
+    fn product_contents_are_the_drops_own_cards_only() {
         let table = table().expect("sld drop table present");
-        // Each Avatar drop product also contains the shared bonus cards (Command Tower 7063
-        // + Fellwar Stone 7062), at the product's own foilness — foil drop, foil bonus.
-        let foil = resolve_product_drop(
+        // A resolved product contains exactly its drop's own cards — the shared random bonus pool
+        // is a separate axis (see `random_bonus_pool`), never folded into `collector_numbers`.
+        let pd = resolve_product_drop(
+            table,
+            "700795",
+            "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+        )
+        .expect("resolves");
+        let cns: Vec<&str> = pd.collector_numbers().collect();
+        assert_eq!(cns, ["2690", "2691", "2692", "2693", "2694"]);
+        // Even an Avatar drop resolves to just its own cards; its bonus (7062/7063) lives in the
+        // random pool, not its contents.
+        let avatar = resolve_product_drop(
             table,
             "0",
             "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Traditional Foil Edition",
         )
         .expect("resolves");
-        assert_eq!(foil.drop.slug, "avatar-the-last-airbender-my-cabbages");
-        assert!(foil.foil);
-        let cns: Vec<&str> = foil.collector_numbers().collect();
-        // The main drop's cards come first, then the appended bonus cards.
-        assert_eq!(cns, ["2295", "2296", "2297", "2298", "2299", "7062", "7063"]);
-
-        // A non-foil drop resolves the same bonus cards; foilness is the product's.
-        let non_foil = resolve_product_drop(
-            table,
-            "0",
-            "Secret Lair Drop: Avatar: The Last Airbender: One With the Elements - Non-Foil Edition",
-        )
-        .expect("resolves");
-        assert!(!non_foil.foil);
-        let cns: Vec<&str> = non_foil.collector_numbers().collect();
-        assert!(cns.contains(&"7062") && cns.contains(&"7063"));
+        assert_eq!(avatar.drop.slug, "avatar-the-last-airbender-my-cabbages");
+        let cns: Vec<&str> = avatar.collector_numbers().collect();
+        assert!(!cns.contains(&"7062") && !cns.contains(&"7063"));
     }
 
     #[test]
-    fn non_superdrop_products_get_no_bonus_cards() {
-        let table = table().expect("sld drop table present");
-        // A drop not listed in the bonus attachments contains only its own cards.
-        let pd = resolve_product_drop(table, "700795", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition")
-            .expect("resolves");
-        assert!(pd.bonus_drops.is_empty());
-        let cns: Vec<&str> = pd.collector_numbers().collect();
-        assert_eq!(cns, ["2690", "2691", "2692", "2693", "2694"]);
+    fn avatar_bonus_is_a_shared_random_pool_across_every_drop() {
+        // Each Avatar drop draws one of Command Tower (7063) / Fellwar Stone (7062) — a shared
+        // `variable` pool, not two guaranteed cards.
+        for slug in [
+            "avatar-the-last-airbender-my-cabbages",
+            "avatar-the-last-airbender-one-with-the-elements",
+            "avatar-the-last-airbender-the-ember-island-players",
+        ] {
+            let pool = random_bonus_pool(slug);
+            assert!(pool.contains(&"7062") && pool.contains(&"7063"), "avatar drop {slug} pool");
+        }
     }
 
     #[test]
@@ -650,16 +589,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn guaranteed_bonus_cards_resolve_from_the_attachment() {
-        // Every Avatar drop guarantees the shared Command Tower + Fellwar Stone (7062/7063).
-        let cards = guaranteed_bonus_cards("avatar-the-last-airbender-my-cabbages");
-        assert!(cards.contains(&"7062") && cards.contains(&"7063"));
-        // A drop with no attachment (and an unknown one) has no guaranteed bonus.
-        assert!(guaranteed_bonus_cards("cats-of-chaos").is_empty());
-        assert!(guaranteed_bonus_cards("no-such-drop").is_empty());
     }
 
     #[test]
