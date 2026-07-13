@@ -6,8 +6,9 @@
 # web/package.json (+ package-lock.json), then lands the bump on `main` through a
 # pull request — `main` is protected, so a direct push is rejected. It commits on a
 # short-lived `chore/release-vX.Y.Z` branch, opens a PR, merges it with a merge
-# commit (so the tagged bump commit itself lands in main's history), tags `vX.Y.Z`,
-# and publishes a GitHub Release. Publishing the release fires the "Release images"
+# commit, then tags `vX.Y.Z` on that merge commit (so GitHub's PR-based release notes
+# include this release's own bump PR — see the tagging step for the off-by-one this
+# avoids), and publishes a GitHub Release. Publishing the release fires the "Release images"
 # workflow (.github/workflows/release.yml), which builds and pushes the Docker
 # images (tcglense-api / tcglense-web / tcglense) to GHCR + Docker Hub.
 #
@@ -131,25 +132,33 @@ read -r -p "Proceed? [y/N] " reply
 # the user exactly how to recover so a partial release isn't a mystery.
 branch_created=false
 committed=false
-tagged=false
 pushed=false
 merged=false
+tagged=false
 release_ok=false
 recover() {
   $release_ok && return 0
   echo >&2
   red "Release $TAG did not finish. Current state and how to unwind it:"
   if $merged; then
-    red "  The bump was MERGED into $BASE_BRANCH, but the GitHub Release wasn't published."
-    red "  Finish it:  gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+    if $tagged; then
+      red "  The bump was MERGED into $BASE_BRANCH and $TAG is tagged + pushed, but the"
+      red "  GitHub Release wasn't published. Finish it:"
+      red "    gh release create $TAG --title $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+    else
+      red "  The bump was MERGED into $BASE_BRANCH but $TAG was not tagged. Finish it:"
+      red "    git switch $BASE_BRANCH && git pull --ff-only origin $BASE_BRANCH"
+      red "    git tag -a $TAG -m 'Release $TAG' && git push origin $TAG"
+      red "    gh release create $TAG --title $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+    fi
   elif $pushed; then
-    red "  Branch '$RELEASE_BRANCH' + tag $TAG are on origin but not merged. Remove them:"
+    red "  Branch '$RELEASE_BRANCH' is on origin but not merged (no tag was pushed). Remove it:"
     red "    git switch $BASE_BRANCH"
-    red "    git push origin --delete $RELEASE_BRANCH ; git push origin --delete $TAG"
-    red "    git branch -D $RELEASE_BRANCH ; git tag -d $TAG"
+    red "    git push origin --delete $RELEASE_BRANCH"
+    red "    git branch -D $RELEASE_BRANCH"
   elif $committed; then
-    red "  The bump is committed on local '$RELEASE_BRANCH'$( $tagged && printf ' (tagged %s)' "$TAG" ) but nothing was pushed. Remove it:"
-    red "    git switch $BASE_BRANCH ; git branch -D $RELEASE_BRANCH$( $tagged && printf ' ; git tag -d %s' "$TAG" )"
+    red "  The bump is committed on local '$RELEASE_BRANCH' but nothing was pushed. Remove it:"
+    red "    git switch $BASE_BRANCH ; git branch -D $RELEASE_BRANCH"
   elif $branch_created; then
     red "  On '$RELEASE_BRANCH' with the bump only in the working tree. Discard it:"
     red "    git checkout -- api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json"
@@ -211,23 +220,19 @@ if [ "$(lock_pkg_version)" != "$VERSION" ]; then
 fi
 [ "$(lock_pkg_version)" = "$VERSION" ] || die "failed to update api/Cargo.lock to $VERSION."
 
-# --- Commit + tag ----------------------------------------------------------------
+# --- Commit ----------------------------------------------------------------------
 echo "-> Committing..."
 git add api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json
 git commit --quiet -m "chore(release): $TAG"
 committed=true
 
-echo "-> Tagging $TAG..."
-git tag -a "$TAG" -m "Release $TAG"
-tagged=true
-
-# --- Push the branch + tag, open a PR, merge it ----------------------------------
+# --- Push the branch, open a PR, merge it ----------------------------------------
 # main is protected (changes must go through a PR), so the bump can't be pushed
-# straight to it. A merge commit (not squash/rebase) keeps the tagged bump commit's
-# SHA in main's history, so $TAG keeps pointing at "chore(release): $TAG".
-echo "-> Pushing $RELEASE_BRANCH + $TAG to origin..."
+# straight to it. The tag is created AFTER the merge, on the merge commit — NOT here
+# on the pre-merge bump commit. See the tagging step below for why that matters to
+# the auto-generated release notes.
+echo "-> Pushing $RELEASE_BRANCH to origin..."
 git push --quiet origin "$RELEASE_BRANCH"
-git push --quiet origin "$TAG"
 pushed=true
 
 echo "-> Opening pull request into $BASE_BRANCH..."
@@ -247,10 +252,23 @@ for _ in 1 2 3 4 5 6; do
   echo "   ...not mergeable yet; retrying in 3s"
   sleep 3
 done
-$merged || die "could not auto-merge the release PR (required checks or approvals?). Merge it in the UI, then run: gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+$merged || die "could not auto-merge the release PR (required checks or approvals?). Merge it in the UI, pull $BASE_BRANCH, then run: git tag -a $TAG -m 'Release $TAG' && git push origin $TAG && gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
 
 echo "-> Fast-forwarding local $BASE_BRANCH..."
 git pull --quiet --ff-only origin "$BASE_BRANCH"
+
+# --- Tag the merge commit (NOT the pre-merge bump commit) -------------------------
+# Tag HEAD, which is now the merge commit of the release PR on $BASE_BRANCH. Tagging
+# the bump commit instead (a *parent* of the merge commit) throws GitHub's PR-based
+# `--generate-notes` off by one: this release's own "chore(release)" PR merges just
+# *after* such a tag, so it drops out of the notes, while the *previous* release's
+# bump PR — which merged after the previous tag — gets swept in. Tagging the merge
+# commit puts this release's bump PR at the end of the range (included) and the
+# previous one before its start (excluded).
+echo "-> Tagging $TAG on the merge commit..."
+git tag -a "$TAG" -m "Release $TAG"
+git push --quiet origin "$TAG"
+tagged=true
 
 # Best-effort cleanup of the merged release branch (GitHub may auto-delete it).
 git push --quiet origin --delete "$RELEASE_BRANCH" 2>/dev/null || true
