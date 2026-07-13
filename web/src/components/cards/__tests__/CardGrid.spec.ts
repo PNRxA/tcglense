@@ -49,7 +49,12 @@ function mountGrid(
   authenticated = true,
   ghostUnowned = false,
   list: CardListTarget = 'collection',
-  opts: { ownedMarks?: OwnedCountsMap; ghostStyle?: GhostStyle; wishlist?: OwnedCountsMap } = {},
+  opts: {
+    ownedMarks?: OwnedCountsMap
+    ghostStyle?: GhostStyle
+    wishlist?: OwnedCountsMap
+    collectionCounts?: OwnedCountsMap
+  } = {},
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -73,6 +78,7 @@ function mountGrid(
       list,
       ownedMarks: opts.ownedMarks,
       wishlist: opts.wishlist,
+      collectionCounts: opts.collectionCounts,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
@@ -136,20 +142,28 @@ describe('CardGrid quick-add controls', () => {
     expect(wrapper.find('a[href="/cards/mtg/cards/a"]').exists()).toBe(true)
   })
 
-  it('retargets the controls at the wish list when the grid is (issue #167)', () => {
+  it('mounts a collection-primary control on the wishlist surface (collectionCounts overlay)', () => {
+    // On the wishlist page the grid's own `ownership` map is WANTS; the collection totals for
+    // the always-collection-primary control come from the `collectionCounts` overlay instead.
     const wrapper = mountGrid(
       [makeCard('a'), makeCard('b')],
       { a: { quantity: 2, foil_quantity: 1 } },
       true,
       false,
       'wishlist',
+      { collectionCounts: { a: { quantity: 4, foil_quantity: 0 } } },
     )
-    // Owned card A keeps its count chips (now heart-led "wanted" per D8); unowned card B's
-    // add affordance targets the wish list — the controls write there instead of the
-    // collection.
+    // Card A: a collection total chip (4, from collectionCounts) + a wanted Heart (3, from the
+    // grid's own ownership), and an owned trigger that edits the COLLECTION.
+    expect(wrapper.find('[aria-label="4 total"]').exists()).toBe(true)
     expect(wrapper.find('[aria-label="3 wanted"]').exists()).toBe(true)
-    expect(wrapper.find('[aria-label="Add Card b to your wish list"]').exists()).toBe(true)
-    expect(wrapper.find('[aria-label="Add Card b to your collection"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Edit copies of Card a in your collection"]').exists()).toBe(
+      true,
+    )
+    // Card B: neither owned nor wanted → an add-to-collection trigger.
+    expect(wrapper.find('[aria-label="Add Card b to your collection"]').exists()).toBe(true)
+    // No control targets the wish list anymore — it's collection-primary everywhere.
+    expect(wrapper.findAll('[aria-label$="to your wish list"]')).toHaveLength(0)
   })
 })
 

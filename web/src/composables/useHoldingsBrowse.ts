@@ -54,7 +54,7 @@ import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 /** The per-surface config the two browse views instantiate the engine with. `useListQuery`
  * etc. are the holding's own query hooks (collection or wish list); the ghost/catalog reads
- * and the owned-marks lookup are shared and imported directly. */
+ * and the collection-counts lookup are shared and imported directly. */
 export interface HoldingsBrowseSurface {
   /** Route prefix the scope-nav helpers navigate under — `/collection` or `/wishlist`. */
   basePath: '/collection' | '/wishlist'
@@ -69,8 +69,12 @@ export interface HoldingsBrowseSurface {
   /** The completion label's noun — undefined ('owned') for the collection, 'wanted' for the
    * wish list. */
   completionNoun?: CountNoun
-  /** Wish-list only: enable the "show owned (in collection)" marks (issue #213). */
-  enableOwnedMarks?: boolean
+  /** Wish list only: fetch each rendered card's COLLECTION-owned counts (issue #364
+   * follow-up). Feeds the collection-primary quick-add control's count chips (always) and
+   * the opt-in "show owned (in collection)" ribbon (issue #213), gated on the setting for
+   * display only — the fetch runs regardless. Subsumes the old owned-marks fetch: one
+   * `['collection-owned', game, …]` batch shared by both. */
+  enableCollectionCounts?: boolean
   /** Collection only: show a Heart "wanted" chip on rendered cards that are on the user's
    * wish list (issue #364 follow-up). Fetches wish-list counts over the rendered cards. */
   enableWishlistHearts?: boolean
@@ -91,8 +95,9 @@ export interface HoldingsBrowseSurface {
  * The whole shared script engine for a holding browse view. Pass the view's `{ game, code }`
  * props and its `surface` config; the returned refs/computeds are what the (per-holding)
  * template binds. The two templates legitimately differ — the collection renders a bulk-value
- * slice and no list/owned-marks props; the wish list omits bulk value and threads
- * `list="wishlist"` + `:owned-marks` through the grids — so only the script is shared.
+ * slice and no `list`/collection-counts props; the wish list omits bulk value and threads
+ * `list="wishlist"` + `:collection-counts`/`:owned-marks` through the grids — so only the
+ * script is shared.
  */
 export function useHoldingsBrowse(
   props: { game: string; code?: string },
@@ -303,20 +308,24 @@ export function useHoldingsBrowse(
       : entries.value.map((entry) => entry.card)
   })
 
-  // "Show owned (in collection)" (issue #213): a persisted setting on the ghost button's
-  // dropdown that flags which cards on the page you already own in your *collection* while you
-  // shop the wish list. Distinct data from the wish-list counts above (`ownership`) — it's the
-  // collection's holdings — so it needs its own lookup, over whatever cards the active mode
-  // renders (any of the four {list,ghost}×{flat,by-drop} shapes). Fetched only when the setting
-  // is on and signed in; the marks pass to the grids as `ownedMarks` (undefined = no markers).
-  // Collection views leave this off (`enableOwnedMarks` unset), so nothing extra is fetched.
+  // Collection-owned counts on the wish-list browse surface (issue #364 follow-up). The
+  // quick-add control is collection-primary everywhere, so each rendered card's COLLECTION
+  // counts must always be known to show its Layers/Sparkles chips — fetched *unconditionally*
+  // over whatever cards the active mode renders (any of the four {list,ghost}×{flat,by-drop}
+  // shapes), one `['collection-owned', game, …]` batch, identical cost to the collection page.
+  // `collectionCounts` feeds the control's primary chips; `ownedMarks` reuses the very same map
+  // for the opt-in "show owned (in collection)" ribbon (issue #213), gated on the persisted
+  // setting for display only — the fetch runs regardless (vue-query dedupes, and the always-on
+  // observer keeps it enabled). Distinct data from the wish-list counts above (`ownership`,
+  // which on this surface means wish-list membership). Collection views leave this off
+  // (`enableCollectionCounts` unset), so nothing extra is fetched.
+  let collectionCounts: ComputedRef<OwnedCountsMap | undefined> = computed(() => undefined)
   let ownedMarks: ComputedRef<OwnedCountsMap | undefined> = computed(() => undefined)
-  if (surface.enableOwnedMarks) {
+  if (surface.enableCollectionCounts) {
+    const { ownership: collectionOwnership } = useOwnedCounts(game, renderedCards)
+    collectionCounts = computed(() => collectionOwnership.value)
     const ghostDisplay = useGhostDisplayStore()
     const showOwnedMarks = computed(() => auth.isAuthenticated && ghostDisplay.showOwned)
-    const { ownership: collectionOwnership } = useOwnedCounts(game, renderedCards, {
-      enabled: showOwnedMarks,
-    })
     ownedMarks = computed(() => (showOwnedMarks.value ? collectionOwnership.value : undefined))
   }
 
@@ -501,6 +510,7 @@ export function useHoldingsBrowse(
     ownership,
     ownershipReady,
     ownedMarks,
+    collectionCounts,
     wishlistCounts,
     heldUnique,
     scopeTotal,

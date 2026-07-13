@@ -88,15 +88,17 @@ describe('OwnedCountBadge', () => {
       expect(labels.indexOf('2 wanted')).toBeGreaterThan(labels.indexOf('3 total'))
     })
 
-    it('never swaps the informational wanted chip to a "+" under hoverAsAdd', () => {
+    it('swaps the appended wanted chip to a "+" under hoverAsAdd like the others', () => {
       const wrapper = mountBadge({
         quantity: 3,
         foilQuantity: 0,
         wantedQuantity: 2,
         hoverAsAdd: true,
       })
-      // Only the total chip swaps; the heart chip contributes no "+".
-      expect(iconsWithClass(wrapper, 'group-hover/add:block')).toHaveLength(1)
+      // Both the total chip and the appended wanted chip swap: one "+" and one hidden
+      // semantic icon per chip.
+      expect(iconsWithClass(wrapper, 'group-hover/add:block')).toHaveLength(2)
+      expect(iconsWithClass(wrapper, 'group-hover/add:hidden')).toHaveLength(2)
       expect(chip(wrapper, '2 wanted').text()).toContain('2')
     })
 
