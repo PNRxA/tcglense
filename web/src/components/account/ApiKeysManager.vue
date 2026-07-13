@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import {
   Check,
   Copy,
-  ExternalLink,
   KeyRound,
   LoaderCircle,
   Plus,
@@ -178,15 +177,12 @@ const selectClass =
           </CardTitle>
           <CardDescription class="mt-1">
             Access the public API from your own scripts. See the
-            <a
-              href="/api/docs"
-              target="_blank"
-              rel="noopener"
-              class="text-primary inline-flex items-center gap-0.5 underline underline-offset-2"
+            <RouterLink
+              to="/docs"
+              class="text-primary underline underline-offset-2"
             >
               API reference
-              <ExternalLink class="size-3" />
-            </a>
+            </RouterLink>
             for endpoints and examples.
           </CardDescription>
         </div>
