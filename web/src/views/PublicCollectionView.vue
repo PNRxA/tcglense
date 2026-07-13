@@ -36,7 +36,6 @@ const {
   filtering,
   sourceSets,
   activePending,
-  activeError,
   ownership,
   totalValue,
   bulkValue,
@@ -48,6 +47,13 @@ const {
   withBulk: true,
 })
 
+// The landing's `activeError` flips with the inherited `?sets=all` scope toggle (it then
+// reads the always-200 public catalog list), so gate not-found on the handle-scoped summary
+// query instead — it 404s for a private/unknown handle regardless of the toggle. Same key as
+// the engine's own summary read, so this dedupes to a single request.
+const summaryQuery = usePublicCollectionSummaryQuery(handle, game)
+const notFound = computed(() => summaryQuery.isError.value)
+
 usePageMeta({
   title: () => `${username.value}'s ${gameName.value} collection`,
   description: () => `${username.value}'s public ${gameName.value} collection on TCGLense.`,
@@ -57,7 +63,7 @@ usePageMeta({
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <div v-if="activeError" class="py-20 text-center">
+    <div v-if="notFound" class="py-20 text-center">
       <h1 class="text-2xl font-semibold tracking-tight">Collection not found</h1>
       <p class="text-muted-foreground mt-2">This collection is private or doesn't exist.</p>
       <RouterLink to="/" class="text-primary mt-4 inline-block underline underline-offset-2">

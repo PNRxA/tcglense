@@ -362,8 +362,23 @@ pub async fn complete_registration(
     let user = active.update(&state.db).await?;
 
     // Optionally claim the username chosen at signup, with an auto-assigned discriminator.
+    // The account is already committed + verified above and the token is spent, so a rare
+    // username-claim failure (a DB blip, or the near-impossible discriminator exhaustion) must
+    // NOT fail the whole signup — that would strand a created account behind a now-dead token.
+    // Complete the session without a handle; the user can set a username later (the opt-in
+    // flow from any collection page).
     let user = match username_display {
-        Some(display) => assign_username(&state.db, user, display).await?,
+        Some(display) => match assign_username(&state.db, user.clone(), display).await {
+            Ok(updated) => updated,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    user_id = user.id,
+                    "could not claim the username chosen at signup; account created without a handle"
+                );
+                user
+            }
+        },
         None => user,
     };
 

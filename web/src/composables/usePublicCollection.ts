@@ -58,16 +58,21 @@ export function usePublicCollectionQuery(
   query: Ref<string>,
   sort: Ref<string>,
   set?: Ref<string | undefined>,
+  includeRelated?: Ref<boolean>,
 ) {
   const setCode = set ?? ref<string | undefined>(undefined)
+  const related = includeRelated ?? ref(false)
   return useQuery<CollectionPage, ApiError>({
-    queryKey: ['public-collection', handle, game, setCode, query, sort, page],
+    queryKey: ['public-collection', handle, game, setCode, related, query, sort, page],
     queryFn: () =>
       getPublicCollection(handle.value, game.value, {
         page: page.value,
         pageSize: CARD_PAGE_SIZE,
         q: query.value || undefined,
         set: setCode.value || undefined,
+        // With a set scope, `?related=1` spans the set's whole group (root + related
+        // sub-sets) — the backend honours include_related on the public list too.
+        includeRelated: related.value || undefined,
         ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
       }),
     placeholderData: keepPreviousData,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
@@ -25,9 +25,13 @@ const game = toRef(props, 'game')
 const gameName = useGameName(game)
 const username = computed(() => props.handle.replace(/-\d{1,4}$/, ''))
 
+const route = useRoute()
 const scoped = computed(() => !!props.code)
 const groupCode = computed(() => props.code ?? '')
 const setCode = computed(() => props.code || undefined)
+// A set tile's "View all cards in {set} and its related sets" link arrives here as
+// `?related=1`; span the set's whole group (root + related sub-sets) when it's set.
+const includeRelated = computed(() => scoped.value && route.query.related === '1')
 // A set's display name for the header/breadcrumb (public catalog, cached); falls back to
 // the upper-cased code until it loads. Only fetched for the set-scoped route.
 const setQuery = useSetQuery(game, groupCode, scoped)
@@ -39,7 +43,15 @@ const heading = computed(() => (scoped.value ? setName.value : 'All cards'))
 const validSorts = COLLECTION_SORT_OPTIONS.map((option) => option.value)
 const { page, searchInput, query, sort } = useCardSearch(COLLECTION_DEFAULT_SORT, validSorts)
 
-const collectionQuery = usePublicCollectionQuery(handle, game, page, query, sort, setCode)
+const collectionQuery = usePublicCollectionQuery(
+  handle,
+  game,
+  page,
+  query,
+  sort,
+  setCode,
+  includeRelated,
+)
 const entries = computed(() => collectionQuery.data.value?.data ?? [])
 const total = computed(() => collectionQuery.data.value?.total ?? 0)
 const notFound = computed(() => collectionQuery.isError.value)
