@@ -35,7 +35,35 @@ export type {
   CollectionSet,
   CollectionSubtypeGroup,
   CollectionSummary,
+  CollectionVisibility,
 } from './generated'
+
+import type { CollectionVisibility } from './generated'
+
+/** Whether the signed-in user's collection for a game is public, plus their handle. */
+export function getCollectionVisibility(
+  token: string,
+  game: string,
+): Promise<CollectionVisibility> {
+  return request<CollectionVisibility>(`/api/collection/${encodeURIComponent(game)}/visibility`, {
+    token,
+  })
+}
+
+/** Enable/disable public sharing for the signed-in user's collection in a game (issues
+ * #361/#362). Enabling requires a username first — the server 409s otherwise, which the
+ * SPA branches on to prompt the username step. */
+export function setCollectionVisibility(
+  token: string,
+  game: string,
+  isPublic: boolean,
+): Promise<CollectionVisibility> {
+  return request<CollectionVisibility>(`/api/collection/${encodeURIComponent(game)}/visibility`, {
+    method: 'PUT',
+    body: { public: isPublic },
+    token,
+  })
+}
 
 /** Owned counts for a batch of cards, keyed by external card id (owned cards only) —
  * the `data` payload of the wire `DataBody<HashMap<..>>` response. */

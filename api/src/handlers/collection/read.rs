@@ -64,6 +64,23 @@ pub async fn list_collection(
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CollectionEntry>>, AppError> {
     let game_meta = require_game(&game)?;
+    Ok(Json(
+        owned_list_page(&state, game_meta, user.id, &game, &params).await?,
+    ))
+}
+
+/// The owned-card list page for a user + game, shared by the authed
+/// [`list_collection`] handler and the public (handle-resolved) read
+/// ([`crate::handlers::sharing::public`]). Parameterised by `user_id` so the two differ
+/// only in how that id is obtained; the query/join/sort and the LEFT-join skip of a
+/// holding whose card row is gone are identical.
+pub(crate) async fn owned_list_page(
+    state: &AppState,
+    game_meta: &'static crate::catalog::Game,
+    user_id: i32,
+    game: &str,
+    params: &ListParams,
+) -> Result<Page<CollectionEntry>, AppError> {
     let (page, page_size) = params.page_and_size();
     let (sort, dir) = params.sort_spec()?;
     let dialect = state.dialect();
@@ -77,11 +94,10 @@ pub async fn list_collection(
     // Resolve the (optional) set scope: a single set, or — with `include_related` — the
     // set's whole group (root + related sub-sets), spanning exactly the sets the catalog
     // does. `None` means the whole collection.
-    let set_codes =
-        resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
+    let set_codes = resolve_set_scope(state, game, params.set(), params.include_related()).await?;
 
     let paginator =
-        collection_query(user.id, &game, set_codes.as_deref(), search, sort, dir, dialect)
+        collection_query(user_id, game, set_codes.as_deref(), search, sort, dir, dialect)
             .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -100,7 +116,7 @@ pub async fn list_collection(
         })
         .collect();
 
-    Ok(Json(build_page(data, page, page_size, total)))
+    Ok(build_page(data, page, page_size, total))
 }
 
 /// The per-user owned-holdings base query: every `collection_items` row for one
@@ -112,7 +128,7 @@ pub async fn list_collection(
 /// a single code = the per-set view, several codes = the include-related group view. An
 /// empty slice would match nothing, but the scope resolver never produces one (a group
 /// always contains at least the set itself).
-pub(super) fn owned_with_cards(
+pub(crate) fn owned_with_cards(
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
@@ -136,7 +152,7 @@ pub(super) fn owned_with_cards(
 /// the `user_id` and `game` filters and the recency sort stay entity-qualified to
 /// `collection_items`, so nothing is ambiguous across the join (both tables carry a
 /// `game` column).
-pub(super) fn collection_query(
+pub(crate) fn collection_query(
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
@@ -221,7 +237,7 @@ pub async fn collection_summary(
 /// holding is left-joined to its card, so a holding whose card row is gone (a catalog
 /// re-import) is skipped for **all three** stats — matching the collection list
 /// (`list_collection`).
-pub(super) async fn summary(
+pub(crate) async fn summary(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
     game: &str,

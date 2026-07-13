@@ -79,6 +79,8 @@ mod tests {
             created_at: now,
             updated_at: now,
             email_verified_at: Some(now),
+            username: None,
+            discriminator: None,
         }
     }
 

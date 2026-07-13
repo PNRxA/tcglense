@@ -1,9 +1,21 @@
 import { request } from './client'
-import type { AuthResponse, RefreshResponse, RegisterResponse, User } from './generated'
+import type {
+  AuthResponse,
+  RefreshResponse,
+  RegisterResponse,
+  User,
+  UsernameAvailability,
+} from './generated'
 
 // The response types are generated from the API's Rust DTOs into `./generated` and
 // re-exported here; the request payloads stay hand-written client types.
-export type { AuthResponse, RefreshResponse, RegisterResponse, User } from './generated'
+export type {
+  AuthResponse,
+  RefreshResponse,
+  RegisterResponse,
+  User,
+  UsernameAvailability,
+} from './generated'
 
 // `captcha_token` is the Cloudflare Turnstile token from the widget; optional
 // here because it's only produced/required when a Turnstile site key is set (the
@@ -77,6 +89,23 @@ export function login(payload: LoginPayload): Promise<AuthResponse> {
 
 export function me(token: string): Promise<{ user: User }> {
   return request<{ user: User }>('/api/auth/me', { token })
+}
+
+/** Set or change the signed-in user's username (issue #362). The server allocates a
+ * `#XXXX` discriminator; the returned `User` carries the new `username`/`discriminator`/
+ * `handle`. A read-only API key is 403; an offensive/invalid/reserved name is 422. */
+export function setUsername(token: string, username: string): Promise<User> {
+  return request<User>('/api/auth/username', { method: 'PUT', body: { username }, token })
+}
+
+/** Whether a candidate username passes the rules (length/charset/reserved/profanity),
+ * for the "choose a username" dialog's live feedback. Authed (the dialog is only reachable
+ * while signed in); allocates nothing. */
+export function checkUsername(token: string, username: string): Promise<UsernameAvailability> {
+  return request<UsernameAvailability>(
+    `/api/auth/username/available?username=${encodeURIComponent(username)}`,
+    { token },
+  )
 }
 
 export function refresh(): Promise<RefreshResponse> {

@@ -8,5 +8,6 @@ pub mod health;
 pub mod mirror;
 pub mod openapi;
 pub mod shared;
+pub mod sharing;
 pub mod sitemap;
 pub mod wishlist;

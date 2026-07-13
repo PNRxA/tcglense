@@ -52,6 +52,23 @@ pub const PUBLIC_CATALOG_CACHE: &str =
 /// (per-user auth, live import status, and every error response).
 pub const NO_STORE: &str = "no-store";
 
+/// `Cache-Control` for public, handle-keyed **holdings** reads (`/api/u/{handle}/...`).
+///
+/// Shorter-lived than the catalog: a public collection changes whenever its owner edits
+/// it, not just on the daily sync, and there is **no active purge on edit** — so a shared
+/// cache may serve a stale copy for up to `s-maxage` after the owner toggles a collection
+/// private or changes it. That is accepted for v1: the owner's *own* view is served from
+/// the authed, `no-store` routes, so they always see edits immediately; only the anonymous
+/// public copy lags (≤ 5 min), and a self-host without a CDN only ever applies the
+/// 60-second browser `max-age`.
+///
+/// Unlike the per-user authed collection routes (which are `no-store`), this is `public`
+/// because the URL — the handle plus the game — fully identifies the content, exactly as a
+/// card id does for the catalog. `max-age=60` (browser), `s-maxage=300` (shared cache),
+/// `stale-while-revalidate=600` (serve-stale-while-refreshing window).
+pub const PUBLIC_HOLDINGS_CACHE: &str =
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
+
 /// Decide the `Cache-Control` value for a *public catalog* response, or `None` to
 /// leave the response's existing header in place.
 ///
@@ -63,10 +80,33 @@ pub const NO_STORE: &str = "no-store";
 /// Kept as a pure function so the policy is unit-testable without spinning up the
 /// router.
 pub fn public_cache_value(status: StatusCode, has_cache_control: bool) -> Option<&'static str> {
+    cache_value(status, has_cache_control, PUBLIC_CATALOG_CACHE)
+}
+
+/// Decide the `Cache-Control` for a public, handle-keyed **holdings** response
+/// (`/api/u/{handle}/...`): a success is shared-cacheable under [`PUBLIC_HOLDINGS_CACHE`],
+/// an already-set header wins (`None`), and every error is [`NO_STORE`] so a CDN never
+/// pins the `404` a private/unknown handle returns.
+pub fn public_holdings_cache_value(
+    status: StatusCode,
+    has_cache_control: bool,
+) -> Option<&'static str> {
+    cache_value(status, has_cache_control, PUBLIC_HOLDINGS_CACHE)
+}
+
+/// Shared "errors → `no-store`, success → `fresh`" policy, leaving any pre-set header
+/// (e.g. the image proxy's `immutable`) intact. `fresh` is the shared-cache policy to tag
+/// a success with — [`PUBLIC_CATALOG_CACHE`] for the catalog, [`PUBLIC_HOLDINGS_CACHE`]
+/// for the public holdings reads.
+fn cache_value(
+    status: StatusCode,
+    has_cache_control: bool,
+    fresh: &'static str,
+) -> Option<&'static str> {
     if has_cache_control {
         None
     } else if status.is_success() {
-        Some(PUBLIC_CATALOG_CACHE)
+        Some(fresh)
     } else {
         Some(NO_STORE)
     }
@@ -76,6 +116,18 @@ pub fn public_cache_value(status: StatusCode, has_cache_control: bool) -> Option
 pub async fn public_cache_layer(mut response: Response) -> Response {
     let has_cache_control = response.headers().contains_key(CACHE_CONTROL);
     if let Some(value) = public_cache_value(response.status(), has_cache_control) {
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static(value));
+    }
+    response
+}
+
+/// Response middleware for the public, handle-keyed holdings routes (`/api/u/...`):
+/// apply [`public_holdings_cache_value`].
+pub async fn public_holdings_cache_layer(mut response: Response) -> Response {
+    let has_cache_control = response.headers().contains_key(CACHE_CONTROL);
+    if let Some(value) = public_holdings_cache_value(response.status(), has_cache_control) {
         response
             .headers_mut()
             .insert(CACHE_CONTROL, HeaderValue::from_static(value));
@@ -263,6 +315,24 @@ mod tests {
         ] {
             assert_eq!(public_cache_value(status, false), Some(NO_STORE));
         }
+    }
+
+    #[test]
+    fn public_holdings_success_shared_cached_errors_no_store() {
+        // A handle-keyed public holdings success is shared-cacheable...
+        assert_eq!(
+            public_holdings_cache_value(StatusCode::OK, false),
+            Some(PUBLIC_HOLDINGS_CACHE)
+        );
+        // ...but a 404 for a private/unknown handle is never CDN-pinned...
+        assert_eq!(
+            public_holdings_cache_value(StatusCode::NOT_FOUND, false),
+            Some(NO_STORE)
+        );
+        // ...and a pre-set header still wins.
+        assert_eq!(public_holdings_cache_value(StatusCode::OK, true), None);
+        // It carries neither `no-store` nor `immutable`, so it earns an ETag (304s work).
+        assert!(is_etaggable(StatusCode::OK, Some(PUBLIC_HOLDINGS_CACHE)));
     }
 
     #[test]

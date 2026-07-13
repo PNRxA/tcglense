@@ -5,6 +5,7 @@ pub use super::card_price_history::Entity as CardPriceHistory;
 pub use super::card_set::Entity as CardSet;
 pub use super::collection_item::Entity as CollectionItem;
 pub use super::collection_source::Entity as CollectionSource;
+pub use super::collection_visibility::Entity as CollectionVisibility;
 pub use super::email_token::Entity as EmailToken;
 pub use super::ingest_state::Entity as IngestState;
 pub use super::product::Entity as Product;

@@ -33,20 +33,33 @@ pub async fn collection_sets(
     Query(params): Query<SetsParams>,
 ) -> Result<Json<CollectionSetsResponse>, AppError> {
     require_game(&game)?;
+    Ok(Json(
+        owned_sets(&state, user.id, &game, params.bulk_threshold_cents()).await?,
+    ))
+}
 
+/// The owned-set landing tiles for a user + game, shared by the authed
+/// [`collection_sets`] handler and the public (handle-resolved) read. Parameterised by
+/// `user_id` so the two differ only in how that id is obtained.
+pub(crate) async fn owned_sets(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    bulk_threshold_cents: i128,
+) -> Result<CollectionSetsResponse, AppError> {
     // Every owned card (with its joined card row) for the game — bounded by how many
     // distinct cards the user owns.
-    let rows = owned_with_cards(user.id, &game, None).all(&state.db).await?;
+    let rows = owned_with_cards(user_id, game, None).all(&state.db).await?;
 
     // The game's set metadata, to dress each owned set as a full catalog tile.
     let sets = CardSet::find()
-        .filter(card_set::Column::Game.eq(game.as_str()))
+        .filter(card_set::Column::Game.eq(game))
         .all(&state.db)
         .await?;
 
-    Ok(Json(CollectionSetsResponse {
-        data: build_collection_sets(&game, rows, sets, params.bulk_threshold_cents()),
-    }))
+    Ok(CollectionSetsResponse {
+        data: build_collection_sets(game, rows, sets, bulk_threshold_cents),
+    })
 }
 
 /// `GET /api/collection/{game}/sets/{code}/drops` -> the signed-in user's owned cards
@@ -65,9 +78,25 @@ pub async fn collection_set_drops(
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CollectionDropGroup>>, AppError> {
     let game_meta = require_game(&game)?;
+    Ok(Json(
+        owned_drop_page(&state, game_meta, user.id, &game, &code, &params).await?,
+    ))
+}
+
+/// The owned cards of a drop-grouped set, grouped by drop and paginated by drop, for a
+/// user + game, shared by the authed [`collection_set_drops`] handler and the public
+/// (handle-resolved) read. Parameterised by `user_id`.
+pub(crate) async fn owned_drop_page(
+    state: &AppState,
+    game_meta: &'static crate::catalog::Game,
+    user_id: i32,
+    game: &str,
+    code: &str,
+    params: &ListParams,
+) -> Result<Page<CollectionDropGroup>, AppError> {
     // Canonicalise the set (and 404 an unknown one) exactly as the catalog does.
-    let set = load_set(&state, &game, &code).await?;
-    let table = require_drop_table(&game, &set.code)?;
+    let set = load_set(state, game, code).await?;
+    let table = require_drop_table(game, &set.code)?;
     let dialect = state.dialect();
 
     // Parse the optional Scryfall-syntax query up front so a malformed one 422s before
@@ -82,8 +111,8 @@ pub async fn collection_set_drops(
     // every drop complete regardless of where the page boundary falls.
     let scope = [set.code.clone()];
     let rows = collection_query(
-        user.id,
-        &game,
+        user_id,
+        game,
         Some(&scope),
         search,
         CollectionSort::Card(SortField::Number),
@@ -94,7 +123,7 @@ pub async fn collection_set_drops(
     .await?;
 
     let (page, page_size) = params.drop_page_and_size();
-    Ok(Json(holding_drop_page(table, rows, page, page_size)))
+    Ok(holding_drop_page(table, rows, page, page_size))
 }
 
 /// `GET /api/collection/{game}/sets/{code}/subtypes` -> the signed-in user's owned cards
@@ -112,8 +141,24 @@ pub async fn collection_set_subtypes(
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CollectionSubtypeGroup>>, AppError> {
     let game_meta = require_game(&game)?;
+    Ok(Json(
+        owned_subtype_page(&state, game_meta, user.id, &game, &code, &params).await?,
+    ))
+}
+
+/// The owned cards of a set, grouped by card sub-type (treatment) and paginated by
+/// sub-type, for a user + game, shared by the authed [`collection_set_subtypes`] handler
+/// and the public (handle-resolved) read. Parameterised by `user_id`.
+pub(crate) async fn owned_subtype_page(
+    state: &AppState,
+    game_meta: &'static crate::catalog::Game,
+    user_id: i32,
+    game: &str,
+    code: &str,
+    params: &ListParams,
+) -> Result<Page<CollectionSubtypeGroup>, AppError> {
     // Canonicalise the set (and 404 an unknown one) exactly as the catalog does.
-    let set = load_set(&state, &game, &code).await?;
+    let set = load_set(state, game, code).await?;
     let dialect = state.dialect();
 
     // Parse the optional Scryfall-syntax query up front so a malformed one 422s before we
@@ -127,8 +172,8 @@ pub async fn collection_set_subtypes(
     // — bounded by one set, so we group + paginate by sub-type in memory.
     let scope = [set.code.clone()];
     let rows = collection_query(
-        user.id,
-        &game,
+        user_id,
+        game,
         Some(&scope),
         search,
         CollectionSort::Card(SortField::Number),
@@ -139,5 +184,5 @@ pub async fn collection_set_subtypes(
     .await?;
 
     let (page, page_size) = params.drop_page_and_size();
-    Ok(Json(holding_subtype_page(rows, page, page_size)))
+    Ok(holding_subtype_page(rows, page, page_size))
 }

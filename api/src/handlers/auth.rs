@@ -15,7 +15,7 @@ use crate::{
     auth::{
         cookie::{REFRESH_COOKIE_NAME, build_refresh_cookie, removal_cookie},
         email_token::{EmailTokenPurpose, consume, issue_with_cooldown},
-        extractor::AuthUser,
+        extractor::{AuthUser, WritableUser},
         jwt::encode_token,
         password::{hash_password, verify_password},
         refresh::{RotateOutcome, issue_refresh_token, revoke_all_for_user, revoke_one, rotate},
@@ -24,7 +24,7 @@ use crate::{
     email::{OutgoingEmail, password_reset_email, registration_email, verification_email},
     entities::{prelude::User, user},
     error::AppError,
-    extract::JsonBody,
+    extract::{JsonBody, Query},
     state::AppState,
 };
 
@@ -86,7 +86,10 @@ pub struct ResetPasswordRequest {
     pub captcha_token: Option<String>,
 }
 
-/// Public-facing user shape (never includes the password hash).
+/// Public-facing user shape (never includes the password hash). Carries the opt-in
+/// public handle (issue #362): `username`/`discriminator` are set together the first
+/// time the user makes a collection public, and `handle` is the formatted
+/// `username-0001` (or null until then) the SPA uses for `/u/{handle}/{game}` links.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "User"))]
 pub struct UserResponse {
@@ -94,15 +97,23 @@ pub struct UserResponse {
     pub email: String,
     pub display_name: Option<String>,
     pub created_at: DateTimeUtc,
+    pub username: Option<String>,
+    pub discriminator: Option<i32>,
+    pub handle: Option<String>,
 }
 
 impl From<user::Model> for UserResponse {
     fn from(m: user::Model) -> Self {
+        // Compute the handle before the field moves below consume `m`.
+        let handle = crate::auth::username::handle_of(&m);
         UserResponse {
             id: m.id,
             email: m.email,
             display_name: m.display_name,
             created_at: m.created_at,
+            username: m.username,
+            discriminator: m.discriminator,
+            handle,
         }
     }
 }
@@ -529,6 +540,99 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoR
 /// `GET /api/auth/me`
 pub async fn me(AuthUser(user): AuthUser) -> Result<impl IntoResponse, AppError> {
     Ok((StatusCode::OK, Json(MeResponse { user: user.into() })))
+}
+
+/// Body of `PUT /api/auth/username`.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct SetUsernameRequest {
+    pub username: String,
+}
+
+/// `PUT /api/auth/username` -> set or change the caller's username (issue #362).
+/// `WritableUser`, so a read-only API key is 403 — a key must not claim a handle. The
+/// username is validated (length/charset/structure/reserved/`rustrict`) before any write;
+/// the discriminator is kept across a rename when the new pair is free, else the lowest
+/// free one is allocated. The `(lower(username), discriminator)` unique index is the
+/// source of truth for the concurrent-allocation race, so a lost race re-allocates and
+/// retries. Returns the updated user (its `handle` now populated).
+pub async fn set_username(
+    State(state): State<AppState>,
+    WritableUser(user): WritableUser,
+    JsonBody(payload): JsonBody<SetUsernameRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let display = crate::auth::username::validate(&payload.username)?;
+    let normalized = crate::auth::username::normalize(&display);
+
+    const MAX_ALLOC_RETRIES: usize = 5;
+    let mut updated: Option<user::Model> = None;
+    for _ in 0..MAX_ALLOC_RETRIES {
+        let discriminator = crate::auth::username::allocate_discriminator(
+            &state.db,
+            &normalized,
+            user.discriminator, // prefer keeping the current tag across a rename
+            user.id,            // exclude the caller's own row from the "taken" set
+        )
+        .await?;
+
+        let mut active: user::ActiveModel = user.clone().into();
+        active.username = Set(Some(display.clone()));
+        active.discriminator = Set(Some(discriminator));
+        active.updated_at = Set(Utc::now());
+        match active.update(&state.db).await {
+            Ok(row) => {
+                updated = Some(row);
+                break;
+            }
+            // Lost the (lower(username), discriminator) race — re-allocate and retry.
+            Err(e) if matches!(e.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let user = updated.ok_or_else(|| {
+        AppError::Conflict("could not allocate a username; please try again".to_string())
+    })?;
+
+    Ok((StatusCode::OK, Json(UserResponse::from(user))))
+}
+
+/// Query params for the username-availability check.
+#[derive(Debug, Deserialize)]
+pub struct UsernameAvailabilityParams {
+    #[serde(default)]
+    pub username: String,
+}
+
+/// Whether a candidate username passes the rules, with a reason when it doesn't — for
+/// the "choose a username" dialog's live feedback.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct UsernameAvailability {
+    pub valid: bool,
+    pub reason: Option<String>,
+}
+
+/// `GET /api/auth/username/available?username=<name>` -> whether `<name>` passes the
+/// username rules. Validation-only: it allocates nothing (the discriminator scheme makes
+/// a valid name effectively always claimable), so it never reserves a tag or reveals
+/// whether a name is "taken". `AuthUser` — the dialog is only reachable when signed in,
+/// keeping the profanity checker off the open internet.
+pub async fn username_available(
+    AuthUser(_user): AuthUser,
+    Query(params): Query<UsernameAvailabilityParams>,
+) -> Result<Json<UsernameAvailability>, AppError> {
+    match crate::auth::username::validate(&params.username) {
+        Ok(_) => Ok(Json(UsernameAvailability {
+            valid: true,
+            reason: None,
+        })),
+        Err(AppError::Validation(reason)) => Ok(Json(UsernameAvailability {
+            valid: false,
+            reason: Some(reason),
+        })),
+        Err(e) => Err(e),
+    }
 }
 
 /// `POST /api/auth/verify-email`

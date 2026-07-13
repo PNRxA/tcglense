@@ -5,6 +5,7 @@ pub mod card_price_history;
 pub mod card_set;
 pub mod collection_item;
 pub mod collection_source;
+pub mod collection_visibility;
 pub mod email_token;
 pub mod ingest_state;
 pub mod prelude;

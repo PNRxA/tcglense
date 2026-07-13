@@ -37,6 +37,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls", 
 # use one process-wide rustls, and 0.23 refuses to auto-select when more than one
 # provider is linked. Matches the aws-lc-sys the build already compiles.
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+rustrict = { version = "0.7.38", default-features = false, features = ["censor"] }
 sea-orm = { version = "1.1.20", features = ["sqlx-sqlite", "sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono"] }
 sea-orm-migration = { version = "1.1.20", features = ["sqlx-sqlite", "sqlx-postgres", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }

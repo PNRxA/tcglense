@@ -11,6 +11,7 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionMovers from '@/components/collection/CollectionMovers.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
+import CollectionVisibilityCard from '@/components/collection/CollectionVisibilityCard.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import { useGameName } from '@/composables/useCatalog'
@@ -148,6 +149,10 @@ function fetchValueHistory(range: PriceRange) {
         </div>
 
         <CollectionSyncControls :game="game" />
+
+        <!-- Make this game's collection public and get a shareable link (issues #361/#362).
+             Per-game: sharing MTG doesn't share any other game's collection. -->
+        <CollectionVisibilityCard :game="game" />
       </header>
 
       <!-- Total collection value over time — reconstructed from historic prices and each

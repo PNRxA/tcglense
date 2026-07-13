@@ -93,6 +93,12 @@ export const useAuthStore = defineStore('auth', () => {
     sessionResolved.value = true
   }
 
+  /** Replace the cached current user (e.g. after setting a username), so every
+   * `auth.user` consumer repaints without a `/me` round-trip. */
+  function setUser(u: User) {
+    user.value = u
+  }
+
   async function logout() {
     try {
       await apiLogout()
@@ -219,6 +225,7 @@ export const useAuthStore = defineStore('auth', () => {
     sessionResolved,
     login,
     setSession,
+    setUser,
     logout,
     refresh,
     fetchMe,
