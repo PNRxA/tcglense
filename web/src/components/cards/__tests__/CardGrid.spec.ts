@@ -49,7 +49,7 @@ function mountGrid(
   authenticated = true,
   ghostUnowned = false,
   list: CardListTarget = 'collection',
-  opts: { ownedMarks?: OwnedCountsMap; ghostStyle?: GhostStyle } = {},
+  opts: { ownedMarks?: OwnedCountsMap; ghostStyle?: GhostStyle; wishlist?: OwnedCountsMap } = {},
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -65,7 +65,15 @@ function mountGrid(
   // store, and the quick-add control uses vue-query, so the tree needs all three.
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(CardGrid, {
-    props: { game: 'mtg', cards, ownership, ghostUnowned, list, ownedMarks: opts.ownedMarks },
+    props: {
+      game: 'mtg',
+      cards,
+      ownership,
+      ghostUnowned,
+      list,
+      ownedMarks: opts.ownedMarks,
+      wishlist: opts.wishlist,
+    },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
 }
@@ -80,6 +88,14 @@ function cardLink(wrapper: ReturnType<typeof mountGrid>, id: string) {
 // chips to know how many tiles show an owned-count badge without depending on styling.
 function totalBadges(wrapper: ReturnType<typeof mountGrid>) {
   return wrapper.findAll('span').filter((s) => (s.attributes('aria-label') ?? '').endsWith('total'))
+}
+
+// The wish-list Heart chip carries an `aria-label` ending in "wanted"; count these to know
+// how many tiles flag a wish-listed card without depending on styling.
+function wantedBadges(wrapper: ReturnType<typeof mountGrid>) {
+  return wrapper
+    .findAll('span')
+    .filter((s) => (s.attributes('aria-label') ?? '').endsWith('wanted'))
 }
 
 describe('CardGrid quick-add controls', () => {
@@ -128,11 +144,42 @@ describe('CardGrid quick-add controls', () => {
       false,
       'wishlist',
     )
-    // Owned card A keeps its count chips; unowned card B's add affordance targets the
-    // wish list — the controls write there instead of the collection.
-    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    // Owned card A keeps its count chips (now heart-led "wanted" per D8); unowned card B's
+    // add affordance targets the wish list — the controls write there instead of the
+    // collection.
+    expect(wrapper.find('[aria-label="3 wanted"]').exists()).toBe(true)
     expect(wrapper.find('[aria-label="Add Card b to your wish list"]').exists()).toBe(true)
     expect(wrapper.find('[aria-label="Add Card b to your collection"]').exists()).toBe(false)
+  })
+})
+
+describe('CardGrid wish-list hearts (issue #364)', () => {
+  it('shows both a total and a wanted chip on an owned + wish-listed card', () => {
+    const wrapper = mountGrid(
+      [makeCard('a'), makeCard('b')],
+      { a: { quantity: 2, foil_quantity: 1 } },
+      true,
+      false,
+      'collection',
+      { wishlist: { a: { quantity: 1, foil_quantity: 0 } } },
+    )
+    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="1 wanted"]').exists()).toBe(true)
+  })
+
+  it('rests a wish-listed-but-unowned card as a heart with an add-to-collection trigger', () => {
+    const wrapper = mountGrid([makeCard('a')], undefined, true, false, 'collection', {
+      wishlist: { a: { quantity: 2, foil_quantity: 0 } },
+    })
+    expect(wrapper.find('[aria-label="2 wanted"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Add Card a to your collection"]').exists()).toBe(true)
+    // Not owned, so no total chip renders — just the heart.
+    expect(totalBadges(wrapper)).toHaveLength(0)
+  })
+
+  it('shows no heart chip without a wishlist map', () => {
+    const wrapper = mountGrid([makeCard('a')], { a: { quantity: 1, foil_quantity: 0 } })
+    expect(wantedBadges(wrapper)).toHaveLength(0)
   })
 })
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { nextTick, type Ref } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { Heart } from '@lucide/vue'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -115,8 +116,13 @@ describe('WantedCountControl (issue #364)', () => {
 
   it('rests as a count chip when wanted and a "+" trigger when not', () => {
     const wanted = mountControl({ quantity: 2, foilQuantity: 1 })
-    // The trigger carries the OwnedCountBadge total chip and the edit-worded label.
-    expect(wanted.find('[aria-label="3 total"]').exists()).toBe(true)
+    // The trigger carries the OwnedCountBadge heart-led total chip and the edit-worded label.
+    expect(wanted.find('[aria-label="3 wanted"]').exists()).toBe(true)
+    // Product mode passes kind='wanted' through, so the chip's leading icon is a Heart (not
+    // the Layers used by owned totals) — assert the component identity, not just the label.
+    const heart = wanted.findComponent(Heart)
+    expect(heart.exists()).toBe(true)
+    expect(wanted.find('[aria-label="3 wanted"]').element.contains(heart.element)).toBe(true)
     expect(
       wanted.find('[aria-label="Edit copies of Booster Box in your wish list"]').exists(),
     ).toBe(true)
@@ -124,7 +130,7 @@ describe('WantedCountControl (issue #364)', () => {
 
     const none = mountControl({ quantity: 0, foilQuantity: 0 })
     expect(none.find('[aria-label="Add Booster Box to your wish list"]').exists()).toBe(true)
-    expect(none.find('[aria-label="3 total"]').exists()).toBe(false)
+    expect(none.find('[aria-label="3 wanted"]').exists()).toBe(false)
     none.unmount()
   })
 

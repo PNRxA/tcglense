@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { Layers, Plus, Sparkles } from '@lucide/vue'
+import { Heart, Layers, Plus, Sparkles } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // The owned-count chips shown on a card image: a total-copies chip (stacked-cards icon,
@@ -22,20 +22,39 @@ const props = withDefaults(
   defineProps<{
     quantity: number
     foilQuantity: number
+    // The card's wish-list wanted count (regular + foil). When positive AND `kind` is
+    // 'owned', a Heart chip is appended to the RIGHT of the total/foil chips, flagging that
+    // the card is on the user's wish list (issue #364 follow-up). Informational only — it
+    // never swaps to a "+" under `hoverAsAdd` (this control adds to the collection, not the
+    // wish list). Ignored when `kind` is 'wanted' (the total chip is already a heart).
+    wantedQuantity?: number
+    // What the total/foil chips MEAN. 'owned' (default): the total chip leads with a
+    // stacked-cards icon and reads "N total" (a collection holding). 'wanted': the total
+    // chip leads with a Heart and reads "N wanted" — used by the product control and the
+    // wishlist-targeting card grids, where the counts are wish-list wants, not owned copies.
+    kind?: 'owned' | 'wanted'
     tooltip?: boolean
     hoverAsAdd?: boolean
   }>(),
-  { tooltip: true, hoverAsAdd: false },
+  { wantedQuantity: 0, kind: 'owned', tooltip: true, hoverAsAdd: false },
 )
 
 const total = computed(() => props.quantity + props.foilQuantity)
 
-// The chips to render: always the total (when any are owned), plus a foil chip when some
-// copies are foil. Each names the icon that leads it and the `aria-label` that voices it.
+// The chips to render, left to right: the total (when any), a foil chip (when some are
+// foil), and — on an 'owned' badge that is also wish-listed — a Heart "wanted" chip. Each
+// names its leading icon, its `aria-label`, and whether it swaps to a "+" under `hoverAsAdd`
+// (`swap`): the total/foil chips do; the informational wanted chip never does.
 const chips = computed(() => {
-  const list: { key: string; icon: Component; count: number; label: string }[] = []
+  const list: { key: string; icon: Component; count: number; label: string; swap: boolean }[] = []
   if (total.value > 0) {
-    list.push({ key: 'total', icon: Layers, count: total.value, label: `${total.value} total` })
+    list.push({
+      key: 'total',
+      icon: props.kind === 'wanted' ? Heart : Layers,
+      count: total.value,
+      label: props.kind === 'wanted' ? `${total.value} wanted` : `${total.value} total`,
+      swap: true,
+    })
   }
   if (props.foilQuantity > 0) {
     list.push({
@@ -43,6 +62,16 @@ const chips = computed(() => {
       icon: Sparkles,
       count: props.foilQuantity,
       label: `${props.foilQuantity} foil`,
+      swap: true,
+    })
+  }
+  if (props.kind === 'owned' && props.wantedQuantity > 0) {
+    list.push({
+      key: 'wanted',
+      icon: Heart,
+      count: props.wantedQuantity,
+      label: `${props.wantedQuantity} wanted`,
+      swap: false,
     })
   }
   return list
@@ -68,7 +97,7 @@ const chipClass =
       <span v-else :class="chipClass" :aria-label="chip.label">
         <!-- In quick-add mode the semantic icon and a "+" are both rendered; the group's
           hover/focus state (set on the enclosing trigger) shows exactly one of them. -->
-        <template v-if="hoverAsAdd">
+        <template v-if="hoverAsAdd && chip.swap">
           <component
             :is="chip.icon"
             class="size-3 group-hover/add:hidden group-focus-within/add:hidden"

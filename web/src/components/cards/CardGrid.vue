@@ -34,8 +34,19 @@ const props = withDefaults(
     // setting — distinct from `ownership`, which on those grids means wish-list membership.
     // Absent (undefined) everywhere else, so no marker renders.
     ownedMarks?: OwnedCountsMap
+    // Wish-list wanted counts keyed by card id (issue #364 follow-up): a card present here
+    // with a positive count shows a Heart "wanted" chip on its quick-add control, flagging
+    // cards on your wish list. Passed only on collection-targeting grids (list==='collection');
+    // on a wishlist grid the count chips already show wants, so this is omitted (undefined).
+    wishlist?: OwnedCountsMap
   }>(),
-  { ownership: undefined, ghostUnowned: false, list: 'collection', ownedMarks: undefined },
+  {
+    ownership: undefined,
+    ghostUnowned: false,
+    list: 'collection',
+    ownedMarks: undefined,
+    wishlist: undefined,
+  },
 )
 
 // A card is owned when the ownership map holds a positive count for it; in show-ghosts
@@ -51,6 +62,12 @@ function isGhost(card: Card): boolean {
 function isOwnedMark(card: Card): boolean {
   const owned = props.ownedMarks?.[card.id]
   return !!owned && owned.quantity + owned.foil_quantity > 0
+}
+
+// The card's total wanted count from the wish-list map (regular + foil); 0 when absent.
+function wishlistTotal(card: Card): number {
+  const w = props.wishlist?.[card.id]
+  return w ? w.quantity + w.foil_quantity : 0
 }
 
 // The grid's column count follows the user's persisted size preference (set via
@@ -82,6 +99,7 @@ useCardNavList(
           :name="card.name"
           :quantity="ownership?.[card.id]?.quantity ?? 0"
           :foil-quantity="ownership?.[card.id]?.foil_quantity ?? 0"
+          :wishlist-quantity="wishlistTotal(card)"
           :list="list"
         />
       </template>

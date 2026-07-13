@@ -86,6 +86,7 @@ const wanted = computed(() => displayTotal.value > 0)
           v-if="wanted"
           :quantity="quantity"
           :foil-quantity="foilQuantity"
+          kind="wanted"
           :tooltip="false"
           hover-as-add
         />
