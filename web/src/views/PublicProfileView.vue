@@ -16,7 +16,7 @@ const profileQuery = usePublicProfileQuery(handle)
 const profile = computed(() => profileQuery.data.value)
 const notFound = computed(() => profileQuery.isError.value)
 
-const displayName = computed(() => profile.value?.display_name || profile.value?.username || '')
+const displayName = computed(() => profile.value?.username || '')
 const tag = computed(() =>
   profile.value ? `#${String(profile.value.discriminator).padStart(4, '0')}` : '',
 )

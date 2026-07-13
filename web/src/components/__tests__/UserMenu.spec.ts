@@ -53,15 +53,15 @@ describe('UserMenu', () => {
     store.user = {
       id: 1,
       email: 'ash@pallet.town',
-      display_name: 'Ash',
       created_at: '2026-01-01T00:00:00Z',
-      username: null,
-      discriminator: null,
-      handle: null,
+      username: 'Ash',
+      discriminator: 7,
+      handle: 'Ash-0007',
     }
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('a[href^="/login"]').exists()).toBe(false)
+    // The menu labels itself with the username now (display names were removed).
     expect(wrapper.text()).toContain('Ash')
   })
 })

@@ -59,7 +59,10 @@ async fn seed_dev_user(db: &DatabaseConnection) {
     let result = user::ActiveModel {
         email: Set(DEV_USER_EMAIL.to_string()),
         password_hash: Set(Some(password_hash)),
-        display_name: Set(Some("Dev Tester".to_string())),
+        // A ready-made handle (`dev_tester-0001`) so the offline account can exercise the
+        // public-collection pages without a signup round trip.
+        username: Set(Some("dev_tester".to_string())),
+        discriminator: Set(Some(1)),
         created_at: Set(now),
         updated_at: Set(now),
         email_verified_at: Set(Some(now)),

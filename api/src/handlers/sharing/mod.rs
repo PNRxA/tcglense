@@ -51,16 +51,15 @@ pub struct PublicGameSummary {
     pub summary: crate::handlers::shared::CollectionSummary,
 }
 
-/// A user's public profile landing: display identity + every game they've made public.
-/// Deliberately carries **no** email or other PII — only the public handle, an optional
-/// display name, the account age, and the per-game summaries.
+/// A user's public profile landing: their handle + every game they've made public.
+/// Deliberately carries **no** email or other PII — only the public username/handle, the
+/// account age, and the per-game summaries.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PublicProfile {
     pub username: String,
     pub discriminator: i32,
     pub handle: String,
-    pub display_name: Option<String>,
     pub member_since: DateTimeUtc,
     pub games: Vec<PublicGameSummary>,
 }

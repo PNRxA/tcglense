@@ -44,17 +44,13 @@ const paddedTag = computed(() => {
           </div>
           <div class="min-w-0">
             <CardTitle class="truncate text-xl">
-              {{ auth.user?.display_name ?? 'Collector' }}
+              {{ auth.user?.username ?? 'Collector' }}
             </CardTitle>
             <CardDescription class="truncate">{{ auth.user?.email }}</CardDescription>
           </div>
         </div>
       </CardHeader>
       <CardContent class="grid gap-4 sm:grid-cols-2">
-        <div class="flex flex-col gap-1">
-          <span class="text-muted-foreground text-xs">Display name</span>
-          <p class="text-sm">{{ auth.user?.display_name ?? 'Not set' }}</p>
-        </div>
         <div class="flex flex-col gap-1">
           <span class="text-muted-foreground text-xs">Username</span>
           <p class="text-sm">

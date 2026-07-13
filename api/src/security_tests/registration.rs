@@ -191,19 +191,25 @@ async fn completion_enforces_password_rules_before_spending_the_token() {
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     // …so the same link still completes with a valid one, signing the user in
-    // (session + refresh cookie) with the chosen display name.
+    // (session + refresh cookie), and the optional username (trimmed) is claimed with an
+    // auto-assigned discriminator.
     let (s, headers, body) = send(
         &app,
         json_post(
             "/api/auth/complete-registration",
-            json!({ "token": token, "password": "password123", "display_name": "  Tester  " }),
+            json!({ "token": token, "password": "password123", "username": "  Tester  " }),
         ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     assert!(body["access_token"].as_str().is_some());
     assert_eq!(body["user"]["email"], "rules@example.com");
-    assert_eq!(body["user"]["display_name"], "Tester");
+    assert_eq!(body["user"]["username"], "Tester");
+    assert!(
+        body["user"]["handle"]
+            .as_str()
+            .is_some_and(|h| h.starts_with("Tester-"))
+    );
     assert!(refresh_token_from(&headers).is_some());
 
     // Single-use: the spent token cannot complete again.
@@ -219,31 +225,44 @@ async fn completion_enforces_password_rules_before_spending_the_token() {
 }
 
 #[tokio::test]
-async fn a_whitespace_only_display_name_is_stored_as_null() {
+async fn username_at_signup_is_optional_and_validated() {
     let app = test_app().await;
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "blank-name@example.com" })),
+        json_post("/api/auth/register", json!({ "email": "signup-name@example.com" })),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let token = latest_email_token(&app, "blank-name@example.com").await;
+    let token = latest_email_token(&app, "signup-name@example.com").await;
 
-    // A display name that is only whitespace normalises to no name at all (an
-    // all-spaces string must not become a stored, renderable display name).
+    // An invalid/reserved username is rejected 422 BEFORE the single-use token is consumed,
+    // so the user can retry (mirrors the password pre-check).
+    let (s, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/complete-registration",
+            json!({ "token": token, "password": "password123", "username": "admin" }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The token survived: completing with a whitespace-only username succeeds and simply
+    // leaves the account without a handle (username is opt-in).
     let (s, _, body) = send(
         &app,
         json_post(
             "/api/auth/complete-registration",
-            json!({ "token": token, "password": "password123", "display_name": "   " }),
+            json!({ "token": token, "password": "password123", "username": "   " }),
         ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     assert!(
-        body["user"]["display_name"].is_null(),
-        "a whitespace-only display name must be stored as null: {body}"
+        body["user"]["username"].is_null(),
+        "a whitespace-only username must leave the account without a handle: {body}"
     );
+    assert!(body["user"]["handle"].is_null());
 }
 
 #[tokio::test]
@@ -352,7 +371,6 @@ async fn case_insensitive_uniqueness_is_enforced_at_the_database() {
     let row = |email: &str| user::ActiveModel {
         email: Set(email.to_string()),
         password_hash: Set(Some("irrelevant".to_string())),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()

@@ -22,7 +22,6 @@ import { useAuthStore } from '@/stores/auth'
 const USER: User = {
   id: 1,
   email: 'ash@pallet.town',
-  display_name: 'Ash',
   created_at: '2026-01-01T00:00:00Z',
   username: null,
   discriminator: null,

@@ -21,7 +21,6 @@ async fn seed_verified_account(app: &TestApp, email: &str, password: &str) {
     user::ActiveModel {
         email: Set(email.to_string()),
         password_hash: Set(Some(hash_password(password).expect("hash password"))),
-        display_name: Set(None),
         email_verified_at: Set(Some(now)),
         created_at: Set(now),
         updated_at: Set(now),
@@ -120,7 +119,6 @@ async fn seed_pending_account(app: &TestApp, email: &str) -> i32 {
     user::ActiveModel {
         email: Set(email.to_string()),
         password_hash: Set(None),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()

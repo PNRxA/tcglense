@@ -45,7 +45,6 @@ pub async fn public_profile(
         username: user.username.clone().unwrap_or_default(),
         discriminator: user.discriminator.unwrap_or_default(),
         handle: crate::auth::username::handle_of(&user).unwrap_or_default(),
-        display_name: user.display_name.clone(),
         member_since: user.created_at,
         games,
     }))

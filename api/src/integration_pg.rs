@@ -278,7 +278,6 @@ async fn email_case_insensitive_uniqueness_on_pg() {
             user::ActiveModel {
                 email: Set(email),
                 password_hash: Set(Some("x".to_string())),
-                display_name: Set(None),
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
@@ -318,7 +317,6 @@ async fn public_handle_resolves_case_insensitively_on_pg() {
     let alice = user::ActiveModel {
         email: Set("alice@x.test".to_string()),
         password_hash: Set(Some("x".to_string())),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         username: Set(Some("Alice".to_string())),
@@ -334,7 +332,6 @@ async fn public_handle_resolves_case_insensitively_on_pg() {
     let dup = user::ActiveModel {
         email: Set("alice2@x.test".to_string()),
         password_hash: Set(Some("x".to_string())),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         username: Set(Some("alice".to_string())),

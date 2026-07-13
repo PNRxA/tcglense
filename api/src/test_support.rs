@@ -184,7 +184,6 @@ pub(crate) async fn insert_user(db: &DatabaseConnection, email: &str) -> i32 {
     user::ActiveModel {
         email: Set(email.to_string()),
         password_hash: Set(Some("x".to_string())),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()

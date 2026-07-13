@@ -1,7 +1,18 @@
-import type { Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getPublicCollection, getPublicCollectionSummary, getPublicProfile } from '@/lib/api'
-import type { ApiError, CollectionPage, CollectionSummary, PublicProfile } from '@/lib/api'
+import {
+  getPublicCollection,
+  getPublicCollectionSets,
+  getPublicCollectionSummary,
+  getPublicProfile,
+} from '@/lib/api'
+import type {
+  ApiError,
+  CollectionPage,
+  CollectionSet,
+  CollectionSummary,
+  PublicProfile,
+} from '@/lib/api'
 import { CARD_PAGE_SIZE } from '@/composables/useCatalog'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 
@@ -28,23 +39,40 @@ export function usePublicCollectionSummaryQuery(handle: Ref<string>, game: Ref<s
   })
 }
 
-/** A page of a user's public collection for a game. `page`/`query`/`sort` are reactive
- * (carried in the key so a change refetches); the previous page stays visible while the
- * next loads. */
+/** The sets the user owns cards in for a public game — the per-set landing tiles. */
+export function usePublicCollectionSetsQuery(handle: Ref<string>, game: Ref<string>) {
+  return useQuery<{ data: CollectionSet[] }, ApiError>({
+    queryKey: ['public-sets', handle, game],
+    queryFn: () => getPublicCollectionSets(handle.value, game.value),
+    retry: false,
+  })
+}
+
+/** A page of a user's public collection for a game, optionally scoped to one set.
+ * `page`/`query`/`sort` (and `set`) are reactive (carried in the key so a change
+ * refetches); the previous page stays visible while the next loads. */
 export function usePublicCollectionQuery(
   handle: Ref<string>,
   game: Ref<string>,
   page: Ref<number>,
   query: Ref<string>,
   sort: Ref<string>,
+  set?: Ref<string | undefined>,
+  includeRelated?: Ref<boolean>,
 ) {
+  const setCode = set ?? ref<string | undefined>(undefined)
+  const related = includeRelated ?? ref(false)
   return useQuery<CollectionPage, ApiError>({
-    queryKey: ['public-collection', handle, game, query, sort, page],
+    queryKey: ['public-collection', handle, game, setCode, related, query, sort, page],
     queryFn: () =>
       getPublicCollection(handle.value, game.value, {
         page: page.value,
         pageSize: CARD_PAGE_SIZE,
         q: query.value || undefined,
+        set: setCode.value || undefined,
+        // With a set scope, `?related=1` spans the set's whole group (root + related
+        // sub-sets) — the backend honours include_related on the public list too.
+        includeRelated: related.value || undefined,
         ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
       }),
     placeholderData: keepPreviousData,
