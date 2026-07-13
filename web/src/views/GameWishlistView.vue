@@ -112,12 +112,30 @@ usePageMeta({
           <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
         </p>
 
-        <!-- Summary stats: the card trio (distinct cards, total copies, what they'd cost) plus
-             the sealed trio (issue #364 follow-up) when any sealed products are wanted. One
-             flex-wrap list so the six stats flow onto one row on desktop and wrap on narrow
-             screens. -->
-        <dl v-if="hasStats || hasProductStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
-          <template v-if="hasStats">
+        <!-- Summary stats split across two rows: the sealed trio (issue #364 follow-up) on the
+             first line when any products are wanted, then the card trio (distinct cards, total
+             copies, what they'd cost) on the next. Each row is its own flex-wrap list so its
+             stats flow onto one line on desktop and wrap on narrow screens. -->
+        <div v-if="hasStats || hasProductStats" class="mt-4 space-y-3">
+          <dl v-if="hasProductStats" class="flex flex-wrap gap-x-8 gap-y-3">
+            <div>
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique products</dt>
+              <dd class="text-xl font-semibold tabular-nums">
+                {{ productSummary?.unique_products.toLocaleString() }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total products</dt>
+              <dd class="text-xl font-semibold tabular-nums">
+                {{ productSummary?.total_products.toLocaleString() }}
+              </dd>
+            </div>
+            <div v-if="productsValue">
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Products value</dt>
+              <dd class="text-xl font-semibold tabular-nums">{{ productsValue }}</dd>
+            </div>
+          </dl>
+          <dl v-if="hasStats" class="flex flex-wrap gap-x-8 gap-y-3">
             <div>
               <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
               <dd class="text-xl font-semibold tabular-nums">
@@ -136,26 +154,8 @@ usePageMeta({
               <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
               <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
             </div>
-          </template>
-          <template v-if="hasProductStats">
-            <div>
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique products</dt>
-              <dd class="text-xl font-semibold tabular-nums">
-                {{ productSummary?.unique_products.toLocaleString() }}
-              </dd>
-            </div>
-            <div>
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total products</dt>
-              <dd class="text-xl font-semibold tabular-nums">
-                {{ productSummary?.total_products.toLocaleString() }}
-              </dd>
-            </div>
-            <div v-if="productsValue">
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Products value</dt>
-              <dd class="text-xl font-semibold tabular-nums">{{ productsValue }}</dd>
-            </div>
-          </template>
-        </dl>
+          </dl>
+        </div>
 
         <!-- Quick add: cards (name → printing → counts) and sealed products (name → quantity).
              Both write to the wish list; sealed products are wishlist-only (issue #364). -->
