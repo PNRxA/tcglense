@@ -88,8 +88,10 @@ const outlinePoints = computed(() =>
 
 // Capture + match one frame on demand — tap the camera or the Capture button. Capturing a
 // new card first commits the previous one (the rapid-add rhythm), handled in the session.
+// Only fires when a card is locked on (the green outline is showing) — capturing an empty
+// frame would just warp the guide box into a guaranteed non-match, so we gate it out.
 async function captureNow() {
-  if (!isReady.value || reading.value) return
+  if (!isReady.value || reading.value || !cardDetected.value) return
   reading.value = true
   try {
     const cap = await capture()
@@ -142,11 +144,11 @@ const statusHint = computed(() => {
       <section class="min-w-0">
         <div
           class="bg-muted relative mx-auto w-full max-w-md overflow-hidden rounded-xl border"
-          :class="{ 'cursor-pointer': isReady && !reading }"
+          :class="{ 'cursor-pointer': isReady && !reading && cardDetected }"
           :style="{ aspectRatio: String(videoAspect) }"
           role="button"
-          :aria-label="isReady ? 'Tap to scan the card in view' : undefined"
-          @click="isReady && captureNow()"
+          :aria-label="isReady && cardDetected ? 'Tap to scan the card in view' : undefined"
+          @click="captureNow"
         >
           <!-- The live frame (always mounted so the ref/stream can attach); overlays sit on
                top per camera state. -->
@@ -253,7 +255,11 @@ const statusHint = computed(() => {
           </p>
 
           <div class="flex flex-wrap items-center justify-center gap-2">
-            <Button :disabled="reading" aria-label="Capture the card in view" @click="captureNow">
+            <Button
+              :disabled="reading || !cardDetected"
+              aria-label="Capture the card in view"
+              @click="captureNow"
+            >
               <ScanLine class="size-4" aria-hidden="true" />
               Capture
             </Button>
