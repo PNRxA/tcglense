@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { getCardPrints } from '@/lib/api'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import { useOwnedCounts } from '@/composables/useCollection'
+import { useWishlistCounts } from '@/composables/useWishlist'
 
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
@@ -21,6 +22,8 @@ const query = useQuery({
 const prints = computed(() => query.data.value?.data ?? [])
 // Owned-count badges for signed-in users, overlaid on the printings grid.
 const { ownership } = useOwnedCounts(game, prints)
+// Wish-list wanted counts for the same prints — a Heart chip flags wishlisted cards (#364).
+const { ownership: wishlistOwnership } = useWishlistCounts(game, prints)
 
 // Collapsed by default (issue #332), matching the sealed product page's card sections:
 // the heading is a disclosure toggle showing the printing count, so a card with many
@@ -51,6 +54,12 @@ watch(id, () => {
         <span class="text-muted-foreground font-normal">({{ prints.length }})</span>
       </h2>
     </button>
-    <CardGrid v-if="expanded" :game="game" :cards="prints" :ownership="ownership" />
+    <CardGrid
+      v-if="expanded"
+      :game="game"
+      :cards="prints"
+      :ownership="ownership"
+      :wishlist="wishlistOwnership"
+    />
   </section>
 </template>

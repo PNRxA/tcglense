@@ -40,8 +40,13 @@ const props = withDefaults(
     quantity: number
     foilQuantity: number
     list?: CardListTarget
+    // The card's wish-list wanted count (regular + foil), passed only on collection-
+    // targeting grids (issue #364 follow-up). Positive → a Heart "wanted" chip on the
+    // resting badge, and the badge shows even on a card you don't own but have wish-listed.
+    // 0 on wishlist-targeting grids (their count chips are already wants).
+    wishlistQuantity?: number
   }>(),
-  { list: 'collection' },
+  { list: 'collection', wishlistQuantity: 0 },
 )
 
 const open = ref(false)
@@ -99,6 +104,10 @@ const wishSaveError = wishEditor.saveError
 // Resting trigger reflects the grid counts; the live edited counts show inside the panel.
 const displayTotal = computed(() => props.quantity + props.foilQuantity)
 const owned = computed(() => displayTotal.value > 0)
+const wanted = computed(() => props.wishlistQuantity > 0)
+// Show the resting badge when the card is owned OR wish-listed (a wish-listed-but-unowned
+// card rests as a heart, not a bare "+"). Only the truly-untouched card keeps the "+".
+const showBadge = computed(() => owned.value || wanted.value)
 const editorTotal = computed(() => regular.value + foil.value)
 
 const rows = computed(() => [
@@ -122,7 +131,7 @@ const rows = computed(() => [
         type="button"
         class="group/add absolute bottom-1.5 left-1.5 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
         :class="
-          owned
+          showBadge
             ? ''
             : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
         "
@@ -132,9 +141,11 @@ const rows = computed(() => [
         @click.stop
       >
         <OwnedCountBadge
-          v-if="owned"
+          v-if="showBadge"
           :quantity="quantity"
           :foil-quantity="foilQuantity"
+          :kind="list === 'wishlist' ? 'wanted' : 'owned'"
+          :wanted-quantity="list === 'wishlist' ? 0 : wishlistQuantity"
           :tooltip="false"
           hover-as-add
         />

@@ -47,6 +47,9 @@ vi.mock('@/composables/useProducts', () => ({
 vi.mock('@/composables/useCollection', () => ({
   useOwnedCounts: () => ({ ownership: {} }),
 }))
+vi.mock('@/composables/useWishlist', () => ({
+  useWishlistCounts: () => ({ ownership: {} }),
+}))
 
 function pageData(total: number): ProductCardsPage {
   return { data: [], page: 1, page_size: 60, total, has_more: total > 60 }

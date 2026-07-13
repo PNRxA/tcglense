@@ -21,6 +21,7 @@ import {
   useOwnedCounts,
 } from '@/composables/useCollection'
 import { useSetGrouping } from '@/composables/useSetGrouping'
+import { useWishlistCounts } from '@/composables/useWishlist'
 import {
   ALL_CARDS_DEFAULT_SORT,
   ALL_CARDS_SORT_OPTIONS,
@@ -70,6 +71,9 @@ export interface HoldingsBrowseSurface {
   completionNoun?: CountNoun
   /** Wish-list only: enable the "show owned (in collection)" marks (issue #213). */
   enableOwnedMarks?: boolean
+  /** Collection only: show a Heart "wanted" chip on rendered cards that are on the user's
+   * wish list (issue #364 follow-up). Fetches wish-list counts over the rendered cards. */
+  enableWishlistHearts?: boolean
   /** Display copy that differs between the two holdings. */
   copy: {
     /** The per-account page title for `usePageMeta`. */
@@ -290,6 +294,15 @@ export function useHoldingsBrowse(
   )
   const { ownership, ready: ownershipReady } = surface.useCounts(game, ghostVisibleCards)
 
+  // The cards the active mode currently renders (any of {held,ghost}×{flat,grouped}) — the
+  // lookup scope for the secondary per-card overlays (owned marks + wish-list hearts).
+  const renderedCards = computed<Card[]>(() => {
+    if (showGhosts.value) return ghostVisibleCards.value
+    return grouped.value
+      ? groups.value.flatMap((g) => g.cards.map((entry) => entry.card))
+      : entries.value.map((entry) => entry.card)
+  })
+
   // "Show owned (in collection)" (issue #213): a persisted setting on the ghost button's
   // dropdown that flags which cards on the page you already own in your *collection* while you
   // shop the wish list. Distinct data from the wish-list counts above (`ownership`) — it's the
@@ -301,18 +314,20 @@ export function useHoldingsBrowse(
   if (surface.enableOwnedMarks) {
     const ghostDisplay = useGhostDisplayStore()
     const showOwnedMarks = computed(() => auth.isAuthenticated && ghostDisplay.showOwned)
-    const markableCards = computed<Card[]>(() => {
-      // Ghost mode renders the same cards `ghostVisibleCards` already derives; the held-only
-      // modes render the holdings' cards.
-      if (showGhosts.value) return ghostVisibleCards.value
-      return grouped.value
-        ? groups.value.flatMap((g) => g.cards.map((entry) => entry.card))
-        : entries.value.map((entry) => entry.card)
-    })
-    const { ownership: collectionOwnership } = useOwnedCounts(game, markableCards, {
+    const { ownership: collectionOwnership } = useOwnedCounts(game, renderedCards, {
       enabled: showOwnedMarks,
     })
     ownedMarks = computed(() => (showOwnedMarks.value ? collectionOwnership.value : undefined))
+  }
+
+  // Wish-list hearts (issue #364 follow-up): on the collection browse surface, flag which
+  // rendered cards are on the user's wish list. Uses the wish list's own batch-counts hook
+  // (auth-gated, empty while signed out) over the same rendered cards. The wishlist surface
+  // leaves this off — its own count chips already show wants.
+  let wishlistCounts: ComputedRef<OwnedCountsMap | undefined> = computed(() => undefined)
+  if (surface.enableWishlistHearts) {
+    const wc = useWishlistCounts(game, renderedCards)
+    wishlistCounts = computed(() => wc.ownership.value)
   }
 
   // The held stats for the current scope (all cards / a set / a set + its related group,
@@ -486,6 +501,7 @@ export function useHoldingsBrowse(
     ownership,
     ownershipReady,
     ownedMarks,
+    wishlistCounts,
     heldUnique,
     scopeTotal,
     scopeTotalValue,

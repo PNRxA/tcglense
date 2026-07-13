@@ -23,8 +23,13 @@ const props = withDefaults(
     // already own in your collection with an "Owned" marker, under the wish list's "Show
     // owned" setting. Absent (undefined) on a plain collection grid, so no marker renders.
     ownedMarks?: OwnedCountsMap
+    // Wish-list wanted counts keyed by card id (issue #364 follow-up): a card present here
+    // with a positive count shows a Heart "wanted" chip on its quick-add control, flagging
+    // cards on your wish list. Passed only on collection-targeting grids (list==='collection');
+    // on a wishlist grid the count chips already show wants, so this is omitted (undefined).
+    wishlist?: OwnedCountsMap
   }>(),
-  { list: 'collection', ownedMarks: undefined },
+  { list: 'collection', ownedMarks: undefined, wishlist: undefined },
 )
 
 const cardSize = useCardSizeStore()
@@ -33,6 +38,12 @@ const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
 function isOwnedMark(entry: CollectionEntry): boolean {
   const owned = props.ownedMarks?.[entry.card.id]
   return !!owned && owned.quantity + owned.foil_quantity > 0
+}
+
+// The card's total wanted count from the wish-list map (regular + foil); 0 when absent.
+function wishlistTotal(entry: CollectionEntry): number {
+  const w = props.wishlist?.[entry.card.id]
+  return w ? w.quantity + w.foil_quantity : 0
 }
 
 // Publish these entries' cards (in display order) so the card-detail modal can step prev/next
@@ -54,6 +65,7 @@ useCardNavList(
           :name="entry.card.name"
           :quantity="entry.quantity"
           :foil-quantity="entry.foil_quantity"
+          :wishlist-quantity="wishlistTotal(entry)"
           :list="list"
         />
       </template>

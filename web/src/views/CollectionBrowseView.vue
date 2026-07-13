@@ -72,6 +72,7 @@ const {
   ghostGroups,
   ownership,
   ownershipReady,
+  wishlistCounts,
   scopeTotalValue,
   scopeBulkValue,
   scopeCopiesLabel,
@@ -95,6 +96,7 @@ const {
   useSubtypesQuery: useCollectionSubtypesQuery,
   useSummaryQuery: useCollectionSummaryQuery,
   useCounts: useOwnedCounts,
+  enableWishlistHearts: true,
   copy: {
     title: ({ scoped, setName, gameName }) =>
       scoped ? `${setName} — your ${gameName} collection` : `All your ${gameName} cards`,
@@ -264,7 +266,11 @@ const {
                 :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
                 :drop="cardGroup"
               >
-                <CollectionGrid :game="game" :entries="cardGroup.cards" />
+                <CollectionGrid
+                  :game="game"
+                  :entries="cardGroup.cards"
+                  :wishlist="wishlistCounts"
+                />
               </DropSection>
             </template>
             <template v-else>
@@ -278,6 +284,7 @@ const {
                   :cards="cardGroup.cards"
                   :ownership="ownership"
                   :ghost-unowned="ownershipReady"
+                  :wishlist="wishlistCounts"
                 />
               </DropSection>
             </template>
@@ -306,13 +313,19 @@ const {
             />
           </div>
           <UpdatingOverlay :loading="updating">
-            <CollectionGrid v-if="!showGhosts" :game="game" :entries="entries" />
+            <CollectionGrid
+              v-if="!showGhosts"
+              :game="game"
+              :entries="entries"
+              :wishlist="wishlistCounts"
+            />
             <CardGrid
               v-else
               :game="game"
               :cards="ghostCards"
               :ownership="ownership"
               :ghost-unowned="ownershipReady"
+              :wishlist="wishlistCounts"
             />
           </UpdatingOverlay>
           <div class="mt-10">

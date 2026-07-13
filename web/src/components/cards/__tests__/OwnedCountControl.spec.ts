@@ -76,7 +76,12 @@ vi.mock('@/composables/useWishlist', async () => {
 import OwnedCountControl from '../OwnedCountControl.vue'
 
 function mountControl(
-  props: { list?: CardListTarget; quantity?: number; foilQuantity?: number } = {},
+  props: {
+    list?: CardListTarget
+    quantity?: number
+    foilQuantity?: number
+    wishlistQuantity?: number
+  } = {},
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -94,6 +99,7 @@ function mountControl(
       quantity: props.quantity ?? 0,
       foilQuantity: props.foilQuantity ?? 0,
       list: props.list ?? 'collection',
+      wishlistQuantity: props.wishlistQuantity ?? 0,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
@@ -265,5 +271,31 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
       true,
     )
     owned.unmount()
+  })
+
+  it('rests a wanted-but-unowned collection control as a heart with an add label', () => {
+    const wrapper = mountControl({
+      list: 'collection',
+      quantity: 0,
+      foilQuantity: 0,
+      wishlistQuantity: 2,
+    })
+    // The wish-list heart chip shows even though the card is unowned...
+    const trigger = wrapper.find('[aria-label="Add Card c1 to your collection"]')
+    expect(wrapper.find('[aria-label="2 wanted"]').exists()).toBe(true)
+    // ...the trigger still adds to the collection (owned is false)...
+    expect(trigger.exists()).toBe(true)
+    // ...and it rests VISIBLE — the heart marks it, so the opacity gate opens (no sm:opacity-0
+    // hover reveal, unlike a bare "+"). The gate widened from `owned` to `owned || wanted`.
+    expect(trigger.classes()).not.toContain('sm:opacity-0')
+    wrapper.unmount()
+
+    // Contrast: a truly-untouched (unowned AND unwanted) control keeps the bare "+" hidden
+    // until hover from sm up — its trigger DOES carry the sm:opacity-0 gate.
+    const bare = mountControl({ list: 'collection', quantity: 0, foilQuantity: 0 })
+    expect(bare.find('[aria-label="Add Card c1 to your collection"]').classes()).toContain(
+      'sm:opacity-0',
+    )
+    bare.unmount()
   })
 })

@@ -4,6 +4,7 @@ import { ChevronDown } from '@lucide/vue'
 import type { Card, ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_PAGE_SIZE, useProductCardsQuery } from '@/composables/useProducts'
 import { useOwnedCounts } from '@/composables/useCollection'
+import { useWishlistCounts } from '@/composables/useWishlist'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
@@ -91,6 +92,8 @@ const show = computed(() => !loaded.value || total.value > 0)
 
 // Owned-count badges for signed-in users, over this page's cards (empty otherwise).
 const { ownership } = useOwnedCounts(game, cards)
+// Wish-list wanted counts for the same cards — a Heart chip flags wishlisted cards (#364).
+const { ownership: wishlistOwnership } = useWishlistCounts(game, cards)
 </script>
 
 <template>
@@ -126,7 +129,12 @@ const { ownership } = useOwnedCounts(game, cards)
           />
         </div>
         <UpdatingOverlay :loading="paging">
-          <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+          <CardGrid
+            :game="game"
+            :cards="cards"
+            :ownership="ownership"
+            :wishlist="wishlistOwnership"
+          />
         </UpdatingOverlay>
         <div class="mt-6">
           <CardPagination

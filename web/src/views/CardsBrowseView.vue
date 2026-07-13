@@ -16,6 +16,7 @@ import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
 import { CARD_PAGE_SIZE, useAllCardsQuery, useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import { useOwnedCounts } from '@/composables/useCollection'
+import { useWishlistCounts } from '@/composables/useWishlist'
 import { ALL_CARDS_DEFAULT_SORT, ALL_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
 import { usePageMeta } from '@/lib/seo'
 
@@ -53,6 +54,8 @@ const cards = computed(() => cardsQuery.data.value?.data ?? [])
 const total = computed(() => cardsQuery.data.value?.total ?? 0)
 // Owned-count badges for signed-in users, overlaid on the grid below.
 const { ownership } = useOwnedCounts(game, cards)
+// Wish-list wanted counts for the same cards — a Heart chip flags wishlisted cards (#364).
+const { ownership: wishlistOwnership } = useWishlistCounts(game, cards)
 // A malformed search query comes back as 422; surface its message inline.
 const searchError = computed(() => searchErrorMessage(cardsQuery.error.value))
 
@@ -122,7 +125,12 @@ useClampPage(page, () => ({
         />
       </div>
       <UpdatingOverlay :loading="cardsQuery.isPlaceholderData.value">
-        <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+        <CardGrid
+          :game="game"
+          :cards="cards"
+          :ownership="ownership"
+          :wishlist="wishlistOwnership"
+        />
       </UpdatingOverlay>
       <div class="mt-10">
         <CardPagination

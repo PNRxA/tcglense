@@ -29,6 +29,7 @@ import {
 import { useClampPage } from '@/composables/useClampPage'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useSetGrouping } from '@/composables/useSetGrouping'
+import { useWishlistCounts } from '@/composables/useWishlist'
 import { SET_DEFAULT_SORT, SET_SORT_OPTIONS } from '@/lib/cardSort'
 import { type Card } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
@@ -133,6 +134,8 @@ const visibleCards = computed<Card[]>(() =>
   grouped.value ? groups.value.flatMap((group) => group.cards) : cards.value,
 )
 const { ownership } = useOwnedCounts(game, visibleCards)
+// Wish-list wanted counts for the same cards — a Heart chip flags wishlisted cards (#364).
+const { ownership: wishlistOwnership } = useWishlistCounts(game, visibleCards)
 
 // The list's loading / error / empty state reads from whichever query drives the current
 // view. cardsQuery waits on the set list, so an as-yet-undecided grouped set shows the
@@ -324,7 +327,12 @@ const searchError = computed(() => searchErrorMessage(listError.value))
               :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
               :drop="cardGroup"
             >
-              <CardGrid :game="game" :cards="cardGroup.cards" :ownership="ownership" />
+              <CardGrid
+                :game="game"
+                :cards="cardGroup.cards"
+                :ownership="ownership"
+                :wishlist="wishlistOwnership"
+              />
             </DropSection>
           </UpdatingOverlay>
           <div class="mt-10">
@@ -350,7 +358,12 @@ const searchError = computed(() => searchErrorMessage(listError.value))
             />
           </div>
           <UpdatingOverlay :loading="cardsQuery.isPlaceholderData.value">
-            <CardGrid :game="game" :cards="cards" :ownership="ownership" />
+            <CardGrid
+              :game="game"
+              :cards="cards"
+              :ownership="ownership"
+              :wishlist="wishlistOwnership"
+            />
           </UpdatingOverlay>
           <div class="mt-10">
             <CardPagination
