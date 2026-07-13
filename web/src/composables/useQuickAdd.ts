@@ -1,6 +1,12 @@
 import { computed, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getCardNames, getCardPrintingsByName, type CardPage } from '@/lib/api'
+import {
+  getCardNames,
+  getCardPrintingsByName,
+  listProducts,
+  type CardPage,
+  type ProductPage,
+} from '@/lib/api'
 
 /**
  * Server state for the collection quick-add box (`GameCollectionView`): the
@@ -28,6 +34,20 @@ export function useCardNameSuggestions(game: Ref<string>, term: Ref<string>) {
     placeholderData: keepPreviousData,
     // Names change at most daily, so a short cache spares a refetch when the user
     // backspaces to a term they just typed.
+    staleTime: 60_000,
+  })
+}
+
+/** Sealed-product suggestions for the product quick-add box: a small name-matched page of
+ * the public products list (order-independent word-AND substring match, name order). */
+export function useProductSuggestions(game: Ref<string>, term: Ref<string>) {
+  const trimmed = computed(() => term.value.trim())
+  const enabled = computed(() => trimmed.value.length >= QUICK_ADD_MIN_CHARS)
+  return useQuery<ProductPage>({
+    queryKey: ['product-suggest', game, trimmed],
+    queryFn: () => listProducts(game.value, { q: trimmed.value, pageSize: 10 }),
+    enabled,
+    placeholderData: keepPreviousData,
     staleTime: 60_000,
   })
 }

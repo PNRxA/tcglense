@@ -100,6 +100,20 @@ async fn read_write_key_authenticates_reads_and_passes_the_write_gate() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body:?}");
+
+    // The sealed-product wish-list write (issue #364) likewise passes the scope gate, then
+    // 404s the unknown product — again NOT a 403.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/wishlist/mtg/products/does-not-exist",
+            &key,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body:?}");
 }
 
 #[tokio::test]
@@ -150,6 +164,24 @@ async fn read_only_key_can_read_but_not_write() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // The sealed-product wish-list write (issue #364) is forbidden too — 403 on the scope
+    // gate, before the unknown product would ever be resolved.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/wishlist/mtg/products/does-not-exist",
+            &key,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // …but reading the sealed-product wish list is allowed for a read-only key.
+    let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/mtg/products", &key)).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

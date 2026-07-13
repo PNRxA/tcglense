@@ -46,8 +46,9 @@ use crate::{
         openapi::openapi_json,
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
-            get_wishlist_entry, list_wishlist, set_wishlist_entry, wishlist_counts,
-            wishlist_set_drops, wishlist_set_subtypes, wishlist_sets, wishlist_summary,
+            get_wishlist_entry, get_wishlist_product_entry, list_wishlist, list_wishlist_products,
+            set_wishlist_entry, set_wishlist_product_entry, wishlist_counts, wishlist_set_drops,
+            wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
     },
     state::AppState,
@@ -195,6 +196,15 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/wishlist/{game}/cards/{id}",
             get(get_wishlist_entry).put(set_wishlist_entry),
+        )
+        // Sealed-product wants (issue #364): the wish list also holds sealed products, in
+        // its own table and routes. The collection deliberately has no sealed surface.
+        // `products` is a new static segment — no conflict with `/cards/{id}`, `/summary`,
+        // `/sets`, or `/counts`.
+        .route("/api/wishlist/{game}/products", get(list_wishlist_products))
+        .route(
+            "/api/wishlist/{game}/products/{id}",
+            get(get_wishlist_product_entry).put(set_wishlist_product_entry),
         )
         // Rate limiting, two complementary middlewares (each picks a quota by path
         // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,

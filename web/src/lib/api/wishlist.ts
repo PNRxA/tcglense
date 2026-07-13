@@ -1,5 +1,12 @@
 import { makeHoldingApi } from './holdings'
-import type { CollectionSet, CollectionSummary } from './generated'
+import { listQuery, request } from './client'
+import type {
+  CollectionQuantities,
+  CollectionSet,
+  CollectionSummary,
+  Page,
+  WishlistProductEntry,
+} from './generated'
 
 // ---------- Wish list (per-user, authenticated) ----------
 //
@@ -69,3 +76,62 @@ export const getWishlistEntry = api.getEntry
 
 /** Set the wanted counts for one card (absolute, not a delta). Both zero removes it. */
 export const setWishlistEntry = api.setEntry
+
+// ---------- Wanted sealed products (wishlist-only, issue #364) ----------
+//
+// Sealed products can be wished for too, but — unlike cards — there is no collection
+// twin (the collection deliberately has no sealed surface), so these live beside the
+// `makeHoldingApi` instance rather than as a factory axis. The endpoints mirror the card
+// wish list's per-entry read/write, but the list carries the full public product payload
+// (`WishlistProductEntry = { product, quantity, foil_quantity }`) and is fixed
+// recency-desc (no q/sort). The id on the wire is the external (TCGplayer) product id.
+
+export type { WishlistProductEntry } from './generated'
+
+/** A page of the user's wanted sealed products plus pagination cursors. */
+export type WishlistProductPage = Page<WishlistProductEntry>
+
+/** Relative `/api/wishlist/{game}/products` path (paged). */
+export function wishlistProductsPath(
+  game: string,
+  params: { page?: number; pageSize?: number } = {},
+): string {
+  return `/api/wishlist/${encodeURIComponent(game)}/products${listQuery(params)}`
+}
+
+/** Relative `/api/wishlist/{game}/products/{id}` path for one product's wanted counts. */
+export function wishlistProductEntryPath(game: string, id: string): string {
+  return `/api/wishlist/${encodeURIComponent(game)}/products/${encodeURIComponent(id)}`
+}
+
+/** The signed-in user's wanted sealed products, most-recently-updated first. */
+export function getWishlistProducts(
+  token: string,
+  game: string,
+  params?: { page?: number; pageSize?: number },
+): Promise<WishlistProductPage> {
+  return request<WishlistProductPage>(wishlistProductsPath(game, params), { token })
+}
+
+/** How many of one sealed product the user wants (zeros when not on the wish list). */
+export function getWishlistProductEntry(
+  token: string,
+  game: string,
+  id: string,
+): Promise<CollectionQuantities> {
+  return request<CollectionQuantities>(wishlistProductEntryPath(game, id), { token })
+}
+
+/** Set the wanted counts for one sealed product (absolute, not a delta). Both zero removes it. */
+export function setWishlistProductEntry(
+  token: string,
+  game: string,
+  id: string,
+  body: CollectionQuantities,
+): Promise<CollectionQuantities> {
+  return request<CollectionQuantities>(wishlistProductEntryPath(game, id), {
+    method: 'PUT',
+    body,
+    token,
+  })
+}

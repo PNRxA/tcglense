@@ -189,7 +189,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated drop titles), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cards: Card[] }` and `total` counts drops. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
 | `GET /api/games/{game}/sets/{code}/subtypes?q&page&page_size` | a set's cards grouped by **sub-type** (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by sub-type** — `{ data: SubtypeGroup[], page, page_size, total, has_more }` where `SubtypeGroup = { slug, title, card_count, cards: Card[] }` and `total` counts sub-types. The sub-type is **derived** from the card's print attributes (see `crate::scryfall::subtypes`); every card classifies, so `Normal` heads the list, then treatments. Unlike `/drops` this never `404`s (any set groups — one `Normal` group if plain; the SPA gates the view on `has_subtypes`); optional `q` filters cards, dropping now-empty sub-types |
 | `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
-| `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection quick-add autocomplete |
+| `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection/wish-list quick-add autocomplete |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
@@ -643,8 +643,8 @@ independent table**: `entities/wishlist_item.rs` (`wishlist_items`, unique on
 `handlers/shared/holdings.rs`), so the `owned_*` field names read as "wanted" here.
 (The summary/set DTOs still carry the `bulk_value_usd` / `owned_bulk_value_usd` fields,
 but the wish-list UI shows only the **total** value — a wish list is a shopping list, so
-only what it costs matters — and ignores the bulk slice.) Each route mirrors its
-collection twin exactly (params, ordering, errors, caps):
+only what it costs matters — and ignores the bulk slice.) The **card** routes below each
+mirror their collection twin exactly (params, ordering, errors, caps):
 
 | Method & path | Mirrors |
 |---------------|---------|
@@ -656,6 +656,26 @@ collection twin exactly (params, ordering, errors, caps):
 | `POST /api/wishlist/{game}/counts` `{ ids }` | `POST .../owned` (batch counts, listed cards only, > 500 ids `422`) — named `/counts` because a wish list doesn't track ownership |
 | `GET /api/wishlist/{game}/cards/{id}` | the single-card counts read (zeros if absent) |
 | `PUT /api/wishlist/{game}/cards/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero deletes, negative/oversized `422`) |
+
+The wish list additionally holds **sealed products** (issue #364) —
+`(user, game, product) → { quantity, foil_quantity }` over its own, fully independent
+`entities/wishlist_product_item.rs` (`wishlist_product_items`, unique on
+`(user_id, game, product_id)`, `user_id` FK → `users` `ON DELETE CASCADE`). These routes
+have **no collection twin** (sealed holdings are wishlist-only by design). `{id}` is the
+external (TCGplayer) product id, resolved to the internal `products.id` on write so a row
+survives catalog re-syncs (the daily TCGCSV sweep is upsert-only); both counts zero deletes
+the row. The wire keeps the shared two-count `{ quantity, foil_quantity }` shape (foil sealed
+variants are separate TCGplayer SKUs), but the UI exposes a single **Quantity** and never edits
+the foil count: a new want is created with `foil_quantity: 0`, and an existing foil count
+(settable only via the raw API) is preserved unchanged by UI quantity edits. The one new DTO is
+`WishlistProductEntry`
+(`{ product: <Product>, quantity, foil_quantity }`, `handlers/wishlist/products.rs`):
+
+| Method & path | Returns |
+|---------------|---------|
+| `GET /api/wishlist/{game}/products?page&page_size` | `Page<WishlistProductEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200 |
+| `GET /api/wishlist/{game}/products/{id}` | the single-product wanted counts (`CollectionQuantities`; zeros if absent, `404` unknown game/product) |
+| `PUT /api/wishlist/{game}/products/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero removes, negative/oversized `422` before product resolution, read-only key → `403`) |
 
 The wish list and the collection never read or write each other's rows (pinned by a
 security test); browse-grid badges/ghosts on wish-list pages come from `/counts` the

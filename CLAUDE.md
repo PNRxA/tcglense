@@ -144,7 +144,11 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `X-Forwarded-For` (else clients spoof their IP).
 - Collection and wish list are **independent tables** that share the ts-rs DTOs in
   `handlers/shared/holdings.rs` — editing a shared shape changes both wire surfaces.
-  Holdings use **external** card ids; both counts zero deletes the row.
+  Holdings use **external** card ids; both counts zero deletes the row. The wish list
+  additionally holds **sealed products** in its own `wishlist_product_items` table
+  (`/api/wishlist/{game}/products*`, external TCGplayer ids on the wire, same
+  both-zero-deletes rule); the collection deliberately has **no** sealed surface — don't
+  add one.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

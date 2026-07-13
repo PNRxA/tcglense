@@ -10,6 +10,7 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import WishlistSealedSection from '@/components/wishlist/WishlistSealedSection.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { useWishlistSetsQuery, useWishlistSummaryQuery } from '@/composables/useWishlist'
@@ -22,9 +23,11 @@ import { useAuthStore } from '@/stores/auth'
 // featured + year sections and all — so there's always somewhere to click through and
 // start wishing. Either way the user's per-set wanted counts/values overlay the tiles
 // that have any. The shared landing pipeline lives in `useHoldingsLanding` (the collection
-// landing's twin); this view keeps the wish-list wording and the header's quick-add box
-// (no import/sync — a wish list has nothing to sync from). The card grids live on
-// WishlistBrowseView (`/wishlist/:game/cards` + `.../sets/:code`).
+// landing's twin); this view keeps the wish-list wording and the header's quick-add
+// boxes — one for cards, one for sealed products (no import/sync — a wish list has
+// nothing to sync from). Wanted sealed products get their own WishlistSealedSection
+// below the header (sealed holdings are wishlist-only — issue #364). The card grids
+// live on WishlistBrowseView (`/wishlist/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 
 const {
@@ -112,16 +115,27 @@ usePageMeta({
           </div>
         </dl>
 
-        <!-- Quick add: type a name, pick a printing, add regular/foil — without leaving
-             this page. Useful both to seed an empty wish list and to grow one, so it's
-             shown regardless of what's wanted. -->
-        <div class="mt-5 max-w-md">
-          <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
-            Quick add a card
-          </p>
-          <QuickAddBox :game="game" list="wishlist" />
+        <!-- Quick add: cards (name → printing → counts) and sealed products (name → quantity).
+             Both write to the wish list; sealed products are wishlist-only (issue #364). -->
+        <div class="mt-5 grid max-w-3xl gap-4 sm:grid-cols-2">
+          <div>
+            <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
+              Quick add a card
+            </p>
+            <QuickAddBox :game="game" list="wishlist" />
+          </div>
+          <div>
+            <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
+              Quick add a sealed product
+            </p>
+            <QuickAddBox :game="game" list="wishlist" kind="product" />
+          </div>
         </div>
       </header>
+
+      <!-- Wanted sealed products (issue #364): self-hides when nothing is wanted; edits
+           happen on the product page or via the sealed quick-add box above. -->
+      <WishlistSealedSection :game="game" class="mb-8" />
 
       <!-- The set list — wishlisted sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

@@ -33,14 +33,25 @@ const warm = () => prefetchRouteChunks(router, to.value)
     the image + text are one clickable target and one tab stop. Unlike CardTile there's
     no detail modal — sealed products open their own detail page directly. -->
   <div class="group relative">
-    <ProductImage
-      :game="game"
-      :id="product.id"
-      :name="product.name"
-      :has-image="product.has_image"
-      size="normal"
-      class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.02] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
-    />
+    <div class="relative">
+      <ProductImage
+        :game="game"
+        :id="product.id"
+        :name="product.name"
+        :has-image="product.has_image"
+        size="normal"
+        class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.02] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+      />
+      <!-- Corner overlay for a per-product badge (the wish list's static wanted-count chip,
+        issue #364), scoped to the image like CardTile's #badge. z-20 keeps it above the
+        RouterLink's stretched `after:` overlay (z-10) and the hover-lifted image; the badges
+        this feature ships are static counts, so `pointer-events-none` lets clicks fall through
+        to the link — a future interactive control can lift that. Browse grids pass no slot, so
+        nothing renders. -->
+      <div v-if="$slots.badge" class="pointer-events-none absolute bottom-2 left-2 z-20">
+        <slot name="badge" />
+      </div>
+    </div>
     <RouterLink
       :to="to"
       class="mt-1.5 block px-0.5 after:absolute after:inset-0 after:z-10 after:content-['']"

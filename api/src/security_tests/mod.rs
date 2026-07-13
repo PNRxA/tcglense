@@ -39,3 +39,4 @@ mod sitemap;
 mod subtypes;
 mod web_root;
 mod wishlist;
+mod wishlist_products;

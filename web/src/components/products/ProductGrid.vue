@@ -18,6 +18,12 @@ const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
 
 <template>
   <div class="grid gap-x-4 gap-y-6" :class="gridClass">
-    <ProductTile v-for="product in products" :key="product.id" :game="game" :product="product" />
+    <!-- Grids that pass a #badge slot decorate each tile per product (the wish list's static
+      wanted-count chips, issue #364); grids that pass none render exactly as before. -->
+    <ProductTile v-for="product in products" :key="product.id" :game="game" :product="product">
+      <template v-if="$slots.badge" #badge>
+        <slot name="badge" :product="product" />
+      </template>
+    </ProductTile>
   </div>
 </template>
