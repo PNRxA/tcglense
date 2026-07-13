@@ -31,8 +31,8 @@ use crate::{
             product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_set_drops, collection_set_subtypes, collection_sets,
-            collection_summary, collection_value_history, delete_collection_source,
+            MAX_CSV_UPLOAD_BYTES, collection_movers, collection_set_drops, collection_set_subtypes,
+            collection_sets, collection_summary, collection_value_history, delete_collection_source,
             export_collection, get_collection_entry, get_collection_source, get_import_job,
             import_collection, import_collection_csv, list_collection, owned_counts,
             save_collection_source, set_collection_entry, sync_collection_source,
@@ -126,6 +126,9 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/value-history",
             get(collection_value_history),
         )
+        // The biggest day / week / month gain & loss movements across the user's owned
+        // cards (per-unit price change × copies held) — top gainers and losers per window.
+        .route("/api/collection/{game}/movers", get(collection_movers))
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
         .route("/api/collection/{game}/sets", get(collection_sets))

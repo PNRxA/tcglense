@@ -1,6 +1,8 @@
+import type { Ref } from 'vue'
 import {
   getCollection,
   getCollectionEntry,
+  getCollectionMovers,
   getCollectionOwned,
   getCollectionSetDrops,
   getCollectionSets,
@@ -8,7 +10,9 @@ import {
   getCollectionSummary,
   setCollectionEntry,
 } from '@/lib/api'
+import type { CollectionMovers } from '@/lib/api'
 import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
+import { useAuthedQuery } from '@/lib/queries'
 
 // Server state for the signed-in user's card collection — the `['collection', …]`
 // query-key family. All the read hooks, the browse-badge counts hook, the invalidation
@@ -37,8 +41,8 @@ const queries = makeHoldingQueries({
  * Refresh every view that depends on the collection contents after any collection write
  * — a per-card edit or a completed import/sync. Covers the grid, the summary header, the
  * per-card owned-count steppers, the by-drop owned-cards view, the per-set landing tiles
- * (ownership per set can change broadly), the collection value history, and the
- * browse-grid owned-count badges. Pass `entryId` to scope the per-card entry invalidation
+ * (ownership per set can change broadly), the collection value history, the movers panel,
+ * and the browse-grid owned-count badges. Pass `entryId` to scope the per-card entry invalidation
  * to the edited card; an import touches many cards, so it invalidates the whole game.
  */
 export const invalidateCollectionData = queries.invalidate
@@ -70,3 +74,13 @@ export type SetCollectionVars = SetHoldingVars
 
 /** Set the owned counts for a card, then invalidate the dependent collection views. */
 export const useSetCollectionEntryMutation = queries.useSetEntryMutation
+
+/** The signed-in user's biggest gain/loss movements across their collection (day / week /
+ * month), for the collection landing's movers panel. */
+export function useCollectionMoversQuery(game: Ref<string>) {
+  const options = {
+    queryKey: ['collection-movers', game],
+    queryFn: (token: string) => getCollectionMovers(token, game.value),
+  }
+  return useAuthedQuery<CollectionMovers>(options)
+}

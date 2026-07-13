@@ -32,6 +32,7 @@ use crate::state::AppState;
 
 mod export;
 mod import;
+mod price_movements;
 mod read;
 mod sets;
 mod value_history;
@@ -45,6 +46,7 @@ pub use import::{
     delete_collection_source, get_collection_source, get_import_job, import_collection,
     import_collection_csv, save_collection_source, sync_collection_source,
 };
+pub use price_movements::collection_movers;
 pub use read::{collection_summary, get_collection_entry, list_collection, owned_counts};
 pub use sets::{collection_set_drops, collection_set_subtypes, collection_sets};
 pub use value_history::collection_value_history;

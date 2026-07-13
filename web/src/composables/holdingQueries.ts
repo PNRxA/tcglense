@@ -197,6 +197,7 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     qc.invalidateQueries({ queryKey: [`${prefix}-summary`, game], ...deferOpts })
     if (cfg.invalidateValueHistory) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
+      qc.invalidateQueries({ queryKey: ['collection-movers', game] })
     }
     qc.invalidateQueries({
       queryKey: opts?.entryId ? [`${prefix}-entry`, game, opts.entryId] : [`${prefix}-entry`, game],
