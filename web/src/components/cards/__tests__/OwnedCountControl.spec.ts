@@ -4,7 +4,6 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 
 // This is the control's first dedicated spec. It drives the popover's new "Wish list" row
 // through the REAL useOwnedCountEditor (so the absolute-count/debounce plumbing is exercised
@@ -55,10 +54,9 @@ vi.mock('@/composables/useWishlist', async () => {
   }
   h.wishMutate = vi.fn<MutateFn>().mockResolvedValue({ quantity: 0, foil_quantity: 0 })
   return {
-    // Capture each caller's options so the spec can assert the lazy `enabled` gate, not
-    // just stub the result. Setup order matters for the indices: a wishlist-targeting
-    // instance creates the popover's primary query first, then the row's hook; a
-    // collection-targeting one creates only the row's hook.
+    // Capture each caller's options so the spec can assert the lazy `enabled` gate, not just
+    // stub the result. The control creates only the row's wish-entry hook (its primary entry
+    // is the collection query), so `wishEntryOpts` holds exactly one entry.
     useWishlistEntryQuery: (_game: Ref<string>, _id: Ref<string>, opts: EntryOpts) => {
       h.wishEntryOpts.push(opts)
       return h.wishEntry
@@ -77,7 +75,6 @@ import OwnedCountControl from '../OwnedCountControl.vue'
 
 function mountControl(
   props: {
-    list?: CardListTarget
     quantity?: number
     foilQuantity?: number
     wishlistQuantity?: number
@@ -98,7 +95,6 @@ function mountControl(
       name: 'Card c1',
       quantity: props.quantity ?? 0,
       foilQuantity: props.foilQuantity ?? 0,
-      list: props.list ?? 'collection',
       wishlistQuantity: props.wishlistQuantity ?? 0,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
@@ -143,7 +139,7 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
   })
 
   it('adds to the wish list from a collection-targeting control, not the collection', async () => {
-    const wrapper = mountControl({ list: 'collection' })
+    const wrapper = mountControl()
 
     // Lazy gate: the row's wish-entry hook exists from setup but stays disabled while the
     // popover is closed — a big grid must not fire one wish-list request per resting tile.
@@ -185,33 +181,8 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
     wrapper.unmount()
   })
 
-  it('renders no wish-list row on a wishlist-targeting control (the popover already is it)', async () => {
-    const wrapper = mountControl({ list: 'wishlist' })
-
-    // Setup creates two wishlist entry hooks — the popover's primary query, then the
-    // row's unconditional hook (composables can't be conditional) — both disabled at rest.
-    expect(h.wishEntryOpts).toHaveLength(2)
-    expect(h.wishEntryOpts[0]!.enabled!.value).toBe(false)
-    expect(h.wishEntryOpts[1]!.enabled!.value).toBe(false)
-
-    await openPopover(wrapper, 'Add Card c1 to your wish list')
-
-    // Opening enables only the primary query; the self-suppressed row's hook never turns on.
-    expect(h.wishEntryOpts[0]!.enabled!.value).toBe(true)
-    expect(h.wishEntryOpts[1]!.enabled!.value).toBe(false)
-
-    // The Regular/Foil rows render as normal...
-    expect(byLabel('Add one regular copy of Card c1')).not.toBeNull()
-    expect(byLabel('Add one foil copy of Card c1')).not.toBeNull()
-    // ...but the secondary "Wish list" row (and its list-worded stepper) does not.
-    expect(byLabel('Add one copy of Card c1 to your wish list')).toBeNull()
-    expect(document.body.textContent).not.toContain('Wish list')
-
-    wrapper.unmount()
-  })
-
   it('adds to the collection from the regular row, not the wish list', async () => {
-    const wrapper = mountControl({ list: 'collection' })
+    const wrapper = mountControl()
     await openPopover(wrapper, 'Add Card c1 to your collection')
 
     // The collection entry is already resolved (beforeEach), so the Regular stepper is live.
@@ -232,7 +203,7 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
   })
 
   it('shows a failed wish save on the row status, not the collection header', async () => {
-    const wrapper = mountControl({ list: 'collection' })
+    const wrapper = mountControl()
     await openPopover(wrapper, 'Add Card c1 to your collection')
 
     h.wishEntry.data.value = { quantity: 0, foil_quantity: 0 }
@@ -262,11 +233,11 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
   })
 
   it('pins the resting trigger wording for a collection control', () => {
-    const unowned = mountControl({ list: 'collection', quantity: 0, foilQuantity: 0 })
+    const unowned = mountControl({ quantity: 0, foilQuantity: 0 })
     expect(unowned.find('[aria-label="Add Card c1 to your collection"]').exists()).toBe(true)
     unowned.unmount()
 
-    const owned = mountControl({ list: 'collection', quantity: 2, foilQuantity: 1 })
+    const owned = mountControl({ quantity: 2, foilQuantity: 1 })
     expect(owned.find('[aria-label="Edit copies of Card c1 in your collection"]').exists()).toBe(
       true,
     )
@@ -275,7 +246,6 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
 
   it('rests a wanted-but-unowned collection control as a heart with an add label', () => {
     const wrapper = mountControl({
-      list: 'collection',
       quantity: 0,
       foilQuantity: 0,
       wishlistQuantity: 2,
@@ -292,7 +262,7 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
 
     // Contrast: a truly-untouched (unowned AND unwanted) control keeps the bare "+" hidden
     // until hover from sm up — its trigger DOES carry the sm:opacity-0 gate.
-    const bare = mountControl({ list: 'collection', quantity: 0, foilQuantity: 0 })
+    const bare = mountControl({ quantity: 0, foilQuantity: 0 })
     expect(bare.find('[aria-label="Add Card c1 to your collection"]').classes()).toContain(
       'sm:opacity-0',
     )

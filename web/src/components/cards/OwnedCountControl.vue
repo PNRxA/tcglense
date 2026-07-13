@@ -6,25 +6,19 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
 import { useCollectionEntryQuery } from '@/composables/useCollection'
 import { useWishlistEntryQuery } from '@/composables/useWishlist'
-import {
-  useOwnedCountEditor,
-  type CardListTarget,
-  type OwnedCountSeed,
-} from '@/composables/useOwnedCountEditor'
+import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 
 // Quick-add control overlaid on a card tile (issue #95): a corner trigger showing the
 // owned count (or a "+" on a card you don't own yet) that opens a small popover with
 // regular/foil steppers, so a signed-in user can add to or adjust their collection
 // without leaving the grid. Rendered by CardGrid / CollectionGrid only while signed in.
-// `list` retargets the whole control at the wish list (issue #167) — same behaviour,
-// reading/writing the wish-list counts with "wish list" wording.
 //
-// On the collection-targeting instances (`list === 'collection'`, i.e. the catalog
-// surfaces) the popover additionally grows a secondary "Wish list" quick-add row
+// The control is COLLECTION-primary everywhere: its steppers and resting count chips are the
+// card's collection holding. The popover also carries a secondary "Wish list" quick-add row
 // (issue #364 follow-up) that reads/writes the card's wish-list holding — a regular-only
 // stepper that seeds lazily when the popover opens (no resting wanted count on catalog
-// tiles). On a wishlist-targeting instance the popover already IS the wish list, so the
-// row self-suppresses.
+// tiles). A positive `wishlistQuantity` additionally appends a Heart "wanted" chip to the
+// resting badge, so a wish-listed card is flagged even before the popover opens.
 //
 // `quantity`/`foilQuantity` are the *display* counts from the grid's ownership source —
 // good enough for the resting badge, but they can lag (a browse grid loads them async).
@@ -39,53 +33,42 @@ const props = withDefaults(
     name: string
     quantity: number
     foilQuantity: number
-    list?: CardListTarget
-    // The card's wish-list wanted count (regular + foil), passed only on collection-
-    // targeting grids (issue #364 follow-up). Positive → a Heart "wanted" chip on the
-    // resting badge, and the badge shows even on a card you don't own but have wish-listed.
-    // 0 on wishlist-targeting grids (their count chips are already wants).
+    // The card's wish-list wanted count (regular + foil) (issue #364 follow-up). Positive →
+    // an appended Heart "wanted" chip on the resting badge, and the badge shows even on a
+    // card you don't own but have wish-listed.
     wishlistQuantity?: number
   }>(),
-  { list: 'collection', wishlistQuantity: 0 },
+  { wishlistQuantity: 0 },
 )
 
 const open = ref(false)
 const game = toRef(props, 'game')
 const cardId = toRef(props, 'cardId')
-const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
 
-// Fetch the authoritative holding only once the popover is open (a big grid must not fire
-// one request per tile). `staleTime: 0` forces a re-fetch every time it re-opens, and
-// `ready` waits for that fetch to settle (not just any prior success) — otherwise a reopen
-// could seed the steppers off a stale cached count and an absolute-count save would clobber
-// the true value. Until ready, seed the display from the grid counts so an owned card
+// Fetch the authoritative collection holding only once the popover is open (a big grid must
+// not fire one request per tile). `staleTime: 0` forces a re-fetch every time it re-opens,
+// and `ready` waits for that fetch to settle (not just any prior success) — otherwise a
+// reopen could seed the steppers off a stale cached count and an absolute-count save would
+// clobber the true value. Until ready, seed the display from the grid counts so an owned card
 // doesn't flash "0"; the steppers stay disabled, so acting on the fallback is impossible.
-// The target list is fixed per instance, so picking the entry hook once at setup is safe.
-const entryQuery =
-  props.list === 'wishlist'
-    ? useWishlistEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
-    : useCollectionEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
+const entryQuery = useCollectionEntryQuery(game, cardId, { enabled: open, staleTime: 0 })
 const seed = computed<OwnedCountSeed>(
   () => entryQuery.data.value ?? { quantity: props.quantity, foil_quantity: props.foilQuantity },
 )
 const ready = computed(() => entryQuery.isSuccess.value && !entryQuery.isFetching.value)
 
 const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
-  list: props.list,
+  list: 'collection',
 })
 
-// Wish-list quick-add row (only when this control targets the collection — on a
-// wishlist grid the popover already IS the wish list). The secondary entry hook is
-// created unconditionally (composables can't be conditional) but stays disabled until
-// the popover opens on a collection-targeting instance; the editor's mutation pick is
-// setup-time and cheap. No display fallback: there are no resting wanted counts on
-// catalog tiles, so the row's steppers stay disabled until the authoritative want
-// loads (an undefined seed keeps an absolute-count save impossible). Only the regular
-// want is editable here; the seeded foil want is preserved on save.
-const wishRowShown = computed(() => props.list === 'collection')
-const wishEnabled = computed(() => open.value && wishRowShown.value)
+// Wish-list quick-add row (always present — the control is collection-primary everywhere).
+// The row's entry hook stays disabled until the popover opens; the editor's mutation pick is
+// setup-time and cheap. No display fallback: there are no resting wanted counts on catalog
+// tiles, so the row's steppers stay disabled until the authoritative want loads (an undefined
+// seed keeps an absolute-count save impossible). Only the regular want is editable here; the
+// seeded foil want is preserved on save.
 const wishEntryQuery = useWishlistEntryQuery(game, cardId, {
-  enabled: wishEnabled,
+  enabled: open,
   staleTime: 0,
 })
 const wishSeed = computed<OwnedCountSeed | undefined>(() => wishEntryQuery.data.value)
@@ -136,7 +119,7 @@ const rows = computed(() => [
             : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
         "
         :aria-label="
-          owned ? `Edit copies of ${name} in your ${listName}` : `Add ${name} to your ${listName}`
+          owned ? `Edit copies of ${name} in your collection` : `Add ${name} to your collection`
         "
         @click.stop
       >
@@ -144,8 +127,8 @@ const rows = computed(() => [
           v-if="showBadge"
           :quantity="quantity"
           :foil-quantity="foilQuantity"
-          :kind="list === 'wishlist' ? 'wanted' : 'owned'"
-          :wanted-quantity="list === 'wishlist' ? 0 : wishlistQuantity"
+          kind="owned"
+          :wanted-quantity="wishlistQuantity"
           :tooltip="false"
           hover-as-add
         />
@@ -160,7 +143,7 @@ const rows = computed(() => [
 
     <!-- Opens above the bottom-left trigger (over the card art) so it doesn't cover the
       name/price below; reka flips it if there isn't room above. -->
-    <PopoverContent side="top" align="start" :side-offset="6" class="w-56 p-3">
+    <PopoverContent side="top" align="start" :side-offset="6" class="w-60 p-3">
       <div class="mb-3 flex items-center justify-between gap-2">
         <p class="truncate text-sm font-medium" :title="name">{{ name }}</p>
         <span
@@ -222,12 +205,12 @@ const rows = computed(() => [
         </div>
       </div>
 
-      <!-- Wish-list quick-add (issue #364 follow-up): only on collection-targeting instances;
-        regular wants only (the seeded foil want is preserved on save). The minus at 0 is
-        inert-but-focusable for the same popover-focus reason as the rows above. -->
-      <div v-if="wishRowShown" class="mt-3 border-t pt-2">
+      <!-- Wish-list quick-add (issue #364 follow-up): regular wants only (the seeded foil want
+        is preserved on save). The minus at 0 is inert-but-focusable for the same popover-focus
+        reason as the rows above. -->
+      <div class="mt-3 border-t pt-2">
         <div class="flex items-center justify-between gap-3">
-          <span class="flex items-center gap-1.5 text-sm">
+          <span class="flex items-center gap-1.5 text-sm whitespace-nowrap">
             <Heart class="size-3.5" aria-hidden="true" />
             Wish list
           </span>

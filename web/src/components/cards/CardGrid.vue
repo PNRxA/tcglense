@@ -25,9 +25,18 @@ const props = withDefaults(
     // `ownership` map, so a card not present there (or owned in zero copies) renders as a
     // ghost. Off for the plain catalog browse grids.
     ghostUnowned?: boolean
-    // Which list the quick-add controls read/write (issue #167): the collection (default)
-    // or the wish list — where the `ownership` map means wish-list membership instead.
+    // What this grid's own `ownership` map / counts represent (issue #167): the collection
+    // (default — catalog & collection pages) or the wish list (the wishlist page, where
+    // `ownership` means wish-list membership). The quick-add control is ALWAYS collection-
+    // primary; on the wishlist surface its collection chips read `collectionCounts` and its
+    // wanted Heart reads this grid's own `ownership`.
     list?: CardListTarget
+    // Collection-owned counts keyed by card id: used ONLY on the wishlist surface
+    // (list==='wishlist') to feed the quick-add control's primary (collection) count chips —
+    // there the grid's own `ownership` map means wish-list membership, not collection
+    // ownership, so the collection totals come from here. Absent on collection grids (the
+    // grid's own `ownership` already holds collection counts).
+    collectionCounts?: OwnedCountsMap
     // Collection-ownership counts keyed by card id (issue #213): a card present here with a
     // positive count gets an "Owned" marker overlaid, flagging cards you already own in your
     // *collection*. Used by the wish-list browse grids under the ghost button's "Show owned"
@@ -44,6 +53,7 @@ const props = withDefaults(
     ownership: undefined,
     ghostUnowned: false,
     list: 'collection',
+    collectionCounts: undefined,
     ownedMarks: undefined,
     wishlist: undefined,
   },
@@ -64,9 +74,21 @@ function isOwnedMark(card: Card): boolean {
   return !!owned && owned.quantity + owned.foil_quantity > 0
 }
 
-// The card's total wanted count from the wish-list map (regular + foil); 0 when absent.
-function wishlistTotal(card: Card): number {
-  const w = props.wishlist?.[card.id]
+// The counts feeding the quick-add control's PRIMARY (collection) count chips. On a
+// collection grid the grid's own `ownership` map already holds collection counts; on the
+// wishlist surface those counts are WANTS, so the collection totals come from the
+// `collectionCounts` overlay instead.
+function primaryCounts(card: Card): { quantity: number; foil_quantity: number } {
+  const source = props.list === 'wishlist' ? props.collectionCounts : props.ownership
+  return source?.[card.id] ?? { quantity: 0, foil_quantity: 0 }
+}
+
+// The card's total wanted count feeding the control's appended Heart chip (regular + foil).
+// On a collection grid that's the `wishlist` overlay; on the wishlist surface it's the grid's
+// own `ownership` map (which there means wish-list membership). 0 when absent.
+function wantedTotal(card: Card): number {
+  const source = props.list === 'wishlist' ? props.ownership : props.wishlist
+  const w = source?.[card.id]
   return w ? w.quantity + w.foil_quantity : 0
 }
 
@@ -97,10 +119,9 @@ useCardNavList(
           :game="game"
           :card-id="card.id"
           :name="card.name"
-          :quantity="ownership?.[card.id]?.quantity ?? 0"
-          :foil-quantity="ownership?.[card.id]?.foil_quantity ?? 0"
-          :wishlist-quantity="wishlistTotal(card)"
-          :list="list"
+          :quantity="primaryCounts(card).quantity"
+          :foil-quantity="primaryCounts(card).foil_quantity"
+          :wishlist-quantity="wantedTotal(card)"
         />
       </template>
     </CardTile>
