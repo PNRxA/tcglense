@@ -4,6 +4,7 @@ import type { PriceRange } from './catalog'
 import type {
   CollectionDropGroup,
   CollectionEntry,
+  CollectionMovers,
   CollectionQuantities,
   CollectionSubtypeGroup,
   CollectionValuePoint,
@@ -27,6 +28,9 @@ import type {
 export type {
   CollectionDropGroup,
   CollectionEntry,
+  CollectionMover,
+  CollectionMoverList,
+  CollectionMovers,
   CollectionQuantities,
   CollectionSet,
   CollectionSubtypeGroup,
@@ -153,6 +157,19 @@ export async function getCollectionValueHistory(
       usd_foil: null,
     })),
   }
+}
+
+/** Relative `/api/collection/{game}/movers` path. */
+export function collectionMoversPath(game: string): string {
+  return `/api/collection/${encodeURIComponent(game)}/movers`
+}
+
+/**
+ * The signed-in user's biggest gain/loss movements (day / week / month) across the cards
+ * they own, ranked by the change in each holding's USD value. Per-user + authenticated.
+ */
+export async function getCollectionMovers(token: string, game: string): Promise<CollectionMovers> {
+  return request<CollectionMovers>(collectionMoversPath(game), { token })
 }
 
 /** Which provider-shaped CSV a collection export produces. */

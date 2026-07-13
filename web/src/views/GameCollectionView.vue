@@ -8,6 +8,7 @@ import PriceChart from '@/components/cards/PriceChart.vue'
 import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
+import CollectionMovers from '@/components/collection/CollectionMovers.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
@@ -160,6 +161,10 @@ function fetchValueHistory(range: PriceRange) {
         :query-key="['collection-value-history', game]"
         :fetcher="fetchValueHistory"
       />
+
+      <!-- The biggest per-card value moves (day / week / month) across the collection —
+           gated like the value chart, on something being owned. -->
+      <CollectionMovers v-if="hasStats" :game="game" />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year
