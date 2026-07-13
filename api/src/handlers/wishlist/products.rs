@@ -16,10 +16,14 @@
 //!
 //! [`wishlist_item`]: crate::entities::wishlist_item
 
+use std::collections::HashMap;
+
 use axum::{Json, extract::State};
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, SelectTwo, Set};
+use sea_orm::{
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, SelectTwo, Set,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::extractor::{AuthUser, WritableUser};
@@ -28,9 +32,11 @@ use crate::entities::{product, wishlist_product_item};
 use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::catalog::{ProductResponse, load_product, product_response, set_name_map};
+use crate::handlers::shared::valuation::Valuation;
 use crate::handlers::shared::{
-    CollectionQuantities, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, SetQuantitiesRequest, build_page,
-    require_game, resolve_page, validate_quantity,
+    CollectionQuantities, DEFAULT_PAGE_SIZE, MAX_OWNED_IDS, MAX_PAGE_SIZE, OwnedCountsRequest,
+    OwnedCountsResponse, Page, SetQuantitiesRequest, build_page, dedupe_ids, require_game,
+    resolve_page, validate_quantity,
 };
 use crate::state::AppState;
 
@@ -42,6 +48,22 @@ pub(crate) struct WishlistProductEntry {
     pub product: ProductResponse,
     pub quantity: i32,
     pub foil_quantity: i32,
+}
+
+/// Aggregate stats for the signed-in user's wanted sealed products in a game (the
+/// wish-list landing's header trio). Wish-list-only — the collection has no sealed
+/// surface, and the shared `CollectionSummary` must not grow product fields.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub(crate) struct WishlistProductSummary {
+    /// Distinct wanted products (one per row whose product still exists).
+    pub unique_products: i64,
+    /// Total copies wanted (regular + foil) across every wanted product.
+    pub total_products: i64,
+    /// Estimated USD cost: regular copies at the product's market `usd`, foil at
+    /// `usd_foil` (msrp is never used), as a 2-dp decimal string. `null` when nothing
+    /// wanted is priced.
+    pub total_value_usd: Option<String>,
 }
 
 /// Query params for the wanted-products list: page + page size only (the list is fixed
@@ -135,6 +157,142 @@ pub async fn list_wishlist_products(
         .collect();
 
     Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// Aggregate stats for a user's wanted sealed products in a game. One LEFT-join query
+/// (the shared `wanted_products_query` base, so per-user scoping lives in one place),
+/// folded in Rust via `Valuation` — prices are stored decimal strings, never summed in
+/// SQL (see `handlers::shared::holdings`). A row whose product is gone (catalog
+/// re-import orphan) is skipped for all three stats, matching `list_wishlist_products`.
+pub(super) async fn product_summary(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    game: &str,
+) -> Result<WishlistProductSummary, AppError> {
+    let rows = wanted_products_query(user_id, game).all(db).await?;
+    let mut unique_products: i64 = 0;
+    let mut total_products: i64 = 0;
+    // The bulk split goes unused (the wish list shows no bulk stat); only total_usd()
+    // is read, which is `None` when nothing was priced — the null-not-"0.00" contract.
+    let mut valuation = Valuation::default();
+    for (item, prod) in rows {
+        let Some(p) = prod else { continue };
+        unique_products += 1;
+        total_products += i64::from(item.quantity) + i64::from(item.foil_quantity);
+        valuation.add(
+            p.price_usd.as_deref(),
+            item.quantity,
+            p.price_usd_foil.as_deref(),
+            item.foil_quantity,
+        );
+    }
+    Ok(WishlistProductSummary {
+        unique_products,
+        total_products,
+        total_value_usd: valuation.total_usd(),
+    })
+}
+
+/// Get wish list sealed summary
+///
+/// `GET /api/wishlist/{game}/products/summary` -> aggregate stats (distinct products,
+/// total copies, estimated USD cost) for the signed-in user's wanted sealed products.
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/products/summary",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "Aggregate stats for the user's wanted sealed products.", body = WishlistProductSummary),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
+pub async fn wishlist_product_summary(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+) -> Result<Json<WishlistProductSummary>, AppError> {
+    require_game(&game)?;
+    Ok(Json(product_summary(&state.db, user.id, &game).await?))
+}
+
+/// `POST /api/wishlist/{game}/products/counts` -> the wanted counts for the subset of the
+/// given external (TCGplayer) product ids that are on the signed-in user's wish list,
+/// keyed by external id. Products the user doesn't want are absent from the map (so an
+/// all-unwanted page returns `{ "data": {} }`). This backs the resting wanted-count badges
+/// on the sealed-product browse grids — the product twin of
+/// [`super::read::wishlist_counts`] — without an N+1 of per-product lookups. Deliberately
+/// **not** in the OpenAPI spec (no `#[utoipa::path]`): like both card counts endpoints,
+/// it's an SPA-internal badge feed. `422` if more than [`MAX_OWNED_IDS`] ids are requested
+/// at once.
+pub async fn wishlist_product_counts(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    JsonBody(payload): JsonBody<OwnedCountsRequest>,
+) -> Result<Json<OwnedCountsResponse>, AppError> {
+    require_game(&game)?;
+
+    let external_ids = dedupe_ids(payload.ids);
+    if external_ids.is_empty() {
+        return Ok(Json(OwnedCountsResponse {
+            data: HashMap::new(),
+        }));
+    }
+    if external_ids.len() > MAX_OWNED_IDS {
+        return Err(AppError::Validation(format!(
+            "at most {MAX_OWNED_IDS} product ids may be looked up at once"
+        )));
+    }
+
+    // Resolve external -> internal ids for this game, keeping the reverse map so the
+    // response is keyed by the external id the client sent. Unknown ids just don't
+    // appear here (and so never in the result).
+    let external_by_internal: HashMap<i32, String> = Product::find()
+        .select_only()
+        .column(product::Column::Id)
+        .column(product::Column::ExternalId)
+        .filter(product::Column::Game.eq(game.as_str()))
+        .filter(product::Column::ExternalId.is_in(external_ids))
+        .into_tuple::<(i32, String)>()
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
+    if external_by_internal.is_empty() {
+        return Ok(Json(OwnedCountsResponse {
+            data: HashMap::new(),
+        }));
+    }
+
+    // One query for the user's wish-list rows among those products; a product with no
+    // row is simply not wanted and contributes nothing to the map.
+    let internal_ids: Vec<i32> = external_by_internal.keys().copied().collect();
+    let rows = WishlistProductItem::find()
+        .filter(wishlist_product_item::Column::UserId.eq(user.id))
+        .filter(wishlist_product_item::Column::Game.eq(game.as_str()))
+        .filter(wishlist_product_item::Column::ProductId.is_in(internal_ids))
+        .all(&state.db)
+        .await?;
+
+    let data: HashMap<String, CollectionQuantities> = rows
+        .into_iter()
+        .filter_map(|r| {
+            external_by_internal.get(&r.product_id).map(|external_id| {
+                (
+                    external_id.clone(),
+                    CollectionQuantities {
+                        quantity: r.quantity,
+                        foil_quantity: r.foil_quantity,
+                    },
+                )
+            })
+        })
+        .collect();
+
+    Ok(Json(OwnedCountsResponse { data }))
 }
 
 /// Get wish list product

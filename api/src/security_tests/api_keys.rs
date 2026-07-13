@@ -182,6 +182,24 @@ async fn read_only_key_can_read_but_not_write() {
     // …but reading the sealed-product wish list is allowed for a read-only key.
     let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/mtg/products", &key)).await;
     assert_eq!(status, StatusCode::OK);
+
+    // The sealed-product batch-count POST is likewise a *read* — allowed for a read-only key.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/products/counts",
+            &key,
+            json!({ "ids": ["x"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // …and the sealed-product summary is a read too.
+    let (status, _, _) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/products/summary", &key)).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

@@ -25,7 +25,11 @@
 //! card wire DTOs and params are the collection's own, reused from
 //! [`crate::handlers::shared::holdings`] so the wish list needs no new generated TS
 //! types; on this side of the API their "owned" fields simply read as "wanted". Sealed
-//! products reuse the same quantity DTOs plus one new [`products::WishlistProductEntry`].
+//! products reuse the same quantity DTOs plus one new [`products::WishlistProductEntry`];
+//! the sealed landing's header trio adds a second new DTO,
+//! [`products::WishlistProductSummary`] (`GET .../products/summary`), and the browse-grid
+//! badges are fed by a batch wanted-counts lookup (`POST .../products/counts`) that reuses
+//! the shared counts DTOs.
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
@@ -44,6 +48,7 @@ mod tests;
 
 pub use products::{
     get_wishlist_product_entry, list_wishlist_products, set_wishlist_product_entry,
+    wishlist_product_counts, wishlist_product_summary,
 };
 pub use read::{get_wishlist_entry, list_wishlist, wishlist_counts, wishlist_summary};
 pub use sets::{wishlist_set_drops, wishlist_set_subtypes, wishlist_sets};
@@ -54,7 +59,7 @@ pub use write::set_wishlist_entry;
 // (see the note in `crate::handlers::catalog`).
 pub use products::{
     __path_get_wishlist_product_entry, __path_list_wishlist_products,
-    __path_set_wishlist_product_entry,
+    __path_set_wishlist_product_entry, __path_wishlist_product_summary,
 };
 pub use read::{__path_get_wishlist_entry, __path_list_wishlist, __path_wishlist_summary};
 pub use write::__path_set_wishlist_entry;

@@ -47,7 +47,8 @@ use crate::{
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, get_wishlist_product_entry, list_wishlist, list_wishlist_products,
-            set_wishlist_entry, set_wishlist_product_entry, wishlist_counts, wishlist_set_drops,
+            set_wishlist_entry, set_wishlist_product_entry, wishlist_counts,
+            wishlist_product_counts, wishlist_product_summary, wishlist_set_drops,
             wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
     },
@@ -202,6 +203,18 @@ pub fn build_router(state: AppState) -> Router {
         // `products` is a new static segment — no conflict with `/cards/{id}`, `/summary`,
         // `/sets`, or `/counts`.
         .route("/api/wishlist/{game}/products", get(list_wishlist_products))
+        // Static siblings of `/products/{id}` — static segments win in axum (same guarantee
+        // as the catalog's `/products/facets`), so neither is ever swallowed by a product id:
+        // the sealed wish-list summary, and the batch wanted-counts lookup for the
+        // product-tile badges (POST like `/counts`; absent ids mean "not wanted").
+        .route(
+            "/api/wishlist/{game}/products/summary",
+            get(wishlist_product_summary),
+        )
+        .route(
+            "/api/wishlist/{game}/products/counts",
+            post(wishlist_product_counts),
+        )
         .route(
             "/api/wishlist/{game}/products/{id}",
             get(get_wishlist_product_entry).put(set_wishlist_product_entry),
