@@ -7,11 +7,11 @@ import CardPagination from '@/components/cards/CardPagination.vue'
 
 // Drive the section off controlled query state rather than the network: the wish-list
 // products composable is mocked so the test exercises the section's render gating (self-hides
-// when nothing is wanted), its header counts, its per-product badges, and the page-when-needed
-// rule — not the query layer (covered by the API path + backend tests). `page` and `dataRef`
-// capture the real refs handed to the mock on the most recent mount, so a test can mutate them
-// after mounting to exercise clamp-page reactivity — the other fields are only read as seed
-// values at mount time.
+// when nothing is wanted), its header counts, the wanted-count map it hands the grid, and the
+// page-when-needed rule — not the query layer (covered by the API path + backend tests).
+// `page` and `dataRef` capture the real refs handed to the mock on the most recent mount, so a
+// test can mutate them after mounting to exercise clamp-page reactivity — the other fields are
+// only read as seed values at mount time.
 const state = vi.hoisted(() => ({
   data: undefined as WishlistProductPage | undefined,
   isPlaceholderData: false,
@@ -34,22 +34,13 @@ vi.mock('@/composables/useWishlist', () => ({
   },
 }))
 
-// A ProductGrid stub that renders the #badge scoped slot per product, so the section's
-// OwnedCountBadge (itself stubbed to echo its counts) is exercised without deep-rendering
-// the real tiles/images.
+// A props-echoing ProductGrid stub: the section now hands the grid a `wanted` counts map
+// (keyed by product id) instead of a #badge slot, so the test asserts on the stub's props
+// without deep-rendering the real tiles/images.
 const ProductGridStub = {
   name: 'ProductGrid',
-  props: ['game', 'products'],
-  template: `<div class="grid-stub">
-    <div v-for="p in products" :key="p.id" class="tile" :data-id="p.id">
-      <slot name="badge" :product="p" />
-    </div>
-  </div>`,
-}
-const BadgeStub = {
-  name: 'OwnedCountBadge',
-  props: ['quantity', 'foilQuantity'],
-  template: '<span class="badge">{{ quantity }}/{{ foilQuantity }}</span>',
+  props: ['game', 'products', 'wanted'],
+  template: '<div class="grid-stub" />',
 }
 
 function entry(id: string, quantity: number, foilQuantity = 0): WishlistProductEntry {
@@ -82,7 +73,6 @@ function mountSection() {
       stubs: {
         RouterLink: RouterLinkStub,
         ProductGrid: ProductGridStub,
-        OwnedCountBadge: BadgeStub,
         CardPagination: true,
       },
     },
@@ -110,7 +100,7 @@ describe('WishlistSealedSection', () => {
     expect(wrapper.find('section').exists()).toBe(false)
   })
 
-  it('renders the heading, total, tiles, and per-product badge counts', () => {
+  it('renders the heading, total, tiles, and passes the wanted counts map keyed by id', () => {
     state.data = pageData([entry('100', 3), entry('200', 1, 2)])
     const wrapper = mountSection()
 
@@ -122,9 +112,11 @@ describe('WishlistSealedSection', () => {
     const grid = wrapper.getComponent(ProductGridStub)
     expect((grid.props('products') as unknown[]).length).toBe(2)
 
-    // Badges carry the wanted counts keyed by product id.
-    const badges = wrapper.findAll('.badge').map((b) => b.text())
-    expect(badges).toEqual(['3/0', '1/2'])
+    // The wanted counts are passed as a map keyed by external product id (from page data).
+    expect(grid.props('wanted')).toEqual({
+      '100': { quantity: 3, foil_quantity: 0 },
+      '200': { quantity: 1, foil_quantity: 2 },
+    })
   })
 
   it('paginates only when the total exceeds one page (60)', () => {

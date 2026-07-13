@@ -1,11 +1,13 @@
-import { makeHoldingApi } from './holdings'
+import { makeHoldingApi, postCountsBatched } from './holdings'
 import { listQuery, request } from './client'
+import type { OwnedCountsMap } from './collection'
 import type {
   CollectionQuantities,
   CollectionSet,
   CollectionSummary,
   Page,
   WishlistProductEntry,
+  WishlistProductSummary,
 } from './generated'
 
 // ---------- Wish list (per-user, authenticated) ----------
@@ -86,7 +88,7 @@ export const setWishlistEntry = api.setEntry
 // (`WishlistProductEntry = { product, quantity, foil_quantity }`) and is fixed
 // recency-desc (no q/sort). The id on the wire is the external (TCGplayer) product id.
 
-export type { WishlistProductEntry } from './generated'
+export type { WishlistProductEntry, WishlistProductSummary } from './generated'
 
 /** A page of the user's wanted sealed products plus pagination cursors. */
 export type WishlistProductPage = Page<WishlistProductEntry>
@@ -134,4 +136,34 @@ export function setWishlistProductEntry(
     body,
     token,
   })
+}
+
+/** Relative `/api/wishlist/{game}/products/summary` path (the sealed stats trio). */
+export function wishlistProductSummaryPath(game: string): string {
+  return `/api/wishlist/${encodeURIComponent(game)}/products/summary`
+}
+
+/** Aggregate stats (unique products, total copies, estimated cost) for the user's
+ * wanted sealed products. `total_value_usd` is null when nothing wanted is priced. */
+export function getWishlistProductSummary(
+  token: string,
+  game: string,
+): Promise<WishlistProductSummary> {
+  return request<WishlistProductSummary>(wishlistProductSummaryPath(game), { token })
+}
+
+/** Relative `/api/wishlist/{game}/products/counts` path (batch wanted counts). */
+export function wishlistProductCountsPath(game: string): string {
+  return `/api/wishlist/${encodeURIComponent(game)}/products/counts`
+}
+
+/** Wanted counts for the given external product ids that are on the user's wish list,
+ * keyed by external id (products not on the list are simply absent) — POSTed and
+ * batched under the id cap, exactly like the card counts. */
+export function getWishlistProductCounts(
+  token: string,
+  game: string,
+  ids: string[],
+): Promise<OwnedCountsMap> {
+  return postCountsBatched(wishlistProductCountsPath(game), token, ids)
 }

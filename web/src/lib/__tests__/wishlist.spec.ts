@@ -2,16 +2,20 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import {
   getWishlistCounts,
+  getWishlistProductCounts,
   getWishlistProductEntry,
   getWishlistProducts,
+  getWishlistProductSummary,
   getWishlistSetDrops,
   getWishlistSets,
   getWishlistSummary,
   setWishlistProductEntry,
   wishlistEntryPath,
   wishlistPath,
+  wishlistProductCountsPath,
   wishlistProductEntryPath,
   wishlistProductsPath,
+  wishlistProductSummaryPath,
   wishlistSetDropsPath,
 } from '../api'
 
@@ -289,5 +293,108 @@ describe('getWishlistProducts / getWishlistProductEntry / setWishlistProductEntr
     expect(init.headers?.Authorization).toBe('Bearer tok')
     expect(JSON.parse(init.body ?? '{}')).toEqual({ quantity: 3, foil_quantity: 0 })
     expect(res).toEqual({ quantity: 3, foil_quantity: 0 })
+  })
+})
+
+describe('wishlistProductSummaryPath', () => {
+  it('builds the product-summary path', () => {
+    expect(wishlistProductSummaryPath('mtg')).toBe('/api/wishlist/mtg/products/summary')
+  })
+
+  it('encodes the game segment', () => {
+    expect(wishlistProductSummaryPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('getWishlistProductSummary', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  type FetchInit = { method?: string; headers?: Record<string, string> }
+
+  function stubJson(payload: unknown) {
+    const fetchMock = vi.fn<(url: string, init?: FetchInit) => Promise<Response>>(
+      async () =>
+        ({ ok: true, status: 200, text: async () => JSON.stringify(payload) }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('GETs the summary with the bearer token and returns the parsed body', async () => {
+    const payload = { unique_products: 3, total_products: 6, total_value_usd: '380.00' }
+    const fetchMock = stubJson(payload)
+    const res = await getWishlistProductSummary('tok', 'mtg')
+    const [url, init] = fetchMock.mock.calls[0] as [string, FetchInit]
+    expect(url).toContain('/api/wishlist/mtg/products/summary')
+    expect(init.method ?? 'GET').toBe('GET')
+    expect(init.headers?.Authorization).toBe('Bearer tok')
+    expect(res).toEqual(payload)
+  })
+})
+
+describe('wishlistProductCountsPath', () => {
+  it('builds the product-counts path', () => {
+    expect(wishlistProductCountsPath('mtg')).toBe('/api/wishlist/mtg/products/counts')
+  })
+
+  it('encodes the game segment', () => {
+    expect(wishlistProductCountsPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('getWishlistProductCounts', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // Shape each response body from the POSTed ids so a test can observe batching + merging.
+  function stubFetch(payloadFor: (ids: string[]) => unknown) {
+    const fetchMock = vi.fn<(url: string, init: { body?: string }) => Promise<Response>>(
+      async (_url, init) => {
+        const body = JSON.parse(init.body ?? '{}') as { ids: string[] }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(payloadFor(body.ids)),
+        } as Response
+      },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('POSTs the ids to /products/counts and returns the wanted-counts map', async () => {
+    const fetchMock = stubFetch(() => ({ data: { '100': { quantity: 2, foil_quantity: 0 } } }))
+    const map = await getWishlistProductCounts('tok', 'mtg', ['100', '200'])
+
+    expect(map).toEqual({ '100': { quantity: 2, foil_quantity: 0 } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, { method: string; body: string }]
+    expect(url).toContain('/api/wishlist/mtg/products/counts')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ ids: ['100', '200'] })
+  })
+
+  it('splits a 401-id list into two batches under the cap and merges the maps', async () => {
+    // Echo one wanted entry per requested id so the merged map reflects every batch.
+    const fetchMock = stubFetch((ids) => ({
+      data: Object.fromEntries(ids.map((id) => [id, { quantity: 1, foil_quantity: 0 }])),
+    }))
+    const ids = Array.from({ length: 401 }, (_, i) => `p${i}`)
+    const map = await getWishlistProductCounts('tok', 'mtg', ids)
+
+    // 401 / 400 per batch = 2 requests (400 + 1), each ≤ the 500-id server cap.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const batchSizes = (fetchMock.mock.calls as [string, { body: string }][]).map(
+      ([, init]) => JSON.parse(init.body).ids.length,
+    )
+    expect(batchSizes).toEqual([400, 1])
+    expect(Object.keys(map)).toHaveLength(401)
+    expect(map.p0).toEqual({ quantity: 1, foil_quantity: 0 })
+    expect(map.p400).toEqual({ quantity: 1, foil_quantity: 0 })
+  })
+
+  it('makes no request for an empty id list', async () => {
+    const fetchMock = stubFetch(() => ({ data: {} }))
+    expect(await getWishlistProductCounts('tok', 'mtg', [])).toEqual({})
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

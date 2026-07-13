@@ -4,8 +4,10 @@ import {
   getWishlist,
   getWishlistCounts,
   getWishlistEntry,
+  getWishlistProductCounts,
   getWishlistProductEntry,
   getWishlistProducts,
+  getWishlistProductSummary,
   getWishlistSetDrops,
   getWishlistSets,
   getWishlistSetSubtypes,
@@ -13,8 +15,17 @@ import {
   setWishlistEntry,
   setWishlistProductEntry,
 } from '@/lib/api'
-import type { ApiError, CollectionQuantities, WishlistProductPage } from '@/lib/api'
-import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
+import type {
+  ApiError,
+  CollectionQuantities,
+  WishlistProductPage,
+  WishlistProductSummary,
+} from '@/lib/api'
+import {
+  makeHoldingQueries,
+  useBatchCounts,
+  type SetHoldingVars,
+} from '@/composables/holdingQueries'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
 // Server state for the signed-in user's wish list (issue #167) — the collection's twin
@@ -80,7 +91,8 @@ export const useSetWishlistEntryMutation = queries.useSetEntryMutation
 // Sealed products can be wished for, but have no collection twin, so the seam rule
 // (extend the shared engine, never fork it) doesn't apply — these are wishlist-only
 // siblings that live beside the factory instance rather than as a factory axis. The key
-// families head-start with `wishlist` so `useAuthCacheReset` wipes them on identity
+// families all head-start with `wishlist` (`wishlist-products`, `wishlist-product-entry`,
+// and the new `wishlist-product-counts`) so `useAuthCacheReset` wipes them on identity
 // change; element-wise partial matching keeps `['wishlist-products', …]` independent of
 // the card factory's `['wishlist', game]` invalidation. As in `holdingQueries.ts`, each
 // vue-query option object is an intermediate variable (not an inline literal) so
@@ -121,13 +133,35 @@ export function useWishlistProductEntryQuery(
   return useAuthedQuery<CollectionQuantities>(options)
 }
 
-/** Refresh the views that depend on wanted sealed products after a product write. */
+/** Aggregate stats for the wanted sealed products — the wish-list landing's product
+ * stat trio. Keyed inside the `['wishlist-products', game]` family so
+ * `invalidateWishlistProducts`' prefix invalidation refreshes it after every product
+ * write for free (`'summary'` never collides with the list's numeric page key). */
+export function useWishlistProductSummaryQuery(game: Ref<string>) {
+  const options = {
+    queryKey: ['wishlist-products', game, 'summary'],
+    queryFn: (token: string) => getWishlistProductSummary(token, game.value),
+  }
+  return useAuthedQuery<WishlistProductSummary>(options)
+}
+
+/** Wanted counts for the sealed products currently on screen, keyed by external id —
+ * the resting badges on the product-tile quick-add controls (the product twin of
+ * `useWishlistCounts`). */
+export function useWishlistProductCounts(game: Ref<string>, products: Ref<{ id: string }[]>) {
+  return useBatchCounts('wishlist-product-counts', getWishlistProductCounts, game, products)
+}
+
+/** Refresh the views that depend on wanted sealed products after a product write — the
+ * list, the per-product entry steppers, the browse-grid wanted-count badges, and the
+ * landing's summary trio (which lives inside the `['wishlist-products', game]` family). */
 export function invalidateWishlistProducts(
   qc: QueryClient,
   game: string,
   opts: { entryId?: string } = {},
 ) {
   qc.invalidateQueries({ queryKey: ['wishlist-products', game] })
+  qc.invalidateQueries({ queryKey: ['wishlist-product-counts', game] })
   qc.invalidateQueries({
     queryKey: opts.entryId
       ? ['wishlist-product-entry', game, opts.entryId]

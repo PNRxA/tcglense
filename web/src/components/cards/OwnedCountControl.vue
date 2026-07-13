@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import { Check, Loader2, Minus, Plus, Sparkles } from '@lucide/vue'
+import { Check, Heart, Loader2, Minus, Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
@@ -18,6 +18,13 @@ import {
 // without leaving the grid. Rendered by CardGrid / CollectionGrid only while signed in.
 // `list` retargets the whole control at the wish list (issue #167) — same behaviour,
 // reading/writing the wish-list counts with "wish list" wording.
+//
+// On the collection-targeting instances (`list === 'collection'`, i.e. the catalog
+// surfaces) the popover additionally grows a secondary "Wish list" quick-add row
+// (issue #364 follow-up) that reads/writes the card's wish-list holding — a regular-only
+// stepper that seeds lazily when the popover opens (no resting wanted count on catalog
+// tiles). On a wishlist-targeting instance the popover already IS the wish list, so the
+// row self-suppresses.
 //
 // `quantity`/`foilQuantity` are the *display* counts from the grid's ownership source —
 // good enough for the resting badge, but they can lag (a browse grid loads them async).
@@ -61,6 +68,33 @@ const ready = computed(() => entryQuery.isSuccess.value && !entryQuery.isFetchin
 const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
   list: props.list,
 })
+
+// Wish-list quick-add row (only when this control targets the collection — on a
+// wishlist grid the popover already IS the wish list). The secondary entry hook is
+// created unconditionally (composables can't be conditional) but stays disabled until
+// the popover opens on a collection-targeting instance; the editor's mutation pick is
+// setup-time and cheap. No display fallback: there are no resting wanted counts on
+// catalog tiles, so the row's steppers stay disabled until the authoritative want
+// loads (an undefined seed keeps an absolute-count save impossible). Only the regular
+// want is editable here; the seeded foil want is preserved on save.
+const wishRowShown = computed(() => props.list === 'collection')
+const wishEnabled = computed(() => open.value && wishRowShown.value)
+const wishEntryQuery = useWishlistEntryQuery(game, cardId, {
+  enabled: wishEnabled,
+  staleTime: 0,
+})
+const wishSeed = computed<OwnedCountSeed | undefined>(() => wishEntryQuery.data.value)
+const wishReady = computed(() => wishEntryQuery.isSuccess.value && !wishEntryQuery.isFetching.value)
+const wishEditor = useOwnedCountEditor(game, cardId, wishSeed, { list: 'wishlist' })
+const wishCount = wishEditor.regular
+const wishTotal = computed(() => wishEditor.regular.value + wishEditor.foil.value)
+// Status stays scoped per editor: `saveError` is sticky (cleared only by that editor's
+// next successful save), so a merged region would pin one target's failure over the
+// other's later success with no hint which write failed. The header reports the
+// collection editor; the wish row carries its own compact status below. Top-level
+// aliases because nested refs don't unwrap in templates.
+const wishSaving = wishEditor.saving
+const wishSaveError = wishEditor.saveError
 
 // Resting trigger reflects the grid counts; the live edited counts show inside the panel.
 const displayTotal = computed(() => props.quantity + props.foilQuantity)
@@ -174,6 +208,65 @@ const rows = computed(() => [
               <Plus />
             </Button>
           </div>
+        </div>
+      </div>
+
+      <!-- Wish-list quick-add (issue #364 follow-up): only on collection-targeting instances;
+        regular wants only (the seeded foil want is preserved on save). The minus at 0 is
+        inert-but-focusable for the same popover-focus reason as the rows above. -->
+      <div v-if="wishRowShown" class="mt-3 border-t pt-2">
+        <div class="flex items-center justify-between gap-3">
+          <span class="flex items-center gap-1.5 text-sm">
+            <Heart class="size-3.5" aria-hidden="true" />
+            Wish list
+          </span>
+          <div class="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              :disabled="!wishReady"
+              :aria-disabled="wishCount <= 0"
+              :class="{ 'pointer-events-none opacity-50': wishCount <= 0 }"
+              :aria-label="`Remove one copy of ${name} from your wish list`"
+              @click="wishEditor.adjust('quantity', -1)"
+            >
+              <Minus />
+            </Button>
+            <span
+              class="w-8 text-center text-sm font-medium tabular-nums"
+              aria-live="polite"
+              aria-atomic="true"
+              :aria-label="`Wish list: ${wishCount}`"
+              >{{ wishCount }}</span
+            >
+            <Button
+              variant="outline"
+              size="icon"
+              :disabled="!wishReady"
+              :aria-label="`Add one copy of ${name} to your wish list`"
+              @click="wishEditor.adjust('quantity', 1)"
+            >
+              <Plus />
+            </Button>
+          </div>
+        </div>
+        <!-- The row's own save status (the header above reports only the collection
+          editor). Fixed height so it never shifts the popover as it changes. -->
+        <div
+          class="text-muted-foreground mt-1 flex h-4 items-center gap-1 text-xs"
+          aria-live="polite"
+        >
+          <template v-if="wishSaveError">
+            <span class="text-destructive">Retry — not saved</span>
+          </template>
+          <template v-else-if="wishSaving">
+            <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+            Saving…
+          </template>
+          <template v-else-if="wishTotal > 0">
+            <Check class="size-3.5" aria-hidden="true" />
+            Saved
+          </template>
         </div>
       </div>
     </PopoverContent>
