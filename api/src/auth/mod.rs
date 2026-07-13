@@ -6,3 +6,4 @@ pub mod jwt;
 pub mod password;
 pub mod refresh;
 mod secret;
+pub mod username;

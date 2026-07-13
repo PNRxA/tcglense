@@ -141,6 +141,22 @@ const router = createRouter({
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
     },
+    // Public, shareable collections (issues #361/#362): a user's profile and the read-only
+    // view of a game collection they've made public, addressed by their handle
+    // (`{username}-{discriminator}`). No requiresAuth — anyone can view — and indexable, so
+    // shared links preview and rank. Lazy-loaded like the rest.
+    {
+      path: '/u/:handle',
+      name: 'public-profile',
+      component: () => import('@/views/PublicProfileView.vue'),
+      props: true,
+    },
+    {
+      path: '/u/:handle/:game',
+      name: 'public-collection',
+      component: () => import('@/views/PublicCollectionView.vue'),
+      props: true,
+    },
     // Interactive public-API reference (issue #284). Public and indexable; linked from
     // the homepage, nav, and footer. Lazy-loaded — the Scalar bundle is heavy and must
     // stay out of the app's initial payload.

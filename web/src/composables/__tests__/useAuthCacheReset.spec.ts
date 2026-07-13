@@ -13,12 +13,18 @@ const USER_A: User = {
   email: 'a@x.test',
   display_name: 'A',
   created_at: '2026-01-01T00:00:00Z',
+  username: null,
+  discriminator: null,
+  handle: null,
 }
 const USER_B: User = {
   id: 2,
   email: 'b@x.test',
   display_name: 'B',
   created_at: '2026-01-02T00:00:00Z',
+  username: null,
+  discriminator: null,
+  handle: null,
 }
 
 // Seed a per-user (authed) query and a public one so we can assert the reset drops only

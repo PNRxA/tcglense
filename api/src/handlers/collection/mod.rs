@@ -50,6 +50,12 @@ pub use sets::{collection_set_drops, collection_set_subtypes, collection_sets};
 pub use value_history::collection_value_history;
 pub use write::set_collection_entry;
 
+// The `user_id`-parameterised read cores, reused by the public sharing handlers
+// (`crate::handlers::sharing::public`) so a public collection read shares the exact
+// query/shaping logic — only how `user_id` is resolved differs.
+pub(crate) use read::{owned_list_page, summary};
+pub(crate) use sets::{owned_drop_page, owned_sets, owned_subtype_page};
+
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::collection::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).

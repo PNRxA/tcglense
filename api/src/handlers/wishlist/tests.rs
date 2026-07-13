@@ -49,6 +49,8 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
             created_at: Set(at("2024-01-01T00:00:00Z")),
             updated_at: Set(at("2024-01-01T00:00:00Z")),
             email_verified_at: Set(None),
+            username: Set(None),
+            discriminator: Set(None),
         }
         .insert(&db)
         .await
@@ -143,6 +145,8 @@ async fn wishlist_query_orders_by_total_copies() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await
@@ -213,6 +217,8 @@ async fn summary_skips_rows_whose_card_row_is_missing() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await
@@ -273,6 +279,8 @@ async fn wishlist_query_scopes_to_a_set() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await
@@ -371,6 +379,8 @@ async fn wanted_cards_group_into_drops_with_counts() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await
@@ -462,6 +472,8 @@ async fn wanted_products_query_scopes_by_user_and_sorts_by_recency() {
             created_at: Set(at("2024-01-01T00:00:00Z")),
             updated_at: Set(at("2024-01-01T00:00:00Z")),
             email_verified_at: Set(None),
+            username: Set(None),
+            discriminator: Set(None),
         }
         .insert(&db)
         .await
@@ -555,6 +567,8 @@ async fn wanted_products_query_returns_none_for_orphaned_products() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await
@@ -623,6 +637,8 @@ async fn product_summary_counts_values_and_skips_orphans() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await
@@ -696,6 +712,8 @@ async fn product_summary_value_is_null_when_nothing_priced_and_ignores_msrp() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        username: Set(None),
+        discriminator: Set(None),
     }
     .insert(&db)
     .await

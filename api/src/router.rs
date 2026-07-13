@@ -7,7 +7,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
     middleware::{from_fn, from_fn_with_state, map_response},
-    routing::{any, delete, get, post},
+    routing::{any, delete, get, post, put},
 };
 use tower_http::{
     cors::CorsLayer,
@@ -21,9 +21,12 @@ use crate::{
         api_keys::{create_api_key, list_api_keys, revoke_api_key},
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
-            resend_verification, reset_password, verify_email,
+            resend_verification, reset_password, set_username, username_available, verify_email,
         },
-        cache::{conditional_request_layer, no_store_layer, public_cache_layer},
+        cache::{
+            conditional_request_layer, no_store_layer, public_cache_layer,
+            public_holdings_cache_layer,
+        },
         catalog::{
             card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
             get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
@@ -39,6 +42,10 @@ use crate::{
         },
         config::public_config,
         health::health,
+        sharing::{
+            get_collection_visibility, public_list, public_profile, public_set_drops,
+            public_set_subtypes, public_sets, public_summary, set_collection_visibility,
+        },
         mirror::{
             fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
             scryfall_sets, tcgcsv_proxy,
@@ -97,6 +104,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        // Set/change the username + a live availability check for the "choose a
+        // username" dialog (issue #362). Both authed; the setter is `WritableUser`
+        // (a read-only API key can't claim a handle).
+        .route("/api/auth/username", put(set_username))
+        .route("/api/auth/username/available", get(username_available))
         // API-key management for the public API (issue #284). Session-only (a key
         // cannot manage keys — SessionUser rejects an API-key credential), so these
         // sit in the private group for `no-store` + the per-user rate limit.
@@ -120,6 +132,14 @@ pub fn build_router(state: AppState) -> Router {
         // user owns, per game. Authenticated (via AuthUser) and no-store.
         .route("/api/collection/{game}", get(list_collection))
         .route("/api/collection/{game}/summary", get(collection_summary))
+        // Per-game public-sharing toggle (issues #361/#362): read the current state and
+        // enable/disable. `visibility` is a new static sibling under
+        // `/api/collection/{game}` (static wins over `/cards/{id}` in axum). The setter is
+        // `WritableUser` (a read-only key is 403); enabling without a username is a 409.
+        .route(
+            "/api/collection/{game}/visibility",
+            get(get_collection_visibility).put(set_collection_visibility),
+        )
         // The user's total collection value over time (add-date-clamped, re-priced from
         // historic snapshots) — the collection's answer to the per-card price chart.
         .route(
@@ -313,7 +333,33 @@ pub fn build_router(state: AppState) -> Router {
         .layer(map_response(public_cache_layer))
         .layer(from_fn(conditional_request_layer));
 
-    let mut app = Router::new().merge(private).merge(public);
+    // Public, handle-keyed collection sharing (issues #361/#362): a read-only view of a
+    // user's owned cards for a game they've made public, addressed by their handle
+    // (`/api/u/{username}-{disc}/...`). Unauthenticated and keyed entirely by the URL, so
+    // — unlike the per-user authed collection routes (`no-store`) — these are
+    // CDN-cacheable, under a shorter-lived `PUBLIC_HOLDINGS_CACHE` (a collection changes
+    // more often than the daily catalog). `conditional_request_layer` adds ETags/304s like
+    // the catalog group; a private/unknown handle 404s to `no-store` (never CDN-pinned).
+    let public_holdings = Router::new()
+        .route("/api/u/{handle}", get(public_profile))
+        .route("/api/u/{handle}/{game}", get(public_list))
+        .route("/api/u/{handle}/{game}/summary", get(public_summary))
+        .route("/api/u/{handle}/{game}/sets", get(public_sets))
+        .route(
+            "/api/u/{handle}/{game}/sets/{code}/drops",
+            get(public_set_drops),
+        )
+        .route(
+            "/api/u/{handle}/{game}/sets/{code}/subtypes",
+            get(public_set_subtypes),
+        )
+        .layer(map_response(public_holdings_cache_layer))
+        .layer(from_fn(conditional_request_layer));
+
+    let mut app = Router::new()
+        .merge(private)
+        .merge(public)
+        .merge(public_holdings);
 
     // Optional dataset mirror (see `Config::mirror_enabled` + `handlers::mirror`). When
     // enabled, this instance re-serves the raw provider datasets so other TCGLense

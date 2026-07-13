@@ -17,6 +17,14 @@ const memberSince = computed(() => {
   if (Number.isNaN(date.getTime())) return '—'
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
 })
+
+// The public handle (issue #362): `username#0001`, set the first time a collection is made
+// public. Shown read-only here; changed from a collection page's "make public" flow.
+const username = computed(() => auth.user?.username ?? null)
+const paddedTag = computed(() => {
+  const disc = auth.user?.discriminator
+  return disc == null ? '' : `#${String(disc).padStart(4, '0')}`
+})
 </script>
 
 <template>
@@ -48,6 +56,15 @@ const memberSince = computed(() => {
           <p class="text-sm">{{ auth.user?.display_name ?? 'Not set' }}</p>
         </div>
         <div class="flex flex-col gap-1">
+          <span class="text-muted-foreground text-xs">Username</span>
+          <p class="text-sm">
+            <template v-if="username">
+              {{ username }}<span class="text-muted-foreground">{{ paddedTag }}</span>
+            </template>
+            <template v-else>Not set</template>
+          </p>
+        </div>
+        <div class="flex flex-col gap-1">
           <span class="text-muted-foreground text-xs">Email</span>
           <p class="text-sm">{{ auth.user?.email ?? '—' }}</p>
         </div>
@@ -63,7 +80,8 @@ const memberSince = computed(() => {
     </div>
 
     <p class="text-muted-foreground mt-6 text-center text-sm">
-      Profile editing and collection stats are coming soon.
+      Your username is set the first time you make a collection public, from any collection
+      page. Profile editing and collection stats are coming soon.
     </p>
   </div>
 </template>

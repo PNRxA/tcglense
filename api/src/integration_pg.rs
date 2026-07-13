@@ -301,6 +301,98 @@ async fn email_case_insensitive_uniqueness_on_pg() {
 
 #[tokio::test]
 #[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn public_handle_resolves_case_insensitively_on_pg() {
+    // The public-collection resolve (issues #361/#362) is dialect-aware: Postgres has no
+    // COLLATE NOCASE, so it matches the functional `lower(username)` unique index. This
+    // proves both the case-insensitive `(username, discriminator)` uniqueness AND that a
+    // case-varied handle in the URL resolves to the owner on the real PG router — the one
+    // path the SQLite security tests can't cover.
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+    let now = Utc::now();
+
+    // A user whose handle is stored case-preserving as "Alice#0007".
+    let alice = user::ActiveModel {
+        email: Set("alice@x.test".to_string()),
+        password_hash: Set(Some("x".to_string())),
+        display_name: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        username: Set(Some("Alice".to_string())),
+        discriminator: Set(Some(7)),
+        ..Default::default()
+    }
+    .insert(conn)
+    .await
+    .expect("insert alice");
+
+    // A different-case duplicate `(username, discriminator)` must collide on the functional
+    // lower(username) unique index (the PG arm of the case-insensitive constraint).
+    let dup = user::ActiveModel {
+        email: Set("alice2@x.test".to_string()),
+        password_hash: Set(Some("x".to_string())),
+        display_name: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        username: Set(Some("alice".to_string())),
+        discriminator: Set(Some(7)),
+        ..Default::default()
+    }
+    .insert(conn)
+    .await;
+    assert!(
+        dup.is_err(),
+        "case-variant (username, discriminator) must collide on lower(username)"
+    );
+
+    // Own one card and make the mtg collection public.
+    let card_id = insert_card(conn, "pub-ext-1").await;
+    collection_item::ActiveModel {
+        user_id: Set(alice.id),
+        game: Set(GAME.to_string()),
+        card_id: Set(card_id),
+        quantity: Set(2),
+        foil_quantity: Set(0),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(conn)
+    .await
+    .expect("own card");
+    crate::entities::collection_visibility::ActiveModel {
+        user_id: Set(alice.id),
+        game: Set(GAME.to_string()),
+        is_public: Set(true),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(conn)
+    .await
+    .expect("make public");
+
+    let router = pg_router(db.conn().clone());
+
+    // The handle resolves case-insensitively on Postgres — the exact, lower, and upper
+    // spellings all return the owner's one owned card.
+    for handle in ["Alice-0007", "alice-0007", "ALICE-0007"] {
+        let (status, body) = get(&router, &format!("/api/u/{handle}/mtg")).await;
+        assert_eq!(status, StatusCode::OK, "handle {handle} should resolve: {body:?}");
+        assert_eq!(data_len(&body), 1, "handle {handle} should list the owned card");
+    }
+    // A wrong discriminator is a 404 (not a different user's collection).
+    let (status, _) = get(&router, "/api/u/alice-0008/mtg").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
 async fn issue_with_cooldown_holds_on_pg() {
     let Some(base) = test_pg_url() else {
         return;
