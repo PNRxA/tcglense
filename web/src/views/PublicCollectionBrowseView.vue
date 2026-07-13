@@ -6,6 +6,8 @@ import CardTile from '@/components/cards/CardTile.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
+import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import { CARD_PAGE_SIZE, useGameName, useSetQuery } from '@/composables/useCatalog'
 import { usePublicCollectionQuery } from '@/composables/usePublicCollection'
@@ -80,13 +82,19 @@ usePageMeta({
         </h1>
       </header>
 
-      <StickySearchBar class="mb-6">
-        <CardSearchBox
-          v-model="searchInput"
-          placeholder="Search this collection — name, c:r, t:goblin…"
-          class="w-full sm:w-96"
-        />
+      <!-- Search + the advanced-filter panel (a UI for the Scryfall-style syntax), the
+           same pair the catalog and authed collection browse views use. -->
+      <StickySearchBar>
+        <div class="flex items-center gap-2">
+          <CardSearchBox
+            v-model="searchInput"
+            placeholder="Search this collection — name, c:r, t:goblin…"
+            class="flex-1"
+          />
+          <AdvancedSearchPanel v-model="searchInput" />
+        </div>
       </StickySearchBar>
+      <SearchSyntaxHint class="mt-2 mb-6" />
 
       <CardGridSkeleton v-if="collectionQuery.isPending.value" />
 
