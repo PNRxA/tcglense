@@ -1,6 +1,9 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { useSetCollectionEntryMutation } from '@/composables/useCollection'
-import { useSetWishlistEntryMutation } from '@/composables/useWishlist'
+import {
+  useSetWishlistEntryMutation,
+  useSetWishlistProductEntryMutation,
+} from '@/composables/useWishlist'
 
 /** Which per-user card list a count editor/control reads and writes: the collection
  * (cards you own, the default) or the wish list (cards you want to buy, issue #167).
@@ -32,17 +35,26 @@ export interface OwnedCountSeed {
  * can't save an adjustment off a stale zero.
  *
  * `opts.list` picks which list the saves write to — the collection (default) or the
- * wish list, whose mutations share the same variables/response shape. Fixed for the
- * editor's lifetime (it's read once, at setup).
+ * wish list, whose mutations share the same variables/response shape. `opts.kind:
+ * 'product'` instead targets the wish list's sealed-product holding (there is no
+ * collection sealed surface, so `list` is moot then); `cardId` is then the external
+ * TCGplayer product id, and product callers render only the regular row — `foil` is
+ * seeded from the server holding same as always but never adjusted by the UI, so a save
+ * preserves whatever foil count the seed carried (0 for a fresh want) instead of clobbering
+ * it. Like `list`, `kind` is fixed for the editor's lifetime (both are read once, at setup).
  */
 export function useOwnedCountEditor(
   game: Ref<string>,
   cardId: Ref<string>,
   seed: Ref<OwnedCountSeed | undefined>,
-  opts: { list?: CardListTarget } = {},
+  opts: { list?: CardListTarget; kind?: 'card' | 'product' } = {},
 ) {
   const mutation =
-    opts.list === 'wishlist' ? useSetWishlistEntryMutation() : useSetCollectionEntryMutation()
+    opts.kind === 'product'
+      ? useSetWishlistProductEntryMutation()
+      : opts.list === 'wishlist'
+        ? useSetWishlistEntryMutation()
+        : useSetCollectionEntryMutation()
 
   const regular = ref(0)
   const foil = ref(0)

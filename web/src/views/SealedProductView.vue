@@ -6,6 +6,7 @@ import ProductImage from '@/components/products/ProductImage.vue'
 import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
 import ProductContents from '@/components/products/ProductContents.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
+import ProductWishlistControls from '@/components/products/ProductWishlistControls.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -194,6 +195,11 @@ usePageMeta({
             </dl>
           </div>
           <p v-else class="text-muted-foreground mt-6 text-sm">No current price.</p>
+
+          <!-- "Regular add" to the wish list (issue #364): read/adjust how many of this sealed
+            product you want. Wishlist-only (no collection sealed surface); signed-out visitors
+            get a sign-in nudge. -->
+          <ProductWishlistControls :game="game" :product="product" />
         </div>
       </div>
 

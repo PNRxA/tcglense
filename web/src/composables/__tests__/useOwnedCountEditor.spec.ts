@@ -51,6 +51,7 @@ function mountEditor(
   seed: Ref<OwnedCountSeed | undefined>,
   cardId: Ref<string> = ref('card-a'),
   list?: CardListTarget,
+  kind?: 'card' | 'product',
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -58,7 +59,7 @@ function mountEditor(
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const game = ref('mtg')
   const host = defineComponent({
-    setup: () => useOwnedCountEditor(game, cardId, seed, { list }),
+    setup: () => useOwnedCountEditor(game, cardId, seed, { list, kind }),
     render: () => null,
   })
   const wrapper = mount(host, {
@@ -193,5 +194,89 @@ describe('useOwnedCountEditor', () => {
     seed.value = { quantity: 7, foil_quantity: 0 }
     await flushPromises()
     expect(editor.regular).toBe(7)
+  })
+
+  it('saves to the wish-list product endpoint when kind is product', async () => {
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }),
+      ref('prod-1'),
+      undefined,
+      'product',
+    )
+    await flushPromises()
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+
+    // The write targets the wish list's sealed-product route with an absolute count body.
+    const calls = putCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toContain('/api/wishlist/mtg/products/prod-1')
+    expect(calls[0]!.body).toEqual({ quantity: 1, foil_quantity: 0 })
+  })
+
+  it('collapses rapid product adjusts into one PUT of the final count', async () => {
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }),
+      ref('prod-1'),
+      undefined,
+      'product',
+    )
+    await flushPromises()
+    editor.adjust('quantity', 1)
+    editor.adjust('quantity', 1)
+    editor.adjust('quantity', 1)
+    expect(editor.regular).toBe(3)
+    await settle()
+    await flushPromises()
+
+    // Debounced to a single PUT of the final absolute value, product route.
+    const calls = putCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toContain('/api/wishlist/mtg/products/prod-1')
+    expect(calls[0]!.body).toEqual({ quantity: 3, foil_quantity: 0 })
+  })
+
+  it('preserves a seeded foil count on a product quantity save', async () => {
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 2, foil_quantity: 5 }),
+      ref('prod-1'),
+      undefined,
+      'product',
+    )
+    await flushPromises()
+    expect(editor.regular).toBe(2)
+    expect(editor.foil).toBe(5)
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+
+    // Only the regular row is user-editable in product mode; the seeded foil count rides
+    // along unchanged rather than being clobbered to 0.
+    const calls = putCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toContain('/api/wishlist/mtg/products/prod-1')
+    expect(calls[0]!.body).toEqual({ quantity: 3, foil_quantity: 5 })
+  })
+
+  it('issues a zero-count PUT to remove a product from the wish list', async () => {
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 1, foil_quantity: 0 }),
+      ref('prod-1'),
+      undefined,
+      'product',
+    )
+    await flushPromises()
+    expect(editor.regular).toBe(1)
+    editor.adjust('quantity', -1)
+    expect(editor.regular).toBe(0)
+    await settle()
+    await flushPromises()
+
+    // Both-zero is the delete signal; the PUT still carries the zeros.
+    const calls = putCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toContain('/api/wishlist/mtg/products/prod-1')
+    expect(calls[0]!.body).toEqual({ quantity: 0, foil_quantity: 0 })
   })
 })

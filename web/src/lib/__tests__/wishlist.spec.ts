@@ -2,11 +2,16 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import {
   getWishlistCounts,
+  getWishlistProductEntry,
+  getWishlistProducts,
   getWishlistSetDrops,
   getWishlistSets,
   getWishlistSummary,
+  setWishlistProductEntry,
   wishlistEntryPath,
   wishlistPath,
+  wishlistProductEntryPath,
+  wishlistProductsPath,
   wishlistSetDropsPath,
 } from '../api'
 
@@ -207,5 +212,82 @@ describe('getWishlistCounts', () => {
     const fetchMock = stubFetch(() => ({ data: {} }))
     expect(await getWishlistCounts('tok', 'mtg', [])).toEqual({})
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('wishlistProductsPath', () => {
+  it('builds the products path with pagination params', () => {
+    expect(wishlistProductsPath('mtg', { page: 2, pageSize: 60 })).toBe(
+      '/api/wishlist/mtg/products?page=2&page_size=60',
+    )
+  })
+
+  it('builds the bare products path with no params', () => {
+    expect(wishlistProductsPath('mtg')).toBe('/api/wishlist/mtg/products')
+  })
+
+  it('omits falsy params', () => {
+    expect(wishlistProductsPath('mtg', { page: 3 })).toBe('/api/wishlist/mtg/products?page=3')
+  })
+
+  it('encodes the game segment', () => {
+    expect(wishlistProductsPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('wishlistProductEntryPath', () => {
+  it('builds the per-product path', () => {
+    expect(wishlistProductEntryPath('mtg', '100')).toBe('/api/wishlist/mtg/products/100')
+  })
+
+  it('encodes path segments to avoid breaking the URL', () => {
+    expect(wishlistProductEntryPath('mtg', 'a/b')).toContain('a%2Fb')
+    expect(wishlistProductEntryPath('a/b', '100')).toContain('a%2Fb')
+  })
+})
+
+describe('getWishlistProducts / getWishlistProductEntry / setWishlistProductEntry', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  type FetchInit = { method?: string; headers?: Record<string, string>; body?: string }
+
+  function stubJson(payload: unknown) {
+    const fetchMock = vi.fn<(url: string, init?: FetchInit) => Promise<Response>>(
+      async () =>
+        ({ ok: true, status: 200, text: async () => JSON.stringify(payload) }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('GETs the paged products list with the bearer token', async () => {
+    const fetchMock = stubJson({ data: [], page: 1, page_size: 60, total: 0, has_more: false })
+    await getWishlistProducts('tok', 'mtg', { page: 2, pageSize: 60 })
+    const [url, init] = fetchMock.mock.calls[0] as [string, FetchInit]
+    expect(url).toContain('/api/wishlist/mtg/products?page=2&page_size=60')
+    expect(init.method ?? 'GET').toBe('GET')
+    expect(init.headers?.Authorization).toBe('Bearer tok')
+  })
+
+  it('GETs one product entry at its path', async () => {
+    const fetchMock = stubJson({ quantity: 0, foil_quantity: 0 })
+    await getWishlistProductEntry('tok', 'mtg', '100')
+    const [url, init] = fetchMock.mock.calls[0] as [string, FetchInit]
+    expect(url).toContain('/api/wishlist/mtg/products/100')
+    expect(init.method ?? 'GET').toBe('GET')
+  })
+
+  it('PUTs absolute counts to one product entry with the bearer token', async () => {
+    const fetchMock = stubJson({ quantity: 3, foil_quantity: 0 })
+    const res = await setWishlistProductEntry('tok', 'mtg', '100', {
+      quantity: 3,
+      foil_quantity: 0,
+    })
+    const [url, init] = fetchMock.mock.calls[0] as [string, FetchInit]
+    expect(url).toContain('/api/wishlist/mtg/products/100')
+    expect(init.method).toBe('PUT')
+    expect(init.headers?.Authorization).toBe('Bearer tok')
+    expect(JSON.parse(init.body ?? '{}')).toEqual({ quantity: 3, foil_quantity: 0 })
+    expect(res).toEqual({ quantity: 3, foil_quantity: 0 })
   })
 })
