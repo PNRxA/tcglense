@@ -13,7 +13,6 @@ pub struct Model {
     /// has been chosen yet. Such an account cannot sign in; completing the
     /// registration (or a password reset) sets the hash.
     pub password_hash: Option<String>,
-    pub display_name: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     /// When the account's email address was verified (via an emailed link, or a

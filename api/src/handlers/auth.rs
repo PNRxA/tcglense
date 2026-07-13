@@ -43,8 +43,11 @@ pub struct RegisterRequest {
 pub struct CompleteRegistrationRequest {
     pub token: String,
     pub password: String,
+    /// Optionally claim a username at signup (issue #362); a `#XXXX` discriminator is
+    /// auto-assigned. Left unset, the account has no handle until it's chosen later (from
+    /// a collection page, when first going public).
     #[serde(default)]
-    pub display_name: Option<String>,
+    pub username: Option<String>,
     #[serde(default)]
     pub captcha_token: Option<String>,
 }
@@ -95,7 +98,6 @@ pub struct ResetPasswordRequest {
 pub struct UserResponse {
     pub id: i32,
     pub email: String,
-    pub display_name: Option<String>,
     pub created_at: DateTimeUtc,
     pub username: Option<String>,
     pub discriminator: Option<i32>,
@@ -109,7 +111,6 @@ impl From<user::Model> for UserResponse {
         UserResponse {
             id: m.id,
             email: m.email,
-            display_name: m.display_name,
             created_at: m.created_at,
             username: m.username,
             discriminator: m.discriminator,
@@ -252,7 +253,6 @@ pub async fn register(
             let new_user = user::ActiveModel {
                 email: Set(email.clone()),
                 password_hash: Set(None),
-                display_name: Set(None),
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
@@ -325,9 +325,16 @@ pub async fn complete_registration(
         .captcha
         .verify(payload.captcha_token.as_deref(), client_ip)
         .await?;
-    // Validate BEFORE consuming the token, so a weak password doesn't burn the
-    // single-use link (mirrors reset_password).
+    // Validate BEFORE consuming the token, so a weak password (or a bad optional
+    // username) doesn't burn the single-use link (mirrors reset_password).
     validate_password(&payload.password)?;
+    let username_display = payload
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(crate::auth::username::validate)
+        .transpose()?;
 
     let row = consume(
         &state.db,
@@ -347,17 +354,18 @@ pub async fn complete_registration(
         return Err(invalid());
     }
 
-    let display_name = payload
-        .display_name
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
     let now = Utc::now();
     let mut active: user::ActiveModel = user.into();
     active.password_hash = Set(Some(hash_password(&payload.password)?));
-    active.display_name = Set(display_name);
     active.email_verified_at = Set(Some(now));
     active.updated_at = Set(now);
     let user = active.update(&state.db).await?;
+
+    // Optionally claim the username chosen at signup, with an auto-assigned discriminator.
+    let user = match username_display {
+        Some(display) => assign_username(&state.db, user, display).await?,
+        None => user,
+    };
 
     let access_token = encode_token(&user, &state.config)?;
     let refresh_plaintext =
@@ -562,13 +570,25 @@ pub async fn set_username(
     JsonBody(payload): JsonBody<SetUsernameRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let display = crate::auth::username::validate(&payload.username)?;
-    let normalized = crate::auth::username::normalize(&display);
+    let user = assign_username(&state.db, user, display).await?;
+    Ok((StatusCode::OK, Json(UserResponse::from(user))))
+}
 
+/// Allocate a free discriminator for the (already-validated) display username and persist
+/// it on `user`, keeping the current tag across a rename when it's still free. The
+/// `(lower(username), discriminator)` unique index is the source of truth for the
+/// concurrent-allocation race, so a lost race re-allocates and retries. Shared by
+/// [`set_username`] and the optional username chosen at registration completion.
+async fn assign_username(
+    db: &sea_orm::DatabaseConnection,
+    user: user::Model,
+    display: String,
+) -> Result<user::Model, AppError> {
+    let normalized = crate::auth::username::normalize(&display);
     const MAX_ALLOC_RETRIES: usize = 5;
-    let mut updated: Option<user::Model> = None;
     for _ in 0..MAX_ALLOC_RETRIES {
         let discriminator = crate::auth::username::allocate_discriminator(
-            &state.db,
+            db,
             &normalized,
             user.discriminator, // prefer keeping the current tag across a rename
             user.id,            // exclude the caller's own row from the "taken" set
@@ -579,22 +599,16 @@ pub async fn set_username(
         active.username = Set(Some(display.clone()));
         active.discriminator = Set(Some(discriminator));
         active.updated_at = Set(Utc::now());
-        match active.update(&state.db).await {
-            Ok(row) => {
-                updated = Some(row);
-                break;
-            }
+        match active.update(db).await {
+            Ok(row) => return Ok(row),
             // Lost the (lower(username), discriminator) race — re-allocate and retry.
             Err(e) if matches!(e.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => continue,
             Err(e) => return Err(e.into()),
         }
     }
-
-    let user = updated.ok_or_else(|| {
-        AppError::Conflict("could not allocate a username; please try again".to_string())
-    })?;
-
-    Ok((StatusCode::OK, Json(UserResponse::from(user))))
+    Err(AppError::Conflict(
+        "could not allocate a username; please try again".to_string(),
+    ))
 }
 
 /// Query params for the username-availability check.

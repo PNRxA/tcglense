@@ -75,7 +75,6 @@ mod tests {
             id: 42,
             email: "tester@example.com".to_string(),
             password_hash: Some("irrelevant".to_string()),
-            display_name: Some("Tester".to_string()),
             created_at: now,
             updated_at: now,
             email_verified_at: Some(now),

@@ -2,8 +2,8 @@
 import type { PublicGameSummary } from "./PublicGameSummary";
 
 /**
- * A user's public profile landing: display identity + every game they've made public.
- * Deliberately carries **no** email or other PII — only the public handle, an optional
- * display name, the account age, and the per-game summaries.
+ * A user's public profile landing: their handle + every game they've made public.
+ * Deliberately carries **no** email or other PII — only the public username/handle, the
+ * account age, and the per-game summaries.
  */
-export type PublicProfile = { username: string, discriminator: number, handle: string, display_name: string | null, member_since: string, games: Array<PublicGameSummary>, };
+export type PublicProfile = { username: string, discriminator: number, handle: string, member_since: string, games: Array<PublicGameSummary>, };

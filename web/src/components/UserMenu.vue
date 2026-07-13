@@ -18,7 +18,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const displayLabel = computed(() => auth.user?.display_name ?? auth.user?.email ?? 'Account')
+const displayLabel = computed(() => auth.user?.username ?? auth.user?.email ?? 'Account')
 
 // Sign-in returns the user to wherever they were (via ?redirect=). On an auth page
 // itself, link plainly so the redirect never loops back to the login/register form —

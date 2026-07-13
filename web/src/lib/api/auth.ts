@@ -32,7 +32,9 @@ export interface RegisterPayload {
 export interface CompleteRegistrationPayload {
   token: string
   password: string
-  display_name?: string | null
+  /** Optionally claim a username at signup (issue #362); a #XXXX tag is auto-assigned.
+   * Omitted/blank leaves the account without a handle until it's chosen later. */
+  username?: string | null
   captcha_token?: string
 }
 

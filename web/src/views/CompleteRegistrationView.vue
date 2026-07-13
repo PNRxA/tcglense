@@ -25,7 +25,7 @@ const token = computed(() =>
   typeof route.query.token === 'string' && route.query.token ? route.query.token : null,
 )
 
-const displayName = ref('')
+const username = ref('')
 const password = ref('')
 const error = ref<string | null>(null)
 const loading = ref(false)
@@ -41,7 +41,7 @@ async function onSubmit() {
     const response = await completeRegistration({
       token: token.value,
       password: password.value,
-      display_name: displayName.value.trim() || null,
+      username: username.value.trim() || null,
       captcha_token,
     })
     // Completion returns a session (access token + refresh cookie) — adopt it and
@@ -80,13 +80,19 @@ async function onSubmit() {
         <CardContent>
           <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
             <div class="flex flex-col gap-2">
-              <Label for="display-name">Display name (optional)</Label>
+              <Label for="username">Username (optional)</Label>
               <Input
-                id="display-name"
-                v-model="displayName"
-                autocomplete="nickname"
-                placeholder="Ash"
+                id="username"
+                v-model="username"
+                autocomplete="username"
+                placeholder="ada_lovelace"
+                maxlength="20"
+                autocapitalize="off"
+                spellcheck="false"
               />
+              <p class="text-muted-foreground text-xs">
+                Used for your public collection link — you can set or change it later.
+              </p>
             </div>
             <div class="flex flex-col gap-2">
               <Label for="password">Password</Label>

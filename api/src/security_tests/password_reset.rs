@@ -240,7 +240,6 @@ async fn completing_a_reset_verifies_an_unverified_account() {
     user::ActiveModel {
         email: Set("lost@example.com".to_string()),
         password_hash: Set(Some(hash_password("password123").expect("hash"))),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         email_verified_at: Set(None),

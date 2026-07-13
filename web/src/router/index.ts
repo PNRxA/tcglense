@@ -157,6 +157,20 @@ const router = createRouter({
       component: () => import('@/views/PublicCollectionView.vue'),
       props: true,
     },
+    // The read-only card grids for a public collection — every card, or scoped to one set
+    // (mirrors the authed collection's /cards and /sets/:code split).
+    {
+      path: '/u/:handle/:game/cards',
+      name: 'public-collection-cards',
+      component: () => import('@/views/PublicCollectionBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/u/:handle/:game/sets/:code',
+      name: 'public-collection-set',
+      component: () => import('@/views/PublicCollectionBrowseView.vue'),
+      props: true,
+    },
     // Interactive public-API reference (issue #284). Public and indexable; linked from
     // the homepage, nav, and footer. Lazy-loaded — the Scalar bundle is heavy and must
     // stay out of the app's initial payload.

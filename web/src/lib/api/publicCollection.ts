@@ -1,6 +1,6 @@
 import { listQuery, request } from './client'
 import type { CollectionListParams, CollectionPage } from './collection'
-import type { CollectionSummary, PublicProfile } from './generated'
+import type { CollectionSet, CollectionSummary, PublicProfile } from './generated'
 
 // ---------- Public collections (read-only, unauthenticated) ----------
 //
@@ -38,4 +38,13 @@ export function getPublicCollectionSummary(
   game: string,
 ): Promise<CollectionSummary> {
   return request<CollectionSummary>(`${base(handle)}/${encodeURIComponent(game)}/summary`)
+}
+
+/** The sets the user owns cards in for a public game — the per-set landing tiles, each
+ * dressed with catalog metadata + owned counts (mirrors the authed `getCollectionSets`). */
+export function getPublicCollectionSets(
+  handle: string,
+  game: string,
+): Promise<{ data: CollectionSet[] }> {
+  return request<{ data: CollectionSet[] }>(`${base(handle)}/${encodeURIComponent(game)}/sets`)
 }

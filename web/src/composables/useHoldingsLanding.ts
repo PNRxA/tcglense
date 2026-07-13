@@ -23,8 +23,10 @@ export interface HoldingLandingSurface {
   /** The held-sets hook (`useCollectionSetsQuery` / `useWishlistSetsQuery`) — the sets the
    * user holds cards in, both the default mode's list and the per-set overlay. */
   useHeldSetsQuery: (game: Ref<string>) => UseQueryReturnType<{ data: CollectionSet[] }, ApiError>
-  /** Route prefix the tiles link under (`/collection` or `/wishlist`). */
-  basePath: '/collection' | '/wishlist'
+  /** Route prefix the tiles link under (`/collection`, `/wishlist`, or a public
+   * `/u/{handle}`). The engine never reads it — the view threads it into `SetGroupGrid` —
+   * so it's a plain string. */
+  basePath: string
   /** The SetGroupGrid count noun — `'wanted'` for the wish list, undefined (SetGroupGrid's
    * `'owned'` default) for the collection. */
   countNoun?: CountNoun

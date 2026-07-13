@@ -28,7 +28,6 @@ async fn insert_grandfathered_unverified(app: &TestApp, email: &str) {
     user::ActiveModel {
         email: Set(email.to_string()),
         password_hash: Set(Some(hash_password("password123").expect("hash"))),
-        display_name: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         email_verified_at: Set(None),
