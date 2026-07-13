@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select'
 import { useCardSearch } from '@/composables/useCardSearch'
 import { useGameName } from '@/composables/useCatalog'
+import { useWishlistProductCounts } from '@/composables/useWishlist'
 import {
   PRODUCT_PAGE_SIZE,
   useProductFacetsQuery,
@@ -94,6 +95,10 @@ const productsQuery = useProductsQuery(game, {
 
 const products = computed(() => productsQuery.data.value?.data ?? [])
 const total = computed(() => productsQuery.data.value?.total ?? 0)
+// Resting wanted-count badges for the tiles' quick-add controls: one POST per 60-product
+// page, far under the id caps. Signed out returns `{}` (the hook is auth-safe), so the grid
+// renders no controls anyway.
+const { ownership: wanted } = useWishlistProductCounts(game, products)
 // The top of the results block — paging scrolls here so the new page starts at the top
 // of the grid, clearing the sticky search bar via its scroll-mt (issue #258).
 const resultsTop = ref<HTMLElement | null>(null)
@@ -187,7 +192,7 @@ useClampPage(page, () => ({
         />
       </div>
       <UpdatingOverlay :loading="productsQuery.isPlaceholderData.value">
-        <ProductGrid :game="game" :products="products" />
+        <ProductGrid :game="game" :products="products" :wanted="wanted" />
       </UpdatingOverlay>
       <div class="mt-10">
         <CardPagination

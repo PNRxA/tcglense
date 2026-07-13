@@ -36,9 +36,13 @@ async fn want_product(app: &Router, token: &str, id: &str, quantity: i64) {
 async fn wishlist_products_require_authentication() {
     let app = test_app().await;
 
-    // The list and the single-entry GET are per-user reads: unauthenticated -> 401, and
-    // never shared-cached.
-    for uri in ["/api/wishlist/mtg/products", "/api/wishlist/mtg/products/100"] {
+    // The list, the sealed summary, and the single-entry GET are per-user reads:
+    // unauthenticated -> 401, and never shared-cached.
+    for uri in [
+        "/api/wishlist/mtg/products",
+        "/api/wishlist/mtg/products/summary",
+        "/api/wishlist/mtg/products/100",
+    ] {
         let (status, headers, _) = send(&app, get(uri)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
         assert_eq!(cache_control(&headers), Some("no-store"), "{uri}");
@@ -53,6 +57,15 @@ async fn wishlist_products_require_authentication() {
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(json!({ "quantity": 1, "foil_quantity": 0 }).to_string()))
             .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // The batch wanted-counts lookup is a POST, but just as private (401 + no-store).
+    let (status, headers, _) = send(
+        &app,
+        json_post("/api/wishlist/mtg/products/counts", json!({ "ids": ["x"] })),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -202,6 +215,20 @@ async fn unknown_game_and_product_are_404() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown game entry PUT");
+    let (status, _, _) =
+        send(&app, get_with_bearer("/api/wishlist/nope/products/summary", &token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown game summary");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/nope/products/counts",
+            &token,
+            json!({ "ids": ["100"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown game counts");
 
     // An unknown product id in a valid game 404s on both entry verbs.
     let (status, _, _) = send(&app, get_with_bearer(&product_path("999999"), &token)).await;
@@ -364,4 +391,144 @@ async fn list_paginates() {
     assert_eq!(page1.len(), 2);
     assert_eq!(page1[0]["product"]["id"], "100", "re-wanting bumps recency to the front");
     assert_eq!(page1[1]["product"]["id"], "300");
+}
+
+/// The sealed-product summary aggregates only the caller's own wanted products (distinct
+/// products, total copies, estimated cost from the market prices) and is scoped to the
+/// token's user. A 200 body here also pins the route-shadowing: had `/products/summary`
+/// fallen into `/products/{id}`, a product lookup of "summary" would 404.
+#[tokio::test]
+async fn product_summary_aggregates_and_is_isolated_per_user() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (alice, _) = register(&app, "alice-summary@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-summary@example.com", "password123").await;
+    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    insert_product(db, "200", "Bundle", "mkm", "bundle", Some("39.99")).await;
+
+    // Alice wants two booster boxes and one bundle.
+    want_product(&app, &alice, "100", 2).await;
+    want_product(&app, &alice, "200", 1).await;
+
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/products/summary", &alice)).await;
+    assert_eq!(status, StatusCode::OK, "summary failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["unique_products"], 2);
+    assert_eq!(body["total_products"], 3);
+    // 2×$249.99 + 1×$39.99 = $539.97 (market prices only).
+    assert_eq!(body["total_value_usd"], "539.97");
+
+    // Bob wants nothing: zeros, and a null value (nothing wanted is priced).
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/products/summary", &bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["unique_products"], 0);
+    assert_eq!(body["total_products"], 0);
+    assert!(body["total_value_usd"].is_null(), "unpriced -> null: {body:?}");
+}
+
+/// `POST .../products/counts` returns only the wish-listed subset of the requested product
+/// ids (an unwanted or unknown product is absent, not a zero entry), tolerates an empty
+/// list, and refuses an oversized batch — the sealed-product mirror of the card counts test.
+#[tokio::test]
+async fn product_counts_batch_returns_wanted_products_only_and_caps_the_id_list() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "counts-sealed@example.com", "password123").await;
+    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    insert_product(db, "200", "Bundle", "mkm", "bundle", Some("39.99")).await;
+
+    want_product(&app, &token, "100", 2).await;
+
+    // Only the wanted product appears; the unwanted "200" and the unknown "999999" are absent.
+    let (status, headers, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/products/counts",
+            &token,
+            json!({ "ids": ["100", "200", "999999"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "counts failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["data"]["100"]["quantity"], 2);
+    assert_eq!(body["data"]["100"]["foil_quantity"], 0);
+    assert!(body["data"].get("200").is_none(), "unwanted product must be absent");
+    assert!(body["data"].get("999999").is_none(), "unknown product must be absent");
+
+    // An empty id list is an empty map, not an error.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/products/counts",
+            &token,
+            json!({ "ids": [] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["data"].as_object().is_some_and(|m| m.is_empty()));
+
+    // More than the server cap (500 ids) is a 422, before any lookup runs.
+    let too_many: Vec<String> = (0..501).map(|i| format!("id-{i}")).collect();
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/products/counts",
+            &token,
+            json!({ "ids": too_many }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// The batch wanted-counts lookup is scoped to the caller: it returns only the caller's
+/// own wanted products, never another user's — the sealed-product mirror of the card
+/// counts isolation test.
+#[tokio::test]
+async fn product_counts_batch_is_isolated_per_user() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (alice, _) = register(&app, "alice-pcounts@example.com", "password123").await;
+    let (bob, _) = register(&app, "bob-pcounts@example.com", "password123").await;
+    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("249.99")).await;
+
+    want_product(&app, &alice, "100", 2).await;
+
+    // Bob asks for the product Alice wants — he wants none, so it's absent from his map.
+    let (status, headers, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/products/counts",
+            &bob,
+            json!({ "ids": ["100"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "counts failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert!(
+        body["data"].get("100").is_none(),
+        "another user's wanted product must not leak: {body:?}"
+    );
+
+    // Alice sees her own count.
+    let (_, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/products/counts",
+            &alice,
+            json!({ "ids": ["100"] }),
+        ),
+    )
+    .await;
+    assert_eq!(body["data"]["100"]["quantity"], 2);
 }

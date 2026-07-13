@@ -4,17 +4,18 @@ import { RouterLink } from 'vue-router'
 import { useWishlistProductsQuery, WISHLIST_PRODUCT_PAGE_SIZE } from '@/composables/useWishlist'
 import { useClampPage } from '@/composables/useClampPage'
 import ProductGrid from '@/components/products/ProductGrid.vue'
-import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import { buttonVariants } from '@/components/ui/button'
+import type { OwnedCountsMap } from '@/lib/api'
 
 // The wish-list landing's sealed-products section (issue #364): a paged grid of the sealed
-// products the signed-in user wants, each tile carrying a static wanted-count badge.
-// Renders nothing until data arrives and the user wants at least one product — discovery is
-// carried by the quick-add box above it and the product pages, so an empty wish list shows
-// no bare heading. Badges are static: edits happen on the product page or via quick add, not
-// here. Hidden entirely for signed-out users because the parent mounts it only in the authed
-// branch.
+// products the signed-in user wants, each tile carrying the interactive quick-add control —
+// its resting count comes from this page's data (`wantedById`), so no extra batch call is
+// needed here. Renders nothing until data arrives and the user wants at least one product —
+// discovery is carried by the quick-add box above it and the product pages, so an empty wish
+// list shows no bare heading. Zeroing a want drops the tile on the settled refetch, and
+// `useClampPage` handles the page shrink. Hidden entirely for signed-out users because the
+// parent mounts it only in the authed branch.
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const page = ref(1)
@@ -22,7 +23,17 @@ const query = useWishlistProductsQuery(game, page)
 const entries = computed(() => query.data.value?.data ?? [])
 const total = computed(() => query.data.value?.total ?? 0)
 const products = computed(() => entries.value.map((e) => e.product))
-const countsById = computed(() => Object.fromEntries(entries.value.map((e) => [e.product.id, e])))
+// Resting counts for the tiles' quick-add controls, keyed by external product id — taken
+// straight from the page data (no batch call; auth is guaranteed by the parent's authed
+// branch).
+const wantedById = computed<OwnedCountsMap>(() =>
+  Object.fromEntries(
+    entries.value.map((e) => [
+      e.product.id,
+      { quantity: e.quantity, foil_quantity: e.foil_quantity },
+    ]),
+  ),
+)
 
 useClampPage(page, () => ({
   ready: query.isSuccess.value,
@@ -46,14 +57,7 @@ useClampPage(page, () => ({
       </RouterLink>
     </div>
 
-    <ProductGrid :game="game" :products="products">
-      <template #badge="{ product }">
-        <OwnedCountBadge
-          :quantity="countsById[product.id]?.quantity ?? 0"
-          :foil-quantity="countsById[product.id]?.foil_quantity ?? 0"
-        />
-      </template>
-    </ProductGrid>
+    <ProductGrid :game="game" :products="products" :wanted="wantedById" />
 
     <CardPagination
       v-if="total > WISHLIST_PRODUCT_PAGE_SIZE"

@@ -105,6 +105,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::wishlist::list_wishlist_products,
         crate::handlers::wishlist::get_wishlist_product_entry,
         crate::handlers::wishlist::set_wishlist_product_entry,
+        crate::handlers::wishlist::wishlist_product_summary,
         // --- API keys ---
         crate::handlers::api_keys::create_api_key,
         crate::handlers::api_keys::list_api_keys,

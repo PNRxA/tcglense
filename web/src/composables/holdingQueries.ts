@@ -92,6 +92,64 @@ export interface HoldingQueriesConfig {
 }
 
 /**
+ * Held counts for the items currently being browsed, keyed by external id (only held
+ * items are present) — the data behind the count badges overlaid on the public browse
+ * grids (issue #85). Disabled while signed out (badges are a signed-in feature) and when
+ * there are no items to look up; the query key carries the id set so a new page refetches
+ * while an identical set dedupes. Returns an empty map while signed out so badges clear
+ * immediately on logout regardless of any lingering cache. Generic over anything with an
+ * `id` (cards or sealed products): the card factory delegates its `useCounts` here, and
+ * the wish list's sealed-product counts hook calls it directly.
+ *
+ * `ready` reports whether the map actually reflects the *current* items: it's true when
+ * signed out or there's nothing to look up (a `{}` map is authoritative then), or once
+ * the query has settled a non-placeholder result for this id set. The show-ghosts view
+ * (issue #112) gates its dimming on it so held cards don't flash as ghosts in the window
+ * before their counts load (an empty map would otherwise read as "everything unheld").
+ */
+export function useBatchCounts(
+  countsKey: string,
+  getCounts: (token: string, game: string, ids: string[]) => Promise<OwnedCountsMap>,
+  game: Ref<string>,
+  items: Ref<{ id: string }[]>,
+  opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
+) {
+  const auth = useAuthStore()
+  const cardIds = computed(() => items.value.map((item) => item.id))
+  // A stable, order-independent key: two renders of the same page hit the same cache.
+  const idsKey = computed(() => [...cardIds.value].sort().join(','))
+  const options = {
+    queryKey: [countsKey, game, idsKey],
+    queryFn: (token: string) => getCounts(token, game.value, cardIds.value),
+    enabled: computed(() => cardIds.value.length > 0 && (opts.enabled?.value ?? true)),
+    // Keep the previous page's badges up while the next page's counts load.
+    placeholderData: keepPreviousData,
+    // A caller can force a fresh authoritative fetch (e.g. the quick-add dialog seeds
+    // absolute-count editors from this, so it wants `0` to re-read on each open). Only
+    // set the key when asked: a bare `staleTime: undefined` would override the client's
+    // 5-minute default down to 0, refetching the badge queries far more than needed.
+    ...(opts.staleTime !== undefined ? { staleTime: opts.staleTime } : {}),
+  }
+  const query = useAuthedQuery<OwnedCountsMap>(options)
+  const ownership = computed<OwnedCountsMap>(() =>
+    auth.isAuthenticated ? (query.data.value ?? {}) : {},
+  )
+  const ready = computed(
+    () =>
+      !auth.isAuthenticated ||
+      cardIds.value.length === 0 ||
+      (query.isSuccess.value && !query.isPlaceholderData.value),
+  )
+  // A fetch in flight. A caller seeding *absolute-count* editors must gate on
+  // `ready && !fetching`, not `ready` alone: on a same-key refetch (e.g. the quick-add
+  // dialog reopening the same name with `staleTime: 0`) `ready` stays true off the
+  // retained cache while the fresh data loads, so `ready` by itself would let an edit
+  // save off a stale seed (mirrors OwnedCountControl's `isSuccess && !isFetching`).
+  const fetching = computed(() => query.isFetching.value)
+  return { ownership, ready, fetching }
+}
+
+/**
  * Build the shared holding query composables for one holding table (collection or wish
  * list). Reads go through `useAuthed*` (which routes via the auth store's `authFetch`,
  * refreshing an expired access token transparently); writes invalidate the dependent
@@ -290,58 +348,15 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     return useAuthedQuery<CollectionQuantities>(options)
   }
 
-  /**
-   * Held counts for the cards currently being browsed, keyed by external card id (only
-   * held cards are present) — the data behind the count badges overlaid on the public
-   * browse grids (issue #85). Disabled while signed out (badges are a signed-in feature)
-   * and when there are no cards to look up; the query key carries the id set so a new page
-   * refetches while an identical set dedupes. Returns an empty map while signed out so
-   * badges clear immediately on logout regardless of any lingering cache.
-   *
-   * `ready` reports whether the map actually reflects the *current* cards: it's true when
-   * signed out or there's nothing to look up (a `{}` map is authoritative then), or once
-   * the query has settled a non-placeholder result for this id set. The show-ghosts view
-   * (issue #112) gates its dimming on it so held cards don't flash as ghosts in the window
-   * before their counts load (an empty map would otherwise read as "everything unheld").
-   */
+  /** Held counts for the cards currently being browsed — the browse-grid count badges
+   * (issue #85). Delegates to the standalone `useBatchCounts`, threading this factory's
+   * counts key + api function; see that hook for the ready/fetching seed-gate semantics. */
   function useCounts(
     game: Ref<string>,
     cards: Ref<Card[]>,
     opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
   ) {
-    const auth = useAuthStore()
-    const cardIds = computed(() => cards.value.map((card) => card.id))
-    // A stable, order-independent key: two renders of the same page hit the same cache.
-    const idsKey = computed(() => [...cardIds.value].sort().join(','))
-    const options = {
-      queryKey: [cfg.countsKey, game, idsKey],
-      queryFn: (token: string) => cfg.getCounts(token, game.value, cardIds.value),
-      enabled: computed(() => cardIds.value.length > 0 && (opts.enabled?.value ?? true)),
-      // Keep the previous page's badges up while the next page's counts load.
-      placeholderData: keepPreviousData,
-      // A caller can force a fresh authoritative fetch (e.g. the quick-add dialog seeds
-      // absolute-count editors from this, so it wants `0` to re-read on each open). Only
-      // set the key when asked: a bare `staleTime: undefined` would override the client's
-      // 5-minute default down to 0, refetching the badge queries far more than needed.
-      ...(opts.staleTime !== undefined ? { staleTime: opts.staleTime } : {}),
-    }
-    const query = useAuthedQuery<OwnedCountsMap>(options)
-    const ownership = computed<OwnedCountsMap>(() =>
-      auth.isAuthenticated ? (query.data.value ?? {}) : {},
-    )
-    const ready = computed(
-      () =>
-        !auth.isAuthenticated ||
-        cardIds.value.length === 0 ||
-        (query.isSuccess.value && !query.isPlaceholderData.value),
-    )
-    // A fetch in flight. A caller seeding *absolute-count* editors must gate on
-    // `ready && !fetching`, not `ready` alone: on a same-key refetch (e.g. the quick-add
-    // dialog reopening the same name with `staleTime: 0`) `ready` stays true off the
-    // retained cache while the fresh data loads, so `ready` by itself would let an edit
-    // save off a stale seed (mirrors OwnedCountControl's `isSuccess && !isFetching`).
-    const fetching = computed(() => query.isFetching.value)
-    return { ownership, ready, fetching }
+    return useBatchCounts(cfg.countsKey, cfg.getCounts, game, cards, opts)
   }
 
   /**

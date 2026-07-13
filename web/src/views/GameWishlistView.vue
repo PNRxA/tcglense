@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { LayoutGrid } from '@lucide/vue'
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
@@ -13,7 +14,12 @@ import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import WishlistSealedSection from '@/components/wishlist/WishlistSealedSection.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
-import { useWishlistSetsQuery, useWishlistSummaryQuery } from '@/composables/useWishlist'
+import {
+  useWishlistProductSummaryQuery,
+  useWishlistSetsQuery,
+  useWishlistSummaryQuery,
+} from '@/composables/useWishlist'
+import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
@@ -57,6 +63,19 @@ const {
   withBulk: false,
 })
 
+// Sealed-product stats (issue #364 follow-up): wishlist-only, so fetched directly here
+// rather than through the useHoldingsLanding twin seam — the collection has no sealed
+// surface, and the shared engine must not grow a product axis. The trio self-hides
+// (hasProductStats) until at least one product is wanted; while the query is pending it
+// is simply absent, like the card trio's own hasStats gate. Every product write
+// refreshes it for free — the query key sits in the ['wishlist-products', game] family
+// that invalidateWishlistProducts prefix-invalidates.
+const productSummaryQuery = useWishlistProductSummaryQuery(game)
+const productSummary = computed(() => productSummaryQuery.data.value)
+const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
+// formatUsd returns null for a null value (nothing wanted is priced) — the stat hides.
+const productsValue = computed(() => formatUsd(productSummary.value?.total_value_usd))
+
 const gameName = useGameName(game)
 const auth = useAuthStore()
 
@@ -93,26 +112,49 @@ usePageMeta({
           <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
         </p>
 
-        <!-- Summary stats: distinct cards, total copies, what they'd cost. -->
-        <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ summary?.unique_cards.toLocaleString() }}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ summary?.total_cards.toLocaleString() }}
-            </dd>
-          </div>
-          <!-- No bulk-value stat (unlike the collection landing): a wish list is a
-               shopping list, so only what it costs matters. -->
-          <div v-if="totalValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
-          </div>
+        <!-- Summary stats: the card trio (distinct cards, total copies, what they'd cost) plus
+             the sealed trio (issue #364 follow-up) when any sealed products are wanted. One
+             flex-wrap list so the six stats flow onto one row on desktop and wrap on narrow
+             screens. -->
+        <dl v-if="hasStats || hasProductStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
+          <template v-if="hasStats">
+            <div>
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
+              <dd class="text-xl font-semibold tabular-nums">
+                {{ summary?.unique_cards.toLocaleString() }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
+              <dd class="text-xl font-semibold tabular-nums">
+                {{ summary?.total_cards.toLocaleString() }}
+              </dd>
+            </div>
+            <!-- No bulk-value stat (unlike the collection landing): a wish list is a
+                 shopping list, so only what it costs matters. -->
+            <div v-if="totalValue">
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
+              <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
+            </div>
+          </template>
+          <template v-if="hasProductStats">
+            <div>
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique products</dt>
+              <dd class="text-xl font-semibold tabular-nums">
+                {{ productSummary?.unique_products.toLocaleString() }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total products</dt>
+              <dd class="text-xl font-semibold tabular-nums">
+                {{ productSummary?.total_products.toLocaleString() }}
+              </dd>
+            </div>
+            <div v-if="productsValue">
+              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Products value</dt>
+              <dd class="text-xl font-semibold tabular-nums">{{ productsValue }}</dd>
+            </div>
+          </template>
         </dl>
 
         <!-- Quick add: cards (name → printing → counts) and sealed products (name → quantity).
@@ -133,8 +175,9 @@ usePageMeta({
         </div>
       </header>
 
-      <!-- Wanted sealed products (issue #364): self-hides when nothing is wanted; edits
-           happen on the product page or via the sealed quick-add box above. -->
+      <!-- Wanted sealed products (issue #364): self-hides when nothing is wanted; each
+           tile carries the hover quick-add control, and the sealed quick-add box above
+           also writes here. -->
       <WishlistSealedSection :game="game" class="mb-8" />
 
       <!-- The set list — wishlisted sets by default, the whole catalog under "All sets".

@@ -30,6 +30,30 @@ import type { CollectionQuantities, CollectionSet, CollectionSummary } from './g
  */
 const COUNTS_BATCH_SIZE = 400
 
+/**
+ * POST `{ ids }` to a batch-counts endpoint, split into batches under the server's
+ * 500-id cap, and merge the maps (batches are disjoint slices, so there's nothing to
+ * reconcile). Shared by the card counts (collection `/owned`, wish list `/counts`) and
+ * the wish list's sealed-product counts.
+ */
+export async function postCountsBatched(
+  endpoint: string,
+  token: string,
+  ids: string[],
+): Promise<OwnedCountsMap> {
+  if (ids.length === 0) return {}
+  const batches: string[][] = []
+  for (let i = 0; i < ids.length; i += COUNTS_BATCH_SIZE) {
+    batches.push(ids.slice(i, i + COUNTS_BATCH_SIZE))
+  }
+  const responses = await Promise.all(
+    batches.map((batch) =>
+      request<{ data: OwnedCountsMap }>(endpoint, { method: 'POST', body: { ids: batch }, token }),
+    ),
+  )
+  return Object.assign({}, ...responses.map((response) => response.data))
+}
+
 /** Build the base-parameterized holdings client for one holding table. */
 export function makeHoldingApi(base: 'collection' | 'wishlist', countsLeaf: 'owned' | 'counts') {
   /** Relative `/api/{base}/...` path for a user's holdings in a game. */
@@ -123,29 +147,12 @@ export function makeHoldingApi(base: 'collection' | 'wishlist', countsLeaf: 'own
   /**
    * Held counts for the given card ids that the user holds, keyed by external id (cards
    * they don't hold are simply absent). Sent as a POST rather than a GET query so a big
-   * browse page's id list can't blow the request-line length behind a proxy, and split
-   * into batches under the server's id cap so any page size works; the batch maps are
-   * merged (batches are disjoint slices, so there's nothing to reconcile). The leaf is
-   * `/owned` for a collection and `/counts` for the wish list.
+   * browse page's id list can't blow the request-line length behind a proxy. The leaf is
+   * `/owned` for a collection and `/counts` for the wish list; the batching + merge live
+   * in `postCountsBatched`.
    */
-  const counts = async (token: string, game: string, ids: string[]): Promise<OwnedCountsMap> => {
-    if (ids.length === 0) return {}
-    const endpoint = `/api/${base}/${encodeURIComponent(game)}/${countsLeaf}`
-    const batches: string[][] = []
-    for (let i = 0; i < ids.length; i += COUNTS_BATCH_SIZE) {
-      batches.push(ids.slice(i, i + COUNTS_BATCH_SIZE))
-    }
-    const responses = await Promise.all(
-      batches.map((batch) =>
-        request<{ data: OwnedCountsMap }>(endpoint, {
-          method: 'POST',
-          body: { ids: batch },
-          token,
-        }),
-      ),
-    )
-    return Object.assign({}, ...responses.map((response) => response.data))
-  }
+  const counts = (token: string, game: string, ids: string[]): Promise<OwnedCountsMap> =>
+    postCountsBatched(`/api/${base}/${encodeURIComponent(game)}/${countsLeaf}`, token, ids)
 
   /** How many copies of one card the user holds (zeros when not held). */
   const getEntry = (token: string, game: string, id: string): Promise<CollectionQuantities> =>

@@ -3,6 +3,7 @@ import { computed, reactive, toRef, watch } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import type { SealedProductRef } from '@/lib/api'
 import { useCardSealedQuery } from '@/composables/useProducts'
+import { useWishlistProductCounts } from '@/composables/useWishlist'
 import ProductGrid from '@/components/products/ProductGrid.vue'
 
 // The card-detail "Sealed products" section: which sealed products this card is found
@@ -17,6 +18,13 @@ const id = toRef(props, 'id')
 
 const query = useCardSealedQuery(game, id)
 const refs = computed<SealedProductRef[]>(() => query.data.value?.data ?? [])
+
+// Resting wanted-count badges for the sealed-product tiles' quick-add controls: one batch
+// POST for every product this card appears in (across all buckets), keyed by product id so
+// each bucket grid reads only its own. Signed out returns `{}` and the grid renders no
+// controls.
+const products = computed(() => refs.value.map((r) => r.product))
+const { ownership: wanted } = useWishlistProductCounts(game, products)
 
 // The three buckets in display order, each with a heading + one-line explanation of how
 // strong the "is in this product" claim is.
@@ -79,7 +87,12 @@ watch(id, () => {
             <p class="text-muted-foreground text-xs">{{ section.blurb }}</p>
           </span>
         </button>
-        <ProductGrid v-if="expanded[section.key]" :game="game" :products="section.products" />
+        <ProductGrid
+          v-if="expanded[section.key]"
+          :game="game"
+          :products="section.products"
+          :wanted="wanted"
+        />
       </div>
     </div>
   </section>

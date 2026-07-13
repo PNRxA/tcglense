@@ -5,12 +5,12 @@
 //! `handlers::collection::tests` — both features drive the exact same
 //! `handlers::shared::holdings` code, so those tests aren't duplicated here.
 
-use super::products::wanted_products_query;
+use super::products::{product_summary, wanted_products_query};
 use super::read::{summary, wishlist_query};
 
 use crate::catalog;
 use crate::db::Dialect;
-use crate::entities::{card, wishlist_item, wishlist_product_item};
+use crate::entities::{card, product, wishlist_item, wishlist_product_item};
 use crate::handlers::shared::{
     BULK_THRESHOLD_CENTS, CollectionSort, SortDir, SortField, group_into_drops, search_condition,
 };
@@ -601,4 +601,127 @@ async fn wanted_products_query_returns_none_for_orphaned_products() {
     );
     assert!(rows[1].1.is_none());
     assert_eq!(rows[1].0.product_id, 9999);
+}
+
+/// `product_summary` counts distinct wanted products and total copies (regular + foil),
+/// values regular copies at the market `usd` and foils at `usd_foil`, skips an orphaned
+/// product (no product row) entirely for all three stats, and lets an unpriced product
+/// contribute nothing to the value — the sealed-product counterpart of
+/// `summary_skips_rows_whose_card_row_is_missing`.
+#[tokio::test]
+async fn product_summary_counts_values_and_skips_orphans() {
+    use sea_orm::prelude::DateTimeUtc;
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        display_name: Set(None),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    // A booster box (regular only), a bundle with both a regular and a foil price, and an
+    // unpriced deck. `insert_product` always leaves `price_usd_foil` None, so set the
+    // bundle's foil price directly.
+    let a = crate::test_support::insert_product(
+        &db,
+        "100",
+        "Booster Box",
+        "aaa",
+        "collector_display",
+        Some("120.00"),
+    )
+    .await;
+    let b =
+        crate::test_support::insert_product(&db, "200", "Bundle", "aaa", "bundle", Some("40.00"))
+            .await;
+    product::ActiveModel {
+        id: Set(b),
+        price_usd_foil: Set(Some("50.00".into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .expect("set foil price");
+    let c = crate::test_support::insert_product(&db, "300", "Deck", "aaa", "deck", None).await;
+
+    let want = |id: i32, product_id: i32, q: i32, f: i32| wishlist_product_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        product_id: Set(product_id),
+        quantity: Set(q),
+        foil_quantity: Set(f),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+    };
+    // a: 2 regular; b: 1 regular + 2 foil; c: 1 regular (unpriced); plus an orphan
+    // (product_id 9999, 5 copies) with no product row.
+    for w in [want(1, a, 2, 0), want(2, b, 1, 2), want(3, c, 1, 0), want(4, 9999, 5, 0)] {
+        w.insert(&db).await.expect("insert wishlist product row");
+    }
+
+    let s = product_summary(&db, 1, "mtg").await.expect("product summary");
+    // The orphan is skipped for all three stats: 3 distinct products, 6 copies
+    // (2 + 3 + 1; the orphan's 5 excluded), value = 2×$120 + 1×$40 + 2×$50 = $380.00
+    // (the unpriced deck contributes nothing).
+    assert_eq!(s.unique_products, 3);
+    assert_eq!(s.total_products, 6);
+    assert_eq!(s.total_value_usd.as_deref(), Some("380.00"));
+}
+
+/// An all-unpriced wanted set reports a `null` value (not `"0.00"`), and a product's
+/// curated MSRP is never folded into the cost — only the market `usd`/`usd_foil` prices
+/// count. Pins both the null-when-unpriced contract and msrp independence.
+#[tokio::test]
+async fn product_summary_value_is_null_when_nothing_priced_and_ignores_msrp() {
+    use sea_orm::prelude::DateTimeUtc;
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        display_name: Set(None),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    // An unpriced product that nonetheless carries a curated MSRP — the value must stay
+    // null (msrp is retail metadata, never a market price).
+    let p = crate::test_support::insert_product(&db, "100", "Deck", "aaa", "deck", None).await;
+    crate::test_support::set_product_msrp(&db, "100", "59.99").await;
+
+    wishlist_product_item::ActiveModel {
+        id: Set(1),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        product_id: Set(p),
+        quantity: Set(3),
+        foil_quantity: Set(0),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+    }
+    .insert(&db)
+    .await
+    .expect("insert wishlist product row");
+
+    let s = product_summary(&db, 1, "mtg").await.expect("product summary");
+    assert_eq!(s.unique_products, 1);
+    assert_eq!(s.total_products, 3);
+    assert_eq!(s.total_value_usd, None);
 }

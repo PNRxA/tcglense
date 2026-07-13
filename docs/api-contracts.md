@@ -667,13 +667,16 @@ survives catalog re-syncs (the daily TCGCSV sweep is upsert-only); both counts z
 the row. The wire keeps the shared two-count `{ quantity, foil_quantity }` shape (foil sealed
 variants are separate TCGplayer SKUs), but the UI exposes a single **Quantity** and never edits
 the foil count: a new want is created with `foil_quantity: 0`, and an existing foil count
-(settable only via the raw API) is preserved unchanged by UI quantity edits. The one new DTO is
-`WishlistProductEntry`
-(`{ product: <Product>, quantity, foil_quantity }`, `handlers/wishlist/products.rs`):
+(settable only via the raw API) is preserved unchanged by UI quantity edits. The two new DTOs are
+`WishlistProductEntry` (`{ product: <Product>, quantity, foil_quantity }`) and
+`WishlistProductSummary` (`{ unique_products, total_products, total_value_usd }`), both in
+`handlers/wishlist/products.rs`:
 
 | Method & path | Returns |
 |---------------|---------|
 | `GET /api/wishlist/{game}/products?page&page_size` | `Page<WishlistProductEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200 |
+| `GET /api/wishlist/{game}/products/summary` | `WishlistProductSummary { unique_products, total_products, total_value_usd }` — wishlist-only aggregate for the landing header; value = regular×`usd` + foil×`usd_foil` (market prices; msrp never used); `total_value_usd` null when nothing wanted is priced; no set scope, no bulk split |
+| `POST /api/wishlist/{game}/products/counts` `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }` — batch wanted counts for the product-tile badges; un-wanted ids absent (never zero); > 500 ids = `422`; like the card `/counts`, deliberately **not** in the OpenAPI spec |
 | `GET /api/wishlist/{game}/products/{id}` | the single-product wanted counts (`CollectionQuantities`; zeros if absent, `404` unknown game/product) |
 | `PUT /api/wishlist/{game}/products/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero removes, negative/oversized `422` before product resolution, read-only key → `403`) |
 

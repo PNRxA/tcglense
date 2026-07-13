@@ -42,15 +42,14 @@ const warm = () => prefetchRouteChunks(router, to.value)
         size="normal"
         class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.02] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
       />
-      <!-- Corner overlay for a per-product badge (the wish list's static wanted-count chip,
-        issue #364), scoped to the image like CardTile's #badge. z-20 keeps it above the
-        RouterLink's stretched `after:` overlay (z-10) and the hover-lifted image; the badges
-        this feature ships are static counts, so `pointer-events-none` lets clicks fall through
-        to the link — a future interactive control can lift that. Browse grids pass no slot, so
-        nothing renders. -->
-      <div v-if="$slots.badge" class="pointer-events-none absolute bottom-2 left-2 z-20">
-        <slot name="badge" />
-      </div>
+      <!-- The slotted control self-positions (bottom-2 left-2 z-20) and may be interactive:
+        the image lifts to `group-hover:z-10` on hover, so overlay content must carry a higher
+        z-index (the quick-add control uses z-20) or the enlarged card paints over it. z-20
+        sits above the stretched-link `after:` (z-10) too, so its buttons take the click
+        instead of navigating — a <button> in the slot is valid HTML here because the slot is
+        a SIBLING of the RouterLink, not nested inside it (the CardTile idiom). Browse grids
+        pass no slot when signed out, so nothing renders. -->
+      <slot name="badge" />
     </div>
     <RouterLink
       :to="to"
