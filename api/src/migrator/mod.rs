@@ -34,6 +34,7 @@ mod m20240101_000031_add_card_price_history_covering_index;
 mod m20240101_000032_create_card_fingerprints_table;
 mod m20240101_000033_add_cards_subtype_facet_index;
 mod m20240101_000034_add_cards_subtype_partial_index;
+mod m20240101_000035_create_wishlist_product_items_table;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -78,6 +79,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000032_create_card_fingerprints_table::Migration),
             Box::new(m20240101_000033_add_cards_subtype_facet_index::Migration),
             Box::new(m20240101_000034_add_cards_subtype_partial_index::Migration),
+            Box::new(m20240101_000035_create_wishlist_product_items_table::Migration),
         ]
     }
 }

@@ -68,7 +68,8 @@ impl Modify for SecurityAddon {
         version = env!("CARGO_PKG_VERSION"),
         description = "Public HTTP JSON API for TCGLense: a game-agnostic card catalog \
 (cards + sealed products, MTG first) with singles/sealed price history, plus per-user \
-collection and wish-list holdings. Read endpoints are unauthenticated and CDN-cacheable; \
+collection and wish-list holdings (the wish list also tracks wanted sealed products). \
+Read endpoints are unauthenticated and CDN-cacheable; \
 the collection, wish-list, and API-key endpoints authenticate with a personal API key \
 (`Authorization: Bearer tcgl_...`). Sign in and create a key from your profile page \
 (Profile → API keys) — the token is shown only once, so copy it when it's created.",
@@ -101,6 +102,9 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::wishlist::wishlist_summary,
         crate::handlers::wishlist::get_wishlist_entry,
         crate::handlers::wishlist::set_wishlist_entry,
+        crate::handlers::wishlist::list_wishlist_products,
+        crate::handlers::wishlist::get_wishlist_product_entry,
+        crate::handlers::wishlist::set_wishlist_product_entry,
         // --- API keys ---
         crate::handlers::api_keys::create_api_key,
         crate::handlers::api_keys::list_api_keys,
@@ -128,7 +132,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         (name = "Cards", description = "Card catalog: games, sets, cards, prices."),
         (name = "Sealed products", description = "Sealed products (boxes, bundles, decks) + prices + contents."),
         (name = "Collection", description = "The signed-in user's owned-card holdings (requires an API key)."),
-        (name = "Wish list", description = "The signed-in user's wanted-card holdings (requires an API key)."),
+        (name = "Wish list", description = "The signed-in user's wanted cards + sealed products (requires an API key)."),
         (name = "API keys", description = "Mint, list, and revoke the personal API keys that authenticate the public API."),
     )
 )]

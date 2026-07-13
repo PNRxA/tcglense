@@ -1425,7 +1425,7 @@ fn cn_int_key(value: Option<i32>) -> (bool, i32) {
 }
 
 /// Resolve a product by its external (TCGplayer) id within a game, 404 if unknown.
-async fn load_product(
+pub(crate) async fn load_product(
     state: &AppState,
     game: &str,
     id: &str,
@@ -1439,7 +1439,10 @@ async fn load_product(
 }
 
 /// The game's `set_code -> set_name` map, for dressing products with their set name.
-async fn set_name_map(state: &AppState, game: &str) -> Result<HashMap<String, String>, AppError> {
+pub(crate) async fn set_name_map(
+    state: &AppState,
+    game: &str,
+) -> Result<HashMap<String, String>, AppError> {
     let rows: Vec<(String, String)> = CardSet::find()
         .select_only()
         .column(card_set::Column::Code)
@@ -1452,7 +1455,7 @@ async fn set_name_map(state: &AppState, game: &str) -> Result<HashMap<String, St
 }
 
 /// Build the wire DTO, resolving the set name from `names` (falling back to `None`).
-fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductResponse {
+pub(crate) fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductResponse {
     let set_name = names.get(&p.set_code).cloned();
     ProductResponse {
         id: p.external_id,

@@ -15,3 +15,4 @@ pub mod sealed_component;
 pub mod sealed_content;
 pub mod user;
 pub mod wishlist_item;
+pub mod wishlist_product_item;

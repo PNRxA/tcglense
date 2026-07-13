@@ -5,11 +5,12 @@
 //! `handlers::collection::tests` — both features drive the exact same
 //! `handlers::shared::holdings` code, so those tests aren't duplicated here.
 
+use super::products::wanted_products_query;
 use super::read::{summary, wishlist_query};
 
 use crate::catalog;
 use crate::db::Dialect;
-use crate::entities::{card, wishlist_item};
+use crate::entities::{card, wishlist_item, wishlist_product_item};
 use crate::handlers::shared::{
     BULK_THRESHOLD_CENTS, CollectionSort, SortDir, SortField, group_into_drops, search_condition,
 };
@@ -438,4 +439,166 @@ async fn wanted_cards_group_into_drops_with_counts() {
     assert_eq!(buckets[0].cards[0].0.quantity, 2);
     assert_eq!(buckets[0].cards[0].0.foil_quantity, 1);
     assert_eq!(buckets[1].cards[0].0.quantity, 3);
+}
+
+/// The wanted-products base query scopes to the signed-in user and orders by recency
+/// (newest change first), left-joining each row to its product — the sealed-product
+/// counterpart of `wishlist_query`, run against `wishlist_product_items` (issue #364).
+#[tokio::test]
+async fn wanted_products_query_scopes_by_user_and_sorts_by_recency() {
+    use sea_orm::prelude::DateTimeUtc;
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    // Two users; user 2 exists only to prove their rows never leak into user 1's list
+    // (the FK on wishlist_product_items.user_id needs the rows present).
+    for uid in [1, 2] {
+        crate::entities::user::ActiveModel {
+            id: Set(uid),
+            email: Set(format!("u{uid}@example.test")),
+            password_hash: Set(Some("x".into())),
+            display_name: Set(None),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at("2024-01-01T00:00:00Z")),
+            email_verified_at: Set(None),
+        }
+        .insert(&db)
+        .await
+        .expect("insert user");
+    }
+
+    // Three products (internal ids captured); user 1 wants two, user 2 wants one.
+    let p100 = crate::test_support::insert_product(
+        &db,
+        "100",
+        "Booster Box",
+        "aaa",
+        "collector_display",
+        Some("120.00"),
+    )
+    .await;
+    let p200 = crate::test_support::insert_product(
+        &db,
+        "200",
+        "Gift Bundle",
+        "aaa",
+        "bundle",
+        Some("40.00"),
+    )
+    .await;
+    let p300 = crate::test_support::insert_product(
+        &db,
+        "300",
+        "Commander Deck",
+        "bbb",
+        "commander_deck",
+        Some("25.00"),
+    )
+    .await;
+
+    let want = |id: i32, product_id: i32, user_id: i32, updated: &str| {
+        wishlist_product_item::ActiveModel {
+            id: Set(id),
+            user_id: Set(user_id),
+            game: Set("mtg".into()),
+            product_id: Set(product_id),
+            quantity: Set(1),
+            foil_quantity: Set(0),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at(updated)),
+        }
+    };
+    // User 1 wants p100 (row id 1, but the *newer* updated_at) and p200 (row id 2, but
+    // the *older* updated_at) — the higher row id deliberately gets the older timestamp,
+    // so a query that (wrongly) sorted by id/insertion order instead of `updated_at`
+    // would return the opposite order and fail the assertion below. User 2 wants p300.
+    for w in [
+        want(1, p100, 1, "2024-03-01T00:00:00Z"),
+        want(2, p200, 1, "2024-02-01T00:00:00Z"),
+        want(3, p300, 2, "2024-04-01T00:00:00Z"),
+    ] {
+        w.insert(&db).await.expect("insert wishlist product row");
+    }
+
+    let rows = wanted_products_query(1, "mtg")
+        .all(&db)
+        .await
+        .expect("run wanted products query");
+
+    // Exactly user 1's two rows, newest updated_at first (p100 before p200 despite its
+    // lower row id), each joined to its product by external id — user 2's p300 is absent.
+    let external_ids: Vec<String> = rows
+        .iter()
+        .map(|(_, prod)| prod.as_ref().expect("product present").external_id.clone())
+        .collect();
+    assert_eq!(external_ids, ["100", "200"]);
+    // The wanted counts ride along on the item side of the join.
+    assert_eq!(rows[0].0.quantity, 1);
+}
+
+/// A wanted-product row whose product row is missing (an orphan — the table has no FK on
+/// `product_id`, mirroring `wishlist_items.card_id`) comes back from the LEFT join as
+/// `(item, None)`, so the handler's `filter_map` drops it; a valid row keeps `Some(product)`.
+#[tokio::test]
+async fn wanted_products_query_returns_none_for_orphaned_products() {
+    use sea_orm::prelude::DateTimeUtc;
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        display_name: Set(None),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    let valid = crate::test_support::insert_product(
+        &db,
+        "100",
+        "Booster Box",
+        "aaa",
+        "collector_display",
+        Some("120.00"),
+    )
+    .await;
+
+    let want = |id: i32, product_id: i32, updated: &str| wishlist_product_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        product_id: Set(product_id),
+        quantity: Set(1),
+        foil_quantity: Set(0),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at(updated)),
+    };
+    // A valid row (newest) plus an orphan pointing at product_id 9999 (no product row).
+    for w in [
+        want(1, valid, "2024-02-01T00:00:00Z"),
+        want(2, 9999, "2024-01-15T00:00:00Z"),
+    ] {
+        w.insert(&db).await.expect("insert wishlist product row");
+    }
+
+    let rows = wanted_products_query(1, "mtg")
+        .all(&db)
+        .await
+        .expect("run wanted products query");
+    assert_eq!(rows.len(), 2);
+    // Recency order: the valid row (newer) first with its product, the orphan second as
+    // `None` — exactly what the handler's `filter_map` skips.
+    assert_eq!(
+        rows[0].1.as_ref().map(|p| p.external_id.clone()),
+        Some("100".to_string())
+    );
+    assert!(rows[1].1.is_none());
+    assert_eq!(rows[1].0.product_id, 9999);
 }
