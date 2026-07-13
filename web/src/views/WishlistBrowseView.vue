@@ -40,8 +40,9 @@ import { useAuthStore } from '@/stores/auth'
 // show-ghosts / by-drop / include-related view controls, and every derived label — is shared
 // with CollectionBrowseView through `useHoldingsBrowse`; only this template differs: it omits
 // the bulk-value slice, uses the 'wanted' completion noun, and threads `list="wishlist"` +
-// `:collection-counts` (the collection-primary control's count chips) + `:owned-marks`
-// ("show owned in collection", issue #213) through the grids and toggles.
+// `:collection-counts` (the collection-primary control's count chips) + `:wishlist` (the
+// order-independent overlay behind the "N wanted" heart, so a quick-add want edit repaints the
+// heart in place) + `:owned-marks` ("show owned in collection", issue #213) through the grids.
 const props = defineProps<{ game: string; code?: string }>()
 const auth = useAuthStore()
 
@@ -77,6 +78,7 @@ const {
   ownershipReady,
   ownedMarks,
   collectionCounts,
+  wishlistCounts,
   scopeTotalValue,
   scopeCopiesLabel,
   total,
@@ -101,6 +103,7 @@ const {
   useCounts: useWishlistCounts,
   completionNoun: 'wanted',
   enableCollectionCounts: true,
+  enableWishlistHearts: true,
   copy: {
     title: ({ scoped, setName, gameName }) =>
       scoped ? `${setName} — your ${gameName} wish list` : `Your ${gameName} wish list cards`,
@@ -274,6 +277,7 @@ const {
                   :entries="cardGroup.cards"
                   list="wishlist"
                   :collection-counts="collectionCounts"
+                  :wishlist="wishlistCounts"
                   :owned-marks="ownedMarks"
                 />
               </DropSection>
@@ -326,6 +330,7 @@ const {
               :entries="entries"
               list="wishlist"
               :collection-counts="collectionCounts"
+              :wishlist="wishlistCounts"
               :owned-marks="ownedMarks"
             />
             <CardGrid

@@ -30,6 +30,7 @@ const queries = makeHoldingQueries({
   setEntry: setCollectionEntry,
   withBulkThreshold: true,
   invalidateValueHistory: true,
+  deferListRefetch: false,
 })
 
 /**

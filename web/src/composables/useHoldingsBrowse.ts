@@ -75,8 +75,12 @@ export interface HoldingsBrowseSurface {
    * display only — the fetch runs regardless. Subsumes the old owned-marks fetch: one
    * `['collection-owned', game, …]` batch shared by both. */
   enableCollectionCounts?: boolean
-  /** Collection only: show a Heart "wanted" chip on rendered cards that are on the user's
-   * wish list (issue #364 follow-up). Fetches wish-list counts over the rendered cards. */
+  /** Fetch each rendered card's wish-list wanted counts into the order-independent
+   * `['wishlist-counts', …]` overlay (issue #364 follow-up) to feed the quick-add control's
+   * Heart "wanted" chip. On the collection surface it flags cards you *also* wish-list; on the
+   * wishlist surface it IS the heart's source — used in place of the entry's list count so a
+   * quick-add want edit repaints the heart in place instead of resorting the recency-sorted
+   * tiles (the visible list defers its refetch there). Off on surfaces with no heart. */
   enableWishlistHearts?: boolean
   /** Display copy that differs between the two holdings. */
   copy: {
@@ -329,10 +333,12 @@ export function useHoldingsBrowse(
     ownedMarks = computed(() => (showOwnedMarks.value ? collectionOwnership.value : undefined))
   }
 
-  // Wish-list hearts (issue #364 follow-up): on the collection browse surface, flag which
-  // rendered cards are on the user's wish list. Uses the wish list's own batch-counts hook
-  // (auth-gated, empty while signed out) over the same rendered cards. The wishlist surface
-  // leaves this off — its own count chips already show wants.
+  // Wish-list hearts (issue #364 follow-up): fetch each rendered card's wanted counts into the
+  // order-independent `['wishlist-counts', …]` overlay (auth-gated, empty while signed out)
+  // over the same rendered cards. On the collection surface it flags cards you also wish-list;
+  // on the wishlist surface it IS the heart's source (threaded to the grids as `:wishlist`),
+  // replacing the reordering list so a want edit repaints the heart in place. This write's
+  // `['wishlist-counts', …]` invalidation refetches it even while the list refetch is deferred.
   let wishlistCounts: ComputedRef<OwnedCountsMap | undefined> = computed(() => undefined)
   if (surface.enableWishlistHearts) {
     const wc = useWishlistCounts(game, renderedCards)

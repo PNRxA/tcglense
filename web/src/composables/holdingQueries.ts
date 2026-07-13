@@ -89,6 +89,27 @@ export interface HoldingQueriesConfig {
   withBulkThreshold: boolean
   /** Collection only: also invalidate the `collection-value-history` key on a write. */
   invalidateValueHistory: boolean
+  /** Wish list only: freeze the browse view's tile order until the next navigation, so a
+   * per-card count edit never resorts the recency-sorted (`updated:desc`) tiles out from under
+   * an open quick-add popover (issue #364 follow-up). The grid sources its count chips and its
+   * "N wanted" heart from the order-independent `collection-owned` / `wishlist-counts` overlays
+   * (which the same write refetches, repainting the tiles in place), so the list is needed only
+   * for membership + order. This flag is the complete "hold the visible list still" contract; it
+   * does three things when set:
+   *   - `invalidate` marks the browse **list** stale but skips its active refetch
+   *     (`refetchType: 'none'`) — the reorder (and any add/remove) lands on the next navigation.
+   *   - `invalidate` marks the **summary** stale the same way, so the header's count/completion
+   *     (fed by the list total) and its value/copies labels (fed by the summary) stay coherent
+   *     with the frozen tiles instead of the summary updating alone (F2 — header mismatch).
+   *   - `useListQuery` sets `refetchOnWindowFocus: false` on the list query, so refocusing the
+   *     tab won't refetch-and-resort the stale list while the popover is open either (F3).
+   * Everything refetches on remount, so navigating away and back settles the true order/counts.
+   * Interplay with the heart's overlay source (`CollectionGrid.wantedTotal`): because the list
+   * is frozen, the heart reads the `wishlist-counts` overlay, falling back per-card to the
+   * entry's own wanted counts until the overlay lands so it never blanks on a cold load/page.
+   * The collection twin leaves this off: its grid's count chips read each entry's own list
+   * counts, so its list + summary must refetch on a write to update them. */
+  deferListRefetch: boolean
 }
 
 /**
@@ -166,8 +187,14 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
    * to the edited card; an import touches many cards, so it invalidates the whole game.
    */
   function invalidate(qc: QueryClient, game: string, opts?: { entryId?: string }) {
-    qc.invalidateQueries({ queryKey: [prefix, game] })
-    qc.invalidateQueries({ queryKey: [`${prefix}-summary`, game] })
+    // The wish list marks its browse list AND summary stale but skips their active refetch (see
+    // `deferListRefetch`) so a per-card count edit neither resorts the recency-sorted tiles under
+    // an open quick-add popover nor updates the summary-fed header out from under the frozen list
+    // total (keeping count/completion coherent with value/copies). The collection refetches both
+    // to update its list-sourced count chips and its stats.
+    const deferOpts = cfg.deferListRefetch ? { refetchType: 'none' as const } : {}
+    qc.invalidateQueries({ queryKey: [prefix, game], ...deferOpts })
+    qc.invalidateQueries({ queryKey: [`${prefix}-summary`, game], ...deferOpts })
     if (cfg.invalidateValueHistory) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
     }
@@ -214,6 +241,11 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       // and the by-drop view fetches drops, so the held-only flat query stays idle in both
       // (no throwaway fetch a drop-set/ghost link would discard).
       enabled: opts.enabled,
+      // The wish list freezes its tile order until navigation (see `deferListRefetch`): stop a
+      // window-focus refetch from resorting the stale recency-sorted list under an open quick-add
+      // popover. Scoped to this list query only — mounts/navigation still refetch. The collection
+      // leaves it at the client default (on), so its list-sourced chips refresh on refocus.
+      ...(cfg.deferListRefetch ? { refetchOnWindowFocus: false as const } : {}),
     }
     return useAuthedQuery<CollectionPage>(options)
   }
