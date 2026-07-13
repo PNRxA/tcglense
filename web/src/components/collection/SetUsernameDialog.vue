@@ -63,7 +63,12 @@ const serverReason = computed(() =>
     : null,
 )
 
-const canSave = computed(() => available.value && !setUsername.isPending.value)
+// `available` reflects the debounced candidate; `submit()` sends `trimmed` (the live input).
+// Gate on the two matching so Save can't fire for a just-typed value the server hasn't vetted
+// yet (inside the 300ms debounce window they diverge).
+const canSave = computed(
+  () => available.value && debounced.value === trimmed.value && !setUsername.isPending.value,
+)
 
 // Clear the form each time the dialog opens so a prior attempt doesn't linger.
 watch(open, (isOpen) => {

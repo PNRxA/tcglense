@@ -59,15 +59,18 @@ pub const NO_STORE: &str = "no-store";
 /// cache may serve a stale copy for up to `s-maxage` after the owner toggles a collection
 /// private or changes it. That is accepted for v1: the owner's *own* view is served from
 /// the authed, `no-store` routes, so they always see edits immediately; only the anonymous
-/// public copy lags (≤ 5 min), and a self-host without a CDN only ever applies the
-/// 60-second browser `max-age`.
+/// public copy lags (≤ 5 min = `s-maxage`), and a self-host without a CDN only ever applies
+/// the 60-second browser `max-age`.
+///
+/// Deliberately **no `stale-while-revalidate`**: because this content is privacy-sensitive
+/// (a made-private collection must stop being served), the worst-case public-exposure
+/// window must equal `s-maxage`, not `s-maxage + stale-while-revalidate`. The catalog can
+/// afford SWR; a de-listed collection cannot.
 ///
 /// Unlike the per-user authed collection routes (which are `no-store`), this is `public`
 /// because the URL — the handle plus the game — fully identifies the content, exactly as a
-/// card id does for the catalog. `max-age=60` (browser), `s-maxage=300` (shared cache),
-/// `stale-while-revalidate=600` (serve-stale-while-refreshing window).
-pub const PUBLIC_HOLDINGS_CACHE: &str =
-    "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
+/// card id does for the catalog. `max-age=60` (browser), `s-maxage=300` (shared cache).
+pub const PUBLIC_HOLDINGS_CACHE: &str = "public, max-age=60, s-maxage=300";
 
 /// Decide the `Cache-Control` value for a *public catalog* response, or `None` to
 /// leave the response's existing header in place.
