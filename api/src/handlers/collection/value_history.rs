@@ -41,7 +41,7 @@ const PRICE_ID_CHUNK: usize = 10_000;
 /// market value of every holding owned on that day (add-date-clamped), as a 2-dp decimal
 /// string; `None` on a day where no owned holding had a captured price yet (so the plotted
 /// line *gaps* rather than dropping to zero before the collection has any priced history).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionValuePoint {
     pub date: String,
@@ -55,6 +55,22 @@ pub struct CollectionValuePoint {
 /// same vocabulary as the per-card price chart). `404` if the game is unknown; `422` for an
 /// unknown `range`; an empty `{ "data": [] }` when the user owns nothing or no captured
 /// price history falls in the window.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/value-history",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("range" = Option<String>, Query, description = "Window + resolution (`7d`/`30d`/`1y`/`2y`/`3y`/`all`); absent = the full daily series"),
+    ),
+    responses(
+        (status = 200, description = "The user's total collection value over time, oldest day first (empty when nothing is owned or no captured price falls in the window).", body = DataBody<Vec<CollectionValuePoint>>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown `range` value."),
+    ),
+)]
 pub async fn collection_value_history(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

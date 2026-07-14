@@ -26,6 +26,21 @@ use super::{
 /// `GET /api/collection/{game}/sets` -> the sets the signed-in user owns cards in,
 /// newest set first, each with the catalog set metadata plus owned counts. Backs the
 /// collection's per-set landing (mirrors the catalog's game -> sets view).
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/sets",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("bulk_max_cents" = Option<i64>, Query, description = "Per-unit bulk price cutoff in USD cents (clamped server-side; default $1)"),
+    ),
+    responses(
+        (status = 200, description = "The sets the user owns cards in, each with catalog metadata and owned counts.", body = CollectionSetsResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn collection_sets(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -71,6 +86,25 @@ pub(crate) async fn owned_sets(
 /// whose collector number isn't in the snapshot fall into a trailing "Other" group.
 /// `404` if the set isn't drop-grouped (check `has_drops` first). An optional `q`
 /// narrows the owned cards, dropping now-empty drops.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/sets/{code}/drops",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
+        ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter over the owned cards"),
+    ),
+    responses(
+        (status = 200, description = "A page of the user's owned cards in the set, grouped by drop.", body = Page<CollectionDropGroup>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game or set, or the set isn't drop-grouped."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn collection_set_drops(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -134,6 +168,25 @@ pub(crate) async fn owned_drop_page(
 /// Only owned cards appear, so a sub-type the user owns nothing in is simply absent. Any
 /// set works (no drop-table gate); the SPA gates the toggle on the tile's `has_subtypes`.
 /// An optional `q` narrows the owned cards, dropping now-empty sub-types.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/sets/{code}/subtypes",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
+        ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter over the owned cards"),
+    ),
+    responses(
+        (status = 200, description = "A page of the user's owned cards in the set, grouped by sub-type.", body = Page<CollectionSubtypeGroup>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game or set."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn collection_set_subtypes(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

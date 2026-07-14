@@ -31,7 +31,7 @@ const MAX_SCAN_TOP_K: u32 = 25;
 const MAX_SCAN_FINGERPRINTS: usize = 64;
 
 /// A scan request: the client-computed fingerprint(s) and how many matches to return.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ScanRequest {
     /// One or more 256-bit perceptual hashes (32 bytes each): the cropped card plus a
@@ -46,7 +46,7 @@ pub struct ScanRequest {
 }
 
 /// One ranked scan match.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ScanMatch {
     /// The matched printing.
@@ -59,13 +59,29 @@ pub struct ScanMatch {
 
 /// The scan response: ranked matches, nearest first — empty when nothing is within the
 /// confidence radius (a scan of something not in the catalog).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ScanResponse {
     pub data: Vec<ScanMatch>,
 }
 
+/// Scan a card
+///
 /// `POST /api/games/{game}/scan` — identify a card from its perceptual hash.
+#[utoipa::path(
+    post,
+    path = "/api/games/{game}/scan",
+    tag = "Cards",
+    security(("api_key" = [])),
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    request_body = ScanRequest,
+    responses(
+        (status = 200, description = "Ranked matches nearest first (empty when nothing is within the confidence radius).", body = ScanResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the visual scanner is not available on this instance."),
+        (status = 422, description = "No fingerprints, too many, or a fingerprint of the wrong byte length."),
+    ),
+)]
 pub async fn scan_cards(
     State(state): State<AppState>,
     AuthUser(_user): AuthUser,

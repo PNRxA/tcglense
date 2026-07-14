@@ -30,6 +30,25 @@ use super::{
 /// `POST /api/decks/{game}/{deck_id}/sections` -> add a custom section (appended after the
 /// last one). `422` for a blank/oversized name or over the per-deck cap; `409` if the deck
 /// already has a section with that name.
+#[utoipa::path(
+    post,
+    path = "/api/decks/{game}/{deck_id}/sections",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    request_body = CreateSectionRequest,
+    responses(
+        (status = 200, description = "The newly created section (appended last).", body = DeckSectionResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+        (status = 409, description = "The deck already has a section with that name."),
+        (status = 422, description = "Blank/oversized name, or over the per-deck section cap."),
+    ),
+)]
 pub async fn create_section(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -77,6 +96,26 @@ pub async fn create_section(
 
 /// `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` -> rename and/or reposition a
 /// section (each field optional). A rename collides-checks like [`create_section`].
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/sections/{section_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+        ("section_id" = i32, Path, description = "Section id"),
+    ),
+    request_body = UpdateSectionRequest,
+    responses(
+        (status = 200, description = "The updated section.", body = DeckSectionResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, the deck is not the caller's, or the section is not the deck's."),
+        (status = 409, description = "Renaming to a name another section in the deck already has."),
+        (status = 422, description = "Blank/oversized name."),
+    ),
+)]
 pub async fn update_section(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -107,6 +146,24 @@ pub async fn update_section(
 /// `DELETE /api/decks/{game}/{deck_id}/sections/{section_id}` -> delete a section, moving
 /// its cards to the deck's first remaining section (merging counts on a collision). `409`
 /// if it's the deck's only section (a deck must keep at least one).
+#[utoipa::path(
+    delete,
+    path = "/api/decks/{game}/{deck_id}/sections/{section_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+        ("section_id" = i32, Path, description = "Section id"),
+    ),
+    responses(
+        (status = 204, description = "The section was deleted (its cards moved to the first remaining section)."),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, the deck is not the caller's, or the section is not the deck's."),
+        (status = 409, description = "Deleting the deck's only section (a deck must keep at least one)."),
+    ),
+)]
 pub async fn delete_section(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -187,6 +244,24 @@ pub async fn delete_section(
 /// `PUT /api/decks/{game}/{deck_id}/sections/reorder` -> set the section order. The body
 /// must list exactly the deck's section ids (any permutation); `422` otherwise. Returns the
 /// sections in the new order.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/sections/reorder",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    request_body = ReorderSectionsRequest,
+    responses(
+        (status = 200, description = "The deck's sections in the new order.", body = DataBody<Vec<DeckSectionResponse>>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+        (status = 422, description = "`section_ids` is not exactly the deck's sections."),
+    ),
+)]
 pub async fn reorder_sections(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,

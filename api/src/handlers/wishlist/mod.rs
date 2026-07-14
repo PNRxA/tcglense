@@ -59,9 +59,14 @@ pub use write::set_wishlist_entry;
 // (see the note in `crate::handlers::catalog`).
 pub use products::{
     __path_get_wishlist_product_entry, __path_list_wishlist_products,
-    __path_set_wishlist_product_entry, __path_wishlist_product_summary,
+    __path_set_wishlist_product_entry, __path_wishlist_product_counts,
+    __path_wishlist_product_summary,
 };
-pub use read::{__path_get_wishlist_entry, __path_list_wishlist, __path_wishlist_summary};
+pub use read::{
+    __path_get_wishlist_entry, __path_list_wishlist, __path_wishlist_counts,
+    __path_wishlist_summary,
+};
+pub use sets::{__path_wishlist_set_drops, __path_wishlist_set_subtypes, __path_wishlist_sets};
 pub use write::__path_set_wishlist_entry;
 
 /// The user's wish-list row for a card, if any. Shared by the get/set entry handlers.

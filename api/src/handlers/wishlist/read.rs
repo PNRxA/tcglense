@@ -276,6 +276,22 @@ pub async fn get_wishlist_entry(
 /// all-unwanted page returns `{ "data": {} }`). This backs the wanted-count badges and
 /// ghost dimming overlaid on the wish-list browse grids without an N+1 of per-card
 /// lookups. `422` if more than [`MAX_OWNED_IDS`] ids are requested at once.
+#[utoipa::path(
+    post,
+    path = "/api/wishlist/{game}/counts",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = OwnedCountsRequest,
+    responses(
+        (status = 200, description = "Wanted counts for the requested ids that are on the user's wish list, keyed by external card id; unwanted ids are absent (an all-unwanted page yields `{ \"data\": {} }`).", body = OwnedCountsResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "More than the per-request id cap was requested."),
+    ),
+)]
 pub async fn wishlist_counts(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

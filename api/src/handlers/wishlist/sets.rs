@@ -24,6 +24,21 @@ use super::read::{wanted_with_cards, wishlist_query};
 /// `GET /api/wishlist/{game}/sets` -> the sets the signed-in user wants cards in,
 /// newest set first, each with the catalog set metadata plus wanted counts. Backs the
 /// wish list's per-set landing (its `owned_*` fields read as wanted counts there).
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/sets",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("bulk_max_cents" = Option<i64>, Query, description = "Per-unit bulk price cutoff in USD cents (default $1); splits each set tile's bulk subtotal"),
+    ),
+    responses(
+        (status = 200, description = "The sets the user wants cards in, newest first, each with catalog metadata + wanted counts.", body = CollectionSetsResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn wishlist_sets(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -56,6 +71,25 @@ pub async fn wishlist_sets(
 /// cards whose collector number isn't in the snapshot fall into a trailing "Other"
 /// group. `404` if the set isn't drop-grouped (check `has_drops` first). An optional
 /// `q` narrows the wanted cards, dropping now-empty drops.
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/sets/{code}/drops",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
+        ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter over the wanted cards"),
+    ),
+    responses(
+        (status = 200, description = "A page of the user's wanted cards in the set, grouped by Secret Lair drop.", body = Page<CollectionDropGroup>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the set isn't drop-grouped."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn wishlist_set_drops(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -103,6 +137,25 @@ pub async fn wishlist_set_drops(
 /// Only wanted cards appear, so a sub-type the user wants nothing in is simply absent. Any
 /// set works (no drop-table gate); the SPA gates the toggle on the tile's `has_subtypes`.
 /// An optional `q` narrows the wanted cards, dropping now-empty sub-types.
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/sets/{code}/subtypes",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
+        ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter over the wanted cards"),
+    ),
+    responses(
+        (status = 200, description = "A page of the user's wanted cards in the set, grouped by card sub-type.", body = Page<CollectionSubtypeGroup>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game or set."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn wishlist_set_subtypes(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

@@ -87,7 +87,7 @@ pub struct ProviderSettings {
 }
 
 /// How an import reconciles with the user's existing collection for the game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum ReconcileMode {
@@ -119,7 +119,7 @@ pub struct FetchedHolding {
 }
 
 /// The outcome of an import, surfaced to the user.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ImportSummary {
     pub provider: &'static str,

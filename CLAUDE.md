@@ -76,7 +76,11 @@ Skeleton only — the full annotated map is [`docs/architecture.md`](./docs/arch
    `AppError` — never `unwrap`/`expect`/`panic!` on a request path. SeaORM query API
    only (parameterized; anything raw goes through `db::Dialect` or it breaks one
    backend). Use `JsonBody<T>`, not raw `Json<T>`. Pick the right cache group in
-   `handlers/cache.rs`; consider a `security_tests/` suite.
+   `handlers/cache.rs`; consider a `security_tests/` suite. **Document it in `/docs`:**
+   any public/API-key JSON endpoint needs a `#[utoipa::path]` (+ `utoipa::ToSchema` on
+   its DTOs, and a `__path_*` re-export from the group `mod.rs`) registered in
+   `openapi.rs` — the `coverage_drift` test there fails until every `router.rs` route is
+   either documented or in its `INTENTIONALLY_UNDOCUMENTED` allow-list (with a reason).
 4. **Wire types:** derive `ts_rs::TS` on response DTOs
    (`#[cfg_attr(test, derive(ts_rs::TS))]`) — regeneration is in the frontend recipe.
 

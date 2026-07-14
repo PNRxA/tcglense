@@ -33,6 +33,23 @@ use super::{
 /// reconcile run in the background, throttled by the provider rate limit. On success the
 /// worker stamps `last_synced_at` on a saved link that points at this same collection (if
 /// any), so importing your saved collection updates "Last synced" just like a re-sync.
+#[utoipa::path(
+    post,
+    path = "/api/collection/{game}/import",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = ImportRequest,
+    responses(
+        (status = 202, description = "The import was enqueued; poll the returned job id.", body = ImportJobResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown provider, provider unavailable for the game, live import disabled, or an unparseable source URL/id."),
+    ),
+)]
 pub async fn import_collection(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -85,6 +102,24 @@ pub async fn import_collection(
 /// and returns the [`ImportSummary`] directly (no rate limiter, no background job): a CSV
 /// has no location to re-sync from, so it's inherently one-off. `404` for an unknown game,
 /// `422` for a bad mode / unreadable CSV / one missing a required column / an empty upload.
+#[utoipa::path(
+    post,
+    path = "/api/collection/{game}/import/csv",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("mode" = Option<String>, Query, description = "Reconcile mode: `overwrite` / `replace` / `merge`"),
+    ),
+    request_body(content_type = "text/csv", description = "The raw CSV file (an Archidekt or Moxfield collection export)."),
+    responses(
+        (status = 200, description = "The import ran synchronously; the summary of what was matched and applied.", body = ImportSummary),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "CSV import unavailable for the game, a bad/missing mode, an unreadable CSV, a missing required column, or an empty upload."),
+    ),
+)]
 pub async fn import_collection_csv(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -114,6 +149,21 @@ pub async fn import_collection_csv(
 /// `GET /api/collection/{game}/import/jobs/{job_id}` -> the status of a background
 /// import/sync job (queued / running / complete / error). `404` for an unknown job or
 /// one that isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/import/jobs/{job_id}",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("job_id" = u64, Path, description = "Import job id returned when the job was enqueued"),
+    ),
+    responses(
+        (status = 200, description = "The job's status (queued / running / complete / error).", body = ImportJobResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or no such job for the caller."),
+    ),
+)]
 pub async fn get_import_job(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -129,6 +179,20 @@ pub async fn get_import_job(
 
 /// `GET /api/collection/{game}/source` -> the saved collection link for this game, or
 /// `null` if none is saved.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/source",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "The saved collection link, or `null` when no link is saved for the game.", body = CollectionSourceResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn get_collection_source(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -141,6 +205,23 @@ pub async fn get_collection_source(
 
 /// `PUT /api/collection/{game}/source` -> save (upsert) the collection link for this
 /// game. Validates that the source resolves to a provider collection id; does not sync.
+#[utoipa::path(
+    put,
+    path = "/api/collection/{game}/source",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = SaveSourceRequest,
+    responses(
+        (status = 200, description = "The saved collection link.", body = CollectionSourceResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown provider, provider unavailable for the game, live import disabled, or an unparseable source URL/id."),
+    ),
+)]
 pub async fn save_collection_source(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -215,6 +296,21 @@ pub async fn save_collection_source(
 
 /// `DELETE /api/collection/{game}/source` -> forget the saved collection link.
 /// Idempotent: deleting when nothing is saved still returns `204`.
+#[utoipa::path(
+    delete,
+    path = "/api/collection/{game}/source",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 204, description = "The saved link was forgotten (idempotent — 204 even if nothing was saved)."),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn delete_collection_source(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -233,6 +329,22 @@ pub async fn delete_collection_source(
 /// link; the worker stamps `last_synced_at` on success. Uses smart (incremental) sync
 /// when the saved link opted into it, otherwise a full mirror/replace. Returns `202`
 /// with a job id to poll. `404` when no link is saved.
+#[utoipa::path(
+    post,
+    path = "/api/collection/{game}/sync",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 202, description = "The re-sync was enqueued; poll the returned job id.", body = ImportJobResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or no saved collection link to sync."),
+        (status = 422, description = "The saved provider's live import is temporarily disabled."),
+    ),
+)]
 pub async fn sync_collection_source(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,

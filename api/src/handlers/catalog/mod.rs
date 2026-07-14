@@ -61,14 +61,18 @@ pub use status::{ingest_status, list_games};
 // at `crate::handlers::catalog::__path_<fn>` (utoipa rewrites each handler path to its
 // sibling `__path_` struct, which lives in the private submodule where the handler is
 // defined). See `crate::openapi`.
-pub use cards::{__path_card_prints, __path_get_card, __path_list_cards};
+pub use cards::{__path_card_names, __path_card_prints, __path_get_card, __path_list_cards};
 pub use prices::__path_card_prices;
 pub use products::{
-    __path_get_product, __path_list_products, __path_product_contents, __path_product_facets,
-    __path_product_prices,
+    __path_card_sealed, __path_get_product, __path_list_products, __path_product_card_sections,
+    __path_product_cards, __path_product_contents, __path_product_facets, __path_product_prices,
 };
-pub use sets::{__path_get_set, __path_list_set_cards, __path_list_set_drops, __path_list_sets};
-pub use status::__path_list_games;
+pub use scan::__path_scan_cards;
+pub use sets::{
+    __path_get_set, __path_list_set_cards, __path_list_set_drops, __path_list_set_subtypes,
+    __path_list_sets,
+};
+pub use status::{__path_ingest_status, __path_list_games};
 
 /// Card art for a given id is immutable, so it is safe to cache aggressively.
 const IMAGE_CACHE_CONTROL: &str = "public, max-age=2592000, immutable";

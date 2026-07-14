@@ -25,6 +25,23 @@ use crate::handlers::decks::deck_detail;
 /// `POST /api/decks/{game}` -> create a deck (seeded with the default sections) and return
 /// its full detail. `422` for a blank/oversized name or over the per-game deck cap; `404`
 /// if `folder_id` isn't one of the caller's folders.
+#[utoipa::path(
+    post,
+    path = "/api/decks/{game}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = CreateDeckRequest,
+    responses(
+        (status = 200, description = "The newly created deck's full detail (seeded with default sections).", body = super::DeckDetail),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or `folder_id` is not one of the caller's folders."),
+        (status = 422, description = "Blank/oversized name, or over the per-game deck cap."),
+    ),
+)]
 pub async fn create_deck(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -85,6 +102,24 @@ pub async fn create_deck(
 
 /// `PUT /api/decks/{game}/{deck_id}` -> replace the deck's editable metadata
 /// (name/description/format). Folder + sharing are separate endpoints.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    request_body = UpdateDeckRequest,
+    responses(
+        (status = 200, description = "The updated deck header.", body = DeckResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+        (status = 422, description = "Blank/oversized name."),
+    ),
+)]
 pub async fn update_deck(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -114,6 +149,22 @@ pub async fn update_deck(
 
 /// `DELETE /api/decks/{game}/{deck_id}` -> delete the deck (its sections + cards cascade
 /// away). Idempotent-ish: a deck that isn't the caller's is a `404`.
+#[utoipa::path(
+    delete,
+    path = "/api/decks/{game}/{deck_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 204, description = "The deck (and its sections + cards) was deleted."),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
 pub async fn delete_deck(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -127,6 +178,23 @@ pub async fn delete_deck(
 
 /// `PUT /api/decks/{game}/{deck_id}/folder` -> move the deck into a folder, or `null` to
 /// loosen it. A non-null `folder_id` must be one of the caller's folders (`404` otherwise).
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/folder",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    request_body = MoveDeckFolderRequest,
+    responses(
+        (status = 200, description = "The deck header, with its new (or cleared) folder.", body = DeckResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, the deck is not the caller's, or `folder_id` is not one of the caller's folders."),
+    ),
+)]
 pub async fn move_deck_to_folder(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -153,6 +221,24 @@ pub async fn move_deck_to_folder(
 /// `PUT /api/decks/{game}/{deck_id}/visibility` -> enable/disable public sharing. Enabling
 /// requires a username first (a public deck is addressed by handle) — else `409`, which the
 /// SPA branches on to prompt the username step. Mirrors the collection visibility toggle.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/visibility",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    request_body = SetDeckVisibilityRequest,
+    responses(
+        (status = 200, description = "The deck's new sharing state (public flag + owner handle).", body = DeckVisibility),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+        (status = 409, description = "Enabling public sharing without a username set."),
+    ),
+)]
 pub async fn set_deck_visibility(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,

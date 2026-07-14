@@ -44,6 +44,21 @@ pub use read::{get_deck, list_decks};
 pub use sections::{create_section, delete_section, reorder_sections, update_section};
 pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibility, update_deck};
 
+// The `#[utoipa::path]`-generated route metadata structs, re-exported so
+// `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
+pub use cards::{__path_move_deck_card, __path_set_deck_card};
+pub use folders::{
+    __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,
+};
+pub use read::{__path_get_deck, __path_list_decks};
+pub use sections::{
+    __path_create_section, __path_delete_section, __path_reorder_sections, __path_update_section,
+};
+pub use write::{
+    __path_create_deck, __path_delete_deck, __path_move_deck_to_folder,
+    __path_set_deck_visibility, __path_update_deck,
+};
+
 // The `deck_id`-parameterised detail core, reused by the public sharing handler
 // (`crate::handlers::sharing::decks`) so a public deck read shares the exact query/shaping.
 pub(crate) use read::deck_detail;
@@ -93,7 +108,7 @@ const MAX_FOLDER_NAME: usize = 100;
 
 /// A deck header, for the deck list. `card_count` is the total copies (regular + foil)
 /// across every section — computed with one grouped aggregate, so the list stays cheap.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Deck"))]
 pub struct DeckResponse {
     pub id: i32,
@@ -108,7 +123,9 @@ pub struct DeckResponse {
     pub is_public: bool,
     /// Total copies (regular + foil) across all sections.
     pub card_count: i64,
+    #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
+    #[schema(value_type = String, format = DateTime)]
     pub updated_at: DateTimeUtc,
 }
 
@@ -130,7 +147,7 @@ impl DeckResponse {
 }
 
 /// A deck folder (organises decks), with how many decks are filed under it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DeckFolder"))]
 pub struct DeckFolderResponse {
     pub id: i32,
@@ -139,7 +156,7 @@ pub struct DeckFolderResponse {
 }
 
 /// One section (category) of a deck, in display order.
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DeckSection"))]
 pub struct DeckSectionResponse {
     pub id: i32,
@@ -160,7 +177,7 @@ impl From<deck_section::Model> for DeckSectionResponse {
 /// One card in a deck: the full public card payload plus which section it sits in and
 /// how many copies. Deck-specific (it carries `section_id`), so a distinct DTO rather
 /// than the shared `CollectionEntry`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct DeckCardEntry {
     pub card: CardResponse,
@@ -173,7 +190,7 @@ pub struct DeckCardEntry {
 /// link — null until a username is set), the aggregate value summary, every section in
 /// order, and every card. A deck is bounded, so this is returned whole (no pagination);
 /// the SPA groups `cards` by `section_id`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct DeckDetail {
     pub id: i32,
@@ -191,13 +208,15 @@ pub struct DeckDetail {
     pub summary: CollectionSummary,
     pub sections: Vec<DeckSectionResponse>,
     pub cards: Vec<DeckCardEntry>,
+    #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
+    #[schema(value_type = String, format = DateTime)]
     pub updated_at: DateTimeUtc,
 }
 
 /// The current sharing state of a deck: whether it's public plus the owner's handle
 /// (null until a username is set), for the share-URL control.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct DeckVisibility {
     pub public: bool,
@@ -208,7 +227,7 @@ pub struct DeckVisibility {
 
 /// Body of `POST /api/decks/{game}`: create a deck. `folder_id`, when present, must be
 /// one of the caller's folders for the game.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CreateDeckRequest {
     pub name: String,
@@ -223,7 +242,7 @@ pub struct CreateDeckRequest {
 /// Body of `PUT /api/decks/{game}/{deck_id}`: replace the deck's editable metadata
 /// (name is required; description/format are optional, blank = cleared). Folder and
 /// sharing are their own endpoints.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct UpdateDeckRequest {
     pub name: String,
@@ -235,7 +254,7 @@ pub struct UpdateDeckRequest {
 
 /// Body of `PUT /api/decks/{game}/{deck_id}/folder`: move the deck to a folder, or
 /// `null` to loosen it. A non-null id must be one of the caller's folders.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct MoveDeckFolderRequest {
     pub folder_id: Option<i32>,
@@ -243,21 +262,21 @@ pub struct MoveDeckFolderRequest {
 
 /// Body of `PUT /api/decks/{game}/{deck_id}/visibility`: enable/disable public sharing.
 /// Enabling requires a username first (a public deck is addressed by handle) — else `409`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SetDeckVisibilityRequest {
     pub public: bool,
 }
 
 /// Body of `POST/PUT` on a folder: its name.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct FolderNameRequest {
     pub name: String,
 }
 
 /// Body of `POST /api/decks/{game}/{deck_id}/sections`: create a custom section.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CreateSectionRequest {
     pub name: String,
@@ -265,7 +284,7 @@ pub struct CreateSectionRequest {
 
 /// Body of `PUT /api/decks/{game}/{deck_id}/sections/{section_id}`: rename and/or
 /// reposition a section (each field optional — absent leaves it unchanged).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct UpdateSectionRequest {
     #[serde(default)]
@@ -276,7 +295,7 @@ pub struct UpdateSectionRequest {
 
 /// Body of `PUT /api/decks/{game}/{deck_id}/sections/reorder`: the section ids in the
 /// desired display order (must be exactly the deck's sections).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ReorderSectionsRequest {
     pub section_ids: Vec<i32>,
@@ -285,7 +304,7 @@ pub struct ReorderSectionsRequest {
 /// Body of `PUT /api/decks/{game}/{deck_id}/cards/{id}`: set the absolute counts for a
 /// card in one section (both zero removes it from that section). `section_id` must be
 /// one of the deck's sections.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SetDeckCardRequest {
     pub quantity: i32,
@@ -295,7 +314,7 @@ pub struct SetDeckCardRequest {
 
 /// Body of `PUT /api/decks/{game}/{deck_id}/cards/{id}/move`: move a card from one of the
 /// deck's sections to another (merging counts if the target already holds the card).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct MoveDeckCardRequest {
     pub from_section_id: i32,

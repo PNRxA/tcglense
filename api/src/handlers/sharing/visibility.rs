@@ -15,6 +15,20 @@ use super::{CollectionVisibility, SetVisibilityRequest, apply_visibility_patch, 
 /// `GET /api/collection/{game}/visibility` -> whether this game's collection is public, the
 /// owner's landing display prefs, and the caller's public handle (null until they set a
 /// username). Defaults (private, both sections shown) when no row exists yet.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/visibility",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "The (user, game) sharing + display state and the caller's handle.", body = CollectionVisibility),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn get_collection_visibility(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -35,6 +49,23 @@ pub async fn get_collection_visibility(
 /// first** (a public collection is addressed by handle) — a 409 the SPA branches on to
 /// prompt the username step. Only the fields present in the body are written, so the
 /// display toggles never disturb the sharing flag and vice versa.
+#[utoipa::path(
+    put,
+    path = "/api/collection/{game}/visibility",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = SetVisibilityRequest,
+    responses(
+        (status = 200, description = "The resulting sharing + display state after the patch.", body = CollectionVisibility),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "A read-scoped API key cannot write."),
+        (status = 404, description = "Unknown game."),
+        (status = 409, description = "Enabling public sharing without a username set first."),
+    ),
+)]
 pub async fn set_collection_visibility(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,

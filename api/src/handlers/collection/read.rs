@@ -294,6 +294,22 @@ pub async fn get_collection_entry(
 /// returns `{ "data": {} }`). This backs the owned-count badges overlaid on the
 /// public browse grids without an N+1 of per-card lookups. `422` if more than
 /// [`MAX_OWNED_IDS`] ids are requested at once.
+#[utoipa::path(
+    post,
+    path = "/api/collection/{game}/owned",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = OwnedCountsRequest,
+    responses(
+        (status = 200, description = "Owned counts for the requested ids the user actually owns, keyed by external id (unowned ids are absent, so an all-unowned request returns `{}`).", body = OwnedCountsResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "More than the allowed number of card ids were requested at once."),
+    ),
+)]
 pub async fn owned_counts(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

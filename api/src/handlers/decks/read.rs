@@ -20,6 +20,20 @@ use super::{
 /// `GET /api/decks/{game}` -> the signed-in user's decks for a game, most-recently-updated
 /// first, each with its total card count. Not paginated (a user has few decks); returns
 /// `{ data: Deck[] }`.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "The caller's decks for the game, newest-updated first.", body = DataBody<Vec<DeckResponse>>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn list_decks(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -47,6 +61,21 @@ pub async fn list_decks(
 
 /// `GET /api/decks/{game}/{deck_id}` -> the full deck: metadata, sections in order, every
 /// card, and the value/copy summary. `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "The full deck: metadata, sections, cards, and value summary.", body = DeckDetail),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
 pub async fn get_deck(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

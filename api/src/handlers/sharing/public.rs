@@ -24,6 +24,18 @@ use super::{
 /// 404 if the handle is unknown or the user has nothing public — no public game **and** no
 /// public deck (no bare-profile leak). A user who has shared only decks still resolves, so
 /// their profile page can list those decks (issue #391).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+    ),
+    responses(
+        (status = 200, description = "The owner's public identity plus a summary per public game.", body = PublicProfile),
+        (status = 404, description = "Unknown handle, or the user has nothing public."),
+    ),
+)]
 pub async fn public_profile(
     State(state): State<AppState>,
     Path(handle): Path<String>,
@@ -55,6 +67,27 @@ pub async fn public_profile(
 
 /// `GET /api/u/{handle}/{game}` -> a page of the owner's owned cards (mirrors
 /// `list_collection`; same `?page/page_size/q/set/include_related/sort/dir`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+        ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the owner's owned cards.", body = Page<CollectionEntry>),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
 pub async fn public_list(
     State(state): State<AppState>,
     Path((handle, game)): Path<(String, String)>,
@@ -69,6 +102,22 @@ pub async fn public_list(
 
 /// `GET /api/u/{handle}/{game}/summary` (mirrors `collection_summary`;
 /// `?set/include_related/bulk_max_cents`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/summary",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+        ("bulk_max_cents" = Option<i64>, Query, description = "Bulk-value threshold (cents) for the estimate split"),
+    ),
+    responses(
+        (status = 200, description = "Aggregate stats for the owner's public collection.", body = CollectionSummary),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+    ),
+)]
 pub async fn public_summary(
     State(state): State<AppState>,
     Path((handle, game)): Path<(String, String)>,
@@ -92,6 +141,20 @@ pub async fn public_summary(
 }
 
 /// `GET /api/u/{handle}/{game}/sets` (mirrors `collection_sets`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/sets",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("bulk_max_cents" = Option<i64>, Query, description = "Bulk-value threshold (cents) for the estimate split"),
+    ),
+    responses(
+        (status = 200, description = "The sets the owner owns cards in, each with catalog metadata + owned counts.", body = CollectionSetsResponse),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+    ),
+)]
 pub async fn public_sets(
     State(state): State<AppState>,
     Path((handle, game)): Path<(String, String)>,
@@ -105,6 +168,24 @@ pub async fn public_sets(
 }
 
 /// `GET /api/u/{handle}/{game}/sets/{code}/drops` (mirrors `collection_set_drops`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/sets/{code}/drops",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code (drop-grouped set, e.g. Secret Lair)"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
+        ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+    ),
+    responses(
+        (status = 200, description = "A page of the owner's owned cards in the set, grouped by drop.", body = Page<CollectionDropGroup>),
+        (status = 404, description = "Unknown/private handle, non-public game, unknown set, or a set that isn't drop-grouped."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn public_set_drops(
     State(state): State<AppState>,
     Path((handle, game, code)): Path<(String, String, String)>,
@@ -118,6 +199,24 @@ pub async fn public_set_drops(
 }
 
 /// `GET /api/u/{handle}/{game}/sets/{code}/subtypes` (mirrors `collection_set_subtypes`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/sets/{code}/subtypes",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
+        ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+    ),
+    responses(
+        (status = 200, description = "A page of the owner's owned cards in the set, grouped by sub-type.", body = Page<CollectionSubtypeGroup>),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown set."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn public_set_subtypes(
     State(state): State<AppState>,
     Path((handle, game, code)): Path<(String, String, String)>,
@@ -136,6 +235,21 @@ pub async fn public_set_subtypes(
 /// cards the owner holds. Cards the owner doesn't own are absent from the map. `422` over
 /// [`MAX_OWNED_IDS`]; a private/unknown handle is `404`. Served `no-store` (the response
 /// varies by the POST body, so it must never be shared-cached).
+#[utoipa::path(
+    post,
+    path = "/api/u/{handle}/{game}/owned",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = OwnedCountsRequest,
+    responses(
+        (status = 200, description = "The owner's owned counts for the subset of the posted ids they hold, keyed by external id.", body = OwnedCountsResponse),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+        (status = 422, description = "More than the maximum number of card ids requested at once."),
+    ),
+)]
 pub async fn public_owned_counts(
     State(state): State<AppState>,
     Path((handle, game)): Path<(String, String)>,
