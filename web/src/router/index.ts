@@ -141,6 +141,27 @@ const router = createRouter({
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
     },
+    // Per-user decks (issue #363): build and organise decks of cards into user-orderable
+    // sections (Archidekt-style categories) and folders, with per-deck public sharing. Same
+    // public-route pattern as the collection — a signed-out visitor gets an in-view sign-in
+    // prompt rather than a bounce to /login.
+    {
+      path: '/decks',
+      name: 'decks',
+      component: () => import('@/views/DecksView.vue'),
+    },
+    {
+      path: '/decks/:game',
+      name: 'game-decks',
+      component: () => import('@/views/GameDecksView.vue'),
+      props: true,
+    },
+    {
+      path: '/decks/:game/:id',
+      name: 'deck',
+      component: () => import('@/views/DeckView.vue'),
+      props: true,
+    },
     // Public, shareable collections (issues #361/#362): a user's profile and the read-only
     // view of a game collection they've made public, addressed by their handle
     // (`{username}-{discriminator}`). No requiresAuth — anyone can view — and indexable, so
@@ -169,6 +190,15 @@ const router = createRouter({
       path: '/u/:handle/:game/sets/:code',
       name: 'public-collection-set',
       component: () => import('@/views/PublicCollectionBrowseView.vue'),
+      props: true,
+    },
+    // A shared public deck (issue #363), addressed by handle + deck id. The static `decks`
+    // segment outranks the `/u/:handle/:game` public-collection routes, so no game slug can
+    // ever be mistaken for it. Public + indexable, like the shared collections.
+    {
+      path: '/u/:handle/decks/:id',
+      name: 'public-deck',
+      component: () => import('@/views/PublicDeckView.vue'),
       props: true,
     },
     // Interactive public-API reference (issue #284). Public and indexable; linked from

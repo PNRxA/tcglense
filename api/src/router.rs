@@ -41,11 +41,17 @@ use crate::{
             save_collection_source, set_collection_entry, sync_collection_source,
         },
         config::public_config,
+        decks::{
+            create_deck, create_folder, create_section, delete_deck, delete_folder,
+            delete_section, get_deck, list_decks, list_folders, move_deck_card,
+            move_deck_to_folder, reorder_sections, set_deck_card, set_deck_visibility,
+            update_deck, update_folder, update_section,
+        },
         health::health,
         sharing::{
-            get_collection_visibility, public_list, public_owned_counts, public_profile,
-            public_set_drops, public_set_subtypes, public_sets, public_summary,
-            set_collection_visibility,
+            get_collection_visibility, public_deck, public_decks, public_list,
+            public_owned_counts, public_profile, public_set_drops, public_set_subtypes,
+            public_sets, public_summary, set_collection_visibility,
         },
         mirror::{
             fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
@@ -243,6 +249,53 @@ pub fn build_router(state: AppState) -> Router {
             "/api/wishlist/{game}/products/{id}",
             get(get_wishlist_product_entry).put(set_wishlist_product_entry),
         )
+        // Per-user decks (issue #363): a user has many named decks per game, organised
+        // into folders (deck level) and sections (card level), so the routes nest a
+        // `{deck_id}` deeper than the flat collection/wishlist. Authenticated (AuthUser
+        // reads, WritableUser writes) and no-store. Static segments (`folders`, `sections`,
+        // `reorder`, `folder`, `visibility`, `move`) win over the dynamic ids in axum, so
+        // none collide — same guarantee as the catalog's `/products/facets`.
+        .route("/api/decks/{game}", get(list_decks).post(create_deck))
+        .route(
+            "/api/decks/{game}/folders",
+            get(list_folders).post(create_folder),
+        )
+        .route(
+            "/api/decks/{game}/folders/{folder_id}",
+            put(update_folder).delete(delete_folder),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}",
+            get(get_deck).put(update_deck).delete(delete_deck),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/folder",
+            put(move_deck_to_folder),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/visibility",
+            put(set_deck_visibility),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/sections",
+            post(create_section),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/sections/reorder",
+            put(reorder_sections),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/sections/{section_id}",
+            put(update_section).delete(delete_section),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/cards/{id}",
+            put(set_deck_card),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/cards/{id}/move",
+            put(move_deck_card),
+        )
         // Rate limiting, two complementary middlewares (each picks a quota by path
         // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,
         // and per-user (keyed by the access-token user id) for the authenticated
@@ -357,6 +410,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/{game}/sets/{code}/subtypes",
             get(public_set_subtypes),
         )
+        // Per-deck public sharing (issue #363): a user's public decks and one public deck's
+        // full detail, addressed by handle. `decks` is a static sibling of `{game}` (static
+        // wins in axum), so it never collides with a game slug. Deck ids are globally unique,
+        // so no game segment is needed. Same CDN-cache + ETag layers as the reads above.
+        .route("/api/u/{handle}/decks", get(public_decks))
+        .route("/api/u/{handle}/decks/{deck_id}", get(public_deck))
         .layer(map_response(public_holdings_cache_layer))
         .layer(from_fn(conditional_request_layer));
 

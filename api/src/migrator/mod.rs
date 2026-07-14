@@ -39,6 +39,10 @@ mod m20240101_000036_add_username_and_discriminator_to_users;
 mod m20240101_000037_create_collection_visibility_table;
 mod m20240101_000038_drop_user_display_name;
 mod m20240101_000039_add_collection_display_prefs;
+mod m20240101_000040_create_deck_folders_table;
+mod m20240101_000041_create_decks_table;
+mod m20240101_000042_create_deck_sections_table;
+mod m20240101_000043_create_deck_cards_table;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -88,6 +92,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000037_create_collection_visibility_table::Migration),
             Box::new(m20240101_000038_drop_user_display_name::Migration),
             Box::new(m20240101_000039_add_collection_display_prefs::Migration),
+            Box::new(m20240101_000040_create_deck_folders_table::Migration),
+            Box::new(m20240101_000041_create_decks_table::Migration),
+            Box::new(m20240101_000042_create_deck_sections_table::Migration),
+            Box::new(m20240101_000043_create_deck_cards_table::Migration),
         ]
     }
 }

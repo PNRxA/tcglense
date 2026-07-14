@@ -20,6 +20,7 @@ mod captcha;
 mod collection;
 mod collection_import;
 mod cors;
+mod decks;
 mod email_verification;
 mod login;
 mod mirror;
