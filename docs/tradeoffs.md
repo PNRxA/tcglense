@@ -436,7 +436,7 @@ catalog) is planned but not implemented.
   CDN-cacheable headers so a fronting CDN absorbs the repeats — but only once a Cloudflare
   **Cache Rule** marks `/api/mirror/*` edge-eligible; Cloudflare bypasses `/api/…` by
   default, so the deploy guides fold the mirror into the *honor-origin* catalog rule
-  (README *Behind a CDN*), and without that rule every consumer pull re-streams from
+  ([`self-hosting.md`](./self-hosting.md#behind-a-cdn-cloudflare) *Behind a CDN*), and without that rule every consumer pull re-streams from
   upstream. It's off by default so an
   ordinary self-host doesn't become an open proxy to the upstreams; the public mirror
   runs `MIRROR_ENABLED=true` + `SYNC_FROM_UPSTREAM=true`. Trade-offs: (1) the mirror
