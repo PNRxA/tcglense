@@ -9,9 +9,14 @@ use sea_orm::entity::prelude::*;
 /// **per game**, so a user can share MTG without sharing another game.
 ///
 /// The row is retained when `is_public` is flipped back to `false` (rather than
-/// deleted) so future per-collection display preferences — hiding values or
-/// quantities, a custom title — added as extra columns survive a
+/// deleted) so the per-collection display preferences below survive a
 /// private -> public -> private toggle. Deleting the user cascades this row away.
+///
+/// `show_value_chart` / `show_movers` are those display preferences (issue #381): the
+/// owner's collection-landing settings menu hides the value-over-time chart and/or the
+/// biggest-movers panel per game. Both default `true`, so no row (or a legacy row) means
+/// both sections show. They are the owner's own view only — the public read surface never
+/// reads them.
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "collection_visibility")]
 pub struct Model {
@@ -23,6 +28,10 @@ pub struct Model {
     pub game: String,
     /// Whether this user's `game` collection is publicly shareable.
     pub is_public: bool,
+    /// Whether the value-over-time chart shows on the owner's collection landing.
+    pub show_value_chart: bool,
+    /// Whether the biggest-movers (gainers/losers) panel shows on the owner's landing.
+    pub show_movers: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

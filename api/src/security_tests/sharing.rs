@@ -226,3 +226,156 @@ async fn read_only_key_cannot_toggle_visibility() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ---------- Collection-landing display preferences (issue #381) ----------
+
+#[tokio::test]
+async fn display_prefs_default_to_shown_and_persist_independently() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "prefs@example.test", "password one two").await;
+
+    // Fresh account, no row yet: both sections show, collection private.
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["public"], false);
+    assert_eq!(body["show_value_chart"], true);
+    assert_eq!(body["show_movers"], true);
+
+    // Hide the value chart — only that field changes; sharing + movers are untouched.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "show_value_chart": false }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "hide value chart failed: {body:?}");
+    assert_eq!(body["show_value_chart"], false);
+    assert_eq!(body["show_movers"], true);
+    assert_eq!(body["public"], false);
+
+    // Persisted on read-back.
+    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    assert_eq!(body["show_value_chart"], false);
+    assert_eq!(body["show_movers"], true);
+}
+
+#[tokio::test]
+async fn display_prefs_survive_public_toggle_and_dont_clobber_sharing() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "survive@example.test", "password one two").await;
+    set_username(&app, &access, "keeper").await;
+
+    // Make public, then hide movers with a display-only patch: `public` must stay true
+    // (the patch touches only its own column, no read-modify-write clobber).
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "show_movers": false }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["public"], true, "a display patch must not clobber sharing");
+    assert_eq!(body["show_movers"], false);
+
+    // Toggle back to private: the row is retained, so the hidden-movers pref survives.
+    let (_, _, _) = send(
+        &app,
+        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": false })),
+    )
+    .await;
+    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    assert_eq!(body["public"], false);
+    assert_eq!(body["show_movers"], false, "a display pref must survive a private toggle");
+}
+
+#[tokio::test]
+async fn read_only_key_cannot_set_display_prefs() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "rodisp@example.test", "password one two").await;
+    let key = create_key(&app, &access, "read").await;
+
+    // Reading prefs with a read-only key is fine...
+    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &key)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // ...but writing one is a write — 403.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &key,
+            json!({ "show_value_chart": false }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn empty_visibility_patch_is_a_noop_echo() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "noop@example.test", "password one two").await;
+
+    // Hide the value chart so there's a non-default row to echo.
+    let _ = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "show_value_chart": false }),
+        ),
+    )
+    .await;
+
+    // An empty patch writes nothing and echoes the current state.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "empty patch failed: {body:?}");
+    assert_eq!(body["public"], false);
+    assert_eq!(body["show_value_chart"], false);
+    assert_eq!(body["show_movers"], true);
+}
+
+#[tokio::test]
+async fn display_prefs_are_isolated_per_user() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-prefs@example.test", "password one two").await;
+    let (bob, _) = register(&app, "bob-prefs@example.test", "password one two").await;
+
+    // Alice hides both sections; Bob's row (defaults) must be untouched.
+    let _ = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &alice,
+            json!({ "show_value_chart": false, "show_movers": false }),
+        ),
+    )
+    .await;
+
+    let (_, _, bob_body) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &bob)).await;
+    assert_eq!(bob_body["show_value_chart"], true, "Alice's prefs must not leak to Bob");
+    assert_eq!(bob_body["show_movers"], true);
+}

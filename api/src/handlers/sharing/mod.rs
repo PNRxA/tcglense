@@ -26,21 +26,33 @@ pub use visibility::{get_collection_visibility, set_collection_visibility};
 
 // ---------- Request / response DTOs ----------
 
-/// Body of `PUT /api/collection/{game}/visibility`.
+/// Body of `PUT /api/collection/{game}/visibility` — a partial patch of the (user, game)
+/// row. Every field is optional (serde absent -> `None`); only the ones present are
+/// written, so the sharing toggle and each display toggle can PATCH just their own field
+/// without clobbering the others. An all-absent body is a no-op that echoes the current
+/// state.
 #[derive(Debug, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SetVisibilityRequest {
-    pub public: bool,
+    /// Enable/disable public sharing. Enabling requires a username first (409 otherwise).
+    pub public: Option<bool>,
+    /// Show/hide the value-over-time chart on the owner's collection landing.
+    pub show_value_chart: Option<bool>,
+    /// Show/hide the biggest-movers panel on the owner's collection landing.
+    pub show_movers: Option<bool>,
 }
 
-/// The current public-visibility state for one (user, game). The wire field is `public`
-/// (the DB column is `is_public`); `handle` is the owner's public handle (`alice-0001`),
-/// or null until they choose a username — the SPA links the live view at
-/// `/u/{handle}/{game}` when `public` is true.
+/// The current visibility + display state for one (user, game). The wire field is `public`
+/// (the DB column is `is_public`); `show_value_chart` / `show_movers` are the owner's
+/// collection-landing display prefs (issue #381), both default true. `handle` is the
+/// owner's public handle (`alice-0001`), or null until they choose a username — the SPA
+/// links the live view at `/u/{handle}/{game}` when `public` is true.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionVisibility {
     pub public: bool,
+    pub show_value_chart: bool,
+    pub show_movers: bool,
     pub handle: Option<String>,
 }
 
@@ -82,32 +94,100 @@ pub(crate) async fn is_public(
         .is_some())
 }
 
-/// Upsert the (user, game) visibility row to `public`. The row is retained (flag flipped)
-/// rather than deleted, so future per-collection display prefs survive a toggle.
-pub(crate) async fn set_visibility(
+/// The visibility + display state for one (user, game): the row's values, or the defaults
+/// (private, both landing sections shown) when no row exists yet.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VisibilityState {
+    pub is_public: bool,
+    pub show_value_chart: bool,
+    pub show_movers: bool,
+}
+
+impl Default for VisibilityState {
+    fn default() -> Self {
+        // No row yet: private, and both optional landing sections shown.
+        Self {
+            is_public: false,
+            show_value_chart: true,
+            show_movers: true,
+        }
+    }
+}
+
+/// Load the (user, game) visibility/display state, or the defaults when no row exists.
+pub(crate) async fn visibility_state(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
     game: &str,
-    public: bool,
-) -> Result<(), AppError> {
+) -> Result<VisibilityState, AppError> {
+    Ok(VisEntity::find()
+        .filter(vis::Column::UserId.eq(user_id))
+        .filter(vis::Column::Game.eq(game))
+        .one(db)
+        .await?
+        .map(|r| VisibilityState {
+            is_public: r.is_public,
+            show_value_chart: r.show_value_chart,
+            show_movers: r.show_movers,
+        })
+        .unwrap_or_default())
+}
+
+/// Apply a partial patch to the (user, game) visibility/display row, returning the
+/// resulting state. Absent fields are left untouched: the INSERT seeds them from the
+/// defaults (so a first-ever write of a single pref still creates a complete row), and the
+/// ON CONFLICT updates ONLY the columns actually provided — so two concurrent single-field
+/// toggles (e.g. flipping sharing and a display pref at once) can't clobber each other the
+/// way a read-modify-write would. The row is retained (never deleted) so prefs survive a
+/// private -> public -> private toggle.
+pub(crate) async fn apply_visibility_patch(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    game: &str,
+    public: Option<bool>,
+    show_value_chart: Option<bool>,
+    show_movers: Option<bool>,
+) -> Result<VisibilityState, AppError> {
+    // Nothing to change: echo the current state without touching the row.
+    if public.is_none() && show_value_chart.is_none() && show_movers.is_none() {
+        return visibility_state(db, user_id, game).await;
+    }
+
     let now = Utc::now();
+    let defaults = VisibilityState::default();
     let active = vis::ActiveModel {
         user_id: Set(user_id),
         game: Set(game.to_string()),
-        is_public: Set(public),
+        is_public: Set(public.unwrap_or(defaults.is_public)),
+        show_value_chart: Set(show_value_chart.unwrap_or(defaults.show_value_chart)),
+        show_movers: Set(show_movers.unwrap_or(defaults.show_movers)),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
     };
+
+    let mut update_columns = vec![vis::Column::UpdatedAt];
+    if public.is_some() {
+        update_columns.push(vis::Column::IsPublic);
+    }
+    if show_value_chart.is_some() {
+        update_columns.push(vis::Column::ShowValueChart);
+    }
+    if show_movers.is_some() {
+        update_columns.push(vis::Column::ShowMovers);
+    }
+
     VisEntity::insert(active)
         .on_conflict(
             OnConflict::columns([vis::Column::UserId, vis::Column::Game])
-                .update_columns([vis::Column::IsPublic, vis::Column::UpdatedAt])
+                .update_columns(update_columns)
                 .to_owned(),
         )
         .exec(db)
         .await?;
-    Ok(())
+
+    // Re-read so the response reflects the untouched columns (and any concurrent write).
+    visibility_state(db, user_id, game).await
 }
 
 /// The games this user has made public, sorted for a stable profile listing.

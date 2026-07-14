@@ -38,6 +38,7 @@ mod m20240101_000035_create_wishlist_product_items_table;
 mod m20240101_000036_add_username_and_discriminator_to_users;
 mod m20240101_000037_create_collection_visibility_table;
 mod m20240101_000038_drop_user_display_name;
+mod m20240101_000039_add_collection_display_prefs;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -86,6 +87,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000036_add_username_and_discriminator_to_users::Migration),
             Box::new(m20240101_000037_create_collection_visibility_table::Migration),
             Box::new(m20240101_000038_drop_user_display_name::Migration),
+            Box::new(m20240101_000039_add_collection_display_prefs::Migration),
         ]
     }
 }

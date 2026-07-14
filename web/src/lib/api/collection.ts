@@ -50,17 +50,26 @@ export function getCollectionVisibility(
   })
 }
 
-/** Enable/disable public sharing for the signed-in user's collection in a game (issues
- * #361/#362). Enabling requires a username first — the server 409s otherwise, which the
- * SPA branches on to prompt the username step. */
+/** A partial update to a game's collection visibility + landing display prefs (issues
+ * #361/#362, #381). Any omitted field is left unchanged server-side, so the sharing toggle
+ * and each display toggle PATCH only their own field. */
+export interface CollectionVisibilityPatch {
+  public?: boolean
+  show_value_chart?: boolean
+  show_movers?: boolean
+}
+
+/** Patch a game's collection visibility / landing display prefs. Enabling public requires
+ * a username first — the server 409s otherwise, which the SPA branches on to prompt the
+ * username step. */
 export function setCollectionVisibility(
   token: string,
   game: string,
-  isPublic: boolean,
+  patch: CollectionVisibilityPatch,
 ): Promise<CollectionVisibility> {
   return request<CollectionVisibility>(`/api/collection/${encodeURIComponent(game)}/visibility`, {
     method: 'PUT',
-    body: { public: isPublic },
+    body: patch,
     token,
   })
 }
