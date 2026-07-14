@@ -23,6 +23,8 @@ use super::{
     CollectionDropGroup, CollectionSetsResponse, CollectionSort, CollectionSubtypeGroup, ListParams,
 };
 
+/// List collection sets
+///
 /// `GET /api/collection/{game}/sets` -> the sets the signed-in user owns cards in,
 /// newest set first, each with the catalog set metadata plus owned counts. Backs the
 /// collection's per-set landing (mirrors the catalog's game -> sets view).
@@ -77,6 +79,8 @@ pub(crate) async fn owned_sets(
     })
 }
 
+/// List collection set drops
+///
 /// `GET /api/collection/{game}/sets/{code}/drops` -> the signed-in user's owned cards
 /// in a drop-grouped set (e.g. Secret Lair), grouped by Secret Lair drop and
 /// **paginated by drop** — the collection mirror of the catalog's set-drops endpoint,
@@ -160,6 +164,8 @@ pub(crate) async fn owned_drop_page(
     Ok(holding_drop_page(table, rows, page, page_size))
 }
 
+/// List collection set sub-types
+///
 /// `GET /api/collection/{game}/sets/{code}/subtypes` -> the signed-in user's owned cards
 /// in a set, grouped by card sub-type (treatment) and **paginated by sub-type** — the
 /// collection mirror of the catalog's set-subtypes endpoint, scoped to (and carrying the

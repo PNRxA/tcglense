@@ -22,6 +22,8 @@ use super::{
 };
 use crate::handlers::decks::deck_detail;
 
+/// Create deck
+///
 /// `POST /api/decks/{game}` -> create a deck (seeded with the default sections) and return
 /// its full detail. `422` for a blank/oversized name or over the per-game deck cap; `404`
 /// if `folder_id` isn't one of the caller's folders.
@@ -100,6 +102,8 @@ pub async fn create_deck(
     Ok(Json(deck_detail(&state, &deck, handle).await?))
 }
 
+/// Update deck
+///
 /// `PUT /api/decks/{game}/{deck_id}` -> replace the deck's editable metadata
 /// (name/description/format). Folder + sharing are separate endpoints.
 #[utoipa::path(
@@ -147,6 +151,8 @@ pub async fn update_deck(
     Ok(Json(DeckResponse::from_model(&updated, count)))
 }
 
+/// Delete deck
+///
 /// `DELETE /api/decks/{game}/{deck_id}` -> delete the deck (its sections + cards cascade
 /// away). Idempotent-ish: a deck that isn't the caller's is a `404`.
 #[utoipa::path(
@@ -176,6 +182,8 @@ pub async fn delete_deck(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Move deck to folder
+///
 /// `PUT /api/decks/{game}/{deck_id}/folder` -> move the deck into a folder, or `null` to
 /// loosen it. A non-null `folder_id` must be one of the caller's folders (`404` otherwise).
 #[utoipa::path(
@@ -218,6 +226,8 @@ pub async fn move_deck_to_folder(
     Ok(Json(DeckResponse::from_model(&updated, count)))
 }
 
+/// Set deck visibility
+///
 /// `PUT /api/decks/{game}/{deck_id}/visibility` -> enable/disable public sharing. Enabling
 /// requires a username first (a public deck is addressed by handle) — else `409`, which the
 /// SPA branches on to prompt the username step. Mirrors the collection visibility toggle.

@@ -256,6 +256,34 @@ mod tests {
             );
         }
     }
+
+    /// The Scalar `/docs` sidebar labels each operation with its `summary`, which utoipa
+    /// takes from the **first line** of the handler's doc comment (everything up to the
+    /// first blank `///` line becomes the summary; the rest is the description). A handler
+    /// whose doc comment is one long `` `GET /api/... -> …` `` paragraph — with no short
+    /// title line — turns that whole paragraph into the sidebar label. Guard against it:
+    /// every operation must carry a concise title summary. Fix a failure by prefixing the
+    /// handler's doc comment with a short `/// Title` line followed by a blank `///` line.
+    #[test]
+    fn every_operation_has_a_concise_summary() {
+        let json = serde_json::to_value(ApiDoc::openapi()).expect("spec serializes to JSON");
+        let mut bad = Vec::new();
+        for (path, item) in json["paths"].as_object().expect("spec has a paths object") {
+            for (method, op) in item.as_object().expect("path item is an object") {
+                let summary = op.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                // A real title is short and is not the `METHOD /path -> …` description form.
+                if summary.is_empty() || summary.chars().count() > 80 || summary.starts_with('`') {
+                    bad.push(format!("{} {path} -> {summary:?}", method.to_uppercase()));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "these operations lack a concise summary — prefix the handler doc comment with a \
+             short `/// Title` line + a blank `///` line so the /docs sidebar reads well:\n{}",
+            bad.join("\n")
+        );
+    }
 }
 
 /// Guards that the hand-maintained [`ApiDoc`] stays in sync with the router: every

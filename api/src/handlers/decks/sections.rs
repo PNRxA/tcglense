@@ -27,6 +27,8 @@ use super::{
     validate_name,
 };
 
+/// Create deck section
+///
 /// `POST /api/decks/{game}/{deck_id}/sections` -> add a custom section (appended after the
 /// last one). `422` for a blank/oversized name or over the per-deck cap; `409` if the deck
 /// already has a section with that name.
@@ -94,6 +96,8 @@ pub async fn create_section(
     Ok(Json(DeckSectionResponse::from(section)))
 }
 
+/// Update deck section
+///
 /// `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` -> rename and/or reposition a
 /// section (each field optional). A rename collides-checks like [`create_section`].
 #[utoipa::path(
@@ -143,6 +147,8 @@ pub async fn update_section(
     Ok(Json(DeckSectionResponse::from(updated)))
 }
 
+/// Delete deck section
+///
 /// `DELETE /api/decks/{game}/{deck_id}/sections/{section_id}` -> delete a section, moving
 /// its cards to the deck's first remaining section (merging counts on a collision). `409`
 /// if it's the deck's only section (a deck must keep at least one).
@@ -241,6 +247,8 @@ pub async fn delete_section(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Reorder deck sections
+///
 /// `PUT /api/decks/{game}/{deck_id}/sections/reorder` -> set the section order. The body
 /// must list exactly the deck's section ids (any permutation); `422` otherwise. Returns the
 /// sections in the new order.

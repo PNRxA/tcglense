@@ -74,6 +74,8 @@ pub async fn list_cards(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
+/// List card names
+///
 /// `GET /api/games/{game}/card-names?q=&limit=` -> up to `limit` **distinct** card
 /// names in the game whose name contains `q` (case-insensitively), with names that
 /// *start* with `q` surfaced first, then alphabetically. Powers the collection
