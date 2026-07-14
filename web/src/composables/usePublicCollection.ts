@@ -22,6 +22,7 @@ import type {
 } from '@/lib/api'
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
+import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 
 // Read-only public collection queries (issues #361/#362). These are the unauthenticated
 // mirror of `useCollection`: PLAIN `useQuery` (no token), keyed by the reactive handle/game
@@ -44,8 +45,14 @@ export function usePublicProfileQuery(handle: Ref<string>) {
 
 /** Aggregate stats for a user's public collection in a game, optionally scoped to one set
  * (and, with `includeRelated`, that set's whole group — so the browse view's scoped
- * value/completion line matches the authed one). The two extra params default to the
- * whole-collection scope, so the landing's `(handle, game)` callers keep their exact key. */
+ * value/completion line matches the authed one). The scope params default to the
+ * whole-collection scope, so the landing's `(handle, game)` callers keep their exact shape.
+ *
+ * The bulk-value split follows the VIEWER's own bulk-threshold preference (the same
+ * client-side setting the authed collection summary uses), so a signed-in visitor sees a
+ * public collection's bulk subtotal through their own cutoff instead of a fixed $1. It's in
+ * the query key (as a computed ref) so changing it in Settings refetches; the store default
+ * matches the server's, so a never-changed / signed-out viewer gets the standard $1 split. */
 export function usePublicCollectionSummaryQuery(
   handle: Ref<string>,
   game: Ref<string>,
@@ -54,12 +61,15 @@ export function usePublicCollectionSummaryQuery(
 ) {
   const setCode = set ?? ref<string | undefined>(undefined)
   const includeRelated = opts.includeRelated ?? ref(false)
+  const bulkThreshold = useBulkThresholdStore()
+  const bulkMaxCents = computed(() => bulkThreshold.cents)
   return useQuery<CollectionSummary, ApiError>({
-    queryKey: ['public-summary', handle, game, setCode, includeRelated],
+    queryKey: ['public-summary', handle, game, setCode, includeRelated, bulkMaxCents],
     queryFn: () =>
       getPublicCollectionSummary(handle.value, game.value, {
         set: setCode.value || undefined,
         includeRelated: includeRelated.value,
+        bulkMaxCents: bulkMaxCents.value,
       }),
     retry: false,
   })

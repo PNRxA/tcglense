@@ -42,14 +42,19 @@ export function getPublicCollection(
 /** Aggregate stats (unique cards, total copies, estimated value) for a user's public
  * collection in a game — optionally scoped to one set (and, with `includeRelated`, that
  * set's whole group), so the browse view's scoped value/completion line matches the authed
- * one. No bulk-threshold override: the public page uses the server default ($1 split). */
+ * one. `bulkMaxCents` sets the cutoff the server splits the bulk subtotal at (the viewer's
+ * own bulk-threshold preference, in cents); omitted = the server default ($1). */
 export function getPublicCollectionSummary(
   handle: string,
   game: string,
-  opts: { set?: string; includeRelated?: boolean } = {},
+  opts: { set?: string; includeRelated?: boolean; bulkMaxCents?: number } = {},
 ): Promise<CollectionSummary> {
   // include_related only means anything alongside a set scope (matches the backend).
-  const qs = listQuery({ set: opts.set, includeRelated: opts.set ? opts.includeRelated : undefined })
+  const qs = listQuery({
+    set: opts.set,
+    includeRelated: opts.set ? opts.includeRelated : undefined,
+    bulkMaxCents: opts.bulkMaxCents,
+  })
   return request<CollectionSummary>(`${base(handle)}/${encodeURIComponent(game)}/summary${qs}`)
 }
 
