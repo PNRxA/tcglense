@@ -429,7 +429,7 @@ function moveSection(sectionId: number, delta: number) {
               <!-- "In your collection" indicator (top-right), when you own the card. -->
               <span
                 v-if="ownedInCollection(entry.card.id) > 0"
-                class="bg-background/90 text-foreground absolute top-1.5 right-1.5 z-20 inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow"
+                class="bg-background/90 text-foreground absolute top-1.5 right-1.5 z-20 inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
                 :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
               >
                 <Library class="size-3" aria-hidden="true" />{{ ownedInCollection(entry.card.id) }}

@@ -21,7 +21,9 @@ use super::{
 };
 
 /// `GET /api/u/{handle}` -> the owner's public identity + a summary per public game.
-/// 404 if the handle is unknown or the user has no public game (no bare-profile leak).
+/// 404 if the handle is unknown or the user has nothing public — no public game **and** no
+/// public deck (no bare-profile leak). A user who has shared only decks still resolves, so
+/// their profile page can list those decks (issue #391).
 pub async fn public_profile(
     State(state): State<AppState>,
     Path(handle): Path<String>,
@@ -38,7 +40,7 @@ pub async fn public_profile(
         let summary = collection::summary(&state.db, user.id, &game, None, bulk).await?;
         games.push(PublicGameSummary { game, summary });
     }
-    if games.is_empty() {
+    if games.is_empty() && !super::decks::user_has_public_deck(&state.db, user.id).await? {
         return Err(AppError::NotFound("collection not found".to_string()));
     }
 
