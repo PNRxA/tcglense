@@ -6,6 +6,12 @@
 
 use super::harness::*;
 
+use chrono::{Duration, Utc};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
+
+use crate::entities::prelude::{Card, CardPriceHistory};
+use crate::entities::{card, card_price_history};
+
 /// Grab `n` real card external ids from the seeded catalog.
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=25")).await;
@@ -644,4 +650,216 @@ async fn export_requires_auth_and_produces_provider_csv() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// ---------- Collection price movers ----------
+//
+// The pure ranking helpers are unit-tested in `handlers::collection::price_movements`; these
+// drive the real `/movers` endpoint end-to-end with *controlled* price history, so the
+// handler-only glue (reference-date = newest owned snapshot, day/week/month anchoring, the
+// cross-window de-dup, and the empty/auth paths) is exercised too.
+
+/// `YYYY-MM-DD` for `offset` days before today (0 = today) — an on-the-wire snapshot date.
+fn day_offset(offset: i64) -> String {
+    (Utc::now().date_naive() - Duration::days(offset))
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// The internal `cards.id` for a seeded external id (holdings + price history key off it).
+async fn internal_card_id(db: &sea_orm::DatabaseConnection, external_id: &str) -> i32 {
+    Card::find()
+        .filter(card::Column::Game.eq("mtg"))
+        .filter(card::Column::ExternalId.eq(external_id))
+        .one(db)
+        .await
+        .expect("query card")
+        .expect("seeded card exists")
+        .id
+}
+
+/// Replace a card's seeded price history with exactly `rows` (`(as_of_date, usd, foil)`), so
+/// a movers assertion is deterministic instead of riding the dummy seed's random price walk.
+async fn set_price_history(
+    db: &sea_orm::DatabaseConnection,
+    card_id: i32,
+    rows: &[(String, Option<&str>, Option<&str>)],
+) {
+    CardPriceHistory::delete_many()
+        .filter(card_price_history::Column::Game.eq("mtg"))
+        .filter(card_price_history::Column::CardId.eq(card_id))
+        .exec(db)
+        .await
+        .expect("wipe seeded history");
+    let now = Utc::now();
+    let models: Vec<card_price_history::ActiveModel> = rows
+        .iter()
+        .map(|(date, usd, foil)| card_price_history::ActiveModel {
+            game: Set("mtg".to_string()),
+            card_id: Set(card_id),
+            as_of_date: Set(date.clone()),
+            price_usd: Set(usd.map(str::to_string)),
+            price_usd_foil: Set(foil.map(str::to_string)),
+            price_eur: Set(None),
+            price_tix: Set(None),
+            created_at: Set(now),
+            ..Default::default()
+        })
+        .collect();
+    CardPriceHistory::insert_many(models)
+        .exec(db)
+        .await
+        .expect("insert controlled history");
+}
+
+/// The owned-card external ids in a mover list, in list order.
+fn mover_ids(list: &Value) -> Vec<String> {
+    list.as_array()
+        .expect("mover list array")
+        .iter()
+        .map(|m| m["card"]["id"].as_str().expect("mover card id").to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn movers_requires_auth_and_handles_empty_and_unknown_game() {
+    let app = test_app_with_catalog().await;
+
+    // Per-user data: no token -> 401, and never shared-cached.
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/movers")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let (token, _) = register(&app, "movers-empty@example.com", "password123").await;
+
+    // Owns nothing -> an all-empty payload with a null `as_of` (and still no-store, per-user).
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert!(body["as_of"].is_null(), "no holdings -> null as_of");
+    for window in ["day", "week", "month"] {
+        assert!(body[window]["gainers"].as_array().unwrap().is_empty());
+        assert!(body[window]["losers"].as_array().unwrap().is_empty());
+    }
+
+    // Unknown game -> 404 (require_game), like the sibling collection reads.
+    let (status, _, _) = send(&app, get_with_bearer("/api/collection/nope/movers", &token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The endpoint ranks each window from the newest owned snapshot, and a card can be a gainer
+/// in a short window while being a loser over the month — it must then appear in *both* lists
+/// (the cross-window de-dup fetches its card row once). This is the handler glue the pure
+/// helper tests bypass (they hand-feed `latest`/`target`).
+#[tokio::test]
+async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-rank@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 3).await;
+    let (a, b, c) = (&ids[0], &ids[1], &ids[2]);
+
+    // One regular copy of each, so a card's holding value change equals its price change.
+    for id in &ids {
+        own_card(&app, &token, id, 1).await;
+    }
+
+    let (d0, d1, d7, d30) = (day_offset(0), day_offset(1), day_offset(7), day_offset(30));
+    // A: flat then jumps -> +$10 in every window (the top gainer everywhere).
+    set_price_history(
+        db,
+        internal_card_id(db, a).await,
+        &[
+            (d30.clone(), Some("10.00"), None),
+            (d7.clone(), Some("10.00"), None),
+            (d1.clone(), Some("10.00"), None),
+            (d0.clone(), Some("20.00"), None),
+        ],
+    )
+    .await;
+    // B: flat then drops -> -$10 in every window (the top loser everywhere).
+    set_price_history(
+        db,
+        internal_card_id(db, b).await,
+        &[
+            (d30.clone(), Some("100.00"), None),
+            (d7.clone(), Some("100.00"), None),
+            (d1.clone(), Some("100.00"), None),
+            (d0.clone(), Some("90.00"), None),
+        ],
+    )
+    .await;
+    // C: recovering off a recent dip but far below a month ago -> +$2 (day)/+$5 (week) yet
+    // -$40 (month). It is a day+week GAINER and a month LOSER — the flip that exercises dedup.
+    set_price_history(
+        db,
+        internal_card_id(db, c).await,
+        &[
+            (d30.clone(), Some("50.00"), None),
+            (d7.clone(), Some("5.00"), None),
+            (d1.clone(), Some("8.00"), None),
+            (d0.clone(), Some("10.00"), None),
+        ],
+    )
+    .await;
+
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
+    assert_eq!(body["as_of"].as_str(), Some(d0.as_str()), "as_of = newest owned snapshot");
+
+    // Day: gainers A(+$10) then C(+$2); loser B(-$10). change_usd carries the sign.
+    assert_eq!(mover_ids(&body["day"]["gainers"]), vec![a.clone(), c.clone()]);
+    assert_eq!(body["day"]["gainers"][0]["change_usd"], "10.00");
+    assert_eq!(body["day"]["gainers"][0]["value_now"], "20.00");
+    assert_eq!(body["day"]["gainers"][0]["value_prev"], "10.00");
+    assert_eq!(body["day"]["gainers"][1]["change_usd"], "2.00");
+    assert_eq!(mover_ids(&body["day"]["losers"]), vec![b.clone()]);
+    assert_eq!(body["day"]["losers"][0]["change_usd"], "-10.00");
+
+    // Month: gainer A(+$10); losers most-negative-first C(-$40) then B(-$10).
+    assert_eq!(mover_ids(&body["month"]["gainers"]), vec![a.clone()]);
+    assert_eq!(mover_ids(&body["month"]["losers"]), vec![c.clone(), b.clone()]);
+    assert_eq!(body["month"]["losers"][0]["change_usd"], "-40.00");
+
+    // The de-dup: the same card C is a day gainer AND a month loser, each with its card payload.
+    assert!(mover_ids(&body["day"]["gainers"]).contains(c));
+    assert!(mover_ids(&body["month"]["losers"]).contains(c));
+}
+
+/// When a card's history doesn't reach the window baseline, the window drops it rather than
+/// fabricating a delta: a card priced only within the last week populates day/week but the
+/// month list stays empty (the 30d target predates every snapshot).
+#[tokio::test]
+async fn movers_month_window_empties_when_baseline_predates_history() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-stale@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 1).await;
+
+    let (d0, d1, d7) = (day_offset(0), day_offset(1), day_offset(7));
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d7.clone(), Some("5.00"), None),
+            (d1.clone(), Some("5.00"), None),
+            (d0.clone(), Some("8.00"), None),
+        ],
+    )
+    .await;
+
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["as_of"].as_str(), Some(d0.as_str()));
+    // Day + week: a +$3 gainer.
+    assert_eq!(mover_ids(&body["day"]["gainers"]), vec![id.clone()]);
+    assert_eq!(mover_ids(&body["week"]["gainers"]), vec![id.clone()]);
+    // Month: no snapshot at/before the 30d target -> empty, not a bogus delta.
+    assert!(body["month"]["gainers"].as_array().unwrap().is_empty());
+    assert!(body["month"]["losers"].as_array().unwrap().is_empty());
 }

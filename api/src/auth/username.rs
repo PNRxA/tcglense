@@ -21,8 +21,11 @@ use std::sync::LazyLock;
 use rand::RngExt;
 use rustrict::CensorStr;
 use sea_orm::sea_query::{Expr, Func};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect,
+};
 
+use crate::db::Dialect;
 use crate::entities::{prelude::User, user};
 use crate::error::AppError;
 
@@ -143,16 +146,25 @@ pub async fn allocate_discriminator(
     prefer: Option<i32>,
     exclude_user_id: i32,
 ) -> Result<i32, AppError> {
-    // `lower(username)` match: correct on Postgres (case-sensitive by default) and
-    // SQLite alike, and hits the functional `lower(username)` index the uniqueness
-    // constraint already provides. Excluding the caller's own row lets a rename to a
-    // free name keep — or the same name re-submit and keep — its current discriminator.
-    let taken: HashSet<i32> = User::find()
+    // Case-insensitive username match, and each dialect's form is served by
+    // `idx_users_username_discriminator` (a seek, not a scan) — mirroring `resolve_public_user`:
+    // Postgres matches the functional `lower(username)` index; SQLite matches the plain
+    // `COLLATE NOCASE` column directly (`username = ?` — a predicate on `lower(username)` there
+    // would be an expression the NOCASE index can't seek, so it would full-scan). Excluding the
+    // caller's own row lets a rename to a free name keep — or the same name re-submit and keep —
+    // its current discriminator.
+    let query = User::find()
         .select_only()
         .column(user::Column::Discriminator)
-        .filter(Expr::expr(Func::lower(Expr::col(user::Column::Username))).eq(normalized_username))
         .filter(user::Column::Discriminator.is_not_null())
-        .filter(user::Column::Id.ne(exclude_user_id))
+        .filter(user::Column::Id.ne(exclude_user_id));
+    let query = match Dialect::from_backend(db.get_database_backend()) {
+        Dialect::Postgres => query.filter(
+            Expr::expr(Func::lower(Expr::col(user::Column::Username))).eq(normalized_username),
+        ),
+        Dialect::Sqlite => query.filter(user::Column::Username.eq(normalized_username)),
+    };
+    let taken: HashSet<i32> = query
         .into_tuple::<i32>()
         .all(db)
         .await?
@@ -211,6 +223,14 @@ pub fn handle_of(user: &user::Model) -> Option<String> {
 /// resolve it case-insensitively via [`normalize`].
 pub fn parse_handle(handle: &str) -> Option<(String, i32)> {
     let (username, disc) = handle.rsplit_once('-')?;
+    // Only the canonical zero-padded 4-digit form `format_handle` emits (`{disc:04}`; the
+    // 1..=9999 range never needs more than 4 digits) resolves. Reject every other spelling —
+    // a leading `+`, or short/over-padded zeros that `i32::from_str` would otherwise accept —
+    // so exactly one handle string maps to a collection (no duplicate URLs splitting the CDN
+    // cache or canonical link).
+    if disc.len() != 4 || !disc.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     let disc: i32 = disc.parse().ok()?;
     if !(MIN_DISCRIMINATOR..=MAX_DISCRIMINATOR).contains(&disc) {
         return None;
@@ -301,9 +321,21 @@ mod tests {
     #[test]
     fn parse_handle_rejects_malformed() {
         assert_eq!(parse_handle("nodash"), None);
-        assert_eq!(parse_handle("x-0"), None); // discriminator out of range
+        assert_eq!(parse_handle("x-0"), None); // discriminator out of range (and not 4-digit)
         assert_eq!(parse_handle("x-10000"), None);
         assert_eq!(parse_handle("-0007"), None); // empty username
         assert_eq!(parse_handle("x-abc"), None); // non-numeric discriminator
+    }
+
+    #[test]
+    fn parse_handle_requires_canonical_four_digit_tag() {
+        // Only the exact zero-padded 4-digit form resolves; every other spelling of the same
+        // number is rejected, so one collection has one canonical handle URL.
+        assert_eq!(parse_handle("x-0007"), Some(("x".to_string(), 7))); // canonical
+        assert_eq!(parse_handle("x-7"), None); // unpadded
+        assert_eq!(parse_handle("x-007"), None); // short pad
+        assert_eq!(parse_handle("x-00007"), None); // over-padded
+        assert_eq!(parse_handle("x-+007"), None); // leading sign
+        assert_eq!(parse_handle("x-0000"), None); // 4-digit but out of range
     }
 }

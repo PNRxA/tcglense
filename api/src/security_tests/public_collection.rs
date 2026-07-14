@@ -204,3 +204,39 @@ async fn public_collections_are_isolated_per_handle() {
     let (status, _, _) = send(&app, get(&format!("/api/u/{bob}/mtg"))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// The remaining public read surfaces — summary, the per-set landing, and a set's sub-type
+/// view — return the owner's data with a 200 and the shared-cacheable policy. Previously only
+/// `private_game_is_404_no_store` touched summary/sets (asserting the 404 side); this pins
+/// their success paths. (The `drops` view shares the exact `owned_drop_page` core the authed
+/// `collection_set_drops` handler exercises, and the seeded test catalog has no drop-grouped
+/// set — even the authed test 404s `dmb` drops — so its 200 isn't reachable from here.)
+#[tokio::test]
+async fn public_summary_sets_and_subtypes_are_readable() {
+    let app = test_app_with_catalog().await;
+    let id = sample_card_ids(&app, 1).await.remove(0);
+    let (handle, access) = owner_with_card(&app, "views@example.test", "views", &id).await;
+    set_public(&app, &access, true).await;
+
+    // Summary: the owner owns 2 copies of exactly one card (see `owner_with_card`).
+    let (status, headers, body) = send(&app, get(&format!("/api/u/{handle}/mtg/summary"))).await;
+    assert_eq!(status, StatusCode::OK, "public summary failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE));
+    assert_eq!(body["unique_cards"], 1);
+    assert_eq!(body["total_cards"], 2);
+
+    // Per-set landing: the set the owned card belongs to is present, shared-cacheable.
+    let (status, headers, body) = send(&app, get(&format!("/api/u/{handle}/mtg/sets"))).await;
+    assert_eq!(status, StatusCode::OK, "public sets failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE));
+    let sets = body["data"].as_array().expect("sets data array");
+    assert!(!sets.is_empty(), "an owner of a card owns cards in >= 1 set");
+
+    // Sub-type view: reachable publicly for the set the owned card is in (the shared
+    // owned_subtype_page core, handle-resolved). A 200 confirms the read path works.
+    let code = sets[0]["code"].as_str().expect("set code");
+    let (status, headers, _) =
+        send(&app, get(&format!("/api/u/{handle}/mtg/sets/{code}/subtypes"))).await;
+    assert_eq!(status, StatusCode::OK, "public set subtypes should be readable while public");
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE));
+}

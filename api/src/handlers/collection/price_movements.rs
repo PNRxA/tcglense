@@ -151,7 +151,8 @@ pub async fn collection_movers(
         .collect();
 
     let card_ids: Vec<i32> = holdings.iter().map(|h| h.card_id).collect();
-    // Only the last ~45 days of snapshots are needed (the 30d baseline plus margin).
+    // Only the last LOOKBACK_DAYS (60) days of snapshots are needed: the 30d month baseline
+    // plus a 30d margin for feed staleness (see the constant's doc).
     let cutoff = format_date(Utc::now().date_naive() - Duration::days(LOOKBACK_DAYS));
 
     // Historic prices for exactly those cards, windowed to the lookback. Chunk the id list

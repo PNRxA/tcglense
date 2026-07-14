@@ -30,8 +30,11 @@ export function useSetCollectionVisibilityMutation() {
   const options = {
     mutationFn: (token: string, vars: SetVisibilityVars) =>
       setCollectionVisibility(token, vars.game, vars.public),
-    onSettled: (_data: CollectionVisibility | undefined, _error: ApiError | null, vars: SetVisibilityVars) =>
-      qc.invalidateQueries({ queryKey: ['collection-visibility', vars.game] }),
+    onSettled: (
+      _data: CollectionVisibility | undefined,
+      _error: ApiError | null,
+      vars: SetVisibilityVars,
+    ) => qc.invalidateQueries({ queryKey: ['collection-visibility', vars.game] }),
   }
   return useAuthedMutation<CollectionVisibility, SetVisibilityVars>(options)
 }
