@@ -278,7 +278,15 @@ catalog) is planned but not implemented.
   this a folded foil would value at $0 against the base's empty foil price (~94% of pairs).
   The base card then carries **both** prices, so the public catalog shows a foil price on it
   as well. When the periodic sync is off (`SYNC_ON_STARTUP=false`), `tasks::start` still runs
-  the enrichment once at boot, so a holding folded by the migration doesn't sit at $0. One
+  the enrichment once at boot, so a holding folded by the migration doesn't sit at $0. **Perf
+  (weak, cold prod Postgres):** the enrichment is **star-driven** — an `UPDATE…FROM` that starts
+  from the ~1,851 `…★` stars via the partial index `m…044_add_cards_foil_variant_star_index` and
+  strips the trailing star (`substr(…, 1, length(…) - 1)`) to point-seek each base — replacing an
+  earlier base-driven correlated form that full-scanned the wide `cards` heap twice (once for the
+  ~40k nonfoil bases, once to hash the ~12k foil rows) to find ~1,627 pairs, ~8 s on the cold prod
+  box. It scans only the tiny star set and point-seeks each base, so it is **robust to
+  visibility-map state** (unlike a covering index — see the snapshot-read note under §Price
+  history): ~3.9× fewer buffers whether or not the preceding sync just churned the heap. One
   consequence of folding to a single dual-finish card: an **Overwrite** import that lists the
   base's nonfoil but not the foil-★ sets the base's *absolute* counts (foil → 0) — the same
   authoritative behavior Overwrite already applies to any card owned in both finishes (the
@@ -684,6 +692,29 @@ catalog) is planned but not implemented.
     ever did grow huge, the move is Postgres-only *physical* tuning behind that same seam
     (a native `DATE` column + BRIN, or partitioning), never an extension the SQLite default
     can't load.
+- **The daily snapshot's cards read is left as a sequential scan — a covering index was measured
+  and rejected.** Each tick, `scryfall::price_history::load_price_columns` reads *every* card's
+  five price columns (`SELECT id, price_usd, price_usd_foil, price_eur, price_tix FROM cards WHERE
+  game = ?`, ~106k rows) to snapshot them into history. It shows up as a ~3.7 s slow-query on the
+  weak, cold prod Postgres because `game = ?` matches the whole (single-game) table so the planner
+  sequential-scans the wide ~140 MB `cards` heap for five tiny columns. The obvious fix — a
+  covering index `(game) INCLUDE (id, price_usd, price_usd_foil, price_eur, price_tix)` for a
+  heap-free index-only scan (the `m…031` `card_price_history` pattern) — was built and benchmarked
+  and **deliberately not shipped**: it repeats the `m…033 → m…034` mistake. The snapshot runs in
+  the **same sync tick, immediately after** `catalog::refresh_all`'s `flush_cards` rewrites every
+  card whose price moved, and `cards` is **never `VACUUM`ed** (m…034's stated invariant). On a real
+  import day **~34 %** of the ~106k cards change price (measured day-over-day from
+  `card_price_history`), which — at ~6 rows/heap-page — clears the all-visible bit on ~87 % of
+  pages. The index-only scan then either degrades to a per-tuple heap fetch (measured on a faithful
+  106,520-row Postgres 17 repro: ~69k heap fetches + random I/O + hint-bit write-back, **slower in
+  wall-time than the plain seq scan** despite fewer raw buffers) or the planner reverts to the seq
+  scan for no gain — while the `INCLUDE` payload still adds unconditional non-HOT write
+  amplification on every price move. The index-only win (~29× fewer buffers) only materialises
+  against a well-vacuumed visibility map, precisely the state that does *not* hold when the
+  snapshot runs. So the seq scan stays: the read touches the whole partition regardless, and no
+  visibility-map-robust index beats it here. (Contrast the foil-enrichment fix in the same audit —
+  `m…044`, §Collection import & sync — which *is* shipped because it leans on a tiny partial index
+  + point seeks, not a full-table index-only scan, so it is robust to the churned VM.)
 
 ## Images & assets
 
