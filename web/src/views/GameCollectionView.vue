@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { LayoutGrid, ScanLine } from '@lucide/vue'
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
@@ -9,13 +10,14 @@ import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionMovers from '@/components/collection/CollectionMovers.vue'
+import CollectionSettingsMenu from '@/components/collection/CollectionSettingsMenu.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
-import CollectionVisibilityCard from '@/components/collection/CollectionVisibilityCard.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
+import { useCollectionVisibilityQuery } from '@/composables/useCollectionVisibility'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { getCollectionValueHistory } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
@@ -63,6 +65,14 @@ const {
 
 const gameName = useGameName(game)
 const auth = useAuthStore()
+// The value chart / movers panel show per the server-backed display prefs, toggled from
+// the header's settings menu (issue #381). While the prefs load (or with no row yet) both
+// default to shown — fail-open, so a transient prefs-query miss never hides these core
+// sections. The cost is only that a section a user *has* hidden shows for a beat on a cold
+// load before the pref resolves (warm navigations read it from cache, so no flash).
+const visibility = useCollectionVisibilityQuery(game)
+const showValueChart = computed(() => visibility.data.value?.show_value_chart ?? true)
+const showMovers = computed(() => visibility.data.value?.show_movers ?? true)
 
 // Per-account page — kept out of search indexes.
 usePageMeta({
@@ -94,14 +104,22 @@ function fetchValueHistory(range: PriceRange) {
 
     <template v-else-if="auth.isAuthenticated">
       <header class="mb-6">
-        <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} collection</h1>
-        <!-- The active mode's set count — just the owned sets by default, the whole
-             catalog under "All sets" — mirroring the catalog game view's header line. -->
-        <p class="text-muted-foreground mt-1">
-          {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
-          <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
-          <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
-        </p>
+        <!-- Title + the settings menu (issue #381): sharing (public/private) and the
+             show/hide toggles for the value chart and movers panel live behind the gear,
+             pinned top-right so the header stays uncluttered. -->
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} collection</h1>
+            <!-- The active mode's set count — just the owned sets by default, the whole
+                 catalog under "All sets" — mirroring the catalog game view's header line. -->
+            <p class="text-muted-foreground mt-1">
+              {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
+              <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+              <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
+            </p>
+          </div>
+          <CollectionSettingsMenu :game="game" />
+        </div>
 
         <!-- Summary stats: distinct cards, total copies, estimated value. -->
         <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
@@ -149,17 +167,13 @@ function fetchValueHistory(range: PriceRange) {
         </div>
 
         <CollectionSyncControls :game="game" />
-
-        <!-- Make this game's collection public and get a shareable link (issues #361/#362).
-             Per-game: sharing MTG doesn't share any other game's collection. -->
-        <CollectionVisibilityCard :game="game" />
       </header>
 
       <!-- Total collection value over time — reconstructed from historic prices and each
-           card's add-date. Shown once something is owned; reuses the shared price-history
-           chart to render the single total-value line. -->
+           card's add-date. Shown once something is owned, unless hidden from the settings
+           menu; reuses the shared price-history chart to render the single total-value line. -->
       <PriceChart
-        v-if="hasStats"
+        v-if="hasStats && showValueChart"
         title="Collection value"
         empty-text="No value history for this range yet."
         single-series
@@ -168,8 +182,8 @@ function fetchValueHistory(range: PriceRange) {
       />
 
       <!-- The biggest per-card value moves (day / week / month) across the collection —
-           gated like the value chart, on something being owned. -->
-      <CollectionMovers v-if="hasStats" :game="game" />
+           gated like the value chart on something being owned, plus its own settings toggle. -->
+      <CollectionMovers v-if="hasStats && showMovers" :game="game" />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year
