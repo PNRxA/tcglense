@@ -17,6 +17,8 @@ use super::{
     DeckCardEntry, DeckDetail, DeckResponse, DeckSectionResponse, card_counts_by_deck, load_deck,
 };
 
+/// List decks
+///
 /// `GET /api/decks/{game}` -> the signed-in user's decks for a game, most-recently-updated
 /// first, each with its total card count. Not paginated (a user has few decks); returns
 /// `{ data: Deck[] }`.
@@ -59,6 +61,8 @@ pub async fn list_decks(
     Ok(Json(DataBody { data }))
 }
 
+/// Get deck
+///
 /// `GET /api/decks/{game}/{deck_id}` -> the full deck: metadata, sections in order, every
 /// card, and the value/copy summary. `404` if the deck isn't the caller's.
 #[utoipa::path(

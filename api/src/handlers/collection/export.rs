@@ -132,6 +132,8 @@ const MOXFIELD_HEADER: &[&str] = &[
     "Purchase Price",
 ];
 
+/// Export collection (CSV)
+///
 /// `GET /api/collection/{game}/export?format=archidekt|moxfield` -> the signed-in user's
 /// whole collection as a downloadable CSV in the chosen provider shape. Unpaginated (an
 /// export is the entire collection); holdings whose catalog card row is gone (a catalog

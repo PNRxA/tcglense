@@ -27,6 +27,8 @@ use super::{
     CollectionSourceResponse, CsvImportParams, ImportJobResponse, ImportRequest, SaveSourceRequest,
 };
 
+/// Import collection
+///
 /// `POST /api/collection/{game}/import` -> enqueue a one-off import from a collection
 /// provider using the chosen reconcile mode (does not save the link). Validates the
 /// request synchronously, then returns `202` with a job id to poll; the fetch +
@@ -92,6 +94,8 @@ pub async fn import_collection(
     ))
 }
 
+/// Import collection from CSV
+///
 /// `POST /api/collection/{game}/import/csv?mode=...` -> import a collection from an
 /// uploaded CSV export (Archidekt or Moxfield — the shape is sniffed from the header
 /// row). The request body is the raw CSV file (bounded by the route's body limit,
@@ -146,6 +150,8 @@ pub async fn import_collection_csv(
     Ok(Json(summary))
 }
 
+/// Get import job
+///
 /// `GET /api/collection/{game}/import/jobs/{job_id}` -> the status of a background
 /// import/sync job (queued / running / complete / error). `404` for an unknown job or
 /// one that isn't the caller's.
@@ -177,6 +183,8 @@ pub async fn get_import_job(
     Ok(Json(ImportJobResponse::from_view(job_id, view)))
 }
 
+/// Get saved import source
+///
 /// `GET /api/collection/{game}/source` -> the saved collection link for this game, or
 /// `null` if none is saved.
 #[utoipa::path(
@@ -203,6 +211,8 @@ pub async fn get_collection_source(
     Ok(Json(row.map(source_response)))
 }
 
+/// Save import source
+///
 /// `PUT /api/collection/{game}/source` -> save (upsert) the collection link for this
 /// game. Validates that the source resolves to a provider collection id; does not sync.
 #[utoipa::path(
@@ -294,6 +304,8 @@ pub async fn save_collection_source(
     Ok(Json(source_response(saved)))
 }
 
+/// Delete import source
+///
 /// `DELETE /api/collection/{game}/source` -> forget the saved collection link.
 /// Idempotent: deleting when nothing is saved still returns `204`.
 #[utoipa::path(
@@ -325,6 +337,8 @@ pub async fn delete_collection_source(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Sync collection from saved source
+///
 /// `POST /api/collection/{game}/sync` -> enqueue a re-sync from the saved collection
 /// link; the worker stamps `last_synced_at` on success. Uses smart (incremental) sync
 /// when the saved link opted into it, otherwise a full mirror/replace. Returns `202`

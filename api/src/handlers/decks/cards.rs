@@ -19,6 +19,8 @@ use crate::state::AppState;
 
 use super::{MoveDeckCardRequest, SetDeckCardRequest, load_deck, load_section, touch_deck};
 
+/// Set deck card
+///
 /// `PUT /api/decks/{game}/{deck_id}/cards/{id}` -> set the absolute counts for a card in
 /// one of the deck's sections (not a delta). Both zero removes it from that section.
 /// `404` for an unknown deck/section/card, `422` for a negative/oversized count.
@@ -106,6 +108,8 @@ pub async fn set_deck_card(
     }))
 }
 
+/// Move deck card
+///
 /// `PUT /api/decks/{game}/{deck_id}/cards/{id}/move` -> move a card from one of the deck's
 /// sections to another. If the target already holds the card, the counts are summed and the
 /// source row removed. Returns the resulting counts in the target section. `404` if the deck,

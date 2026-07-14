@@ -288,6 +288,8 @@ pub async fn get_collection_entry(
     }))
 }
 
+/// Batch owned counts
+///
 /// `POST /api/collection/{game}/owned` -> the owned counts for the subset of the
 /// given external card ids that the signed-in user actually owns, keyed by external
 /// id. Cards the user doesn't own are absent from the map (so an all-unowned page

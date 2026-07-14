@@ -58,6 +58,8 @@ pub(super) async fn user_has_public_deck(
         .is_some())
 }
 
+/// List public decks
+///
 /// `GET /api/u/{handle}/decks` -> the owner's public decks (across games), newest first.
 /// `404` when the handle is unknown **or** the user has no public deck — the same
 /// non-oracle stance as the public profile (a valid handle with nothing public is
@@ -99,6 +101,8 @@ pub async fn public_decks(
     Ok(Json(DataBody { data }))
 }
 
+/// Get public deck
+///
 /// `GET /api/u/{handle}/decks/{deck_id}` -> a public deck's full detail (the shareable
 /// view). `404` when the handle is unknown or the deck is private/absent. Carries the owner
 /// handle (so the SPA can link the author) but no other PII.
