@@ -61,7 +61,10 @@ describe('UserMenu', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('a[href^="/login"]').exists()).toBe(false)
-    // The menu labels itself with the username now (display names were removed).
-    expect(wrapper.text()).toContain('Ash')
+    // The trigger is icon-only now (#396) — no visible username/email label, just the
+    // screen-reader label naming the control.
+    expect(wrapper.text()).not.toContain('Ash')
+    expect(wrapper.text()).not.toContain('ash@pallet.town')
+    expect(wrapper.find('.sr-only').text()).toBe('Account menu')
   })
 })
