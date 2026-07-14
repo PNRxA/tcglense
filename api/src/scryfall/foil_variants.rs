@@ -25,10 +25,22 @@ use super::ingest::IngestError;
 /// it with the current sibling price just keeps it fresh as prices move. Returns the number of
 /// base rows updated (for logging).
 ///
-/// Cross-backend plain SQL: correlated scalar subquery + `||` concat + `LIKE`-free `= x || '★'`
-/// match, no `UPDATE…FROM` — so it runs byte-identically on SQLite and Postgres. Game-agnostic
-/// (the star↔base join is same-game), so the star convention is handled for whatever game has
-/// such pairs; today only MTG does.
+/// **Star-driven** (issue-#209 follow-up perf, `m..044`): the `…★` foil stars are a tiny set
+/// (~1,851 rows against ~40k nonfoil bases and ~106k cards), so the `UPDATE` starts from them —
+/// found through the partial index `idx_cards_foil_variant_star` on `finishes = 'foil' AND
+/// collector_number LIKE '%★'` — and joins each back to its base by **stripping the trailing
+/// star** (`substr(..., 1, length(...) - 1)`; the star is a single char, so this is exact). The
+/// earlier base-driven form re-derived the match with a correlated subquery per candidate, which
+/// made the planner sequential-scan the whole wide `cards` heap twice (once for the ~40k nonfoil
+/// bases, once to hash the ~12k foil rows) — ~8 s on the weak, cold prod Postgres. This form
+/// scans only the ~1,851 stars and point-seeks each base, ~3.9× fewer buffers there, and is
+/// verified to produce byte-identical results (0 mismatches over the 1,627 real pairs).
+///
+/// Cross-backend plain SQL: `UPDATE…FROM` self-join + `substr`/`length` + `LIKE` + `||` concat,
+/// all of which render byte-identically on SQLite (≥ 3.33 for `UPDATE…FROM`; the shipping
+/// `IS DISTINCT FROM` below already requires ≥ 3.39) and Postgres — no `db::Dialect` gate.
+/// Game-agnostic (the star↔base join is same-game), so the star convention is handled for
+/// whatever game has such pairs; today only MTG does.
 pub(crate) async fn enrich_foil_variant_prices(
     db: &DatabaseConnection,
 ) -> Result<u64, IngestError> {
@@ -37,41 +49,21 @@ pub(crate) async fn enrich_foil_variant_prices(
 }
 
 const ENRICH_SQL: &str = r#"
-UPDATE cards
-SET price_usd_foil = (
-        SELECT sc.price_usd_foil
-        FROM cards sc
-        WHERE sc.game = cards.game
-          AND sc.set_code = cards.set_code
-          AND sc.oracle_id = cards.oracle_id
-          AND sc.finishes = 'foil'
-          AND sc.collector_number = cards.collector_number || '★'
-        LIMIT 1
-    )
-WHERE cards.id IN (
-        SELECT b.id
-        FROM cards b
-        JOIN cards s ON s.game = b.game
-                    AND s.set_code = b.set_code
-                    AND s.oracle_id = b.oracle_id
-                    AND s.finishes = 'foil'
-                    AND s.collector_number = b.collector_number || '★'
-        WHERE b.finishes = 'nonfoil'
-    )
-  -- Only rewrite a base whose foil price would actually change. Without this, every
-  -- matched base is re-written each tick even when the sibling price is unchanged,
-  -- churning an MVCC tuple + indexes for nothing. `IS DISTINCT FROM` is null-safe and
-  -- valid on both Postgres and SQLite (≥ 3.39).
-  AND cards.price_usd_foil IS DISTINCT FROM (
-        SELECT sc.price_usd_foil
-        FROM cards sc
-        WHERE sc.game = cards.game
-          AND sc.set_code = cards.set_code
-          AND sc.oracle_id = cards.oracle_id
-          AND sc.finishes = 'foil'
-          AND sc.collector_number = cards.collector_number || '★'
-        LIMIT 1
-    )"#;
+UPDATE cards AS base
+SET price_usd_foil = star.price_usd_foil
+FROM cards AS star
+WHERE star.finishes = 'foil'
+  AND star.collector_number LIKE '%★'
+  AND base.game = star.game
+  AND base.set_code = star.set_code
+  AND base.oracle_id = star.oracle_id
+  AND base.finishes = 'nonfoil'
+  AND base.collector_number = substr(star.collector_number, 1, length(star.collector_number) - 1)
+  -- Only rewrite a base whose foil price would actually change. Without this, every matched base
+  -- is re-written each tick even when the sibling price is unchanged, churning an MVCC tuple +
+  -- indexes for nothing. `IS DISTINCT FROM` is null-safe and valid on both Postgres and SQLite
+  -- (≥ 3.39).
+  AND base.price_usd_foil IS DISTINCT FROM star.price_usd_foil"#;
 
 #[cfg(test)]
 mod tests {
@@ -127,14 +119,19 @@ mod tests {
         insert(&db, 4, "33★", "foil", "ora-proctor", None, Some("9.99")).await;
         // A plain card with no star sibling -> untouched.
         insert(&db, 5, "100", "nonfoil", "ora-plain", Some("5.00"), None).await;
+        // An alphanumeric collector number -> the star-strip (`substr(..., length - 1)`) must
+        // drop only the trailing ★, matching "W3a" not a numeric prefix.
+        insert(&db, 6, "W3a", "nonfoil", "ora-alpha", Some("4.00"), None).await;
+        insert(&db, 7, "W3a★", "foil", "ora-alpha", None, Some("3.33")).await;
 
         let n = enrich_foil_variant_prices(&db).await.expect("enrich");
 
-        assert_eq!(n, 1, "only the clean nonfoil base is enriched");
+        assert_eq!(n, 2, "only the clean nonfoil bases are enriched");
         assert_eq!(foil_price(&db, "ext-1").await.as_deref(), Some("29.39"), "base gets star foil price");
         assert_eq!(foil_price(&db, "ext-2").await.as_deref(), Some("29.39"), "star unchanged");
         assert_eq!(foil_price(&db, "ext-3").await.as_deref(), Some("2.00"), "ambiguous base kept its own");
         assert_eq!(foil_price(&db, "ext-5").await, None, "no-sibling card untouched");
+        assert_eq!(foil_price(&db, "ext-6").await.as_deref(), Some("3.33"), "alphanumeric base gets star foil price");
     }
 
     #[tokio::test]
