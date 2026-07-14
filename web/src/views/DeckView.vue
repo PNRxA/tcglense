@@ -196,15 +196,21 @@ function removeSection(sectionId: number, name: string, count: number) {
 }
 function moveSection(sectionId: number, delta: number) {
   if (!deck.value) return
+  // Swap against the VISIBLE neighbour (skipping hidden empty sections), else the up/down
+  // buttons appear to no-op when empty sections sit between the visible ones. The full
+  // (complete) id list is still submitted, so the backend's "exactly the deck's sections"
+  // check holds.
+  const visible = visibleSections.value
+  const vi = visible.findIndex((s) => s.id === sectionId)
+  const vj = vi + delta
+  const neighbour = visible[vj]
+  if (vi < 0 || !neighbour) return
   const ids = sections.value.map((s) => s.id)
   const i = ids.indexOf(sectionId)
-  const j = i + delta
-  if (i < 0 || j < 0 || j >= ids.length) return
-  const a = ids[i]
-  const b = ids[j]
-  if (a === undefined || b === undefined) return
-  ids[i] = b
-  ids[j] = a
+  const j = ids.indexOf(neighbour.id)
+  if (i < 0 || j < 0) return
+  ids[i] = neighbour.id
+  ids[j] = sectionId
   void reorderSections.mutateAsync({ game: props.game, deckId: deck.value.id, sectionIds: ids })
 }
 </script>
@@ -361,14 +367,15 @@ function moveSection(sectionId: number, delta: number) {
             <button
               class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
               aria-label="Move section up"
-              :disabled="index === 0 && !showEmpty"
+              :disabled="index === 0"
               @click="moveSection(section.id, -1)"
             >
               <ChevronUp class="size-4" />
             </button>
             <button
-              class="text-muted-foreground hover:text-foreground rounded p-1"
+              class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
               aria-label="Move section down"
+              :disabled="index === visibleSections.length - 1"
               @click="moveSection(section.id, 1)"
             >
               <ChevronDown class="size-4" />

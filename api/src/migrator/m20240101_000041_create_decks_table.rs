@@ -79,6 +79,33 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // Backs the folder-delete `SET NULL` child-side lookup (`WHERE folder_id = ?`) and
+        // the per-folder deck-count aggregate, so neither seq-scans the `decks` table.
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_decks_folder_id")
+                    .table(Decks::Table)
+                    .col(Decks::FolderId)
+                    .to_owned(),
+            )
+            .await?;
+
+        // Backs the cross-game public deck list (`WHERE user_id = ? AND is_public`
+        // ordered by `updated_at DESC, id DESC`) — the `/api/u/{handle}/decks` read.
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_decks_user_public_updated_at_id")
+                    .table(Decks::Table)
+                    .col(Decks::UserId)
+                    .col(Decks::IsPublic)
+                    .col(Decks::UpdatedAt)
+                    .col(Decks::Id)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 

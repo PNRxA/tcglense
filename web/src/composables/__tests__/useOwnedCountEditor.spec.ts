@@ -292,10 +292,12 @@ describe('useOwnedCountEditor', () => {
     const cardId = ref('card-a')
     const seed = ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 })
     const saves: Array<[string, number, number]> = []
-    const saveFn = vi.fn(async (id: string, q: number, f: number) => {
-      saves.push([id, q, f])
-      return {}
-    })
+    const saveFn = vi.fn<(id: string, q: number, f: number) => Promise<unknown>>(
+      async (id, q, f) => {
+        saves.push([id, q, f])
+        return {}
+      },
+    )
     const host = defineComponent({
       setup: () => useOwnedCountEditor(game, cardId, seed, { saveFn }),
       render: () => null,

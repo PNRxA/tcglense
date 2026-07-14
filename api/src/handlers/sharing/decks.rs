@@ -26,6 +26,22 @@ fn not_here() -> AppError {
     AppError::NotFound("deck not found".to_string())
 }
 
+/// Resolve a public handle, collapsing its "unknown handle" 404 into the same
+/// [`not_here`] body a private/absent deck returns — so an unknown handle and a real
+/// handle-with-nothing-public are indistinguishable (no username-enumeration oracle).
+/// A genuine (non-404) error is preserved.
+async fn resolve_or_not_here(
+    state: &AppState,
+    handle: &str,
+) -> Result<crate::entities::user::Model, AppError> {
+    resolve_public_user(state, handle)
+        .await
+        .map_err(|e| match e {
+            AppError::NotFound(_) => not_here(),
+            other => other,
+        })
+}
+
 /// `GET /api/u/{handle}/decks` -> the owner's public decks (across games), newest first.
 /// `404` when the handle is unknown **or** the user has no public deck — the same
 /// non-oracle stance as the public profile (a valid handle with nothing public is
@@ -34,7 +50,7 @@ pub async fn public_decks(
     State(state): State<AppState>,
     Path(handle): Path<String>,
 ) -> Result<Json<DataBody<Vec<DeckResponse>>>, AppError> {
-    let user = resolve_public_user(&state, &handle).await?;
+    let user = resolve_or_not_here(&state, &handle).await?;
     let decks = Deck::find()
         .filter(deck::Column::UserId.eq(user.id))
         .filter(deck::Column::IsPublic.eq(true))
@@ -62,7 +78,7 @@ pub async fn public_deck(
     State(state): State<AppState>,
     Path((handle, deck_id)): Path<(String, i32)>,
 ) -> Result<Json<DeckDetail>, AppError> {
-    let user = resolve_public_user(&state, &handle).await?;
+    let user = resolve_or_not_here(&state, &handle).await?;
     let deck = Deck::find_by_id(deck_id)
         .filter(deck::Column::UserId.eq(user.id))
         .filter(deck::Column::IsPublic.eq(true))

@@ -170,7 +170,9 @@ pub async fn delete_folder(
 }
 
 /// 409 if another folder for this `(user, game)` already has `name` (excluding `exclude_id`
-/// on a rename). A belt to the unique index, so a duplicate is a clean 409 not a 500.
+/// on a rename). A belt in front of the unique index so an ordinary duplicate is a clean
+/// 409; a rare concurrent double-submit that races past this check still surfaces the
+/// index violation as a 500 (self-inflicted, no data corruption — the index holds).
 async fn ensure_unique_name(
     state: &AppState,
     user_id: i32,

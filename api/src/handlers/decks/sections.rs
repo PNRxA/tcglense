@@ -6,8 +6,10 @@ use std::collections::HashMap;
 
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
+use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    TransactionTrait,
 };
 
 use crate::auth::extractor::WritableUser;
@@ -125,44 +127,59 @@ pub async fn delete_section(
         .ok_or_else(|| AppError::Conflict("a deck must have at least one section".to_string()))?;
 
     let now = Utc::now();
+    // All of the reassign + delete runs in one transaction so a mid-way failure can't leave
+    // the deck half-migrated (some cards re-filed, some stranded, the section still present).
+    let txn = state.db.begin().await?;
+
     let cards = DeckCard::find()
         .filter(deck_card::Column::DeckId.eq(deck.id))
         .filter(deck_card::Column::SectionId.eq(section.id))
-        .all(&state.db)
+        .all(&txn)
         .await?;
-    // Cards already in the fallback, keyed by card id, so a moved card merges rather than
-    // colliding on the (deck, card, section) unique index.
+    // Cards already in the fallback, keyed by card id: a moved card must MERGE onto these
+    // rather than collide on the (deck, card, section) unique index.
     let fallback_cards: HashMap<i32, deck_card::Model> = DeckCard::find()
         .filter(deck_card::Column::DeckId.eq(deck.id))
         .filter(deck_card::Column::SectionId.eq(fallback.id))
-        .all(&state.db)
+        .all(&txn)
         .await?
         .into_iter()
         .map(|c| (c.card_id, c))
         .collect();
 
-    for card in cards {
+    // The colliding minority (also in the fallback) merges one row at a time below; the
+    // non-colliding majority re-files in ONE bulk UPDATE rather than a round-trip per card.
+    let colliding: Vec<i32> = cards
+        .iter()
+        .map(|c| c.card_id)
+        .filter(|id| fallback_cards.contains_key(id))
+        .collect();
+    let mut bulk = DeckCard::update_many()
+        .col_expr(deck_card::Column::SectionId, Expr::value(fallback.id))
+        .col_expr(deck_card::Column::UpdatedAt, Expr::value(now))
+        .filter(deck_card::Column::DeckId.eq(deck.id))
+        .filter(deck_card::Column::SectionId.eq(section.id));
+    if !colliding.is_empty() {
+        bulk = bulk.filter(deck_card::Column::CardId.is_not_in(colliding.iter().copied()));
+    }
+    bulk.exec(&txn).await?;
+
+    for card in &cards {
         if let Some(target) = fallback_cards.get(&card.card_id) {
             let mut active: deck_card::ActiveModel = target.clone().into();
             active.quantity = Set((target.quantity + card.quantity).min(MAX_CARD_QUANTITY));
             active.foil_quantity =
                 Set((target.foil_quantity + card.foil_quantity).min(MAX_CARD_QUANTITY));
             active.updated_at = Set(now);
-            active.update(&state.db).await?;
-            DeckCard::delete_by_id(card.id).exec(&state.db).await?;
-        } else {
-            let mut active: deck_card::ActiveModel = card.into();
-            active.section_id = Set(fallback.id);
-            active.updated_at = Set(now);
-            active.update(&state.db).await?;
+            active.update(&txn).await?;
+            DeckCard::delete_by_id(card.id).exec(&txn).await?;
         }
     }
 
     // The section is now empty, so this deletes nothing further via the card FK.
-    DeckSection::delete_by_id(section.id)
-        .exec(&state.db)
-        .await?;
-    touch_deck(&state.db, deck.id, now).await?;
+    DeckSection::delete_by_id(section.id).exec(&txn).await?;
+    touch_deck(&txn, deck.id, now).await?;
+    txn.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -194,15 +211,20 @@ pub async fn reorder_sections(
     let now = Utc::now();
     let by_id: HashMap<i32, deck_section::Model> =
         sections.into_iter().map(|s| (s.id, s)).collect();
+    // One transaction so a partial reorder can't leave the deck's positions inconsistent
+    // (a mid-loop failure would otherwise strand some sections at their new position and
+    // others at the old).
+    let txn = state.db.begin().await?;
     let mut ordered = Vec::with_capacity(payload.section_ids.len());
     for (position, id) in payload.section_ids.iter().enumerate() {
         let section = by_id.get(id).expect("membership checked above").clone();
         let mut active: deck_section::ActiveModel = section.into();
         active.position = Set(position as i32);
         active.updated_at = Set(now);
-        ordered.push(DeckSectionResponse::from(active.update(&state.db).await?));
+        ordered.push(DeckSectionResponse::from(active.update(&txn).await?));
     }
-    touch_deck(&state.db, deck.id, now).await?;
+    touch_deck(&txn, deck.id, now).await?;
+    txn.commit().await?;
 
     Ok(Json(DataBody { data: ordered }))
 }

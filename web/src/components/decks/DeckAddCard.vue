@@ -42,13 +42,33 @@ const targetSectionId = ref<number | null>(null)
 watch(
   () => props.sections,
   (sections) => {
-    const first = sections[0]
-    if (targetSectionId.value == null && first) targetSectionId.value = first.id
+    // Re-validate on every sections change: keep the current target if it still exists,
+    // else fall back to the first section (so deleting the targeted section can't leave the
+    // box pointed at a section that's gone).
+    const valid =
+      targetSectionId.value != null && sections.some((s) => s.id === targetSectionId.value)
+    if (!valid) targetSectionId.value = sections[0]?.id ?? null
   },
   { immediate: true },
 )
 
 const setCard = useSetDeckCardMutation()
+
+// Optimistic per-(card, section) count so rapid re-adds (building a playset by clicking the
+// same printing several times) stack instead of all reading `quantity=0` off the deck cache
+// that only refreshes after each write's refetch lands. Cleared once the refetch catches up.
+const optimistic = new Map<string, number>()
+const keyOf = (cardId: string, sectionId: number) => `${cardId}:${sectionId}`
+watch(
+  () => props.cards,
+  (cards) => {
+    for (const [k, v] of optimistic) {
+      const [cardId, sec] = k.split(':')
+      const entry = cards.find((c) => c.card.id === cardId && c.section_id === Number(sec))
+      if ((entry?.quantity ?? 0) >= v) optimistic.delete(k)
+    }
+  },
+)
 
 function pickName(name: string) {
   pickedName.value = name
@@ -62,14 +82,17 @@ function currentCounts(cardId: string, sectionId: number): { quantity: number; f
 async function addPrinting(card: Card) {
   const sectionId = targetSectionId.value
   if (sectionId == null) return
-  const current = currentCounts(card.id, sectionId)
+  const k = keyOf(card.id, sectionId)
+  const server = currentCounts(card.id, sectionId)
+  const next = (optimistic.get(k) ?? server.quantity) + 1
+  optimistic.set(k, next)
   await setCard.mutateAsync({
     game: props.game,
     deckId: props.deckId,
     sectionId,
     id: card.id,
-    quantity: current.quantity + 1,
-    foil_quantity: current.foil,
+    quantity: next,
+    foil_quantity: server.foil,
   })
 }
 

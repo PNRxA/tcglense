@@ -399,8 +399,8 @@ pub(crate) fn validate_optional(
 /// Bump a deck's `updated_at` so an edit to its cards or sections bubbles it to the top of
 /// the recency-sorted deck list. One cheap indexed UPDATE (the caller has already proved
 /// ownership via [`load_deck`]).
-pub(crate) async fn touch_deck(
-    db: &sea_orm::DatabaseConnection,
+pub(crate) async fn touch_deck<C: sea_orm::ConnectionTrait>(
+    db: &C,
     deck_id: i32,
     now: DateTimeUtc,
 ) -> Result<(), AppError> {
@@ -416,12 +416,16 @@ pub(crate) async fn touch_deck(
 /// Total copies (regular + foil) held across a set of decks, keyed by deck id — one
 /// grouped aggregate so the deck list doesn't fetch every card. Decks with no cards are
 /// simply absent (the caller defaults them to `0`).
+///
+/// **Inner-joins `cards`** so a holding whose catalog row is gone (a re-import) is skipped —
+/// matching `deck_detail`'s LEFT-join-then-skip fold, so the list `card_count` and the
+/// detail `summary.total_cards` agree for the same deck.
 pub(crate) async fn card_counts_by_deck(
     db: &sea_orm::DatabaseConnection,
     deck_ids: &[i32],
 ) -> Result<std::collections::HashMap<i32, i64>, AppError> {
     use crate::entities::deck_card;
-    use crate::entities::prelude::DeckCard;
+    use crate::entities::prelude::{Card, DeckCard};
     use sea_orm::sea_query::Expr;
     use sea_orm::{QueryOrder, QuerySelect};
 
@@ -431,7 +435,11 @@ pub(crate) async fn card_counts_by_deck(
     let rows: Vec<(i32, i64)> = DeckCard::find()
         .select_only()
         .column(deck_card::Column::DeckId)
-        .column_as(Expr::cust("SUM(quantity + foil_quantity)"), "copies")
+        .column_as(
+            Expr::cust("SUM(deck_cards.quantity + deck_cards.foil_quantity)"),
+            "copies",
+        )
+        .inner_join(Card)
         .filter(deck_card::Column::DeckId.is_in(deck_ids.iter().copied()))
         .group_by(deck_card::Column::DeckId)
         .order_by_asc(deck_card::Column::DeckId)

@@ -37,7 +37,7 @@ const { data: games } = useGamesQuery()
 const gameName = computed(
   () => games.value?.data.find((g) => g.id === props.game)?.name ?? props.game.toUpperCase(),
 )
-usePageMeta({ title: `Your ${gameName.value} decks`, noindex: true })
+usePageMeta({ title: computed(() => `Your ${gameName.value} decks`), noindex: true })
 
 const decksQuery = useDecksQuery(game)
 const foldersQuery = useFoldersQuery(game)

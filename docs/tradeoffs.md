@@ -303,9 +303,9 @@ catalog) is planned but not implemented.
   their own tables (`decks` / `deck_sections` / `deck_cards` / `deck_folders`), their own
   `handlers::decks` module, and their own web api/composable modules keyed under
   `deck`/`decks`. But a deck *card* is shape-identical to a holding, so `deck_card::Model`
-  implements `HoldingCounts` and the deck reads reuse `summarize_holdings` / the `Card` DTO /
-  `apply_card_sort` for free; the only duplicated backend query is the one `deck_id`-scoped
-  base select. This is the CLAUDE.md anti-fork rule applied correctly — reuse the *lower*
+  implements `HoldingCounts` and the deck reads reuse `summarize_holdings` and the `Card` DTO
+  for free (the deck detail sorts its cards by name directly rather than through
+  `apply_card_sort`); the only duplicated backend query is the one `deck_id`-scoped base select. This is the CLAUDE.md anti-fork rule applied correctly — reuse the *lower*
   seams, don't force the singleton engine.
 - **Sections are Archidekt-style categories, not fixed boards.** A `deck_sections` table
   (per-deck, `position`-ordered, unique name) with `deck_cards.section_id` gives custom,
@@ -320,7 +320,8 @@ catalog) is planned but not implemented.
 - **Per-deck sharing is a boolean column, not a visibility table.** Collections needed the
   separate `collection_visibility` table because a bag of holdings has no owning row to hang a
   flag on. A deck *is* the shareable unit (one row, 1:1), so `is_public` lives on the deck row
-  and `require_public_deck` is a plain filtered load. Everything else mirrors #361 verbatim —
+  and the public read (`sharing::decks::public_deck`) is a plain `is_public`-filtered load
+  (no helper). Everything else mirrors #361 verbatim —
   `resolve_public_user`, the username-first `409`, the single `404` for every miss (no
   existence oracle), and the CDN-cacheable `public_holdings` group. Deck ids are globally
   unique, so the public URL is game-agnostic (`/api/u/{handle}/decks/{id}`), a static sibling
