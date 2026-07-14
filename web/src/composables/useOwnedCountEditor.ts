@@ -7,7 +7,10 @@ import {
 
 /** Which per-user card list a count editor/control reads and writes: the collection
  * (cards you own, the default) or the wish list (cards you want to buy, issue #167).
- * The two share the holding shape and endpoints, so the editor plumbing is common. */
+ * The two share the holding shape and endpoints, so the editor plumbing is common.
+ * A deck (issue #363) is a *different* cardinality — one of many, keyed by
+ * (deck, section, card) rather than a per-user singleton — so it drives this editor via
+ * the `saveFn` injection below rather than a `list` value. */
 export type CardListTarget = 'collection' | 'wishlist'
 
 /** The authoritative owned counts to seed an editor from (the server holding). */
@@ -47,7 +50,16 @@ export function useOwnedCountEditor(
   game: Ref<string>,
   cardId: Ref<string>,
   seed: Ref<OwnedCountSeed | undefined>,
-  opts: { list?: CardListTarget; kind?: 'card' | 'product' } = {},
+  opts: {
+    list?: CardListTarget
+    kind?: 'card' | 'product'
+    /** Override the save with an injected absolute-count writer (external id, regular,
+     * foil). Decks use this to write a (deck, section, card) row through their own
+     * mutation while reusing all the debounce/serialize/dirty/flush machinery here — no
+     * fork, and existing collection/wish-list callers are untouched (they leave it unset
+     * and keep the internal mutation path). */
+    saveFn?: (id: string, quantity: number, foilQuantity: number) => Promise<unknown>
+  } = {},
 ) {
   const mutation =
     opts.kind === 'product'
@@ -55,6 +67,22 @@ export function useOwnedCountEditor(
       : opts.list === 'wishlist'
         ? useSetWishlistEntryMutation()
         : useSetCollectionEntryMutation()
+
+  // Tracks an in-flight injected save (the internal mutation exposes `isPending`; an
+  // injected `saveFn` needs its own signal for the `saving` computed below).
+  const injectedPending = ref(false)
+
+  /** Persist absolute counts for a card id: the injected writer when provided, else the
+   * list mutation. */
+  function persist(id: string, quantity: number, foilQuantity: number): Promise<unknown> {
+    if (opts.saveFn) {
+      injectedPending.value = true
+      return opts.saveFn(id, quantity, foilQuantity).finally(() => {
+        injectedPending.value = false
+      })
+    }
+    return mutation.mutateAsync({ game: game.value, id, quantity, foil_quantity: foilQuantity })
+  }
 
   const regular = ref(0)
   const foil = ref(0)
@@ -87,11 +115,7 @@ export function useOwnedCountEditor(
       timer = null
       const quantity = regular.value
       const foilQuantity = foil.value
-      inFlight = inFlight.then(() =>
-        mutation
-          .mutateAsync({ game: game.value, id: oldId, quantity, foil_quantity: foilQuantity })
-          .catch(() => {}),
-      )
+      inFlight = inFlight.then(() => persist(oldId, quantity, foilQuantity).catch(() => {}))
     }
     dirty.value = false
     saveError.value = false
@@ -99,13 +123,7 @@ export function useOwnedCountEditor(
 
   function runSave() {
     const gen = editGen
-    return mutation
-      .mutateAsync({
-        game: game.value,
-        id: cardId.value,
-        quantity: regular.value,
-        foil_quantity: foil.value,
-      })
+    return persist(cardId.value, regular.value, foil.value)
       .then(() => {
         saveError.value = false
       })
@@ -151,8 +169,10 @@ export function useOwnedCountEditor(
     scheduleSave()
   }
 
-  // A save is outstanding while the mutation is in flight or an edit is still debouncing.
-  const saving = computed(() => mutation.isPending.value || dirty.value)
+  // A save is outstanding while a write is in flight or an edit is still debouncing.
+  const saving = computed(
+    () => mutation.isPending.value || injectedPending.value || dirty.value,
+  )
 
   return { regular, foil, adjust, dirty, saving, saveError }
 }

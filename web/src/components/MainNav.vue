@@ -51,6 +51,7 @@ function warmSection(value: string) {
   } else if (value === 'collection') {
     warm('/collection')
     warm('/scan')
+    warm('/decks')
     for (const game of games.value) warm(`/collection/${game.id}`)
   } else if (value === 'wishlist') {
     warm('/wishlist')
@@ -160,9 +161,17 @@ function warmSection(value: string) {
                 >
               </NavigationMenuLink>
             </li>
-            <!-- Scan cards: rapid-add via the phone/webcam camera. A distinct action, so
-                 it sits below the per-game links behind a divider. -->
+            <!-- Decks + Scan: distinct actions, so they sit below the per-game links
+                 behind a divider. Decks (issue #363): build and organise decks of cards. -->
             <li class="mt-1 border-t pt-2">
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/decks" @pointerenter="warm('/decks')" @focusin="warm('/decks')">
+                  <Layers aria-hidden="true" />
+                  Decks
+                </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <li>
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
                 <RouterLink to="/scan" @pointerenter="warm('/scan')" @focusin="warm('/scan')">
                   <ScanLine aria-hidden="true" />

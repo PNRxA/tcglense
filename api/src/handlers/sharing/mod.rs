@@ -15,9 +15,11 @@ use crate::entities::{collection_visibility as vis, user};
 use crate::error::AppError;
 use crate::state::AppState;
 
+pub mod decks;
 pub mod public;
 pub mod visibility;
 
+pub use decks::{public_deck, public_decks};
 pub use public::{
     public_list, public_owned_counts, public_profile, public_set_drops, public_set_subtypes,
     public_sets, public_summary,

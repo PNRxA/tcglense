@@ -16,7 +16,7 @@ use sea_orm::sea_query::{Expr, SimpleExpr};
 use serde::{Deserialize, Serialize};
 
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
-use crate::entities::{card, card_set, collection_item, wishlist_item};
+use crate::entities::{card, card_set, collection_item, deck_card, wishlist_item};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -59,6 +59,16 @@ impl HoldingCounts for collection_item::Model {
 }
 
 impl HoldingCounts for wishlist_item::Model {
+    fn quantity(&self) -> i32 {
+        self.quantity
+    }
+
+    fn foil_quantity(&self) -> i32 {
+        self.foil_quantity
+    }
+}
+
+impl HoldingCounts for deck_card::Model {
     fn quantity(&self) -> i32 {
         self.quantity
     }

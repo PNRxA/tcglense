@@ -157,6 +157,16 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`/api/wishlist/{game}/products*`, external TCGplayer ids on the wire, same
   both-zero-deletes rule); the collection deliberately has **no** sealed surface — don't
   add one.
+- **Decks** (`/api/decks/{game}*`, issue #363) are a **container** surface — many per user,
+  in `decks`/`deck_sections`/`deck_cards`/`deck_folders` — **not** a collection/wishlist twin,
+  so they don't ride `makeHoldingApi`/`makeHoldingQueries`; they live beside it and only reuse
+  the *lower* seams (`deck_card::Model` impls `HoldingCounts`; the `Card` DTO). A `deck_card`
+  has **no `user_id`** (it hangs off `deck_id`), so every deck route must `load_deck` to prove
+  ownership first — a deck that isn't the caller's is **404, not 403**. Per-deck sharing is an
+  `is_public` **column** on the deck row (not a `collection_visibility`-style table — a deck is
+  1:1 with the shareable unit), public at `/api/u/{handle}/decks/{id}` (username-first `409`,
+  reusing #361's `resolve_public_user`). Deck **import** from Archidekt/Moxfield is a follow-up
+  (issue #389) — a deck is written whole, never through the `collection_items` reconcile engine.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

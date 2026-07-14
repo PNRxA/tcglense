@@ -279,4 +279,43 @@ describe('useOwnedCountEditor', () => {
     expect(calls[0]!.url).toContain('/api/wishlist/mtg/products/prod-1')
     expect(calls[0]!.body).toEqual({ quantity: 0, foil_quantity: 0 })
   })
+
+  it('routes saves through an injected saveFn (the deck path), not the list mutation', async () => {
+    // Decks reuse this editor via an injected `saveFn` (they write a (deck, section, card)
+    // row through their own mutation). Verify the debounce/collapse still applies and that
+    // NO collection/wish-list PUT is issued.
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().accessToken = 'test-token'
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const game = ref('mtg')
+    const cardId = ref('card-a')
+    const seed = ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 })
+    const saves: Array<[string, number, number]> = []
+    const saveFn = vi.fn(async (id: string, q: number, f: number) => {
+      saves.push([id, q, f])
+      return {}
+    })
+    const host = defineComponent({
+      setup: () => useOwnedCountEditor(game, cardId, seed, { saveFn }),
+      render: () => null,
+    })
+    const wrapper = mount(host, {
+      global: { plugins: [pinia, [VueQueryPlugin, { queryClient }]] },
+    })
+    mounted.push(wrapper)
+    const editor = wrapper.vm as unknown as {
+      adjust: (which: 'quantity' | 'foil', delta: number) => void
+    }
+    await flushPromises()
+    editor.adjust('quantity', 1)
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+
+    // One collapsed call to the injected writer with the final absolute count; no list PUT.
+    expect(saveFn).toHaveBeenCalledTimes(1)
+    expect(saves).toEqual([['card-a', 2, 0]])
+    expect(putBodies()).toHaveLength(0)
+  })
 })

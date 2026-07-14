@@ -684,6 +684,73 @@ The wish list and the collection never read or write each other's rows (pinned b
 security test); browse-grid badges/ghosts on wish-list pages come from `/counts` the
 same way the catalog's come from `/owned`.
 
+## Decks API contract
+
+Per-user **decks** (issue #363) — build and organise decks of cards for a game.
+Authenticated (`Authorization: Bearer <access_token>`, via `AuthUser` reads /
+`WritableUser` writes), game-namespaced under `/api/decks/{game}`, in the router's
+`private` group (so every response is `Cache-Control: no-store` and per-user rate
+limited). Unlike the collection / wish list (one implicit list per `(user, game)`), a
+user has **many** decks, so the routes nest a `{deck_id}` and add CRUD verbs. Card ids in
+a path are the **external** card id, resolved to the internal `cards.id` on write (so a
+deck card survives a catalog re-import — same as the collection).
+
+A deck is three tables: `entities/deck.rs` (`decks` — the deck row, carrying `name`,
+`description`, `format`, a nullable `folder_id`, and an `is_public` flag), `deck_section.rs`
+(`deck_sections` — the Archidekt-style categories a deck's cards are filed into, one row per
+`(deck, name)`, ordered by `position`), and `deck_card.rs` (`deck_cards` — one row per
+`(deck, card, section)`, the same two-count `{ quantity, foil_quantity }` shape as a holding
+so it reuses the shared valuation/summary machinery; both counts zero deletes the row). Decks
+are grouped at the deck level into `deck_folder.rs` (`deck_folders`). All four cascade-delete
+from `users`; deleting a deck cascades its sections + cards, and deleting a folder **ungroups**
+its decks (`folder_id → NULL`) rather than deleting them.
+
+**Ownership.** A `deck_card`/`deck_section` has no `user_id` — it hangs off `deck_id` — so
+every deck-scoped route first proves the parent deck belongs to the token user; a deck (or
+folder/section) that isn't the caller's is a **404** (never 403 — no existence oracle over
+deck ids), matching the public-sharing surface.
+
+| Method & path | Body | Returns |
+|---------------|------|---------|
+| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections) |
+| `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
+| `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
+| `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
+| `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
+| `PUT /api/decks/{game}/{deck_id}/folder` | `{ folder_id }` | `Deck` — file the deck under a folder, or `null` to loosen it (`404` for a folder that isn't the caller's) |
+| `PUT /api/decks/{game}/{deck_id}/visibility` | `{ public }` | `DeckVisibility { public, handle }` — enable/disable public sharing. Enabling **requires a username first** (a public deck is addressed by handle) — else **409** (the SPA prompts the username step). `WritableUser`, so a read-only key is 403 |
+| `GET /api/decks/{game}/folders` | — | `{ data: DeckFolder[] }` — the user's folders (alphabetical), each `DeckFolder = { id, name, deck_count }` |
+| `POST /api/decks/{game}/folders` | `{ name }` | `DeckFolder` — create a folder. `409` if the name already exists; `422` over the cap (500) |
+| `PUT /api/decks/{game}/folders/{folder_id}` | `{ name }` | `DeckFolder` — rename |
+| `DELETE /api/decks/{game}/folders/{folder_id}` | — | `204` — delete (its decks are ungrouped, not deleted) |
+| `POST /api/decks/{game}/{deck_id}/sections` | `{ name }` | `DeckSection { id, name, position }` — add a custom section (appended). `409` duplicate name; `422` over the per-deck cap (200) |
+| `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` | `{ name?, position? }` | `DeckSection` — rename and/or reposition |
+| `DELETE /api/decks/{game}/{deck_id}/sections/{section_id}` | — | `204` — delete a section, **moving its cards** to the deck's first remaining section (merging counts on a collision). `409` if it's the deck's only section (a deck must keep ≥ 1) |
+| `PUT /api/decks/{game}/{deck_id}/sections/reorder` | `{ section_ids }` | `{ data: DeckSection[] }` — set the section order; `section_ids` must be exactly the deck's sections (`422` otherwise) |
+| `PUT /api/decks/{game}/{deck_id}/cards/{id}` | `{ quantity, foil_quantity, section_id }` | `{ quantity, foil_quantity }` — set the absolute counts for a card in one section (both zero removes it there). `404` unknown deck/section/card, `422` negative/oversized |
+| `PUT /api/decks/{game}/{deck_id}/cards/{id}/move` | `{ from_section_id, to_section_id }` | `{ quantity, foil_quantity }` — move a card between two of the deck's sections (merging counts on a collision) |
+
+`DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
+sections, cards, created_at, updated_at }` — `summary` is the shared `CollectionSummary`
+(reused for the value/copy aggregates; the deck UI ignores the bulk slice), `sections` are
+`DeckSection[]` in display order, and `cards` are `DeckCardEntry[]` (`{ card, section_id,
+quantity, foil_quantity }`, the full catalog `Card` plus which section it sits in — a
+deck-specific DTO, since a `CollectionEntry` has no section). The default seeded sections are
+Archidekt-flavoured (Commander, Creatures, …, the functional categories Ramp / Removal /
+Tutor / …, and Maybeboard) — see `docs/tradeoffs.md`.
+
+**Public deck sharing** reuses the collection's handle namespace (issue #361's model, but per
+deck): a deck's `is_public` column exposes a read-only view, and these token-less reads live in
+the CDN-cacheable `public_holdings` router group (ETag'd, `PUBLIC_HOLDINGS_CACHE`). Deck ids are
+globally unique, so no game segment is needed. Every miss — unknown handle, or a private/absent
+deck — is the same **404** (no existence oracle), and the public `DeckDetail` carries only the
+owner handle (no email/PII).
+
+| Method & path | Returns |
+|---------------|---------|
+| `GET /api/u/{handle}/decks` | `{ data: Deck[] }` — the owner's public decks (across games), newest first. `404` when the handle is unknown **or** the user has no public deck (non-oracle, like the public profile) |
+| `GET /api/u/{handle}/decks/{deck_id}` | `DeckDetail` — one public deck (the shareable view). `404` if private/absent |
+
 ## Dataset mirror
 
 Optional public endpoints (`handlers::mirror`), wired **only when `MIRROR_ENABLED=true`**

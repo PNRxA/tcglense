@@ -47,6 +47,7 @@ function warmAll(open: boolean) {
     for (const game of games.value) prefetchRouteChunks(router, `${s.base}/${game.id}`)
   }
   prefetchRouteChunks(router, '/scan')
+  prefetchRouteChunks(router, '/decks')
   prefetchRouteChunks(router, '/docs')
 }
 
@@ -157,6 +158,10 @@ const docsLinkClass =
             Scan cards
           </RouterLink>
         </Button>
+        <RouterLink to="/decks" :class="docsLinkClass">
+          <Layers class="mx-0.5 size-4" aria-hidden="true" />
+          Decks
+        </RouterLink>
         <RouterLink to="/docs" :class="docsLinkClass">
           <Code class="mx-0.5 size-4" aria-hidden="true" />
           API docs

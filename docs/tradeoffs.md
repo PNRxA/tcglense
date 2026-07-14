@@ -292,6 +292,55 @@ catalog) is planned but not implemented.
   a browsable catalog entry — only the *holding* is consolidated, so a set's owned-card
   badges show the count on the base card, not the star.
 
+## Decks (issue #363)
+
+- **A new *container* surface, not a third holdings twin.** The collection and wish list are
+  twin singletons (one implicit list per `(user, game)`) that share one engine
+  (`handlers/shared/holdings.rs`, `makeHoldingApi`, `makeHoldingQueries`). A deck is a
+  *first-class, one-of-many* container, so it can't ride that engine (there is nowhere for a
+  `deck_id` axis in a flat `/api/{base}/{game}/…` URL or a `[prefix, game]` query key). Decks
+  therefore live **beside** the factory — exactly as the wishlist's sealed products do — with
+  their own tables (`decks` / `deck_sections` / `deck_cards` / `deck_folders`), their own
+  `handlers::decks` module, and their own web api/composable modules keyed under
+  `deck`/`decks`. But a deck *card* is shape-identical to a holding, so `deck_card::Model`
+  implements `HoldingCounts` and the deck reads reuse `summarize_holdings` / the `Card` DTO /
+  `apply_card_sort` for free; the only duplicated backend query is the one `deck_id`-scoped
+  base select. This is the CLAUDE.md anti-fork rule applied correctly — reuse the *lower*
+  seams, don't force the singleton engine.
+- **Sections are Archidekt-style categories, not fixed boards.** A `deck_sections` table
+  (per-deck, `position`-ordered, unique name) with `deck_cards.section_id` gives custom,
+  renamable, reorderable buckets a card can be moved between — the model the issue asked for,
+  and a superset of a fixed mainboard/sideboard. A new deck is **seeded** with a curated
+  default set (`DEFAULT_SECTIONS`: the common type buckets, then functional categories — Ramp,
+  Removal, Tutor, … — then Maybeboard) so it has a ready structure; empty sections are hidden
+  in the UI behind a toggle. The unique key is `(deck_id, card_id, section_id)`, so a card may
+  sit in several sections; deleting a section **reassigns** its cards to the deck's first
+  remaining section (never orphaning them), and the deck's *last* section can't be deleted
+  (a deck must always have somewhere to file a card).
+- **Per-deck sharing is a boolean column, not a visibility table.** Collections needed the
+  separate `collection_visibility` table because a bag of holdings has no owning row to hang a
+  flag on. A deck *is* the shareable unit (one row, 1:1), so `is_public` lives on the deck row
+  and `require_public_deck` is a plain filtered load. Everything else mirrors #361 verbatim —
+  `resolve_public_user`, the username-first `409`, the single `404` for every miss (no
+  existence oracle), and the CDN-cacheable `public_holdings` group. Deck ids are globally
+  unique, so the public URL is game-agnostic (`/api/u/{handle}/decks/{id}`), a static sibling
+  of `/api/u/{handle}/{game}` that axum's static-wins routing keeps unambiguous.
+- **The ownership check is the one genuinely new invariant.** `deck_cards`/`deck_sections`
+  carry no `user_id` (they hang off `deck_id`), so unlike every collection query — which
+  filters `user_id` directly — a deck route must first `load_deck` to prove the parent is the
+  caller's, returning **404** (not 403) for someone else's deck so a deck id can't be probed.
+  A security test pins this.
+- **The web editor is extended, not forked.** The debounced/serialized/dirty-guarded
+  absolute-count editor (`useOwnedCountEditor`) gained an optional `saveFn` injection: decks
+  pass a writer that PUTs a `(deck, section, card)` row while reusing all the tricky flush
+  machinery, and the existing collection/wish-list callers are untouched (they leave it unset
+  and keep the internal mutation path).
+- **Import is deliberately out of scope here (issue #389).** Syncing a deck from
+  Archidekt/Moxfield is a follow-up: the provider *deck* endpoints differ from the collection
+  ones (Moxfield's collection parser even rejects `/decks/`), a deck row carries a section/board
+  the collection intermediate can't, and a deck is written whole (a straight insert), never
+  through the `collection_items` reconcile/consolidate/smart engine — so it's its own PR.
+
 ## Data ingest & datasets
 
 - **Card data import:** runs in the background on boot, streaming Scryfall's
