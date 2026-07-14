@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { Plus } from '@lucide/vue'
+import { Loader2, Plus } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import type { Card } from '@/lib/api'
@@ -16,6 +16,8 @@ const props = defineProps<{
   card: Card
   /** Copies of this printing already in the target section, for the progress badge. */
   count?: number
+  /** An add for this printing is in flight — the add affordance shows a spinner. */
+  loading?: boolean
 }>()
 defineEmits<{ add: [] }>()
 
@@ -45,12 +47,19 @@ const price = computed(() => displayUsdPrice(props.card.prices))
         class="bg-background/90 text-foreground absolute top-1 right-1 z-10 rounded-md border px-1.5 py-0.5 text-xs font-medium shadow tabular-nums select-none"
         >×{{ count }}</span
       >
-      <!-- Add affordance, revealed on hover/focus (the whole tile is the button). -->
+      <!-- Add affordance, revealed on hover/focus (the whole tile is the button); while an
+           add is in flight it stays visible and spins so the click reads as working. -->
       <span
-        class="bg-primary text-primary-foreground absolute right-1 bottom-1 z-10 flex size-6 items-center justify-center rounded-full opacity-0 shadow transition group-hover:opacity-100 group-focus-visible:opacity-100"
+        class="bg-primary text-primary-foreground absolute right-1 bottom-1 z-10 flex size-6 items-center justify-center rounded-full shadow transition"
+        :class="
+          loading
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'
+        "
         aria-hidden="true"
       >
-        <Plus class="size-4" />
+        <Loader2 v-if="loading" class="size-4 animate-spin" />
+        <Plus v-else class="size-4" />
       </span>
     </div>
 

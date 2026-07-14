@@ -65,6 +65,11 @@ const setCard = useSetDeckCardMutation()
 // that only refreshes after each write's refetch lands. Cleared once the refetch catches up.
 const optimistic = new Map<string, number>()
 const keyOf = (cardId: string, sectionId: number) => `${cardId}:${sectionId}`
+
+// In-flight adds, keyed the same way, so each tile can spin its own "+" while its write is
+// outstanding (a single shared mutation's `isPending` can't tell the tiles apart). A ref'd
+// Set is reactive for add/delete, so the `isPending(card.id)` prop below ticks on its own.
+const pending = ref(new Set<string>())
 watch(
   () => props.cards,
   (cards) => {
@@ -95,6 +100,13 @@ function inTargetCount(cardId: string): number {
   return quantity + foil
 }
 
+// Whether an add for this printing (in the current target section) is still in flight.
+function isPending(cardId: string): boolean {
+  const sectionId = targetSectionId.value
+  if (sectionId == null) return false
+  return pending.value.has(keyOf(cardId, sectionId))
+}
+
 async function addPrinting(card: Card) {
   const sectionId = targetSectionId.value
   if (sectionId == null) return
@@ -102,14 +114,19 @@ async function addPrinting(card: Card) {
   const server = currentCounts(card.id, sectionId)
   const next = (optimistic.get(k) ?? server.quantity) + 1
   optimistic.set(k, next)
-  await setCard.mutateAsync({
-    game: props.game,
-    deckId: props.deckId,
-    sectionId,
-    id: card.id,
-    quantity: next,
-    foil_quantity: server.foil,
-  })
+  pending.value.add(k)
+  try {
+    await setCard.mutateAsync({
+      game: props.game,
+      deckId: props.deckId,
+      sectionId,
+      id: card.id,
+      quantity: next,
+      foil_quantity: server.foil,
+    })
+  } finally {
+    pending.value.delete(k)
+  }
 }
 
 function reset() {
@@ -173,6 +190,7 @@ function reset() {
           :game="game"
           :card="card"
           :count="inTargetCount(card.id)"
+          :loading="isPending(card.id)"
           @add="addPrinting(card)"
         />
       </div>

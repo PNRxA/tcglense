@@ -39,6 +39,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
+import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import type { Card, DeckCardEntry } from '@/lib/api'
 import {
   useCreateSectionMutation,
@@ -142,23 +143,41 @@ function move(folderId: number | null) {
 }
 
 // --- Sharing ---
+// Making a deck public needs a username first (the server 409s otherwise), exactly like a
+// public collection: if the user has none, the toggle opens the shared "choose a username"
+// dialog and finishes the share on its `saved` event, rather than round-tripping a
+// guaranteed conflict. Mirrors CollectionVisibilityControl.
 const shareError = ref('')
-async function toggleShare() {
+const usernameDialogOpen = ref(false)
+async function setPublic(next: boolean) {
   if (!deck.value) return
   shareError.value = ''
   try {
     await setVisibility.mutateAsync({
       game: props.game,
       deckId: deck.value.id,
-      public: !deck.value.is_public,
+      public: next,
     })
-  } catch (e) {
-    const err = e as { status?: number }
-    shareError.value =
-      err.status === 409
-        ? 'Set a username in your collection settings before sharing a deck.'
-        : 'Could not update sharing. Please retry.'
+  } catch {
+    shareError.value = 'Could not update sharing. Please retry.'
   }
+}
+async function toggleShare() {
+  if (!deck.value) return
+  shareError.value = ''
+  if (deck.value.is_public) {
+    await setPublic(false)
+    return
+  }
+  if (!auth.user?.username) {
+    usernameDialogOpen.value = true
+    return
+  }
+  await setPublic(true)
+}
+// The username dialog saved — finish the "make public" the toggle started.
+function onUsernameSaved() {
+  void setPublic(true)
 }
 const shareUrl = computed(() =>
   deck.value?.handle ? `${window.location.origin}/u/${deck.value.handle}/decks/${deck.value.id}` : '',
@@ -302,6 +321,7 @@ function moveSection(sectionId: number, delta: number) {
               </div>
             </PopoverContent>
           </Popover>
+          <SetUsernameDialog v-model:open="usernameDialogOpen" @saved="onUsernameSaved" />
 
           <!-- Settings -->
           <DropdownMenu>
