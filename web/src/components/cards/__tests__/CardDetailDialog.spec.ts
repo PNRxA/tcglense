@@ -169,3 +169,51 @@ describe('CardDetailDialog card navigation (issue #275)', () => {
     expect(router.currentRoute.value.query.card).toBe('c')
   })
 })
+
+describe('CardDetailDialog game resolution (issue #394)', () => {
+  let localWrapper: VueWrapper
+
+  // Mount over an arbitrary route with the given query. The public deck page
+  // (`/u/:handle/decks/:id`) has no `:game` path param, so its card tiles carry the game
+  // in the query instead — the dialog must resolve it from there to open.
+  async function mountAt(fullPath: string) {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/u/:handle/decks/:id', component: { template: '<div />' } },
+        { path: '/cards/:game', component: { template: '<div />' } },
+        { path: '/cards/:game/cards/:id', component: { template: '<div />' } },
+      ],
+    })
+    const pinia: Pinia = createPinia()
+    setActivePinia(pinia)
+    await router.push(fullPath)
+    await router.isReady()
+    localWrapper = mount(CardDetailDialog, {
+      attachTo: document.body,
+      global: { plugins: [router, pinia], stubs: { CardDetailContent: true } },
+    })
+    await flushPromises()
+  }
+
+  afterEach(() => {
+    localWrapper?.unmount()
+    document.body.innerHTML = ''
+  })
+
+  it('opens on a game-less route when the game is carried in the query', async () => {
+    await mountAt('/u/alice/decks/5?card=x&game=mtg')
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
+  it('stays closed on a game-less route with no game anywhere', async () => {
+    await mountAt('/u/alice/decks/5?card=x')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('prefers the path param over the query when both could apply', async () => {
+    // A normal grid route carries :game in the path; the query fallback must not shadow it.
+    await mountAt('/cards/mtg?card=x')
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+})

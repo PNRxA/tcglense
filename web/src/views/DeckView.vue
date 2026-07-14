@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Copy,
   Globe,
+  Heart,
   Layers,
   Library,
   Lock,
@@ -52,6 +53,7 @@ import {
   useUpdateSectionMutation,
 } from '@/composables/useDecks'
 import { useOwnedCounts as useCollectionOwnedCounts } from '@/composables/useCollection'
+import { useWishlistCounts } from '@/composables/useWishlist'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
 
@@ -84,12 +86,20 @@ const visibleSections = computed(() =>
     : sections.value.filter((s) => (cardsBySection.value.get(s.id)?.length ?? 0) > 0),
 )
 
-// Collection ownership overlay: which of the deck's cards the user owns, for the "in your
-// collection" chip on each tile (issue #363: indicate what's already in your collection).
+// Ownership overlays: which of the deck's cards the user owns (collection) and wants
+// (wish list), for the chips on each tile (issue #363: indicate what's already in your
+// collection; #394: the wish-list count alongside it). Both reuse the shared holdings
+// batch-counts seam, keyed by the deck's card ids. Owner-only — the public deck view is
+// read-only and mounts neither.
 const catalogCards = computed<Card[]>(() => allCards.value.map((c) => c.card))
 const { ownership } = useCollectionOwnedCounts(game, catalogCards)
+const { ownership: wishlistWanted } = useWishlistCounts(game, catalogCards)
 function ownedInCollection(cardId: string): number {
   const c = ownership.value[cardId]
+  return c ? c.quantity + c.foil_quantity : 0
+}
+function wantedInWishlist(cardId: string): number {
+  const c = wishlistWanted.value[cardId]
   return c ? c.quantity + c.foil_quantity : 0
 }
 
@@ -426,14 +436,27 @@ function moveSection(sectionId: number, delta: number) {
                 :foil-quantity="entry.foil_quantity"
                 :sections="sections"
               />
-              <!-- "In your collection" indicator (top-right), when you own the card. -->
-              <span
-                v-if="ownedInCollection(entry.card.id) > 0"
-                class="bg-background/90 text-foreground absolute top-1.5 right-1.5 z-20 inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
-                :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
+              <!-- Ownership indicators (top-right): how many of this card you own
+                   (collection) and want (wish list), each shown only when non-zero. -->
+              <div
+                v-if="ownedInCollection(entry.card.id) > 0 || wantedInWishlist(entry.card.id) > 0"
+                class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1"
               >
-                <Library class="size-3" aria-hidden="true" />{{ ownedInCollection(entry.card.id) }}
-              </span>
+                <span
+                  v-if="ownedInCollection(entry.card.id) > 0"
+                  class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
+                  :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
+                >
+                  <Library class="size-3" aria-hidden="true" />{{ ownedInCollection(entry.card.id) }}
+                </span>
+                <span
+                  v-if="wantedInWishlist(entry.card.id) > 0"
+                  class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
+                  :title="`You have ${wantedInWishlist(entry.card.id)} of this card on your wish list`"
+                >
+                  <Heart class="size-3" aria-hidden="true" />{{ wantedInWishlist(entry.card.id) }}
+                </span>
+              </div>
             </template>
           </CardTile>
         </div>

@@ -12,6 +12,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import DeckTile from '@/components/decks/DeckTile.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
@@ -69,9 +76,12 @@ const createOpen = ref(false)
 const newDeckName = ref('')
 const newDeckFormat = ref('')
 const formatPresets = computed(() => formatPresetsFor(props.game))
-// Folder choice for the new deck: '' = no folder, 'new' = create one from
-// `newDeckFolderName`, otherwise the chosen folder's id (as a string, from the <select>).
-const newDeckFolderChoice = ref('')
+// Folder choice for the new deck. reka's Select reserves '' for "no selection", so the
+// picker uses explicit string sentinels: NO_FOLDER = no folder, NEW_FOLDER = create one
+// from `newDeckFolderName`; any other value is the chosen folder's id as a string.
+const NO_FOLDER = 'none'
+const NEW_FOLDER = 'new'
+const newDeckFolderChoice = ref(NO_FOLDER)
 const newDeckFolderName = ref('')
 const createDeck = useCreateDeckMutation()
 // Open the dialog fresh every time, so a folder selection left over from a cancelled run
@@ -80,18 +90,18 @@ watch(createOpen, (open) => {
   if (!open) return
   newDeckName.value = ''
   newDeckFormat.value = ''
-  newDeckFolderChoice.value = ''
+  newDeckFolderChoice.value = NO_FOLDER
   newDeckFolderName.value = ''
 })
 async function submitCreateDeck() {
   const name = newDeckName.value.trim()
   if (!name) return
   let folderId: number | null = null
-  if (newDeckFolderChoice.value === 'new') {
+  if (newDeckFolderChoice.value === NEW_FOLDER) {
     const folderName = newDeckFolderName.value.trim()
     if (!folderName) return
     folderId = await resolveFolderByName(folderName)
-  } else if (newDeckFolderChoice.value) {
+  } else if (newDeckFolderChoice.value !== NO_FOLDER) {
     // Guard against a folder deleted after it was selected: fall back to loose (no folder)
     // rather than POSTing an id the backend would 404.
     const id = Number(newDeckFolderChoice.value)
@@ -109,7 +119,7 @@ async function submitCreateDeck() {
   createOpen.value = false
   newDeckName.value = ''
   newDeckFormat.value = ''
-  newDeckFolderChoice.value = ''
+  newDeckFolderChoice.value = NO_FOLDER
   newDeckFolderName.value = ''
   void router.push(`/decks/${props.game}/${deck.id}`)
 }
@@ -212,19 +222,20 @@ function removeFolder(folderId: number, name: string) {
                   <option v-for="f in formatPresets" :key="f" :value="f" />
                 </datalist>
                 <!-- Folder: none, an existing one, or a brand-new one. -->
-                <select
-                  v-model="newDeckFolderChoice"
-                  class="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-2 py-1.5 text-sm outline-none focus-visible:ring-2"
-                  aria-label="Folder"
-                >
-                  <option value="">No folder</option>
-                  <option v-for="f in folders" :key="f.id" :value="String(f.id)">
-                    {{ f.name }}
-                  </option>
-                  <option value="new">+ New folder…</option>
-                </select>
+                <Select v-model="newDeckFolderChoice">
+                  <SelectTrigger class="w-full" aria-label="Folder">
+                    <SelectValue placeholder="No folder" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="NO_FOLDER">No folder</SelectItem>
+                    <SelectItem v-for="f in folders" :key="f.id" :value="String(f.id)">
+                      {{ f.name }}
+                    </SelectItem>
+                    <SelectItem :value="NEW_FOLDER">+ New folder…</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Input
-                  v-if="newDeckFolderChoice === 'new'"
+                  v-if="newDeckFolderChoice === NEW_FOLDER"
                   v-model="newDeckFolderName"
                   placeholder="New folder name"
                 />
@@ -234,7 +245,7 @@ function removeFolder(folderId: number, name: string) {
                     type="submit"
                     :disabled="
                       !newDeckName.trim() ||
-                      (newDeckFolderChoice === 'new' && !newDeckFolderName.trim()) ||
+                      (newDeckFolderChoice === NEW_FOLDER && !newDeckFolderName.trim()) ||
                       createDeck.isPending.value ||
                       createFolder.isPending.value
                     "
