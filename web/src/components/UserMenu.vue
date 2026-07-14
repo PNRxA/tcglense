@@ -18,8 +18,6 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const displayLabel = computed(() => auth.user?.username ?? auth.user?.email ?? 'Account')
-
 // Sign-in returns the user to wherever they were (via ?redirect=). On an auth page
 // itself, link plainly so the redirect never loops back to the login/register form —
 // a direct visit to /login then just lands on the homepage after signing in.
@@ -60,9 +58,8 @@ async function onSignOut() {
     <NavigationMenuList>
       <NavigationMenuItem>
         <NavigationMenuTrigger>
-          <User class="mr-1.5 size-4" aria-hidden="true" />
+          <User class="size-4" aria-hidden="true" />
           <span class="sr-only">Account menu</span>
-          <span class="hidden max-w-[12rem] truncate sm:inline">{{ displayLabel }}</span>
         </NavigationMenuTrigger>
         <!-- The shared NavigationMenuContent only becomes `absolute md:w-auto` at the
              md breakpoint (below it, reka's default renders the panel inline/full-width
