@@ -10,6 +10,7 @@ use sea_orm::{
 };
 
 use super::BackfillError;
+use crate::db::upsert_changed_guard;
 use crate::entities::prelude::{Product, ProductPriceHistory};
 use crate::entities::{product, product_price_history};
 
@@ -71,7 +72,9 @@ pub async fn snapshot_prices(
 
 /// Batched upsert of product price-history rows on the `(game, product_id, as_of_date)`
 /// unique key, updating only the price columns (so `created_at` is preserved on a
-/// same-day re-run). Shared by the daily snapshot and the dummy seeder.
+/// same-day re-run). A change-guard skips the write entirely when the day's row already
+/// holds these exact prices, so a same-day restart/tick doesn't rewrite unchanged rows.
+/// Shared by the daily snapshot and the dummy seeder.
 pub(crate) async fn upsert_price_history(
     db: &DatabaseConnection,
     batch: Vec<product_price_history::ActiveModel>,
@@ -90,6 +93,24 @@ pub(crate) async fn upsert_price_history(
                 product_price_history::Column::PriceUsd,
                 product_price_history::Column::PriceUsdFoil,
             ])
+            // Skip the write when the day's row already holds these exact prices — the
+            // sealed-product mirror of the card snapshot's guard. This runs on every boot and
+            // sync tick, so a same-day restart would otherwise rewrite every product row to
+            // identical values. `created_at` is excluded from the compare (always-`now()`,
+            // never updated); a real intra-day price move still differs and still writes.
+            .action_and_where(upsert_changed_guard::<product_price_history::Column>(
+                "product_price_history",
+                |c| {
+                    matches!(
+                        c,
+                        product_price_history::Column::Id
+                            | product_price_history::Column::Game
+                            | product_price_history::Column::ProductId
+                            | product_price_history::Column::AsOfDate
+                            | product_price_history::Column::CreatedAt
+                    )
+                },
+            ))
             .to_owned(),
         )
         .exec_without_returning(db)
@@ -140,5 +161,56 @@ mod tests {
         assert_eq!(n, 2);
         let all = ProductPriceHistory::find().all(&db).await.unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    /// The change-guard must still write a genuine intra-day price move on a same-day
+    /// re-snapshot — the sealed-product mirror of the card-side guard test.
+    #[tokio::test]
+    async fn same_day_resnapshot_writes_changed_product_price() {
+        use sea_orm::ActiveModelTrait;
+        let db = crate::test_support::migrated_memory_db().await;
+        let day = "2024-06-01";
+        let mover = insert_product(&db, "100", Some("10.00")).await;
+        let steady = insert_product(&db, "200", Some("20.00")).await;
+
+        assert_eq!(snapshot_prices(&db, super::super::GAME, day).await.unwrap(), 2);
+
+        // A real intra-day price move on one product only.
+        product::ActiveModel {
+            id: Set(mover),
+            price_usd: Set(Some("11.00".to_string())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("bump product price");
+
+        assert_eq!(snapshot_prices(&db, super::super::GAME, day).await.unwrap(), 2);
+
+        let mover_rows = ProductPriceHistory::find()
+            .filter(product_price_history::Column::ProductId.eq(mover))
+            .filter(product_price_history::Column::AsOfDate.eq(day))
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(mover_rows.len(), 1, "same-day re-snapshot upserts, never duplicates");
+        assert_eq!(
+            mover_rows[0].price_usd.as_deref(),
+            Some("11.00"),
+            "the guard let the real intra-day change through"
+        );
+
+        let steady_rows = ProductPriceHistory::find()
+            .filter(product_price_history::Column::ProductId.eq(steady))
+            .filter(product_price_history::Column::AsOfDate.eq(day))
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(steady_rows.len(), 1);
+        assert_eq!(
+            steady_rows[0].price_usd.as_deref(),
+            Some("20.00"),
+            "the unchanged product's row is preserved"
+        );
     }
 }
