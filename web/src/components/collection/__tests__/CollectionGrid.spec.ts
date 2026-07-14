@@ -56,6 +56,7 @@ function mountGrid(
     collectionCounts?: OwnedCountsMap
     ownedMarks?: OwnedCountsMap
     wishlist?: OwnedCountsMap
+    readonly?: boolean
   } = {},
 ) {
   const router = createRouter({
@@ -73,6 +74,7 @@ function mountGrid(
       collectionCounts: opts.collectionCounts,
       ownedMarks: opts.ownedMarks,
       wishlist: opts.wishlist,
+      readonly: opts.readonly,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
@@ -193,5 +195,26 @@ describe('CollectionGrid quick-add controls on the collection surface (default l
   it('shows no heart chip without a wishlist overlay', () => {
     const wrapper = mountGrid([entry('a', 1, 0)])
     expect(wantedBadges(wrapper)).toHaveLength(0)
+  })
+})
+
+describe('CollectionGrid read-only (public collection browse, issues #361/#362)', () => {
+  // CollectionGrid renders OwnedCountControl UNCONDITIONALLY (no auth gate), so the public
+  // collection browse must pass `readonly` — otherwise a signed-in viewer of someone else's
+  // page would get an editor seeded with the owner's counts that writes into their OWN
+  // collection. Read-only renders a static owned badge (total + foil) instead.
+  it('renders a static owned badge (total + foil) and never an editor', () => {
+    const wrapper = mountGrid([entry('a', 2, 1)], 'collection', { readonly: true })
+    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="1 foil"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Edit copies of Card a in your collection"]').exists()).toBe(
+      false,
+    )
+    expect(wrapper.findAll('[aria-label^="Add Card"]')).toHaveLength(0)
+  })
+
+  it('renders no badge on a zero-count entry', () => {
+    const wrapper = mountGrid([entry('a', 0, 0)], 'collection', { readonly: true })
+    expect(totalBadges(wrapper)).toHaveLength(0)
   })
 })

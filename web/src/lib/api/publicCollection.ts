@@ -1,5 +1,13 @@
 import { listQuery, request } from './client'
-import type { CollectionListParams, CollectionPage } from './collection'
+import { postCountsBatched } from './holdings'
+import type {
+  CollectionDropGroupPage,
+  CollectionDropsParams,
+  CollectionListParams,
+  CollectionPage,
+  CollectionSubtypeGroupPage,
+  OwnedCountsMap,
+} from './collection'
 import type { CollectionSet, CollectionSummary, PublicProfile } from './generated'
 
 // ---------- Public collections (read-only, unauthenticated) ----------
@@ -32,12 +40,17 @@ export function getPublicCollection(
 }
 
 /** Aggregate stats (unique cards, total copies, estimated value) for a user's public
- * collection in a game. */
+ * collection in a game — optionally scoped to one set (and, with `includeRelated`, that
+ * set's whole group), so the browse view's scoped value/completion line matches the authed
+ * one. No bulk-threshold override: the public page uses the server default ($1 split). */
 export function getPublicCollectionSummary(
   handle: string,
   game: string,
+  opts: { set?: string; includeRelated?: boolean } = {},
 ): Promise<CollectionSummary> {
-  return request<CollectionSummary>(`${base(handle)}/${encodeURIComponent(game)}/summary`)
+  // include_related only means anything alongside a set scope (matches the backend).
+  const qs = listQuery({ set: opts.set, includeRelated: opts.set ? opts.includeRelated : undefined })
+  return request<CollectionSummary>(`${base(handle)}/${encodeURIComponent(game)}/summary${qs}`)
 }
 
 /** The sets the user owns cards in for a public game — the per-set landing tiles, each
@@ -47,4 +60,42 @@ export function getPublicCollectionSets(
   game: string,
 ): Promise<{ data: CollectionSet[] }> {
   return request<{ data: CollectionSet[] }>(`${base(handle)}/${encodeURIComponent(game)}/sets`)
+}
+
+/** A page (by Secret Lair drop) of a user's public collection in a drop-grouped set —
+ * the show-ghosts / by-drop mirror of the authed `getCollectionSetDrops`. */
+export function getPublicCollectionDrops(
+  handle: string,
+  game: string,
+  code: string,
+  params?: CollectionDropsParams,
+): Promise<CollectionDropGroupPage> {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return request<CollectionDropGroupPage>(`${base(handle)}/${g}/sets/${c}/drops${listQuery(params ?? {})}`)
+}
+
+/** A page (by card sub-type / treatment) of a user's public collection in a set —
+ * mirrors the authed `getCollectionSetSubtypes`. */
+export function getPublicCollectionSubtypes(
+  handle: string,
+  game: string,
+  code: string,
+  params?: CollectionDropsParams,
+): Promise<CollectionSubtypeGroupPage> {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return request<CollectionSubtypeGroupPage>(`${base(handle)}/${g}/sets/${c}/subtypes${listQuery(params ?? {})}`)
+}
+
+/** Which of the given catalog card ids the owner holds, keyed by external id (cards they
+ * don't own are simply absent) — the show-ghosts overlay on the public browse grid.
+ * Token-less POST to `.../owned`, batched under the server id cap like the authed
+ * `getCollectionOwned`. */
+export function getPublicOwnedCounts(
+  handle: string,
+  game: string,
+  ids: string[],
+): Promise<OwnedCountsMap> {
+  return postCountsBatched(`${base(handle)}/${encodeURIComponent(game)}/owned`, null, ids)
 }

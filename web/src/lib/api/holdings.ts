@@ -38,7 +38,7 @@ const COUNTS_BATCH_SIZE = 400
  */
 export async function postCountsBatched(
   endpoint: string,
-  token: string,
+  token: string | null,
   ids: string[],
 ): Promise<OwnedCountsMap> {
   if (ids.length === 0) return {}

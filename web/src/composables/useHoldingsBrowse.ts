@@ -56,8 +56,13 @@ import { useGhostDisplayStore } from '@/stores/ghostDisplay'
  * etc. are the holding's own query hooks (collection or wish list); the ghost/catalog reads
  * and the collection-counts lookup are shared and imported directly. */
 export interface HoldingsBrowseSurface {
-  /** Route prefix the scope-nav helpers navigate under — `/collection` or `/wishlist`. */
-  basePath: '/collection' | '/wishlist'
+  /** Route prefix the scope-nav helpers navigate under — `/collection`, `/wishlist`, or a
+   * public collection's `/u/{handle}`. */
+  basePath: string
+  /** Read-only public surface (a user's public collection): the show-ghosts overlay needs no
+   * auth, and the page is indexable (not `noindex`). Defaults false — the authed
+   * collection/wishlist surfaces are private + editable, and gate ghosts on being signed in. */
+  publicRead?: boolean
   /** The holding's flat / by-drop / by-sub-type / summary query hooks. */
   useListQuery: typeof useCollectionQuery
   useDropsQuery: typeof useCollectionDropsQuery
@@ -86,6 +91,9 @@ export interface HoldingsBrowseSurface {
   copy: {
     /** The per-account page title for `usePageMeta`. */
     title: (ctx: { scoped: boolean; setName: string; gameName: string }) => string
+    /** The page meta description — public (indexable) surfaces only; omit on the private
+     * `noindex` collection/wishlist views. */
+    description?: (ctx: { scoped: boolean; setName: string; gameName: string }) => string
     /** The held-only (non-ghost) search-box placeholder. */
     ownSearchPlaceholder: string
     /** The held-only loading-row label. */
@@ -119,6 +127,11 @@ export function useHoldingsBrowse(
   const router = useRouter()
   const gameName = useGameName(game)
   const auth = useAuthStore()
+  // Whether the show-ghosts overlay (the full catalog with held cards marked + the rest
+  // dimmed) may fetch. On the authed collection/wishlist it's a signed-in feature (its counts
+  // come from the user's own holdings); on a read-only public collection it's always
+  // available — the counts are the *owner's*, read token-lessly by handle.
+  const canGhost = computed(() => surface.publicRead === true || auth.isAuthenticated)
 
   // Show-ghosts mode (issue #112): when on (`?ghosts=1`), the grid also shows the cards in
   // scope the user *doesn't* hold — dimmed "ghosts" — so the gaps read at a glance and can
@@ -176,7 +189,9 @@ export function useHoldingsBrowse(
     return includeRelated.value && group.value ? group.value.main.name : setName.value
   })
 
-  // Per-account page — kept out of search indexes.
+  // A private per-account page (collection/wishlist) is kept out of search indexes; a
+  // public collection is indexable and carries a description.
+  const metaDescription = surface.copy.description
   usePageMeta({
     title: () =>
       surface.copy.title({
@@ -184,11 +199,19 @@ export function useHoldingsBrowse(
         setName: setName.value,
         gameName: gameName.value,
       }),
+    description: metaDescription
+      ? () =>
+          metaDescription({
+            scoped: scoped.value,
+            setName: setName.value,
+            gameName: gameName.value,
+          })
+      : undefined,
     canonicalPath: () =>
       scoped.value
         ? `${surface.basePath}/${game.value}/sets/${code.value}`
         : `${surface.basePath}/${game.value}/cards`,
-    noindex: true,
+    noindex: !surface.publicRead,
   })
 
   // In show-ghosts mode the flat grid is really the catalog list (held + not), so it offers
@@ -250,7 +273,7 @@ export function useHoldingsBrowse(
   // whole grid lives behind the signed-in template, so a signed-out visitor landing on
   // `?ghosts=1` sees the sign-in prompt — don't fetch for them.
   const ghostFlat = computed(
-    () => auth.isAuthenticated && showGhosts.value && !grouped.value && flatReady.value,
+    () => canGhost.value && showGhosts.value && !grouped.value && flatReady.value,
   )
   // Both hooks are called unconditionally — this component backs both the all-cards and
   // set-scoped routes, so `scoped` can flip on the same reused instance — with `enabled`
@@ -284,12 +307,12 @@ export function useHoldingsBrowse(
   const ghostDropsQuery = useSetDropsQuery(game, groupCode, {
     page,
     query,
-    enabled: computed(() => auth.isAuthenticated && showGhosts.value && byDrop.value),
+    enabled: computed(() => canGhost.value && showGhosts.value && byDrop.value),
   })
   const ghostSubtypesQuery = useSetSubtypesQuery(game, groupCode, {
     page,
     query,
-    enabled: computed(() => auth.isAuthenticated && showGhosts.value && bySubtype.value),
+    enabled: computed(() => canGhost.value && showGhosts.value && bySubtype.value),
   })
   const ghostGroupsQuery = computed(() => (bySubtype.value ? ghostSubtypesQuery : ghostDropsQuery))
   const ghostGroups = computed(() => ghostGroupsQuery.value.data.value?.data ?? [])
