@@ -93,7 +93,7 @@ pub struct CollectionEntry {
 /// mirror of the catalog's `DropGroupResponse`, but each card carries its owned counts.
 /// The enclosing [`Page`](crate::handlers::shared::Page) paginates over these (so `total`
 /// is a drop count, not cards).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionDropGroup {
     /// Stable slug for anchors/links; `None` for the catch-all "Other" group of owned
@@ -108,7 +108,7 @@ pub struct CollectionDropGroup {
 /// collection/wish-list mirror of the catalog's `SubtypeGroupResponse`, each card carrying
 /// its owned counts. Same shape as [`CollectionDropGroup`]; the enclosing
 /// [`Page`](crate::handlers::shared::Page) paginates over these (`total` is a sub-type count).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionSubtypeGroup {
     /// Stable slug (`normal`/`borderless`/`showcase`/…) for anchors/links.
@@ -152,7 +152,7 @@ pub struct CollectionSummary {
 /// One set the user owns cards in, for the collection's per-set landing. Carries the
 /// same catalog set metadata a set tile needs (so the SPA can reuse `SetTile`) plus how
 /// much of it the user owns.
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionSet {
     pub code: String,
@@ -196,7 +196,7 @@ pub struct SetQuantitiesRequest {
 /// Body of `POST .../owned`: the external card ids to look up owned counts for. Sent
 /// as a POST body rather than a GET query so a browse page's (potentially few-hundred)
 /// id list can't blow the request-line length behind a proxy.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct OwnedCountsRequest {
     pub ids: Vec<String>,

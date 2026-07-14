@@ -79,6 +79,20 @@ pub async fn list_cards(
 /// *start* with `q` surfaced first, then alphabetically. Powers the collection
 /// quick-add autocomplete (one hint per unique name). A blank/absent `q` returns an
 /// empty list — there's nothing to suggest yet.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/card-names",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("q" = Option<String>, Query, description = "Substring to match card names against (case-insensitive); blank/absent yields an empty list"),
+        ("limit" = Option<u64>, Query, description = "Max suggestions to return (clamped to [1, 25]); absent = 10"),
+    ),
+    responses(
+        (status = 200, description = "Up to `limit` distinct matching card names, starts-with matches first.", body = DataBody<Vec<String>>),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn card_names(
     State(state): State<AppState>,
     Path(game): Path<String>,

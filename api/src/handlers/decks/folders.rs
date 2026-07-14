@@ -63,6 +63,20 @@ async fn deck_counts_by_folder(
 
 /// `GET /api/decks/{game}/folders` -> the caller's folders for a game (alphabetical), each
 /// with how many decks are filed under it.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/folders",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "The caller's deck folders for the game (alphabetical).", body = DataBody<Vec<DeckFolderResponse>>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn list_folders(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -91,6 +105,24 @@ pub async fn list_folders(
 
 /// `POST /api/decks/{game}/folders` -> create a folder. `422` for a blank/oversized name
 /// or over the per-game cap; `409` if a folder with that name already exists.
+#[utoipa::path(
+    post,
+    path = "/api/decks/{game}/folders",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = FolderNameRequest,
+    responses(
+        (status = 200, description = "The newly created folder.", body = DeckFolderResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game."),
+        (status = 409, description = "A folder with that name already exists."),
+        (status = 422, description = "Blank/oversized name, or over the per-game folder cap."),
+    ),
+)]
 pub async fn create_folder(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -132,6 +164,25 @@ pub async fn create_folder(
 }
 
 /// `PUT /api/decks/{game}/folders/{folder_id}` -> rename a folder.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/folders/{folder_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("folder_id" = i32, Path, description = "Folder id"),
+    ),
+    request_body = FolderNameRequest,
+    responses(
+        (status = 200, description = "The renamed folder.", body = DeckFolderResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the folder is not the caller's."),
+        (status = 409, description = "Another folder with that name already exists."),
+        (status = 422, description = "Blank/oversized name."),
+    ),
+)]
 pub async fn update_folder(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -158,6 +209,22 @@ pub async fn update_folder(
 
 /// `DELETE /api/decks/{game}/folders/{folder_id}` -> delete a folder. Its decks are
 /// **ungrouped** (their `folder_id` -> NULL via the FK), not deleted.
+#[utoipa::path(
+    delete,
+    path = "/api/decks/{game}/folders/{folder_id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("folder_id" = i32, Path, description = "Folder id"),
+    ),
+    responses(
+        (status = 204, description = "The folder was deleted (its decks are ungrouped, not deleted)."),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the folder is not the caller's."),
+    ),
+)]
 pub async fn delete_folder(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,

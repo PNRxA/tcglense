@@ -85,7 +85,7 @@ pub struct DropGroupResponse {
 /// endpoint. Same shape as [`DropGroupResponse`] — the enclosing [`Page`] paginates over
 /// these (`total` is a sub-type count) and the SPA renders both through one section
 /// component — but here `slug` is always present (every card classifies, Normal included).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "SubtypeGroup"))]
 pub struct SubtypeGroupResponse {
     /// Stable slug (`normal`/`borderless`/`showcase`/…) for anchors/links.
@@ -350,6 +350,23 @@ pub async fn list_set_drops(
 /// it only offers this where there's something to see). Sub-types keep their fixed order
 /// (Normal first, then treatments); within one, cards are in collector-number order. An
 /// optional `q` narrows the cards first; sub-types with no remaining matches are omitted.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/sets/{code}/subtypes",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("code" = String, Path, description = "Set code, e.g. `neo`"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
+        ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search narrowing the cards within each sub-type"),
+    ),
+    responses(
+        (status = 200, description = "A page of the set's cards grouped by sub-type.", body = Page<SubtypeGroupResponse>),
+        (status = 404, description = "Unknown game or set."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn list_set_subtypes(
     State(state): State<AppState>,
     Path((game, code)): Path<(String, String)>,

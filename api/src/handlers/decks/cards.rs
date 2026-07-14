@@ -22,6 +22,25 @@ use super::{MoveDeckCardRequest, SetDeckCardRequest, load_deck, load_section, to
 /// `PUT /api/decks/{game}/{deck_id}/cards/{id}` -> set the absolute counts for a card in
 /// one of the deck's sections (not a delta). Both zero removes it from that section.
 /// `404` for an unknown deck/section/card, `422` for a negative/oversized count.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/cards/{id}",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    request_body = SetDeckCardRequest,
+    responses(
+        (status = 200, description = "The resulting counts for the card in that section (both zero removes it).", body = CollectionQuantities),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, deck, section, or card."),
+        (status = 422, description = "A negative or oversized count."),
+    ),
+)]
 pub async fn set_deck_card(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
@@ -91,6 +110,24 @@ pub async fn set_deck_card(
 /// sections to another. If the target already holds the card, the counts are summed and the
 /// source row removed. Returns the resulting counts in the target section. `404` if the deck,
 /// either section, the card, or the card-in-`from_section` isn't found.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/cards/{id}/move",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    request_body = MoveDeckCardRequest,
+    responses(
+        (status = 200, description = "The resulting counts for the card in the target section.", body = CollectionQuantities),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, deck, either section, the card, or the card in `from_section`."),
+    ),
+)]
 pub async fn move_deck_card(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,

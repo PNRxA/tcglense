@@ -17,7 +17,7 @@ use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
 
 /// Background card-data import status for a game.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "IngestStatus"))]
 pub struct StatusResponse {
     pub status: String,
@@ -25,6 +25,7 @@ pub struct StatusResponse {
     pub sets_imported: i32,
     pub cards_imported: i32,
     pub source_updated_at: Option<String>,
+    #[schema(value_type = Option<String>, format = DateTime)]
     pub finished_at: Option<DateTimeUtc>,
 }
 
@@ -43,7 +44,19 @@ pub async fn list_games() -> Json<DataBody<&'static [catalog::Game]>> {
     Json(DataBody { data: catalog::GAMES })
 }
 
+/// Get import status
+///
 /// `GET /api/games/{game}/status` -> the card-data import status for a game.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/status",
+    tag = "Cards",
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "The game's card-data import status (idle defaults when never imported).", body = StatusResponse),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn ingest_status(
     State(state): State<AppState>,
     Path(game): Path<String>,

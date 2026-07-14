@@ -61,7 +61,21 @@ pub(crate) use sets::{owned_drop_page, owned_sets, owned_subtype_page};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::collection::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
-pub use read::{__path_collection_summary, __path_get_collection_entry, __path_list_collection};
+pub use export::__path_export_collection;
+pub use import::{
+    __path_delete_collection_source, __path_get_collection_source, __path_get_import_job,
+    __path_import_collection, __path_import_collection_csv, __path_save_collection_source,
+    __path_sync_collection_source,
+};
+pub use price_movements::__path_collection_movers;
+pub use read::{
+    __path_collection_summary, __path_get_collection_entry, __path_list_collection,
+    __path_owned_counts,
+};
+pub use sets::{
+    __path_collection_set_drops, __path_collection_set_subtypes, __path_collection_sets,
+};
+pub use value_history::__path_collection_value_history;
 pub use write::__path_set_collection_entry;
 
 // The entity-agnostic DTOs, params, and constants (shared with `handlers::wishlist`).
@@ -84,7 +98,7 @@ pub const MAX_CSV_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 /// Body of `POST .../import`: which provider, the source URL/id, and how to reconcile.
 /// `provider` is any string on the wire (validated against the known providers by the
 /// handler), so the generated TS type is wider than the client's own body type.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ImportRequest {
     pub provider: String,
@@ -95,7 +109,7 @@ pub struct ImportRequest {
 /// Body of `PUT .../source`: the collection link to remember (provider + source URL/id),
 /// plus whether saved re-syncs should use smart (incremental) sync. `smart` defaults to
 /// `false` (full mirror) when omitted.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SaveSourceRequest {
     pub provider: String,
@@ -105,7 +119,7 @@ pub struct SaveSourceRequest {
 }
 
 /// A saved external collection link for a game.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CollectionSource"))]
 pub struct CollectionSourceResponse {
     pub provider: &'static str,
@@ -122,7 +136,7 @@ pub struct CollectionSourceResponse {
 /// and the collection's total when the provider reported one up front. A determinate
 /// progress bar can be drawn when `total` is present; otherwise (a smart sync, which stops
 /// early) only the running `fetched` count is meaningful.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ImportProgress {
     /// Provider rows fetched so far.
@@ -145,7 +159,7 @@ impl From<ProgressSnapshot> for ImportProgress {
 /// The status of a background import/sync job — returned when one is enqueued and each
 /// time the client polls. Imports run asynchronously (throttled by the provider rate
 /// limit), so the client kicks one off and polls this until `complete`/`error`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ImportJob"))]
 pub struct ImportJobResponse {
     pub job_id: u64,

@@ -26,6 +26,15 @@ pub use public::{
 };
 pub use visibility::{get_collection_visibility, set_collection_visibility};
 
+// The `#[utoipa::path]`-generated route metadata structs, re-exported so
+// `crate::openapi::ApiDoc` can name them at `crate::handlers::sharing::__path_<fn>`.
+pub use decks::{__path_public_deck, __path_public_decks};
+pub use public::{
+    __path_public_list, __path_public_owned_counts, __path_public_profile, __path_public_set_drops,
+    __path_public_set_subtypes, __path_public_sets, __path_public_summary,
+};
+pub use visibility::{__path_get_collection_visibility, __path_set_collection_visibility};
+
 // ---------- Request / response DTOs ----------
 
 /// Body of `PUT /api/collection/{game}/visibility` — a partial patch of the (user, game)
@@ -33,7 +42,7 @@ pub use visibility::{get_collection_visibility, set_collection_visibility};
 /// written, so the sharing toggle and each display toggle can PATCH just their own field
 /// without clobbering the others. An all-absent body is a no-op that echoes the current
 /// state.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SetVisibilityRequest {
     /// Enable/disable public sharing. Enabling requires a username first (409 otherwise).
@@ -49,7 +58,7 @@ pub struct SetVisibilityRequest {
 /// collection-landing display prefs (issue #381), both default true. `handle` is the
 /// owner's public handle (`alice-0001`), or null until they choose a username — the SPA
 /// links the live view at `/u/{handle}/{game}` when `public` is true.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionVisibility {
     pub public: bool,
@@ -59,7 +68,7 @@ pub struct CollectionVisibility {
 }
 
 /// One public game on a profile: the game slug plus its collection summary.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PublicGameSummary {
     pub game: String,
@@ -69,12 +78,13 @@ pub struct PublicGameSummary {
 /// A user's public profile landing: their handle + every game they've made public.
 /// Deliberately carries **no** email or other PII — only the public username/handle, the
 /// account age, and the per-game summaries.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PublicProfile {
     pub username: String,
     pub discriminator: i32,
     pub handle: String,
+    #[schema(value_type = String, format = DateTime)]
     pub member_since: DateTimeUtc,
     pub games: Vec<PublicGameSummary>,
 }

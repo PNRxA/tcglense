@@ -127,7 +127,7 @@ pub(crate) struct ProductFacets {
 /// A sealed product a card is found in — or can be pulled from — plus how it relates.
 /// Wraps the shared [`ProductResponse`] (so the SPA reuses the product tile/grid) with
 /// the membership bucket and a foil flag (the "found in / can be in / may be in" split).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "SealedProductRef"))]
 pub(crate) struct SealedProductRef {
     pub product: ProductResponse,
@@ -171,7 +171,7 @@ pub(crate) struct ProductComponent {
 /// reuses the card tile/grid) with the membership bucket and a foil flag, so the
 /// sealed-product page can render the "in the box / can be pulled from / may be in"
 /// groups over the product's cards.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductCardEntry"))]
 pub(crate) struct ProductCardEntry {
     pub card: CardResponse,
@@ -198,7 +198,7 @@ pub(crate) struct ProductCardEntry {
 /// `booster` → `variable`, the [`CardSection`] display order); this manifest lets the SPA
 /// render one **independently paginated** block per section (issue #224) — knowing which
 /// sections exist and how big each is — without fetching every card first.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductCardSection"))]
 pub(crate) struct ProductCardSection {
     /// The section key: `contains`, `exclusive`, `booster`, or `variable` — the value the
@@ -659,6 +659,19 @@ pub async fn product_facets(
 /// product name, so the SPA can render the three "found in / can be in / may be in"
 /// groups in place. Empty `{ "data": [] }` when the card is in no ingested product (or
 /// no contents have been ingested at all). `404` for an unknown game/card.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}/sealed",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    responses(
+        (status = 200, description = "The sealed products this card is found in or can be pulled from, `contains` -> `booster` -> `variable` then by name.", body = DataBody<Vec<SealedProductRef>>),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
 pub async fn card_sealed(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -859,6 +872,26 @@ const PRODUCT_CARDS_IN_CHUNK: usize = 900;
 /// sort like the same cards on the catalog browse; the section split (and its display order)
 /// is untouched — a sort only changes the order *inside* a section. Absent = the product's
 /// natural membership / exclusive / set-number order. An unknown sort/dir is a `422`.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/cards",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("section" = Option<String>, Query, description = "Restrict to one display section (`contains`/`exclusive`/`booster`/`variable`)"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style card search narrowing this product's cards"),
+        ("sort" = Option<String>, Query, description = "Card-list sort key (`name`/`rarity`/`cmc`/`price`/…); re-orders within each section"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the product's cards, ordered by membership then exclusivity then set number.", body = Page<ProductCardEntry>),
+        (status = 404, description = "Unknown game or product."),
+        (status = 422, description = "Unknown section, malformed search query, or unknown sort/direction."),
+    ),
+)]
 pub async fn product_cards(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
@@ -948,6 +981,21 @@ pub async fn product_cards(
 /// that search, so it agrees with the filtered `product_cards` pages (issue #222).
 /// `{ "data": [] }` when the product has no ingested contents (or nothing matches `q`);
 /// `404` for an unknown game/product, `422` for a malformed `q`.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/cards/sections",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style card search filtering the manifest to matching sections + counts"),
+    ),
+    responses(
+        (status = 200, description = "The product's non-empty display sections, in display order, each with its card count.", body = DataBody<Vec<ProductCardSection>>),
+        (status = 404, description = "Unknown game or product."),
+        (status = 422, description = "Malformed search query."),
+    ),
+)]
 pub async fn product_card_sections(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,

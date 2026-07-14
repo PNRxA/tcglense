@@ -54,7 +54,7 @@ const LOOKBACK_DAYS: i64 = 60;
 const TOP_N: usize = 5;
 
 /// The biggest gain/loss movements across a user's collection, for each of three windows.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionMovers {
     /// The reference ("as of") date the movements are measured to: the most recent
@@ -67,7 +67,7 @@ pub struct CollectionMovers {
 }
 
 /// The ranked movers for one window: the top gainers and the top losers.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionMoverList {
     pub gainers: Vec<CollectionMover>,
@@ -75,7 +75,7 @@ pub struct CollectionMoverList {
 }
 
 /// One card's movement: the card, the counts held, and the value change of that holding.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionMover {
     pub card: CardResponse,
@@ -116,6 +116,20 @@ impl CollectionMoverList {
 /// over the day / week / month windows. `404` if the game is unknown; an all-empty
 /// `{ "as_of": null, ... }` when the user owns nothing or no owned card has captured price
 /// history. No query params — the windows and top-N are fixed.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/movers",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "The user's biggest gain/loss movements over the day / week / month windows (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
 pub async fn collection_movers(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

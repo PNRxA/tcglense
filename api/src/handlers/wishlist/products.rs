@@ -223,10 +223,25 @@ pub async fn wishlist_product_summary(
 /// keyed by external id. Products the user doesn't want are absent from the map (so an
 /// all-unwanted page returns `{ "data": {} }`). This backs the resting wanted-count badges
 /// on the sealed-product browse grids — the product twin of
-/// [`super::read::wishlist_counts`] — without an N+1 of per-product lookups. Deliberately
-/// **not** in the OpenAPI spec (no `#[utoipa::path]`): like both card counts endpoints,
-/// it's an SPA-internal badge feed. `422` if more than [`MAX_OWNED_IDS`] ids are requested
-/// at once.
+/// [`super::read::wishlist_counts`] — without an N+1 of per-product lookups. Like both
+/// card counts endpoints, it's an SPA-internal badge feed. `422` if more than
+/// [`MAX_OWNED_IDS`] ids are requested at once.
+#[utoipa::path(
+    post,
+    path = "/api/wishlist/{game}/products/counts",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    request_body = OwnedCountsRequest,
+    responses(
+        (status = 200, description = "Wanted counts for the requested ids that are on the user's wish list, keyed by external (TCGplayer) product id; unwanted ids are absent (an all-unwanted page yields `{ \"data\": {} }`).", body = OwnedCountsResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "More than the per-request id cap was requested."),
+    ),
+)]
 pub async fn wishlist_product_counts(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

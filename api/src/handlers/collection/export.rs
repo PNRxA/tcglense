@@ -136,6 +136,22 @@ const MOXFIELD_HEADER: &[&str] = &[
 /// whole collection as a downloadable CSV in the chosen provider shape. Unpaginated (an
 /// export is the entire collection); holdings whose catalog card row is gone (a catalog
 /// re-import removed it) are skipped, as every other collection read does.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/export",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("format" = Option<String>, Query, description = "Provider shape: `archidekt` (default) or `moxfield`"),
+    ),
+    responses(
+        (status = 200, description = "The whole collection as a downloadable CSV in the chosen provider shape.", content_type = "text/csv"),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown export format."),
+    ),
+)]
 pub async fn export_collection(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,

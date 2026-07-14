@@ -62,6 +62,18 @@ pub(super) async fn user_has_public_deck(
 /// `404` when the handle is unknown **or** the user has no public deck — the same
 /// non-oracle stance as the public profile (a valid handle with nothing public is
 /// indistinguishable from an unknown one).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+    ),
+    responses(
+        (status = 200, description = "The owner's public decks across games, newest first.", body = DataBody<Vec<DeckResponse>>),
+        (status = 404, description = "Unknown handle, or the user has no public deck."),
+    ),
+)]
 pub async fn public_decks(
     State(state): State<AppState>,
     Path(handle): Path<String>,
@@ -90,6 +102,19 @@ pub async fn public_decks(
 /// `GET /api/u/{handle}/decks/{deck_id}` -> a public deck's full detail (the shareable
 /// view). `404` when the handle is unknown or the deck is private/absent. Carries the owner
 /// handle (so the SPA can link the author) but no other PII.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "The public deck's full detail (the shareable view).", body = DeckDetail),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
 pub async fn public_deck(
     State(state): State<AppState>,
     Path((handle, deck_id)): Path<(String, i32)>,
