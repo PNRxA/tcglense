@@ -24,6 +24,14 @@ limiting), and a public API with scoped `tcgl_` API keys (OpenAPI at
 repo-wide greps/finds to `api/` and `web/`, and never edit a file through a
 `.claude/worktrees/…` path — that silently changes a different branch's checkout.
 
+**No private memories:** don't stash project knowledge (gotchas, conventions, workflow
+notes) in a per-user/agent memory store — put it in the repo (this file or `docs/`) via a
+PR, so the whole team and every agent sees it. Learned something worth keeping? Add it here.
+
+**Scoping a "review since `<tag>`":** pin the commit range and re-verify `HEAD` before you
+finalize — `main` advances by squash-merge, so a `git diff v<x>..HEAD` scope can grow while
+you work; confirm the final file list matches what you actually reviewed.
+
 ## Run & verify
 
 ```sh
