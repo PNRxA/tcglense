@@ -19,7 +19,8 @@ pub mod public;
 pub mod visibility;
 
 pub use public::{
-    public_list, public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
+    public_list, public_owned_counts, public_profile, public_set_drops, public_set_subtypes,
+    public_sets, public_summary,
 };
 pub use visibility::{get_collection_visibility, set_collection_visibility};
 

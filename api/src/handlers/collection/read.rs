@@ -303,15 +303,30 @@ pub async fn owned_counts(
     require_game(&game)?;
 
     let external_ids = dedupe_ids(payload.ids);
-    if external_ids.is_empty() {
-        return Ok(Json(OwnedCountsResponse {
-            data: HashMap::new(),
-        }));
-    }
     if external_ids.len() > MAX_OWNED_IDS {
         return Err(AppError::Validation(format!(
             "at most {MAX_OWNED_IDS} card ids may be looked up at once"
         )));
+    }
+
+    Ok(Json(owned_counts_map(&state, user.id, &game, external_ids).await?))
+}
+
+/// The owned-counts core, parameterised by `user_id` so both the authed handler above
+/// and the public sharing handler (`crate::handlers::sharing::public::public_owned_counts`)
+/// share the exact resolve + holdings query — only how `user_id` is resolved differs. The
+/// caller is responsible for validating the id count against [`MAX_OWNED_IDS`]; this takes
+/// an already-deduped id list (an empty one short-circuits to `{}`).
+pub(crate) async fn owned_counts_map(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    external_ids: Vec<String>,
+) -> Result<OwnedCountsResponse, AppError> {
+    if external_ids.is_empty() {
+        return Ok(OwnedCountsResponse {
+            data: HashMap::new(),
+        });
     }
 
     // Resolve external -> internal ids for this game, keeping the reverse map so the
@@ -321,7 +336,7 @@ pub async fn owned_counts(
         .select_only()
         .column(card::Column::Id)
         .column(card::Column::ExternalId)
-        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::Game.eq(game))
         .filter(card::Column::ExternalId.is_in(external_ids))
         .into_tuple::<(i32, String)>()
         .all(&state.db)
@@ -329,17 +344,17 @@ pub async fn owned_counts(
         .into_iter()
         .collect();
     if external_by_internal.is_empty() {
-        return Ok(Json(OwnedCountsResponse {
+        return Ok(OwnedCountsResponse {
             data: HashMap::new(),
-        }));
+        });
     }
 
     // One query for the user's holdings among those cards; a card with no row is
     // simply not owned and contributes nothing to the map.
     let internal_ids: Vec<i32> = external_by_internal.keys().copied().collect();
     let rows = CollectionItem::find()
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game))
         .filter(collection_item::Column::CardId.is_in(internal_ids))
         .all(&state.db)
         .await?;
@@ -359,5 +374,5 @@ pub async fn owned_counts(
         })
         .collect();
 
-    Ok(Json(OwnedCountsResponse { data }))
+    Ok(OwnedCountsResponse { data })
 }

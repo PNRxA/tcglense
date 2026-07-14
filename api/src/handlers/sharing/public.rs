@@ -6,12 +6,13 @@
 use axum::{Json, extract::State};
 
 use crate::error::AppError;
-use crate::extract::{Path, Query};
+use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::collection;
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
     CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSubtypeGroup,
-    CollectionSummary, ListParams, Page, SetsParams, SummaryParams, require_game, resolve_set_scope,
+    CollectionSummary, ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page,
+    SetsParams, SummaryParams, dedupe_ids, require_game, resolve_set_scope,
 };
 use crate::state::AppState;
 
@@ -124,5 +125,31 @@ pub async fn public_set_subtypes(
     let user_id = require_public_handle(&state, &handle, &game).await?;
     Ok(Json(
         collection::owned_subtype_page(&state, meta, user_id, &game, &code, &params).await?,
+    ))
+}
+
+/// `POST /api/u/{handle}/{game}/owned` -> the owner's owned counts for the subset of the
+/// posted external card ids they actually own, keyed by external id (mirrors the authed
+/// `owned_counts`). Backs the show-ghosts overlay on the public browse grid: which catalog
+/// cards the owner holds. Cards the owner doesn't own are absent from the map. `422` over
+/// [`MAX_OWNED_IDS`]; a private/unknown handle is `404`. Served `no-store` (the response
+/// varies by the POST body, so it must never be shared-cached).
+pub async fn public_owned_counts(
+    State(state): State<AppState>,
+    Path((handle, game)): Path<(String, String)>,
+    JsonBody(payload): JsonBody<OwnedCountsRequest>,
+) -> Result<Json<OwnedCountsResponse>, AppError> {
+    require_game(&game)?;
+    let user_id = require_public_handle(&state, &handle, &game).await?;
+
+    let external_ids = dedupe_ids(payload.ids);
+    if external_ids.len() > MAX_OWNED_IDS {
+        return Err(AppError::Validation(format!(
+            "at most {MAX_OWNED_IDS} card ids may be looked up at once"
+        )));
+    }
+
+    Ok(Json(
+        collection::owned_counts_map(&state, user_id, &game, external_ids).await?,
     ))
 }

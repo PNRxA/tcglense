@@ -179,6 +179,79 @@ async fn profile_lists_only_public_games() {
 }
 
 #[tokio::test]
+async fn public_owned_counts_returns_owner_holdings_no_store() {
+    let app = test_app_with_catalog().await;
+    let ids = sample_card_ids(&app, 2).await; // [owned, unowned]
+    let (handle, access) = owner_with_card(&app, "counts@example.test", "counter", &ids[0]).await;
+    set_public(&app, &access, true).await;
+
+    // The show-ghosts overlay POSTs the visible catalog ids; the owner holds only ids[0].
+    let (status, headers, body) = send(
+        &app,
+        json_post_from(
+            &format!("/api/u/{handle}/mtg/owned"),
+            "9.9.9.9",
+            json!({ "ids": ids }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owned lookup failed: {body:?}");
+    // Body-varying (keyed by the posted id list), so it must never be shared-cached.
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    // The owned card carries the owner's count (owner_with_card owns 2 regular); the unowned
+    // card is simply absent from the map (mirrors the authed `/owned` semantics).
+    assert_eq!(body["data"][ids[0].as_str()]["quantity"], 2);
+    assert!(
+        body["data"].get(ids[1].as_str()).is_none(),
+        "an unowned card must be absent from the map"
+    );
+}
+
+#[tokio::test]
+async fn public_owned_counts_private_handle_is_404_no_store() {
+    let app = test_app_with_catalog().await;
+    let ids = sample_card_ids(&app, 1).await;
+    // Owns a card + has a handle, but the game is never made public: a uniform 404, no oracle.
+    let (handle, _) = owner_with_card(&app, "privcounts@example.test", "privc", &ids[0]).await;
+
+    let (status, headers, _) = send(
+        &app,
+        json_post_from(
+            &format!("/api/u/{handle}/mtg/owned"),
+            "9.9.9.9",
+            json!({ "ids": ids }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+}
+
+#[tokio::test]
+async fn public_owned_counts_over_cap_is_422() {
+    let app = test_app_with_catalog().await;
+    let id = sample_card_ids(&app, 1).await.remove(0);
+    let (handle, access) = owner_with_card(&app, "capcounts@example.test", "capc", &id).await;
+    set_public(&app, &access, true).await;
+
+    // One over the per-request id ceiling → 422 (the same cap the authed `/owned` enforces),
+    // even though these ids don't resolve — the cap is checked before any lookup.
+    let too_many: Vec<String> = (0..=crate::handlers::shared::MAX_OWNED_IDS)
+        .map(|i| format!("fake-{i}"))
+        .collect();
+    let (status, _, _) = send(
+        &app,
+        json_post_from(
+            &format!("/api/u/{handle}/mtg/owned"),
+            "9.9.9.9",
+            json!({ "ids": too_many }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn public_collections_are_isolated_per_handle() {
     let app = test_app_with_catalog().await;
     let ids = sample_card_ids(&app, 2).await;

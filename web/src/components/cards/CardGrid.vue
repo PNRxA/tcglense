@@ -4,6 +4,7 @@ import type { Card, OwnedCountsMap } from '@/lib/api'
 import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
 import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
+import ReadonlyOwnedBadge from '@/components/cards/ReadonlyOwnedBadge.vue'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import { useCardNavList } from '@/composables/useCardNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
@@ -48,6 +49,11 @@ const props = withDefaults(
     // cards on your wish list. Passed only on collection-targeting grids (list==='collection');
     // on a wishlist grid the count chips already show wants, so this is omitted (undefined).
     wishlist?: OwnedCountsMap
+    // Read-only grid (the public collection browse, issues #361/#362): render a static owned
+    // badge from the `ownership` map — which here holds the OWNER's counts — instead of the
+    // quick-add editor, ignoring auth. A signed-in viewer of someone else's public page must
+    // never get an editor that would write the owner's counts into their own collection.
+    readonly?: boolean
   }>(),
   {
     ownership: undefined,
@@ -56,6 +62,7 @@ const props = withDefaults(
     collectionCounts: undefined,
     ownedMarks: undefined,
     wishlist: undefined,
+    readonly: false,
   },
 )
 
@@ -114,8 +121,14 @@ useCardNavList(
     <CardTile v-for="card in cards" :key="card.id" :game="game" :card="card" :ghost="isGhost(card)">
       <template #badge>
         <OwnedMarkBadge v-if="isOwnedMark(card)" />
+        <!-- Read-only public grid: a static owned badge (the owner's counts), never an editor. -->
+        <ReadonlyOwnedBadge
+          v-if="readonly"
+          :quantity="primaryCounts(card).quantity"
+          :foil-quantity="primaryCounts(card).foil_quantity"
+        />
         <OwnedCountControl
-          v-if="auth.isAuthenticated"
+          v-else-if="auth.isAuthenticated"
           :game="game"
           :card-id="card.id"
           :name="card.name"

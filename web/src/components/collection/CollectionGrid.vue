@@ -4,6 +4,7 @@ import type { CollectionEntry, OwnedCountsMap } from '@/lib/api'
 import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
 import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
+import ReadonlyOwnedBadge from '@/components/cards/ReadonlyOwnedBadge.vue'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import { useCardNavList } from '@/composables/useCardNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
@@ -38,8 +39,20 @@ const props = withDefaults(
     // heart in place instead of resorting the recency-sorted tiles. Absent (undefined) when no
     // overlay is threaded, so no heart renders.
     wishlist?: OwnedCountsMap
+    // Read-only grid (the public collection browse, issues #361/#362): render a static owned
+    // badge (the owner's counts) instead of the quick-add editor. This grid otherwise renders
+    // OwnedCountControl unconditionally, so without this flag a signed-in viewer of someone
+    // else's public collection would get an editor seeded with the owner's counts that writes
+    // into their OWN collection.
+    readonly?: boolean
   }>(),
-  { list: 'collection', collectionCounts: undefined, ownedMarks: undefined, wishlist: undefined },
+  {
+    list: 'collection',
+    collectionCounts: undefined,
+    ownedMarks: undefined,
+    wishlist: undefined,
+    readonly: false,
+  },
 )
 
 const cardSize = useCardSizeStore()
@@ -94,7 +107,14 @@ useCardNavList(
     <CardTile v-for="entry in entries" :key="entry.card.id" :game="game" :card="entry.card">
       <template #badge>
         <OwnedMarkBadge v-if="isOwnedMark(entry)" />
+        <!-- Read-only public grid: a static owned badge (the owner's counts), never an editor. -->
+        <ReadonlyOwnedBadge
+          v-if="readonly"
+          :quantity="primaryCounts(entry).quantity"
+          :foil-quantity="primaryCounts(entry).foil_quantity"
+        />
         <OwnedCountControl
+          v-else
           :game="game"
           :card-id="entry.card.id"
           :name="entry.card.name"

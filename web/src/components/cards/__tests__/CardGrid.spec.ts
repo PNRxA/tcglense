@@ -54,6 +54,7 @@ function mountGrid(
     ghostStyle?: GhostStyle
     wishlist?: OwnedCountsMap
     collectionCounts?: OwnedCountsMap
+    readonly?: boolean
   } = {},
 ) {
   const router = createRouter({
@@ -79,6 +80,7 @@ function mountGrid(
       ownedMarks: opts.ownedMarks,
       wishlist: opts.wishlist,
       collectionCounts: opts.collectionCounts,
+      readonly: opts.readonly,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
@@ -253,6 +255,32 @@ describe('CardGrid ghost desaturation style (issue #213)', () => {
     const wrapper = mountGrid([makeCard('b')], {}, true, false)
     expect(wrapper.find('.grayscale').exists()).toBe(false)
     expect(wrapper.find('.opacity-45').exists()).toBe(false)
+  })
+})
+
+describe('CardGrid read-only (public collection browse, issues #361/#362)', () => {
+  // On a public collection's show-ghosts grid the `ownership` map is the OWNER's counts. The
+  // `readonly` flag must render a static owned badge and NEVER a quick-add editor — even for a
+  // signed-in viewer, whose editor would otherwise write the owner's counts into their OWN
+  // collection.
+  it('renders static owned badges and never an editor, even for a signed-in viewer', () => {
+    const wrapper = mountGrid(
+      [makeCard('a'), makeCard('b')],
+      { a: { quantity: 2, foil_quantity: 1 } },
+      true, // signed in
+      true, // show-ghosts
+      'collection',
+      { readonly: true },
+    )
+    // The owner's owned card A shows a static badge (3 total, 1 foil)...
+    expect(wrapper.find('[aria-label="3 total"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="1 foil"]').exists()).toBe(true)
+    expect(totalBadges(wrapper)).toHaveLength(1)
+    // ...with NO editor and NO add trigger for the viewer.
+    expect(wrapper.findAll('[aria-label^="Edit copies"]')).toHaveLength(0)
+    expect(wrapper.findAll('[aria-label^="Add Card"]')).toHaveLength(0)
+    // Unowned card B is still ghosted (dimmed) and carries no badge.
+    expect(cardLink(wrapper, 'b').classes()).toContain('opacity-60')
   })
 })
 

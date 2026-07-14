@@ -43,8 +43,9 @@ use crate::{
         config::public_config,
         health::health,
         sharing::{
-            get_collection_visibility, public_list, public_profile, public_set_drops,
-            public_set_subtypes, public_sets, public_summary, set_collection_visibility,
+            get_collection_visibility, public_list, public_owned_counts, public_profile,
+            public_set_drops, public_set_subtypes, public_sets, public_summary,
+            set_collection_visibility,
         },
         mirror::{
             fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
@@ -359,10 +360,21 @@ pub fn build_router(state: AppState) -> Router {
         .layer(map_response(public_holdings_cache_layer))
         .layer(from_fn(conditional_request_layer));
 
+    // The public show-ghosts owned-counts overlay (issue #361/#362 follow-up): which of the
+    // posted catalog card ids the owner holds. A POST (the id list can be long), so — unlike
+    // the GET public-holdings reads above — it is NOT CDN-cacheable: the response varies by
+    // the request body, which a shared cache can't key on. Kept in its own group *outside*
+    // the `public_holdings` cache/ETag layers and marked `no-store`, so it's never
+    // shared-cached (mirrors why the authed `/api/collection/{game}/owned` twin is no-store).
+    let public_holdings_owned = Router::new()
+        .route("/api/u/{handle}/{game}/owned", post(public_owned_counts))
+        .layer(map_response(no_store_layer));
+
     let mut app = Router::new()
         .merge(private)
         .merge(public)
-        .merge(public_holdings);
+        .merge(public_holdings)
+        .merge(public_holdings_owned);
 
     // Optional dataset mirror (see `Config::mirror_enabled` + `handlers::mirror`). When
     // enabled, this instance re-serves the raw provider datasets so other TCGLense
