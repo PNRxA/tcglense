@@ -493,6 +493,78 @@ async fn public_sharing_requires_a_username_then_serves_a_cacheable_no_pii_view(
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// A user who has shared only a deck (no public collection) still has a resolvable public
+/// profile (issue #391), so the profile page can list those decks — while a user with
+/// nothing public stays a uniform 404 (the relaxation opens no bare-profile leak).
+#[tokio::test]
+async fn profile_resolves_for_a_decks_only_user() {
+    let app = test_app_with_catalog().await;
+
+    // A username'd user with nothing public: the profile 404s.
+    let (access, _) = register(&app, "decksonly@example.com", PW).await;
+    let (status, _, u) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/username",
+            &access,
+            json!({ "username": "decksonly" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let handle = u["handle"].as_str().expect("handle").to_string();
+
+    let (status, _, _) = send(&app, get(&format!("/api/u/{handle}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nothing public -> 404");
+
+    // Create a deck and make it public — the user still has NO public collection.
+    let deck = create_deck(&app, &access, "Mono-Red").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/visibility"),
+            &access,
+            json!({ "public": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Now the profile resolves (200) with an empty collection list — the deck alone is
+    // enough for the page to render (and list the public deck via /api/u/{handle}/decks).
+    let (status, _, body) = send(&app, get(&format!("/api/u/{handle}"))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a public deck should make the profile resolve: {body:?}"
+    );
+    assert_eq!(body["username"], "decksonly");
+    assert!(
+        body["games"].as_array().expect("games array").is_empty(),
+        "no public collection -> empty games"
+    );
+
+    // A different username'd user who shares nothing still 404s.
+    let (other, _) = register(&app, "nothing@example.com", PW).await;
+    let (status, _, u2) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/username",
+            &other,
+            json!({ "username": "nothing" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let other_handle = u2["handle"].as_str().expect("handle").to_string();
+    let (status, _, _) = send(&app, get(&format!("/api/u/{other_handle}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "still nothing public -> 404");
+}
+
 #[tokio::test]
 async fn a_blank_deck_name_is_rejected() {
     let app = test_app_with_catalog().await;

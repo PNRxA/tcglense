@@ -83,7 +83,7 @@ function copies(entry: DeckCardEntry): number {
           >
             <template #badge>
               <span
-                class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 rounded-md border px-1.5 py-0.5 text-xs font-medium shadow tabular-nums"
+                class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
                 >×{{ copies(entry) }}</span
               >
             </template>

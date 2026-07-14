@@ -42,6 +42,22 @@ async fn resolve_or_not_here(
         })
 }
 
+/// Whether the user has at least one publicly-shared deck. Lets the public profile
+/// (`public_profile`) still resolve for someone who has shared **only** decks and no
+/// collection — without inventing a new oracle (their decks are already listable at
+/// `/api/u/{handle}/decks`).
+pub(super) async fn user_has_public_deck(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+) -> Result<bool, AppError> {
+    Ok(Deck::find()
+        .filter(deck::Column::UserId.eq(user_id))
+        .filter(deck::Column::IsPublic.eq(true))
+        .one(db)
+        .await?
+        .is_some())
+}
+
 /// `GET /api/u/{handle}/decks` -> the owner's public decks (across games), newest first.
 /// `404` when the handle is unknown **or** the user has no public deck — the same
 /// non-oracle stance as the public profile (a valid handle with nothing public is

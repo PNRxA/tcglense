@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { FolderPlus, Layers, Plus } from '@lucide/vue'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -25,6 +25,7 @@ import {
   useMoveDeckToFolderMutation,
 } from '@/composables/useDecks'
 import type { Deck } from '@/lib/api'
+import { formatPresetsFor } from '@/lib/deckFormats'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
 
@@ -50,28 +51,72 @@ function decksInFolder(folderId: number): Deck[] {
   return decks.value.filter((d) => d.folder_id === folderId)
 }
 
+// Folder creation is shared: the standalone New-folder dialog and the New-deck dialog's
+// "+ New folder…" option both mint folders through this one mutation.
+const createFolder = useCreateFolderMutation()
+
+// Resolve a typed folder name to an id, reusing an existing folder whose name matches
+// case-insensitively so a repeat name never trips the create endpoint's duplicate 409.
+async function resolveFolderByName(name: string): Promise<number> {
+  const existing = folders.value.find((f) => f.name.toLowerCase() === name.toLowerCase())
+  if (existing) return existing.id
+  const folder = await createFolder.mutateAsync({ game: props.game, name })
+  return folder.id
+}
+
 // --- Create deck ---
 const createOpen = ref(false)
 const newDeckName = ref('')
 const newDeckFormat = ref('')
+const formatPresets = computed(() => formatPresetsFor(props.game))
+// Folder choice for the new deck: '' = no folder, 'new' = create one from
+// `newDeckFolderName`, otherwise the chosen folder's id (as a string, from the <select>).
+const newDeckFolderChoice = ref('')
+const newDeckFolderName = ref('')
 const createDeck = useCreateDeckMutation()
+// Open the dialog fresh every time, so a folder selection left over from a cancelled run
+// (whose folder may since have been deleted) can't be submitted as a stale id.
+watch(createOpen, (open) => {
+  if (!open) return
+  newDeckName.value = ''
+  newDeckFormat.value = ''
+  newDeckFolderChoice.value = ''
+  newDeckFolderName.value = ''
+})
 async function submitCreateDeck() {
   const name = newDeckName.value.trim()
   if (!name) return
+  let folderId: number | null = null
+  if (newDeckFolderChoice.value === 'new') {
+    const folderName = newDeckFolderName.value.trim()
+    if (!folderName) return
+    folderId = await resolveFolderByName(folderName)
+  } else if (newDeckFolderChoice.value) {
+    // Guard against a folder deleted after it was selected: fall back to loose (no folder)
+    // rather than POSTing an id the backend would 404.
+    const id = Number(newDeckFolderChoice.value)
+    folderId = folders.value.some((f) => f.id === id) ? id : null
+  }
   const deck = await createDeck.mutateAsync({
     game: props.game,
-    body: { name, format: newDeckFormat.value.trim() || null, description: null, folder_id: null },
+    body: {
+      name,
+      format: newDeckFormat.value.trim() || null,
+      description: null,
+      folder_id: folderId,
+    },
   })
   createOpen.value = false
   newDeckName.value = ''
   newDeckFormat.value = ''
+  newDeckFolderChoice.value = ''
+  newDeckFolderName.value = ''
   void router.push(`/decks/${props.game}/${deck.id}`)
 }
 
-// --- Create folder ---
+// --- Create folder (standalone dialog) ---
 const folderOpen = ref(false)
 const newFolderName = ref('')
-const createFolder = useCreateFolderMutation()
 async function submitCreateFolder() {
   const name = newFolderName.value.trim()
   if (!name) return
@@ -152,13 +197,47 @@ function removeFolder(folderId: number, name: string) {
             </DialogTrigger>
             <DialogContent class="max-w-sm">
               <DialogTitle>New deck</DialogTitle>
-              <DialogDescription>Give your deck a name (and an optional format).</DialogDescription>
+              <DialogDescription>
+                Give your deck a name, pick a format, and file it in a folder — all optional.
+              </DialogDescription>
               <form class="mt-2 space-y-3" @submit.prevent="submitCreateDeck">
                 <Input v-model="newDeckName" placeholder="Deck name" autofocus />
-                <Input v-model="newDeckFormat" placeholder="Format (optional, e.g. Commander)" />
+                <!-- Free-typed format with preset suggestions via a native datalist. -->
+                <Input
+                  v-model="newDeckFormat"
+                  list="deck-format-presets"
+                  placeholder="Format (optional, e.g. Commander)"
+                />
+                <datalist id="deck-format-presets">
+                  <option v-for="f in formatPresets" :key="f" :value="f" />
+                </datalist>
+                <!-- Folder: none, an existing one, or a brand-new one. -->
+                <select
+                  v-model="newDeckFolderChoice"
+                  class="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-2 py-1.5 text-sm outline-none focus-visible:ring-2"
+                  aria-label="Folder"
+                >
+                  <option value="">No folder</option>
+                  <option v-for="f in folders" :key="f.id" :value="String(f.id)">
+                    {{ f.name }}
+                  </option>
+                  <option value="new">+ New folder…</option>
+                </select>
+                <Input
+                  v-if="newDeckFolderChoice === 'new'"
+                  v-model="newDeckFolderName"
+                  placeholder="New folder name"
+                />
                 <div class="flex justify-end gap-2">
                   <DialogClose :class="buttonVariants({ variant: 'ghost' })">Cancel</DialogClose>
-                  <Button type="submit" :disabled="!newDeckName.trim() || createDeck.isPending.value"
+                  <Button
+                    type="submit"
+                    :disabled="
+                      !newDeckName.trim() ||
+                      (newDeckFolderChoice === 'new' && !newDeckFolderName.trim()) ||
+                      createDeck.isPending.value ||
+                      createFolder.isPending.value
+                    "
                     >Create</Button
                   >
                 </div>
@@ -168,11 +247,17 @@ function removeFolder(folderId: number, name: string) {
         </div>
       </header>
 
-      <LoadingRow v-if="decksQuery.isPending.value" label="Loading decks…" />
+      <LoadingRow
+        v-if="decksQuery.isPending.value || foldersQuery.isPending.value"
+        label="Loading decks…"
+      />
       <p v-else-if="decksQuery.isError.value" class="text-destructive py-8">
         Couldn't load your decks. Please retry.
       </p>
-      <p v-else-if="decks.length === 0" class="text-muted-foreground py-16 text-center">
+      <p
+        v-else-if="decks.length === 0 && folders.length === 0"
+        class="text-muted-foreground py-16 text-center"
+      >
         You haven't built any decks yet. Hit <strong>New deck</strong> to start one.
       </p>
 

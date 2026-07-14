@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Loader2, Plus, Search } from '@lucide/vue'
+import { Loader2, Search } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
+import DeckAddPrintTile from '@/components/decks/DeckAddPrintTile.vue'
 import { useCardNameSuggestions, useCardPrintingsByName } from '@/composables/useQuickAdd'
 import { useSetDeckCardMutation } from '@/composables/useDecks'
 import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
-import { displayUsdPrice } from '@/lib/cardPrice'
 
 // The deck builder's "add cards" box (issue #363): search a card name, pick a printing, and
 // add it to a chosen section — reusing the public card-name/printings reads that power the
@@ -33,6 +33,12 @@ const names = computed(() => namesQuery.data.value?.data ?? [])
 
 // The chosen name -> its printings (fetched only once a name is picked).
 const pickedName = ref('')
+// Editing the search box after picking a name dismisses the (now-stale) printings menu on
+// its own, so the user drops straight back to name search without hitting "Clear".
+// `pickName` never touches `term`, so this only fires on genuine typing.
+watch(term, () => {
+  if (pickedName.value) pickedName.value = ''
+})
 const pickedEnabled = computed(() => pickedName.value.length > 0)
 const printingsQuery = useCardPrintingsByName(gameRef, pickedName, { enabled: pickedEnabled })
 const printings = computed(() => printingsQuery.data.value?.data ?? [])
@@ -77,6 +83,16 @@ function pickName(name: string) {
 function currentCounts(cardId: string, sectionId: number): { quantity: number; foil: number } {
   const entry = props.cards.find((c) => c.card.id === cardId && c.section_id === sectionId)
   return { quantity: entry?.quantity ?? 0, foil: entry?.foil_quantity ?? 0 }
+}
+
+// Total copies (regular + foil) of a printing already in the current target section — the
+// progress badge on its tile. Reactive off `props.cards` + `targetSectionId`, so it ticks
+// up as the post-add refetch lands.
+function inTargetCount(cardId: string): number {
+  const sectionId = targetSectionId.value
+  if (sectionId == null) return 0
+  const { quantity, foil } = currentCounts(cardId, sectionId)
+  return quantity + foil
 }
 
 async function addPrinting(card: Card) {
@@ -147,25 +163,18 @@ function reset() {
         </button>
       </div>
       <Loader2 v-if="printingsQuery.isPending.value" class="text-muted-foreground size-4 animate-spin" />
-      <div v-else class="grid max-h-64 gap-1.5 overflow-y-auto sm:grid-cols-2">
-        <button
+      <div
+        v-else
+        class="grid max-h-[32rem] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4"
+      >
+        <DeckAddPrintTile
           v-for="card in printings"
           :key="card.id"
-          class="hover:bg-accent flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left"
-          @click="addPrinting(card)"
-        >
-          <span class="min-w-0">
-            <span class="text-muted-foreground text-xs"
-              >{{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}</span
-            >
-          </span>
-          <span class="flex items-center gap-1.5">
-            <span v-if="displayUsdPrice(card.prices)" class="text-xs tabular-nums"
-              >${{ displayUsdPrice(card.prices)?.amount }}</span
-            >
-            <Plus class="size-4" aria-hidden="true" />
-          </span>
-        </button>
+          :game="game"
+          :card="card"
+          :count="inTargetCount(card.id)"
+          @add="addPrinting(card)"
+        />
       </div>
     </div>
   </div>
