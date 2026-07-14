@@ -7,7 +7,7 @@ let dialogWarmed = false
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import CardImage from '@/components/cards/CardImage.vue'
@@ -44,7 +44,13 @@ function onClick(event: MouseEvent) {
     return
   }
   event.preventDefault()
-  void router.push({ query: { ...route.query, card: props.card.id } })
+  // A grid under a route without a `:game` path param (the public deck page,
+  // `/u/:handle/decks/:id`) can't feed the shared CardDetailDialog its game from the URL
+  // path, so carry it in the query there. Pages that already have `:game` in the path are
+  // left untouched (the dialog reads the param and this stays absent).
+  const query: LocationQueryRaw = { ...route.query, card: props.card.id }
+  if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
+  void router.push({ query })
 }
 
 // Fire-and-forget prefetch of the detail-dialog chunk on first hover/focus.

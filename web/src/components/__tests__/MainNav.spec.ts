@@ -30,6 +30,9 @@ function makeRouter() {
       { path: '/sealed/:game', component: { template: '<div />' } },
       { path: '/collection', component: { template: '<div />' } },
       { path: '/collection/:game', component: { template: '<div />' } },
+      { path: '/decks', component: { template: '<div />' } },
+      { path: '/decks/:game', component: { template: '<div />' } },
+      { path: '/scan', component: { template: '<div />' } },
       { path: '/wishlist', component: { template: '<div />' } },
       { path: '/wishlist/:game', component: { template: '<div />' } },
       { path: '/docs', component: { template: '<div />' } },
@@ -103,6 +106,24 @@ describe('MainNav', () => {
     expect(all.exists()).toBe(true)
     expect(all.text()).toContain('All collections')
     expect(wrapper.find('a[href="/collection/mtg"]').exists()).toBe(true)
+  })
+
+  it('lists per-game deck links and the scan action under the Collection menu', async () => {
+    const wrapper = await mountNav([MTG])
+    await trigger(wrapper, 'Collection').trigger('click')
+    await flushPromises()
+
+    // Decks: an "all decks" landing plus one per-game link (issue #394), mirroring the
+    // collections list above.
+    const allDecks = wrapper.find('a[href="/decks"]')
+    expect(allDecks.exists()).toBe(true)
+    expect(allDecks.text()).toContain('All decks')
+    const gameDecks = wrapper.find('a[href="/decks/mtg"]')
+    expect(gameDecks.exists()).toBe(true)
+    expect(gameDecks.text()).toContain(MTG.name)
+
+    // Scan cards still lives in the same dropdown, below the decks.
+    expect(wrapper.find('a[href="/scan"]').exists()).toBe(true)
   })
 
   it('reveals wish-list links when the Wish list menu is opened', async () => {

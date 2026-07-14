@@ -24,8 +24,12 @@ const cardId = computed(() => {
   return typeof value === 'string' && value ? value : null
 })
 const game = computed(() => {
-  const value = route.params.game
-  return typeof value === 'string' && value ? value : null
+  const param = route.params.game
+  if (typeof param === 'string' && param) return param
+  // A route without a `:game` path param (the public deck page) carries the game in the
+  // query instead — see CardTile's click handler.
+  const q = route.query.game
+  return typeof q === 'string' && q ? q : null
 })
 const open = computed(() => cardId.value !== null && game.value !== null)
 
@@ -83,6 +87,9 @@ function onKeydown(event: KeyboardEvent) {
 function close() {
   const next = { ...route.query }
   delete next.card
+  // Drop the game the public deck page carried alongside `card` (a no-op elsewhere, where
+  // the game lives in the path, not the query).
+  delete next.game
   void router.push({ query: next })
 }
 function onOpenChange(value: boolean) {

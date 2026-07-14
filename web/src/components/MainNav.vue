@@ -52,7 +52,10 @@ function warmSection(value: string) {
     warm('/collection')
     warm('/scan')
     warm('/decks')
-    for (const game of games.value) warm(`/collection/${game.id}`)
+    for (const game of games.value) {
+      warm(`/collection/${game.id}`)
+      warm(`/decks/${game.id}`)
+    }
   } else if (value === 'wishlist') {
     warm('/wishlist')
     for (const game of games.value) warm(`/wishlist/${game.id}`)
@@ -161,17 +164,30 @@ function warmSection(value: string) {
                 >
               </NavigationMenuLink>
             </li>
-            <!-- Decks + Scan: distinct actions, so they sit below the per-game links
-                 behind a divider. Decks (issue #363): build and organise decks of cards. -->
+            <!-- Decks (issue #363): build and organise decks of cards. Sit below the
+                 collections behind a divider, with a per-game list mirroring them so a deck
+                 game is reachable in one hop (issue #394). -->
             <li class="mt-1 border-t pt-2">
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
                 <RouterLink to="/decks" @pointerenter="warm('/decks')" @focusin="warm('/decks')">
                   <Layers aria-hidden="true" />
-                  Decks
+                  All decks
                 </RouterLink>
               </NavigationMenuLink>
             </li>
-            <li>
+            <li v-for="game in games" :key="`decks-${game.id}`">
+              <NavigationMenuLink as-child>
+                <RouterLink
+                  :to="`/decks/${game.id}`"
+                  @pointerenter="warm(`/decks/${game.id}`)"
+                  @focusin="warm(`/decks/${game.id}`)"
+                  >{{ game.name }}</RouterLink
+                >
+              </NavigationMenuLink>
+            </li>
+            <!-- Scan: a distinct action, so it gets its own divider below the decks (issue
+                 #394). -->
+            <li class="mt-1 border-t pt-2">
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
                 <RouterLink to="/scan" @pointerenter="warm('/scan')" @focusin="warm('/scan')">
                   <ScanLine aria-hidden="true" />

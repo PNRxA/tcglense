@@ -3,6 +3,13 @@ import { computed, ref, toRef } from 'vue'
 import { ArrowRightLeft, Check, Loader2, Minus, Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
 import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 import { useMoveDeckCardMutation, useSetDeckCardMutation } from '@/composables/useDecks'
@@ -64,18 +71,22 @@ const rows = computed(() => [
   { key: 'foil' as const, label: 'Foil', value: foil.value, icon: Sparkles },
 ])
 
-function moveTo(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
-  if (!value) return
-  void moveCard.mutateAsync({
-    game: props.game,
-    deckId: props.deckId,
-    id: props.cardId,
-    fromSectionId: props.sectionId,
-    toSectionId: Number(value),
-  })
-  open.value = false
-}
+// The "move to section" picker holds no persistent selection — its `get` stays '' so reka
+// shows the placeholder — and choosing a section moves the card, then closes the popover.
+const moveTarget = computed({
+  get: () => '',
+  set: (value: string) => {
+    if (!value) return
+    void moveCard.mutateAsync({
+      game: props.game,
+      deckId: props.deckId,
+      id: props.cardId,
+      fromSectionId: props.sectionId,
+      toSectionId: Number(value),
+    })
+    open.value = false
+  },
+})
 </script>
 
 <template>
@@ -159,13 +170,16 @@ function moveTo(event: Event) {
         <label class="text-muted-foreground flex items-center gap-1.5 text-xs">
           <ArrowRightLeft class="size-3.5" aria-hidden="true" /> Move to section
         </label>
-        <select
-          class="border-input bg-background mt-1 w-full rounded-md border px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          @change="moveTo"
-        >
-          <option value="">Choose a section…</option>
-          <option v-for="s in otherSections" :key="s.id" :value="s.id">{{ s.name }}</option>
-        </select>
+        <Select v-model="moveTarget">
+          <SelectTrigger size="sm" class="mt-1 w-full" aria-label="Move to section">
+            <SelectValue placeholder="Choose a section…" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="s in otherSections" :key="s.id" :value="String(s.id)">
+              {{ s.name }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     </PopoverContent>
   </Popover>
