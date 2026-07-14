@@ -32,6 +32,14 @@ insecure secret (logged as a warning) — never set that outside local dev. The 
 `cargo run` works out of the box. The server binds `127.0.0.1` by default (set
 `HOST=0.0.0.0` for containers/LAN).
 
+> **Editing `api/.env` — quote any value containing spaces.** This includes the
+> User-Agent strings sent to Scryfall / TCGCSV / Moxfield and the `EMAIL_FROM` address.
+> Format a User-Agent as a quoted `product/version (+contact)` string, e.g.
+> `SCRYFALL_USER_AGENT="TCGLense/0.1 (+https://github.com/you/app)"`. An unquoted space
+> is a parse error that makes the env loader **silently skip every variable defined
+> after it** (they fall back to their defaults), which fails in confusing ways — e.g.
+> card sync quietly falling back to the dataset mirror instead of the source you set.
+
 **Optional Postgres.** Point `DATABASE_URL` at a `postgres://…` URL and the same
 `Database::connect` picks the Postgres driver at runtime (both `sqlx-sqlite` and
 `sqlx-postgres` are compiled in — no cargo feature). Migrations run on boot against
@@ -187,7 +195,9 @@ so the split (Caddy) deployment and existing installs are untouched. Pinned by t
 images in a matrix (`fail-fast: false`) and pushes them to **GHCR** (`ghcr.io/pnrxa/…`,
 via the built-in `GITHUB_TOKEN` — needs `packages: write`) and, when the
 `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repo secrets are set, **Docker Hub**
-(`docker.io/pnrxa/…`; the Docker Hub push is gated on the secrets' presence — resolved
+(`docker.io/pnrxa/…`; `DOCKERHUB_TOKEN` is a Docker Hub **access token** created at
+[hub.docker.com/settings/security](https://hub.docker.com/settings/security), not the
+account password; the Docker Hub push is gated on the secrets' presence — resolved
 into a job step so GHCR-only works out of the box; the first GHCR push creates each
 package **private** — make it Public once, per package, to allow anonymous pulls).
 `docker/metadata-action` derives the image tags: for a release `vX.Y.Z`, the exact git
@@ -264,15 +274,14 @@ beyond the migration that creates `api_keys` (runs on boot).
 
 The origin already emits Cloudflare-honored cache headers on every public read (see
 `docs/api-contracts.md` → *HTTP caching*). The Cloudflare **Cache Rules** themselves
-are **not new** for this feature — they're already documented in the
-[README](../README.md#behind-a-cdn-cloudflare). Issue #284 adds only one small delta:
-the public OpenAPI document. Extend the README's **Rule 1** (the "cache the public
-catalog" rule) so its expression also matches `/api/openapi.json`, and it's edge-cached
-like the rest of the catalog (this has been done in the README's rule text). The
-interactive reference is an SPA route (`/docs`), served as static web assets — no API
-cache rule applies. The **API-key routes need no change** — they live under `/api/auth/*`,
-which the README's **Rule 2** already bypasses (per-user, must never be edge-cached),
-alongside `/api/collection/*` and `/api/wishlist/*`.
+are **not new** for this feature — they're documented in the [self-hosting
+guide](./self-hosting.md#behind-a-cdn-cloudflare). Issue #284 adds only one small delta:
+the public OpenAPI document. The guide's **Rule 1** (the "cache the public
+catalog" rule) matches `/api/openapi.json`, so it's edge-cached like the rest of the
+catalog. The interactive reference is an SPA route (`/docs`), served as static web
+assets — no API cache rule applies. The **API-key routes need no change** — they live
+under `/api/auth/*`, which the guide's **Rule 2** already bypasses (per-user, must never
+be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
 
 ## Environment variables
 

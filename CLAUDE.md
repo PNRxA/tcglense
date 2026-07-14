@@ -7,7 +7,7 @@ detail lives in `docs/` — read the relevant one before working in its area:
 - [`docs/architecture.md`](./docs/architecture.md) — the fully annotated file map for `api/src/` and `web/src/`, plus test organization
 - [`docs/operations.md`](./docs/operations.md) — running, commands, CI, releases, Docker, and the full environment-variable reference (authoritative: `api/src/config.rs`, `api/.env.example`)
 - [`docs/tradeoffs.md`](./docs/tradeoffs.md) — known trade-offs and design rationale; read it before "fixing" anything that looks odd
-- Deploying: [`docs/deploy-digitalocean.md`](./docs/deploy-digitalocean.md) (Droplet, recommended) · [`docs/deploy-app-platform.md`](./docs/deploy-app-platform.md) (PaaS)
+- Self-hosting / deploying: [`docs/self-hosting.md`](./docs/self-hosting.md) — the deploy hub (homelab, production split, bare metal, CDN cache rules), then the managed-cloud guides [`docs/deploy-digitalocean.md`](./docs/deploy-digitalocean.md) (Droplet, recommended) · [`docs/deploy-app-platform.md`](./docs/deploy-app-platform.md) (PaaS)
 
 **TCGLense** tracks trading-card games: a card catalog (MTG first, via Scryfall),
 singles + sealed-product price history (TCGCSV, MTGJSON), per-user collections and a

@@ -291,7 +291,7 @@ nothing defeats shared caching, and errors are forced to `no-store` so the edge 
 pins a negative. The origin is therefore Cloudflare-ready as shipped. Operational
 caveat: Cloudflare does **not** cache `/api/...` (JSON) paths by default — the edge only
 stores a response once a **Cache Rule** marks its path eligible. Those rules already
-exist and are documented in the README (*Behind a CDN (Cloudflare)*): its catalog rule
+exist and are documented in the [self-hosting guide](./self-hosting.md#behind-a-cdn-cloudflare) (*Behind a CDN (Cloudflare)*): its catalog rule
 (extended to also match `/api/openapi.json`, and — on a mirror host — the dataset mirror
 `/api/mirror/*`, issue #192) makes the public reads edge-cacheable, and its bypass rule
 keeps the per-user `/api/auth/*` (incl. the API-key management routes),
@@ -760,7 +760,7 @@ from its fixed upstream host on demand — no disk persistence, the same fetch-a
 model as `CDN_MODE` — stamping its own CDN-cacheable `Cache-Control` (preserved by the shared
 `public_cache_layer`). A fronting CDN only *absorbs* these repeats once a **Cache Rule**
 marks `/api/mirror/*` edge-eligible — the deploy guides fold it into the honor-origin
-catalog rule (README *Behind a CDN (Cloudflare)*); without that rule Cloudflare bypasses
+catalog rule ([self-hosting.md](./self-hosting.md#behind-a-cdn-cloudflare) *Behind a CDN (Cloudflare)*); without that rule Cloudflare bypasses
 `/api/…` by default, so every consumer pull re-streams from upstream. The
 `kind`/path inputs are sanitised (host-locked, no traversal). The MTGJSON route forwards
 `If-None-Match` and relays the upstream `304`, so an unchanged file stays a cheap
