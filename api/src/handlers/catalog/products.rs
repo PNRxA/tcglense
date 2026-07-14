@@ -654,6 +654,8 @@ pub async fn product_facets(
     }))
 }
 
+/// List sealed products for a card
+///
 /// `GET /api/games/{game}/cards/{id}/sealed` -> the sealed products this card is found
 /// in (or can be pulled from). Ordered `contains` → `booster` → `variable`, then by
 /// product name, so the SPA can render the three "found in / can be in / may be in"
@@ -851,6 +853,8 @@ pub async fn product_contents(
 /// reference thousands of cards) can't blow the bind limit.
 const PRODUCT_CARDS_IN_CHUNK: usize = 900;
 
+/// List product cards
+///
 /// `GET /api/games/{game}/products/{id}/cards?page=&page_size=&section=` -> a page of the
 /// cards this sealed product is found to contain (or can be pulled from), the **reverse** of
 /// `cards/{id}/sealed`. Ordered by membership (`contains` → `booster` → `variable`, so
@@ -972,6 +976,8 @@ pub async fn product_cards(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
+/// List product card sections
+///
 /// `GET /api/games/{game}/products/{id}/cards/sections` -> the non-empty display sections of
 /// this product's cards, in display order (`contains` → `exclusive` → `booster` →
 /// `variable`), each with its card count. The reverse-companion of `product_cards`: the SPA

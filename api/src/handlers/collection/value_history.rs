@@ -48,6 +48,8 @@ pub struct CollectionValuePoint {
     pub value_usd: Option<String>,
 }
 
+/// Get collection value history
+///
 /// `GET /api/collection/{game}/value-history?range=` -> the signed-in user's total
 /// collection value over time, oldest day first, for charting. With no `range` the full
 /// daily series is returned; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows

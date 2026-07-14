@@ -61,6 +61,8 @@ async fn deck_counts_by_folder(
         .collect())
 }
 
+/// List deck folders
+///
 /// `GET /api/decks/{game}/folders` -> the caller's folders for a game (alphabetical), each
 /// with how many decks are filed under it.
 #[utoipa::path(
@@ -103,6 +105,8 @@ pub async fn list_folders(
     Ok(Json(DataBody { data }))
 }
 
+/// Create deck folder
+///
 /// `POST /api/decks/{game}/folders` -> create a folder. `422` for a blank/oversized name
 /// or over the per-game cap; `409` if a folder with that name already exists.
 #[utoipa::path(
@@ -163,6 +167,8 @@ pub async fn create_folder(
     }))
 }
 
+/// Rename deck folder
+///
 /// `PUT /api/decks/{game}/folders/{folder_id}` -> rename a folder.
 #[utoipa::path(
     put,
@@ -207,6 +213,8 @@ pub async fn update_folder(
     }))
 }
 
+/// Delete deck folder
+///
 /// `DELETE /api/decks/{game}/folders/{folder_id}` -> delete a folder. Its decks are
 /// **ungrouped** (their `folder_id` -> NULL via the FK), not deleted.
 #[utoipa::path(

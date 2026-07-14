@@ -112,6 +112,8 @@ impl CollectionMoverList {
     }
 }
 
+/// List collection movers
+///
 /// `GET /api/collection/{game}/movers` -> the signed-in user's biggest gain/loss movements
 /// over the day / week / month windows. `404` if the game is unknown; an all-empty
 /// `{ "as_of": null, ... }` when the user owns nothing or no owned card has captured price

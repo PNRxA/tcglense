@@ -218,6 +218,8 @@ pub async fn wishlist_product_summary(
     Ok(Json(product_summary(&state.db, user.id, &game).await?))
 }
 
+/// Batch wanted product counts
+///
 /// `POST /api/wishlist/{game}/products/counts` -> the wanted counts for the subset of the
 /// given external (TCGplayer) product ids that are on the signed-in user's wish list,
 /// keyed by external id. Products the user doesn't want are absent from the map (so an

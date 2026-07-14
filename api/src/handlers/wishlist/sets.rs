@@ -21,6 +21,8 @@ use crate::state::AppState;
 
 use super::read::{wanted_with_cards, wishlist_query};
 
+/// List wish-list sets
+///
 /// `GET /api/wishlist/{game}/sets` -> the sets the signed-in user wants cards in,
 /// newest set first, each with the catalog set metadata plus wanted counts. Backs the
 /// wish list's per-set landing (its `owned_*` fields read as wanted counts there).
@@ -62,6 +64,8 @@ pub async fn wishlist_sets(
     }))
 }
 
+/// List wish-list set drops
+///
 /// `GET /api/wishlist/{game}/sets/{code}/drops` -> the signed-in user's wanted cards
 /// in a drop-grouped set (e.g. Secret Lair), grouped by Secret Lair drop and
 /// **paginated by drop** — the wish-list mirror of the catalog's set-drops endpoint,
@@ -129,6 +133,8 @@ pub async fn wishlist_set_drops(
     Ok(Json(holding_drop_page(table, rows, page, page_size)))
 }
 
+/// List wish-list set sub-types
+///
 /// `GET /api/wishlist/{game}/sets/{code}/subtypes` -> the signed-in user's wanted cards in
 /// a set, grouped by card sub-type (treatment) and **paginated by sub-type** — the
 /// wish-list mirror of the catalog's set-subtypes endpoint, scoped to (and carrying the

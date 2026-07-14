@@ -341,6 +341,8 @@ pub async fn list_set_drops(
     })))
 }
 
+/// List set sub-types
+///
 /// `GET /api/games/{game}/sets/{code}/subtypes` -> a set's cards grouped by sub-type
 /// (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by
 /// sub-type**.

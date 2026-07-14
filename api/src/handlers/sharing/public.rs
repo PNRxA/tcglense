@@ -20,6 +20,8 @@ use super::{
     PublicGameSummary, PublicProfile, public_games, require_public_handle, resolve_public_user,
 };
 
+/// Get public profile
+///
 /// `GET /api/u/{handle}` -> the owner's public identity + a summary per public game.
 /// 404 if the handle is unknown or the user has nothing public — no public game **and** no
 /// public deck (no bare-profile leak). A user who has shared only decks still resolves, so
@@ -65,6 +67,8 @@ pub async fn public_profile(
     }))
 }
 
+/// List public collection
+///
 /// `GET /api/u/{handle}/{game}` -> a page of the owner's owned cards (mirrors
 /// `list_collection`; same `?page/page_size/q/set/include_related/sort/dir`).
 #[utoipa::path(
@@ -100,6 +104,8 @@ pub async fn public_list(
     ))
 }
 
+/// Get public collection summary
+///
 /// `GET /api/u/{handle}/{game}/summary` (mirrors `collection_summary`;
 /// `?set/include_related/bulk_max_cents`).
 #[utoipa::path(
@@ -140,6 +146,8 @@ pub async fn public_summary(
     ))
 }
 
+/// List public collection sets
+///
 /// `GET /api/u/{handle}/{game}/sets` (mirrors `collection_sets`).
 #[utoipa::path(
     get,
@@ -167,6 +175,8 @@ pub async fn public_sets(
     ))
 }
 
+/// List public collection set drops
+///
 /// `GET /api/u/{handle}/{game}/sets/{code}/drops` (mirrors `collection_set_drops`).
 #[utoipa::path(
     get,
@@ -198,6 +208,8 @@ pub async fn public_set_drops(
     ))
 }
 
+/// List public collection set sub-types
+///
 /// `GET /api/u/{handle}/{game}/sets/{code}/subtypes` (mirrors `collection_set_subtypes`).
 #[utoipa::path(
     get,
@@ -229,6 +241,8 @@ pub async fn public_set_subtypes(
     ))
 }
 
+/// Batch public owned counts
+///
 /// `POST /api/u/{handle}/{game}/owned` -> the owner's owned counts for the subset of the
 /// posted external card ids they actually own, keyed by external id (mirrors the authed
 /// `owned_counts`). Backs the show-ghosts overlay on the public browse grid: which catalog

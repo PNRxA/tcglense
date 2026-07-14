@@ -12,6 +12,8 @@ use crate::state::AppState;
 
 use super::{CollectionVisibility, SetVisibilityRequest, apply_visibility_patch, visibility_state};
 
+/// Get collection visibility
+///
 /// `GET /api/collection/{game}/visibility` -> whether this game's collection is public, the
 /// owner's landing display prefs, and the caller's public handle (null until they set a
 /// username). Defaults (private, both sections shown) when no row exists yet.
@@ -44,6 +46,8 @@ pub async fn get_collection_visibility(
     }))
 }
 
+/// Set collection visibility
+///
 /// `PUT /api/collection/{game}/visibility` -> partial patch of sharing + display prefs.
 /// `WritableUser`, so a read-only API key is 403. Enabling public **requires a username
 /// first** (a public collection is addressed by handle) — a 409 the SPA branches on to

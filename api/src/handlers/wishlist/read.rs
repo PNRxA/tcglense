@@ -270,6 +270,8 @@ pub async fn get_wishlist_entry(
     }))
 }
 
+/// Batch wanted counts
+///
 /// `POST /api/wishlist/{game}/counts` -> the wanted counts for the subset of the
 /// given external card ids that are actually on the signed-in user's wish list, keyed
 /// by external id. Cards the user doesn't want are absent from the map (so an
