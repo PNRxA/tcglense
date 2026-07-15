@@ -165,9 +165,18 @@ async fn main() {
     let state = AppState::new(config, db, http.clone(), image_http, redis)
         .expect("failed to assemble application state");
 
-    // Spawn background maintenance (refresh-token pruning) and either the offline
-    // dummy-catalog seed or the periodic card-data sync, per config.
-    tasks::start(&state, &http).await;
+    // A maintenance boot exists to apply migrations while the instance is drained;
+    // don't start cleanup, catalog sync, or fingerprint jobs until normal service
+    // resumes. Migrations have already completed above.
+    if state.config.maintenance_mode {
+        tracing::warn!(
+            "MAINTENANCE_MODE enabled; migrations completed and background tasks are disabled"
+        );
+    } else {
+        // Spawn background maintenance (refresh-token pruning) and either the offline
+        // dummy-catalog seed or the periodic card-data sync, per config.
+        tasks::start(&state, &http).await;
+    }
 
     let app = build_router(state);
 

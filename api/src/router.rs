@@ -51,7 +51,7 @@ use crate::{
             list_folders, move_deck_card, move_deck_to_folder, reorder_sections, set_deck_card,
             set_deck_visibility, update_deck, update_folder, update_section,
         },
-        health::{health, ready},
+        health::{health, maintenance, maintenance_ready, ready},
         mirror::{
             fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
             scryfall_sets, tcgcsv_proxy,
@@ -91,10 +91,31 @@ fn cors_layer() -> CorsLayer {
         .allow_credentials(true)
 }
 
+/// Minimal router used during planned maintenance. It deliberately does not merge
+/// the application routes or static-SPA fallback: only process liveness stays up,
+/// readiness drains the instance, and every other request gets a non-cacheable 503.
+fn build_maintenance_router() -> Router {
+    Router::new()
+        .route("/api/health", get(health))
+        .route("/api/ready", get(maintenance_ready))
+        .fallback(maintenance)
+        .layer(map_response(no_store_layer))
+        .layer(cors_layer())
+        .layer(TraceLayer::new_for_http())
+        .layer(from_fn(security_headers_middleware))
+}
+
 /// Build the application router: all routes plus the shared middleware stack and
 /// state. Split out of `main` so integration tests can drive the exact same
 /// router (CORS, error mapping, auth) in-process via `tower`'s `oneshot`.
 pub fn build_router(state: AppState) -> Router {
+    if state.config.maintenance_mode {
+        tracing::warn!(
+            "MAINTENANCE_MODE enabled; serving liveness only and rejecting application traffic"
+        );
+        return build_maintenance_router();
+    }
+
     // Per-user, live, and side-effecting routes: auth (access tokens + Set-Cookie)
     // and the import-status route the SPA polls for live progress. These must never
     // be stored by the browser or a shared cache, so every response gets

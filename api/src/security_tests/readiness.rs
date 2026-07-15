@@ -35,3 +35,36 @@ async fn database_failure_only_fails_readiness_with_a_generic_response() {
     assert_eq!(body, json!({ "status": "ok" }));
     assert_eq!(cache_control(&headers), Some("no-store"));
 }
+
+#[tokio::test]
+async fn maintenance_mode_keeps_liveness_up_and_rejects_everything_else() {
+    let mut state = test_state().await;
+    state.config = std::sync::Arc::new(crate::config::Config {
+        maintenance_mode: true,
+        // A configured combined-image fallback must be blocked too.
+        web_root: Some(std::env::temp_dir()),
+        ..state.config.as_ref().clone()
+    });
+    let app = crate::build_router(state);
+
+    let (status, headers, body) = send(&app, get("/api/health")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "status": "ok" }));
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let (status, headers, body) = send(&app, get("/api/ready")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body, json!({ "status": "maintenance" }));
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    for uri in ["/api/games", "/api/not-a-real-route", "/collection/mtg"] {
+        let (status, headers, body) = send(&app, get(uri)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert_eq!(
+            body,
+            json!({ "error": "service is under maintenance" }),
+            "{uri}"
+        );
+        assert_eq!(cache_control(&headers), Some("no-store"), "{uri}");
+    }
+}
