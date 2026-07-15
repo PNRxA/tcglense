@@ -39,11 +39,14 @@ rollout/load-balancer readiness: it performs a database round-trip and returns a
 
 For a planned schema upgrade, set `MAINTENANCE_MODE=true` and restart first. The process
 still connects and runs every pending migration, but skips background jobs; liveness
-remains `200`, readiness returns `503 {"status":"maintenance"}`, and all other API or
-combined-image requests return a non-cacheable maintenance `503`. Once the upgrade is
-complete, set the flag back to `false` and restart. A fronting CDN can continue serving
-an already-fresh cached public response, so purge it or enable an edge bypass during a
-maintenance window when the public catalog must disappear immediately.
+remains `200`, readiness returns `503 {"status":"maintenance"}`, and application or
+combined-image requests return a non-cacheable maintenance `503`. The no-store
+`GET /api/config` remains available so the SPA can show maintenance state on startup;
+any maintenance-coded application response switches an already-open SPA too. There is
+no timer poll; the config is rechecked when its tab becomes visible. Once the upgrade
+is complete, set the flag back to `false` and restart. A fronting CDN can continue
+serving an already-fresh cached public response, so purge it or enable an edge bypass
+during a maintenance window when the public catalog must disappear immediately.
 
 > **Editing `api/.env` — quote any value containing spaces.** This includes the
 > User-Agent strings sent to Scryfall / TCGCSV / Moxfield and the `EMAIL_FROM` address.

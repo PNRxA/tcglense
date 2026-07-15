@@ -1,3 +1,5 @@
+import { announceMaintenance, MAINTENANCE_ERROR_CODE } from '@/lib/maintenance'
+
 // Empty base -> relative '/api/...' URLs, which go through the Vite dev proxy in
 // dev and are same-origin in production. Override with VITE_API_URL if needed.
 export const API_URL = import.meta.env.VITE_API_URL ?? ''
@@ -5,12 +7,41 @@ export const API_URL = import.meta.env.VITE_API_URL ?? ''
 /** Error thrown for non-2xx responses, carrying the server message and HTTP status. */
 export class ApiError extends Error {
   readonly status: number
+  readonly code?: string
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
+}
+
+/** Build the common API error and publish the one global response code the app shell handles. */
+export function apiErrorFromPayload(
+  payload: unknown,
+  status: number,
+  fallbackMessage = `Request failed with status ${status}`,
+): ApiError {
+  const body = payload as { error?: unknown; code?: unknown } | null
+  const code = typeof body?.code === 'string' ? body.code : undefined
+  const message = typeof body?.error === 'string' ? body.error : fallbackMessage
+  if (status === 503 && code === MAINTENANCE_ERROR_CODE) announceMaintenance()
+  return new ApiError(message, status, code)
+}
+
+/** Read a raw file endpoint's error response through the same JSON error path. */
+export async function apiErrorFromResponse(
+  response: Response,
+  fallbackMessage?: string,
+): Promise<ApiError> {
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    // Proxies may return HTML or an empty body. The status fallback remains useful.
+  }
+  return apiErrorFromPayload(payload, response.status, fallbackMessage)
 }
 
 interface RequestOptions {
@@ -46,6 +77,9 @@ interface RequestOptions {
    * not share the short auth deadline).
    */
   timeoutMs?: number
+  /** Browser HTTP-cache policy. Runtime config opts out explicitly so focus checks
+   * always reach the origin even when the SPA shell/assets came from a cache. */
+  cache?: RequestCache
 }
 
 /**
@@ -130,6 +164,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       headers,
       // Always send/receive the httpOnly refresh cookie (tcglense_refresh).
       credentials: 'include',
+      cache: options.cache,
       keepalive: options.keepalive,
       signal,
       body: isRaw
@@ -152,10 +187,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     }
 
     if (!response.ok) {
-      const error = (data as { error?: unknown } | null)?.error
-      const message =
-        typeof error === 'string' ? error : `Request failed with status ${response.status}`
-      throw new ApiError(message, response.status)
+      throw apiErrorFromPayload(data, response.status)
     }
 
     return (data ?? undefined) as T

@@ -94,15 +94,19 @@ fn cors_layer() -> CorsLayer {
 /// Minimal router used during planned maintenance. It deliberately does not merge
 /// the application routes or static-SPA fallback: only process liveness stays up,
 /// readiness drains the instance, and every other request gets a non-cacheable 503.
-fn build_maintenance_router() -> Router {
+fn build_maintenance_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/ready", get(maintenance_ready))
+        // The cached SPA's boot-time maintenance check. Keep this one application
+        // endpoint live; it carries `maintenance_mode: true` and remains no-store.
+        .route("/api/config", get(public_config))
         .fallback(maintenance)
         .layer(map_response(no_store_layer))
         .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
         .layer(from_fn(security_headers_middleware))
+        .with_state(state)
 }
 
 /// Build the application router: all routes plus the shared middleware stack and
@@ -113,7 +117,7 @@ pub fn build_router(state: AppState) -> Router {
         tracing::warn!(
             "MAINTENANCE_MODE enabled; serving liveness only and rejecting application traffic"
         );
-        return build_maintenance_router();
+        return build_maintenance_router(state);
     }
 
     // Per-user, live, and side-effecting routes: auth (access tokens + Set-Cookie)

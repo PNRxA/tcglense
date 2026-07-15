@@ -11,8 +11,7 @@ import type {
 } from '@/lib/api'
 
 const mocks = vi.hoisted(() => ({
-  completeRegistration:
-    vi.fn<(payload: CompleteRegistrationPayload) => Promise<AuthResponse>>(),
+  completeRegistration: vi.fn<(payload: CompleteRegistrationPayload) => Promise<AuthResponse>>(),
   execute: vi.fn<() => Promise<string | null>>(),
   publicConfig: vi.fn<() => Promise<PublicConfig>>(),
   register: vi.fn<(payload: RegisterPayload) => Promise<RegisterResponse>>(),
@@ -64,6 +63,7 @@ beforeEach(() => {
   mocks.completeRegistration.mockReset()
   mocks.execute.mockReset().mockResolvedValue(null)
   mocks.publicConfig.mockReset().mockResolvedValue({
+    maintenance_mode: false,
     turnstile_site_key: null,
     signups_enabled: true,
     signups_disabled_message: null,

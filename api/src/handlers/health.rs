@@ -4,7 +4,8 @@ use serde_json::json;
 
 use crate::state::AppState;
 
-pub const MAINTENANCE_MESSAGE: &str = "service is under maintenance";
+const MAINTENANCE_MESSAGE: &str = "service is under maintenance";
+const MAINTENANCE_CODE: &str = "maintenance";
 
 /// `GET /api/health` -> `200 { "status": "ok" }`.
 pub async fn health() -> impl IntoResponse {
@@ -26,7 +27,10 @@ pub async fn maintenance_ready() -> impl IntoResponse {
 pub async fn maintenance() -> impl IntoResponse {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        Json(json!({ "error": MAINTENANCE_MESSAGE })),
+        Json(json!({
+            "error": MAINTENANCE_MESSAGE,
+            "code": MAINTENANCE_CODE,
+        })),
     )
 }
 

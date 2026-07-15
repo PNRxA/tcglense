@@ -1,5 +1,7 @@
-// Shared accessor for the public runtime config (GET /api/config): the Turnstile
-// site key, and whether new signups are currently accepted.
+// Shared accessor for the auth-form fields in public runtime config (GET /api/config):
+// the Turnstile site key and whether new signups are currently accepted. The global
+// maintenance check intentionally uses its own uncached Vue Query in
+// useMaintenanceMode so this promise cache cannot hide a mode change.
 //
 // The value only changes on a redeploy, so the fetch is done once per page load
 // and the promise cached. A *failed* fetch is NOT cached — it rethrows for this

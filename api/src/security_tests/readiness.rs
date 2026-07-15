@@ -57,12 +57,20 @@ async fn maintenance_mode_keeps_liveness_up_and_rejects_everything_else() {
     assert_eq!(body, json!({ "status": "maintenance" }));
     assert_eq!(cache_control(&headers), Some("no-store"));
 
+    let (status, headers, body) = send(&app, get("/api/config")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["maintenance_mode"], true);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
     for uri in ["/api/games", "/api/not-a-real-route", "/collection/mtg"] {
         let (status, headers, body) = send(&app, get(uri)).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
         assert_eq!(
             body,
-            json!({ "error": "service is under maintenance" }),
+            json!({
+                "error": "service is under maintenance",
+                "code": "maintenance",
+            }),
             "{uri}"
         );
         assert_eq!(cache_control(&headers), Some("no-store"), "{uri}");
