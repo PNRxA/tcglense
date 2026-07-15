@@ -3,7 +3,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { UseQueryReturnType } from '@tanstack/vue-query'
 import { useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
-import { formatUsd } from '@/lib/money'
+import { useCurrency } from '@/composables/useCurrency'
 import { groupByYear, partitionPinned } from '@/lib/setGroups'
 import type { ApiError, CardSet, CollectionSet, CollectionSummary } from '@/lib/api'
 import type { CountNoun } from '@/lib/ownership'
@@ -46,6 +46,7 @@ export interface HoldingLandingSurface {
  */
 export function useHoldingsLanding(props: { game: string }, surface: HoldingLandingSurface) {
   const game = toRef(props, 'game')
+  const money = useCurrency()
 
   const summaryQuery = surface.useSummaryQuery(game)
   // The sets holding the user's cards — the default mode's list and the per-set overlay
@@ -126,15 +127,15 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
     for (const set of heldSets.value) {
       counts[set.code] = set.owned_cards
       copies[set.code] = set.owned_copies
-      values[set.code] = formatUsd(set.owned_value_usd)
-      bulkValues[set.code] = formatUsd(set.owned_bulk_value_usd)
+      values[set.code] = money.formatUsd(set.owned_value_usd)
+      bulkValues[set.code] = money.formatUsd(set.owned_bulk_value_usd)
     }
     return surface.withBulk ? { counts, copies, values, bulkValues } : { counts, copies, values }
   })
-  const totalValue = computed(() => formatUsd(summary.value?.total_value_usd))
+  const totalValue = computed(() => money.formatUsd(summary.value?.total_value_usd))
   // The bulk (< $1/card) slice of the total value (collection only; the wish list ignores
   // it). Present whenever the total is (both gate on something being priced).
-  const bulkValue = computed(() => formatUsd(summary.value?.bulk_value_usd))
+  const bulkValue = computed(() => money.formatUsd(summary.value?.bulk_value_usd))
 
   // Stats are worth showing only once something is held.
   const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)

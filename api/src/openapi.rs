@@ -311,6 +311,7 @@ mod coverage_drift {
         // --- Liveness / SPA runtime config: infra, not part of the public data API. ---
         ("/api/health", "liveness probe; not a data endpoint"),
         ("/api/config", "SPA bootstrap config (Turnstile site key); internal to the web app"),
+        ("/api/currencies", "SPA display exchange rates; internal to the web app"),
         // --- Auth & account: the SPA's session/cookie flow. API-key *management*
         //     (`/api/auth/api-keys`) IS documented; everything else is sign-in plumbing. ---
         ("/api/auth/register", "email-first registration; SPA session flow"),
@@ -319,6 +320,7 @@ mod coverage_drift {
         ("/api/auth/refresh", "refresh-cookie rotation; SPA session flow"),
         ("/api/auth/logout", "session teardown; SPA session flow"),
         ("/api/auth/me", "current-session identity; SPA session flow"),
+        ("/api/auth/currency", "account display preference; SPA session flow"),
         ("/api/auth/username", "handle claim; SPA session flow"),
         ("/api/auth/username/available", "handle availability check; SPA session flow"),
         ("/api/auth/verify-email", "single-use email token; SPA session flow"),

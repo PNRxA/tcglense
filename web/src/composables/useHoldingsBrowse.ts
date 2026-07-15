@@ -13,6 +13,7 @@ import {
   useSetSubtypesQuery,
 } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
+import { useCurrency } from '@/composables/useCurrency'
 import {
   useCollectionDropsQuery,
   useCollectionQuery,
@@ -31,7 +32,6 @@ import {
   SET_SORT_OPTIONS,
 } from '@/lib/cardSort'
 import { type Card, type OwnedCountsMap } from '@/lib/api'
-import { formatUsd } from '@/lib/money'
 import { formatCompletion, formatCopies, type CountNoun } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -116,6 +116,7 @@ export function useHoldingsBrowse(
   surface: HoldingsBrowseSurface,
 ) {
   const game = toRef(props, 'game')
+  const money = useCurrency()
   const code = toRef(props, 'code')
   const setCode = computed(() => props.code || undefined)
   const scoped = computed(() => !!setCode.value)
@@ -398,10 +399,10 @@ export function useHoldingsBrowse(
   // harmless. Shown only when there's no active search — the values are the whole scope's, so
   // pairing them with a search-filtered count would misread.
   const scopeTotalValue = computed(() =>
-    query.value ? null : formatUsd(summaryQuery.data.value?.total_value_usd),
+    query.value ? null : money.formatUsd(summaryQuery.data.value?.total_value_usd),
   )
   const scopeBulkValue = computed(() =>
-    query.value ? null : formatUsd(summaryQuery.data.value?.bulk_value_usd),
+    query.value ? null : money.formatUsd(summaryQuery.data.value?.bulk_value_usd),
   )
   // The scope's total held copies (with duplicates) as "N copies", shown next to the count when
   // there are more copies than distinct cards. Like the value, it's the whole scope's figure,

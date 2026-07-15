@@ -4,6 +4,7 @@ import { Loader2, Plus } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import type { Card } from '@/lib/api'
+import { useCurrency } from '@/composables/useCurrency'
 
 // One printing in the deck builder's "add cards" grid (issue #391): full card art plus
 // set/number/rarity/price, the whole tile a button that adds one copy. Art makes visually
@@ -22,7 +23,11 @@ const props = defineProps<{
 defineEmits<{ add: [] }>()
 
 const card = toRef(props, 'card')
-const price = computed(() => displayUsdPrice(props.card.prices))
+const money = useCurrency()
+const price = computed(() => {
+  const picked = displayUsdPrice(props.card.prices)
+  return picked ? money.formatUsd(picked.amount) : null
+})
 </script>
 
 <template>
@@ -68,7 +73,7 @@ const price = computed(() => displayUsdPrice(props.card.prices))
       <p class="text-muted-foreground flex flex-wrap items-center gap-x-1 text-xs">
         <span>{{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}</span>
         <span v-if="card.rarity" class="capitalize">· {{ card.rarity }}</span>
-        <span v-if="price" class="tabular-nums">· ${{ price.amount }}</span>
+        <span v-if="price" class="tabular-nums">· {{ price }}</span>
       </p>
     </div>
   </button>

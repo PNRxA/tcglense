@@ -13,8 +13,8 @@ import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductQuery, useProductContentsQuery } from '@/composables/useProducts'
 import { useProductBackLink } from '@/composables/useProductBackLink'
+import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices, productImageUrl } from '@/lib/api'
-import { formatUsd } from '@/lib/money'
 import { productTypeLabel } from '@/lib/productType'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
 import {
@@ -34,6 +34,7 @@ import {
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
+const money = useCurrency()
 
 const productQuery = useProductQuery(game, id)
 const product = computed(() => productQuery.data.value)
@@ -69,9 +70,12 @@ const priceRows = computed(() => {
   const prod = product.value
   if (!prod) return []
   return [
-    { label: 'USD', value: formatUsd(prod.prices?.usd) },
-    { label: 'USD foil', value: formatUsd(prod.prices?.usd_foil) },
-    { label: 'MSRP', value: formatUsd(prod.msrp) },
+    { label: money.displayCurrency.value, value: money.formatUsd(prod.prices?.usd) },
+    {
+      label: `${money.displayCurrency.value} foil`,
+      value: money.formatUsd(prod.prices?.usd_foil),
+    },
+    { label: 'MSRP', value: money.formatUsd(prod.msrp) },
   ].filter((row): row is { label: string; value: string } => row.value != null)
 })
 

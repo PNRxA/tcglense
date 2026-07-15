@@ -13,6 +13,7 @@ import CardImage from '@/components/cards/CardImage.vue'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import type { Card, CollectionQuantities } from '@/lib/api'
 import type { ScanMatch } from '@/composables/useScanSession'
+import { useCurrency } from '@/composables/useCurrency'
 
 // The editable match panel: the card the scan resolved to, shown large, with a name
 // corrector (when the OCR is ambiguous), a printing picker, and regular/foil steppers.
@@ -39,9 +40,11 @@ const emit = defineEmits<{
   discard: []
 }>()
 
-const price = computed(() =>
-  props.selectedCard ? displayUsdPrice(props.selectedCard.prices) : null,
-)
+const money = useCurrency()
+const price = computed(() => {
+  const picked = props.selectedCard ? displayUsdPrice(props.selectedCard.prices) : null
+  return picked ? { ...picked, text: money.formatUsd(picked.amount) } : null
+})
 
 // Newest-first printings labelled for the picker (set code · #number · rarity).
 function printingLabel(card: Card): string {
@@ -137,7 +140,7 @@ const rows = computed(() => [
         </Select>
         <p v-else class="text-muted-foreground text-sm">No printings found.</p>
         <p v-if="price" class="text-muted-foreground mt-1 text-xs tabular-nums">
-          ${{ price.amount }}<span v-if="price.foil" class="ml-0.5 uppercase opacity-70">foil</span>
+          {{ price.text }}<span v-if="price.foil" class="ml-0.5 uppercase opacity-70">foil</span>
         </p>
       </div>
 

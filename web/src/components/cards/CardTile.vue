@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
+import { useCurrency } from '@/composables/useCurrency'
 import CardImage from '@/components/cards/CardImage.vue'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
@@ -24,8 +25,12 @@ const props = defineProps<{
   ghost?: boolean
 }>()
 
-// Show the regular USD price, falling back to the foil price for foil-only cards.
-const price = computed(() => displayUsdPrice(props.card.prices))
+// Show the regular canonical USD price (or foil fallback), converted for this viewer.
+const money = useCurrency()
+const price = computed(() => {
+  const picked = displayUsdPrice(props.card.prices)
+  return picked ? { ...picked, text: money.formatUsd(picked.amount) } : null
+})
 const to = computed(() => `/cards/${props.game}/cards/${props.card.id}`)
 
 // A plain left-click opens the card in the detail modal over the current page — the
@@ -126,7 +131,7 @@ const ghostTextClass = computed(() =>
           >{{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}</span
         >
         <span v-if="price" class="shrink-0 tabular-nums"
-          >${{ price.amount
+          >{{ price.text
           }}<span
             v-if="price.foil"
             class="ml-1 text-[0.65rem] tracking-wide uppercase opacity-70"

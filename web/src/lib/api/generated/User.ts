@@ -5,5 +5,6 @@
  * public handle (issue #362): `username`/`discriminator` are set together the first
  * time the user makes a collection public, and `handle` is the formatted
  * `username-0001` (or null until then) the SPA uses for `/u/{handle}/{game}` links.
+ * `currency` is the preferred ISO 4217 display currency; catalog prices remain USD.
  */
-export type User = { id: number, email: string, created_at: string, username: string | null, discriminator: number | null, handle: string | null, };
+export type User = { id: number, email: string, created_at: string, username: string | null, discriminator: number | null, handle: string | null, currency: string, };

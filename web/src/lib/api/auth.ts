@@ -100,6 +100,11 @@ export function setUsername(token: string, username: string): Promise<User> {
   return request<User>('/api/auth/username', { method: 'PUT', body: { username }, token })
 }
 
+/** Persist the signed-in user's ISO 4217 display currency. Canonical API prices remain USD. */
+export function setCurrency(token: string, currency: string): Promise<User> {
+  return request<User>('/api/auth/currency', { method: 'PUT', body: { currency }, token })
+}
+
 /** Whether a candidate username passes the rules (length/charset/reserved/profanity),
  * for the "choose a username" dialog's live feedback. Authed (the dialog is only reachable
  * while signed in); allocates nothing. */

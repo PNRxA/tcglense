@@ -5,12 +5,14 @@ import { Layers } from '@lucide/vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import { usePublicDeckQuery } from '@/composables/useDecks'
+import { useCurrency } from '@/composables/useCurrency'
 import type { DeckCardEntry } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
 // view; no edit controls. Indexable so shared links preview and rank.
 const props = defineProps<{ handle: string; id: string }>()
+const money = useCurrency()
 const handle = computed(() => props.handle)
 const deckId = computed(() => Number(props.id))
 const deckQuery = usePublicDeckQuery(handle, deckId)
@@ -59,12 +61,18 @@ function copies(entry: DeckCardEntry): number {
         <h1 class="text-2xl font-semibold tracking-tight">{{ deck.name }}</h1>
         <p class="text-muted-foreground mt-1 text-sm">
           by
-          <RouterLink :to="`/u/${handle}`" class="hover:text-foreground underline">{{ author }}</RouterLink>
+          <RouterLink :to="`/u/${handle}`" class="hover:text-foreground underline">{{
+            author
+          }}</RouterLink>
           · {{ deck.summary.total_cards }} card{{ deck.summary.total_cards === 1 ? '' : 's' }}
           <span v-if="deck.format"> · {{ deck.format }}</span>
-          <span v-if="deck.summary.total_value_usd"> · ${{ deck.summary.total_value_usd }}</span>
+          <span v-if="money.formatUsd(deck.summary.total_value_usd)">
+            · {{ money.formatUsd(deck.summary.total_value_usd) }}</span
+          >
         </p>
-        <p v-if="deck.description" class="text-muted-foreground mt-2 text-sm">{{ deck.description }}</p>
+        <p v-if="deck.description" class="text-muted-foreground mt-2 text-sm">
+          {{ deck.description }}
+        </p>
       </header>
 
       <section v-for="section in visibleSections" :key="section.id" class="mb-8">

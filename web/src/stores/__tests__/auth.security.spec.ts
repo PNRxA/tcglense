@@ -26,6 +26,7 @@ const USER: User = {
   username: null,
   discriminator: null,
   handle: null,
+  currency: 'USD',
 }
 
 beforeEach(() => {
