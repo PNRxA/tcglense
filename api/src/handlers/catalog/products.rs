@@ -32,6 +32,7 @@ use crate::db::Dialect;
 use crate::entities::prelude::{
     Card, CardSet, Product, ProductPriceHistory, SealedComponent, SealedContent,
 };
+use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 use crate::entities::{
     card, card_set, product, product_price_history, sealed_component, sealed_content,
@@ -164,6 +165,18 @@ pub(crate) struct ProductComponent {
     /// The card this component links to (a `card` component resolving to a catalog card).
     /// `None` otherwise.
     pub card: Option<CardResponse>,
+}
+
+/// A sealed product that directly contains another catalog product. This is the reverse
+/// of a linked `sealed` [`ProductComponent`]: the parent product is embedded for display,
+/// alongside how many copies of the viewed child it contains.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductContainer"))]
+pub(crate) struct ProductContainer {
+    /// The parent sealed product (for example, a booster box containing booster packs).
+    pub product: ProductResponse,
+    /// How many copies of the viewed product the parent contains (`>= 1`).
+    pub quantity: u32,
 }
 
 /// A card found in — or pullable from — a sealed product, plus how it relates. The
@@ -844,6 +857,75 @@ pub async fn product_contents(
             }
         })
         .collect();
+
+    Ok(Json(DataBody { data }))
+}
+
+/// Get products containing this product
+///
+/// `GET /api/games/{game}/products/{id}/containers` -> the parent sealed products whose
+/// direct structural composition includes this product, with the quantity each parent
+/// contains. This is the reverse of the linked `sealed` rows returned by `.../contents`;
+/// for example, a booster-pack page can link to its booster box and bundles.
+/// `{ "data": [] }` when no ingested composition references the product; `404` for an
+/// unknown game/product.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/products/{id}/containers",
+    tag = "Sealed products",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "Product id"),
+    ),
+    responses(
+        (status = 200, description = "The sealed products that directly contain this product.", body = DataBody<Vec<ProductContainer>>),
+        (status = 404, description = "Unknown game or product."),
+    ),
+)]
+pub async fn product_containers(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<DataBody<Vec<ProductContainer>>>, AppError> {
+    require_game(&game)?;
+    let child = load_product(&state, &game, &id).await?;
+
+    // A parent normally references a child once, but summing duplicate component rows
+    // keeps the reverse list to one stable entry per parent if upstream models the same
+    // child in more than one line item.
+    let rows = SealedComponent::find()
+        .filter(sealed_component::Column::Game.eq(game.as_str()))
+        .filter(sealed_component::Column::Kind.eq(ComponentKind::Sealed.as_str()))
+        .filter(sealed_component::Column::ChildProductId.eq(child.id))
+        .all(&state.db)
+        .await?;
+    let mut quantities: HashMap<i32, u32> = HashMap::new();
+    for row in rows {
+        let quantity = row.quantity.max(0) as u32;
+        quantities
+            .entry(row.product_id)
+            .and_modify(|total| *total = total.saturating_add(quantity))
+            .or_insert(quantity);
+    }
+    if quantities.is_empty() {
+        return Ok(Json(DataBody { data: Vec::new() }));
+    }
+
+    let parent_ids: Vec<i32> = quantities.keys().copied().collect();
+    let names = set_name_map(&state, &game).await?;
+    let mut data: Vec<ProductContainer> = Product::find()
+        .filter(product::Column::Game.eq(game.as_str()))
+        .filter(product::Column::Id.is_in(parent_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .filter_map(|parent| {
+            quantities.get(&parent.id).map(|quantity| ProductContainer {
+                product: into_response(parent, &names),
+                quantity: *quantity,
+            })
+        })
+        .collect();
+    data.sort_by(|a, b| a.product.name.cmp(&b.product.name));
 
     Ok(Json(DataBody { data }))
 }

@@ -652,6 +652,12 @@ catalog) is planned but not implemented.
   when MTGJSON gave that product *no* composition) so the `contents: null` products get a
   hand-authored box — e.g. the Avatar Commander's Bundle's "9× Play Booster + 1× Collector
   Booster + lands + life counter + storage box", the retail manifest MTGJSON hasn't authored.
+  (6) The `/products/{id}/containers` endpoint reads the same table in reverse by
+  `child_product_id`, letting a booster pack show the boxes and bundles that directly contain
+  it (issue #415). This remains non-recursive and data-backed — it does not guess relationships
+  from names — and repeated child lines in one parent are collapsed with summed quantities.
+  A sibling `(game, child_product_id)` index covers this reverse read; the original
+  `(game, product_id, position)` unique index continues to cover the forward composition.
 - **Gotcha — `reqwest`:** pinned `default-features = false, features = ["rustls",
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on

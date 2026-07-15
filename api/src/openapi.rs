@@ -97,6 +97,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::get_product,
         crate::handlers::catalog::product_prices,
         crate::handlers::catalog::product_contents,
+        crate::handlers::catalog::product_containers,
         // --- Collection ---
         crate::handlers::collection::list_collection,
         crate::handlers::collection::collection_summary,

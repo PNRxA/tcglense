@@ -83,11 +83,14 @@ export function findProductInCache(qc: QueryClient, game: string, id: string): P
       if (isProduct(row) && row.id === id) return row
     }
   }
-  // Card→sealed sections: each ref wraps its product under `.product`.
-  for (const [, payload] of qc.getQueriesData({ queryKey: ['card-sealed', game] })) {
-    for (const row of pageRows(payload)) {
-      const product = nested(row, 'product')
-      if (isProduct(product) && product.id === id) return product
+  // Product relations: card→sealed refs, linked "what's in the box" children, and the
+  // reverse parent-product list all wrap a full product under `.product`.
+  for (const family of ['card-sealed', 'product-contents', 'product-containers']) {
+    for (const [, payload] of qc.getQueriesData({ queryKey: [family, game] })) {
+      for (const row of pageRows(payload)) {
+        const product = nested(row, 'product')
+        if (isProduct(product) && product.id === id) return product
+      }
     }
   }
   return undefined
