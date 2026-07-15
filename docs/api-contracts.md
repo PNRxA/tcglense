@@ -280,7 +280,8 @@ browser- and CDN-cacheable, served stale-while-revalidate so a cache miss never 
 on the origin. Per-user, live, and error responses are `no-store`: all `/api/auth/*`
 (access tokens + `Set-Cookie`), the import-`status` route (a live progress signal the
 SPA polls), and any non-2xx (so a CDN can't pin a transient `404`/`5xx`). The image/icon
-routes set their own longer `immutable` header, which the layer preserves.
+routes — and the dataset mirror's dated TCGCSV archives — set their own longer
+`immutable` header, which the layer preserves.
 
 **Cloudflare (issue #284 bullet 3).** These directives are all standard and
 Cloudflare-honored: `public` makes a response edge-storable, `s-maxage` sets the edge
@@ -308,8 +309,9 @@ cacheable-success body into a **weak `ETag`** (`W/"<128-bit hex>"`, a SHA-256 pr
 weak because a downstream CDN may re-encode the payload in transit) and turns a matching
 `If-None-Match` (RFC 9110 weak comparison, incl. `*` and comma-separated lists) into a
 bodyless `304 Not Modified` carrying the `ETag` + `Cache-Control`. It deliberately
-**skips** `immutable` responses (the image/icon proxy — never revalidated within
-`max-age`, and hashing a large binary would be wasteful) and `no-store` responses
+**skips** `immutable` responses (the image/icon proxy and the mirror's dated TCGCSV
+archives — never revalidated within `max-age`, and hashing a large binary would be
+wasteful) and `no-store` responses
 (errors / per-user), and only runs for `GET` (axum serves `HEAD` off the same handler
 but strips the body, so a `HEAD` carries no validator). Buffering the body to hash it is
 bounded by `MAX_ETAG_BODY_BYTES` (a body of unknown or over-cap size is served
@@ -766,13 +768,21 @@ catalog rule ([self-hosting.md](./self-hosting.md#behind-a-cdn-cloudflare) *Behi
 `If-None-Match` and relays the upstream `304`, so an unchanged file stays a cheap
 conditional.
 
+TCGCSV's dated price **archives** (`archive/…`) are the one mirror route cached
+**`immutable`** (a year): `prices-{date}.ppmd.7z` is fixed once published, unlike the live
+JSON beside it. The short meta TTL was actively wrong there — the one-time historic price
+backfill walks ~900 archive days and **each day is a distinct URL fetched exactly once**
+per consumer, so no shared cache ever serves a repeat *within* one walk, and a one-hour TTL
+has long expired before the next self-host walks. Pinning a *missing* day is not a risk: an
+unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
+
 | Method & path | Returns |
 |---------------|---------|
 | `GET /api/mirror/scryfall/bulk-data` | Scryfall's bulk-data catalog JSON |
 | `GET /api/mirror/scryfall/sets` | Scryfall's sets listing |
 | `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated) |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
-| `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives) |
+| `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
 
 The **fingerprint** route is not an upstream proxy: it serializes this origin's own

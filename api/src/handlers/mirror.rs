@@ -47,6 +47,29 @@ const MIRROR_META_CACHE: &str = "public, max-age=300, s-maxage=3600, stale-while
 /// data, stamp it as current, and never pull the real new file.
 const MIRROR_FILE_CACHE: &str = "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400";
 
+/// `Cache-Control` for TCGCSV's dated price **archives** (`archive/tcgplayer/prices-{date}.ppmd.7z`).
+///
+/// Deliberately a **much longer** shared TTL than [`MIRROR_META_CACHE`], and the only
+/// mirror route that is `immutable`: an archive is a *dated* daily snapshot, fixed once
+/// published — unlike the JSON endpoints next to it, which re-describe a moving catalog
+/// and must expire. (TCGCSV re-stamped its whole back-catalog once, in 2024-11, so
+/// "immutable" is a property of the data, not a promise from upstream; a CDN purge is the
+/// escape hatch if it ever happens again.)
+///
+/// The short meta TTL is actively wrong here. The one-time historic price backfill
+/// ([`crate::tcgcsv::backfill`]) walks ~900 archive days, and each day is a **distinct URL
+/// fetched exactly once** per consumer — so within one backfill there is no repeat request
+/// for a shared cache to serve, and across consumers a one-hour TTL has long expired by
+/// the time the next self-host backfills. The mirror therefore re-fetches every archive
+/// from TCGCSV for every self-host that runs the walk, under the mirror's own User-Agent
+/// and IP (see [`tcgcsv_proxy`]), spending TCGCSV's request budget on data that never
+/// changed. A year of `immutable` lets the CDN absorb the repeats instead.
+///
+/// Safe against pinning a *missing* day: a day TCGCSV has not published is a `404`, which
+/// [`crate::handlers::cache::public_cache_layer`] stamps `no-store`, so this header is only
+/// ever attached to an archive that actually exists.
+const MIRROR_ARCHIVE_CACHE: &str = "public, max-age=31536000, immutable";
+
 /// `Cache-Control` for MTGJSON's `AllPrintings.json.gz`. That file is version-gated on
 /// its HTTP `ETag`, so the win is the conditional `304` (the consumer only re-ingests a
 /// changed file), not caching the ~160 MB body. Tell shared caches to revalidate every
@@ -78,6 +101,31 @@ fn sanitize_tcgcsv_path(path: &str) -> Option<String> {
         }
     }
     Some(segments.join("/"))
+}
+
+/// Whether a (already-sanitised) TCGCSV sub-path addresses the dated price archives
+/// rather than the live JSON catalog. Everything under `archive/` is a per-day snapshot
+/// keyed by date in its filename, so it is immutable once published and earns
+/// [`MIRROR_ARCHIVE_CACHE`]; every other path re-describes a moving catalog and keeps
+/// [`MIRROR_META_CACHE`]. A bare `archive` (a directory listing) is not a snapshot, so
+/// the trailing slash is required.
+fn is_tcgcsv_archive_path(path: &str) -> bool {
+    path.starts_with("archive/")
+}
+
+/// Pick the `Cache-Control` for a (sanitised) TCGCSV sub-path: a dated archive is an
+/// immutable snapshot ([`MIRROR_ARCHIVE_CACHE`]); everything else re-describes a moving
+/// catalog and keeps [`MIRROR_META_CACHE`].
+///
+/// Kept as a pure function — mirroring [`crate::handlers::cache::public_cache_value`] —
+/// so the policy is unit-testable without an upstream to fetch from. Inverting it would
+/// pin the live catalog for a year, which no route-level test would catch.
+fn tcgcsv_cache_control(path: &str) -> &'static str {
+    if is_tcgcsv_archive_path(path) {
+        MIRROR_ARCHIVE_CACHE
+    } else {
+        MIRROR_META_CACHE
+    }
 }
 
 /// Map a request-path upstream failure to a `502`, tagged with which mirror hop failed.
@@ -263,12 +311,16 @@ pub async fn mtgjson_all_printings(
 /// `tcgplayer/{cat}/groups`, `.../products`, `.../prices`, `archive/...`), host-locked
 /// and path-sanitised. Carries the configured TCGCSV User-Agent, since TCGCSV blocks
 /// generic ones.
+///
+/// The dated archives are cached `immutable` for a year ([`MIRROR_ARCHIVE_CACHE`]); the
+/// live catalog paths keep the short [`MIRROR_META_CACHE`].
 pub async fn tcgcsv_proxy(
     Path(path): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Response, AppError> {
     let clean = sanitize_tcgcsv_path(&path)
         .ok_or_else(|| AppError::NotFound("mirror: invalid tcgcsv path".to_string()))?;
+    let cache_control = tcgcsv_cache_control(&clean);
     let url = format!("{}/{clean}", crate::tcgcsv::BASE_URL);
     proxy_stream(
         &state,
@@ -276,7 +328,7 @@ pub async fn tcgcsv_proxy(
         &url,
         Some(state.config.tcgcsv_user_agent.as_str()),
         None,
-        MIRROR_META_CACHE,
+        cache_control,
     )
     .await
 }
@@ -357,6 +409,69 @@ mod tests {
                 "should accept {p}"
             );
         }
+    }
+
+    #[test]
+    fn only_dated_archives_are_immutable() {
+        // The backfill's archive days: immutable, so the CDN can absorb the ~900-day walk.
+        assert!(is_tcgcsv_archive_path(
+            "archive/tcgplayer/prices-2024-02-08.ppmd.7z"
+        ));
+        // The live catalog paths re-describe a moving catalog: never immutable.
+        for p in [
+            "last-updated.txt",
+            "tcgplayer/1/groups",
+            "tcgplayer/1/2649/products",
+            "tcgplayer/1/2649/prices",
+        ] {
+            assert!(!is_tcgcsv_archive_path(p), "{p} must not be immutable");
+        }
+        // A bare listing isn't a dated snapshot, and a look-alike prefix isn't the
+        // archive tree.
+        assert!(!is_tcgcsv_archive_path("archive"));
+        assert!(!is_tcgcsv_archive_path("archived/prices.7z"));
+    }
+
+    #[test]
+    fn tcgcsv_cache_control_maps_archives_to_immutable_and_catalog_to_meta() {
+        // The mapping, not just the predicate: inverting the arms would pin the live,
+        // moving catalog for a year, so assert the header each path actually earns.
+        assert_eq!(
+            tcgcsv_cache_control("archive/tcgplayer/prices-2024-02-08.ppmd.7z"),
+            MIRROR_ARCHIVE_CACHE
+        );
+        for p in [
+            "last-updated.txt",
+            "tcgplayer/1/groups",
+            "tcgplayer/1/2649/products",
+            "tcgplayer/1/2649/prices",
+            "archive",
+            "archived/prices.7z",
+        ] {
+            assert_eq!(
+                tcgcsv_cache_control(p),
+                MIRROR_META_CACHE,
+                "{p} must not be immutable"
+            );
+        }
+    }
+
+    #[test]
+    fn archive_cache_outlives_the_meta_cache_and_is_immutable() {
+        /// Pull `directive=<seconds>` out of a `Cache-Control` value.
+        fn ttl(cache_control: &str, directive: &str) -> u64 {
+            cache_control
+                .split(',')
+                .map(str::trim)
+                .find_map(|d| d.strip_prefix(&format!("{directive}=")))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| panic!("{cache_control} has no {directive}"))
+        }
+        // The point of the split: an archive must never inherit the short meta TTL that
+        // makes the mirror re-fetch every day of the ~900-day walk from TCGCSV.
+        assert!(ttl(MIRROR_ARCHIVE_CACHE, "max-age") > ttl(MIRROR_META_CACHE, "s-maxage"));
+        assert!(MIRROR_ARCHIVE_CACHE.contains("immutable"));
+        assert!(!MIRROR_META_CACHE.contains("immutable"));
     }
 
     #[test]

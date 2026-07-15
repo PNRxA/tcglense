@@ -452,9 +452,20 @@ catalog) is planned but not implemented.
   stamp as current and never re-pull) — a guarantee that holds only while the CDN honors
   each route's `s-maxage`, which is why the deploy rule keeps the mirror under
   *honor-origin* and never a fixed Edge TTL (one fixed TTL would collapse the file and
-  catalog windows into one and could invert the guarantee); (3) MTGJSON stays ETag-gated end-to-end — the
+  catalog windows into one and could invert the guarantee); (3) TCGCSV's dated price
+  **archives** are the one mirror route cached **`immutable`** (a year), because
+  `archive/tcgplayer/prices-{date}.ppmd.7z` is fixed once published — unlike the live JSON
+  beside it, which re-describes a moving catalog. The short meta TTL was actively wrong
+  there: the one-time historic price backfill (`tcgcsv::backfill`) walks ~900 archive days
+  and **each day is a distinct URL fetched exactly once** per consumer, so no shared cache
+  ever serves a repeat *within* one walk, and a one-hour TTL has long expired before the
+  next self-host walks — so the mirror re-fetched every archive from TCGCSV for every
+  consumer that backfilled, spending TCGCSV's ~10k/day courtesy budget under the *mirror's*
+  User-Agent and IP (`tcgcsv_proxy` sends its own UA, not the consumer's). Pinning a
+  *missing* day is not a risk: a day TCGCSV hasn't published is a `404`, which
+  `public_cache_layer` marks `no-store`; (4) MTGJSON stays ETag-gated end-to-end — the
   mirror forwards `If-None-Match` and relays the upstream `304` (its cache is
-  `must-revalidate`), so an unchanged file is still a cheap conditional; (4) the mirror
+  `must-revalidate`), so an unchanged file is still a cheap conditional; (5) the mirror
   is a public read proxy to fixed upstream hosts with `kind`/path inputs sanitised
   (host-locked, no traversal), but — like the image proxy — has no per-IP rate limit or
   bandwidth budget yet, so it carries the same open-proxy abuse posture noted under

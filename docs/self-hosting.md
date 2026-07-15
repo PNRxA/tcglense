@@ -110,7 +110,8 @@ to honor the origin, Cloudflare gives every response the exact lifetime the API 
 chose — catalog reads their hour at the edge (`s-maxage=3600`), the image/icon proxy its
 30 days (`immutable`), the sitemaps their day, the dataset mirror its per-route window
 (the bulk-data catalog an hour, the streamed bulk file a deliberately shorter half-hour,
-MTGJSON's `AllPrintings` a cheap conditional revalidate) — and caches **no** `no-store` response
+MTGJSON's `AllPrintings` a cheap conditional revalidate, and TCGCSV's dated price archives
+a year of `immutable` — they never change once published) — and caches **no** `no-store` response
 (auth, the live `status` route, per-user collection/wishlist data, and every error), so
 you never have to enumerate those to keep them out.
 
@@ -158,6 +159,85 @@ you never have to enumerate those to keep them out.
    *Note: The origin automatically serves HTML pages with `public, no-cache` (cached but revalidated on every request via ETags so builds stay fresh on deploy) and hashed static assets with `public, max-age=31536000, immutable`.*
 
 The expressions are structured so you can apply them in order. If you ever add *overlapping* cache rules, note that Cloudflare applies **all** that match and the **last** one wins per setting.
+
+#### Verify caching is actually live
+
+A cache that isn't working fails **silently** — the site behaves correctly, just uncached,
+and the origin quietly serves everything. A correct rule set is also **not sufficient**: an
+unrelated zone setting can un-cache a surface without touching your rules (see the Bot
+Fight Mode box below), and it does so *invisibly to a browser*. So measure each surface
+with `cf-cache-status` rather than assuming, and re-check after editing rules:
+
+```sh
+# curl sends no cookies — which is the point: that is exactly what a mirror consumer,
+# a crawler, or an uptime monitor looks like. Run it twice; the first hit may be a cold MISS.
+for p in /api/games /api/openapi.json /api/sitemap.xml /api/mirror/tcgcsv/last-updated.txt /api/health; do
+  printf '%-44s ' "$p"
+  curl -sI "https://YOUR-DOMAIN$p" \
+    | grep -iE '^(HTTP/|cf-cache-status|set-cookie: __cf_bm)' \
+    | sed -E 's/^(set-cookie): (__cf_bm).*/\1: \2 (!)/I' | tr -d '\r' | tr '\n' ' '
+  echo
+done
+```
+
+| Path | Expected | Meaning |
+|------|----------|---------|
+| `/api/games` | `HIT` / `MISS` / `EXPIRED` | rule 1 live (`MISS` just means cold — re-run it) |
+| `/api/openapi.json` | `HIT` / `REVALIDATED` | rule 1 live |
+| `/api/sitemap.xml` | `HIT` / `MISS` | rule 1's sitemap clause live |
+| `/api/mirror/*` | `HIT` / `MISS` on a **mirror host**; `BYPASS` otherwise | rule 1's mirror clause live. `MIRROR_ENABLED` is off by default, and then the route is a `404` — so `BYPASS` here says nothing about your rules unless you run a mirror |
+| `/api/health` | `DYNAMIC` | correct — no rule matches it, and none should |
+
+Read a failure precisely — **check the status code first** (`curl -sI` shows it), because
+the same `cf-cache-status` has very different causes:
+
+- **`DYNAMIC`** on a path that should cache = **no rule matches it**. Rule 1 is missing
+  that clause, or the rule is disabled. `DYNAMIC` on `/api/health` is the expected
+  baseline — it proves there is no blanket `/api/*` rule.
+- **`BYPASS`** on a **non-`200`** is expected and means nothing about your rules. The
+  origin marks *every* error `no-store` by design (so a CDN never pins a `404`), and
+  rule 1's *bypass cache if not present* Edge TTL also yields `BYPASS` for any response
+  carrying no `Cache-Control` at all — which is what an unrouted path returns.
+- **`BYPASS`** on a genuine **`200`** — look for a **`set-cookie`** on the same response
+  before you touch any rule:
+  - **With `set-cookie: __cf_bm`** → this is **Bot Fight Mode**, not your rules. See the
+    box below; your Cache Rules are fine and editing them will not help.
+  - **Without a `set-cookie`** → *then* it's a Cache Rule set to *Bypass cache* whose
+    expression is broader than intended, matching and **ordered after** rule 1 (the last
+    matching rule wins per setting). **Narrow that rule's expression**; do *not* reorder
+    it before rule 1, or rule 1 would start winning on `/api/auth/*`,
+    `/api/collection/*`, `/api/wishlist/*` and the live `status` route, undoing rule 2.
+
+> **Bot Fight Mode silently un-caches the mirror.** *Security → Bots → Bot Fight Mode*
+> attaches a `__cf_bm` **`Set-Cookie`** to any response filled from the origin, and
+> Cloudflare does not cache a response that sets a cookie — it returns `BYPASS`. (Free/Pro/
+> Business have *Origin Cache Control* permanently enabled, so this branch can't be turned
+> off.) Cloudflare doesn't state this in one place; it follows from its
+> [cookies](https://developers.cloudflare.com/fundamentals/reference/policies-compliances/cloudflare-cookies/)
+> and [cache-behavior](https://developers.cloudflare.com/cache/concepts/cache-behavior/) docs.
+>
+> A client that **already holds** `__cf_bm` is not re-issued one, so its responses cache
+> normally — which is why **browser traffic looks fine** and only cookieless clients bypass.
+> That is the trap: the dataset mirror's entire audience is cookieless. TCGLense's own HTTP
+> client builds `reqwest` **without** the `cookies` feature (`api/Cargo.toml`), so every
+> consumer instance is permanently cookieless, and **every** mirror pull bypasses the edge —
+> forever, and invisibly if you only ever check the site in a browser. Search-engine
+> crawlers hitting `/api/sitemap*` are cookieless too.
+>
+> On **Free** it cannot be scoped: *"You cannot bypass or skip Bot Fight Mode using WAF
+> custom rules or Page Rules"* — it doesn't run on the Ruleset Engine. Options, in order:
+> turn Bot Fight Mode **off**; or, on **Pro+**, use Super Bot Fight Mode with a WAF custom
+> rule using the **Skip** action for the public cacheable paths; or give rule 1 an explicit
+> *Edge TTL* (Cloudflare then strips the `Set-Cookie` and caches) — but that discards the
+> origin's `Cache-Control` for edge TTL, which **breaks the mirror's per-route windows**
+> (see rule 1's note and `tradeoffs.md`), so it needs one rule per mirror sub-surface with
+> TTLs hand-synced to the code. Prefer the first two.
+
+A `BYPASS` on `/api/mirror/*` is worth catching early: it makes every self-host's dataset
+pull — and especially the ~900-day archive walk of the one-time price backfill
+(`PRICE_BACKFILL_ENABLED`, see [`operations.md`](./operations.md)) — miss the edge and hit
+your origin, which then re-fetches each file from the upstream under *your* User-Agent and
+IP. Cached, the edge absorbs those repeats and the upstream is hit about once per file.
 
 > **Real client IP (important).** With Cloudflare in front, the edge Caddy's immediate
 > peer is *Cloudflare*, so the default `edge.Caddyfile` line
