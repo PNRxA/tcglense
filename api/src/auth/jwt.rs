@@ -87,6 +87,7 @@ mod tests {
             username: None,
             discriminator: None,
             session_version: 0,
+            currency: crate::currency::DEFAULT_CURRENCY.to_string(),
         }
     }
 

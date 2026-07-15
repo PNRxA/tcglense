@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import type { Product } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
-import { formatUsd } from '@/lib/money'
+import { useCurrency } from '@/composables/useCurrency'
 import { productTypeLabel } from '@/lib/productType'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 import ProductImage from '@/components/products/ProductImage.vue'
@@ -13,11 +13,13 @@ const props = defineProps<{
   product: Product
 }>()
 
+const money = useCurrency()
+
 // The regular USD price, falling back to the foil price for foil-only products;
 // formatted thousands-grouped (a sealed box runs to hundreds of dollars).
 const price = computed(() => {
   const pick = displayUsdPrice(props.product.prices)
-  return pick ? { text: formatUsd(pick.amount), foil: pick.foil } : null
+  return pick ? { text: money.formatUsd(pick.amount), foil: pick.foil } : null
 })
 const typeLabel = computed(() => productTypeLabel(props.product.product_type))
 const to = computed(() => `/sealed/${props.game}/${props.product.id}`)

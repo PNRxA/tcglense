@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+import { createPinia } from 'pinia'
 import type { Product } from '@/lib/api'
 
 // Drive the dialog off controlled composables: the authoritative-count query and the
@@ -73,9 +75,11 @@ const DialogContentStub = {
 const PassThrough = { template: '<div><slot /></div>' }
 
 function mountDialog(product: Product | null = PRODUCT) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(QuickAddProductDialog, {
     props: { open: true, game: 'mtg', product },
     global: {
+      plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
       stubs: {
         Dialog: DialogRootStub,
         DialogContent: DialogContentStub,

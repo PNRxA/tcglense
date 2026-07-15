@@ -103,7 +103,7 @@ struct RowCard {
 /// (i.e. `foil`, `etched`, or a future special finish) counts as foil in our two-bucket
 /// model, mirroring the Archidekt rule. The `isFoil` boolean is only consulted when the
 /// `finish` string is absent (older payloads).
-fn is_foil_finish(finish: Option<&str>, is_foil: bool) -> bool {
+pub(crate) fn is_foil_finish(finish: Option<&str>, is_foil: bool) -> bool {
     match finish.map(str::trim) {
         Some(f) if !f.is_empty() => !f.eq_ignore_ascii_case("nonfoil"),
         _ => is_foil,
@@ -144,7 +144,7 @@ pub fn parse_collection_id(input: &str) -> Option<String> {
 
 /// Whether a candidate collection id is plausible: base64url charset (letters, digits,
 /// `-`, `_`) within the length bounds. This is what makes the constructed URL safe.
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     (MIN_ID_LEN..=MAX_ID_LEN).contains(&id.len())
         && id
             .bytes()

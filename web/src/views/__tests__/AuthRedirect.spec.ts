@@ -41,6 +41,7 @@ const USER = {
   username: null,
   discriminator: null,
   handle: null,
+  currency: 'USD',
 }
 
 function makeRouter() {

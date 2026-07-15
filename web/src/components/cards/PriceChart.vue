@@ -5,6 +5,7 @@ import { Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useCurrency } from '@/composables/useCurrency'
 import { type PriceRange } from '@/lib/api'
 
 // The shared price-history chart + range picker, used by both card and sealed-product
@@ -40,6 +41,7 @@ const props = withDefaults(
     emptyText: 'No price history for this range.',
   },
 )
+const money = useCurrency()
 
 // The chart body is a separate chunk so unovis never bloats a detail route; a Skeleton
 // (reduced-motion aware, like every other placeholder) stands in immediately (delay 0)
@@ -79,7 +81,13 @@ const query = useQuery({
   placeholderData: keepPreviousData,
 })
 
-const series = computed<PricePointLike[]>(() => query.data.value?.data ?? [])
+const series = computed<PricePointLike[]>(() =>
+  (query.data.value?.data ?? []).map((point) => ({
+    ...point,
+    usd: money.convertUsd(point.usd),
+    usd_foil: money.convertUsd(point.usd_foil),
+  })),
+)
 
 // "Empty" for a range means nothing plottable — either no rows at all, or (for the
 // add-date-clamped collection series) every row null because the collection is younger than
@@ -132,7 +140,13 @@ const isEmpty = computed(
         {{ props.emptyText }}
       </p>
 
-      <PriceChartInner v-else :series="series" :range="range" :single-series="props.singleSeries" />
+      <PriceChartInner
+        v-else
+        :series="series"
+        :range="range"
+        :currency="money.displayCurrency.value"
+        :single-series="props.singleSeries"
+      />
     </CardContent>
   </Card>
 </template>

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  FileDown,
   Globe,
   Heart,
   Layers,
@@ -40,7 +41,8 @@ import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
-import type { Card, DeckCardEntry } from '@/lib/api'
+import { ApiError, exportDeckFile } from '@/lib/api'
+import type { Card, DeckCardEntry, DeckExportFormat } from '@/lib/api'
 import {
   useCreateSectionMutation,
   useDeckQuery,
@@ -55,12 +57,15 @@ import {
 } from '@/composables/useDecks'
 import { useOwnedCounts as useCollectionOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
+import { useCurrency } from '@/composables/useCurrency'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
+import { downloadBlob } from '@/lib/download'
 
 const props = defineProps<{ game: string; id: string }>()
 const router = useRouter()
 const auth = useAuthStore()
+const money = useCurrency()
 
 const game = computed(() => props.game)
 const deckId = computed(() => Number(props.id))
@@ -125,7 +130,11 @@ async function submitRename() {
   await updateDeck.mutateAsync({
     game: props.game,
     deckId: deck.value.id,
-    body: { name: editName.value.trim(), format: editFormat.value.trim() || null, description: deck.value.description },
+    body: {
+      name: editName.value.trim(),
+      format: editFormat.value.trim() || null,
+      description: deck.value.description,
+    },
   })
   renameOpen.value = false
 }
@@ -140,6 +149,25 @@ function removeDeck() {
 function move(folderId: number | null) {
   if (!deck.value || deck.value.folder_id === folderId) return
   void moveToFolder.mutateAsync({ game: props.game, deckId: deck.value.id, folderId })
+}
+
+const exporting = ref(false)
+const exportError = ref('')
+async function exportDeck(format: DeckExportFormat) {
+  if (!deck.value || exporting.value) return
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const blob = await auth.authFetch((token) =>
+      exportDeckFile(token, props.game, deck.value!.id, format),
+    )
+    const extension = format === 'moxfield-text' ? 'txt' : 'csv'
+    downloadBlob(blob, `tcglense-${props.game}-deck-${deck.value.id}-${format}.${extension}`)
+  } catch (error) {
+    exportError.value = error instanceof ApiError ? error.message : 'Export failed. Please retry.'
+  } finally {
+    exporting.value = false
+  }
 }
 
 // --- Sharing ---
@@ -180,7 +208,9 @@ function onUsernameSaved() {
   void setPublic(true)
 }
 const shareUrl = computed(() =>
-  deck.value?.handle ? `${window.location.origin}/u/${deck.value.handle}/decks/${deck.value.id}` : '',
+  deck.value?.handle
+    ? `${window.location.origin}/u/${deck.value.handle}/decks/${deck.value.id}`
+    : '',
 )
 const copied = ref(false)
 function copyShare() {
@@ -213,7 +243,12 @@ async function submitNewSection() {
 function renameSection(sectionId: number, current: string) {
   const name = prompt('Rename section', current)
   if (!name || !name.trim() || !deck.value) return
-  void updateSection.mutateAsync({ game: props.game, deckId: deck.value.id, sectionId, name: name.trim() })
+  void updateSection.mutateAsync({
+    game: props.game,
+    deckId: deck.value.id,
+    sectionId,
+    name: name.trim(),
+  })
 }
 function removeSection(sectionId: number, name: string, count: number) {
   if (!deck.value) return
@@ -246,13 +281,18 @@ function moveSection(sectionId: number, delta: number) {
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-6">
-    <div v-if="auth.sessionResolved && !auth.isAuthenticated" class="mx-auto max-w-md py-16 text-center">
+    <div
+      v-if="auth.sessionResolved && !auth.isAuthenticated"
+      class="mx-auto max-w-md py-16 text-center"
+    >
       <div class="bg-muted mx-auto flex size-12 items-center justify-center rounded-lg">
         <Layers class="size-6" aria-hidden="true" />
       </div>
       <h1 class="mt-4 text-xl font-semibold">Sign in to view this deck</h1>
       <div class="mt-6 flex justify-center gap-3">
-        <RouterLink :class="buttonVariants()" :to="{ path: '/login', query: { redirect: `/decks/${game}/${id}` } }"
+        <RouterLink
+          :class="buttonVariants()"
+          :to="{ path: '/login', query: { redirect: `/decks/${game}/${id}` } }"
           >Sign in</RouterLink
         >
       </div>
@@ -261,7 +301,9 @@ function moveSection(sectionId: number, delta: number) {
     <LoadingRow v-else-if="deckQuery.isPending.value" label="Loading deck…" />
     <p v-else-if="deckQuery.isError.value" class="text-muted-foreground py-16 text-center">
       This deck couldn't be found.
-      <RouterLink :to="`/decks/${game}`" class="text-primary underline">Back to your decks</RouterLink>
+      <RouterLink :to="`/decks/${game}`" class="text-primary underline"
+        >Back to your decks</RouterLink
+      >
     </p>
 
     <template v-else-if="deck">
@@ -279,7 +321,9 @@ function moveSection(sectionId: number, delta: number) {
           <p class="text-muted-foreground mt-1 text-sm">
             {{ deck.summary.total_cards }} card{{ deck.summary.total_cards === 1 ? '' : 's' }}
             <span v-if="deck.format"> · {{ deck.format }}</span>
-            <span v-if="deck.summary.total_value_usd"> · ${{ deck.summary.total_value_usd }}</span>
+            <span v-if="money.formatUsd(deck.summary.total_value_usd)">
+              · {{ money.formatUsd(deck.summary.total_value_usd) }}</span
+            >
           </p>
         </div>
 
@@ -297,7 +341,12 @@ function moveSection(sectionId: number, delta: number) {
               <p class="text-muted-foreground mt-1 text-xs">
                 A public deck is viewable by anyone with the link.
               </p>
-              <Button class="mt-3 w-full" size="sm" :variant="deck.is_public ? 'outline' : 'default'" @click="toggleShare">
+              <Button
+                class="mt-3 w-full"
+                size="sm"
+                :variant="deck.is_public ? 'outline' : 'default'"
+                @click="toggleShare"
+              >
                 {{ deck.is_public ? 'Make private' : 'Make public' }}
               </Button>
               <p v-if="shareError" class="text-destructive mt-2 text-xs">{{ shareError }}</p>
@@ -323,16 +372,39 @@ function moveSection(sectionId: number, delta: number) {
           </Popover>
           <SetUsernameDialog v-model:open="usernameDialogOpen" @saved="onUsernameSaved" />
 
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" size="sm" :disabled="exporting">
+                <FileDown class="size-4" /> Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Export deck</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem @select="exportDeck('archidekt')">Archidekt CSV</DropdownMenuItem>
+              <DropdownMenuItem @select="exportDeck('moxfield')">Moxfield CSV</DropdownMenuItem>
+              <DropdownMenuItem @select="exportDeck('moxfield-text')"
+                >Moxfield plain text</DropdownMenuItem
+              >
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <!-- Settings -->
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <Button variant="outline" size="icon" aria-label="Deck settings"><Settings2 class="size-4" /></Button>
+              <Button variant="outline" size="icon" aria-label="Deck settings"
+                ><Settings2 class="size-4"
+              /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem @click="openRename"><Settings2 class="size-4" /> Rename / format</DropdownMenuItem>
+              <DropdownMenuItem @click="openRename"
+                ><Settings2 class="size-4" /> Rename / format</DropdownMenuItem
+              >
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Move to folder</DropdownMenuLabel>
-              <DropdownMenuItem v-if="deck.folder_id != null" @click="move(null)">Remove from folder</DropdownMenuItem>
+              <DropdownMenuItem v-if="deck.folder_id != null" @click="move(null)"
+                >Remove from folder</DropdownMenuItem
+              >
               <DropdownMenuItem
                 v-for="folder in folders.filter((f) => f.id !== deck?.folder_id)"
                 :key="folder.id"
@@ -347,6 +419,9 @@ function moveSection(sectionId: number, delta: number) {
           </DropdownMenu>
         </div>
       </header>
+      <p v-if="exportError" class="text-destructive -mt-3 mb-4 text-sm" aria-live="polite">
+        {{ exportError }}
+      </p>
 
       <!-- Add cards -->
       <DeckAddCard
@@ -418,10 +493,18 @@ function moveSection(sectionId: number, delta: number) {
                 <MoreVertical class="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem @click="renameSection(section.id, section.name)">Rename</DropdownMenuItem>
+                <DropdownMenuItem @click="renameSection(section.id, section.name)"
+                  >Rename</DropdownMenuItem
+                >
                 <DropdownMenuItem
                   class="text-destructive"
-                  @click="removeSection(section.id, section.name, cardsBySection.get(section.id)?.length ?? 0)"
+                  @click="
+                    removeSection(
+                      section.id,
+                      section.name,
+                      cardsBySection.get(section.id)?.length ?? 0,
+                    )
+                  "
                   >Delete section</DropdownMenuItem
                 >
               </DropdownMenuContent>
@@ -435,10 +518,7 @@ function moveSection(sectionId: number, delta: number) {
         >
           No cards here yet.
         </p>
-        <div
-          v-else
-          class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6"
-        >
+        <div v-else class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
           <CardTile
             v-for="entry in cardsBySection.get(section.id) ?? []"
             :key="`${entry.card.id}-${entry.section_id}`"
@@ -467,7 +547,9 @@ function moveSection(sectionId: number, delta: number) {
                   class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
                   :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
                 >
-                  <Library class="size-3" aria-hidden="true" />{{ ownedInCollection(entry.card.id) }}
+                  <Library class="size-3" aria-hidden="true" />{{
+                    ownedInCollection(entry.card.id)
+                  }}
                 </span>
                 <span
                   v-if="wantedInWishlist(entry.card.id) > 0"

@@ -84,16 +84,16 @@ pub(super) enum ParsedCsv {
 /// One usable row of a Moxfield collection export, pre-normalized (set code lowercased,
 /// number trimmed) but not yet resolved to a catalog card.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct MoxfieldCsvRow {
+pub(crate) struct MoxfieldCsvRow {
     /// Scryfall set code, lowercased (the catalog stores lowercase codes).
-    pub(super) set_code: String,
+    pub(crate) set_code: String,
     /// Collector number as printed, trimmed. Compared exactly — Scryfall numbers can
     /// carry letters/symbols (`"12a"`, `"XLN-217"`) that must not be normalized away.
-    pub(super) collector_number: String,
+    pub(crate) collector_number: String,
     /// Card name, only used to label unmatched cards in the import summary.
-    pub(super) name: String,
-    pub(super) foil: bool,
-    pub(super) quantity: i32,
+    pub(crate) name: String,
+    pub(crate) foil: bool,
+    pub(crate) quantity: i32,
 }
 
 /// Parse an uploaded collection CSV, sniffing the provider from the header row.
@@ -244,7 +244,7 @@ fn parse_moxfield_rows(
 
 /// Unwrap one CSV record, mapping a read error (e.g. invalid UTF-8 / a binary upload) to
 /// a clear 422 — never a partial, silently-truncated import — and enforcing the row cap.
-fn read_record(
+pub(crate) fn read_record(
     record: Result<csv::StringRecord, csv::Error>,
     rows_seen: &mut usize,
 ) -> Result<csv::StringRecord, ImportError> {
@@ -271,7 +271,7 @@ fn positive_quantity(record: &csv::StringRecord, idx: usize) -> Option<i32> {
 
 /// The 0-based index of the first header matching any of `names` (compared with
 /// [`normalize`]), or `None` if the CSV has no such column.
-fn find_column(headers: &csv::StringRecord, names: &[&str]) -> Option<usize> {
+pub(crate) fn find_column(headers: &csv::StringRecord, names: &[&str]) -> Option<usize> {
     headers
         .iter()
         .position(|h| names.contains(&normalize(h).as_str()))
@@ -286,7 +286,7 @@ fn normalize(header: &str) -> String {
 /// Parse a quantity cell to a positive-or-zero `i32`. Trims first; `None` for a blank or
 /// unparseable cell (so the row is skipped) — a huge count saturates to `i32::MAX` and is
 /// clamped again by the reconcile engine.
-fn parse_quantity(cell: &str) -> Option<i32> {
+pub(crate) fn parse_quantity(cell: &str) -> Option<i32> {
     let cell = cell.trim();
     if cell.is_empty() {
         return None;

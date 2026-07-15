@@ -30,7 +30,7 @@ use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
 use crate::state::AppState;
 
-mod export;
+pub(crate) mod export;
 mod import;
 mod price_movements;
 mod read;

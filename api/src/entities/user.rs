@@ -36,6 +36,10 @@ pub struct Model {
     /// "alice" #0002. Displayed zero-padded as `#0001`; `None` whenever `username`
     /// is `None`.
     pub discriminator: Option<i32>,
+    /// ISO 4217 code used to convert canonical USD prices for display (issue #412).
+    /// Writes are restricted to `currency::SUPPORTED_CURRENCIES`; existing accounts and
+    /// new registrations default to USD in the migration/database.
+    pub currency: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

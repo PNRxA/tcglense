@@ -148,9 +148,10 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::wishlist::wishlist_set_subtypes,
         crate::handlers::wishlist::wishlist_counts,
         crate::handlers::wishlist::wishlist_product_counts,
-        // --- Decks (issue #363): decks, folders, sections, cards ---
+        // --- Decks (issues #363/#389): decks, import/export, folders, sections, cards ---
         crate::handlers::decks::list_decks,
         crate::handlers::decks::create_deck,
+        crate::handlers::decks::import_deck,
         crate::handlers::decks::get_deck,
         crate::handlers::decks::update_deck,
         crate::handlers::decks::delete_deck,
@@ -166,6 +167,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::delete_section,
         crate::handlers::decks::set_deck_card,
         crate::handlers::decks::move_deck_card,
+        crate::handlers::decks::export_deck,
         // --- Public sharing (issues #361/#362/#363): handle-keyed public collection + decks ---
         crate::handlers::sharing::public_profile,
         crate::handlers::sharing::public_list,
@@ -312,6 +314,7 @@ mod coverage_drift {
         ("/api/health", "liveness probe; not a data endpoint"),
         ("/api/ready", "database readiness probe; not a data endpoint"),
         ("/api/config", "SPA bootstrap config (Turnstile site key); internal to the web app"),
+        ("/api/currencies", "SPA display exchange rates; internal to the web app"),
         // --- Auth & account: the SPA's session/cookie flow. API-key *management*
         //     (`/api/auth/api-keys`) IS documented; everything else is sign-in plumbing. ---
         ("/api/auth/register", "email-first registration; SPA session flow"),
@@ -320,6 +323,7 @@ mod coverage_drift {
         ("/api/auth/refresh", "refresh-cookie rotation; SPA session flow"),
         ("/api/auth/logout", "session teardown; SPA session flow"),
         ("/api/auth/me", "current-session identity; SPA session flow"),
+        ("/api/auth/currency", "account display preference; SPA session flow"),
         ("/api/auth/username", "handle claim; SPA session flow"),
         ("/api/auth/username/available", "handle availability check; SPA session flow"),
         ("/api/auth/verify-email", "single-use email token; SPA session flow"),

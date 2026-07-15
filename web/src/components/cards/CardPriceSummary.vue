@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Card } from '@/lib/api'
+import { useCurrency } from '@/composables/useCurrency'
 
 const props = defineProps<{ card: Card }>()
 
-// The card's current prices, formatted with their currency symbol; blank fields are
-// dropped so the grid only shows prices we actually have.
+// The canonical USD prices converted for this viewer. Keep the direct Cardmarket EUR
+// quote and MTGO tix alongside them: those are market feeds, not FX estimates.
+const money = useCurrency()
 const priceRows = computed(() => {
   const p = props.card.prices
   return [
-    { label: 'USD', value: p.usd ? `$${p.usd}` : null },
-    { label: 'USD foil', value: p.usd_foil ? `$${p.usd_foil}` : null },
-    { label: 'EUR', value: p.eur ? `€${p.eur}` : null },
+    { label: money.displayCurrency.value, value: money.formatUsd(p.usd) },
+    { label: `${money.displayCurrency.value} foil`, value: money.formatUsd(p.usd_foil) },
+    { label: 'Cardmarket EUR', value: p.eur ? `€${p.eur}` : null },
     { label: 'MTGO tix', value: p.tix ?? null },
   ].filter((row) => row.value)
 })

@@ -4,6 +4,7 @@ pub mod cache;
 pub mod catalog;
 pub mod collection;
 pub mod config;
+pub mod currency;
 pub mod decks;
 pub mod health;
 pub mod mirror;

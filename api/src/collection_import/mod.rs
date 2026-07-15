@@ -14,15 +14,15 @@
 //! carries no card id at all; its rows resolve by set code + collector number instead —
 //! see [`execute_csv_import`].)
 
-mod archidekt;
+pub(crate) mod archidekt;
 mod consolidate;
-mod csv_import;
+pub(crate) mod csv_import;
 mod error;
 pub mod jobs;
-mod moxfield;
+pub(crate) mod moxfield;
 mod progress;
 pub mod rate_limit;
-mod reconcile;
+pub(crate) mod reconcile;
 mod smart;
 mod types;
 
@@ -42,16 +42,16 @@ use smart::smart_absorb_page;
 
 /// Hard cap on how many holding rows we'll pull from a provider in one import, so a
 /// request can't make us fan out an unbounded number of upstream page fetches.
-const MAX_IMPORT_ROWS: usize = 100_000;
+pub(crate) const MAX_IMPORT_ROWS: usize = 100_000;
 
 /// How many unmatched card ids we surface in the summary (a debugging aid — the full
 /// count is always reported).
-const UNMATCHED_SAMPLE_CAP: usize = 20;
+pub(crate) const UNMATCHED_SAMPLE_CAP: usize = 20;
 
 /// SQLite caps host parameters per statement (as few as 999 on old builds), so any
 /// `IN (...)` lookup/delete over the imported cards is batched into chunks comfortably
 /// under that limit — a large collection can carry far more distinct cards than that.
-const IN_CHUNK: usize = 900;
+pub(crate) const IN_CHUNK: usize = 900;
 
 /// Everything a provider fetch needs beyond the collection id: the shared HTTP client,
 /// the per-provider rate limiters, and deployment-level provider settings.
@@ -265,7 +265,7 @@ pub async fn execute_csv_import(
 /// contain `#` or spaces), so the engine counts them as unmatched and surfaces them in
 /// the summary's sample verbatim — far more useful to a user than a bare UUID. The
 /// placeholder is keyed off the pair's first-seen row so duplicate rows still aggregate.
-async fn moxfield_rows_to_holdings(
+pub(crate) async fn moxfield_rows_to_holdings(
     db: &DatabaseConnection,
     game: &str,
     rows: Vec<csv_import::MoxfieldCsvRow>,

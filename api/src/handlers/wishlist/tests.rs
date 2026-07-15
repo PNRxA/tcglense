@@ -51,6 +51,7 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
             session_version: Set(0),
             username: Set(None),
             discriminator: Set(None),
+            currency: Set("USD".into()),
         }
         .insert(&db)
         .await
@@ -147,6 +148,7 @@ async fn wishlist_query_orders_by_total_copies() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -219,6 +221,7 @@ async fn summary_skips_rows_whose_card_row_is_missing() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -281,6 +284,7 @@ async fn wishlist_query_scopes_to_a_set() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -381,6 +385,7 @@ async fn wanted_cards_group_into_drops_with_counts() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -474,6 +479,7 @@ async fn wanted_products_query_scopes_by_user_and_sorts_by_recency() {
             session_version: Set(0),
             username: Set(None),
             discriminator: Set(None),
+            currency: Set("USD".into()),
         }
         .insert(&db)
         .await
@@ -569,6 +575,7 @@ async fn wanted_products_query_returns_none_for_orphaned_products() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -639,6 +646,7 @@ async fn product_summary_counts_values_and_skips_orphans() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -714,6 +722,7 @@ async fn product_summary_value_is_null_when_nothing_priced_and_ignores_msrp() {
         session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await

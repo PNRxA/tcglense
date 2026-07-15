@@ -3,8 +3,8 @@ import { computed, toRef } from 'vue'
 import { ChevronRight, Heart } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { useWishlistSummaryQuery } from '@/composables/useWishlist'
+import { useCurrency } from '@/composables/useCurrency'
 import { type Game } from '@/lib/api'
-import { formatUsd } from '@/lib/money'
 
 // One game tile on the `/wishlist` landing — the wish-list twin of CollectionGameTile.
 // Each tile fetches that game's wish-list summary so its subtitle can show what the
@@ -18,7 +18,8 @@ const gameId = toRef(() => props.game.id)
 // Signed-out visitors get no summary (the authed query stays disabled), so the tile
 // gracefully falls back to the static subtitle below.
 const summaryQuery = useWishlistSummaryQuery(gameId)
-const totalValue = computed(() => formatUsd(summaryQuery.data.value?.total_value_usd))
+const money = useCurrency()
+const totalValue = computed(() => money.formatUsd(summaryQuery.data.value?.total_value_usd))
 </script>
 
 <template>

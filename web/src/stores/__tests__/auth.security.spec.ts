@@ -27,6 +27,7 @@ const USER: User = {
   username: null,
   discriminator: null,
   handle: null,
+  currency: 'USD',
 }
 
 const OTHER_USER: User = {

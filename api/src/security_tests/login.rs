@@ -51,6 +51,7 @@ async fn me_requires_a_valid_bearer_token() {
     let (ok_status, _, ok_body) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
     assert_eq!(ok_status, StatusCode::OK);
     assert_eq!(ok_body["user"]["email"], "me@example.com");
+    assert_eq!(ok_body["user"]["currency"], "USD");
 
     // Missing header.
     let (missing, _, _) = send(&app, get("/api/auth/me")).await;
@@ -71,6 +72,49 @@ async fn me_requires_a_valid_bearer_token() {
     // Garbage / forged token.
     let (garbage, _, _) = send(&app, get_with_bearer("/api/auth/me", "not.a.jwt")).await;
     assert_eq!(garbage, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn display_currency_is_validated_and_persisted_on_the_account() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "currency@example.com", "password123").await;
+
+    let (status, headers, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/currency",
+            &access,
+            json!({ "currency": "AUD" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "currency update failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["currency"], "AUD");
+
+    // A fresh read proves the preference was stored, not only echoed by the write.
+    let (status, _, body) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["user"]["currency"], "AUD");
+
+    // Codes are exact and restricted to the supported set; a failed update leaves the
+    // previous preference untouched.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/currency",
+            &access,
+            json!({ "currency": "aud" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["error"].as_str().unwrap().contains("USD, AUD"));
+
+    let (_, _, body) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(body["user"]["currency"], "AUD");
 }
 
 /// A cryptographically-valid, unexpired access token stops working the instant its

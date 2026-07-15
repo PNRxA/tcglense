@@ -12,8 +12,8 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import ProductImage from '@/components/products/ProductImage.vue'
 import { useWishlistProductEntryQuery } from '@/composables/useWishlist'
 import { useOwnedCountEditor } from '@/composables/useOwnedCountEditor'
+import { useCurrency } from '@/composables/useCurrency'
 import { displayUsdPrice } from '@/lib/cardPrice'
-import { formatUsd } from '@/lib/money'
 import { productTypeLabel } from '@/lib/productType'
 import type { Product } from '@/lib/api'
 
@@ -45,12 +45,14 @@ const { regular, adjust, saving, saveError } = useOwnedCountEditor(game, product
   kind: 'product',
 })
 
+const money = useCurrency()
+
 // The USD price, falling back to the foil price for foil-only products (same idiom as
 // ProductTile), thousands-grouped.
 const price = computed(() => {
   if (!props.product) return null
   const pick = displayUsdPrice(props.product.prices)
-  return pick ? { text: formatUsd(pick.amount), foil: pick.foil } : null
+  return pick ? { text: money.formatUsd(pick.amount), foil: pick.foil } : null
 })
 const wanted = computed(() => regular.value > 0)
 </script>

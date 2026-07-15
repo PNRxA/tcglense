@@ -59,7 +59,7 @@ Skeleton only — the full annotated map is [`docs/architecture.md`](./docs/arch
 
 - `api/src/`: `router.rs` (every route + middleware) · `handlers/` · `entities/` +
   `migrator/` · `auth/` · `catalog/` (GAMES registry + per-game dispatch) · providers
-  (`scryfall/`, `tcgcsv/`, `mtgjson/`) · `collection_import/` · `security_tests/`
+  (`scryfall/`, `tcgcsv/`, `mtgjson/`) · `collection_import/` · `deck_import/` · `security_tests/`
   (HTTP-level suites driving the real router).
 - `web/src/`: `views/` + `router/` · `components/` · `composables/` (query hooks) ·
   `stores/` (Pinia) · `lib/api/` (typed client; `generated/` = ts-rs wire types).
@@ -170,8 +170,11 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   ownership first — a deck that isn't the caller's is **404, not 403**. Per-deck sharing is an
   `is_public` **column** on the deck row (not a `collection_visibility`-style table — a deck is
   1:1 with the shareable unit), public at `/api/u/{handle}/decks/{id}` (username-first `409`,
-  reusing #361's `resolve_public_user`). Deck **import** from Archidekt/Moxfield is a follow-up
-  (issue #389) — a deck is written whole, never through the `collection_items` reconcile engine.
+  reusing #361's `resolve_public_user`). Deck **import/export** (issue #389) lives in the sibling
+  `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
+  whole, never through the `collection_items` reconcile engine. It reuses the lower provider
+  throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
+  a lightweight deck header; Moxfield live URLs keep the collection import gate.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

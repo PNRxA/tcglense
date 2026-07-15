@@ -104,6 +104,7 @@ pub struct ResetPasswordRequest {
 /// public handle (issue #362): `username`/`discriminator` are set together the first
 /// time the user makes a collection public, and `handle` is the formatted
 /// `username-0001` (or null until then) the SPA uses for `/u/{handle}/{game}` links.
+/// `currency` is the preferred ISO 4217 display currency; catalog prices remain USD.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "User"))]
 pub struct UserResponse {
@@ -113,6 +114,7 @@ pub struct UserResponse {
     pub username: Option<String>,
     pub discriminator: Option<i32>,
     pub handle: Option<String>,
+    pub currency: String,
 }
 
 impl From<user::Model> for UserResponse {
@@ -126,6 +128,7 @@ impl From<user::Model> for UserResponse {
             username: m.username,
             discriminator: m.discriminator,
             handle,
+            currency: m.currency,
         }
     }
 }
@@ -656,6 +659,29 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoR
 /// `GET /api/auth/me`
 pub async fn me(AuthUser(user): AuthUser) -> Result<impl IntoResponse, AppError> {
     Ok((StatusCode::OK, Json(MeResponse { user: user.into() })))
+}
+
+/// Body of `PUT /api/auth/currency`.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct SetCurrencyRequest {
+    pub currency: String,
+}
+
+/// Persist the caller's preferred display currency (issue #412). Prices and valuations
+/// remain USD in storage/on the API; the SPA applies the cached reference rate at display
+/// time. A read-only API key cannot mutate account preferences.
+pub async fn set_currency(
+    State(state): State<AppState>,
+    WritableUser(user): WritableUser,
+    JsonBody(payload): JsonBody<SetCurrencyRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let currency = crate::currency::validate(&payload.currency)?.to_string();
+    let mut active: user::ActiveModel = user.into();
+    active.currency = Set(currency);
+    active.updated_at = Set(Utc::now());
+    let user = active.update(&state.db).await?;
+    Ok((StatusCode::OK, Json(UserResponse::from(user))))
 }
 
 /// Body of `PUT /api/auth/username`.

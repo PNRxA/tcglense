@@ -12,6 +12,7 @@ import {
   getFolders,
   getPublicDeck,
   getPublicDecks,
+  importDeck,
   moveDeckCard,
   moveDeckToFolder,
   reorderSections,
@@ -28,6 +29,8 @@ import type {
   Deck,
   DeckDetail,
   DeckFolder,
+  DeckImportRequest,
+  DeckImportResponse,
   DeckSection,
   DeckVisibility,
   UpdateDeckRequest,
@@ -112,6 +115,10 @@ export interface CreateDeckVars {
   game: string
   body: CreateDeckRequest
 }
+export interface ImportDeckVars {
+  game: string
+  body: DeckImportRequest
+}
 export interface UpdateDeckVars {
   game: string
   deckId: number
@@ -192,6 +199,16 @@ export function useCreateDeckMutation() {
       invalidateDeck(qc, vars.game),
   }
   return useAuthedMutation<DeckDetail, CreateDeckVars>(options)
+}
+
+export function useImportDeckMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: ImportDeckVars) => importDeck(token, vars.game, vars.body),
+    onSettled: (_d: DeckImportResponse | undefined, _e: ApiError | null, vars: ImportDeckVars) =>
+      invalidateDeck(qc, vars.game, _d?.deck.id),
+  }
+  return useAuthedMutation<DeckImportResponse, ImportDeckVars>(options)
 }
 
 export function useUpdateDeckMutation() {

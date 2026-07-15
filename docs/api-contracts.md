@@ -14,7 +14,11 @@ the parser detail is logged only).
 
 ## Auth API contract
 
-`User` shape: `{ id: number, email: string, created_at: string (RFC3339 UTC), username: string | null, discriminator: number | null, handle: string | null }`.
+`User` shape: `{ id: number, email: string, created_at: string (RFC3339 UTC), username:
+string | null, discriminator: number | null, handle: string | null, currency: string }`.
+`currency` is the account's ISO 4217 display preference (`USD` by default; one of
+`USD`/`AUD`/`CAD`/`EUR`/`GBP`/`JPY`/`NZD`). Catalog prices and valuation fields remain
+canonical USD on the API.
 
 **Two-token model:** a short-lived **access token** (JWT, 15 min, returned as
 `access_token`, kept in memory on the client) plus a long-lived **refresh token**
@@ -62,6 +66,7 @@ email bypass is active.
 | `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token, user }` + **rotated** cookie; returning identity with the token prevents stale/cross-tab account state | `401` if missing/invalid/expired/reuse-burned (clears cookie); a benign concurrent superseded-token submit returns `401` **without** clearing a newer cookie |
 | `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes that login family + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
+| `PUT /api/auth/currency` | `{ currency }` (`Authorization: Bearer <access_token>`) | `200 User` — persists the account's preferred display currency | `422` unsupported currency · read-only API key `403` |
 | `POST /api/auth/verify-email` | `{ token }` | `204` (stamps `users.email_verified_at`; no session) | `401 "invalid or expired token"` |
 | `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
@@ -69,6 +74,7 @@ email bypass is active.
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
 | `GET /api/ready` | — | `200 { status: "ready" }` after a database round-trip | `503 { status: "unavailable" }` without internal details when storage is unavailable |
 | `GET /api/config` | — | `200 { turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads before rendering the auth forms; `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
+| `GET /api/currencies` | — | `200 { base: "USD", as_of: "YYYY-MM-DD", rates: Record<string, number> }` — daily display rates; `rates.USD` is `1`; after 12h the last-good snapshot is returned immediately while one background refresh runs, with a hard seven-day stale limit | `502` when no snapshot exists or the last-good snapshot is over seven days old and refresh is unavailable |
 
 **Anti-abuse (all seven auth mutation endpoints above):** each request body may carry
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the
@@ -735,7 +741,9 @@ deck ids), matching the public-sharing surface.
 |---------------|------|---------|
 | `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections) |
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
+| `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Imported categories/boards become the deck's **exact** sections rather than seeding defaults. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
+| `GET /api/decks/{game}/{deck_id}/export?format=archidekt\|moxfield\|moxfield-text` | — | Owner-scoped deck-list download. `archidekt` (default) and `moxfield` return CSV; `moxfield-text` returns a sectioned plain-text list. Regular and foil quantities are separate rows, and sections round-trip through each format. `404` if not the caller's |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
 | `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
 | `PUT /api/decks/{game}/{deck_id}/folder` | `{ folder_id }` | `Deck` — file the deck under a folder, or `null` to loosen it (`404` for a folder that isn't the caller's) |
@@ -759,6 +767,25 @@ quantity, foil_quantity }`, the full catalog `Card` plus which section it sits i
 deck-specific DTO, since a `CollectionEntry` has no section). The default seeded sections are
 Archidekt-flavoured (Commander, Creatures, …, the functional categories Ramp / Removal /
 Tutor / …, and Maybeboard) — see `docs/tradeoffs.md`.
+
+Deck imports run inline because each provider deck endpoint is a single-object fetch, unlike
+the paginated collection job. They still share the collection importer's per-provider rate
+limiter, `429` back-off, foil detection, external-id resolution, and Moxfield
+`(set, collector_number)` lookup. Archidekt uses the first category as the card's primary
+section; Moxfield boards map to Mainboard / Sideboard / Commander / Maybeboard / Companion /
+Signature Spells, with per-board fallback for older top-level payloads.
+Name-only plain text resolves to the newest exact-name printing; an explicit printing tuple
+that is absent from the local catalog stays unmatched. The write is one transaction and goes
+straight to `decks` / `deck_sections` / `deck_cards` — it never invokes collection reconcile.
+
+Moxfield **live URL** import uses the same deployment gate as collection import and remains
+disabled until the operator has an approved `MOXFIELD_USER_AGENT`; upload is the supported
+Moxfield path. Upload bodies are capped at 16 MiB and deck lists at a deck-specific 2000-row
+cap. The synchronous response stays bounded by returning a `Deck` header, never every card.
+CSV parsers accept the provider's relevant columns plus extra export metadata. The app's own
+minimal exports are deliberately re-importable: Archidekt uses Quantity / Name / Finish /
+Scryfall ID / Categories, while Moxfield uses Count / Name / Edition / Foil / Collector
+Number / Board.
 
 **Public deck sharing** reuses the collection's handle namespace (issue #361's model, but per
 deck): a deck's `is_public` column exposes a read-only view, and these token-less reads live in

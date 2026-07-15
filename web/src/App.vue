@@ -6,6 +6,7 @@ import MainNav from '@/components/MainNav.vue'
 import MobileNav from '@/components/MobileNav.vue'
 import NavigationProgressBar from '@/components/NavigationProgressBar.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import CurrencyMenu from '@/components/CurrencyMenu.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
@@ -120,6 +121,7 @@ onMounted(() => {
         </div>
         <div class="flex shrink-0 items-center gap-1">
           <ThemeToggle />
+          <CurrencyMenu />
           <UserMenu />
         </div>
       </div>

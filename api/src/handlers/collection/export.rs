@@ -386,7 +386,7 @@ fn csv_err(error: csv::Error) -> AppError {
 
 /// Wrap the CSV body in a file-download response (`text/csv` + a `Content-Disposition`
 /// attachment filename). Cache-Control is stamped `no-store` by the router's private group.
-fn csv_download(body: String, filename: &str) -> Result<Response, AppError> {
+pub(crate) fn csv_download(body: String, filename: &str) -> Result<Response, AppError> {
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
         .map_err(|_| AppError::Internal("invalid export filename".into()))?;
     Ok((

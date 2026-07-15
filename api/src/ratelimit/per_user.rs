@@ -34,17 +34,18 @@ pub(super) enum UserRoute {
     /// General authenticated requests — collection reads, absolute-count edits,
     /// batch owned-count lookups, `me`. A generous ceiling for a signed-in human.
     General,
-    /// The expensive collection import / sync / CSV-upload endpoints, which do real
-    /// server-side work (an upstream fetch, a CSV parse, or a full-collection DB
-    /// reconcile). A much tighter cap.
+    /// The expensive collection/deck import, sync, and CSV-upload endpoints, which
+    /// do real server-side work (an upstream fetch, a CSV parse, or database writes).
+    /// A much tighter cap.
     Import,
 }
 
 impl UserRoute {
     /// Classify an authenticated request path into its per-user quota class. `{game}`
     /// is a path variable, so this matches on the trailing segments after
-    /// `/api/collection/{game}`; everything else (reads, edits, `me`, an unknown
-    /// path) falls into the generous [`Self::General`] bucket.
+    /// `/api/collection/{game}` or `/api/decks/{game}`; everything else (reads,
+    /// edits, `me`, an unknown path) falls into the generous [`Self::General`]
+    /// bucket.
     pub(super) fn from_path(path: &str) -> Self {
         if let Some(rest) = path.strip_prefix("/api/collection/")
             && let Some((_game, tail)) = rest.split_once('/')
@@ -52,6 +53,13 @@ impl UserRoute {
         {
             return Self::Import;
         }
+
+        if let Some(rest) = path.strip_prefix("/api/decks/")
+            && let Some((_game, "import")) = rest.split_once('/')
+        {
+            return Self::Import;
+        }
+
         Self::General
     }
 
@@ -303,6 +311,10 @@ mod tests {
             UserRoute::from_path("/api/collection/mtg/sync"),
             UserRoute::Import
         );
+        assert_eq!(
+            UserRoute::from_path("/api/decks/mtg/import"),
+            UserRoute::Import
+        );
 
         // Reads, edits, job polling, and non-collection authenticated routes are general
         // (the whole wishlist surface included — it has no expensive import twin).
@@ -312,6 +324,8 @@ mod tests {
             "/api/collection/mtg/sets",
             "/api/collection/mtg/cards/some-external-id",
             "/api/collection/mtg/import/jobs/1",
+            "/api/decks/mtg",
+            "/api/decks/mtg/1/export",
             "/api/wishlist/mtg",
             "/api/wishlist/mtg/counts",
             "/api/wishlist/mtg/cards/some-external-id",
