@@ -330,7 +330,11 @@ pub(crate) async fn moxfield_rows_to_holdings(
                 .cloned()
                 // Unmatched: keep the readable placeholder so the summary's
                 // unmatched sample names the card, not an opaque key.
-                .unwrap_or_else(|| placeholder_by_pair[&pair].clone());
+                .unwrap_or_else(|| {
+                    placeholder_by_pair.get(&pair).cloned().unwrap_or_else(|| {
+                        format!("{} #{}", row.set_code, row.collector_number)
+                    })
+                });
             FetchedHolding {
                 external_card_id,
                 foil: row.foil,

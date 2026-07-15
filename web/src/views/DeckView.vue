@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { computed } from 'vue'
+import { RouterLink } from 'vue-router'
 import {
   ArrowLeft,
   ChevronDown,
@@ -41,242 +41,51 @@ import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
-import { ApiError, exportDeckFile } from '@/lib/api'
-import type { Card, DeckCardEntry, DeckExportFormat } from '@/lib/api'
-import {
-  useCreateSectionMutation,
-  useDeckQuery,
-  useDeleteDeckMutation,
-  useDeleteSectionMutation,
-  useFoldersQuery,
-  useMoveDeckToFolderMutation,
-  useReorderSectionsMutation,
-  useSetDeckVisibilityMutation,
-  useUpdateDeckMutation,
-  useUpdateSectionMutation,
-} from '@/composables/useDecks'
-import { useOwnedCounts as useCollectionOwnedCounts } from '@/composables/useCollection'
-import { useWishlistCounts } from '@/composables/useWishlist'
 import { useCurrency } from '@/composables/useCurrency'
-import { useAuthStore } from '@/stores/auth'
+import { useDeckEditor } from '@/composables/useDeckEditor'
 import { usePageMeta } from '@/lib/seo'
-import { downloadBlob } from '@/lib/download'
 
 const props = defineProps<{ game: string; id: string }>()
-const router = useRouter()
-const auth = useAuthStore()
 const money = useCurrency()
-
-const game = computed(() => props.game)
-const deckId = computed(() => Number(props.id))
-const deckQuery = useDeckQuery(game, deckId)
-const deck = computed(() => deckQuery.data.value)
+const {
+  auth,
+  game,
+  deckQuery,
+  deck,
+  sections,
+  allCards,
+  cardsBySection,
+  showEmpty,
+  visibleSections,
+  ownedInCollection,
+  wantedInWishlist,
+  folders,
+  renameOpen,
+  editName,
+  editFormat,
+  openRename,
+  submitRename,
+  removeDeck,
+  move,
+  exporting,
+  exportError,
+  exportDeck,
+  shareError,
+  usernameDialogOpen,
+  toggleShare,
+  onUsernameSaved,
+  shareUrl,
+  copied,
+  copyShare,
+  newSectionOpen,
+  newSectionName,
+  submitNewSection,
+  renameSection,
+  removeSection,
+  moveSection,
+} = useDeckEditor(props)
 
 usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true })
-
-const sections = computed(() => deck.value?.sections ?? [])
-const allCards = computed<DeckCardEntry[]>(() => deck.value?.cards ?? [])
-const cardsBySection = computed(() => {
-  const map = new Map<number, DeckCardEntry[]>()
-  for (const s of sections.value) map.set(s.id, [])
-  for (const c of allCards.value) map.get(c.section_id)?.push(c)
-  return map
-})
-
-// Empty sections are hidden by default (a deck seeds ~19), with a toggle to reveal them so
-// the user can still target them from the add box (which always lists every section).
-const showEmpty = ref(false)
-const visibleSections = computed(() =>
-  showEmpty.value
-    ? sections.value
-    : sections.value.filter((s) => (cardsBySection.value.get(s.id)?.length ?? 0) > 0),
-)
-
-// Ownership overlays: which of the deck's cards the user owns (collection) and wants
-// (wish list), for the chips on each tile (issue #363: indicate what's already in your
-// collection; #394: the wish-list count alongside it). Both reuse the shared holdings
-// batch-counts seam, keyed by the deck's card ids. Owner-only — the public deck view is
-// read-only and mounts neither.
-const catalogCards = computed<Card[]>(() => allCards.value.map((c) => c.card))
-const { ownership } = useCollectionOwnedCounts(game, catalogCards)
-const { ownership: wishlistWanted } = useWishlistCounts(game, catalogCards)
-function ownedInCollection(cardId: string): number {
-  const c = ownership.value[cardId]
-  return c ? c.quantity + c.foil_quantity : 0
-}
-function wantedInWishlist(cardId: string): number {
-  const c = wishlistWanted.value[cardId]
-  return c ? c.quantity + c.foil_quantity : 0
-}
-
-// --- Deck-level mutations ---
-const updateDeck = useUpdateDeckMutation()
-const deleteDeck = useDeleteDeckMutation()
-const setVisibility = useSetDeckVisibilityMutation()
-const moveToFolder = useMoveDeckToFolderMutation()
-const foldersQuery = useFoldersQuery(game)
-const folders = computed(() => foldersQuery.data.value?.data ?? [])
-
-const renameOpen = ref(false)
-const editName = ref('')
-const editFormat = ref('')
-function openRename() {
-  editName.value = deck.value?.name ?? ''
-  editFormat.value = deck.value?.format ?? ''
-  renameOpen.value = true
-}
-async function submitRename() {
-  if (!editName.value.trim() || !deck.value) return
-  await updateDeck.mutateAsync({
-    game: props.game,
-    deckId: deck.value.id,
-    body: {
-      name: editName.value.trim(),
-      format: editFormat.value.trim() || null,
-      description: deck.value.description,
-    },
-  })
-  renameOpen.value = false
-}
-
-function removeDeck() {
-  if (!deck.value || !confirm(`Delete the deck "${deck.value.name}"? This can't be undone.`)) return
-  void deleteDeck.mutateAsync({ game: props.game, deckId: deck.value.id }).then(() => {
-    void router.push(`/decks/${props.game}`)
-  })
-}
-
-function move(folderId: number | null) {
-  if (!deck.value || deck.value.folder_id === folderId) return
-  void moveToFolder.mutateAsync({ game: props.game, deckId: deck.value.id, folderId })
-}
-
-const exporting = ref(false)
-const exportError = ref('')
-async function exportDeck(format: DeckExportFormat) {
-  if (!deck.value || exporting.value) return
-  exporting.value = true
-  exportError.value = ''
-  try {
-    const blob = await auth.authFetch((token) =>
-      exportDeckFile(token, props.game, deck.value!.id, format),
-    )
-    const extension = format === 'moxfield-text' ? 'txt' : 'csv'
-    downloadBlob(blob, `tcglense-${props.game}-deck-${deck.value.id}-${format}.${extension}`)
-  } catch (error) {
-    exportError.value = error instanceof ApiError ? error.message : 'Export failed. Please retry.'
-  } finally {
-    exporting.value = false
-  }
-}
-
-// --- Sharing ---
-// Making a deck public needs a username first (the server 409s otherwise), exactly like a
-// public collection: if the user has none, the toggle opens the shared "choose a username"
-// dialog and finishes the share on its `saved` event, rather than round-tripping a
-// guaranteed conflict. Mirrors CollectionVisibilityControl.
-const shareError = ref('')
-const usernameDialogOpen = ref(false)
-async function setPublic(next: boolean) {
-  if (!deck.value) return
-  shareError.value = ''
-  try {
-    await setVisibility.mutateAsync({
-      game: props.game,
-      deckId: deck.value.id,
-      public: next,
-    })
-  } catch {
-    shareError.value = 'Could not update sharing. Please retry.'
-  }
-}
-async function toggleShare() {
-  if (!deck.value) return
-  shareError.value = ''
-  if (deck.value.is_public) {
-    await setPublic(false)
-    return
-  }
-  if (!auth.user?.username) {
-    usernameDialogOpen.value = true
-    return
-  }
-  await setPublic(true)
-}
-// The username dialog saved — finish the "make public" the toggle started.
-function onUsernameSaved() {
-  void setPublic(true)
-}
-const shareUrl = computed(() =>
-  deck.value?.handle
-    ? `${window.location.origin}/u/${deck.value.handle}/decks/${deck.value.id}`
-    : '',
-)
-const copied = ref(false)
-function copyShare() {
-  if (!shareUrl.value) return
-  void navigator.clipboard.writeText(shareUrl.value).then(() => {
-    copied.value = true
-    setTimeout(() => (copied.value = false), 2000)
-  })
-}
-
-// --- Section mutations ---
-const createSection = useCreateSectionMutation()
-const updateSection = useUpdateSectionMutation()
-const deleteSection = useDeleteSectionMutation()
-const reorderSections = useReorderSectionsMutation()
-
-const newSectionOpen = ref(false)
-const newSectionName = ref('')
-async function submitNewSection() {
-  if (!newSectionName.value.trim() || !deck.value) return
-  await createSection.mutateAsync({
-    game: props.game,
-    deckId: deck.value.id,
-    name: newSectionName.value.trim(),
-  })
-  newSectionName.value = ''
-  newSectionOpen.value = false
-}
-
-function renameSection(sectionId: number, current: string) {
-  const name = prompt('Rename section', current)
-  if (!name || !name.trim() || !deck.value) return
-  void updateSection.mutateAsync({
-    game: props.game,
-    deckId: deck.value.id,
-    sectionId,
-    name: name.trim(),
-  })
-}
-function removeSection(sectionId: number, name: string, count: number) {
-  if (!deck.value) return
-  const msg = count
-    ? `Delete "${name}"? Its ${count} card(s) move to your first section.`
-    : `Delete the empty section "${name}"?`
-  if (!confirm(msg)) return
-  void deleteSection.mutateAsync({ game: props.game, deckId: deck.value.id, sectionId })
-}
-function moveSection(sectionId: number, delta: number) {
-  if (!deck.value) return
-  // Swap against the VISIBLE neighbour (skipping hidden empty sections), else the up/down
-  // buttons appear to no-op when empty sections sit between the visible ones. The full
-  // (complete) id list is still submitted, so the backend's "exactly the deck's sections"
-  // check holds.
-  const visible = visibleSections.value
-  const vi = visible.findIndex((s) => s.id === sectionId)
-  const vj = vi + delta
-  const neighbour = visible[vj]
-  if (vi < 0 || !neighbour) return
-  const ids = sections.value.map((s) => s.id)
-  const i = ids.indexOf(sectionId)
-  const j = ids.indexOf(neighbour.id)
-  if (i < 0 || j < 0) return
-  ids[i] = neighbour.id
-  ids[j] = sectionId
-  void reorderSections.mutateAsync({ game: props.game, deckId: deck.value.id, sectionIds: ids })
-}
 </script>
 
 <template>

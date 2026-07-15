@@ -28,7 +28,7 @@ struct DeckRow {
     #[serde(default)]
     quantity: i32,
     #[serde(default)]
-    foil: bool,
+    foil: Option<bool>,
     #[serde(default)]
     modifier: Option<String>,
     card: RowCard,
@@ -155,7 +155,10 @@ async fn fetch_deck_from_base(
                 external_card_id: Some(row.card.uid),
                 set_code: None,
                 collector_number: None,
-                foil: is_foil_finish(row.foil, row.modifier.as_deref()),
+                // Archidekt emits `null` for ordinary cards in current live payloads.
+                // Treat it like the older `false` spelling instead of rejecting the
+                // entire deck during deserialization.
+                foil: is_foil_finish(row.foil.unwrap_or_default(), row.modifier.as_deref()),
                 quantity: row.quantity,
             }
         })
@@ -170,6 +173,8 @@ async fn fetch_deck_from_base(
 }
 
 fn archidekt_format(id: Option<i32>) -> Option<String> {
+    // Archidekt publishes this id/name registry at `/api/decks/formats/`. Keep unknown
+    // future ids unset rather than attaching the wrong format to an imported deck.
     let label = match id? {
         1 => "Standard",
         2 => "Modern",
@@ -177,7 +182,26 @@ fn archidekt_format(id: Option<i32>) -> Option<String> {
         4 => "Legacy",
         5 => "Vintage",
         6 => "Pauper",
-        7 => "Pioneer",
+        7 => "Custom",
+        8 => "Frontier",
+        9 => "Future Standard",
+        10 => "Penny",
+        11 => "1v1 Commander",
+        12 => "Duel Commander",
+        13 => "Brawl",
+        14 => "Oathbreaker",
+        15 => "Pioneer",
+        16 => "Historic",
+        17 => "Pauper EDH",
+        18 => "Alchemy",
+        19 => "Explorer",
+        20 => "Historic Brawl",
+        21 => "Gladiator",
+        22 => "Premodern",
+        23 => "PreDH",
+        24 => "Timeless",
+        25 => "Canadian Highlander",
+        26 => "Competitive Brawl",
         _ => return None,
     };
     Some(label.to_string())
@@ -214,7 +238,7 @@ mod tests {
                 "name":"Imported EDH", "deckFormat":3,
                 "cards":[{
                     "categories":["Commander","Creatures"], "quantity":1,
-                    "foil":false, "modifier":"Foil",
+                    "foil":null, "modifier":"Foil",
                     "card":{"uid":"uid-a","displayName":null,"oracleCard":{"name":"Atraxa"}}
                 }]
             }"#,
@@ -223,9 +247,20 @@ mod tests {
         assert_eq!(payload.name, "Imported EDH");
         assert_eq!(payload.cards[0].categories[0], "Commander");
         assert!(is_foil_finish(
-            payload.cards[0].foil,
+            payload.cards[0].foil.unwrap_or_default(),
             payload.cards[0].modifier.as_deref()
         ));
+    }
+
+    #[test]
+    fn maps_current_archidekt_format_ids() {
+        assert_eq!(archidekt_format(Some(7)).as_deref(), Some("Custom"));
+        assert_eq!(archidekt_format(Some(15)).as_deref(), Some("Pioneer"));
+        assert_eq!(
+            archidekt_format(Some(26)).as_deref(),
+            Some("Competitive Brawl")
+        );
+        assert_eq!(archidekt_format(Some(999)), None);
     }
 
     #[tokio::test]
