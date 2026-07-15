@@ -5,9 +5,10 @@ import { createRouter, createWebHistory, useRoute } from 'vue-router'
 import { useProductBackLink } from '../useProductBackLink'
 
 // The real named routes a sealed product can be opened from: the per-game sealed browse
-// (a product tile) and a card's "Sealed products" section — the card's full page, or the
-// browse-grid card modal (`?card=<id>`) that can sit over any list route. Each renders a
-// placeholder except the product route, which hosts the composable.
+// (a product tile), the wish list's sealed section, and a card's "Sealed products"
+// section — the card's full page, or the browse-grid card modal (`?card=<id>`) that can
+// sit over any list route. Each renders a placeholder except the product route, which
+// hosts the composable.
 const routes = [
   { path: '/', name: 'home', component: { template: '<div />' } },
   { path: '/cards/:game', name: 'game', component: { template: '<div />' } },
@@ -17,6 +18,7 @@ const routes = [
   { path: '/sealed', name: 'sealed', component: { template: '<div />' } },
   { path: '/sealed/:game', name: 'game-sealed', component: { template: '<div />' } },
   { path: '/sealed/:game/:id', name: 'sealed-product', component: Host() },
+  { path: '/wishlist/:game', name: 'game-wishlist', component: { template: '<div />' } },
 ]
 
 // Product-route component: calls the composable with the route's `:game` and renders the
@@ -63,6 +65,13 @@ describe('useProductBackLink', () => {
     expect(await backLink('/sealed/mtg?set=blb')).toEqual({
       to: '/sealed/mtg?set=blb',
       label: 'Sealed products',
+    })
+  })
+
+  it('returns to the wish list it was opened from, preserving its sealed-product page', async () => {
+    expect(await backLink('/wishlist/mtg?page=2')).toEqual({
+      to: '/wishlist/mtg?page=2',
+      label: 'Wish list',
     })
   })
 

@@ -4,14 +4,14 @@ import { onBeforeRouteUpdate, useRouter } from 'vue-router'
 /**
  * The sealed-product "back" link, mirroring the in-app location the user arrived from
  * rather than always pointing at the sealed browse (issue #203). A product page is
- * reached three ways: from the per-game sealed browse (a product tile), from a card's
- * "Sealed products" section (the card's full detail page, or the browse-grid card modal
- * `?card=<id>` which can sit over any list route), or from another sealed product's
- * "What's in the box" section (a linked sub-product it contains). vue-router records the previous
- * entry's path in history state (null on a direct load or a freshly-opened tab); we
- * resolve it so "back" returns to exactly that page — re-opening the card modal, or
- * preserving the sealed browse's search/filter/page state — and fall back to the
- * per-game sealed browse otherwise.
+ * reached from the per-game sealed browse (a product tile), the wish list's sealed
+ * section, a card's "Sealed products" section (the card's full detail page, or the
+ * browse-grid card modal `?card=<id>` which can sit over any list route), or another
+ * sealed product's "What's in the box" section (a linked sub-product it contains).
+ * vue-router records the previous entry's path in history state (null on a direct load
+ * or a freshly-opened tab); we resolve it so "back" returns to exactly that page —
+ * re-opening the card modal, or preserving the originating list's state — and fall
+ * back to the per-game sealed browse otherwise.
  *
  * Held in a ref and refreshed on each product→product navigation, mirroring
  * useCardBackLink: this view is reused across the `sealed-product` route, so setup()
@@ -51,6 +51,12 @@ export function useProductBackLink(game: Ref<string>) {
     // Opened from the sealed browse — return to it with its search/filter/page intact.
     if (from.name === 'game-sealed') {
       return { to: from.fullPath, label: 'Sealed products' }
+    }
+
+    // Opened from the wish list's sealed-products section — return to the wish list,
+    // rather than falling through to the public sealed browse (issue #414).
+    if (from.name === 'game-wishlist') {
+      return { to: from.fullPath, label: 'Wish list' }
     }
 
     return fallback.value
