@@ -110,7 +110,8 @@ to honor the origin, Cloudflare gives every response the exact lifetime the API 
 chose — catalog reads their hour at the edge (`s-maxage=3600`), the image/icon proxy its
 30 days (`immutable`), the sitemaps their day, the dataset mirror its per-route window
 (the bulk-data catalog an hour, the streamed bulk file a deliberately shorter half-hour,
-MTGJSON's `AllPrintings` a cheap conditional revalidate) — and caches **no** `no-store` response
+MTGJSON's `AllPrintings` a cheap conditional revalidate, and TCGCSV's dated price archives
+a year of `immutable` — they never change once published) — and caches **no** `no-store` response
 (auth, the live `status` route, per-user collection/wishlist data, and every error), so
 you never have to enumerate those to keep them out.
 
@@ -158,6 +159,50 @@ you never have to enumerate those to keep them out.
    *Note: The origin automatically serves HTML pages with `public, no-cache` (cached but revalidated on every request via ETags so builds stay fresh on deploy) and hashed static assets with `public, max-age=31536000, immutable`.*
 
 The expressions are structured so you can apply them in order. If you ever add *overlapping* cache rules, note that Cloudflare applies **all** that match and the **last** one wins per setting.
+
+#### Verify the rules are actually live
+
+A rule that never got applied fails **silently** — the site works, just uncached, and the
+origin quietly serves everything. Check each surface with `cf-cache-status` rather than
+assuming, and re-check after editing rules (a clause dropped from rule 1 looks exactly
+like no rule at all):
+
+```sh
+for p in /api/games /api/openapi.json /api/sitemap.xml /api/mirror/tcgcsv/last-updated.txt /api/health; do
+  printf '%-44s ' "$p"
+  curl -sI "https://YOUR-DOMAIN$p" | grep -i '^cf-cache-status' || echo '(none)'
+done
+```
+
+| Path | Expected | Meaning |
+|------|----------|---------|
+| `/api/games` | `HIT` / `MISS` / `EXPIRED` | rule 1 live (`MISS` just means cold — re-run it) |
+| `/api/openapi.json` | `HIT` / `REVALIDATED` | rule 1 live |
+| `/api/sitemap.xml` | `HIT` / `MISS` | rule 1's sitemap clause live |
+| `/api/mirror/*` | `HIT` / `MISS` on a **mirror host**; `BYPASS` otherwise | rule 1's mirror clause live. `MIRROR_ENABLED` is off by default, and then the route is a `404` — so `BYPASS` here says nothing about your rules unless you run a mirror |
+| `/api/health` | `DYNAMIC` | correct — no rule matches it, and none should |
+
+Read a failure precisely — **check the status code first** (`curl -sI` shows it), because
+the same `cf-cache-status` has very different causes:
+
+- **`DYNAMIC`** on a path that should cache = **no rule matches it**. Rule 1 is missing
+  that clause, or the rule is disabled. `DYNAMIC` on `/api/health` is the expected
+  baseline — it proves there is no blanket `/api/*` rule.
+- **`BYPASS`** on a **non-`200`** is expected and means nothing about your rules. The
+  origin marks *every* error `no-store` by design (so a CDN never pins a `404`), and
+  rule 1's *bypass cache if not present* Edge TTL also yields `BYPASS` for any response
+  carrying no `Cache-Control` at all — which is what an unrouted path returns.
+- **`BYPASS`** on a genuine **`200`** is the real signal: a Cache Rule set to *Bypass
+  cache* whose expression is broader than intended is matching, and is **ordered after**
+  rule 1 — the last matching rule wins per setting. **Narrow that rule's expression**; do
+  *not* reorder it before rule 1, or rule 1 would start winning on `/api/auth/*`,
+  `/api/collection/*`, `/api/wishlist/*` and the live `status` route, undoing rule 2.
+
+A `BYPASS` on `/api/mirror/*` is worth catching early: it makes every self-host's dataset
+pull — and especially the ~900-day archive walk of the one-time price backfill
+(`PRICE_BACKFILL_ENABLED`, see [`operations.md`](./operations.md)) — miss the edge and hit
+your origin, which then re-fetches each file from the upstream under *your* User-Agent and
+IP. Cached, the edge absorbs those repeats and the upstream is hit about once per file.
 
 > **Real client IP (important).** With Cloudflare in front, the edge Caddy's immediate
 > peer is *Cloudflare*, so the default `edge.Caddyfile` line
