@@ -2,11 +2,12 @@
 //! memberships/components, Secret Lair drop→cards derivation, and the contained/sibling
 //! booster-pool synthesis (issue #290). Most rules are gated on "the product has no rows of
 //! its own", so MTGJSON / the fallback stay authoritative and each source fills only genuine
-//! gaps. The deliberate exceptions are the add-only passes that attach an axis MTGJSON doesn't
-//! surface, and so must apply even to a "covered" product, self-retiring **per card** through
-//! the row set's dedup rather than a coverage gate: [`merge_sld_bonus_cards`] (a superdrop's
-//! *shared bonus pool*) and a fallback entry flagged `supplement` (see [`merge_fallback`] —
-//! e.g. cards upstream models as a deck reference that resolves to no deck data; issue #352).
+//! gaps. The deliberate exceptions attach an axis MTGJSON doesn't surface, and so must apply
+//! even to a "covered" product: [`merge_sld_bonus_cards`] (a
+//! superdrop's *shared bonus pool*) and a fallback entry flagged `supplement` (see
+//! [`merge_fallback`] — e.g. cards upstream models through an incomplete deck reference;
+//! issue #352). Supplements are additive unless they explicitly override contradictory
+//! memberships for their curated cards.
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,12 +26,16 @@ use crate::entities::{card, product, sealed_component, sealed_content};
 /// rows for it** (`mtgjson_products`), so upstream stays authoritative and the fallback fills
 /// genuine gaps (e.g. Avatar's originally-`contents: null` Commander's Bundle) — except an
 /// entry flagged `supplement`, whose rows merge **even when** upstream describes the product:
-/// they carry an axis upstream is missing (that same bundle again, once its contents became a
-/// `deck` reference that resolves to no deck data plus textual-only land packs; issue #352).
-/// A supplement is strictly additive — upstream's rows are untouched and a row upstream also
-/// emits dedups away, so it self-retires per card like [`merge_sld_bonus_cards`]. A fallback
-/// product or card absent from our catalog, or carrying an unknown membership, is skipped
-/// and logged.
+/// they carry an axis upstream is missing (that same bundle again, once its contents gained an
+/// incomplete deck reference plus textual-only land packs; issue #352).
+/// A supplement is additive by default — upstream's rows are untouched and a row upstream
+/// also emits dedups away, so it self-retires per card like [`merge_sld_bonus_cards`]. An
+/// `override_memberships` supplement instead removes contradictory memberships for only the
+/// curated product/card pairs before inserting the fallback rows. This corrects sources that
+/// resolve the right cards under the wrong certainty (the Avatar Commander's Bundle's random
+/// pool currently arrives as guaranteed) without replacing unrelated upstream cards. A
+/// fallback product or card absent from our catalog, or carrying an unknown membership, is
+/// skipped and logged.
 pub(super) async fn merge_fallback(
     db: &DatabaseConnection,
     data: &FallbackData,
@@ -52,6 +57,7 @@ pub(super) async fn merge_fallback(
     let cards = resolve_cards_by_setnum(db, &card_keys).await?;
 
     let mut added = 0;
+    let mut overridden = 0;
     for product in &data.products {
         let Some(&product_id) = products.get(&product.tcgplayer_product_id) else {
             tracing::debug!(
@@ -63,7 +69,8 @@ pub(super) async fn merge_fallback(
         };
         // MTGJSON already describes this product — it wins, skip the whole fallback entry.
         // A `supplement` entry is the exception: its rows carry an axis upstream is
-        // missing, so they merge alongside (add-only; duplicates dedup via the row set).
+        // missing, so they merge alongside (additive unless it opts into the narrow
+        // membership override below; duplicates dedup via the row set).
         if mtgjson_products.contains(&product_id) && !product.supplement {
             continue;
         }
@@ -82,13 +89,26 @@ pub(super) async fn merge_fallback(
                 );
                 continue;
             };
+            if product.supplement && product.override_memberships {
+                let before = rows.len();
+                rows.retain(|&(row_product, row_card, row_membership, _)| {
+                    row_product != product_id
+                        || row_card != card_id
+                        || row_membership == membership.as_str()
+                });
+                overridden += before - rows.len();
+            }
             if rows.insert((product_id, card_id, membership.as_str(), card.foil)) {
                 added += 1;
             }
         }
     }
-    if added > 0 {
-        tracing::info!(rows = added, "mtgjson: merged curated fallback memberships");
+    if added > 0 || overridden > 0 {
+        tracing::info!(
+            rows = added,
+            overridden,
+            "mtgjson: merged curated fallback memberships"
+        );
     }
     Ok(added)
 }

@@ -26,9 +26,10 @@
 //! products MTGJSON left empty**, so upstream stays authoritative and the fallback
 //! self-retires as gaps fill. An entry flagged `supplement` merges its rows even into a
 //! product upstream *does* describe — for an axis upstream is missing (the Commander's
-//! Bundle again: its contents became a `deck` reference that resolves to no deck data,
-//! plus textual-only land packs; issue #352) — add-only and per-card self-retiring via
-//! the row dedup, like the SLD bonus-pool pass.
+//! Bundle again: its contents gained an incomplete `deck` reference plus textual-only
+//! land packs; issue #352). Supplements are add-only by default; an explicit membership
+//! override can reclassify only their curated cards when upstream has the right card under
+//! the wrong certainty.
 //!
 //! Secret Lair Drop (`SLD`) products are the same gap with a twist: a drop's real contents
 //! is the *cards in that drop*, which the app already tracks ([`crate::scryfall::drops`]),
