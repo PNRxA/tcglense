@@ -52,6 +52,40 @@ async fn refresh_rotates_single_use_and_detects_token_theft() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }
 
+/// Reuse detection burns only the replayed token's FAMILY (one browser's login
+/// lineage), not every session the user has: a second, independent login on the
+/// same account must survive one browser's stale-jar replay (issue #417 — users
+/// reporting logouts across all their devices).
+#[tokio::test]
+async fn reuse_detection_burns_only_the_replayed_family() {
+    let app = test_app().await;
+    // Device A registers (family A); device B logs into the SAME account (family B).
+    let (_, a1) = register(&app, "twodevices@example.com", "password123").await;
+    let (_, b1) = login(&app, "twodevices@example.com", "password123").await;
+
+    // Device A rotates a1 -> a2 -> a3, so a1's successor a2 is itself revoked.
+    let (s, ha2, _) = send(&app, post_with_cookie("/api/auth/refresh", &a1)).await;
+    assert_eq!(s, StatusCode::OK);
+    let a2 = refresh_token_from(&ha2).expect("a2");
+    let (s, ha3, _) = send(&app, post_with_cookie("/api/auth/refresh", &a2)).await;
+    assert_eq!(s, StatusCode::OK);
+    let a3 = refresh_token_from(&ha3).expect("a3");
+
+    // Replaying a1 is reuse: family A is burned (a3 no longer rotates)...
+    let (s, h, _) = send(&app, post_with_cookie("/api/auth/refresh", &a1)).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    assert!(
+        refresh_cookie_cleared(&h),
+        "detected reuse clears the cookie"
+    );
+    let (s, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &a3)).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "family A is dead");
+
+    // ...but device B's independent family is untouched: it still rotates.
+    let (s, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &b1)).await;
+    assert_eq!(s, StatusCode::OK, "the other device's session must survive");
+}
+
 /// A genuinely unknown/invalid refresh cookie is a dead session: 401 AND the
 /// cookie is cleared (distinct from the benign concurrent double-submit above,
 /// which leaves the cookie intact).

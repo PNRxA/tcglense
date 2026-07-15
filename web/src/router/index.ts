@@ -282,6 +282,12 @@ const router = createRouter({
 
 let restorePromise: Promise<unknown> | null = null
 
+// Throttle for re-attempting a TRANSIENTLY-failed restore (see the guard body):
+// at most one retry per window, so a redirect chain (or rapid navigation) can't
+// fire a refresh POST per hop while the API is down.
+const RESTORE_RETRY_COOLDOWN_MS = 5_000
+let restoreRetryAt = 0
+
 // Exported so the router-guard spec can register the real guard on a memory-history router.
 export async function authGuard(to: RouteLocationNormalized) {
   const auth = useAuthStore()
@@ -296,6 +302,22 @@ export async function authGuard(to: RouteLocationNormalized) {
   // the restore's RTT stalling every navigation on a high-latency link. The
   // flash-of-protected-UI this await used to prevent is now handled per component via
   // `auth.sessionResolved` (see UserMenu / HomeView / CollectionControls).
+  // A restore that failed TRANSIENTLY (offline, a 5xx from the cold prod DB —
+  // the refresh cookie may well still be valid) is re-attempted on a later
+  // navigation instead of pinning the whole SPA session to one bad boot attempt;
+  // re-arming BEFORE the kick-off lets the retried restore rescue THIS
+  // navigation. Definitive failures (hard 401: the cookie is gone) stay cached,
+  // so signed-out visitors never pay a refresh POST per navigation. Re-arming a
+  // still-in-flight restore is harmless — tryRestore() single-flights.
+  if (
+    restorePromise &&
+    !auth.isAuthenticated &&
+    auth.restoreRecoverable &&
+    Date.now() >= restoreRetryAt
+  ) {
+    restoreRetryAt = Date.now() + RESTORE_RETRY_COOLDOWN_MS
+    restorePromise = null
+  }
   restorePromise ??= auth.tryRestore()
   if (to.meta.requiresAuth || to.meta.requiresGuest) {
     await restorePromise

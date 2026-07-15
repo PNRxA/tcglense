@@ -21,16 +21,49 @@ catalog) is planned but not implemented.
   long-lived credential. In production set `COOKIE_SECURE=true` (HTTPS) and serve
   web + API same-origin (or configure cross-origin CORS credentials).
 - **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
-  gated on `rows_affected`, so it's race-safe across connections. The
-  revoke-then-issue pair isn't wrapped in a transaction, so a DB error mid-rotation
-  degrades to a forced re-login (no security impact).
+  gated on `rows_affected`, so it's race-safe across connections — and the whole
+  rotation (claim → successor insert → lineage link → user load) runs in **one
+  transaction**, so a dropped request (axum cancels the handler future when the
+  client disconnects) or a DB blip mid-rotation rolls the claim back and the
+  presented token stays live and retriable. It used to commit the claim alone,
+  permanently stranding the browser on a dead cookie — a major residual cause of
+  #417's prod logouts (deploys SIGTERM in-flight rotations; the cold Postgres
+  errs). The one unrecoverable remainder is a rotation that *fully commits* and
+  then loses its `Set-Cookie` in transit (a proxy 5xx after the origin committed);
+  that degrades to a forced re-login. The client shrinks that window with
+  `keepalive: true` on the refresh POST (the response's `Set-Cookie` still lands
+  when the page navigates away). We deliberately do **not** try to "heal" a
+  stranded cookie server-side: a revoked-predecessor-with-live-unused-successor is
+  the *normal* steady state between refreshes, indistinguishable from the stranded
+  case, so any such heal would hand a session to anyone replaying a captured
+  predecessor.
 - **Concurrent refresh:** reuse detection is lineage-based (a token stores its
-  successor's id) so a benign concurrent double-submit of the same token doesn't
-  burn the family — only replay of a token whose successor was itself consumed does.
-  The client also **single-flights** `refresh()`/`tryRestore()` so concurrent 401s
-  coalesce into one rotation. Residual caveat: two browser *tabs* refreshing at the
-  same instant still race (one wins, the other's request clears its cookie); fixing
-  that fully needs cross-tab coordination (e.g. `BroadcastChannel`) — not done yet.
+  successor's id and its family root's id) so a benign concurrent double-submit
+  doesn't burn anything — only replay of a token whose successor was itself
+  revoked does, and the burn is scoped to that **family** (the one browser's login
+  grant, per RFC 9700 §4.14.2), not every device the user owns: a crashed browser
+  whose cookie jar reverted a few rotations (WebKit/Chromium persist cookies
+  asynchronously) must not sign the user's phone out too. Pre-migration rows
+  without a `family_id` fall back to the old revoke-everything burn and age out
+  with the 30-day expiry. The client **single-flights** `refresh()`/`tryRestore()`
+  and serializes cross-tab rotations with the Web Locks API (5s wait bound,
+  falling open to the server's race-safe handling); the loser of a benign
+  concurrent double-submit retries once after a short delay and picks up the
+  winner's cookie. Transient (non-401) refresh failures keep the in-memory session
+  — only a definitive 401 clears it, and only the server ever revokes the cookie
+  (the SPA's `authFetch` never escalates an ambiguous 401 to a cookie-revoking
+  logout, and the router guard re-attempts a transiently-failed boot restore
+  rather than pinning the session signed-out).
+- **Known limitation — revoke sweeps vs concurrent rotation (Postgres):** the
+  session-ending sweeps (`revoke_all_for_user` on password reset, `revoke_one` on
+  logout, the reuse-detection family burn) are single `UPDATE`s outside any
+  transaction. Under Postgres `READ COMMITTED`, a rotation transaction that
+  commits a *new* successor after the sweep snapshotted can leave that successor
+  live — so a session forced concurrently with an in-flight rotation can survive.
+  Pre-existing (the sweeps always worked this way; the rotation transaction didn't
+  change the outcome), narrow (needs a rotation mid-flight against the sweep), and
+  SQLite is unaffected (single writer). The robust fix is a per-user session epoch
+  checked at rotation time — tracked as a follow-up, not bundled into this fix.
 - **Refresh-token pruning:** a background task deletes rows past `expires_at` every
   6h so the table can't grow unbounded; revoked-but-unexpired rows are retained so
   reuse detection still works.

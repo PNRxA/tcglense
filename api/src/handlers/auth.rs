@@ -475,7 +475,8 @@ pub async fn login(
 /// `POST /api/auth/refresh`
 ///
 /// Reads the `tcglense_refresh` cookie, rotates it, and returns a new access
-/// token. Any failure clears the cookie and returns 401.
+/// token. A definitive 401 clears the cookie; a benign `Superseded` 401 and any
+/// 5xx keep it (see `refresh_error_response` and `RotateOutcome`).
 pub async fn refresh(State(state): State<AppState>, jar: CookieJar) -> Response {
     let Some(cookie) = jar.get(REFRESH_COOKIE_NAME) else {
         return (
@@ -493,22 +494,23 @@ pub async fn refresh(State(state): State<AppState>, jar: CookieJar) -> Response 
     )
     .await
     {
-        Ok(RotateOutcome::Rotated(rotated)) => {
-            match mint_access_token(&state, rotated.user_id).await {
-                Ok(access_token) => {
-                    let jar = jar.add(build_refresh_cookie(rotated.plaintext, &state.config));
-                    (jar, Json(AccessTokenResponse { access_token })).into_response()
-                }
-                Err(err) => refresh_error_response(jar, err),
+        // The user rode along from inside the rotation transaction, so a rotation
+        // that commits always has everything it needs to answer — a lookup failing
+        // HERE can no longer strand a committed rotation behind a 500.
+        Ok(RotateOutcome::Rotated(rotated)) => match encode_token(&rotated.user, &state.config) {
+            Ok(access_token) => {
+                let jar = jar.add(build_refresh_cookie(rotated.plaintext, &state.config));
+                (jar, Json(AccessTokenResponse { access_token })).into_response()
             }
-        }
-        // Benign concurrent double-submit: a sibling request/tab already rotated
-        // this cookie and its successor is still live, so the browser already holds
-        // the newer valid cookie. Return 401 but send NO Set-Cookie — clearing here
-        // would race the winning request's rotated cookie and, when the clear lands
-        // last, wipe the live cookie and log every tab out (the intermittent
-        // "randomly signed out" bug). The caller simply refreshes again and picks
-        // up the current cookie. See `RotateOutcome::Superseded`.
+            Err(err) => refresh_error_response(jar, err),
+        },
+        // Benign concurrent double-submit: a sibling request/tab just rotated this
+        // cookie and its successor is still live, so the browser already holds (or
+        // is about to receive) the newer valid cookie. Return 401 but send NO
+        // Set-Cookie — clearing here would race the winning request's rotated
+        // cookie and, when the clear lands last, wipe the live cookie and log
+        // every tab out (the intermittent "randomly signed out" bug). The SPA
+        // retries once after a short delay and picks up the winner's cookie.
         Ok(RotateOutcome::Superseded) => {
             AppError::Unauthorized("refresh token superseded".to_string()).into_response()
         }
@@ -531,17 +533,6 @@ fn refresh_error_response(jar: CookieJar, err: AppError) -> Response {
     } else {
         err.into_response()
     }
-}
-
-/// Load the owner of a just-rotated refresh token and mint them a fresh access
-/// token.
-async fn mint_access_token(state: &AppState, user_id: i32) -> Result<String, AppError> {
-    let user = User::find_by_id(user_id)
-        .one(&state.db)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("user no longer exists".to_string()))?;
-
-    encode_token(&user, &state.config)
 }
 
 /// `POST /api/auth/logout`

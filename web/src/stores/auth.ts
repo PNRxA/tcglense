@@ -25,10 +25,27 @@ import {
 // back to an unsynchronized refresh, which the server keeps race-safe (it no
 // longer clears a live cookie on a benign concurrent double-submit).
 const REFRESH_LOCK_NAME = 'tcglense-refresh'
-// A refresh POST has no client-side timeout (large uploads share the path), so a
-// half-open socket could otherwise make one tab hold the lock forever. Bound how
-// long a sibling waits before giving up and refreshing unsynchronized.
+// Bound how long a sibling waits for the lock before giving up and refreshing
+// unsynchronized. The refresh POST has its own 15s timeout (see `refresh` in
+// lib/api/auth.ts), but a serialized queue of slow refreshes (a session restore
+// opening several tabs against a cold prod DB) can still exceed one request's
+// worth of waiting.
 const REFRESH_LOCK_WAIT_MS = 5_000
+
+// Delay before the single retry of a 401-rejected refresh. The 401 may be the
+// benign answer handed to the LOSER of a concurrent double-submit (a sibling
+// tab won the rotation); by the retry the winner's Set-Cookie has landed in the
+// jar, so the retry succeeds and no tab is spuriously signed out. A genuinely
+// dead session 401s again immediately — that first 401 already cleared the
+// cookie — so the retry is bounded and cannot loop.
+const REFRESH_RETRY_DELAY_MS = 400
+const REFRESH_SUPERSEDED_ERROR = 'refresh token superseded'
+
+function isSupersededRefreshError(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError && error.status === 401 && error.message === REFRESH_SUPERSEDED_ERROR
+  )
+}
 
 function withRefreshLock<T>(run: () => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' && 'locks' in navigator ? navigator.locks : null
@@ -55,6 +72,13 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
 
   const isAuthenticated = computed(() => Boolean(accessToken.value || user.value))
+
+  // True while a signed-out state might still be rescued by retrying the refresh
+  // cookie: the last refresh failed TRANSIENTLY (offline, a 5xx from the cold
+  // prod DB, the client timeout) rather than with a definitive 401. The router
+  // guard uses it to re-arm its cached one-time restore, so one bad boot attempt
+  // doesn't pin the whole SPA session to signed-out (issue #417).
+  const restoreRecoverable = ref(false)
 
   // One-way latch: false until the FIRST session restore settles (success OR failure)
   // or a session is adopted directly. It answers "has the initial session question been
@@ -107,6 +131,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     accessToken.value = null
     user.value = null
+    restoreRecoverable.value = false
   }
 
   // Single-flight guards: concurrent callers share one in-flight request so the
@@ -128,13 +153,54 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function doRefresh(): Promise<boolean> {
+    if (await attemptRefresh()) return true
+
+    // Transient failure (network blip, 5xx, timeout): the refresh cookie is
+    // still valid server-side, so KEEP the local session and report failure —
+    // clearing it here is what painted signed-out chrome (and bounced
+    // requiresAuth routes to /login) for a hiccup that the next attempt
+    // recovers from on its own. Only a 401 speaks to the session's validity.
+    if (!(lastRefreshError instanceof ApiError) || lastRefreshError.status !== 401) {
+      restoreRecoverable.value = true
+      return false
+    }
+
+    // 401: retry once after a short delay (see REFRESH_RETRY_DELAY_MS — the
+    // benign loser-of-a-concurrent-rotation case succeeds here).
+    await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_DELAY_MS))
+    if (await attemptRefresh()) return true
+
+    if (
+      lastRefreshError instanceof ApiError &&
+      lastRefreshError.status === 401 &&
+      !isSupersededRefreshError(lastRefreshError)
+    ) {
+      // Definitively dead (the server cleared the cookie): clear local state.
+      accessToken.value = null
+      user.value = null
+      restoreRecoverable.value = false
+    } else {
+      // The winner's Set-Cookie is not ordered against this tab's response. If
+      // the retry was also Superseded, its request may simply have captured the
+      // old cookie before the winner's response landed. Keep the session posture
+      // and let a later refresh/router restore pick up the winner's live cookie.
+      restoreRecoverable.value = true
+    }
+    return false
+  }
+
+  // The error behind the latest failed attemptRefresh(). Module-local mutable
+  // state (not a ref): only doRefresh reads it, immediately after an attempt.
+  let lastRefreshError: unknown = null
+
+  async function attemptRefresh(): Promise<boolean> {
     try {
       const response = await apiRefresh()
       accessToken.value = response.access_token
+      restoreRecoverable.value = false
       return true
-    } catch {
-      accessToken.value = null
-      user.value = null
+    } catch (error) {
+      lastRefreshError = error
       return false
     }
   }
@@ -184,8 +250,8 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Run an authenticated API call, transparently refreshing an expired access token.
    * Ensures a token exists (restoring via the cookie if needed), retries once on a
-   * 401 after refreshing, and logs out if the retry still fails. Reusable by other
-   * stores for their own protected calls.
+   * 401 after refreshing, and drops the local session if the retry still fails.
+   * Reusable by other stores for their own protected calls.
    */
   async function authFetch<T>(call: (token: string) => Promise<T>): Promise<T> {
     if (!accessToken.value) {
@@ -211,7 +277,18 @@ export const useAuthStore = defineStore('auth', () => {
         return await call(accessToken.value)
       } catch (retryError) {
         if (retryError instanceof ApiError && retryError.status === 401) {
-          await logout()
+          // A freshly-minted access token was rejected. Drop the in-memory
+          // session, but deliberately do NOT call logout(): that POSTs
+          // /api/auth/logout, revoking the refresh cookie server-side — which
+          // turns an infra-injected 401 (a proxy/WAF blip, a mid-deploy
+          // mismatch) into a permanent, browser-wide logout. The refresh above
+          // just SUCCEEDED, so the cookie is valid and the session is
+          // recoverable: mark it so the router guard re-attempts a restore on a
+          // later navigation (self-healing once the infra blip clears) instead
+          // of stranding the user on signed-out chrome until a manual reload.
+          accessToken.value = null
+          user.value = null
+          restoreRecoverable.value = true
         }
         throw retryError
       }
@@ -223,6 +300,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     isAuthenticated,
     sessionResolved,
+    restoreRecoverable,
     login,
     setSession,
     setUser,

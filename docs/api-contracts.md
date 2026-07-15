@@ -57,7 +57,7 @@ flow end to end.
 | `POST /api/auth/register` | `{ email }` | `200 { completion_token }` — `completion_token` is **always `null`** (the link is emailed) unless email is disabled (dev bypass: the token is returned so the SPA can drive the set-password step) | generic (a new, pending, or already-registered address are identical — no `409`) · `422` invalid email · `403` when `SIGNUPS_ENABLED=false` (message from `SIGNUPS_DISABLED_MESSAGE` or generic; checked **before** the CAPTCHA — see `GET /api/config`) |
 | `POST /api/auth/complete-registration` | `{ token, password, display_name? }` | `200 { access_token, user }` + refresh cookie — finishes registration: sets the first password, verifies the email, and signs in | `401 "invalid or expired token"` (also once the account already has a password) · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` (so a link minted before signups closed can't finalise a new account) |
 | `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic — incl. a pending password-less account, same dummy-hash timing) · `403 "email not verified"` (skipped when email is disabled; now only reachable by grandfathered accounts) |
-| `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/revoked (clears cookie) |
+| `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/reuse-burned (clears cookie); `401` **without** touching the cookie for a benign concurrent double-submit (`"refresh token superseded"` — the SPA retries once, then keeps the restore recoverable if the winner's cookie is still in flight) |
 | `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes token + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
 | `POST /api/auth/verify-email` | `{ token }` | `204` (stamps `users.email_verified_at`; no session) | `401 "invalid or expired token"` |
@@ -90,11 +90,15 @@ contain `@` and be ≤ 254 chars; login returns a **generic** 401 (with timing
 equalization on user-not-found, against a dummy hash precomputed at startup).
 Access JWTs are HS256 with `exp`, decoded with the algorithm pinned to HS256.
 **Refresh tokens are single-use** — every `/refresh` rotates them (claimed via an
-atomic conditional `UPDATE`) with **lineage-based reuse detection**: each token
-records its successor, so replaying a *superseded* token (whose successor has itself
-been consumed) revokes the user's whole token family, while a benign concurrent
-double-submit (successor still active) is just rejected. A revoked token is never
-exchanged for a new one. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
+atomic conditional `UPDATE`, with the whole rotation — claim, successor insert,
+lineage link, user load — in **one transaction**, so a dropped request or DB blip
+mid-rotation rolls back and leaves the token retriable) with **lineage-based
+reuse detection**: each token records its successor and its *family* (the login
+grant's root token), so replaying a token whose successor was itself revoked
+burns that **family only** — the user's other devices stay signed in (RFC 9700
+§4.14.2) — while a benign concurrent double-submit (successor still active) is
+just rejected without touching the cookie. A revoked token is never exchanged for
+a new one. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
 Secure=COOKIE_SECURE` (SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
 **Email tokens** (registration-completion 24h, verification 24h, reset 1h) mirror the
 refresh-token storage:

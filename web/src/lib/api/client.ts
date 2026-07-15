@@ -33,6 +33,13 @@ interface RequestOptions {
    * cancellation); a timeout-abort surfaces as `ApiError('Request timed out', 408)`.
    */
   signal?: AbortSignal
+  /**
+   * Let the request outlive its page (fetch keepalive). Used by the refresh POST so
+   * a rotation's Set-Cookie still lands when the user navigates away mid-request —
+   * an undelivered rotated cookie strands the browser on a dead token. Keepalive
+   * caps the request body at 64KB, so only give it to small/bodyless requests.
+   */
+  keepalive?: boolean
 }
 
 /**
@@ -117,6 +124,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       headers,
       // Always send/receive the httpOnly refresh cookie (tcglense_refresh).
       credentials: 'include',
+      keepalive: options.keepalive,
       signal,
       body: isRaw
         ? options.rawBody
