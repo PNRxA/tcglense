@@ -168,7 +168,11 @@ fn build_csv(
             "Board",
         ]
         .as_slice(),
-        ExportFormat::MoxfieldText => unreachable!(),
+        ExportFormat::MoxfieldText => {
+            return Err(AppError::Internal(
+                "plain-text deck export was sent to the CSV builder".to_string(),
+            ));
+        }
     };
     writer
         .write_record(header)
@@ -223,7 +227,11 @@ fn write_csv_row(
             card.collector_number.clone(),
             section.to_string(),
         ],
-        ExportFormat::MoxfieldText => unreachable!(),
+        ExportFormat::MoxfieldText => {
+            return Err(AppError::Internal(
+                "plain-text deck export was sent to the CSV row builder".to_string(),
+            ));
+        }
     };
     writer
         .write_record(row)

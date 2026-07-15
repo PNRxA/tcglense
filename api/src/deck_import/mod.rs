@@ -119,7 +119,12 @@ pub async fn create_deck_from_rows(
     if !tuple_rows.is_empty() {
         let holdings = moxfield_rows_to_holdings(db, game, tuple_rows).await?;
         for (index, holding) in tuple_indexes.into_iter().zip(holdings) {
-            parsed.rows[index].external_card_id = Some(holding.external_card_id);
+            let row = parsed.rows.get_mut(index).ok_or_else(|| {
+                ImportError::Db(sea_orm::DbErr::Custom(
+                    "deck import row disappeared during card resolution".to_string(),
+                ))
+            })?;
+            row.external_card_id = Some(holding.external_card_id);
         }
     }
 
@@ -241,21 +246,24 @@ pub async fn create_deck_from_rows(
         .values()
         .map(|(regular, foil)| i64::from(clamp_count(*regular)) + i64::from(clamp_count(*foil)))
         .sum();
-    let cards: Vec<deck_card::ActiveModel> = aggregate
-        .into_iter()
-        .map(
-            |((section, card_id), (regular, foil))| deck_card::ActiveModel {
-                deck_id: Set(deck.id),
-                section_id: Set(section_ids[&section]),
-                card_id: Set(card_id),
-                quantity: Set(clamp_count(regular)),
-                foil_quantity: Set(clamp_count(foil)),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
-            },
-        )
-        .collect();
+    let mut cards = Vec::with_capacity(aggregate.len());
+    for ((section, card_id), (regular, foil)) in aggregate {
+        let section_id = section_ids.get(&section).copied().ok_or_else(|| {
+            ImportError::Db(sea_orm::DbErr::Custom(
+                "deck import section disappeared before card insertion".to_string(),
+            ))
+        })?;
+        cards.push(deck_card::ActiveModel {
+            deck_id: Set(deck.id),
+            section_id: Set(section_id),
+            card_id: Set(card_id),
+            quantity: Set(clamp_count(regular)),
+            foil_quantity: Set(clamp_count(foil)),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        });
+    }
     for chunk in cards.chunks(INSERT_CHUNK) {
         DeckCard::insert_many(chunk.iter().cloned())
             .exec(&txn)
