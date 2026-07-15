@@ -395,6 +395,37 @@ describe('auth store: logout always clears local state', () => {
 })
 
 describe('auth store: registration completion ordering', () => {
+  it('starts a fresh restore after completion invalidates an older in-flight restore', async () => {
+    let resolveOldRefresh!: (value: { access_token: string; user: User }) => void
+    vi.mocked(refresh)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOldRefresh = resolve
+        }),
+      )
+      .mockResolvedValueOnce({ access_token: 'restored-token', user: USER })
+
+    const store = useAuthStore()
+    const oldRestore = store.tryRestore()
+    await Promise.resolve()
+    store.prepareForRegistrationCompletion()
+
+    // Leaving the completion route must not re-use the restore whose response was
+    // deliberately invalidated. The replacement waits for it so the rotating cookie
+    // is never submitted concurrently, then reads the cookie it left behind.
+    const replacementRestore = store.tryRestore()
+    expect(replacementRestore).not.toBe(oldRestore)
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1)
+
+    resolveOldRefresh({ access_token: 'stale-token', user: OTHER_USER })
+    await expect(oldRestore).resolves.toBe(false)
+    await expect(replacementRestore).resolves.toBe(true)
+
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(2)
+    expect(store.accessToken).toBe('restored-token')
+    expect(store.user).toEqual(USER)
+  })
+
   it('waits out and ignores an older restore before adopting the completed account', async () => {
     const NEW_USER = { ...OTHER_USER, id: 3, email: 'brock@pewter.gym' }
     let resolveRefresh!: (value: { access_token: string; user: User }) => void

@@ -1,6 +1,11 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { CompleteRegistrationPayload, LoginPayload, ResetPasswordPayload, User } from '@/lib/api'
+import type {
+  CompleteRegistrationPayload,
+  LoginPayload,
+  ResetPasswordPayload,
+  User,
+} from '@/lib/api'
 import {
   ApiError,
   completeRegistration as apiCompleteRegistration,
@@ -212,6 +217,7 @@ export const useAuthStore = defineStore('auth', () => {
   // server treats as token reuse and would revoke the whole session).
   let refreshInFlight: Promise<boolean> | null = null
   let restoreInFlight: Promise<boolean> | null = null
+  let restoreInFlightEpoch: number | null = null
 
   /** Mint a fresh access token from the refresh cookie. Clears state on failure. */
   function refresh(): Promise<boolean> {
@@ -290,16 +296,35 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Restore a session on app start. If an access token is already in memory we are
    * done; otherwise try the refresh cookie. Always resolves (never throws) so it is
-   * safe to call from the router guard even when the API is unreachable. Single-
-   * flighted so concurrent callers share one restore.
+   * safe to call from the router guard even when the API is unreachable. Concurrent
+   * callers in the same session epoch share one restore. After an auth mutation
+   * invalidates that epoch, a new caller queues a fresh restore behind the stale one
+   * so it can adopt the cookie that the stale response may already have rotated.
    */
   function tryRestore(): Promise<boolean> {
-    restoreInFlight ??= doRestore().finally(() => {
-      restoreInFlight = null
-      // The initial session question is now answered (either way). Idempotent — the
-      // latch only ever goes true, so re-settling on a later authFetch restore is a no-op.
-      sessionResolved.value = true
-    })
+    const epoch = sessionEpoch
+    if (!restoreInFlight || restoreInFlightEpoch !== epoch) {
+      const previousRestore = restoreInFlight
+      const attempt = previousRestore
+        ? previousRestore.then(
+            () => doRestore(epoch),
+            () => doRestore(epoch),
+          )
+        : doRestore(epoch)
+
+      restoreInFlightEpoch = epoch
+      restoreInFlight = attempt.finally(() => {
+        // An older epoch may settle after a replacement has been installed. Only the
+        // current epoch's owner may clear the shared single-flight pointer.
+        if (restoreInFlightEpoch === epoch) {
+          restoreInFlight = null
+          restoreInFlightEpoch = null
+        }
+        // The initial session question is now answered (either way). Idempotent — the
+        // latch only ever goes true, so re-settling on a later authFetch restore is a no-op.
+        sessionResolved.value = true
+      })
+    }
     // Watchdog: if the restore hasn't settled by the ceiling, degrade to signed-out so
     // the gated UI stops showing skeletons. Only armed once (while still unresolved).
     if (!sessionResolved.value) {
@@ -310,7 +335,10 @@ export const useAuthStore = defineStore('auth', () => {
     return restoreInFlight
   }
 
-  async function doRestore(): Promise<boolean> {
+  async function doRestore(epoch: number): Promise<boolean> {
+    if (epoch !== sessionEpoch) {
+      return false
+    }
     if (accessToken.value) {
       return true
     }
@@ -319,7 +347,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       return false
     }
-    return isAuthenticated.value
+    return epoch === sessionEpoch && isAuthenticated.value
   }
 
   /**

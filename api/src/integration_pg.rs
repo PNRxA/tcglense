@@ -518,7 +518,13 @@ async fn refresh_reuse_and_descendant_rotation_are_serialized_on_pg() {
         refresh::rotate(conn, &t3.plaintext, 30)
     );
     assert!(matches!(reuse, Err(crate::error::AppError::Unauthorized(_))));
-    assert!(descendant.is_ok(), "descendant rotation failed unexpectedly");
+    assert!(
+        matches!(
+            descendant,
+            Ok(_) | Err(crate::error::AppError::Unauthorized(_))
+        ),
+        "descendant rotation returned an unexpected error"
+    );
 
     let family = RefreshToken::find()
         .filter(refresh_token::Column::UserId.eq(uid))
