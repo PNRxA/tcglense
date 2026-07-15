@@ -39,6 +39,13 @@ const REFRESH_LOCK_WAIT_MS = 5_000
 // dead session 401s again immediately — that first 401 already cleared the
 // cookie — so the retry is bounded and cannot loop.
 const REFRESH_RETRY_DELAY_MS = 400
+const REFRESH_SUPERSEDED_ERROR = 'refresh token superseded'
+
+function isSupersededRefreshError(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError && error.status === 401 && error.message === REFRESH_SUPERSEDED_ERROR
+  )
+}
 
 function withRefreshLock<T>(run: () => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' && 'locks' in navigator ? navigator.locks : null
@@ -163,12 +170,20 @@ export const useAuthStore = defineStore('auth', () => {
     await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_DELAY_MS))
     if (await attemptRefresh()) return true
 
-    if (lastRefreshError instanceof ApiError && lastRefreshError.status === 401) {
+    if (
+      lastRefreshError instanceof ApiError &&
+      lastRefreshError.status === 401 &&
+      !isSupersededRefreshError(lastRefreshError)
+    ) {
       // Definitively dead (the server cleared the cookie): clear local state.
       accessToken.value = null
       user.value = null
       restoreRecoverable.value = false
     } else {
+      // The winner's Set-Cookie is not ordered against this tab's response. If
+      // the retry was also Superseded, its request may simply have captured the
+      // old cookie before the winner's response landed. Keep the session posture
+      // and let a later refresh/router restore pick up the winner's live cookie.
       restoreRecoverable.value = true
     }
     return false

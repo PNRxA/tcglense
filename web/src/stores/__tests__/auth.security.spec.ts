@@ -127,6 +127,31 @@ describe('auth store: single-flight refresh', () => {
     }
   })
 
+  it('stays recoverable when the winner cookie has not landed before the 401 retry', async () => {
+    vi.useFakeTimers()
+    try {
+      // Responses on separate tab connections are not ordered: even after the
+      // delay, the retry can capture the old cookie before the winner's
+      // Set-Cookie lands and receive Superseded again.
+      vi.mocked(refresh).mockRejectedValue(new ApiError('refresh token superseded', 401))
+
+      const store = useAuthStore()
+      store.accessToken = 'stale'
+      store.user = USER
+
+      const result = store.refresh()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(await result).toBe(false)
+
+      expect(vi.mocked(refresh)).toHaveBeenCalledTimes(2)
+      expect(store.accessToken).toBe('stale')
+      expect(store.user).toEqual(USER)
+      expect(store.restoreRecoverable).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps session state when a refresh fails transiently', async () => {
     // A 5xx / network blip says nothing about the session: the httpOnly cookie
     // is still valid server-side, so the in-memory session must survive — the
