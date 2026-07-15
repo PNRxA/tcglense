@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router'
 import { Layers, Library, UserCircle } from '@lucide/vue'
 import { usePublicProfileQuery } from '@/composables/usePublicCollection'
 import { usePublicDecksQuery } from '@/composables/useDecks'
-import { formatUsd } from '@/lib/money'
+import { useCurrency } from '@/composables/useCurrency'
 import { usePageMeta } from '@/lib/seo'
 
 // A user's public profile (issues #361/#362): their handle + the game collections and decks
@@ -12,6 +12,7 @@ import { usePageMeta } from '@/lib/seo'
 // indexable. A 404 (unknown handle or nothing public) renders the not-found state.
 const props = defineProps<{ handle: string }>()
 const handle = toRef(props, 'handle')
+const money = useCurrency()
 
 const profileQuery = usePublicProfileQuery(handle)
 const profile = computed(() => profileQuery.data.value)
@@ -96,10 +97,10 @@ usePageMeta({
                     {{ entry.summary.total_cards.toLocaleString() }}
                   </dd>
                 </div>
-                <div v-if="formatUsd(entry.summary.total_value_usd)">
+                <div v-if="money.formatUsd(entry.summary.total_value_usd)">
                   <dt class="text-muted-foreground text-xs">Value</dt>
                   <dd class="font-semibold tabular-nums">
-                    {{ formatUsd(entry.summary.total_value_usd) }}
+                    {{ money.formatUsd(entry.summary.total_value_usd) }}
                   </dd>
                 </div>
               </dl>

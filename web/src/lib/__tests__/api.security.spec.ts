@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, getCard, login, logout, me, register } from '../api'
+import {
+  ApiError,
+  getCard,
+  getCurrencyRates,
+  login,
+  logout,
+  me,
+  register,
+  setCurrency,
+} from '../api'
 
 // Build a minimal `fetch` Response stand-in (only what `request()` reads).
 function fakeResponse(status: number, body: unknown) {
@@ -51,6 +60,29 @@ describe('api client: credentials + headers', () => {
     const { init } = lastCall()
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer access-token-123')
     expect(init.credentials).toBe('include')
+  })
+
+  it('persists currency with an authenticated PUT', async () => {
+    fetchMock.mockResolvedValueOnce(fakeResponse(200, { id: 1, currency: 'AUD' }))
+    await setCurrency('access-token-123', 'AUD')
+
+    const { url, init } = lastCall()
+    expect(url).toBe('/api/auth/currency')
+    expect(init.method).toBe('PUT')
+    expect(init.body).toBe(JSON.stringify({ currency: 'AUD' }))
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer access-token-123')
+  })
+
+  it('loads the public currency-rate snapshot without a bearer', async () => {
+    fetchMock.mockResolvedValueOnce(
+      fakeResponse(200, { base: 'USD', as_of: '2026-07-14', rates: { USD: 1, AUD: 1.52 } }),
+    )
+    await getCurrencyRates()
+
+    const { url, init } = lastCall()
+    expect(url).toBe('/api/currencies')
+    expect(init.method).toBe('GET')
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 
   it('percent-encodes path segments so they cannot break out of the URL', async () => {

@@ -21,7 +21,8 @@ use crate::{
         api_keys::{create_api_key, list_api_keys, revoke_api_key},
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
-            resend_verification, reset_password, set_username, username_available, verify_email,
+            resend_verification, reset_password, set_currency, set_username, username_available,
+            verify_email,
         },
         cache::{
             conditional_request_layer, no_store_layer, public_cache_layer,
@@ -42,6 +43,7 @@ use crate::{
             save_collection_source, set_collection_entry, sync_collection_source,
         },
         config::public_config,
+        currency::currency_rates,
         decks::{
             create_deck, create_folder, create_section, delete_deck, delete_folder,
             delete_section, get_deck, list_decks, list_folders, move_deck_card,
@@ -101,6 +103,9 @@ pub fn build_router(state: AppState) -> Router {
         // Public runtime config for the SPA (the Turnstile site key). no-store: it
         // only changes on redeploy and must not be cached per-user/stale.
         .route("/api/config", get(public_config))
+        // Daily reference rates used for display-only conversion. The service caches one
+        // upstream snapshot process-wide and serves the last good copy through outages.
+        .route("/api/currencies", get(currency_rates))
         .route("/api/auth/register", post(register))
         // Finishes an email-first registration: consumes the emailed completion
         // token, sets the first password, and signs the account in.
@@ -116,6 +121,7 @@ pub fn build_router(state: AppState) -> Router {
         // username" dialog (issue #362). Both authed; the setter is `WritableUser`
         // (a read-only API key can't claim a handle).
         .route("/api/auth/username", put(set_username))
+        .route("/api/auth/currency", put(set_currency))
         .route("/api/auth/username/available", get(username_available))
         // API-key management for the public API (issue #284). Session-only (a key
         // cannot manage keys — SessionUser rejects an API-key credential), so these

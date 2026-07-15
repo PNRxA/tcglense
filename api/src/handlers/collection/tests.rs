@@ -236,6 +236,7 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
             email_verified_at: Set(None),
             username: Set(None),
             discriminator: Set(None),
+            currency: Set("USD".into()),
         }
         .insert(&db)
         .await
@@ -331,6 +332,7 @@ async fn collection_query_orders_by_total_copies() {
         email_verified_at: Set(None),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -403,6 +405,7 @@ async fn summary_skips_holdings_whose_card_row_is_missing() {
         email_verified_at: Set(None),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -464,6 +467,7 @@ async fn collection_query_scopes_to_a_set() {
         email_verified_at: Set(None),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await
@@ -563,6 +567,7 @@ async fn owned_cards_group_into_drops_with_counts() {
         email_verified_at: Set(None),
         username: Set(None),
         discriminator: Set(None),
+        currency: Set("USD".into()),
     }
     .insert(&db)
     .await

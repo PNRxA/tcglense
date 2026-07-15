@@ -10,6 +10,7 @@ import {
   componentToString,
 } from '@/components/ui/chart'
 import { type PriceRange } from '@/lib/api'
+import type { SupportedCurrency } from '@/lib/currency'
 
 // The unovis-backed chart body, split out of PriceChart so unovis stays off every detail
 // route's critical chunk (this loads via defineAsyncComponent, in parallel with the
@@ -24,6 +25,7 @@ interface PricePointLike {
 const props = defineProps<{
   series: PricePointLike[]
   range: PriceRange
+  currency: SupportedCurrency
   /** Plot only the USD line (no foil series) — the collection value chart's single total
    * line. Stable per chart instance, so the once-built tooltip stays consistent with it. */
   singleSeries?: boolean
@@ -66,8 +68,10 @@ const showDots = computed(() => points.value.length === 1 || plottedUsd.value ==
 // empty "USD foil" row. Keyed off the stable `singleSeries` prop (never the data), so the
 // once-built tooltip template below can't desync from the plotted lines across navigation.
 const chartConfig = computed<ChartConfig>(() => {
-  const config: ChartConfig = { usd: { label: 'USD', color: 'var(--chart-1)' } }
-  if (!props.singleSeries) config.usdFoil = { label: 'USD foil', color: 'var(--chart-2)' }
+  const config: ChartConfig = { usd: { label: props.currency, color: 'var(--chart-1)' } }
+  if (!props.singleSeries) {
+    config.usdFoil = { label: `${props.currency} foil`, color: 'var(--chart-2)' }
+  }
   return config
 })
 
@@ -93,14 +97,24 @@ const formatAxisDate = computed(() => {
   return (tick: number | Date) => fmt.format(typeof tick === 'number' ? new Date(tick) : tick)
 })
 
-const formatPrice = (tick: number | Date) =>
-  `$${Number(tick).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+const currencyFormatter = computed(
+  () =>
+    new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: props.currency,
+      currencyDisplay: 'narrowSymbol',
+      maximumFractionDigits: 2,
+    }),
+)
+const formatPrice = (tick: number | Date) => currencyFormatter.value.format(Number(tick))
 
 // Rich tooltip rendered from the shadcn primitive (built once during setup).
-const tooltipTemplate = componentToString(chartConfig.value, ChartTooltipContent, {
-  labelFormatter: formatDate,
-  indicator: 'line',
-})
+const tooltipTemplate = computed(() =>
+  componentToString(chartConfig.value, ChartTooltipContent, {
+    labelFormatter: formatDate,
+    indicator: 'line',
+  }),
+)
 </script>
 
 <template>

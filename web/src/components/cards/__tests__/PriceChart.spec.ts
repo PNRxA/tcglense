@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+import { createPinia } from 'pinia'
 import PriceChart from '../PriceChart.vue'
 
 interface Pt {
@@ -22,7 +23,7 @@ async function mountChart(data: Pt[]) {
       singleSeries: true,
     },
     global: {
-      plugins: [[VueQueryPlugin, { queryClient }]],
+      plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
       stubs: { PriceChartInner: true },
     },
   })

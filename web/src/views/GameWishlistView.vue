@@ -14,12 +14,12 @@ import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import WishlistSealedSection from '@/components/wishlist/WishlistSealedSection.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
+import { useCurrency } from '@/composables/useCurrency'
 import {
   useWishlistProductSummaryQuery,
   useWishlistSetsQuery,
   useWishlistSummaryQuery,
 } from '@/composables/useWishlist'
-import { formatUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
@@ -35,6 +35,7 @@ import { useAuthStore } from '@/stores/auth'
 // below the header (sealed holdings are wishlist-only — issue #364). The card grids
 // live on WishlistBrowseView (`/wishlist/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
+const money = useCurrency()
 
 const {
   game,
@@ -74,7 +75,7 @@ const productSummaryQuery = useWishlistProductSummaryQuery(game)
 const productSummary = computed(() => productSummaryQuery.data.value)
 const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
 // formatUsd returns null for a null value (nothing wanted is priced) — the stat hides.
-const productsValue = computed(() => formatUsd(productSummary.value?.total_value_usd))
+const productsValue = computed(() => money.formatUsd(productSummary.value?.total_value_usd))
 
 const gameName = useGameName(game)
 const auth = useAuthStore()

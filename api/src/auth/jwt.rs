@@ -80,6 +80,7 @@ mod tests {
             email_verified_at: Some(now),
             username: None,
             discriminator: None,
+            currency: crate::currency::DEFAULT_CURRENCY.to_string(),
         }
     }
 

@@ -9,6 +9,7 @@ use crate::catalog::images::ImageCache;
 use crate::collection_import::ProviderSettings;
 use crate::collection_import::jobs::ImportQueue;
 use crate::config::Config;
+use crate::currency::CurrencyRates;
 use crate::email::Emailer;
 use crate::error::AppError;
 use crate::ratelimit::{AuthRateLimiter, UserRateLimiter};
@@ -35,6 +36,9 @@ pub struct AppState {
     /// collection from Archidekt). Follows redirects and carries the app User-Agent;
     /// `reqwest::Client` is internally reference-counted, so cloning it is cheap.
     pub http: reqwest::Client,
+    /// Daily USD exchange rates for display conversion, fetched lazily and shared across
+    /// requests. The service keeps its last good snapshot through provider outages.
+    pub currency_rates: Arc<CurrencyRates>,
     /// Background queue + per-provider rate limiters for collection imports/syncs (they run
     /// asynchronously because the provider rate limits make them slow).
     pub imports: Arc<ImportQueue>,
@@ -105,6 +109,7 @@ impl AppState {
             dummy_password_hash,
             images,
             http,
+            currency_rates: Arc::new(CurrencyRates::default()),
             imports,
             email,
             captcha,

@@ -14,7 +14,11 @@ the parser detail is logged only).
 
 ## Auth API contract
 
-`User` shape: `{ id: number, email: string, display_name: string | null, created_at: string (RFC3339 UTC) }`
+`User` shape: `{ id: number, email: string, created_at: string (RFC3339 UTC), username:
+string | null, discriminator: number | null, handle: string | null, currency: string }`.
+`currency` is the account's ISO 4217 display preference (`USD` by default; one of
+`USD`/`AUD`/`CAD`/`EUR`/`GBP`/`JPY`/`NZD`). Catalog prices and valuation fields remain
+canonical USD on the API.
 
 **Two-token model:** a short-lived **access token** (JWT, 15 min, returned as
 `access_token`, kept in memory on the client) plus a long-lived **refresh token**
@@ -60,12 +64,14 @@ flow end to end.
 | `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/reuse-burned (clears cookie); `401` **without** touching the cookie for a benign concurrent double-submit (`"refresh token superseded"` — the SPA retries once, then keeps the restore recoverable if the winner's cookie is still in flight) |
 | `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes token + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
+| `PUT /api/auth/currency` | `{ currency }` (`Authorization: Bearer <access_token>`) | `200 User` — persists the account's preferred display currency | `422` unsupported currency · read-only API key `403` |
 | `POST /api/auth/verify-email` | `{ token }` | `204` (stamps `users.email_verified_at`; no session) | `401 "invalid or expired token"` |
 | `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
 | `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, **revokes every refresh token**, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` **and** the account is still pending (password-less) — this reset-activation is the same new-account creation the signup gate refuses; a genuine reset for an already-active account still works |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
 | `GET /api/config` | — | `200 { turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads before rendering the auth forms; `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
+| `GET /api/currencies` | — | `200 { base: "USD", as_of: "YYYY-MM-DD", rates: Record<string, number> }` — daily reference rates for display conversion, cached server-side with stale-on-error fallback; `rates.USD` is `1` | `502` only when no rate snapshot has ever been available |
 
 **Anti-abuse (all seven auth mutation endpoints above):** each request body may carry
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the

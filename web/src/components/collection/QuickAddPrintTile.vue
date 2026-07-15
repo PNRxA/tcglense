@@ -10,6 +10,7 @@ import {
 } from '@/composables/useOwnedCountEditor'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import type { Card } from '@/lib/api'
+import { useCurrency } from '@/composables/useCurrency'
 
 // One printing in the quick-add print picker, rendered as a tall tile so the artwork
 // is large enough to actually tell printings apart: full-size card image on top, then
@@ -43,7 +44,11 @@ const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, c
   list: props.list,
 })
 
-const price = computed(() => displayUsdPrice(props.card.prices))
+const money = useCurrency()
+const price = computed(() => {
+  const picked = displayUsdPrice(props.card.prices)
+  return picked ? { ...picked, text: money.formatUsd(picked.amount) } : null
+})
 const owned = computed(() => regular.value + foil.value > 0)
 
 const rows = computed(() => [
@@ -70,7 +75,7 @@ const rows = computed(() => [
         <span>{{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}</span>
         <span v-if="card.rarity" class="capitalize">· {{ card.rarity }}</span>
         <span v-if="price" class="tabular-nums"
-          >· ${{ price.amount
+          >· {{ price.text
           }}<span v-if="price.foil" class="ml-0.5 uppercase opacity-70">foil</span></span
         >
       </p>

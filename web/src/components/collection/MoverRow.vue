@@ -11,7 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { CollectionMover } from '@/lib/api'
 import CardImage from '@/components/cards/CardImage.vue'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
-import { formatUsd } from '@/lib/money'
+import { useCurrency } from '@/composables/useCurrency'
 
 // One row of the collection landing's "Biggest movers" panel: card thumbnail + name/set
 // on the left, the holding's signed value change (with a % chip and the current holding
@@ -19,6 +19,7 @@ import { formatUsd } from '@/lib/money'
 // the shared `?card=` detail modal (CardTile's idiom) so the landing keeps its state,
 // while the href stays the real card page for modifier/middle clicks and new tabs.
 const props = defineProps<{ game: string; mover: CollectionMover }>()
+const money = useCurrency()
 
 const route = useRoute()
 const router = useRouter()
@@ -49,14 +50,14 @@ const change = computed(() => Number(props.mover.change_usd))
 const isGain = computed(() => change.value >= 0)
 const changeText = computed(() => {
   if (!Number.isFinite(change.value)) return props.mover.change_usd
-  return `${isGain.value ? '+' : '−'}${formatUsd(String(Math.abs(change.value)))}`
+  return `${isGain.value ? '+' : '−'}${money.formatUsd(String(Math.abs(change.value)))}`
 })
 const pctText = computed(() => {
   const pct = props.mover.change_pct
   if (pct == null) return null
   return `${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%`
 })
-const valueNow = computed(() => formatUsd(props.mover.value_now))
+const valueNow = computed(() => money.formatUsd(props.mover.value_now))
 
 // Light-mode uses the -700 greens/reds (not -600): -600 falls under the 4.5:1 WCAG AA
 // contrast threshold on the white card, matching the -700 the chips already use.
