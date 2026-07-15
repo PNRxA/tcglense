@@ -6,4 +6,9 @@ import type { DeckImportFileFormat } from "./DeckImportFileFormat";
  * URL/id) or `contents` (an uploaded file read as text) must be present. Uploaded files
  * also carry their `format` and an optional deck `name`.
  */
-export type DeckImportRequest = { provider: string, source: string | null, contents: string | null, format: DeckImportFileFormat | null, name: string | null, };
+export type DeckImportRequest = { provider: string, source: string | null, contents: string | null, format: DeckImportFileFormat | null, name: string | null, 
+/**
+ * When true (the default), cards in a generic `Mainboard` section are filed into
+ * the matching preset type section. Explicit provider categories are preserved.
+ */
+auto_categorize: boolean, };

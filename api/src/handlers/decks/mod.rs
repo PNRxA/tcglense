@@ -14,9 +14,9 @@
 //! versus the twin holdings surfaces: the parent deck + folder + section entities and
 //! their CRUD, and a per-deck `is_public` flag for handle-addressed public sharing (the
 //! per-collection model of #361, but per deck — see `handlers::sharing::decks`).
-//! Whole-deck provider import/export is a sibling pipeline: provider categories/boards
-//! become exact sections and the new deck is inserted atomically, without collection
-//! reconciliation.
+//! Whole-deck provider import/export is a sibling pipeline: explicit provider
+//! categories/boards become sections, generic Mainboard rows may be auto-filed by type,
+//! and the new deck is inserted atomically without collection reconciliation.
 //!
 //! Every route is in the router's `private` group (authenticated via
 //! [`AuthUser`](crate::auth::extractor::AuthUser) / [`WritableUser`](crate::auth::extractor::WritableUser),
@@ -43,7 +43,7 @@ mod read;
 mod sections;
 mod write;
 
-pub use cards::{move_deck_card, set_deck_card};
+pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use export::export_deck;
 pub use folders::{create_folder, delete_folder, list_folders, update_folder};
 pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
@@ -53,7 +53,7 @@ pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibili
 
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
-pub use cards::{__path_move_deck_card, __path_set_deck_card};
+pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
 pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,
 };
@@ -330,6 +330,16 @@ pub struct MoveDeckCardRequest {
     pub to_section_id: i32,
 }
 
+/// Body of `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing`: replace one card
+/// printing in a section with another printing of the same gameplay card. Counts and
+/// finish buckets are preserved (or merged if the target printing is already present).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ChangeDeckCardPrintingRequest {
+    pub new_card_id: String,
+    pub section_id: i32,
+}
+
 /// Body of `POST /api/decks/{game}/import`. Exactly one of `source` (a provider deck
 /// URL/id) or `contents` (an uploaded file read as text) must be present. Uploaded files
 /// also carry their `format` and an optional deck `name`.
@@ -345,6 +355,14 @@ pub struct DeckImportRequest {
     pub format: Option<crate::deck_import::DeckImportFileFormat>,
     #[serde(default)]
     pub name: Option<String>,
+    /// When true (the default), cards in a generic `Mainboard` section are filed into
+    /// the matching preset type section. Explicit provider categories are preserved.
+    #[serde(default = "default_auto_categorize")]
+    pub auto_categorize: bool,
+}
+
+const fn default_auto_categorize() -> bool {
+    true
 }
 
 /// Result of a deck import: a lightweight header for the newly created deck plus match

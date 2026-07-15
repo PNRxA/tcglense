@@ -5,6 +5,7 @@
 //! engine. A deck is a new container with sections and cards, inserted all-or-nothing.
 
 mod archidekt;
+mod categorize;
 mod moxfield;
 mod parser;
 mod types;
@@ -74,15 +75,17 @@ pub fn parse_file(
     parser::parse_file(provider, format, name, bytes)
 }
 
-/// Resolve every row, aggregate by `(section, card)`, and create a new deck + its exact
+/// Resolve every row, aggregate by `(section, card)`, and create a new deck + its
 /// imported sections/cards in one transaction. An empty or zero-match import creates
-/// nothing. Unlike a normal blank deck, imported decks are not seeded with defaults: the
-/// provider boards/categories are the source of truth.
+/// nothing. Unlike a normal blank deck, imported decks are not seeded with defaults:
+/// explicit provider categories stay authoritative, while generic Mainboard rows may be
+/// filed into the preset type buckets.
 pub async fn create_deck_from_rows(
     db: &DatabaseConnection,
     user_id: i32,
     game: &str,
     mut parsed: ParsedDeck,
+    auto_categorize: bool,
 ) -> Result<CreatedDeckImport, ImportError> {
     if parsed.rows.len() > MAX_DECK_IMPORT_ROWS {
         return Err(ImportError::TooLarge {
@@ -137,6 +140,18 @@ pub async fn create_deck_from_rows(
         .collect();
     let ids_by_external = resolve_card_ids(db, game, &external_ids).await?;
     let ids_by_name = resolve_names(db, game, &parsed.rows).await?;
+    let type_lines = if auto_categorize {
+        let resolved_ids: Vec<i32> = ids_by_external
+            .values()
+            .chain(ids_by_name.values())
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        resolve_type_lines(db, &resolved_ids).await?
+    } else {
+        HashMap::new()
+    };
 
     let mut aggregate: HashMap<(String, i32), (i64, i64)> = HashMap::new();
     let mut section_order = Vec::new();
@@ -170,7 +185,13 @@ pub async fn create_deck_from_rows(
             continue;
         };
         matched_ids.insert(card_id);
-        let cleaned_section = clean_section(&row.section);
+        let mut cleaned_section = clean_section(&row.section);
+        if auto_categorize && categorize::is_generic_section(&cleaned_section) {
+            let type_line = type_lines.get(&card_id).and_then(|line| line.as_deref());
+            if let Some(preset) = categorize::preset_section(type_line) {
+                cleaned_section = preset.to_string();
+            }
+        }
         let section_key = cleaned_section.to_ascii_lowercase();
         let section = if let Some(canonical) = canonical_sections.get(&section_key) {
             canonical.clone()
@@ -318,6 +339,26 @@ async fn resolve_names(
     Ok(result)
 }
 
+async fn resolve_type_lines(
+    db: &DatabaseConnection,
+    card_ids: &[i32],
+) -> Result<HashMap<i32, Option<String>>, ImportError> {
+    let mut result = HashMap::new();
+    for chunk in card_ids.chunks(crate::collection_import::IN_CHUNK) {
+        let rows: Vec<(i32, Option<String>)> = Card::find()
+            .select_only()
+            .column(card::Column::Id)
+            .column(card::Column::TypeLine)
+            .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .into_tuple()
+            .all(db)
+            .await
+            .map_err(ImportError::Db)?;
+        result.extend(rows);
+    }
+    Ok(result)
+}
+
 fn unmatched_label(row: &DeckCardRow) -> String {
     if !row.card_name.is_empty() {
         if let (Some(set), Some(number)) = (&row.set_code, &row.collector_number) {
@@ -359,6 +400,7 @@ mod tests {
     use super::*;
     use crate::entities::prelude::DeckSection;
     use crate::test_support::{insert_card, insert_user, migrated_memory_db};
+    use sea_orm::sea_query::Expr;
 
     #[tokio::test]
     async fn creates_sections_and_aggregated_cards_atomically() {
@@ -394,6 +436,7 @@ mod tests {
                     },
                 ],
             },
+            true,
         )
         .await
         .expect("import");
@@ -412,6 +455,88 @@ mod tests {
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].card_id, card_id);
         assert_eq!((cards[0].quantity, cards[0].foil_quantity), (2, 1));
+    }
+
+    #[tokio::test]
+    async fn auto_categorizes_only_generic_sections() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "deck-categorize@test.example").await;
+        let card_id = insert_card(&db, "uid-creature").await;
+        Card::update_many()
+            .col_expr(
+                card::Column::TypeLine,
+                Expr::value("Artifact Creature — Golem"),
+            )
+            .filter(card::Column::Id.eq(card_id))
+            .exec(&db)
+            .await
+            .expect("set type line");
+
+        let parsed = |section: &str, name: &str| ParsedDeck {
+            provider: Provider::Archidekt,
+            name: name.into(),
+            format: None,
+            rows: vec![DeckCardRow {
+                section: section.into(),
+                card_name: "Test creature".into(),
+                external_card_id: Some("uid-creature".into()),
+                set_code: None,
+                collector_number: None,
+                foil: false,
+                quantity: 1,
+            }],
+        };
+
+        let automatic = create_deck_from_rows(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            parsed("Mainboard", "Automatic"),
+            true,
+        )
+        .await
+        .expect("automatic import");
+        let automatic_section = DeckSection::find()
+            .filter(deck_section::Column::DeckId.eq(automatic.deck.id))
+            .one(&db)
+            .await
+            .expect("section query")
+            .expect("automatic section");
+        assert_eq!(automatic_section.name, "Creatures");
+
+        let explicit = create_deck_from_rows(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            parsed("Ramp", "Explicit"),
+            true,
+        )
+        .await
+        .expect("explicit import");
+        let explicit_section = DeckSection::find()
+            .filter(deck_section::Column::DeckId.eq(explicit.deck.id))
+            .one(&db)
+            .await
+            .expect("section query")
+            .expect("explicit section");
+        assert_eq!(explicit_section.name, "Ramp");
+
+        let disabled = create_deck_from_rows(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            parsed("Mainboard", "Disabled"),
+            false,
+        )
+        .await
+        .expect("non-automatic import");
+        let disabled_section = DeckSection::find()
+            .filter(deck_section::Column::DeckId.eq(disabled.deck.id))
+            .one(&db)
+            .await
+            .expect("section query")
+            .expect("disabled section");
+        assert_eq!(disabled_section.name, "Mainboard");
     }
 
     #[tokio::test]
@@ -436,6 +561,7 @@ mod tests {
                     quantity: 1,
                 }],
             },
+            true,
         )
         .await
         .expect_err("zero match");
@@ -469,6 +595,7 @@ mod tests {
                 format: None,
                 rows,
             },
+            true,
         )
         .await
         .expect_err("oversized deck");

@@ -28,6 +28,7 @@ describe('deck import/export API', () => {
       contents: 'Quantity,Scryfall ID,Categories\n1,abc,Mainboard\n',
       format: 'csv',
       name: 'Imported',
+      auto_categorize: true,
     }
 
     await importDeck('tok', 'mtg', body)

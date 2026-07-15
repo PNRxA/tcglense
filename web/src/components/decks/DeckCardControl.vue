@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import { ArrowRightLeft, Check, Loader2, Minus, Plus, Sparkles } from '@lucide/vue'
+import { ArrowRightLeft, Check, Loader2, Minus, Plus, RefreshCw, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -11,9 +11,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
+import DeckPrintingDialog from '@/components/decks/DeckPrintingDialog.vue'
 import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 import { useMoveDeckCardMutation, useSetDeckCardMutation } from '@/composables/useDecks'
-import type { DeckSection } from '@/lib/api'
+import type { Card, DeckSection } from '@/lib/api'
 
 // Quick-add / edit control overlaid on a card tile inside the deck builder (issue #363),
 // the deck's analogue of the collection's OwnedCountControl. A corner chip shows how many
@@ -29,16 +30,16 @@ const props = defineProps<{
   game: string
   deckId: number
   sectionId: number
-  cardId: string
-  name: string
+  card: Card
   quantity: number
   foilQuantity: number
   sections: DeckSection[]
 }>()
 
 const open = ref(false)
+const printingOpen = ref(false)
 const game = toRef(props, 'game')
-const cardId = toRef(props, 'cardId')
+const cardId = computed(() => props.card.id)
 
 const setCard = useSetDeckCardMutation()
 const moveCard = useMoveDeckCardMutation()
@@ -80,13 +81,18 @@ const moveTarget = computed({
     void moveCard.mutateAsync({
       game: props.game,
       deckId: props.deckId,
-      id: props.cardId,
+      id: props.card.id,
       fromSectionId: props.sectionId,
       toSectionId: Number(value),
     })
     open.value = false
   },
 })
+
+function openPrintingPicker() {
+  open.value = false
+  printingOpen.value = true
+}
 </script>
 
 <template>
@@ -95,7 +101,9 @@ const moveTarget = computed({
       <button
         type="button"
         class="group/add absolute bottom-1.5 left-1.5 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
-        :aria-label="inDeck ? `Edit copies of ${name} in this deck` : `Add ${name} to this deck`"
+        :aria-label="
+          inDeck ? `Edit copies of ${card.name} in this deck` : `Add ${card.name} to this deck`
+        "
         @click.stop
       >
         <OwnedCountBadge
@@ -117,8 +125,11 @@ const moveTarget = computed({
 
     <PopoverContent side="top" align="start" :side-offset="6" class="w-60 p-3">
       <div class="mb-3 flex items-center justify-between gap-2">
-        <p class="truncate text-sm font-medium" :title="name">{{ name }}</p>
-        <span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs" aria-live="polite">
+        <p class="truncate text-sm font-medium" :title="card.name">{{ card.name }}</p>
+        <span
+          class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs"
+          aria-live="polite"
+        >
           <template v-if="saveError"><span class="text-destructive">Retry</span></template>
           <template v-else-if="saving">
             <Loader2 class="size-3.5 animate-spin" aria-hidden="true" /> Saving…
@@ -141,7 +152,7 @@ const moveTarget = computed({
               size="icon"
               :aria-disabled="row.value <= 0"
               :class="{ 'pointer-events-none opacity-50': row.value <= 0 }"
-              :aria-label="`Remove one ${row.label.toLowerCase()} copy of ${name}`"
+              :aria-label="`Remove one ${row.label.toLowerCase()} copy of ${card.name}`"
               @click="adjust(row.key, -1)"
             >
               <Minus />
@@ -156,7 +167,7 @@ const moveTarget = computed({
             <Button
               variant="outline"
               size="icon"
-              :aria-label="`Add one ${row.label.toLowerCase()} copy of ${name}`"
+              :aria-label="`Add one ${row.label.toLowerCase()} copy of ${card.name}`"
               @click="adjust(row.key, 1)"
             >
               <Plus />
@@ -181,6 +192,26 @@ const moveTarget = computed({
           </SelectContent>
         </Select>
       </div>
+
+      <Button
+        v-if="inDeck"
+        variant="outline"
+        size="sm"
+        class="mt-3 w-full"
+        @click="openPrintingPicker"
+      >
+        <RefreshCw class="size-3.5" /> Change printing
+      </Button>
     </PopoverContent>
   </Popover>
+
+  <DeckPrintingDialog
+    v-model:open="printingOpen"
+    :game="game"
+    :deck-id="deckId"
+    :section-id="sectionId"
+    :card="card"
+    :quantity="quantity"
+    :foil-quantity="foilQuantity"
+  />
 </template>

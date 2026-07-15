@@ -741,7 +741,7 @@ deck ids), matching the public-sharing surface.
 |---------------|------|---------|
 | `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections) |
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
-| `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Imported categories/boards become the deck's **exact** sections rather than seeding defaults. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
+| `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name, auto_categorize }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Explicit provider categories/boards become deck sections. `auto_categorize` defaults to `true` when omitted and files generic Mainboard rows into the matching preset type section; set it to `false` to preserve Mainboard exactly. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/export?format=archidekt\|moxfield\|moxfield-text` | — | Owner-scoped deck-list download. `archidekt` (default) and `moxfield` return CSV; `moxfield-text` returns a sectioned plain-text list. Regular and foil quantities are separate rows, and sections round-trip through each format. `404` if not the caller's |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
@@ -758,6 +758,7 @@ deck ids), matching the public-sharing surface.
 | `PUT /api/decks/{game}/{deck_id}/sections/reorder` | `{ section_ids }` | `{ data: DeckSection[] }` — set the section order; `section_ids` must be exactly the deck's sections (`422` otherwise) |
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}` | `{ quantity, foil_quantity, section_id }` | `{ quantity, foil_quantity }` — set the absolute counts for a card in one section (both zero removes it there). `404` unknown deck/section/card, `422` negative/oversized |
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}/move` | `{ from_section_id, to_section_id }` | `{ quantity, foil_quantity }` — move a card between two of the deck's sections (merging counts on a collision) |
+| `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing` | `{ new_card_id, section_id }` | `{ quantity, foil_quantity }` — atomically replace a card with another printing of the same gameplay card in that section, preserving finish counts (or merging when the target printing is already present). `404` unknown/non-owned source row, `422` unrelated target card |
 
 `DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
 sections, cards, created_at, updated_at }` — `summary` is the shared `CollectionSummary`
@@ -766,14 +767,18 @@ sections, cards, created_at, updated_at }` — `summary` is the shared `Collecti
 quantity, foil_quantity }`, the full catalog `Card` plus which section it sits in — a
 deck-specific DTO, since a `CollectionEntry` has no section). The default seeded sections are
 Archidekt-flavoured (Commander, Creatures, …, the functional categories Ramp / Removal /
-Tutor / …, and Maybeboard) — see `docs/tradeoffs.md`.
+Tutor / …, and Maybeboard). The SPA's default add target uses the front-face card type to
+pick the matching preset type bucket, while an explicit section choice always wins — see
+`docs/tradeoffs.md`.
 
 Deck imports run inline because each provider deck endpoint is a single-object fetch, unlike
 the paginated collection job. They still share the collection importer's per-provider rate
 limiter, `429` back-off, foil detection, external-id resolution, and Moxfield
 `(set, collector_number)` lookup. Archidekt uses the first category as the card's primary
 section; Moxfield boards map to Mainboard / Sideboard / Commander / Maybeboard / Companion /
-Signature Spells, with per-board fallback for older top-level payloads.
+Signature Spells, with per-board fallback for older top-level payloads. With the default
+`auto_categorize: true`, only generic Mainboard rows are re-filed into Creatures / Artifacts /
+Enchantments / Instants / Sorceries / Planeswalkers / Lands; explicit categories remain exact.
 Name-only plain text resolves to the newest exact-name printing; an explicit printing tuple
 that is absent from the local catalog stays unmatched. The write is one transaction and goes
 straight to `decks` / `deck_sections` / `deck_cards` — it never invokes collection reconcile.

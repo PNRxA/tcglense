@@ -6,7 +6,7 @@
 use axum::{Json, extract::State};
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
 
 use crate::auth::extractor::WritableUser;
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
@@ -17,7 +17,10 @@ use crate::extract::{JsonBody, Path};
 use crate::handlers::shared::{CollectionQuantities, load_card, require_game, validate_quantity};
 use crate::state::AppState;
 
-use super::{MoveDeckCardRequest, SetDeckCardRequest, load_deck, load_section, touch_deck};
+use super::{
+    ChangeDeckCardPrintingRequest, MoveDeckCardRequest, SetDeckCardRequest, load_deck,
+    load_section, touch_deck,
+};
 
 /// Set deck card
 ///
@@ -106,6 +109,109 @@ pub async fn set_deck_card(
         quantity,
         foil_quantity,
     }))
+}
+
+/// Change deck card printing
+///
+/// `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing` atomically replaces the
+/// printing stored for one card in one section. The target must share the old card's
+/// gameplay identity; counts are preserved, or merged if the target printing is already
+/// present in the section.
+#[utoipa::path(
+    put,
+    path = "/api/decks/{game}/{deck_id}/cards/{id}/printing",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+        ("id" = String, Path, description = "Current external card id"),
+    ),
+    request_body = ChangeDeckCardPrintingRequest,
+    responses(
+        (status = 200, description = "The counts preserved on the replacement printing.", body = CollectionQuantities),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, deck, section, card, or source card row."),
+        (status = 422, description = "The target is not another printing of the same card."),
+    ),
+)]
+pub async fn change_deck_card_printing(
+    State(state): State<AppState>,
+    WritableUser(user): WritableUser,
+    Path((game, deck_id, id)): Path<(String, i32, String)>,
+    JsonBody(payload): JsonBody<ChangeDeckCardPrintingRequest>,
+) -> Result<Json<CollectionQuantities>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let section = load_section(&state, deck.id, payload.section_id).await?;
+    let current_card = load_card(&state, &game, &id).await?;
+    let replacement = load_card(&state, &game, &payload.new_card_id).await?;
+
+    let same_identity = match (&current_card.oracle_id, &replacement.oracle_id) {
+        (Some(current), Some(next)) => current == next,
+        (None, None) => current_card.name == replacement.name,
+        _ => false,
+    };
+    if !same_identity {
+        return Err(AppError::Validation(
+            "replacement must be another printing of the same card".to_string(),
+        ));
+    }
+
+    let txn = state.db.begin().await?;
+    let source = DeckCard::find()
+        .filter(deck_card::Column::DeckId.eq(deck.id))
+        .filter(deck_card::Column::CardId.eq(current_card.id))
+        .filter(deck_card::Column::SectionId.eq(section.id))
+        .one(&txn)
+        .await?
+        .ok_or_else(|| AppError::NotFound("card not in that section".to_string()))?;
+
+    if current_card.id == replacement.id {
+        txn.commit().await?;
+        return Ok(Json(CollectionQuantities {
+            quantity: source.quantity,
+            foil_quantity: source.foil_quantity,
+        }));
+    }
+
+    let existing = DeckCard::find()
+        .filter(deck_card::Column::DeckId.eq(deck.id))
+        .filter(deck_card::Column::CardId.eq(replacement.id))
+        .filter(deck_card::Column::SectionId.eq(section.id))
+        .one(&txn)
+        .await?;
+    let now = Utc::now();
+    let result = if let Some(target) = existing {
+        let quantity = (target.quantity + source.quantity).min(MAX_CARD_QUANTITY);
+        let foil_quantity = (target.foil_quantity + source.foil_quantity).min(MAX_CARD_QUANTITY);
+        let mut active: deck_card::ActiveModel = target.into();
+        active.quantity = Set(quantity);
+        active.foil_quantity = Set(foil_quantity);
+        active.updated_at = Set(now);
+        active.update(&txn).await?;
+        DeckCard::delete_by_id(source.id).exec(&txn).await?;
+        CollectionQuantities {
+            quantity,
+            foil_quantity,
+        }
+    } else {
+        let quantity = source.quantity;
+        let foil_quantity = source.foil_quantity;
+        let mut active: deck_card::ActiveModel = source.into();
+        active.card_id = Set(replacement.id);
+        active.updated_at = Set(now);
+        active.update(&txn).await?;
+        CollectionQuantities {
+            quantity,
+            foil_quantity,
+        }
+    };
+    touch_deck(&txn, deck.id, now).await?;
+    txn.commit().await?;
+
+    Ok(Json(result))
 }
 
 /// Move deck card

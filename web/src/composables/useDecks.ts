@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import type { Ref } from 'vue'
 import {
+  changeDeckCardPrinting,
   createDeck,
   createFolder,
   createSection,
@@ -187,6 +188,13 @@ export interface MoveDeckCardVars {
   id: string
   fromSectionId: number
   toSectionId: number
+}
+export interface ChangeDeckCardPrintingVars {
+  game: string
+  deckId: number
+  id: string
+  newCardId: string
+  sectionId: number
 }
 
 // ----- Deck mutations -----
@@ -377,4 +385,22 @@ export function useMoveDeckCardMutation() {
     ) => invalidateDeck(qc, vars.game, vars.deckId),
   }
   return useAuthedMutation<CollectionQuantities, MoveDeckCardVars>(options)
+}
+
+/** Swap a deck card to another printing without exposing a delete-then-add gap. */
+export function useChangeDeckCardPrintingMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: ChangeDeckCardPrintingVars) =>
+      changeDeckCardPrinting(token, vars.game, vars.deckId, vars.id, {
+        new_card_id: vars.newCardId,
+        section_id: vars.sectionId,
+      }),
+    onSettled: (
+      _d: CollectionQuantities | undefined,
+      _e: ApiError | null,
+      vars: ChangeDeckCardPrintingVars,
+    ) => invalidateDeck(qc, vars.game, vars.deckId),
+  }
+  return useAuthedMutation<CollectionQuantities, ChangeDeckCardPrintingVars>(options)
 }
