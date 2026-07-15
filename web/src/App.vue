@@ -2,6 +2,7 @@
 import { defineAsyncComponent, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import AppFooter from '@/components/AppFooter.vue'
+import MaintenanceMode from '@/components/MaintenanceMode.vue'
 import MainNav from '@/components/MainNav.vue'
 import MobileNav from '@/components/MobileNav.vue'
 import NavigationProgressBar from '@/components/NavigationProgressBar.vue'
@@ -11,6 +12,7 @@ import UserMenu from '@/components/UserMenu.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { useAuthCacheReset } from '@/composables/useAuthCacheReset'
+import { useMaintenanceMode } from '@/composables/useMaintenanceMode'
 import { scheduleIdleWarm } from '@/lib/prefetch'
 
 // Session restore happens once in the router guard (see router/index.ts).
@@ -18,6 +20,7 @@ import { scheduleIdleWarm } from '@/lib/prefetch'
 // Wipe the per-user query cache whenever the signed-in identity changes, so one
 // account never sees another's cached collection/wish list (issue #177).
 useAuthCacheReset()
+const maintenanceMode = useMaintenanceMode()
 
 const route = useRoute()
 const router = useRouter()
@@ -95,46 +98,51 @@ onMounted(() => {
        (the /docs Scalar sidebar scrolled away with the page). `clip` leaves overflow-y
        `visible`, so the page scrolls the document and sticky works. -->
   <div class="bg-background text-foreground flex min-h-screen flex-col overflow-x-clip">
-    <!-- Top-of-page navigation progress bar, shown only when a route change runs long. -->
-    <NavigationProgressBar />
-    <header class="border-b">
-      <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
-        <div class="flex min-w-0 items-center gap-1">
-          <!-- Below md the two nav dropdowns don't fit alongside the brand + theme +
+    <MaintenanceMode v-if="maintenanceMode" />
+    <template v-else>
+      <!-- Top-of-page navigation progress bar, shown only when a route change runs long. -->
+      <NavigationProgressBar />
+      <header class="border-b">
+        <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
+          <div class="flex min-w-0 items-center gap-1">
+            <!-- Below md the two nav dropdowns don't fit alongside the brand + theme +
                account controls, so they collapse into MobileNav's hamburger. The brand
                itself is fixed-width and never truncates. The md:hidden lives on this
                wrapper, not on <MobileNav>: reka's Sheet (Dialog) root is renderless, so a
                class set on the component is dropped and the hamburger would never hide —
                it would double up with MainNav from md up. -->
-          <div class="md:hidden">
-            <MobileNav />
-          </div>
-          <RouterLink to="/" class="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight"
-            >TCGLense</RouterLink
-          >
-          <!-- MainNav renders its own <nav> landmark (reka NavigationMenu), so this is a div.
+            <div class="md:hidden">
+              <MobileNav />
+            </div>
+            <RouterLink
+              to="/"
+              class="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight"
+              >TCGLense</RouterLink
+            >
+            <!-- MainNav renders its own <nav> landmark (reka NavigationMenu), so this is a div.
                Both dropdowns live under one NavigationMenu so the swipe/fade motion plays
                when moving between them. Hidden below md in favour of MobileNav. -->
-          <div class="ml-3 hidden md:block">
-            <MainNav />
+            <div class="ml-3 hidden md:block">
+              <MainNav />
+            </div>
+          </div>
+          <div class="flex shrink-0 items-center gap-1">
+            <ThemeToggle />
+            <CurrencyMenu />
+            <UserMenu />
           </div>
         </div>
-        <div class="flex shrink-0 items-center gap-1">
-          <ThemeToggle />
-          <CurrencyMenu />
-          <UserMenu />
-        </div>
-      </div>
-    </header>
-    <main class="flex-1">
-      <RouterView />
-    </main>
-    <!-- Site-wide footer (data-source credits, GitHub, Terms/Privacy, WotC disclaimer). The
+      </header>
+      <main class="flex-1">
+        <RouterView />
+      </main>
+      <!-- Site-wide footer (data-source credits, GitHub, Terms/Privacy, WotC disclaimer). The
          flex-1 main above pins it to the viewport bottom on short pages. -->
-    <AppFooter />
-    <!-- The card-detail modal any browse grid opens via `?card=<id>` (see CardTile /
+      <AppFooter />
+      <!-- The card-detail modal any browse grid opens via `?card=<id>` (see CardTile /
          CardDetailDialog) — mounted while `?card=` is present (or once its chunk has
          loaded) so it overlays whichever page is up without a stuck loading backdrop. -->
-    <CardDetailDialog v-if="route.query.card || dialogLoaded" />
+      <CardDetailDialog v-if="route.query.card || dialogLoaded" />
+    </template>
   </div>
 </template>

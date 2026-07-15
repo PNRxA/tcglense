@@ -39,8 +39,8 @@ flow. That flow returns the completion credential to the browser instead of prov
 mailbox ownership, so never expose it to the internet. For a public host, configure
 HTTPS, Resend, and Turnstile as described in the launch checklist.
 
-The compose file also reads `COOKIE_SECURE`, `PUBLIC_SITE_URL`, and `IMAGE_TAG` from the
-environment — `export` them before `up -d` (see the HTTPS note below and
+The compose file also reads `COOKIE_SECURE`, `PUBLIC_SITE_URL`, `MAINTENANCE_MODE`, and
+`IMAGE_TAG` from the environment — `export` them before `up -d` (see the HTTPS note below and
 `deploy/docker-compose.homelab.yml`).
 
 <details>
@@ -293,6 +293,7 @@ Run the binary + static SPA directly, no containers.
    COOKIE_SECURE=true                   # HTTPS-only refresh cookie
    PUBLIC_SITE_URL=https://cards.example.com
    HOST=127.0.0.1                       # API listens on localhost; only Caddy reaches it
+   MAINTENANCE_MODE=false               # planned-upgrade switch; restart after changing
    SIGNUPS_ENABLED=false                # keep closed through the first production deploy
    DATABASE_URL=sqlite:///var/lib/tcglense/tcglense.db?mode=rwc   # dir must exist + be writable
    DATA_DIR=/var/lib/tcglense/data       # persistent + writable; holds cached card images

@@ -71,10 +71,16 @@ email bypass is active.
 | `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
 | `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, invalidates **every access and refresh session** plus sibling reset links, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` **and** the account is still pending (password-less) — this reset-activation is the same new-account creation the signup gate refuses; a genuine reset for an already-active account still works |
-| `GET /api/health` | — | `200 { status: "ok" }` | — |
-| `GET /api/ready` | — | `200 { status: "ready" }` after a database round-trip | `503 { status: "unavailable" }` without internal details when storage is unavailable |
-| `GET /api/config` | — | `200 { turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads before rendering the auth forms; `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
+| `GET /api/health` | — | `200 { status: "ok" }` (including maintenance mode) | — |
+| `GET /api/ready` | — | `200 { status: "ready" }` after a database round-trip | `503 { status: "unavailable" }` without internal details when storage is unavailable · `503 { status: "maintenance" }` when `MAINTENANCE_MODE=true` |
+| `GET /api/config` | — | `200 { maintenance_mode: bool, turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads on boot and before rendering the auth forms; remains available during maintenance so a cached SPA can switch to its maintenance screen; `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
 | `GET /api/currencies` | — | `200 { base: "USD", as_of: "YYYY-MM-DD", rates: Record<string, number> }` — daily display rates; `rates.USD` is `1`; after 12h the last-good snapshot is returned immediately while one background refresh runs, with a hard seven-day stale limit | `502` when no snapshot exists or the last-good snapshot is over seven days old and refresh is unavailable |
+
+With `MAINTENANCE_MODE=true`, startup still applies database migrations but does not
+start background jobs. Apart from the two probes and uncached runtime config above,
+every API and combined-image SPA/static request returns a non-cacheable
+`503 { error: "service is under maintenance", code: "maintenance" }`. The machine-readable
+code lets an already-open SPA replace its normal shell after any application request.
 
 **Anti-abuse (all seven auth mutation endpoints above):** each request body may carry
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the

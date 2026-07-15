@@ -4,9 +4,34 @@ use serde_json::json;
 
 use crate::state::AppState;
 
+const MAINTENANCE_MESSAGE: &str = "service is under maintenance";
+const MAINTENANCE_CODE: &str = "maintenance";
+
 /// `GET /api/health` -> `200 { "status": "ok" }`.
 pub async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "status": "ok" })))
+}
+
+/// `GET /api/ready` while maintenance mode is enabled.
+///
+/// Liveness stays healthy so an orchestrator does not restart the process, but
+/// readiness fails explicitly so load balancers drain it before schema work.
+pub async fn maintenance_ready() -> impl IntoResponse {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "status": "maintenance" })),
+    )
+}
+
+/// Non-probe response while maintenance mode is enabled.
+pub async fn maintenance() -> impl IntoResponse {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "error": MAINTENANCE_MESSAGE,
+            "code": MAINTENANCE_CODE,
+        })),
+    )
 }
 
 /// `GET /api/ready` -> a database-backed readiness result.

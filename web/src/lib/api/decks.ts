@@ -1,4 +1,4 @@
-import { API_URL, ApiError, request } from './client'
+import { API_URL, apiErrorFromResponse, request } from './client'
 import type {
   CollectionQuantities,
   CreateDeckRequest,
@@ -258,7 +258,11 @@ export async function exportDeckFile(
     credentials: 'include',
   })
   if (!response.ok) {
-    throw new ApiError(`Export failed with status ${response.status}`, response.status)
+    const error = await apiErrorFromResponse(
+      response,
+      `Export failed with status ${response.status}`,
+    )
+    throw error
   }
   return response.blob()
 }

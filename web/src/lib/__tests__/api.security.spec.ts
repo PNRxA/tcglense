@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   getCard,
+  getConfig,
   getCurrencyRates,
+  getOpenApiDocument,
   login,
   logout,
   me,
   register,
   setCurrency,
 } from '../api'
+import { onMaintenanceDetected } from '@/lib/maintenance'
 
 // Build a minimal `fetch` Response stand-in (only what `request()` reads).
 function fakeResponse(status: number, body: unknown) {
@@ -85,6 +88,22 @@ describe('api client: credentials + headers', () => {
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 
+  it('always bypasses the browser cache for runtime config', async () => {
+    fetchMock.mockResolvedValueOnce(
+      fakeResponse(200, {
+        maintenance_mode: false,
+        turnstile_site_key: null,
+        signups_enabled: true,
+        signups_disabled_message: null,
+      }),
+    )
+    await getConfig()
+
+    const { url, init } = lastCall()
+    expect(url).toBe('/api/config')
+    expect(init.cache).toBe('no-store')
+  })
+
   it('percent-encodes path segments so they cannot break out of the URL', async () => {
     fetchMock.mockResolvedValueOnce(fakeResponse(200, { id: 'x' }))
     // A traversal-looking id must be encoded, not interpolated raw.
@@ -120,5 +139,30 @@ describe('api client: error mapping', () => {
   it('resolves an empty 204 body without throwing (logout)', async () => {
     fetchMock.mockResolvedValueOnce(fakeResponse(204, ''))
     await expect(logout()).resolves.toBeUndefined()
+  })
+
+  it('signals only machine-readable maintenance errors to the app shell', async () => {
+    const detected = vi.fn<() => void>()
+    const unsubscribe = onMaintenanceDetected(detected)
+
+    fetchMock.mockResolvedValueOnce(
+      fakeResponse(503, {
+        error: 'service is under maintenance',
+        code: 'maintenance',
+      }),
+    )
+    await expect(getOpenApiDocument('docs-token')).rejects.toMatchObject({
+      status: 503,
+      code: 'maintenance',
+    })
+    expect(detected).toHaveBeenCalledOnce()
+    const { url, init } = lastCall()
+    expect(url).toBe('/api/openapi.json')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer docs-token')
+
+    fetchMock.mockResolvedValueOnce(fakeResponse(503, { error: 'import queue is full' }))
+    await expect(getCard('mtg', 'card-id')).rejects.toMatchObject({ status: 503 })
+    expect(detected).toHaveBeenCalledOnce()
+    unsubscribe()
   })
 })

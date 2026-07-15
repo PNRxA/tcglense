@@ -45,10 +45,11 @@ services:
     http_port: 8080        # App Platform injects PORT=8080; the API binds it on 0.0.0.0.
 
     health_check:
-      # Database-backed readiness: don't route a rollout that cannot serve accounts.
-      # /api/health remains the process-only liveness probe for manual diagnosis.
-      http_path: /api/ready
-      initial_delay_seconds: 30    # migrations run on boot before /api/ready answers
+      # Routing liveness: the API only starts listening after DB connect + migrations,
+      # and this stays 200 in planned maintenance so /api/config + coded 503s remain
+      # reachable. Monitor /api/ready separately for dependency readiness.
+      http_path: /api/health
+      initial_delay_seconds: 30
       period_seconds: 15
       timeout_seconds: 5
       success_threshold: 1
@@ -102,6 +103,11 @@ services:
       - key: PUBLIC_SITE_URL
         scope: RUN_TIME
         value: https://tcglense.com
+      # Planned upgrade switch. App Platform redeploys after this changes; liveness
+      # stays healthy so the combined app can serve its maintenance screen.
+      - key: MAINTENANCE_MODE
+        scope: RUN_TIME
+        value: "false"
       # SeaORM logs EVERY SQL statement at INFO (sqlx-core target `sqlx::query`), which
       # floods the App Platform log stream. Keep the app's own logs at info but silence
       # the per-query SQL. Raise `sqlx::query` to debug temporarily when you need to see

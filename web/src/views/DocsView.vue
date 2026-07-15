@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ApiReference } from '@scalar/api-reference'
 import '@scalar/api-reference/style.css'
+import { getOpenApiDocument } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
@@ -33,13 +34,11 @@ usePageMeta({
 })
 
 onMounted(async () => {
-  const headers: Record<string, string> = {}
-  if (auth.accessToken) {
-    headers['Authorization'] = `Bearer ${auth.accessToken}`
-  }
-  const res = await fetch('/api/openapi.json', { headers })
-  if (res.ok) {
-    spec.value = await res.json()
+  try {
+    spec.value = await getOpenApiDocument(auth.accessToken)
+  } catch {
+    // The shared client has already signalled a coded maintenance response to App.vue.
+    // Preserve the existing loading placeholder for other transient fetch failures.
   }
 })
 </script>

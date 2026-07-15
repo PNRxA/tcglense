@@ -18,6 +18,10 @@ pub struct Config {
     /// Network interface to bind. Defaults to 127.0.0.1; set 0.0.0.0 in dev/containers.
     pub host: String,
     pub port: u16,
+    /// Whether the process should run in maintenance mode. Startup still connects to
+    /// the database and applies migrations, but background jobs are skipped and the
+    /// HTTP router serves only liveness; readiness and application traffic return 503.
+    pub maintenance_mode: bool,
     /// Public origin where the SPA is served (e.g. `https://tcglense.app`), used to
     /// build the absolute `<loc>` URLs in the DB-backed sitemaps (see
     /// [`crate::handlers::sitemap`]). Defaults to the Vite dev origin; set it to the
@@ -192,6 +196,7 @@ impl std::fmt::Debug for Config {
             .field("cookie_secure", &self.cookie_secure)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("maintenance_mode", &self.maintenance_mode)
             .field("public_site_url", &self.public_site_url)
             .field("data_dir", &self.data_dir)
             .field("scryfall_user_agent", &self.scryfall_user_agent)
@@ -564,6 +569,10 @@ impl Config {
 
         let port = env_parse::<u16>("PORT").unwrap_or(8080);
 
+        // Opt-in operational posture for planned upgrades. Migrations run before the
+        // router is built, while normal traffic and background jobs stay disabled.
+        let maintenance_mode = env_bool("MAINTENANCE_MODE", false);
+
         // Public origin of the SPA, used for the absolute <loc>s in the sitemaps.
         // Defaults to the Vite dev origin so dev/e2e produce valid URLs. Trailing
         // slashes are trimmed so `base + "/cards/..."` never yields a doubled slash.
@@ -694,6 +703,7 @@ impl Config {
             cookie_secure,
             host,
             port,
+            maintenance_mode,
             public_site_url,
             data_dir,
             scryfall_user_agent,

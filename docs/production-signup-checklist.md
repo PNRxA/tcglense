@@ -33,7 +33,8 @@ password reset for an active account, or authenticated users.
 For an existing DigitalOcean App Platform service, update the **live** environment
 and health-check settings before deploying the image: the release workflow requests a
 new deployment but does not apply `.do/app.yaml` changes to an existing app. Set
-`SIGNUPS_ENABLED=false`, configure `/api/ready`, then verify the live `/api/config`.
+`SIGNUPS_ENABLED=false` and `MAINTENANCE_MODE=false`, configure the platform routing
+health check on `/api/health`, then verify `/api/ready` and the live `/api/config`.
 
 1. Take a pre-deploy database snapshot, deploy the new images, and let migrations
    finish. Do not switch signups on while an older API version is still serving.

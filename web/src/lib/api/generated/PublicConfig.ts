@@ -10,6 +10,12 @@
  */
 export type PublicConfig = { 
 /**
+ * Whether the API is accepting application traffic. The config route remains
+ * available and non-cacheable during maintenance so an already-cached SPA can
+ * replace its normal shell with the maintenance screen.
+ */
+maintenance_mode: boolean, 
+/**
  * The Cloudflare Turnstile public site key, or `null` when CAPTCHA is disabled
  * (no `TURNSTILE_SECRET_KEY`/`TURNSTILE_SITE_KEY` set) — the SPA then skips the
  * widget. The API is the source of truth for whether a token is required.

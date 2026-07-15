@@ -1,4 +1,4 @@
-import { API_URL, ApiError, request } from './client'
+import { API_URL, apiErrorFromResponse, request } from './client'
 import { makeHoldingApi } from './holdings'
 import type { PriceRange } from './catalog'
 import type {
@@ -234,7 +234,11 @@ export async function exportCollectionCsv(
     credentials: 'include',
   })
   if (!response.ok) {
-    throw new ApiError(`Export failed with status ${response.status}`, response.status)
+    const error = await apiErrorFromResponse(
+      response,
+      `Export failed with status ${response.status}`,
+    )
+    throw error
   }
   return response.blob()
 }

@@ -9,5 +9,5 @@ export type { PublicConfig } from './generated'
  * the shipped bundle needs no rebuild to change it. No token — a plain public GET.
  */
 export function getConfig(): Promise<PublicConfig> {
-  return request<PublicConfig>('/api/config')
+  return request<PublicConfig>('/api/config', { cache: 'no-store' })
 }

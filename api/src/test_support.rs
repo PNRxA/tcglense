@@ -28,6 +28,7 @@ pub(crate) fn test_config() -> Config {
         cookie_secure: false,
         host: "127.0.0.1".to_string(),
         port: 8080,
+        maintenance_mode: false,
         public_site_url: "https://tcglense.example".to_string(),
         data_dir: std::path::PathBuf::from("./data"),
         scryfall_user_agent: "TCGLense/test".to_string(),

@@ -49,6 +49,8 @@ services:
     logging: *default-logging
     environment:
       JWT_SECRET: ${JWT_SECRET:?set it, e.g. openssl rand -hex 32}
+      # Planned upgrade switch; recreate the API container after changing it.
+      MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
       # DigitalOcean Managed Postgres — use the PRIVATE (VPC) host + ?sslmode=require.
       DATABASE_URL: ${DATABASE_URL:?set the DO Managed Postgres URL}
       # Upstash Redis — rediss://… (TLS). Optional: leave empty to run the rate
