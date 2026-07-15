@@ -154,11 +154,11 @@ const maxDollars = centsToDollars(MAX_BULK_THRESHOLD_CENTS)
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2 text-lg">
-            <Wallet class="size-5" /> Bulk threshold
+            <Wallet class="size-5" /> Bulk threshold (USD)
           </CardTitle>
           <CardDescription>
-            Cards worth less than this each count as “bulk” in your collection's value — the
-            low-value commons and uncommons, shown as a separate slice of the total.
+            This cutoff is always measured in US dollars because catalog prices and filters remain
+            canonical USD. Cards worth less than it count as “bulk” in your collection's value.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -171,7 +171,7 @@ const maxDollars = centsToDollars(MAX_BULK_THRESHOLD_CENTS)
             :format-options="{
               style: 'currency',
               currency: 'USD',
-              currencyDisplay: 'narrowSymbol',
+              currencyDisplay: 'code',
             }"
             class="max-w-[12rem]"
           >

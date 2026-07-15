@@ -152,6 +152,20 @@ async fn read_only_key_can_read_but_not_write() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body:?}");
 
+    // Account display preferences are writes too: a read-only key cannot change the
+    // server-persisted currency used by the signed-in UI.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/currency",
+            &key,
+            json!({ "currency": "AUD" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
     // The wish-list write is likewise forbidden.
     let (status, _, _) = send(
         &app,

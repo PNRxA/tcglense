@@ -21,7 +21,9 @@ describe('currency display conversion', () => {
   })
 
   it('falls back honestly to USD when no conversion rate is available', () => {
-    expect(formatConvertedUsd('12.5', 'AUD', null)).toBe('$12.50')
+    expect(formatConvertedUsd('12.5', 'AUD', null)).toBe('USD 12.50')
+    expect(formatConvertedUsd('12.5', 'CAD', null)).toBe('USD 12.50')
+    expect(formatConvertedUsd('12.5', 'NZD', null)).toBe('USD 12.50')
     expect(convertUsd('12.5', 'AUD', null)).toBe('12.5')
   })
 })

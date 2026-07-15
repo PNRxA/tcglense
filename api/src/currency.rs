@@ -21,6 +21,10 @@ pub const SUPPORTED_CURRENCIES: &[&str] = &["USD", "AUD", "CAD", "EUR", "GBP", "
 const RATES_URL: &str =
     "https://api.frankfurter.dev/v2/rates?base=USD&quotes=AUD,CAD,EUR,GBP,JPY,NZD";
 const REFRESH_AFTER: Duration = Duration::from_secs(12 * 60 * 60);
+// Daily feeds legitimately pause for weekends and holidays, but an indefinitely stale
+// conversion is worse than an explicitly-labelled USD fallback. Seven days comfortably
+// covers those gaps while bounding how old a displayed conversion can become.
+const MAX_STALE_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const RETRY_AFTER_ERROR: Duration = Duration::from_secs(5 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -67,19 +71,37 @@ struct CachedRates {
 struct RatesState {
     cache: Option<CachedRates>,
     failed_at: Option<Instant>,
+    refreshing: bool,
 }
 
-/// Single-flight, stale-on-error cache for the daily upstream feed. The mutex is held across
-/// the cold fetch on purpose: at most one request reaches the provider when a process starts
-/// or the snapshot expires; followers wait and reuse that result.
-#[derive(Default)]
+/// Single-flight, bounded-stale cache for the daily upstream feed. A cold/too-old cache
+/// waits for one guarded upstream request; an expired-but-usable snapshot is returned
+/// immediately while one background refresh runs.
 pub struct CurrencyRates {
     state: Mutex<RatesState>,
+    rates_url: String,
+}
+
+impl Default for CurrencyRates {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(RatesState::default()),
+            rates_url: RATES_URL.to_string(),
+        }
+    }
 }
 
 impl CurrencyRates {
+    #[cfg(test)]
+    fn with_url(rates_url: String) -> Self {
+        Self {
+            state: Mutex::new(RatesState::default()),
+            rates_url,
+        }
+    }
+
     pub async fn latest(
-        &self,
+        self: &std::sync::Arc<Self>,
         client: &reqwest::Client,
     ) -> Result<CurrencyRatesResponse, AppError> {
         let mut state = self.state.lock().await;
@@ -89,22 +111,40 @@ impl CurrencyRates {
             return Ok(cached.snapshot.clone());
         }
 
-        // Back off a failed cold start/refresh. Without this, every queued request would
-        // take its own turn retrying the unavailable provider as soon as the mutex opened.
-        if let Some(failed_at) = state.failed_at
-            && failed_at.elapsed() < RETRY_AFTER_ERROR
-        {
-            return state.cache.as_ref().map_or_else(
-                || {
-                    Err(AppError::BadGateway(
-                        "currency conversion is temporarily unavailable".to_string(),
-                    ))
-                },
-                |cached| Ok(cached.snapshot.clone()),
-            );
+        let stale = state
+            .cache
+            .as_ref()
+            .filter(|cached| cached.fetched_at.elapsed() <= MAX_STALE_AGE)
+            .map(|cached| cached.snapshot.clone());
+
+        // Stale-while-revalidate: an otherwise usable request must not inherit the
+        // provider's latency. One caller marks the refresh in flight and spawns it; every
+        // caller (including that first one) receives the last-good snapshot immediately.
+        if let Some(snapshot) = stale {
+            let in_backoff = state
+                .failed_at
+                .is_some_and(|failed_at| failed_at.elapsed() < RETRY_AFTER_ERROR);
+            if !in_backoff && !state.refreshing {
+                state.refreshing = true;
+                let rates = std::sync::Arc::clone(self);
+                let client = client.clone();
+                tokio::spawn(async move { rates.refresh(client).await });
+            }
+            return Ok(snapshot);
         }
 
-        match fetch_rates(client).await {
+        // No usable snapshot exists. Back off a failed cold start/too-old refresh so a
+        // burst of requests cannot take turns hammering an unavailable provider.
+        if state
+            .failed_at
+            .is_some_and(|failed_at| failed_at.elapsed() < RETRY_AFTER_ERROR)
+        {
+            return Err(unavailable());
+        }
+
+        // Hold the lock across a cold fetch deliberately. Followers have no safe stale
+        // value to receive, so they wait for and reuse this one single-flight result.
+        match fetch_rates(client, &self.rates_url).await {
             Ok(snapshot) => {
                 state.cache = Some(CachedRates {
                     fetched_at: Instant::now(),
@@ -117,23 +157,51 @@ impl CurrencyRates {
                 state.failed_at = Some(Instant::now());
                 // A previously-good snapshot is safer than making every monetary display
                 // fall back to USD during a temporary provider outage.
-                if let Some(cached) = state.cache.as_ref() {
+                if let Some(cached) = state
+                    .cache
+                    .as_ref()
+                    .filter(|cached| cached.fetched_at.elapsed() <= MAX_STALE_AGE)
+                {
                     tracing::warn!(error = %err, "currency-rate refresh failed; serving stale rates");
                     Ok(cached.snapshot.clone())
                 } else {
                     tracing::warn!(error = %err, "currency-rate fetch failed");
-                    Err(AppError::BadGateway(
-                        "currency conversion is temporarily unavailable".to_string(),
-                    ))
+                    Err(unavailable())
                 }
+            }
+        }
+    }
+
+    async fn refresh(self: std::sync::Arc<Self>, client: reqwest::Client) {
+        let result = fetch_rates(&client, &self.rates_url).await;
+        let mut state = self.state.lock().await;
+        state.refreshing = false;
+        match result {
+            Ok(snapshot) => {
+                state.cache = Some(CachedRates {
+                    fetched_at: Instant::now(),
+                    snapshot,
+                });
+                state.failed_at = None;
+            }
+            Err(err) => {
+                state.failed_at = Some(Instant::now());
+                tracing::warn!(error = %err, "currency-rate refresh failed; retaining bounded stale snapshot");
             }
         }
     }
 }
 
-async fn fetch_rates(client: &reqwest::Client) -> Result<CurrencyRatesResponse, String> {
+fn unavailable() -> AppError {
+    AppError::BadGateway("currency conversion is temporarily unavailable".to_string())
+}
+
+async fn fetch_rates(
+    client: &reqwest::Client,
+    rates_url: &str,
+) -> Result<CurrencyRatesResponse, String> {
     let rows = client
-        .get(RATES_URL)
+        .get(rates_url)
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await
@@ -183,7 +251,93 @@ fn parse_rates(rows: Vec<ProviderRate>) -> Result<CurrencyRatesResponse, String>
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicU16, AtomicU64, Ordering},
+        },
+        time::Duration,
+    };
+
+    use axum::{Router, http::StatusCode};
+    use reqwest::Client;
+    use tokio::time::{sleep, timeout};
+
     use super::*;
+
+    struct ProviderControl {
+        hits: AtomicU64,
+        status: AtomicU16,
+        delay_ms: AtomicU64,
+    }
+
+    async fn spawn_provider() -> (String, Arc<ProviderControl>) {
+        let control = Arc::new(ProviderControl {
+            hits: AtomicU64::new(0),
+            status: AtomicU16::new(200),
+            delay_ms: AtomicU64::new(0),
+        });
+        let handler_control = control.clone();
+        let body = serde_json::json!([
+            { "date": "2026-07-15", "base": "USD", "quote": "AUD", "rate": 1.52 },
+            { "date": "2026-07-15", "base": "USD", "quote": "CAD", "rate": 1.37 },
+            { "date": "2026-07-15", "base": "USD", "quote": "EUR", "rate": 0.86 },
+            { "date": "2026-07-15", "base": "USD", "quote": "GBP", "rate": 0.75 },
+            { "date": "2026-07-15", "base": "USD", "quote": "JPY", "rate": 158.4 },
+            { "date": "2026-07-15", "base": "USD", "quote": "NZD", "rate": 1.66 }
+        ])
+        .to_string();
+        let app = Router::new().fallback(move || {
+            let control = handler_control.clone();
+            let body = body.clone();
+            async move {
+                control.hits.fetch_add(1, Ordering::SeqCst);
+                let delay = control.delay_ms.load(Ordering::SeqCst);
+                if delay > 0 {
+                    sleep(Duration::from_millis(delay)).await;
+                }
+                let status = StatusCode::from_u16(control.status.load(Ordering::SeqCst))
+                    .expect("valid provider status");
+                (status, [("content-type", "application/json")], body)
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind rate provider");
+        let addr = listener.local_addr().expect("rate provider address");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}/rates"), control)
+    }
+
+    async fn wait_for_hits(control: &ProviderControl, expected: u64) {
+        timeout(Duration::from_secs(1), async {
+            while control.hits.load(Ordering::SeqCst) < expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("provider hit did not arrive");
+    }
+
+    async fn wait_for_refresh(rates: &CurrencyRates) {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if !rates.state.lock().await.refreshing {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("background refresh did not finish");
+    }
+
+    async fn age_cache(rates: &CurrencyRates, age: Duration) {
+        let mut state = rates.state.lock().await;
+        state.cache.as_mut().expect("primed cache").fetched_at = Instant::now() - age;
+    }
 
     fn row(quote: &str, rate: f64) -> ProviderRate {
         ProviderRate {
@@ -233,5 +387,97 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn cold_fetch_is_singleflight_and_fresh_cache_is_reused() {
+        let (url, control) = spawn_provider().await;
+        control.delay_ms.store(25, Ordering::SeqCst);
+        let rates = Arc::new(CurrencyRates::with_url(url));
+        let client = Client::new();
+
+        let mut calls = Vec::new();
+        for _ in 0..8 {
+            let rates = rates.clone();
+            let client = client.clone();
+            calls.push(tokio::spawn(
+                async move { rates.latest(&client).await.unwrap() },
+            ));
+        }
+        for call in calls {
+            assert_eq!(call.await.unwrap().rates["AUD"], 1.52);
+        }
+        assert_eq!(control.hits.load(Ordering::SeqCst), 1);
+
+        assert_eq!(rates.latest(&client).await.unwrap().rates["AUD"], 1.52);
+        assert_eq!(control.hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn expired_cache_returns_stale_immediately_and_refreshes_once() {
+        let (url, control) = spawn_provider().await;
+        let rates = Arc::new(CurrencyRates::with_url(url));
+        let client = Client::new();
+        rates.latest(&client).await.unwrap();
+        age_cache(&rates, REFRESH_AFTER + Duration::from_secs(1)).await;
+        control.delay_ms.store(250, Ordering::SeqCst);
+
+        let mut calls = Vec::new();
+        for _ in 0..8 {
+            let rates = rates.clone();
+            let client = client.clone();
+            calls.push(tokio::spawn(
+                async move { rates.latest(&client).await.unwrap() },
+            ));
+        }
+        timeout(Duration::from_millis(100), async {
+            for call in calls {
+                assert_eq!(call.await.unwrap().rates["AUD"], 1.52);
+            }
+        })
+        .await
+        .expect("stale readers waited for the upstream refresh");
+
+        wait_for_hits(&control, 2).await;
+        wait_for_refresh(&rates).await;
+        assert_eq!(control.hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_refresh_backs_off_and_never_serves_beyond_the_stale_limit() {
+        let (url, control) = spawn_provider().await;
+        let rates = Arc::new(CurrencyRates::with_url(url));
+        let client = Client::new();
+        rates.latest(&client).await.unwrap();
+
+        control.status.store(500, Ordering::SeqCst);
+        age_cache(&rates, REFRESH_AFTER + Duration::from_secs(1)).await;
+        assert_eq!(rates.latest(&client).await.unwrap().rates["AUD"], 1.52);
+        wait_for_hits(&control, 2).await;
+        wait_for_refresh(&rates).await;
+
+        // The five-minute error backoff reuses a still-bounded stale snapshot without a
+        // third provider call.
+        assert_eq!(rates.latest(&client).await.unwrap().rates["AUD"], 1.52);
+        tokio::task::yield_now().await;
+        assert_eq!(control.hits.load(Ordering::SeqCst), 2);
+
+        // Once the snapshot is too old, even the backoff path must refuse it and let the
+        // browser render its explicit USD fallback.
+        age_cache(&rates, MAX_STALE_AGE + Duration::from_secs(1)).await;
+        assert!(matches!(
+            rates.latest(&client).await,
+            Err(AppError::BadGateway(_))
+        ));
+        assert_eq!(control.hits.load(Ordering::SeqCst), 2);
+
+        // After the backoff expires, a too-old cache is treated like a cold cache: retry
+        // once, then remain unavailable rather than leaking the expired conversion.
+        rates.state.lock().await.failed_at = Some(Instant::now() - RETRY_AFTER_ERROR);
+        assert!(matches!(
+            rates.latest(&client).await,
+            Err(AppError::BadGateway(_))
+        ));
+        assert_eq!(control.hits.load(Ordering::SeqCst), 3);
     }
 }

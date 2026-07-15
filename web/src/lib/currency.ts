@@ -26,7 +26,8 @@ export function formatConvertedUsd(
   currency: SupportedCurrency,
   usdRate: number | null,
 ): string | null {
-  if (currency === 'USD' || usdRate == null) return formatUsd(raw)
+  if (currency === 'USD') return formatUsd(raw)
+  if (usdRate == null) return formatExplicitUsd(raw)
   if (!raw) return null
 
   const amount = Number(raw)
@@ -36,6 +37,18 @@ export function formatConvertedUsd(
     currency,
     currencyDisplay: 'narrowSymbol',
   }).format(amount * usdRate)
+}
+
+/** A fallback for someone who selected another dollar currency. Plain `$12.50` can be
+ * mistaken for AUD/CAD/NZD, so cold-feed failures always spell out the canonical unit. */
+function formatExplicitUsd(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const amount = Number(raw)
+  if (!Number.isFinite(amount)) return `USD ${raw}`
+  return `USD ${amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 /** Convert a canonical USD decimal string for charting while preserving null gaps. */

@@ -71,7 +71,7 @@ flow end to end.
 | `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, **revokes every refresh token**, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` **and** the account is still pending (password-less) — this reset-activation is the same new-account creation the signup gate refuses; a genuine reset for an already-active account still works |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
 | `GET /api/config` | — | `200 { turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads before rendering the auth forms; `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
-| `GET /api/currencies` | — | `200 { base: "USD", as_of: "YYYY-MM-DD", rates: Record<string, number> }` — daily reference rates for display conversion, cached server-side with stale-on-error fallback; `rates.USD` is `1` | `502` only when no rate snapshot has ever been available |
+| `GET /api/currencies` | — | `200 { base: "USD", as_of: "YYYY-MM-DD", rates: Record<string, number> }` — daily display rates; `rates.USD` is `1`; after 12h the last-good snapshot is returned immediately while one background refresh runs, with a hard seven-day stale limit | `502` when no snapshot exists or the last-good snapshot is over seven days old and refresh is unavailable |
 
 **Anti-abuse (all seven auth mutation endpoints above):** each request body may carry
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the
