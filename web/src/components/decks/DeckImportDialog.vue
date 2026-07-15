@@ -13,6 +13,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useImportDeckMutation } from '@/composables/useDecks'
 import { ApiError } from '@/lib/api'
 import type { CollectionProvider, DeckImportFileFormat, DeckImportResponse } from '@/lib/api'
@@ -136,10 +143,6 @@ function openDeck() {
   open.value = false
   void router.push(`/decks/${props.game}/${result.value.deck.id}`)
 }
-
-const selectClass =
-  'border-input dark:bg-input/30 flex h-9 w-full rounded-md border bg-transparent px-3 text-sm ' +
-  'shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]'
 </script>
 
 <template>
@@ -181,17 +184,22 @@ const selectClass =
 
         <div class="space-y-1.5">
           <Label for="deck-import-provider">Provider</Label>
-          <select id="deck-import-provider" v-model="provider" :class="selectClass">
-            <option
-              v-for="item in providers"
-              :key="item.value"
-              :value="item.value"
-              :disabled="sourceType === 'link' && item.linkDisabled"
-            >
-              {{ item.label
-              }}{{ sourceType === 'link' && item.linkDisabled ? ' — upload only' : '' }}
-            </option>
-          </select>
+          <Select v-model="provider">
+            <SelectTrigger id="deck-import-provider" class="w-full">
+              <SelectValue placeholder="Choose a provider" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="item in providers"
+                :key="item.value"
+                :value="item.value"
+                :disabled="sourceType === 'link' && item.linkDisabled"
+              >
+                {{ item.label
+                }}{{ sourceType === 'link' && item.linkDisabled ? ' — upload only' : '' }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div v-if="sourceType === 'link'" class="space-y-1.5">
