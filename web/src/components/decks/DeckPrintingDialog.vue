@@ -56,7 +56,9 @@ async function choose(printing: Card) {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="max-h-[90vh] w-[min(94vw,64rem)] max-w-5xl overflow-y-auto">
+    <DialogContent
+      class="bg-background max-h-[90vh] w-[min(94vw,64rem)] max-w-5xl overflow-y-auto rounded-xl border p-6 shadow-xl"
+    >
       <DialogTitle>Change printing</DialogTitle>
       <DialogDescription>
         Choose another printing of {{ card.name }}. Its {{ quantity + foilQuantity }}
