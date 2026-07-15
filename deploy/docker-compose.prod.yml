@@ -54,6 +54,8 @@ services:
     restart: unless-stopped
     environment:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, e.g. openssl rand -hex 32}
+      # Planned upgrade switch; recreate the API container after changing it.
+      MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
       COOKIE_SECURE: "true"     # TLS terminates at caddy, so the refresh cookie is HTTPS-only
       # The api sees the web/caddy container as its peer, so per-IP auth rate limiting
       # must key on X-Forwarded-For. The edge Caddy overwrites XFF with the real client

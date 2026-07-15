@@ -5,6 +5,7 @@ import {
   getCard,
   getConfig,
   getCurrencyRates,
+  getOpenApiDocument,
   login,
   logout,
   me,
@@ -150,11 +151,14 @@ describe('api client: error mapping', () => {
         code: 'maintenance',
       }),
     )
-    await expect(getCard('mtg', 'card-id')).rejects.toMatchObject({
+    await expect(getOpenApiDocument('docs-token')).rejects.toMatchObject({
       status: 503,
       code: 'maintenance',
     })
     expect(detected).toHaveBeenCalledOnce()
+    const { url, init } = lastCall()
+    expect(url).toBe('/api/openapi.json')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer docs-token')
 
     fetchMock.mockResolvedValueOnce(fakeResponse(503, { error: 'import queue is full' }))
     await expect(getCard('mtg', 'card-id')).rejects.toMatchObject({ status: 503 })

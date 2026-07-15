@@ -176,6 +176,7 @@ Fill in `.env` (full annotated template in
 | `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | both; required by this public stack |
 | `RESEND_API_KEY` / `EMAIL_FROM` | required in production (see below) |
 | `SIGNUPS_ENABLED` | leave `false` until the production signup checklist passes |
+| `MAINTENANCE_MODE` | leave `false`; set `true` and recreate the API container for a planned upgrade |
 
 ## 7. Two things not to miss
 
@@ -197,7 +198,7 @@ Fill in `.env` (full annotated template in
 ```sh
 curl -s https://<your-domain>/api/health         # -> {"status":"ok"}
 curl -s https://<your-domain>/api/ready          # -> {"status":"ready"} after a DB round-trip
-curl -s https://<your-domain>/api/config          # -> {"turnstile_site_key": "..."|null}
+curl -s https://<your-domain>/api/config          # -> {"maintenance_mode":false,"turnstile_site_key":...}
 docker compose -f deploy/docker-compose.do.yml logs api | grep -iE "backend|migrat|redis"
 ```
 

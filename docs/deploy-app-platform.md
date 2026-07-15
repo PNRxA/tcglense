@@ -13,9 +13,12 @@ starts with `SIGNUPS_ENABLED=false` so its first rollout stays closed.
 
 The spec is applied by `doctl apps create/update`; the release workflow only asks an
 existing app to pull the latest image and does **not** push later spec changes. For an
-already-running app, confirm the live component still has `SIGNUPS_ENABLED=false` and
-change its health-check path to `/api/ready` in App Platform before this rollout (or
-apply the reviewed spec with `doctl apps update`, preserving its secrets and domain).
+already-running app, confirm the live component has `SIGNUPS_ENABLED=false` and
+`MAINTENANCE_MODE=false`, and change its health-check path to `/api/health` in App
+Platform before this rollout (or apply the reviewed spec with `doctl apps update`,
+preserving its secrets and domain). The API only listens after database connection and
+migrations; using liveness for platform routing also keeps planned-maintenance responses
+reachable, while `/api/ready` remains the separately monitored dependency/drain signal.
 
 ```
 internet ─▶ Cloudflare (DNS · CDN · TLS · WAF)
@@ -158,6 +161,12 @@ release moves that tag.
 `doctl apps update <APP_ID> --spec .do/app.yaml` (this one *does* push the whole spec, so
 include your envs), or roll back from the App Platform **Activity** tab.
 
+**Planned maintenance:** set the live `MAINTENANCE_MODE` environment variable to `true`.
+Saving it triggers a deployment; migrations complete before the server starts, then the
+platform `/api/health` check keeps the instance routed so the cached SPA can read fresh
+`/api/config` and application requests receive the coded maintenance `503`. Confirm
+`/api/ready` reports maintenance, then set the variable back to `false` to leave the mode.
+
 ## The rate-limit caveat
 
 The per-IP auth rate limiter keys on the client IP from the **left-most `X-Forwarded-For`
@@ -194,7 +203,7 @@ change needed to go multi-instance.
 ```sh
 curl -s https://<your-domain>/api/health         # -> {"status":"ok"}
 curl -s https://<your-domain>/api/ready          # -> {"status":"ready"} after a DB round-trip
-curl -s https://<your-domain>/api/config          # -> {"turnstile_site_key": "..."|null}
+curl -s https://<your-domain>/api/config          # -> {"maintenance_mode":false,"turnstile_site_key":...}
 doctl apps logs <APP_ID> --type run | grep -iE "backend|migrat|listening"
 ```
 

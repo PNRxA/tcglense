@@ -47,6 +47,10 @@ no timer poll; the config is rechecked when its tab becomes visible. Once the up
 is complete, set the flag back to `false` and restart. A fronting CDN can continue
 serving an already-fresh cached public response, so purge it or enable an edge bypass
 during a maintenance window when the public catalog must disappear immediately.
+An ingress that must keep serving that maintenance response needs a routing/liveness
+check on `/api/health` while monitoring `/api/ready` separately; otherwise the deliberate
+readiness `503` removes the only maintenance instance. The App Platform spec uses this
+split. The shipped Compose manifests pass `MAINTENANCE_MODE` through to the API container.
 
 > **Editing `api/.env` — quote any value containing spaces.** This includes the
 > User-Agent strings sent to Scryfall / TCGCSV / Moxfield and the `EMAIL_FROM` address.
@@ -321,7 +325,7 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   `HOST` (`127.0.0.1`), `PORT` (8080),
   `MAINTENANCE_MODE` (`false`; planned-upgrade mode: migrations still run, background
   jobs stay off, liveness remains healthy, and readiness/application traffic return 503;
-  restart after changing it),
+  restart or recreate the API container after changing it),
   `PUBLIC_SITE_URL` (`http://localhost:5173`; bare public SPA origin used for the sitemap
   `<loc>`s **and** every emailed link — completion/verify/reset — so set it to the real
   HTTPS origin in prod; credentials, paths, queries, and fragments are rejected),
