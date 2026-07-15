@@ -538,6 +538,7 @@ mod tests {
                 tcgplayer_product_id: tcg.to_string(),
                 name: format!("Product {tcg}"),
                 supplement: false,
+                override_memberships: false,
                 contents,
                 components: Vec::new(),
             }],
@@ -551,6 +552,14 @@ mod tests {
         data
     }
 
+    /// Like [`one_supplement_product`], with curated memberships taking precedence over
+    /// contradictory upstream buckets for the cards it names.
+    fn one_membership_override_product(tcg: &str, contents: Vec<FallbackCard>) -> FallbackData {
+        let mut data = one_supplement_product(tcg, contents);
+        data.products[0].override_memberships = true;
+        data
+    }
+
     /// Build a one-product fallback dataset with authored composition components.
     fn one_product_components(tcg: &str, components: Vec<FallbackComponent>) -> FallbackData {
         FallbackData {
@@ -558,6 +567,7 @@ mod tests {
                 tcgplayer_product_id: tcg.to_string(),
                 name: format!("Product {tcg}"),
                 supplement: false,
+                override_memberships: false,
                 contents: Vec::new(),
                 components,
             }],
@@ -664,6 +674,43 @@ mod tests {
         assert!(rows.contains(&(bundle, sol, "booster", true)), "upstream rows untouched");
         assert!(rows.contains(&(bundle, sol, "contains", false)));
         assert!(rows.contains(&(bundle, swat, "variable", false)));
+    }
+
+    /// A membership override corrects only contradictory buckets for the curated cards;
+    /// unrelated upstream cards and matching memberships remain intact.
+    #[tokio::test]
+    async fn merge_fallback_can_override_contradictory_memberships() {
+        let db = migrated_memory_db().await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let swat = insert_card_at(&db, "sf-swat", "tle", "311").await;
+        let pull = insert_card_at(&db, "sf-pull", "tla", "1").await;
+        let bundle = insert_product(&db, "648686").await;
+        let data = one_membership_override_product(
+            "648686",
+            vec![
+                fb_card("tle", "316", "contains", false),
+                fb_card("tle", "311", "variable", false),
+            ],
+        );
+
+        // Current upstream behavior: all thirteen deck cards are marked guaranteed, even
+        // though ten form a two-of-ten random pool. It also emits the contained boosters.
+        let mut rows = HashSet::from([
+            (bundle, sol, "contains", false),
+            (bundle, swat, "contains", false),
+            (bundle, pull, "booster", false),
+        ]);
+        let covered = HashSet::from([bundle]);
+        let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
+
+        assert_eq!(added, 1, "the matching guaranteed row already exists");
+        assert!(rows.contains(&(bundle, sol, "contains", false)));
+        assert!(!rows.contains(&(bundle, swat, "contains", false)));
+        assert!(rows.contains(&(bundle, swat, "variable", false)));
+        assert!(
+            rows.contains(&(bundle, pull, "booster", false)),
+            "unrelated rows survive"
+        );
     }
 
     /// An unresolved product or card (not in our catalog) is skipped, not fatal.
@@ -858,14 +905,12 @@ mod tests {
         assert_eq!(pool.child_card_id, None, "the 2-of-10 pool stays unlinked");
     }
 
-    /// Regression test for issue #352: MTGJSON stopped shipping the Commander's Bundle as
-    /// `contents: null` and now describes it with a `deck` reference that resolves to no
-    /// deck ("Commander's Bundle", set tla) plus its boosters — so the product is covered,
-    /// the zero-rows gate never engages, and the guaranteed staples / 2-of-10 pool / land
-    /// cards vanished. The shipped fallback entry is flagged `supplement`, so its rows
-    /// must merge **alongside** upstream's: memberships gain the staples (`contains`,
-    /// incl. the land printings) and the pool (`variable`) while upstream's booster rows
-    /// and its composition — the "1× Commander's Bundle" deck line included — stay as-is.
+    /// Regression test for issue #352 and the later upstream deck data: MTGJSON describes
+    /// the Commander's Bundle with a deck plus its boosters. The deck initially resolved to
+    /// no data; now it resolves all thirteen staples as guaranteed even though ten form a
+    /// two-of-ten random pool. The shipped fallback supplements missing cards and overrides
+    /// contradictory memberships for its curated cards, while upstream's booster rows and
+    /// composition stay as-is.
     #[tokio::test]
     async fn shipped_avatar_bundle_supplements_upstream_rows() {
         let db = migrated_memory_db().await;
@@ -878,10 +923,15 @@ mod tests {
         let appa = insert_card_at(&db, "sf-appa-forest", "tla", "291").await;
         let pull = insert_card_at(&db, "sf-pull", "tla", "1").await;
 
-        // What the new upstream emits: booster membership rows via the sealed recursion
-        // (covering the product), and a composition with the bare textual deck line plus
-        // the linked boosters.
-        let mut rows = HashSet::from([(bundle, pull, "booster", false)]);
+        // What current upstream emits: booster membership rows via the sealed recursion,
+        // plus all thirteen Commander cards as `contains` through the deck reference —
+        // including the ten-card random pool (represented here by Deflecting Swat).
+        let mut rows = HashSet::from([
+            (bundle, pull, "booster", false),
+            (bundle, signet, "contains", false),
+            (bundle, sol, "contains", false),
+            (bundle, swat, "contains", false),
+        ]);
         let mut components = vec![
             ComponentRow {
                 product_id: bundle,
@@ -909,11 +959,11 @@ mod tests {
             .await
             .unwrap();
 
-        // The supplement lands alongside upstream: guaranteed staples + land printings as
-        // `contains` (lands in both finishes), the pool as `variable`, and upstream's own
-        // booster row untouched.
+        // The supplement keeps the guaranteed staples + land printings as `contains`,
+        // reclassifies the random pool as `variable`, and leaves upstream's booster row.
         assert!(rows.contains(&(bundle, signet, "contains", false)));
         assert!(rows.contains(&(bundle, sol, "contains", false)));
+        assert!(!rows.contains(&(bundle, swat, "contains", false)));
         assert!(rows.contains(&(bundle, swat, "variable", false)));
         assert!(rows.contains(&(bundle, plains, "contains", false)));
         assert!(rows.contains(&(bundle, plains, "contains", true)));
