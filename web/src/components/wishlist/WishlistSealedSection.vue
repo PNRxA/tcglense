@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, toRef } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useWishlistProductsQuery, WISHLIST_PRODUCT_PAGE_SIZE } from '@/composables/useWishlist'
 import { useClampPage } from '@/composables/useClampPage'
 import ProductGrid from '@/components/products/ProductGrid.vue'
@@ -18,7 +18,24 @@ import type { OwnedCountsMap } from '@/lib/api'
 // parent mounts it only in the authed branch.
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
-const page = ref(1)
+const route = useRoute()
+const router = useRouter()
+
+// Keep this independently-paged section in the URL so opening a product and following
+// its history-aware back link restores the same wish-list page (issue #414). Page 1 is
+// canonicalized to an absent query key, matching the catalog list controls.
+const page = computed({
+  get: () => {
+    const value = Number(route.query.page)
+    return Number.isInteger(value) && value > 1 ? value : 1
+  },
+  set: (value) => {
+    const query = { ...route.query }
+    if (value > 1) query.page = String(value)
+    else delete query.page
+    void router.replace({ query })
+  },
+})
 const query = useWishlistProductsQuery(game, page)
 const entries = computed(() => query.data.value?.data ?? [])
 const total = computed(() => query.data.value?.total ?? 0)

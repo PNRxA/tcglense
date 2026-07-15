@@ -68,9 +68,9 @@ describe('useProductBackLink', () => {
     })
   })
 
-  it('returns to the wish list it was opened from', async () => {
-    expect(await backLink('/wishlist/mtg')).toEqual({
-      to: '/wishlist/mtg',
+  it('returns to the wish list it was opened from, preserving its sealed-product page', async () => {
+    expect(await backLink('/wishlist/mtg?page=2')).toEqual({
+      to: '/wishlist/mtg?page=2',
       label: 'Wish list',
     })
   })

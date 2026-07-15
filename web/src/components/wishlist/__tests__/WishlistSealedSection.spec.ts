@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick, ref, type Ref } from 'vue'
-import { mount, RouterLinkStub } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import type { WishlistProductEntry, WishlistProductPage } from '@/lib/api'
 import WishlistSealedSection from '../WishlistSealedSection.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
@@ -66,10 +67,17 @@ function pageData(entries: WishlistProductEntry[], total = entries.length): Wish
   return { data: entries, page: 1, page_size: 60, total, has_more: total > 60 }
 }
 
-function mountSection() {
-  return mount(WishlistSealedSection, {
+async function mountSection(path = '/wishlist/mtg') {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/wishlist/:game', component: { template: '<div />' } }],
+  })
+  await router.push(path)
+
+  const wrapper = mount(WishlistSealedSection, {
     props: { game: 'mtg' },
     global: {
+      plugins: [router],
       stubs: {
         RouterLink: RouterLinkStub,
         ProductGrid: ProductGridStub,
@@ -77,6 +85,7 @@ function mountSection() {
       },
     },
   })
+  return { wrapper, router }
 }
 
 beforeEach(() => {
@@ -88,21 +97,21 @@ beforeEach(() => {
 })
 
 describe('WishlistSealedSection', () => {
-  it('renders nothing while data is undefined', () => {
+  it('renders nothing while data is undefined', async () => {
     state.data = undefined
-    const wrapper = mountSection()
+    const { wrapper } = await mountSection()
     expect(wrapper.find('section').exists()).toBe(false)
   })
 
-  it('renders nothing when the wish list has no sealed products', () => {
+  it('renders nothing when the wish list has no sealed products', async () => {
     state.data = pageData([], 0)
-    const wrapper = mountSection()
+    const { wrapper } = await mountSection()
     expect(wrapper.find('section').exists()).toBe(false)
   })
 
-  it('renders the heading, total, tiles, and passes the wanted counts map keyed by id', () => {
+  it('renders the heading, total, tiles, and passes the wanted counts map keyed by id', async () => {
     state.data = pageData([entry('100', 3), entry('200', 1, 2)])
-    const wrapper = mountSection()
+    const { wrapper } = await mountSection()
 
     expect(wrapper.find('section').exists()).toBe(true)
     const heading = wrapper.get('h2').text()
@@ -119,29 +128,30 @@ describe('WishlistSealedSection', () => {
     })
   })
 
-  it('paginates only when the total exceeds one page (60)', () => {
+  it('paginates only when the total exceeds one page (60)', async () => {
     // Under a page: no pager.
     state.data = pageData([entry('100', 1)], 2)
-    expect(mountSection().findComponent(CardPagination).exists()).toBe(false)
+    expect((await mountSection()).wrapper.findComponent(CardPagination).exists()).toBe(false)
 
     // Over a page: the pager renders.
     state.data = pageData([entry('100', 1)], 100)
-    expect(mountSection().findComponent(CardPagination).exists()).toBe(true)
+    expect((await mountSection()).wrapper.findComponent(CardPagination).exists()).toBe(true)
   })
 
-  it('clamps back to page 1 once a shrunk total no longer reaches the current page', async () => {
-    // 100 wanted, 60 per page: page 2 is valid at mount.
+  it('restores page 2 from the URL and clamps the URL when the total shrinks', async () => {
+    // Returning from a product keeps the wishlist's ?page=2 in history, so the section
+    // must seed its query from that route rather than remounting at page 1.
     state.data = pageData([entry('100', 1)], 100)
-    mountSection()
+    const { router } = await mountSection('/wishlist/mtg?page=2')
+    expect(state.page!.value).toBe(2)
 
-    // The user is sitting on page 2 (as if the pager had carried them there)...
-    state.page!.value = 2
-
-    // ...then the quick-add dialog zeroes the last product on that page, and the refetch at
-    // page=2 comes back with a total that no longer reaches a second page.
+    // If the last product on page 2 is removed, the shared clamp returns to page 1 and
+    // canonicalizes it by dropping the query key.
     state.dataRef!.value = pageData([], 60)
     await nextTick()
+    await flushPromises()
 
     expect(state.page!.value).toBe(1)
+    expect(router.currentRoute.value.query.page).toBeUndefined()
   })
 })
