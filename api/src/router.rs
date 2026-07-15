@@ -45,10 +45,10 @@ use crate::{
         config::public_config,
         currency::currency_rates,
         decks::{
-            create_deck, create_folder, create_section, delete_deck, delete_folder,
-            delete_section, get_deck, list_decks, list_folders, move_deck_card,
-            move_deck_to_folder, reorder_sections, set_deck_card, set_deck_visibility,
-            update_deck, update_folder, update_section,
+            MAX_DECK_UPLOAD_BYTES, create_deck, create_folder, create_section, delete_deck,
+            delete_folder, delete_section, export_deck, get_deck, import_deck, list_decks,
+            list_folders, move_deck_card, move_deck_to_folder, reorder_sections, set_deck_card,
+            set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::health,
         sharing::{
@@ -256,13 +256,20 @@ pub fn build_router(state: AppState) -> Router {
             "/api/wishlist/{game}/products/{id}",
             get(get_wishlist_product_entry).put(set_wishlist_product_entry),
         )
-        // Per-user decks (issue #363): a user has many named decks per game, organised
+        // Per-user decks (issues #363/#389): a user has many named decks per game, organised
         // into folders (deck level) and sections (card level), so the routes nest a
         // `{deck_id}` deeper than the flat collection/wishlist. Authenticated (AuthUser
         // reads, WritableUser writes) and no-store. Static segments (`folders`, `sections`,
         // `reorder`, `folder`, `visibility`, `move`) win over the dynamic ids in axum, so
         // none collide — same guarantee as the catalog's `/products/facets`.
         .route("/api/decks/{game}", get(list_decks).post(create_deck))
+        // A deck import is inline (one provider object or one uploaded file), but the
+        // JSON body may carry a sizeable CSV/text export, so give only this route the
+        // same bounded 16 MiB ceiling as collection CSV upload.
+        .route(
+            "/api/decks/{game}/import",
+            post(import_deck).layer(DefaultBodyLimit::max(MAX_DECK_UPLOAD_BYTES)),
+        )
         .route(
             "/api/decks/{game}/folders",
             get(list_folders).post(create_folder),
@@ -282,6 +289,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/decks/{game}/{deck_id}/visibility",
             put(set_deck_visibility),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/export",
+            get(export_deck),
         )
         .route(
             "/api/decks/{game}/{deck_id}/sections",

@@ -110,7 +110,7 @@ fn plan_reconcile(
 /// Resolve external card ids -> internal `cards.id` for one game, chunked so a very large
 /// collection can't blow past SQLite's per-statement bind-variable limit. Ids with no
 /// catalog match are simply absent from the returned map. Shared by both reconcile paths.
-async fn resolve_card_ids(
+pub(crate) async fn resolve_card_ids(
     db: &DatabaseConnection,
     game: &str,
     external_ids: &[String],

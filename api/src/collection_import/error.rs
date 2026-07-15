@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 
-/// A failure while importing a collection. Converts to the right `AppError` (and thus
+/// A failure while importing a collection or deck. Converts to the right `AppError` (and thus
 /// HTTP status + JSON body) via the `From` impl below.
 #[derive(Debug)]
 pub enum ImportError {
@@ -10,14 +10,20 @@ pub enum ImportError {
     InvalidSource(String),
     /// The provider has no public collection at that id -> 404.
     CollectionNotFound(String),
+    /// The provider has no public deck at that id -> 404.
+    DeckNotFound(String),
     /// The provider collection has no cards to import -> 422 (guards a `Replace` from
     /// silently wiping the user's collection against an empty/misresolved source).
     EmptyCollection,
+    /// The fetched/uploaded deck has no usable card rows -> 422.
+    EmptyDeck,
     /// A `Replace` matched none of our catalog -> 422. Guards against wiping the whole
     /// collection when the source's cards simply aren't in our catalog (e.g. the
     /// catalog hasn't been synced), rather than deleting everything and importing nothing.
     NoMatchingCards,
-    /// The collection is larger than we'll import in one request -> 422.
+    /// No imported deck card matched the local catalog -> 422; do not create an empty deck.
+    NoMatchingDeckCards,
+    /// The source is larger than we'll import in one request -> 422.
     TooLarge { count: usize, max: usize },
     /// The provider kept rate-limiting us (`429`) even after backing off -> 503.
     RateLimited,
@@ -39,29 +45,39 @@ impl From<ImportError> for AppError {
             ImportError::CollectionNotFound(id) => {
                 AppError::NotFound(format!("no public collection found for '{id}'"))
             }
+            ImportError::DeckNotFound(id) => {
+                AppError::NotFound(format!("no public deck found for '{id}'"))
+            }
             ImportError::EmptyCollection => {
                 AppError::Validation("the collection has no cards to import".to_string())
+            }
+            ImportError::EmptyDeck => {
+                AppError::Validation("the deck has no cards to import".to_string())
             }
             ImportError::NoMatchingCards => AppError::Validation(
                 "none of the collection's cards are in our catalog, so there was nothing to \
                  import (your collection was left unchanged)"
                     .to_string(),
             ),
+            ImportError::NoMatchingDeckCards => AppError::Validation(
+                "none of the deck's cards are in our catalog, so no deck was created"
+                    .to_string(),
+            ),
             ImportError::TooLarge { count, max } => AppError::Validation(format!(
-                "collection is too large to import ({count} cards; the limit is {max})"
+                "source is too large to import ({count} cards; the limit is {max})"
             )),
             ImportError::RateLimited => AppError::ServiceUnavailable(
-                "the collection provider is rate-limiting us; please try again in a few minutes"
+                "the provider is rate-limiting us; please try again in a few minutes"
                     .to_string(),
             ),
             ImportError::ProviderDenied(detail) => {
-                tracing::warn!(error = %detail, "collection provider denied our request");
+                tracing::warn!(error = %detail, "import provider denied our request");
                 AppError::BadGateway(detail)
             }
             ImportError::Upstream(detail) => {
                 // Log the upstream detail server-side; return a generic gateway error.
-                tracing::warn!(error = %detail, "collection provider request failed");
-                AppError::BadGateway("the collection provider could not be reached".to_string())
+                tracing::warn!(error = %detail, "import provider request failed");
+                AppError::BadGateway("the import provider could not be reached".to_string())
             }
             ImportError::Db(err) => AppError::from(err),
         }

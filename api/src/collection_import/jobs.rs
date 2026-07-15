@@ -104,6 +104,19 @@ impl ImportQueue {
         self
     }
 
+    /// Shared outbound provider limiters. Deck imports are single-request, inline
+    /// operations, but they still consume the same provider request budget as collection
+    /// imports so the two surfaces cannot independently exceed an upstream limit.
+    pub(crate) fn limiters(&self) -> &ProviderLimiters {
+        &self.limiters
+    }
+
+    /// Deployment-level provider settings shared with inline deck imports (currently the
+    /// approved Moxfield User-Agent, when configured).
+    pub(crate) fn settings(&self) -> &ProviderSettings {
+        &self.settings
+    }
+
     /// A job's status + live progress, scoped to its owner + game — anyone else (or an
     /// unknown id) gets `None`, which the handler renders as a 404 so job ids aren't
     /// cross-user probes.

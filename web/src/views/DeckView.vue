@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  FileDown,
   Globe,
   Heart,
   Layers,
@@ -40,7 +41,8 @@ import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
-import type { Card, DeckCardEntry } from '@/lib/api'
+import { ApiError, exportDeckFile } from '@/lib/api'
+import type { Card, DeckCardEntry, DeckExportFormat } from '@/lib/api'
 import {
   useCreateSectionMutation,
   useDeckQuery,
@@ -58,6 +60,7 @@ import { useWishlistCounts } from '@/composables/useWishlist'
 import { useCurrency } from '@/composables/useCurrency'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
+import { downloadBlob } from '@/lib/download'
 
 const props = defineProps<{ game: string; id: string }>()
 const router = useRouter()
@@ -146,6 +149,25 @@ function removeDeck() {
 function move(folderId: number | null) {
   if (!deck.value || deck.value.folder_id === folderId) return
   void moveToFolder.mutateAsync({ game: props.game, deckId: deck.value.id, folderId })
+}
+
+const exporting = ref(false)
+const exportError = ref('')
+async function exportDeck(format: DeckExportFormat) {
+  if (!deck.value || exporting.value) return
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const blob = await auth.authFetch((token) =>
+      exportDeckFile(token, props.game, deck.value!.id, format),
+    )
+    const extension = format === 'moxfield-text' ? 'txt' : 'csv'
+    downloadBlob(blob, `tcglense-${props.game}-deck-${deck.value.id}-${format}.${extension}`)
+  } catch (error) {
+    exportError.value = error instanceof ApiError ? error.message : 'Export failed. Please retry.'
+  } finally {
+    exporting.value = false
+  }
 }
 
 // --- Sharing ---
@@ -350,6 +372,23 @@ function moveSection(sectionId: number, delta: number) {
           </Popover>
           <SetUsernameDialog v-model:open="usernameDialogOpen" @saved="onUsernameSaved" />
 
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" size="sm" :disabled="exporting">
+                <FileDown class="size-4" /> Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Export deck</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem @select="exportDeck('archidekt')">Archidekt CSV</DropdownMenuItem>
+              <DropdownMenuItem @select="exportDeck('moxfield')">Moxfield CSV</DropdownMenuItem>
+              <DropdownMenuItem @select="exportDeck('moxfield-text')"
+                >Moxfield plain text</DropdownMenuItem
+              >
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <!-- Settings -->
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
@@ -380,6 +419,9 @@ function moveSection(sectionId: number, delta: number) {
           </DropdownMenu>
         </div>
       </header>
+      <p v-if="exportError" class="text-destructive -mt-3 mb-4 text-sm" aria-live="polite">
+        {{ exportError }}
+      </p>
 
       <!-- Add cards -->
       <DeckAddCard

@@ -7,6 +7,7 @@ mod config;
 mod currency;
 mod datasets;
 mod db;
+mod deck_import;
 mod email;
 mod entities;
 mod error;

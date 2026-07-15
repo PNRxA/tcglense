@@ -377,11 +377,27 @@ catalog) is planned but not implemented.
   pass a writer that PUTs a `(deck, section, card)` row while reusing all the tricky flush
   machinery, and the existing collection/wish-list callers are untouched (they leave it unset
   and keep the internal mutation path).
-- **Import is deliberately out of scope here (issue #389).** Syncing a deck from
-  Archidekt/Moxfield is a follow-up: the provider *deck* endpoints differ from the collection
-  ones (Moxfield's collection parser even rejects `/decks/`), a deck row carries a section/board
-  the collection intermediate can't, and a deck is written whole (a straight insert), never
-  through the `collection_items` reconcile/consolidate/smart engine — so it's its own PR.
+- **Deck import/export is a sibling pipeline, not collection reconcile (issue #389).** The
+  provider *deck* endpoints and uploaded deck-list rows carry a category/board that the flat
+  collection intermediate cannot represent. `deck_import` therefore produces `DeckCardRow`
+  values and writes the new deck, its exact imported sections, and its aggregated cards in one
+  transaction. It deliberately reuses the lower collection seams — foil classification,
+  external-id and Moxfield `(set, collector_number)` resolution, provider throttling/back-off,
+  and `ImportError` mapping — but never calls collection reconcile/consolidate/smart. Empty and
+  zero-match imports create nothing. Archidekt permits multiple categories per card while our
+  schema files one row in one section, so its first category is the primary section; this avoids
+  multiplying the card count. Moxfield's boards map directly, including signature spells,
+  with each nested board independently falling back to the older top-level shape. The inverse
+  exports preserve sections and regular/foil buckets in provider-shaped CSV or Moxfield-style
+  text.
+- **Live deck fetches stay small and policy-gated.** A deck is one provider object, so the route
+  runs inline rather than entering the long-lived paginated collection queue, while sharing the
+  same global provider limiters. Archidekt live URLs are enabled. Moxfield live URLs remain
+  behind `Provider::network_import_enabled()` and the approved `MOXFIELD_USER_AGENT`, exactly
+  like collection import; CSV/plain-text upload remains available without upstream access. A
+  deck-specific 2000-row cap is enforced by every parser and again at the database boundary,
+  and the synchronous response returns only the lightweight deck header; the full card DTOs are
+  loaded through the normal deck-detail read after navigation.
 
 ## Data ingest & datasets
 
