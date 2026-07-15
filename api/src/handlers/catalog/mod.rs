@@ -46,7 +46,7 @@ pub use prices::card_prices;
 pub use scan::scan_cards;
 pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
-    product_contents, product_facets, product_image, product_prices,
+    product_containers, product_contents, product_facets, product_image, product_prices,
 };
 // Product wire-shaping helpers shared with the wish list's sealed-product holdings
 // (issue #364). Crate-internal: the `products` submodule itself stays private.
@@ -65,7 +65,8 @@ pub use cards::{__path_card_names, __path_card_prints, __path_get_card, __path_l
 pub use prices::__path_card_prices;
 pub use products::{
     __path_card_sealed, __path_get_product, __path_list_products, __path_product_card_sections,
-    __path_product_cards, __path_product_contents, __path_product_facets, __path_product_prices,
+    __path_product_cards, __path_product_containers, __path_product_contents,
+    __path_product_facets, __path_product_prices,
 };
 pub use scan::__path_scan_cards;
 pub use sets::{

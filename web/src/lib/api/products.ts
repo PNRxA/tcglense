@@ -5,6 +5,7 @@ import type {
   Product,
   ProductCardEntry,
   ProductCardSection,
+  ProductContainer,
   ProductFacets,
   ProductPricePoint,
 } from './generated'
@@ -21,6 +22,7 @@ export type {
   ProductCardEntry,
   ProductCardSection,
   ProductComponent,
+  ProductContainer,
   ProductFacets,
   ProductPricePoint,
   ProductPrices,
@@ -101,6 +103,23 @@ export function getProductContents(
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<{ data: ProductComponent[] }>(`/api/games/${g}/products/${i}/contents`, {
+    signal,
+  })
+}
+
+/**
+ * The sealed products whose direct structural composition includes this product. Each
+ * entry embeds the parent product and reports how many copies of the viewed product it
+ * contains. Empty when this product is not linked from any ingested composition.
+ */
+export function getProductContainers(
+  game: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ data: ProductContainer[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: ProductContainer[] }>(`/api/games/${g}/products/${i}/containers`, {
     signal,
   })
 }

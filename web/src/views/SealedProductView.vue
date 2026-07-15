@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 import ProductImage from '@/components/products/ProductImage.vue'
 import ProductBuyLinks from '@/components/products/ProductBuyLinks.vue'
 import ProductContents from '@/components/products/ProductContents.vue'
+import ProductContainers from '@/components/products/ProductContainers.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
 import ProductWishlistControls from '@/components/products/ProductWishlistControls.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
@@ -207,6 +208,11 @@ usePageMeta({
         own pages, decks, promos, physical extras). Mounts off the route id and self-hides
         when the product has no ingested composition. -->
       <ProductContents :game="game" :id="id" />
+
+      <!-- The reverse structural relation: boxes, bundles, and other parent products that
+        directly contain this product. Most useful on individual booster-pack pages; it
+        self-hides for products with no parent composition (issue #415). -->
+      <ProductContainers :game="game" :id="id" />
 
       <!-- Price history over time (full width, below the details). Keyed off game/id, so
         it mounts and fetches in parallel with the product query above. -->

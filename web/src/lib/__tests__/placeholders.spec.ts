@@ -101,6 +101,18 @@ describe('findProductInCache', () => {
     expect(findProductInCache(qc, 'mtg', 'sealed1')?.id).toBe('sealed1')
   })
 
+  it('unwraps forward and reverse product-composition refs', () => {
+    const qc = client()
+    qc.setQueryData(['product-contents', 'mtg', 'box'], {
+      data: [{ product: product('pack'), kind: 'sealed', quantity: 36 }],
+    })
+    qc.setQueryData(['product-containers', 'mtg', 'pack'], {
+      data: [{ product: product('box'), quantity: 36 }],
+    })
+    expect(findProductInCache(qc, 'mtg', 'pack')?.id).toBe('pack')
+    expect(findProductInCache(qc, 'mtg', 'box')?.id).toBe('box')
+  })
+
   it('returns undefined on a miss', () => {
     const qc = client()
     qc.setQueryData(['products', 'mtg', '', '', '', 'default', 1], { data: [product('bb')] })

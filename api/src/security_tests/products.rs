@@ -305,6 +305,55 @@ async fn product_contents_endpoint_lists_composition_with_links() {
     }
 }
 
+#[tokio::test]
+async fn product_containers_endpoint_lists_direct_parents_with_quantities() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    let pack = insert_product(db, "800", "Play Booster Pack", "tla", "play_pack", Some("4.99")).await;
+    let box_product =
+        insert_product(db, "810", "Play Booster Box", "tla", "play_display", Some("139.99")).await;
+    let bundle = insert_product(db, "820", "Gift Bundle", "tla", "gift_bundle", Some("79.99")).await;
+
+    // The box models its packs in two direct line items; the reverse endpoint collapses
+    // those to one parent and sums their quantities. The bundle is a second parent.
+    insert_component(db, box_product, 0, "sealed", "Play Booster Pack", 30, Some(pack), None).await;
+    insert_component(db, box_product, 1, "sealed", "Box Topper Pack", 6, Some(pack), None).await;
+    insert_component(db, bundle, 0, "sealed", "Play Booster Pack", 9, Some(pack), None).await;
+
+    let (status, headers, body) = send(&app, get("/api/games/mtg/products/800/containers")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "the reverse product-composition read must be browser + CDN cacheable"
+    );
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2);
+    // Parent name order is stable, and each entry reuses the full Product wire shape.
+    assert_eq!(data[0]["product"]["id"], "820");
+    assert_eq!(data[0]["quantity"], 9);
+    assert!(data[0]["product"]["prices"].is_object());
+    assert_eq!(data[1]["product"]["id"], "810");
+    assert_eq!(data[1]["quantity"], 36);
+
+    // A product with no parent composition has a clean empty list.
+    let (status, headers, body) = send(&app, get("/api/games/mtg/products/810/containers")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE));
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+    // Unknown game / product are no-store 404s, matching the forward contents endpoint.
+    for uri in [
+        "/api/games/nope/products/800/containers",
+        "/api/games/mtg/products/999999/containers",
+    ] {
+        let (status, headers, _) = send(&app, get(uri)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} should 404");
+        assert_eq!(cache_control(&headers), Some("no-store"), "{uri} 404 must be no-store");
+    }
+}
+
 /// Insert one `sealed_contents` membership row for `(product, card)`.
 async fn insert_sealed(
     db: &sea_orm::DatabaseConnection,
