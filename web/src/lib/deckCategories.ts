@@ -21,8 +21,10 @@ export function presetDeckSection(card: Pick<Card, 'type_line'>): string | null 
   return null
 }
 
-/** Resolve the automatic bucket against this deck's actual sections, falling back to
- * the first section for imported/custom decks that do not have the preset bucket. */
+/** Resolve the automatic bucket against this deck's actual sections. When the type has
+ * no preset (or that preset is absent), only an explicit Mainboard/Other catch-all is
+ * safe; returning undefined makes the add UI ask the user to choose a section instead
+ * of silently filing a Battle or unknown type into Commander/Sideboard. */
 export function automaticDeckSection(
   card: Pick<Card, 'type_line'>,
   sections: DeckSection[],
@@ -31,5 +33,8 @@ export function automaticDeckSection(
   const matched = preset
     ? sections.find((section) => section.name.toLowerCase() === preset.toLowerCase())
     : undefined
-  return matched ?? sections[0]
+  return (
+    matched ??
+    sections.find((section) => ['mainboard', 'other'].includes(section.name.trim().toLowerCase()))
+  )
 }

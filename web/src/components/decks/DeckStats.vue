@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watchEffect } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select,
@@ -9,17 +9,30 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import DeckStatBars from '@/components/decks/DeckStatBars.vue'
-import type { DeckCardEntry } from '@/lib/api'
-import { calculateDeckStats, drawProbability } from '@/lib/deckStats'
+import type { DeckCardEntry, DeckSection } from '@/lib/api'
+import { calculateDeckStats, defaultDrawSectionIds, drawProbability } from '@/lib/deckStats'
 
-const props = defineProps<{ cards: DeckCardEntry[] }>()
+const props = defineProps<{ cards: DeckCardEntry[]; sections: DeckSection[] }>()
 const stats = computed(() => calculateDeckStats(props.cards))
+const drawSectionIds = ref<number[]>([])
+watch(
+  () => props.sections.map((section) => `${section.id}:${section.name}`).join('|'),
+  () => {
+    drawSectionIds.value = defaultDrawSectionIds(props.sections)
+  },
+  { immediate: true },
+)
+const drawSectionSet = computed(() => new Set(drawSectionIds.value))
+const drawCards = computed(() =>
+  props.cards.filter((entry) => drawSectionSet.value.has(entry.section_id)),
+)
+const drawStats = computed(() => calculateDeckStats(drawCards.value))
 const selectedCard = ref('')
 const cardsSeen = ref(7)
-const maxCardsSeen = computed(() => Math.max(1, Math.min(30, stats.value.totalCopies)))
+const maxCardsSeen = computed(() => Math.max(1, Math.min(30, drawStats.value.totalCopies)))
 
 watchEffect(() => {
-  const options = stats.value.cardOdds
+  const options = drawStats.value.cardOdds
   if (!options.some((item) => item.name === selectedCard.value)) {
     selectedCard.value = options[0]?.name ?? ''
   }
@@ -27,10 +40,10 @@ watchEffect(() => {
 })
 
 const selectedCopies = computed(
-  () => stats.value.cardOdds.find((item) => item.name === selectedCard.value)?.copies ?? 0,
+  () => drawStats.value.cardOdds.find((item) => item.name === selectedCard.value)?.copies ?? 0,
 )
 const selectedProbability = computed(() =>
-  drawProbability(stats.value.totalCopies, selectedCopies.value, cardsSeen.value),
+  drawProbability(drawStats.value.totalCopies, selectedCopies.value, cardsSeen.value),
 )
 const probabilityLabel = computed(
   () => `${(selectedProbability.value * 100).toFixed(1).replace('.0', '')}%`,
@@ -75,7 +88,33 @@ const probabilityLabel = computed(
         <p class="text-muted-foreground mt-1 text-xs">
           Chance of seeing at least one copy without replacement.
         </p>
+        <fieldset v-if="sections.length" class="mt-3">
+          <legend class="text-xs font-medium">Library sections</legend>
+          <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1.5">
+            <label
+              v-for="section in sections"
+              :key="section.id"
+              class="flex items-center gap-1.5 text-xs"
+            >
+              <input
+                v-model="drawSectionIds"
+                type="checkbox"
+                :value="section.id"
+                class="accent-primary size-3.5 rounded border"
+              />
+              {{ section.name }}
+            </label>
+          </div>
+          <p class="text-muted-foreground mt-1.5 text-xs">
+            {{ drawStats.totalCopies }} cards from {{ drawSectionIds.length }} selected
+            {{ drawSectionIds.length === 1 ? 'section' : 'sections' }}.
+          </p>
+        </fieldset>
+        <p v-if="drawStats.totalCopies === 0" class="text-muted-foreground mt-4 text-sm">
+          Select at least one section containing cards to calculate draw odds.
+        </p>
         <div
+          v-else
           class="mt-3 grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,1fr)_auto] sm:items-end"
         >
           <label class="space-y-1.5 text-sm">
@@ -85,7 +124,7 @@ const probabilityLabel = computed(
                 <SelectValue placeholder="Choose a card" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="item in stats.cardOdds" :key="item.name" :value="item.name">
+                <SelectItem v-for="item in drawStats.cardOdds" :key="item.name" :value="item.name">
                   {{ item.name }} ({{ item.copies }})
                 </SelectItem>
               </SelectContent>

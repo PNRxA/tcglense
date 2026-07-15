@@ -58,13 +58,16 @@ export function useProductSuggestions(game: Ref<string>, term: Ref<string>) {
 export function useCardPrintingsByName(
   game: Ref<string>,
   name: Ref<string>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; page?: Ref<number> } = {},
 ) {
   const enabled = computed(() => name.value.length > 0 && (opts.enabled?.value ?? true))
   return useQuery<CardPage>({
-    queryKey: ['card-printings', game, name],
-    queryFn: () => getCardPrintingsByName(game.value, name.value),
+    queryKey: opts.page
+      ? ['card-printings', game, name, opts.page]
+      : ['card-printings', game, name],
+    queryFn: () => getCardPrintingsByName(game.value, name.value, opts.page?.value ?? 1),
     enabled,
+    placeholderData: keepPreviousData,
     staleTime: 60_000,
   })
 }

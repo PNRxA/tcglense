@@ -56,11 +56,16 @@ mod tests {
 
     #[test]
     fn files_multitype_and_modal_cards_by_the_front_face() {
+        assert_eq!(preset_section(Some("Basic Land — Island")), Some("Lands"));
         assert_eq!(
             preset_section(Some("Artifact Creature — Golem")),
             Some("Creatures")
         );
+        assert_eq!(preset_section(Some("Planeswalker")), Some("Planeswalkers"));
+        assert_eq!(preset_section(Some("Instant")), Some("Instants"));
         assert_eq!(preset_section(Some("Sorcery // Land")), Some("Sorceries"));
+        assert_eq!(preset_section(Some("Enchantment")), Some("Enchantments"));
+        assert_eq!(preset_section(Some("Artifact")), Some("Artifacts"));
         assert_eq!(preset_section(Some("Battle — Siege")), None);
         assert_eq!(preset_section(None), None);
     }

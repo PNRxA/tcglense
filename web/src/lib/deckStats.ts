@@ -1,4 +1,4 @@
-import type { DeckCardEntry } from '@/lib/api'
+import type { DeckCardEntry, DeckSection } from '@/lib/api'
 
 export interface DeckStatItem {
   key: string
@@ -42,6 +42,29 @@ const CARD_TYPES = [
   'Land',
   'Battle',
 ] as const
+
+const NON_LIBRARY_SECTION_NAMES = new Set([
+  'commander',
+  'commanders',
+  'sideboard',
+  'sideboards',
+  'maybeboard',
+  'maybe board',
+  'considering',
+  'companion',
+  'companions',
+  'command zone',
+  'signature spell',
+  'signature spells',
+])
+
+/** Sections included in draw odds by default. Users can override the selection in the
+ * analytics panel, while known command-zone and out-of-game boards start excluded. */
+export function defaultDrawSectionIds(sections: Array<Pick<DeckSection, 'id' | 'name'>>): number[] {
+  return sections
+    .filter((section) => !NON_LIBRARY_SECTION_NAMES.has(section.name.trim().toLowerCase()))
+    .map((section) => section.id)
+}
 
 function increment(map: Map<string, number>, key: string, copies: number) {
   map.set(key, (map.get(key) ?? 0) + copies)

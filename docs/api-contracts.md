@@ -758,7 +758,7 @@ deck ids), matching the public-sharing surface.
 | `PUT /api/decks/{game}/{deck_id}/sections/reorder` | `{ section_ids }` | `{ data: DeckSection[] }` — set the section order; `section_ids` must be exactly the deck's sections (`422` otherwise) |
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}` | `{ quantity, foil_quantity, section_id }` | `{ quantity, foil_quantity }` — set the absolute counts for a card in one section (both zero removes it there). `404` unknown deck/section/card, `422` negative/oversized |
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}/move` | `{ from_section_id, to_section_id }` | `{ quantity, foil_quantity }` — move a card between two of the deck's sections (merging counts on a collision) |
-| `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing` | `{ new_card_id, section_id }` | `{ quantity, foil_quantity }` — atomically replace a card with another printing of the same gameplay card in that section, preserving finish counts (or merging when the target printing is already present). `404` unknown/non-owned source row, `422` unrelated target card |
+| `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing` | `{ new_card_id, section_id }` | `{ quantity, foil_quantity }` — atomically replace a card with another printing of the same gameplay card in that section, preserving finish counts (or merging when the target printing is already present). Serialized with count-set and section-move writes through the parent deck row. `404` unknown/non-owned source row, `422` unrelated target card |
 
 `DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
 sections, cards, created_at, updated_at }` — `summary` is the shared `CollectionSummary`
@@ -769,7 +769,8 @@ deck-specific DTO, since a `CollectionEntry` has no section). The default seeded
 Archidekt-flavoured (Commander, Creatures, …, the functional categories Ramp / Removal /
 Tutor / …, and Maybeboard). The SPA's default add target uses the front-face card type to
 pick the matching preset type bucket, while an explicit section choice always wins — see
-`docs/tradeoffs.md`.
+`docs/tradeoffs.md`. Unknown types use a Mainboard/Other catch-all when present; otherwise
+the SPA requires an explicit section instead of defaulting to the deck's first section.
 
 Deck imports run inline because each provider deck endpoint is a single-object fetch, unlike
 the paginated collection job. They still share the collection importer's per-provider rate

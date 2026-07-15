@@ -76,7 +76,7 @@ function copies(entry: DeckCardEntry): number {
         </p>
       </header>
 
-      <DeckStats :cards="deck.cards" />
+      <DeckStats :cards="deck.cards" :sections="deck.sections" />
 
       <section v-for="section in visibleSections" :key="section.id" class="mb-8">
         <h2 class="mb-3 border-b pb-1.5 font-medium">

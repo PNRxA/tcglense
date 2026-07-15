@@ -97,6 +97,14 @@ function targetSectionId(card: Card): number | null {
   return Number.isFinite(sectionId) ? sectionId : null
 }
 
+function needsExplicitSection(card: Card): boolean {
+  return target.value === 'auto' && targetSectionId(card) == null
+}
+
+const hasUnclassifiedPrintings = computed(() =>
+  printings.value.some((card) => needsExplicitSection(card)),
+)
+
 function inTargetCount(card: Card): number {
   const sectionId = targetSectionId(card)
   if (sectionId == null) return 0
@@ -184,9 +192,19 @@ function reset() {
           Clear
         </button>
       </div>
-      <Loader2 v-if="printingsQuery.isPending.value" class="text-muted-foreground size-4 animate-spin" />
+      <Loader2
+        v-if="printingsQuery.isPending.value"
+        class="text-muted-foreground size-4 animate-spin"
+      />
+      <p
+        v-else-if="hasUnclassifiedPrintings"
+        class="text-muted-foreground mb-2 text-xs"
+        role="status"
+      >
+        Some card types have no safe automatic category. Choose a section above to add them.
+      </p>
       <div
-        v-else
+        v-if="!printingsQuery.isPending.value"
         class="grid max-h-[32rem] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4"
       >
         <DeckAddPrintTile
@@ -196,6 +214,7 @@ function reset() {
           :card="card"
           :count="inTargetCount(card)"
           :loading="isPending(card)"
+          :disabled="needsExplicitSection(card)"
           @add="addPrinting(card)"
         />
       </div>

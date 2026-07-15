@@ -340,8 +340,10 @@ catalog) is planned but not implemented.
 - **Automatic filing is deliberately type-only.** A normal add targets "Automatic" by default
   and uses the card's front-face type to choose Lands / Creatures / Planeswalkers / Instants /
   Sorceries / Enchantments / Artifacts (in that priority order); an explicit section selection
-  always wins, and a custom/imported deck without the matching preset falls back to its first
-  section. Imports apply the same rule only to generic Mainboard rows and expose an
+  always wins. A missing/unknown preset uses an explicit Mainboard or Other catch-all when one
+  exists; otherwise the add UI requires a section choice instead of silently filing into the
+  first section (often Commander or Sideboard). Imports apply the same rule only to generic
+  Mainboard rows and expose an
   `auto_categorize` switch (default true); provider categories such as Commander, Ramp, or
   Sideboard remain authoritative. Functional buckets cannot be inferred safely from oracle text
   (a treasure maker may or may not be "Ramp"), so they stay manual.
@@ -363,11 +365,17 @@ catalog) is planned but not implemented.
   absolute-count editor (`useOwnedCountEditor`) gained an optional `saveFn` injection: decks
   pass a writer that PUTs a `(deck, section, card)` row while reusing all the tricky flush
   machinery, and the existing collection/wish-list callers are untouched (they leave it unset
-  and keep the internal mutation path). The deck view derives colour identity, card-type,
+  and keep the internal mutation path). Before a card changes printing or section, the UI
+  explicitly flushes that debounce so a trailing absolute-count write cannot recreate the old
+  row. All three backend card mutations also serialize through a transaction-held update of the
+  parent deck row, preventing a Postgres read/merge/write race. The deck view derives colour identity, card-type,
   nonland mana-curve, average-mana-value, and hypergeometric draw-odds analytics directly from
-  its already-bounded `DeckDetail.cards` payload, so stats add no API request. Printing changes
+  its already-bounded `DeckDetail.cards` payload, so stats add no API request. Draw odds start
+  with Commander / Companion / Sideboard / Maybeboard / Signature Spells excluded and expose
+  section checkboxes so custom deck structures remain explicit. Printing changes
   use one atomic deck endpoint: the replacement must share the current card's `oracle_id`
-  (same-name fallback only when both ids are absent), and existing target counts merge.
+  (same-name fallback only when both ids are absent), existing target counts merge, and the
+  picker pages through the full exact-name result set (including 800+ basic-land printings).
 - **Deck import/export is a sibling pipeline, not collection reconcile (issue #389).** The
   provider *deck* endpoints and uploaded deck-list rows carry a category/board that the flat
   collection intermediate cannot represent. `deck_import` therefore produces `DeckCardRow`

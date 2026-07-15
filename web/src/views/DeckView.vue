@@ -242,7 +242,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
         {{ exportError }}
       </p>
 
-      <DeckStats :cards="allCards" />
+      <DeckStats :cards="allCards" :sections="sections" />
 
       <!-- Add cards -->
       <DeckAddCard
@@ -399,10 +399,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        :open="sectionDeleteTarget != null"
-        @update:open="onSectionDeleteOpenChange"
-      >
+      <Dialog :open="sectionDeleteTarget != null" @update:open="onSectionDeleteOpenChange">
         <DialogContent class="max-w-sm">
           <DialogTitle>Delete {{ sectionDeleteTarget?.name }}?</DialogTitle>
           <DialogDescription v-if="sectionDeleteTarget?.count">

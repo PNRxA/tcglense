@@ -137,8 +137,9 @@ export function useOwnedCountEditor(
       })
   }
 
-  function save() {
+  function save(): Promise<unknown> {
     inFlight = inFlight.then(runSave)
+    return inFlight
   }
 
   function scheduleSave() {
@@ -156,9 +157,23 @@ export function useOwnedCountEditor(
     if (timer) {
       clearTimeout(timer)
       timer = null
-      save()
+      void save()
     }
   })
+
+  /** Immediately persist any debounced edit and wait for all serialized writes. This is
+   * used before a deck card changes identity/section so a trailing absolute-count PUT
+   * cannot recreate the old row after the structural mutation completes. */
+  async function flush(): Promise<boolean> {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+      await save()
+    } else {
+      await inFlight
+    }
+    return !saveError.value
+  }
 
   function adjust(which: 'quantity' | 'foil', delta: number) {
     const current = which === 'quantity' ? regular : foil
@@ -170,9 +185,7 @@ export function useOwnedCountEditor(
   }
 
   // A save is outstanding while a write is in flight or an edit is still debouncing.
-  const saving = computed(
-    () => mutation.isPending.value || injectedPending.value || dirty.value,
-  )
+  const saving = computed(() => mutation.isPending.value || injectedPending.value || dirty.value)
 
-  return { regular, foil, adjust, dirty, saving, saveError }
+  return { regular, foil, adjust, flush, dirty, saving, saveError }
 }

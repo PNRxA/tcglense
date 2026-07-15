@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Card, DeckCardEntry } from '../api'
-import { calculateDeckStats, drawProbability } from '../deckStats'
+import { calculateDeckStats, defaultDrawSectionIds, drawProbability } from '../deckStats'
 
 function entry(id: string, name: string, quantity: number, card: Partial<Card>): DeckCardEntry {
   return {
@@ -47,5 +47,20 @@ describe('deck stats', () => {
     expect(drawProbability(60, 4, 7)).toBeCloseTo(0.3995, 3)
     expect(drawProbability(60, 60, 1)).toBe(1)
     expect(drawProbability(0, 4, 7)).toBe(0)
+  })
+
+  it('excludes command-zone and out-of-game sections from draw odds by default', () => {
+    expect(
+      defaultDrawSectionIds([
+        { id: 1, name: 'Commander' },
+        { id: 2, name: 'Creatures' },
+        { id: 3, name: 'Sideboard' },
+        { id: 4, name: 'Maybeboard' },
+        { id: 5, name: 'Signature Spells' },
+        { id: 6, name: 'Custom library pile' },
+        { id: 7, name: 'Considering' },
+        { id: 8, name: 'Command Zone' },
+      ]),
+    ).toEqual([2, 6])
   })
 })

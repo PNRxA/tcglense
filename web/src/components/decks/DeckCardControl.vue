@@ -38,6 +38,7 @@ const props = defineProps<{
 
 const open = ref(false)
 const printingOpen = ref(false)
+const preparingPrinting = ref(false)
 const game = toRef(props, 'game')
 const cardId = computed(() => props.card.id)
 
@@ -50,17 +51,22 @@ const seed = computed<OwnedCountSeed>(() => ({
   quantity: props.quantity,
   foil_quantity: props.foilQuantity,
 }))
-const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
-  saveFn: (id, quantity, foilQuantity) =>
-    setCard.mutateAsync({
-      game: props.game,
-      deckId: props.deckId,
-      sectionId: props.sectionId,
-      id,
-      quantity,
-      foil_quantity: foilQuantity,
-    }),
-})
+const { regular, foil, adjust, flush, saving, saveError } = useOwnedCountEditor(
+  game,
+  cardId,
+  seed,
+  {
+    saveFn: (id, quantity, foilQuantity) =>
+      setCard.mutateAsync({
+        game: props.game,
+        deckId: props.deckId,
+        sectionId: props.sectionId,
+        id,
+        quantity,
+        foil_quantity: foilQuantity,
+      }),
+  },
+)
 
 const total = computed(() => props.quantity + props.foilQuantity)
 const inDeck = computed(() => total.value > 0)
@@ -78,20 +84,32 @@ const moveTarget = computed({
   get: () => '',
   set: (value: string) => {
     if (!value) return
-    void moveCard.mutateAsync({
-      game: props.game,
-      deckId: props.deckId,
-      id: props.card.id,
-      fromSectionId: props.sectionId,
-      toSectionId: Number(value),
-    })
-    open.value = false
+    void moveToSection(Number(value))
   },
 })
 
-function openPrintingPicker() {
+async function moveToSection(toSectionId: number) {
+  if (!(await flush())) return
+  await moveCard.mutateAsync({
+    game: props.game,
+    deckId: props.deckId,
+    id: props.card.id,
+    fromSectionId: props.sectionId,
+    toSectionId,
+  })
   open.value = false
-  printingOpen.value = true
+}
+
+async function openPrintingPicker() {
+  if (preparingPrinting.value) return
+  preparingPrinting.value = true
+  try {
+    if (!(await flush())) return
+    open.value = false
+    printingOpen.value = true
+  } finally {
+    preparingPrinting.value = false
+  }
 }
 </script>
 
@@ -198,9 +216,11 @@ function openPrintingPicker() {
         variant="outline"
         size="sm"
         class="mt-3 w-full"
+        :disabled="preparingPrinting"
         @click="openPrintingPicker"
       >
-        <RefreshCw class="size-3.5" /> Change printing
+        <Loader2 v-if="preparingPrinting" class="size-3.5 animate-spin" />
+        <RefreshCw v-else class="size-3.5" /> Change printing
       </Button>
     </PopoverContent>
   </Popover>

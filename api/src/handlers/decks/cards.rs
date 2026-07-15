@@ -60,15 +60,20 @@ pub async fn set_deck_card(
     let section = load_section(&state, deck.id, payload.section_id).await?;
     let card = load_card(&state, &game, &id).await?;
 
+    // Serialize every mutation of this deck's card rows through the parent deck row.
+    // This prevents a printing merge racing an absolute-count set on Postgres, while
+    // also taking SQLite's single-writer lock before any card-row write.
+    let txn = state.db.begin().await?;
     let now = Utc::now();
+    touch_deck(&txn, deck.id, now).await?;
     if quantity == 0 && foil_quantity == 0 {
         DeckCard::delete_many()
             .filter(deck_card::Column::DeckId.eq(deck.id))
             .filter(deck_card::Column::CardId.eq(card.id))
             .filter(deck_card::Column::SectionId.eq(section.id))
-            .exec(&state.db)
+            .exec(&txn)
             .await?;
-        touch_deck(&state.db, deck.id, now).await?;
+        txn.commit().await?;
         return Ok(Json(CollectionQuantities {
             quantity: 0,
             foil_quantity: 0,
@@ -101,9 +106,9 @@ pub async fn set_deck_card(
             ])
             .to_owned(),
         )
-        .exec(&state.db)
+        .exec(&txn)
         .await?;
-    touch_deck(&state.db, deck.id, now).await?;
+    txn.commit().await?;
 
     Ok(Json(CollectionQuantities {
         quantity,
@@ -160,6 +165,8 @@ pub async fn change_deck_card_printing(
     }
 
     let txn = state.db.begin().await?;
+    let now = Utc::now();
+    touch_deck(&txn, deck.id, now).await?;
     let source = DeckCard::find()
         .filter(deck_card::Column::DeckId.eq(deck.id))
         .filter(deck_card::Column::CardId.eq(current_card.id))
@@ -182,7 +189,6 @@ pub async fn change_deck_card_printing(
         .filter(deck_card::Column::SectionId.eq(section.id))
         .one(&txn)
         .await?;
-    let now = Utc::now();
     let result = if let Some(target) = existing {
         let quantity = (target.quantity + source.quantity).min(MAX_CARD_QUANTITY);
         let foil_quantity = (target.foil_quantity + source.foil_quantity).min(MAX_CARD_QUANTITY);
@@ -208,7 +214,6 @@ pub async fn change_deck_card_printing(
             foil_quantity,
         }
     };
-    touch_deck(&txn, deck.id, now).await?;
     txn.commit().await?;
 
     Ok(Json(result))
@@ -250,28 +255,31 @@ pub async fn move_deck_card(
     let to = load_section(&state, deck.id, payload.to_section_id).await?;
     let card = load_card(&state, &game, &id).await?;
 
+    let txn = state.db.begin().await?;
+    let now = Utc::now();
+    touch_deck(&txn, deck.id, now).await?;
     let source = DeckCard::find()
         .filter(deck_card::Column::DeckId.eq(deck.id))
         .filter(deck_card::Column::CardId.eq(card.id))
         .filter(deck_card::Column::SectionId.eq(from.id))
-        .one(&state.db)
+        .one(&txn)
         .await?
         .ok_or_else(|| AppError::NotFound("card not in that section".to_string()))?;
 
     // No-op move: same section.
     if from.id == to.id {
+        txn.commit().await?;
         return Ok(Json(CollectionQuantities {
             quantity: source.quantity,
             foil_quantity: source.foil_quantity,
         }));
     }
 
-    let now = Utc::now();
     let existing = DeckCard::find()
         .filter(deck_card::Column::DeckId.eq(deck.id))
         .filter(deck_card::Column::CardId.eq(card.id))
         .filter(deck_card::Column::SectionId.eq(to.id))
-        .one(&state.db)
+        .one(&txn)
         .await?;
 
     let result = if let Some(target) = existing {
@@ -282,8 +290,8 @@ pub async fn move_deck_card(
         active.quantity = Set(quantity);
         active.foil_quantity = Set(foil_quantity);
         active.updated_at = Set(now);
-        active.update(&state.db).await?;
-        DeckCard::delete_by_id(source.id).exec(&state.db).await?;
+        active.update(&txn).await?;
+        DeckCard::delete_by_id(source.id).exec(&txn).await?;
         CollectionQuantities {
             quantity,
             foil_quantity,
@@ -295,13 +303,13 @@ pub async fn move_deck_card(
         let mut active: deck_card::ActiveModel = source.into();
         active.section_id = Set(to.id);
         active.updated_at = Set(now);
-        active.update(&state.db).await?;
+        active.update(&txn).await?;
         CollectionQuantities {
             quantity,
             foil_quantity,
         }
     };
-    touch_deck(&state.db, deck.id, now).await?;
+    txn.commit().await?;
 
     Ok(Json(result))
 }
