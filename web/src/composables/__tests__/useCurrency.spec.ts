@@ -40,12 +40,14 @@ const Harness = defineComponent({
     const money = useCurrency()
     const mutation = useSetCurrencyMutation()
     const chooseAud = () => mutation.mutateAsync({ currency: 'AUD' })
-    return { money, chooseAud }
+    const chooseGuestNzd = () => money.setGuestCurrency('NZD')
+    return { money, chooseAud, chooseGuestNzd }
   },
   template: `
     <div data-currency>{{ money.displayCurrency.value }}</div>
     <div data-value>{{ money.formatUsd('12.5') }}</div>
     <button type="button" @click="chooseAud">AUD</button>
+    <button type="button" data-guest @click="chooseGuestNzd">guest NZD</button>
   `,
 })
 
@@ -62,12 +64,45 @@ function mountHarness(currency: string) {
   return { wrapper, auth, queryClient }
 }
 
+function mountGuestHarness() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const wrapper = mount(Harness, {
+    global: { plugins: [pinia, [VueQueryPlugin, { queryClient }]] },
+  })
+  return { wrapper, queryClient }
+}
+
 beforeEach(() => {
+  localStorage.clear()
   vi.mocked(getCurrencyRates).mockReset()
   vi.mocked(setCurrency).mockReset()
 })
 
 describe('useCurrency', () => {
+  it('restores and persists the signed-out device preference', async () => {
+    localStorage.setItem('tcglense_currency', 'CAD')
+    vi.mocked(getCurrencyRates).mockResolvedValue(RATES)
+    const { wrapper } = mountGuestHarness()
+    await flushPromises()
+
+    expect(wrapper.get('[data-currency]').text()).toBe('CAD')
+    await wrapper.get('[data-guest]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-currency]').text()).toBe('NZD')
+    expect(localStorage.getItem('tcglense_currency')).toBe('NZD')
+  })
+
+  it('prefers the signed-in account currency over the saved guest choice', () => {
+    localStorage.setItem('tcglense_currency', 'CAD')
+    const { wrapper } = mountHarness('USD')
+
+    expect(wrapper.get('[data-currency]').text()).toBe('USD')
+    expect(wrapper.get('[data-value]').text()).toBe('$12.50')
+  })
+
   it('labels the fallback explicitly as USD while a preferred rate is loading', async () => {
     let resolveRates!: (value: typeof RATES) => void
     vi.mocked(getCurrencyRates).mockReturnValue(

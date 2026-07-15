@@ -17,8 +17,7 @@ import { CURRENCY_OPTIONS, isSupportedCurrency } from '@/lib/currency'
 import { useAuthStore } from '@/stores/auth'
 
 // Header shortcut for the same server-persisted preference as Settings. Signed-out
-// visitors have no account preference to mutate, so the control appears only after the
-// session resolves signed in.
+// visitors get the same display behavior with a device-local preference instead.
 const auth = useAuthStore()
 const money = useCurrency()
 const mutation = useSetCurrencyMutation()
@@ -27,6 +26,10 @@ const error = ref<string | null>(null)
 async function onSelect(value: unknown) {
   if (!isSupportedCurrency(value) || value === money.currency.value) return
   error.value = null
+  if (!auth.isAuthenticated) {
+    money.setGuestCurrency(value)
+    return
+  }
   try {
     await mutation.mutateAsync({ currency: value })
   } catch (cause) {
@@ -37,13 +40,13 @@ async function onSelect(value: unknown) {
 </script>
 
 <template>
-  <DropdownMenu v-if="auth.isAuthenticated">
+  <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <Button
         variant="ghost"
         size="sm"
         class="h-9 gap-1.5 px-2"
-        :disabled="mutation.isPending.value"
+        :disabled="auth.isAuthenticated && mutation.isPending.value"
       >
         <CircleDollarSign class="size-4" aria-hidden="true" />
         <span class="hidden text-xs font-semibold sm:inline">{{ money.currency.value }}</span>

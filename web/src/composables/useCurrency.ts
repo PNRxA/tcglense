@@ -10,17 +10,24 @@ import {
 } from '@/lib/currency'
 import { useAuthStore } from '@/stores/auth'
 import { useAuthedMutation } from '@/lib/queries'
+import { persistedRef } from '@/lib/persistedRef'
 import type { User } from '@/lib/api'
 
 const RATES_STALE_MS = 12 * 60 * 60 * 1000
+const GUEST_CURRENCY_KEY = 'tcglense_currency'
 
 /** One rates observer per Pinia instance. Card grids can mount dozens of money displays;
  * centralising the observer avoids creating one vue-query subscription per tile while its
- * selected code remains derived directly from the authenticated user. */
+ * selected code remains derived from the account or guest preference. */
 const useCurrencyState = defineStore('currency-display', () => {
   const auth = useAuthStore()
+  const guestCurrency = persistedRef<SupportedCurrency>(
+    GUEST_CURRENCY_KEY,
+    'USD',
+    isSupportedCurrency,
+  )
   const currency = computed<SupportedCurrency>(() =>
-    isSupportedCurrency(auth.user?.currency) ? auth.user.currency : 'USD',
+    isSupportedCurrency(auth.user?.currency) ? auth.user.currency : guestCurrency.value,
   )
 
   const ratesQuery = useQuery({
@@ -50,11 +57,15 @@ const useCurrencyState = defineStore('currency-display', () => {
     return convertUsdValue(raw, currency.value, rate.value)
   }
 
-  return { currency, displayCurrency, rate, formatUsd, convertUsd }
+  function setGuestCurrency(next: SupportedCurrency) {
+    guestCurrency.value = next
+  }
+
+  return { currency, displayCurrency, rate, formatUsd, convertUsd, setGuestCurrency }
 })
 
-/** The signed-in account's server-persisted display currency. Signed-out visitors and
- * older/malformed user payloads safely use USD. */
+/** The signed-in account's server-persisted display currency, or a device-local preference
+ * for signed-out visitors. Account preferences always take precedence while signed in. */
 export function useCurrency() {
   const state = useCurrencyState()
   const { currency, displayCurrency, rate } = storeToRefs(state)
@@ -64,6 +75,7 @@ export function useCurrency() {
     rate,
     formatUsd: state.formatUsd,
     convertUsd: state.convertUsd,
+    setGuestCurrency: state.setGuestCurrency,
   }
 }
 
