@@ -160,17 +160,23 @@ you never have to enumerate those to keep them out.
 
 The expressions are structured so you can apply them in order. If you ever add *overlapping* cache rules, note that Cloudflare applies **all** that match and the **last** one wins per setting.
 
-#### Verify the rules are actually live
+#### Verify caching is actually live
 
-A rule that never got applied fails **silently** — the site works, just uncached, and the
-origin quietly serves everything. Check each surface with `cf-cache-status` rather than
-assuming, and re-check after editing rules (a clause dropped from rule 1 looks exactly
-like no rule at all):
+A cache that isn't working fails **silently** — the site behaves correctly, just uncached,
+and the origin quietly serves everything. A correct rule set is also **not sufficient**: an
+unrelated zone setting can un-cache a surface without touching your rules (see the Bot
+Fight Mode box below), and it does so *invisibly to a browser*. So measure each surface
+with `cf-cache-status` rather than assuming, and re-check after editing rules:
 
 ```sh
+# curl sends no cookies — which is the point: that is exactly what a mirror consumer,
+# a crawler, or an uptime monitor looks like. Run it twice; the first hit may be a cold MISS.
 for p in /api/games /api/openapi.json /api/sitemap.xml /api/mirror/tcgcsv/last-updated.txt /api/health; do
   printf '%-44s ' "$p"
-  curl -sI "https://YOUR-DOMAIN$p" | grep -i '^cf-cache-status' || echo '(none)'
+  curl -sI "https://YOUR-DOMAIN$p" \
+    | grep -iE '^(HTTP/|cf-cache-status|set-cookie: __cf_bm)' \
+    | sed -E 's/^(set-cookie): (__cf_bm).*/\1: \2 (!)/I' | tr -d '\r' | tr '\n' ' '
+  echo
 done
 ```
 
@@ -192,11 +198,40 @@ the same `cf-cache-status` has very different causes:
   origin marks *every* error `no-store` by design (so a CDN never pins a `404`), and
   rule 1's *bypass cache if not present* Edge TTL also yields `BYPASS` for any response
   carrying no `Cache-Control` at all — which is what an unrouted path returns.
-- **`BYPASS`** on a genuine **`200`** is the real signal: a Cache Rule set to *Bypass
-  cache* whose expression is broader than intended is matching, and is **ordered after**
-  rule 1 — the last matching rule wins per setting. **Narrow that rule's expression**; do
-  *not* reorder it before rule 1, or rule 1 would start winning on `/api/auth/*`,
-  `/api/collection/*`, `/api/wishlist/*` and the live `status` route, undoing rule 2.
+- **`BYPASS`** on a genuine **`200`** — look for a **`set-cookie`** on the same response
+  before you touch any rule:
+  - **With `set-cookie: __cf_bm`** → this is **Bot Fight Mode**, not your rules. See the
+    box below; your Cache Rules are fine and editing them will not help.
+  - **Without a `set-cookie`** → *then* it's a Cache Rule set to *Bypass cache* whose
+    expression is broader than intended, matching and **ordered after** rule 1 (the last
+    matching rule wins per setting). **Narrow that rule's expression**; do *not* reorder
+    it before rule 1, or rule 1 would start winning on `/api/auth/*`,
+    `/api/collection/*`, `/api/wishlist/*` and the live `status` route, undoing rule 2.
+
+> **Bot Fight Mode silently un-caches the mirror.** *Security → Bots → Bot Fight Mode*
+> attaches a `__cf_bm` **`Set-Cookie`** to any response filled from the origin, and
+> Cloudflare does not cache a response that sets a cookie — it returns `BYPASS`. (Free/Pro/
+> Business have *Origin Cache Control* permanently enabled, so this branch can't be turned
+> off.) Cloudflare doesn't state this in one place; it follows from its
+> [cookies](https://developers.cloudflare.com/fundamentals/reference/policies-compliances/cloudflare-cookies/)
+> and [cache-behavior](https://developers.cloudflare.com/cache/concepts/cache-behavior/) docs.
+>
+> A client that **already holds** `__cf_bm` is not re-issued one, so its responses cache
+> normally — which is why **browser traffic looks fine** and only cookieless clients bypass.
+> That is the trap: the dataset mirror's entire audience is cookieless. TCGLense's own HTTP
+> client builds `reqwest` **without** the `cookies` feature (`api/Cargo.toml`), so every
+> consumer instance is permanently cookieless, and **every** mirror pull bypasses the edge —
+> forever, and invisibly if you only ever check the site in a browser. Search-engine
+> crawlers hitting `/api/sitemap*` are cookieless too.
+>
+> On **Free** it cannot be scoped: *"You cannot bypass or skip Bot Fight Mode using WAF
+> custom rules or Page Rules"* — it doesn't run on the Ruleset Engine. Options, in order:
+> turn Bot Fight Mode **off**; or, on **Pro+**, use Super Bot Fight Mode with a WAF custom
+> rule using the **Skip** action for the public cacheable paths; or give rule 1 an explicit
+> *Edge TTL* (Cloudflare then strips the `Set-Cookie` and caches) — but that discards the
+> origin's `Cache-Control` for edge TTL, which **breaks the mirror's per-route windows**
+> (see rule 1's note and `tradeoffs.md`), so it needs one rule per mirror sub-surface with
+> TTLs hand-synced to the code. Prefer the first two.
 
 A `BYPASS` on `/api/mirror/*` is worth catching early: it makes every self-host's dataset
 pull — and especially the ~900-day archive walk of the one-time price backfill
