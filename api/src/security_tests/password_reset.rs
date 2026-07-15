@@ -4,11 +4,14 @@
 //! registration-completion tokens (neither can be spent as the other).
 
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
 use super::harness::*;
-use crate::auth::password::hash_password;
-use crate::entities::user;
+use crate::auth::{
+    email_token::{issue, EmailTokenPurpose},
+    password::hash_password,
+};
+use crate::entities::{prelude::User, user};
 
 /// The token from the most recent email to `to` whose subject contains `needle`.
 /// A test that triggers both a registration and a reset mails two `token=` links
@@ -34,7 +37,7 @@ async fn token_for_subject(app: &TestApp, to: &str, needle: &str) -> String {
 #[tokio::test]
 async fn forgot_password_is_generic_and_reset_rotates_the_password() {
     let app = test_app().await;
-    let (_, old_refresh) = register(&app, "reset@example.com", "password123").await;
+    let (old_access, old_refresh) = register(&app, "reset@example.com", "password123").await;
 
     // A known and an unknown address answer identically — no existence oracle.
     let (known, _, known_body) = send(
@@ -92,6 +95,11 @@ async fn forgot_password_is_generic_and_reset_rotates_the_password() {
         send(&app, post_with_cookie("/api/auth/refresh", &old_refresh)).await;
     assert_eq!(refresh_status, StatusCode::UNAUTHORIZED);
 
+    // The already-minted access JWT is dead immediately too; reset is not merely
+    // a refresh-cookie revocation that leaves a stolen bearer usable until exp.
+    let (old_access_status, _, _) = send(&app, get_with_bearer("/api/auth/me", &old_access)).await;
+    assert_eq!(old_access_status, StatusCode::UNAUTHORIZED);
+
     // The reset token is single-use.
     let (replay, _, _) = send(
         &app,
@@ -102,6 +110,63 @@ async fn forgot_password_is_generic_and_reset_rotates_the_password() {
     )
     .await;
     assert_eq!(replay, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn successful_reset_invalidates_every_older_reset_link() {
+    let app = test_app().await;
+    register(&app, "siblings@example.com", "password123").await;
+
+    // Issue the first link through the real forgot-password endpoint.
+    send(
+        &app,
+        json_post(
+            "/api/auth/forgot-password",
+            json!({ "email": "siblings@example.com" }),
+        ),
+    )
+    .await;
+    let older = latest_email_token(&app, "siblings@example.com").await;
+
+    // Plant a second simultaneously-live link (the public uncooled helper exists
+    // for exactly this security-test case; production issuance is cooldown-gated).
+    let user_id = User::find()
+        .filter(user::Column::Email.eq("siblings@example.com"))
+        .one(&app.state.db)
+        .await
+        .expect("query user")
+        .expect("user exists")
+        .id;
+    let newer = issue(&app.state.db, user_id, EmailTokenPurpose::ResetPassword)
+        .await
+        .expect("issue sibling reset token");
+
+    let (status, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/reset-password",
+            json!({ "token": newer, "password": "newer-password-456" }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "newer reset failed: {body:?}"
+    );
+
+    // The older, individually unconsumed token was invalidated by the successful
+    // reset and cannot be used to overwrite the new password afterward.
+    let (older_status, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/reset-password",
+            json!({ "token": older, "password": "attacker-password-789" }),
+        ),
+    )
+    .await;
+    assert_eq!(older_status, StatusCode::UNAUTHORIZED);
+    login(&app, "siblings@example.com", "newer-password-456").await;
 }
 
 #[tokio::test]

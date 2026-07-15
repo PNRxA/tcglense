@@ -281,6 +281,7 @@ const router = createRouter({
 })
 
 let restorePromise: Promise<unknown> | null = null
+let registrationCompletionPrepared = false
 
 // Throttle for re-attempting a TRANSIENTLY-failed restore (see the guard body):
 // at most one retry per window, so a redirect chain (or rapid navigation) can't
@@ -291,6 +292,23 @@ let restoreRetryAt = 0
 // Exported so the router-guard spec can register the real guard on a memory-history router.
 export async function authGuard(to: RouteLocationNormalized) {
   const auth = useAuthStore()
+
+  // The completion endpoint replaces the browser's refresh cookie with the new
+  // account's session. Do not start (or await) a background restore for a possibly
+  // different existing account on this route: those two Set-Cookie responses can
+  // otherwise race. The store also invalidates any older in-flight restore's local
+  // result and resolves chrome to the signed-out posture while the form is open.
+  if (to.name === 'complete-registration') {
+    restorePromise = null
+    // The token scrub is a same-route router.replace; prepare only once for this
+    // continuous visit so that replace cannot invalidate a submit started nearby.
+    if (!registrationCompletionPrepared) {
+      auth.prepareForRegistrationCompletion()
+      registrationCompletionPrepared = true
+    }
+    return true
+  }
+  registrationCompletionPrepared = false
 
   // Kick off the one-time session restore on the first navigation and cache the PROMISE
   // (not a post-await boolean): concurrent initial navigations and every later navigation

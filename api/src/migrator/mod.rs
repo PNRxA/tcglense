@@ -47,6 +47,7 @@ mod m20240101_000044_add_cards_foil_variant_star_index;
 mod m20240101_000045_add_sealed_components_child_product_index;
 mod m20240101_000046_add_refresh_token_family;
 mod m20240101_000047_add_user_currency;
+mod m20240101_000048_add_auth_session_version;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -104,6 +105,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000045_add_sealed_components_child_product_index::Migration),
             Box::new(m20240101_000046_add_refresh_token_family::Migration),
             Box::new(m20240101_000047_add_user_currency::Migration),
+            Box::new(m20240101_000048_add_auth_session_version::Migration),
         ]
     }
 }

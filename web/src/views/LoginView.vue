@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Loader2 } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -15,12 +15,19 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthSubmit } from '@/composables/useAuthSubmit'
 import { useTurnstile } from '@/composables/useTurnstile'
-import { resendVerification } from '@/lib/api'
+import { ApiError, resendVerification } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
 const { error, errorStatus, loading, submit } = useAuthSubmit()
+const redirect = computed(() => safeInternalPath(route.query.redirect))
+const registerTo = computed(() => ({
+  path: '/register',
+  ...(redirect.value ? { query: { redirect: redirect.value } } : {}),
+}))
 
 usePageMeta({ title: 'Sign in', canonicalPath: '/login', noindex: true })
 
@@ -40,15 +47,19 @@ function onSubmit() {
 // resend the verification link (the server answers generically either way).
 const resendLoading = ref(false)
 const resendSent = ref(false)
+const resendError = ref<string | null>(null)
 
 async function onResend() {
+  resendSent.value = false
+  resendError.value = null
   resendLoading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
     await resendVerification({ email: email.value, captcha_token })
     resendSent.value = true
-  } catch {
-    // Generic endpoint; a failure here is transient — leave the prompt in place.
+  } catch (err) {
+    resendError.value =
+      err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
   } finally {
     resendLoading.value = false
   }
@@ -63,16 +74,24 @@ async function onResend() {
         <CardDescription>Sign in to your TCGLense account</CardDescription>
       </CardHeader>
       <CardContent>
-        <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
+        <form
+          class="flex flex-col gap-4"
+          :aria-busy="loading || resendLoading || undefined"
+          @submit.prevent="onSubmit"
+        >
           <div class="flex flex-col gap-2">
             <Label for="email">Email</Label>
             <Input
               id="email"
               v-model="email"
+              name="email"
               type="email"
               autocomplete="email"
+              maxlength="254"
               placeholder="you@example.com"
               required
+              :aria-invalid="Boolean(error) || undefined"
+              :aria-describedby="error ? 'login-error' : undefined"
             />
           </div>
           <div class="flex flex-col gap-2">
@@ -88,30 +107,37 @@ async function onResend() {
             <Input
               id="password"
               v-model="password"
+              name="password"
               type="password"
               autocomplete="current-password"
+              maxlength="1024"
               required
+              :aria-invalid="Boolean(error) || undefined"
+              :aria-describedby="error ? 'login-error' : undefined"
             />
           </div>
-          <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
+          <p v-if="error" id="login-error" class="text-destructive text-sm" role="alert">
+            {{ error }}
+          </p>
           <p v-if="errorStatus === 403" class="text-muted-foreground text-sm">
-            <template v-if="resendSent">
-              Verification email sent — check your inbox, then sign in.
-            </template>
-            <template v-else>
-              Check your inbox for the verification link, or
-              <button
-                type="button"
-                class="text-primary font-medium hover:underline"
-                :disabled="resendLoading"
-                @click="onResend"
-              >
-                resend it</button
-              >.
-            </template>
+            Check your inbox for the verification link, or
+            <button
+              type="button"
+              class="text-primary font-medium hover:underline disabled:opacity-50"
+              :disabled="resendLoading || loading"
+              @click="onResend"
+            >
+              {{ resendLoading ? 'requesting another...' : 'request another' }}</button
+            >.
+          </p>
+          <p v-if="resendSent" class="text-muted-foreground text-sm" role="status">
+            If this account still needs verification, another link will arrive soon.
+          </p>
+          <p v-if="resendError" class="text-destructive text-sm" role="alert">
+            {{ resendError }}
           </p>
           <div ref="turnstileEl" class="empty:hidden"></div>
-          <Button type="submit" class="w-full" :disabled="loading">
+          <Button type="submit" class="w-full" :disabled="loading || resendLoading">
             <Loader2 v-if="loading" class="animate-spin" />
             {{ loading ? 'Signing in...' : 'Sign in' }}
           </Button>
@@ -120,7 +146,7 @@ async function onResend() {
       <CardFooter class="justify-center">
         <p class="text-muted-foreground text-sm">
           Don't have an account?
-          <RouterLink to="/register" class="text-primary font-medium hover:underline">
+          <RouterLink :to="registerTo" class="text-primary font-medium hover:underline">
             Create one
           </RouterLink>
         </p>

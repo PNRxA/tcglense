@@ -1,13 +1,96 @@
 //! Registration / response hygiene.
 //!
-//! Registration is email-first (issue #176): `POST /register` takes ONLY the
-//! address and always answers the same generic 200 — whether the address is
-//! new, mid-registration, or already registered — so it can't be used to
-//! enumerate accounts (the old duplicate `409` was exactly that oracle). The
-//! password (+ display name) is set by `POST /complete-registration`, which
-//! consumes the emailed single-use token and signs the account in.
+//! Registration is email-first (issue #176): `POST /register` takes the address
+//! plus optional same-site navigation context and always answers the same generic
+//! 200 — whether the address is new, mid-registration, or already registered —
+//! so it can't be used to enumerate accounts (the old duplicate `409` was exactly
+//! that oracle). The password (+ display name) is set by
+//! `POST /complete-registration`, which consumes the emailed single-use token and
+//! signs the account in.
 
 use super::harness::*;
+
+async fn latest_registration_link(app: &TestApp, to: &str) -> url::Url {
+    let emails = delivered_emails(app).await;
+    let email = emails
+        .iter()
+        .rev()
+        .find(|email| email.to == to)
+        .unwrap_or_else(|| panic!("no registration email delivered to {to}"));
+    let link = email
+        .text
+        .lines()
+        .find(|line| line.starts_with(&app.state.config.public_site_url))
+        .unwrap_or_else(|| panic!("registration email contains no completion link: {}", email.text));
+    url::Url::parse(link).expect("registration email carries a valid absolute URL")
+}
+
+#[tokio::test]
+async fn safe_registration_redirect_is_encoded_and_preserved_in_the_completion_link() {
+    let app = test_app().await;
+    let redirect = "/collection/magic?sort=name&dir=asc#owned";
+    let (status, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "redirect@example.com", "redirect": redirect }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "completion_token": null }));
+    let link = latest_registration_link(&app, "redirect@example.com").await;
+    assert_eq!(link.path(), "/complete-registration");
+    assert_eq!(
+        link.query_pairs()
+            .find(|(key, _)| key == "redirect")
+            .map(|(_, value)| value.into_owned()),
+        Some(redirect.to_string())
+    );
+    assert!(
+        link.as_str().contains(
+            "redirect=%2Fcollection%2Fmagic%3Fsort%3Dname%26dir%3Dasc%23owned"
+        ),
+        "redirect must be encoded as one query value: {link}"
+    );
+}
+
+#[tokio::test]
+async fn unsafe_registration_redirects_are_silently_omitted() {
+    let app = test_app().await;
+    let cases = [
+        ("absolute", "https://evil.example/phish".to_string()),
+        ("protocol-relative", "//evil.example/phish".to_string()),
+        ("backslash", "/safe\\evil.example".to_string()),
+        ("control", "/safe\nheader".to_string()),
+        ("oversized", format!("/{}", "a".repeat(4096))),
+    ];
+
+    for (label, redirect) in cases {
+        let email = format!("unsafe-{label}@example.com");
+        let (status, _, body) = send(
+            &app,
+            json_post(
+                "/api/auth/register",
+                json!({ "email": email, "redirect": redirect }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{label}: {body:?}");
+        assert_eq!(
+            body,
+            json!({ "completion_token": null }),
+            "{label}: invalid navigation context changed the generic response"
+        );
+
+        let link = latest_registration_link(&app, &email).await;
+        assert!(
+            link.query_pairs().all(|(key, _)| key != "redirect"),
+            "{label}: unsafe redirect leaked into completion link: {link}"
+        );
+    }
+}
 
 #[tokio::test]
 async fn register_answers_generically_and_mints_no_session() {

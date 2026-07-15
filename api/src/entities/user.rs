@@ -15,6 +15,10 @@ pub struct Model {
     pub password_hash: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
+    /// Incremented whenever every existing login must become invalid (currently
+    /// on password reset). Access and refresh tokens capture the value they were
+    /// issued under and are rejected after it changes.
+    pub session_version: i64,
     /// When the account's email address was verified (via an emailed link, or a
     /// completed password reset — both prove mailbox ownership). `None` means
     /// unverified, and login is refused until it is set. Accounts predating the

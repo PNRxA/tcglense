@@ -3,11 +3,11 @@
 //! error mapping, auth, cache headers) in-process via `tower`'s `oneshot`.
 
 use axum::{
-    Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, Method, header},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method},
     middleware::{from_fn, from_fn_with_state, map_response},
     routing::{any, delete, get, post, put},
+    Router,
 };
 use tower_http::{
     cors::CorsLayer,
@@ -36,11 +36,12 @@ use crate::{
             scan_cards, set_icon,
         },
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_movers, collection_set_drops, collection_set_subtypes,
-            collection_sets, collection_summary, collection_value_history, delete_collection_source,
+            collection_movers, collection_set_drops, collection_set_subtypes, collection_sets,
+            collection_summary, collection_value_history, delete_collection_source,
             export_collection, get_collection_entry, get_collection_source, get_import_job,
             import_collection, import_collection_csv, list_collection, owned_counts,
             save_collection_source, set_collection_entry, sync_collection_source,
+            MAX_CSV_UPLOAD_BYTES,
         },
         config::public_config,
         currency::currency_rates,
@@ -50,17 +51,17 @@ use crate::{
             list_folders, move_deck_card, move_deck_to_folder, reorder_sections, set_deck_card,
             set_deck_visibility, update_deck, update_folder, update_section,
         },
-        health::health,
-        sharing::{
-            get_collection_visibility, public_deck, public_decks, public_list,
-            public_owned_counts, public_profile, public_set_drops, public_set_subtypes,
-            public_sets, public_summary, set_collection_visibility,
-        },
+        health::{health, ready},
         mirror::{
             fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
             scryfall_sets, tcgcsv_proxy,
         },
         openapi::openapi_json,
+        sharing::{
+            get_collection_visibility, public_deck, public_decks, public_list, public_owned_counts,
+            public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
+            set_collection_visibility,
+        },
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
             get_wishlist_entry, get_wishlist_product_entry, list_wishlist, list_wishlist_products,
@@ -100,6 +101,7 @@ pub fn build_router(state: AppState) -> Router {
     // `Cache-Control: no-store` (see `handlers::cache`).
     let private = Router::new()
         .route("/api/health", get(health))
+        .route("/api/ready", get(ready))
         // Public runtime config for the SPA (the Turnstile site key). no-store: it
         // only changes on redeploy and must not be cached per-user/stale.
         .route("/api/config", get(public_config))
@@ -306,10 +308,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/decks/{game}/{deck_id}/sections/{section_id}",
             put(update_section).delete(delete_section),
         )
-        .route(
-            "/api/decks/{game}/{deck_id}/cards/{id}",
-            put(set_deck_card),
-        )
+        .route("/api/decks/{game}/{deck_id}/cards/{id}", put(set_deck_card))
         .route(
             "/api/decks/{game}/{deck_id}/cards/{id}/move",
             put(move_deck_card),
@@ -518,7 +517,46 @@ pub fn build_router(state: AppState) -> Router {
 
     app.layer(cors_layer())
         .layer(TraceLayer::new_for_http())
+        .layer(from_fn(security_headers_middleware))
         .with_state(state)
+}
+
+/// Browser hardening shared by API-only and combined-image deployments. The edge
+/// proxy repeats these defensively, but applying them here also covers App Platform
+/// and anyone exposing the API image directly. Existing route-specific headers are
+/// preserved.
+async fn security_headers_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    for (name, value) in [
+        ("strict-transport-security", "max-age=31536000"),
+        ("referrer-policy", "no-referrer"),
+        ("x-content-type-options", "nosniff"),
+        ("x-frame-options", "DENY"),
+        (
+            "content-security-policy",
+            "base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
+        ),
+        (
+            "permissions-policy",
+            "geolocation=(), microphone=(), camera=(self)",
+        ),
+    ] {
+        insert_header_if_missing(headers, name, value);
+    }
+    response
+}
+
+fn insert_header_if_missing(headers: &mut HeaderMap, name: &'static str, value: &'static str) {
+    if !headers.contains_key(name) {
+        headers.insert(
+            HeaderName::from_static(name),
+            HeaderValue::from_static(value),
+        );
+    }
 }
 
 /// Middleware to explicitly set Cache-Control headers for the static SPA assets

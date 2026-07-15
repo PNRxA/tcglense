@@ -7,6 +7,10 @@ images (`tcglense`, `tcglense-api`, `tcglense-web`) are published to **GHCR**
 build/publish/release mechanics and the full **environment-variable reference** live in
 [`operations.md`](./operations.md).
 
+Before accepting public accounts, work through the
+[production signup launch checklist](./production-signup-checklist.md). The shipped
+production manifests deliberately start with registration closed.
+
 Pick a topology:
 
 | Topology | When to use it | Guide |
@@ -28,6 +32,12 @@ export JWT_SECRET=$(openssl rand -hex 32)
 docker compose -f deploy/docker-compose.homelab.yml up -d
 # then open http://<host>:8080
 ```
+
+Registration starts closed. On a trusted private LAN, you can explicitly set
+`SIGNUPS_ENABLED=true` and `ALLOW_INSECURE_DEV_AUTH=true` to use the no-email setup
+flow. That flow returns the completion credential to the browser instead of proving
+mailbox ownership, so never expose it to the internet. For a public host, configure
+HTTPS, Resend, and Turnstile as described in the launch checklist.
 
 The compose file also reads `COOKIE_SECURE`, `PUBLIC_SITE_URL`, and `IMAGE_TAG` from the
 environment — `export` them before `up -d` (see the HTTPS note below and
@@ -64,21 +74,24 @@ Two step-by-step managed-service guides, both single-instance:
 
 ## Production split: Caddy, web, api, Postgres, Redis
 
-The scalable split: an edge **Caddy** terminates TLS and forwards to the **web**
-container (serves the SPA, proxies `/api`), which talks to the **api** container,
+The scalable split: an edge **Caddy** terminates TLS and sends static requests to the
+**web** container and `/api` requests directly to the **api** container. The API is
 backed by **Postgres** and **Redis** (shared rate-limiter state across instances).
 Config lives in [`deploy/docker-compose.prod.yml`](../deploy/docker-compose.prod.yml)
 + [`deploy/edge.Caddyfile`](../deploy/edge.Caddyfile).
 
 ```
-internet ──443──▶ caddy (TLS) ──▶ web (SPA + /api proxy) ──▶ api ──▶ db    (Postgres)
-                                                                 └──▶ cache (Redis)
+internet ──443──▶ caddy (TLS) ─┬─▶ web (SPA)
+                               └─▶ api ─┬─▶ db    (Postgres)
+                                        └─▶ cache (Redis)
 ```
 
 ```sh
 export SITE_ADDRESS=tcglense.example.com          # your domain — Caddy auto-provisions HTTPS
 export JWT_SECRET=$(openssl rand -hex 32)
 export POSTGRES_PASSWORD=$(openssl rand -hex 24)
+# Also set RESEND_API_KEY, EMAIL_FROM, and both TURNSTILE keys.
+# Keep SIGNUPS_ENABLED=false until the linked launch checklist passes.
 docker compose -f deploy/docker-compose.prod.yml up -d
 ```
 
@@ -248,8 +261,11 @@ IP. Cached, the edge absorbs those repeats and the upstream is hit about once pe
 > origin directly:
 >
 > ```caddyfile
-> reverse_proxy web:80 {
-> 	header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+> @backend path /api/* /sitemap.xml /sitemaps/*
+> handle @backend {
+> 	reverse_proxy api:8080 {
+> 		header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+> 	}
 > }
 > ```
 
@@ -267,15 +283,25 @@ Run the binary + static SPA directly, no containers.
    install -D api/target/release/tcglense-api /srv/tcglense/tcglense-api
    mkdir -p /srv/tcglense/web && cp -r web/dist/. /srv/tcglense/web/
    ```
-3. **Configure** `/srv/tcglense/api.env` (start from `api/.env.example`) with
-   production values — at minimum:
+3. **Configure** `/srv/tcglense/api.env`. Use `api/.env.example` as a reference,
+   but do not copy its local-development auth opt-ins into production. Start with
+   registration closed and set at least:
    ```sh
-   JWT_SECRET=...          # openssl rand -hex 32 — required
-   COOKIE_SECURE=true      # HTTPS-only refresh cookie
-   HOST=127.0.0.1          # API listens on localhost; only Caddy reaches it
+   JWT_SECRET=...                       # openssl rand -hex 32 — required
+   ALLOW_INSECURE_DEV_SECRET=false
+   ALLOW_INSECURE_DEV_AUTH=false
+   COOKIE_SECURE=true                   # HTTPS-only refresh cookie
+   PUBLIC_SITE_URL=https://cards.example.com
+   HOST=127.0.0.1                       # API listens on localhost; only Caddy reaches it
+   SIGNUPS_ENABLED=false                # keep closed through the first production deploy
    DATABASE_URL=sqlite:///var/lib/tcglense/tcglense.db?mode=rwc   # dir must exist + be writable
-   DATA_DIR=/var/lib/tcglense/data   # persistent + writable; holds cached card images
+   DATA_DIR=/var/lib/tcglense/data       # persistent + writable; holds cached card images
    ```
+   Before changing `SIGNUPS_ENABLED=true`, add `RESEND_API_KEY`, an `EMAIL_FROM`
+   address on your verified domain, and both `TURNSTILE_SECRET_KEY` and
+   `TURNSTILE_SITE_KEY`. The API refuses to boot with public signups if any of
+   those protections is missing. Follow the
+   [production signup checklist](./production-signup-checklist.md) for the rollout.
 4. **Run the API as a service** (Linux/systemd): copy
    [`deploy/tcglense-api.service`](../deploy/tcglense-api.service) to
    `/etc/systemd/system/`, adjust paths/user, then

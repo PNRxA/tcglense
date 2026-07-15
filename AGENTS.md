@@ -141,9 +141,10 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   dummy-hash verify on unknown users is timing equalization, not dead code).
   Password rules are validated **before** an email token is consumed. A missing/bad
   CAPTCHA token is deliberately **400** (never 401/403).
-- No `RESEND_API_KEY` = the email dev bypass (register returns the completion token;
-  login skips the verified gate). **Never run prod without the key** (anyone could
-  activate any address).
+- No `RESEND_API_KEY` = the local email dev bypass (register returns the completion
+  token; login skips the verified gate). Internet-facing configurations refuse to
+  enable signups without the key, a non-default `EMAIL_FROM`, and Turnstile; keep
+  those bypasses local only.
 - **API-key scope is enforced by extractor choice, not HTTP method:** reads take
   `AuthUser` (session JWT or any `tcgl_` key), writes take `WritableUser` (read-only
   key = **403**), key management (`/api/auth/api-keys`) takes `SessionUser` (JWT
@@ -185,9 +186,10 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`FINGERPRINT_BUILD_ENABLED`, default off); read `docs/tradeoffs.md` §Visual card
   scanner before touching it.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
-- Dep pins: `jsonwebtoken` keeps `default-features = false, features =
-  ["rust_crypto"]` (panics at runtime otherwise); `reqwest` deliberately has **no**
-  overall timeout (streaming bulk downloads) — don't "fix" either when bumping.
+- Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
+  provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling
+  both providers requires manual selection. `reqwest` deliberately has **no** overall
+  timeout (streaming bulk downloads) — don't "fix" that when bumping.
 
 ## Conventions
 

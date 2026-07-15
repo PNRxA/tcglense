@@ -1,1 +1,8 @@
 .claude
+
+# Local deployment credentials and overrides. The managed-cloud guide creates
+# these at the repository root / under deploy; neither may ever be committed.
+.env
+.env.*
+!.env.example
+deploy/origin/

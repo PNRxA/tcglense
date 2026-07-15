@@ -301,7 +301,12 @@ test.describe('security: browser session', () => {
     await page.getByRole('button', { name: /account menu/i }).click()
     const signOut = page.getByRole('button', { name: /sign out/i })
     await expect(signOut).toBeVisible()
+    const logoutFinished = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/auth/logout') && response.request().method() === 'POST',
+    )
     await signOut.click()
+    expect((await logoutFinished).status()).toBe(204)
     await expect(page).toHaveURL(/\/$/)
 
     await page.goto('/profile')
@@ -312,15 +317,16 @@ test.describe('security: browser session', () => {
     page,
   }) => {
     // With no email provider (the CI config), register returns the completion token
-    // in its body, so the SPA navigates straight to /complete-registration?token=…
-    // instead of a check-your-email dead end. Choose a password there to finish and
-    // land on the homepage signed in.
+    // in its body, so the SPA navigates straight to the completion screen instead
+    // of a check-your-email dead end. The one-time token is captured in memory and
+    // immediately scrubbed from the visible URL before the user chooses a password.
     const email = uniqueEmail('reg-ui')
     await page.goto('/register')
     await page.locator('#email').fill(email)
     await page.getByRole('button', { name: /continue/i }).click()
 
-    await expect(page).toHaveURL(/\/complete-registration\?token=/)
+    await expect(page).toHaveURL('http://localhost:4173/complete-registration')
+    await expect(page.locator('#password')).toBeVisible()
     await page.locator('#password').fill(PASSWORD)
     await page.getByRole('button', { name: /create account/i }).click()
 

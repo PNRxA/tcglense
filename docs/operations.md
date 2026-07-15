@@ -28,9 +28,14 @@ startup via `Migrator::up`. The server **refuses to start without a real `JWT_SE
 (≥ 32 bytes, and not the public dev constant). For local dev
 without a secret, set `ALLOW_INSECURE_DEV_SECRET=true` to opt into a publicly-known
 insecure secret (logged as a warning) — never set that outside local dev. The shipped
-`.env.example` includes a placeholder `JWT_SECRET`, so `cp .env.example .env` then
-`cargo run` works out of the box. The server binds `127.0.0.1` by default (set
-`HOST=0.0.0.0` for containers/LAN).
+`.env.example` deliberately contains no placeholder secret; it opts into that known
+local-development key with `ALLOW_INSECURE_DEV_SECRET=true`, so copying it works locally
+without creating a copyable production credential. The server binds `127.0.0.1` by
+default (set `HOST=0.0.0.0` for containers/LAN).
+
+Use `GET /api/health` as the process-only liveness probe. Use `GET /api/ready` for
+rollout/load-balancer readiness: it performs a database round-trip and returns a generic
+`503 {"status":"unavailable"}` when storage cannot serve requests.
 
 > **Editing `api/.env` — quote any value containing spaces.** This includes the
 > User-Agent strings sent to Scryfall / TCGCSV / Moxfield and the `EMAIL_FROM` address.
@@ -121,7 +126,8 @@ the deterministic offline dummy catalog (no Scryfall network calls):
 3. Starts the API in the background with the offline dummy catalog and waits (up to 60s,
    polling `/api/health`) for it to be healthy, failing fast with the API log if the
    process exits early. Env: `JWT_SECRET=<throwaway ≥32-byte constant>`,
-   `SEED_DUMMY_DATA=true`, `SYNC_ON_STARTUP=false`,
+   `SEED_DUMMY_DATA=true`, `SYNC_ON_STARTUP=false`, `SIGNUPS_ENABLED=true`,
+   `ALLOW_INSECURE_DEV_AUTH=true`,
    `DATABASE_URL=sqlite://$RUNNER_TEMP/tcglense-ci.db?mode=rwc`,
    `DATA_DIR=$RUNNER_TEMP/api-data`, `HOST=127.0.0.1`, `PORT=8080`, `RUST_LOG=warn`.
 4. `npm run test:e2e` with `CI=true`. Playwright's own `webServer` config serves the
@@ -142,6 +148,7 @@ with the offline dummy catalog:
 ```sh
 # terminal 1 (from api/):
 JWT_SECRET=dev-secret-please-change-0123456789abcdef \
+SIGNUPS_ENABLED=true ALLOW_INSECURE_DEV_AUTH=true \
 SEED_DUMMY_DATA=true SYNC_ON_STARTUP=false cargo run
 
 # terminal 2 (from web/):
@@ -253,12 +260,12 @@ Both `web/scripts/*` require the Playwright browsers installed
 | File | What it is |
 |------|------------|
 | `deploy/docker-compose.yml` | Local Postgres + Redis for optional-backend development and the gated integration tests (`cargo test -- --ignored` from `api/`). Not used by the default SQLite dev flow |
-| `deploy/docker-compose.homelab.yml` | Homelab stack: the single `combined` image + SQLite in one container (API serves `/api` **and** the SPA via `WEB_ROOT`); DB + cached images persist in the `tcglense_data` volume. `JWT_SECRET` required; put a reverse proxy in front for HTTPS + set `COOKIE_SECURE=true` + `PUBLIC_SITE_URL`. Pin a release with `IMAGE_TAG=vX.Y.Z` (defaults `:latest`) |
-| `deploy/docker-compose.prod.yml` | Production stack: edge Caddy (TLS) → `web` (Caddy: SPA + `/api` proxy) → `api` → Postgres (`db`) + Redis (`cache`). only `JWT_SECRET` is hard-required (compose `:?` refuses to start without it); `SITE_ADDRESS` defaults to `localhost` and `POSTGRES_PASSWORD` to `tcglense` — set all three for a real deployment. Images from GHCR, pin with `IMAGE_TAG` |
+| `deploy/docker-compose.homelab.yml` | Homelab stack: the single `combined` image + SQLite in one container (API serves `/api` **and** the SPA via `WEB_ROOT`); DB + cached images persist in the `tcglense_data` volume. `JWT_SECRET` is required and signups default closed; a trusted local-only no-email setup must explicitly set both `SIGNUPS_ENABLED=true` and `ALLOW_INSECURE_DEV_AUTH=true`. Put a reverse proxy in front for HTTPS + set `COOKIE_SECURE=true` + `PUBLIC_SITE_URL`. Pin a release with `IMAGE_TAG=vX.Y.Z` (defaults `:latest`) |
+| `deploy/docker-compose.prod.yml` | Production split stack: edge Caddy terminates TLS and routes API/sitemaps directly to `api`, with all other traffic going to `web` (SPA); the API uses Postgres (`db`) + Redis (`cache`). Compose requires `SITE_ADDRESS`, `JWT_SECRET`, `POSTGRES_PASSWORD`, Resend + verified `EMAIL_FROM`, and both Turnstile keys; signups still default closed until the launch checklist passes. Images from GHCR, pin with `IMAGE_TAG` |
 | `deploy/docker-compose.do.yml` + `deploy/do.Caddyfile` + `deploy/do.env.example` | Managed-cloud stack for the DigitalOcean + Upstash + Cloudflare deploy: one Droplet runs Caddy + the `combined` image, backed by DO Managed Postgres (private VPC, `?sslmode=require`) and Upstash Redis (`rediss://`), fronted by a free Cloudflare CDN. The Caddyfile terminates origin TLS (Cloudflare Origin cert) and rewrites `X-Forwarded-For` from `CF-Connecting-IP`. Full walkthrough: [`deploy-digitalocean.md`](./deploy-digitalocean.md) |
 | `.do/app.yaml` | DigitalOcean **App Platform** (PaaS) spec: one `combined`-image instance + DO Managed Postgres, **no Redis, single instance**. Ephemeral disk ⇒ `CDN_MODE=true` (Cloudflare holds the images). The release workflow's `deploy-app-platform` job auto-redeploys it on a published Release when `DIGITALOCEAN_ACCESS_TOKEN` + `DIGITALOCEAN_APP_ID` secrets are set. Walkthrough (incl. the per-IP rate-limit caveat): [`deploy-app-platform.md`](./deploy-app-platform.md) |
 | `deploy/web.Caddyfile` | Caddy config baked into the `tcglense-web` image: serve the built SPA + reverse-proxy `/api/*` to the API (upstream defaults to compose service `api:8080`, override with `API_UPSTREAM`). Terminate TLS in front of this container |
-| `deploy/edge.Caddyfile` | Edge reverse proxy for the prod compose stack: terminates TLS for `{$SITE_ADDRESS:localhost}` and forwards everything to the `web` container. **Overwrites** (not appends) `X-Forwarded-For` with the real client IP so the API can safely key per-IP rate limiting on the left-most XFF entry (`TRUST_PROXY_HEADERS=true`) without spoofing |
+| `deploy/edge.Caddyfile` | Edge reverse proxy for the prod compose stack: terminates TLS for required `SITE_ADDRESS`, sends `/api/*`, `/sitemap.xml`, and `/sitemaps/*` directly to the API, and sends the SPA to `web`. It **overwrites** (not appends) `X-Forwarded-For` on API requests so the API can safely key per-IP rate limiting on the real client (`TRUST_PROXY_HEADERS=true`) without spoofing |
 | `deploy/Caddyfile` | Standalone single-origin production reverse proxy (Caddy v2): serves the built SPA **and** forwards `/api/*` to the Rust API on the same origin (keeps the httpOnly refresh cookie first-party). Auto-provisions HTTPS for a real domain. `caddy run --config deploy/Caddyfile` |
 | `deploy/tcglense-api.service` | systemd unit for the API: copy to `/etc/systemd/system/`, adjust `User`/paths, `systemctl enable --now`. Production env (`JWT_SECRET`, `COOKIE_SECURE=true`, `HOST=127.0.0.1`, `DATABASE_URL`, …) supplied by the unit |
 
@@ -296,12 +303,15 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   public internet); requires **Redis 5.0+** — the limiter Lua script uses server `TIME` +
   `SET`, rejected by older Redis's script effect replication), `JWT_SECRET`
   (**required**, ≥ 32 bytes, not the dev constant), `ALLOW_INSECURE_DEV_SECRET`
-  (false; opt-in to the insecure compiled-in secret for local dev only),
+  (false; opt-in to the insecure compiled-in secret for local dev only; refused for
+  an internet-facing origin),
   `ACCESS_TOKEN_EXPIRY_MINUTES` (15), `REFRESH_TOKEN_EXPIRY_DAYS` (30),
-  `COOKIE_SECURE` (false), `HOST` (`127.0.0.1`), `PORT` (8080),
-  `PUBLIC_SITE_URL` (`http://localhost:5173`; public SPA origin used for the sitemap
+  `COOKIE_SECURE` (false; must be true for an internet-facing origin or startup fails),
+  `HOST` (`127.0.0.1`), `PORT` (8080),
+  `PUBLIC_SITE_URL` (`http://localhost:5173`; bare public SPA origin used for the sitemap
   `<loc>`s **and** every emailed link — completion/verify/reset — so set it to the real
-  site origin in prod), `RUST_LOG` (`info`),
+  HTTPS origin in prod; credentials, paths, queries, and fragments are rejected),
+  `RUST_LOG` (`info`),
   `DATA_DIR` (`./data`; holds cached card images under
   `images/`), `WEB_ROOT` (unset; when set, the API also serves the built SPA static
   files from this dir with an `index.html` fallback for client-side routes — the
@@ -326,19 +336,22 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   secret; unset = email sending disabled, messages logged instead), `EMAIL_FROM`
   (`TCGLense <onboarding@resend.dev>`; the outbound From address — Resend's shared
   onboarding sender only delivers to the account owner, so set a verified-domain
-  sender in prod),
+  sender in prod), `ALLOW_INSECURE_DEV_AUTH` (`false`; local-only opt-in required to
+  enable signups without email, returning the completion token without mailbox proof;
+  always rejected for an internet-facing origin),
   `TURNSTILE_SECRET_KEY` (unset; Cloudflare Turnstile secret for the auth-endpoint
   CAPTCHA — a secret; unset = CAPTCHA disabled/checks pass), `TURNSTILE_SITE_KEY`
   (unset; the **public** Turnstile site key the browser widget renders with —
   served to the SPA at runtime via `GET /api/config`, so the published web image
   needs no rebuild to change it. Pairs with `TURNSTILE_SECRET_KEY`: set both or
-  neither, or the server refuses to boot), `TRUST_PROXY_HEADERS`
+  neither, or the server refuses to boot. Siteverify must match both the widget's
+  `auth` action and `PUBLIC_SITE_URL` hostname), `TRUST_PROXY_HEADERS`
   (`false`; trust `X-Forwarded-For`/`Forwarded` for the rate-limiter client IP —
   set `true` **only** behind a trusted proxy, else clients can spoof their IP),
   `RATE_LIMIT_ENABLED` (`true`; per-IP auth rate limiting — set `false` to defer to
   an upstream WAF),
-  `SIGNUPS_ENABLED` (`true`; accept new-account registration — set `false` to
-  temporarily refuse `POST /api/auth/register` + `/complete-registration` with a
+  `SIGNUPS_ENABLED` (`false`; set `true` to accept new-account registration — when
+  false, `POST /api/auth/register` + `/complete-registration` return
   `403` while existing users keep signing in), `SIGNUPS_DISABLED_MESSAGE` (unset;
   the user-facing notice shown when signups are disabled — not a secret, served to
   the SPA via `GET /api/config`; unset = a generic message),

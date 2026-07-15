@@ -9,6 +9,8 @@
 import { publicConfig } from '@/lib/config'
 
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+const SCRIPT_LOAD_TIMEOUT_MS = 15_000
+const SCRIPT_MARKER = 'data-tcglense-turnstile'
 
 /**
  * The Turnstile site key from the runtime config, or `undefined` to skip the
@@ -29,6 +31,7 @@ export function turnstileSiteKey(): Promise<string | undefined> {
 
 export interface TurnstileRenderOptions {
   sitekey: string
+  action?: string
   callback?: (token: string) => void
   'error-callback'?: () => void
   'expired-callback'?: () => void
@@ -58,16 +61,46 @@ let loadPromise: Promise<TurnstileApi> | null = null
 /** Load the Turnstile script once and resolve with the global API. */
 export function loadTurnstile(): Promise<TurnstileApi> {
   if (window.turnstile) return Promise.resolve(window.turnstile)
-  loadPromise ??= new Promise<TurnstileApi>((resolve, reject) => {
-    window.__turnstileOnload = () => {
-      if (window.turnstile) resolve(window.turnstile)
-      else reject(new Error('Turnstile loaded without an API'))
-    }
+  if (loadPromise) return loadPromise
+
+  loadPromise = new Promise<TurnstileApi>((resolve, reject) => {
     const script = document.createElement('script')
     script.src = `${SCRIPT_SRC}&onload=__turnstileOnload`
     script.async = true
     script.defer = true
-    script.onerror = () => reject(new Error('failed to load Turnstile'))
+    script.setAttribute(SCRIPT_MARKER, '')
+
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      script.onerror = null
+      if (window.__turnstileOnload === onload) delete window.__turnstileOnload
+    }
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      script.remove()
+      loadPromise = null
+      reject(error)
+    }
+    const onload = () => {
+      if (settled) return
+      if (!window.turnstile) {
+        fail(new Error('Turnstile loaded without an API'))
+        return
+      }
+      settled = true
+      cleanup()
+      resolve(window.turnstile)
+    }
+
+    window.__turnstileOnload = onload
+    script.onerror = () => fail(new Error('failed to load Turnstile'))
+    const timer = setTimeout(
+      () => fail(new Error('timed out loading Turnstile')),
+      SCRIPT_LOAD_TIMEOUT_MS,
+    )
     document.head.appendChild(script)
   })
   return loadPromise

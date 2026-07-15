@@ -9,6 +9,11 @@ use crate::{config::Config, entities::user, error::AppError};
 pub struct Claims {
     pub sub: String,
     pub email: String,
+    /// Server-side session generation. Older access tokens predate this claim;
+    /// serde maps them to generation zero so a rolling deploy does not log every
+    /// existing user out, while the next password reset still invalidates them.
+    #[serde(default)]
+    pub session_version: i64,
     pub iat: usize,
     pub exp: usize,
 }
@@ -24,6 +29,7 @@ pub fn encode_token(user: &user::Model, config: &Config) -> Result<String, AppEr
     let claims = Claims {
         sub: user.id.to_string(),
         email: user.email.clone(),
+        session_version: user.session_version,
         iat,
         exp,
     };
@@ -80,6 +86,7 @@ mod tests {
             email_verified_at: Some(now),
             username: None,
             discriminator: None,
+            session_version: 0,
             currency: crate::currency::DEFAULT_CURRENCY.to_string(),
         }
     }
@@ -94,7 +101,29 @@ mod tests {
 
         assert_eq!(claims.sub, "42");
         assert_eq!(claims.email, "tester@example.com");
+        assert_eq!(claims.session_version, user.session_version);
         assert!(claims.exp > claims.iat);
+    }
+
+    #[test]
+    fn decode_defaults_a_legacy_tokens_session_generation() {
+        let config = test_config();
+        let now = Utc::now().timestamp() as usize;
+        let legacy_claims = serde_json::json!({
+            "sub": "42",
+            "email": "tester@example.com",
+            "iat": now,
+            "exp": now + 3600,
+        });
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &legacy_claims,
+            &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+        )
+        .expect("encode legacy token");
+
+        let claims = decode_token(&token, &config).expect("decode legacy token");
+        assert_eq!(claims.session_version, 0);
     }
 
     #[test]
@@ -159,6 +188,7 @@ mod tests {
         let claims = Claims {
             sub: "42".to_string(),
             email: "tester@example.com".to_string(),
+            session_version: 0,
             iat: past - 60,
             exp: past,
         };

@@ -8,6 +8,7 @@ const { mockAuth } = vi.hoisted(() => ({
   mockAuth: {
     isAuthenticated: false,
     restoreRecoverable: false,
+    prepareForRegistrationCompletion: vi.fn<() => void>(),
     tryRestore: vi.fn<() => Promise<boolean>>(),
   },
 }))
@@ -22,6 +23,11 @@ function makeRouter(guard: NavigationGuard) {
     routes: [
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/cards', name: 'cards', component: { template: '<div />' } },
+      {
+        path: '/complete-registration',
+        name: 'complete-registration',
+        component: { template: '<div />' },
+      },
       {
         path: '/login',
         name: 'login',
@@ -49,6 +55,7 @@ async function freshGuard(): Promise<NavigationGuard> {
 beforeEach(() => {
   mockAuth.isAuthenticated = false
   mockAuth.restoreRecoverable = false
+  mockAuth.prepareForRegistrationCompletion.mockReset()
   mockAuth.tryRestore.mockReset()
   mockAuth.tryRestore.mockResolvedValue(false)
 })
@@ -64,6 +71,32 @@ describe('router auth guard', () => {
 
     expect(router.currentRoute.value.name).toBe('cards')
     expect(mockAuth.tryRestore).toHaveBeenCalledTimes(1)
+  })
+
+  it('never starts restore on an initial registration-completion navigation', async () => {
+    mockAuth.tryRestore.mockReturnValue(new Promise<boolean>(() => {}))
+    const router = makeRouter(await freshGuard())
+
+    await router.push('/complete-registration?token=secret')
+    // useSecretToken scrubs the credential with a same-route replace. That must not
+    // begin a second preparation epoch that could invalidate a nearby form submit.
+    await router.replace('/complete-registration')
+
+    expect(router.currentRoute.value.name).toBe('complete-registration')
+    expect(mockAuth.tryRestore).not.toHaveBeenCalled()
+    expect(mockAuth.prepareForRegistrationCompletion).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not wait for an older pending background restore before completion', async () => {
+    mockAuth.tryRestore.mockReturnValue(new Promise<boolean>(() => {}))
+    const router = makeRouter(await freshGuard())
+    await router.push('/cards')
+
+    await router.push('/complete-registration?token=secret')
+
+    expect(router.currentRoute.value.name).toBe('complete-registration')
+    expect(mockAuth.tryRestore).toHaveBeenCalledTimes(1)
+    expect(mockAuth.prepareForRegistrationCompletion).toHaveBeenCalledTimes(1)
   })
 
   it('awaits restore on a requiresAuth route and redirects to /login when signed out', async () => {

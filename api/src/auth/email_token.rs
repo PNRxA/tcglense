@@ -197,11 +197,14 @@ pub async fn issue_with_cooldown(
 ///
 /// * unknown / wrong purpose / already consumed -> `Unauthorized`
 /// * consumed here but past expiry              -> `Unauthorized` (stays spent)
-pub async fn consume(
-    db: &DatabaseConnection,
+pub async fn consume<C>(
+    db: &C,
     presented_plaintext: &str,
     purpose: EmailTokenPurpose,
-) -> Result<email_token::Model, AppError> {
+) -> Result<email_token::Model, AppError>
+where
+    C: ConnectionTrait,
+{
     let token_hash = super::secret::sha256_hex(presented_plaintext);
     let now = Utc::now();
     let invalid = || AppError::Unauthorized("invalid or expired token".to_string());
@@ -236,6 +239,49 @@ pub async fn consume(
     }
 
     Ok(row)
+}
+
+/// Cheap read-only check before starting expensive password hashing. The caller
+/// must still call [`consume`] inside its mutation transaction: this check is
+/// intentionally only a DoS guard and does not claim the token.
+pub async fn preflight<C>(
+    db: &C,
+    presented_plaintext: &str,
+    purpose: EmailTokenPurpose,
+) -> Result<email_token::Model, AppError>
+where
+    C: ConnectionTrait,
+{
+    let token_hash = super::secret::sha256_hex(presented_plaintext);
+    EmailToken::find()
+        .filter(email_token::Column::TokenHash.eq(token_hash))
+        .filter(email_token::Column::Purpose.eq(purpose.as_str()))
+        .filter(email_token::Column::ConsumedAt.is_null())
+        .filter(email_token::Column::ExpiresAt.gt(Utc::now()))
+        .one(db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("invalid or expired token".to_string()))
+}
+
+/// Invalidate every still-live token of `purpose` for one user. Password reset
+/// uses this after consuming the presented link so an older sibling link cannot
+/// later overwrite the newly-chosen password.
+pub async fn invalidate_all_for_user<C>(
+    db: &C,
+    user_id: i32,
+    purpose: EmailTokenPurpose,
+) -> Result<u64, AppError>
+where
+    C: ConnectionTrait,
+{
+    let result = EmailToken::update_many()
+        .col_expr(email_token::Column::ConsumedAt, Expr::value(Utc::now()))
+        .filter(email_token::Column::UserId.eq(user_id))
+        .filter(email_token::Column::Purpose.eq(purpose.as_str()))
+        .filter(email_token::Column::ConsumedAt.is_null())
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
 }
 
 /// Delete email tokens that are already past their expiry. Expired tokens are

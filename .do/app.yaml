@@ -45,8 +45,10 @@ services:
     http_port: 8080        # App Platform injects PORT=8080; the API binds it on 0.0.0.0.
 
     health_check:
-      http_path: /api/health
-      initial_delay_seconds: 30    # migrations run on boot before /api/health answers
+      # Database-backed readiness: don't route a rollout that cannot serve accounts.
+      # /api/health remains the process-only liveness probe for manual diagnosis.
+      http_path: /api/ready
+      initial_delay_seconds: 30    # migrations run on boot before /api/ready answers
       period_seconds: 15
       timeout_seconds: 5
       success_threshold: 1
@@ -62,14 +64,13 @@ services:
       - key: DATABASE_URL
         scope: RUN_TIME
         type: SECRET
-      # Email — REQUIRED in production. Without RESEND_API_KEY the API returns the
-      # registration token in the response and skips the verified-email gate, so anyone
-      # could activate any address.
+      # Email — required before public signups can be enabled. The no-email token
+      # response / verification bypass is strictly a local-development posture.
       - key: RESEND_API_KEY
         scope: RUN_TIME
         type: SECRET
-      # Turnstile CAPTCHA — set BOTH or NEITHER (a mismatched pair fails the boot). The
-      # public site key is served to the SPA at runtime via GET /api/config (no rebuild).
+      # Turnstile CAPTCHA — both keys are required before public signups can be enabled.
+      # The public site key is served via GET /api/config (no rebuild).
       - key: TURNSTILE_SECRET_KEY
         scope: RUN_TIME
         type: SECRET
@@ -108,6 +109,14 @@ services:
       - key: RUST_LOG
         scope: RUN_TIME
         value: info,sqlx::query=warn
+      # Fail-closed launch switch: change to "true" only after the production
+      # email, CAPTCHA, migration, backup and smoke-test checks have passed.
+      - key: SIGNUPS_ENABLED
+        scope: RUN_TIME
+        value: "false"
+      - key: SIGNUPS_DISABLED_MESSAGE
+        scope: RUN_TIME
+        value: New registrations are not open yet.
 
 # Single service ⇒ everything routes to it; this block is explicit but optional.
 ingress:

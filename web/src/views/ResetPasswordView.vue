@@ -1,22 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { Loader2 } from '@lucide/vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSecretToken } from '@/composables/useSecretToken'
 import { useTurnstile } from '@/composables/useTurnstile'
-import { ApiError, resetPassword } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { useAuthStore } from '@/stores/auth'
 
 usePageMeta({ title: 'Choose a new password', canonicalPath: '/reset-password', noindex: true })
 
-const route = useRoute()
-// The emailed link carries ?token=…; anything else (missing, repeated) is invalid.
-const token = computed(() =>
-  typeof route.query.token === 'string' && route.query.token ? route.query.token : null,
-)
+const token = useSecretToken()
+const auth = useAuthStore()
 
 const password = ref('')
 const error = ref<string | null>(null)
@@ -31,7 +30,7 @@ async function onSubmit() {
   loading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
-    await resetPassword({ token: token.value, password: password.value, captcha_token })
+    await auth.resetPassword({ token: token.value, password: password.value, captcha_token })
     done.value = true
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
@@ -79,20 +78,30 @@ async function onSubmit() {
           >
         </CardHeader>
         <CardContent>
-          <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
+          <form
+            class="flex flex-col gap-4"
+            :aria-busy="loading || undefined"
+            @submit.prevent="onSubmit"
+          >
             <div class="flex flex-col gap-2">
               <Label for="password">New password</Label>
               <Input
                 id="password"
                 v-model="password"
+                name="password"
                 type="password"
                 autocomplete="new-password"
                 minlength="8"
+                maxlength="1024"
                 required
+                :aria-invalid="Boolean(error) || undefined"
+                :aria-describedby="error ? 'reset-password-help reset-error' : 'reset-password-help'"
               />
-              <p class="text-muted-foreground text-xs">Must be at least 8 characters.</p>
+              <p id="reset-password-help" class="text-muted-foreground text-xs">
+                Must be at least 8 characters.
+              </p>
             </div>
-            <p v-if="error" class="text-destructive text-sm" role="alert">
+            <p v-if="error" id="reset-error" class="text-destructive text-sm" role="alert">
               {{ error }}
               <template v-if="error === 'invalid or expired token'">
                 <RouterLink to="/forgot-password" class="text-primary font-medium hover:underline">

@@ -69,6 +69,13 @@ async fn resolve_principal(parts: &Parts, state: &AppState) -> Result<Principal,
         .await?
         .ok_or_else(|| AppError::Unauthorized("user no longer exists".to_string()))?;
 
+    // Password reset increments this server-side generation. Comparing it on
+    // every authenticated request makes already-minted JWTs stop working
+    // immediately instead of remaining live until their `exp` time.
+    if claims.session_version != user.session_version {
+        return Err(AppError::Unauthorized("session has expired".to_string()));
+    }
+
     Ok(Principal {
         user,
         method: AuthMethod::Session,

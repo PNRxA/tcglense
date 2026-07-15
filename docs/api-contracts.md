@@ -25,7 +25,7 @@ canonical USD on the API.
 (opaque, 30 days, delivered only as the `tcglense_refresh` httpOnly cookie, stored
 server-side as a SHA-256 hash).
 
-**Email-first registration (issue #176):** register takes only `{ email }` and always
+**Email-first registration (issue #176):** register takes `{ email, redirect? }` and always
 answers a generic `200 { completion_token: null }` — a new, a pending, and an
 already-registered address are indistinguishable (no enumeration oracle; the pre-#176
 duplicate-email `409` is gone). A new address creates a **pending** account
@@ -35,7 +35,7 @@ duplicate-email `409` is gone). A new address creates a **pending** account
 sent fire-and-forget off the request path); re-POSTing register re-sends it for a
 pending address (the cooldown collapses bursts) and sends nothing for an activated one.
 `POST /api/auth/complete-registration` then consumes the token, sets the first password
-(+ optional display name), stamps the email verified (using the link proves mailbox
+(+ optional public username), stamps the email verified (using the link proves mailbox
 ownership), and **signs the user in** (`access_token` + refresh cookie) — the two-step
 account creation. The password rules are checked **before** the token is spent (a weak
 password doesn't burn the single-use link), and the token is refused (`401`) once the
@@ -52,24 +52,27 @@ delivered, so register hands it back instead: the response's `completion_token` 
 the token (its **only** non-null case), and the SPA drives straight to the set-password
 page — the offline dev/CI/e2e journey stays completable through the real two-step UI.
 Login's unverified-`403` gate is likewise skipped in this posture. This is the dev/CI
-posture (the e2e suite runs this way); the test suites use a mail *sink* (which counts
-as enabled) so `completion_token` stays null and they exercise the real email-first
-flow end to end.
+posture and requires the explicit local-only `ALLOW_INSECURE_DEV_AUTH=true` opt-in (the
+e2e suite runs this way); the test suites use a mail *sink* (which counts as enabled) so
+`completion_token` stays null and they exercise the real email-first flow end to end.
+Internet-facing configurations reject that flag and refuse to enable signups while the
+email bypass is active.
 
 | Method & path | Body | Success | Notes |
 |---------------|------|---------|-------|
-| `POST /api/auth/register` | `{ email }` | `200 { completion_token }` — `completion_token` is **always `null`** (the link is emailed) unless email is disabled (dev bypass: the token is returned so the SPA can drive the set-password step) | generic (a new, pending, or already-registered address are identical — no `409`) · `422` invalid email · `403` when `SIGNUPS_ENABLED=false` (message from `SIGNUPS_DISABLED_MESSAGE` or generic; checked **before** the CAPTCHA — see `GET /api/config`) |
-| `POST /api/auth/complete-registration` | `{ token, password, display_name? }` | `200 { access_token, user }` + refresh cookie — finishes registration: sets the first password, verifies the email, and signs in | `401 "invalid or expired token"` (also once the account already has a password) · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` (so a link minted before signups closed can't finalise a new account) |
+| `POST /api/auth/register` | `{ email, redirect? }` | `200 { completion_token }` — `completion_token` is **always `null`** (the link is emailed) unless email is disabled (dev bypass: the token is returned so the SPA can drive the set-password step) | generic (a new, pending, or already-registered address are identical — no `409`) · a safe same-origin `redirect` is carried through the completion link; external/malformed values are ignored · `422` invalid email · `403` when `SIGNUPS_ENABLED=false` (message from `SIGNUPS_DISABLED_MESSAGE` or generic; checked **before** the CAPTCHA — see `GET /api/config`) |
+| `POST /api/auth/complete-registration` | `{ token, password, username? }` | `200 { access_token, user }` + refresh cookie — finishes registration: sets the first password, verifies the email, and signs in | `401 "invalid or expired token"` (also once the account already has a password) · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` (so a link minted before signups closed can't finalise a new account) |
 | `POST /api/auth/login` | `{ email, password }` | `200 { access_token, user }` + refresh cookie | `401 "invalid email or password"` (generic — incl. a pending password-less account, same dummy-hash timing) · `403 "email not verified"` (skipped when email is disabled; now only reachable by grandfathered accounts) |
-| `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token }` + **rotated** cookie | `401` if missing/invalid/expired/reuse-burned (clears cookie); `401` **without** touching the cookie for a benign concurrent double-submit (`"refresh token superseded"` — the SPA retries once, then keeps the restore recoverable if the winner's cookie is still in flight) |
-| `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes token + clears cookie) | idempotent |
+| `POST /api/auth/refresh` | — (refresh cookie) | `200 { access_token, user }` + **rotated** cookie; returning identity with the token prevents stale/cross-tab account state | `401` if missing/invalid/expired/reuse-burned (clears cookie); a benign concurrent superseded-token submit returns `401` **without** clearing a newer cookie |
+| `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes that login family + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
 | `PUT /api/auth/currency` | `{ currency }` (`Authorization: Bearer <access_token>`) | `200 User` — persists the account's preferred display currency | `422` unsupported currency · read-only API key `403` |
 | `POST /api/auth/verify-email` | `{ token }` | `204` (stamps `users.email_verified_at`; no session) | `401 "invalid or expired token"` |
 | `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
-| `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, **revokes every refresh token**, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` **and** the account is still pending (password-less) — this reset-activation is the same new-account creation the signup gate refuses; a genuine reset for an already-active account still works |
+| `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, invalidates **every access and refresh session** plus sibling reset links, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` **and** the account is still pending (password-less) — this reset-activation is the same new-account creation the signup gate refuses; a genuine reset for an already-active account still works |
 | `GET /api/health` | — | `200 { status: "ok" }` | — |
+| `GET /api/ready` | — | `200 { status: "ready" }` after a database round-trip | `503 { status: "unavailable" }` without internal details when storage is unavailable |
 | `GET /api/config` | — | `200 { turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads before rendering the auth forms; `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
 | `GET /api/currencies` | — | `200 { base: "USD", as_of: "YYYY-MM-DD", rates: Record<string, number> }` — daily display rates; `rates.USD` is `1`; after 12h the last-good snapshot is returned immediately while one background refresh runs, with a hard seven-day stale limit | `502` when no snapshot exists or the last-good snapshot is over seven days old and refresh is unavailable |
 
@@ -77,7 +80,9 @@ flow end to end.
 a `captcha_token` (Cloudflare Turnstile). When `TURNSTILE_SECRET_KEY` is set the
 token is **required** — a missing/rejected one is `400 "captcha …"` (deliberately
 not 401/403, so it never collides with login's `403`), verified **before** any
-account lookup so it leaks nothing. When the key is unset, CAPTCHA is disabled and
+account lookup so it leaks nothing. A successful Siteverify response must also match
+`PUBLIC_SITE_URL`'s hostname and the widget's `auth` action. When the key is unset,
+CAPTCHA is disabled and
 the field is ignored (dev/tests). The paired **public** site key
 (`TURNSTILE_SITE_KEY`, set together with the secret) is served to the SPA via
 `GET /api/config`, so the browser renders the widget with a runtime-supplied key —
@@ -96,15 +101,16 @@ contain `@` and be ≤ 254 chars; login returns a **generic** 401 (with timing
 equalization on user-not-found, against a dummy hash precomputed at startup).
 Access JWTs are HS256 with `exp`, decoded with the algorithm pinned to HS256.
 **Refresh tokens are single-use** — every `/refresh` rotates them (claimed via an
-atomic conditional `UPDATE`, with the whole rotation — claim, successor insert,
-lineage link, user load — in **one transaction**, so a dropped request or DB blip
-mid-rotation rolls back and leaves the token retriable) with **lineage-based
-reuse detection**: each token records its successor and its *family* (the login
-grant's root token), so replaying a token whose successor was itself revoked
-burns that **family only** — the user's other devices stay signed in (RFC 9700
-§4.14.2) — while a benign concurrent double-submit (successor still active) is
-just rejected without touching the cookie. A revoked token is never exchanged for
-a new one. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
+atomic conditional `UPDATE`, with the claim, session-generation check, successor
+insert, lineage link, user load, and any reuse revocation in **one transaction**
+serialized per user, so a dropped request or DB failure rolls the rotation back)
+with **lineage-based reuse detection**. Each token records its successor and login
+family: replaying a token whose successor was itself consumed burns that family only,
+while a benign concurrent double-submit whose successor is still active is rejected
+without touching the cookie. A revoked token is never exchanged for a new one, and
+replaying an old token cannot revoke a separately-created login family. Access and
+refresh tokens capture the user's session generation; password reset advances it so
+already-minted access JWTs fail immediately. The cookie is `HttpOnly; SameSite=Lax; Path=/api/auth;
 Secure=COOKIE_SECURE` (SameSite=Lax mitigates CSRF on `/refresh` and `/logout`).
 **Email tokens** (registration-completion 24h, verification 24h, reset 1h) mirror the
 refresh-token storage:
@@ -117,7 +123,9 @@ pruned by the same 6h background task. The emailed links point at the SPA
 out through Resend's HTTPS API on the shared client (10s per-request timeout).
 With no `RESEND_API_KEY` sending is **disabled**: the message — including the
 link — is logged instead, so offline dev and the test suites work with zero
-network (the security-test harness swaps in a capturing mailbox).
+network (the security-test harness swaps in a capturing mailbox). The SPA captures
+each query token into memory and immediately replaces the visible URL without it;
+production responses also set `Referrer-Policy: no-referrer`.
 
 ## Public API & API keys (issue #284)
 

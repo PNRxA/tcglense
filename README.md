@@ -20,9 +20,12 @@ docker compose -f deploy/docker-compose.homelab.yml up -d
 ```
 
 On first boot it imports the MTG catalog from Scryfall in the background (a one-off
-~30s). For HTTPS, put a reverse proxy in front and `export COOKIE_SECURE=true` +
-`PUBLIC_SITE_URL=https://your-host` before bringing it up. Images are published to GHCR
-and Docker Hub on every release.
+~30s). New-account signup starts closed. On a trusted local network with no email
+provider, explicitly export `SIGNUPS_ENABLED=true` and
+`ALLOW_INSECURE_DEV_AUTH=true` before bringing it up; that bypass is rejected for an
+internet-facing origin. For a public site, configure HTTPS (`COOKIE_SECURE=true` and a
+real `PUBLIC_SITE_URL`), Resend with a verified-domain sender, and both Turnstile keys.
+Images are published to GHCR and Docker Hub on every release.
 
 **Other ways to deploy** — managed cloud (recommended for a public site), the scalable
 Caddy + Postgres + Redis split, bare metal, and putting a CDN in front — are in the
@@ -51,6 +54,7 @@ pre-commit checks, and how to add a feature — is [`CLAUDE.md`](./CLAUDE.md).
 | [`docs/api-contracts.md`](./docs/api-contracts.md) | Every HTTP endpoint, wire shapes, the search syntax, caching/ETags/sitemaps, import/sync |
 | [`docs/architecture.md`](./docs/architecture.md) | Annotated file map of `api/src` and `web/src`, plus test organization |
 | [`docs/tradeoffs.md`](./docs/tradeoffs.md) | Design rationale and known trade-offs — read before "fixing" something that looks odd |
+| [`docs/production-signup-checklist.md`](./docs/production-signup-checklist.md) | Fail-closed production signup rollout, backup, readiness, email, CAPTCHA, and canary checks |
 | [`CLAUDE.md`](./CLAUDE.md) | Contributor guide: project conventions and step-by-step guides for adding features |
 
 Managed-cloud walkthroughs: [DigitalOcean Droplet](./docs/deploy-digitalocean.md)

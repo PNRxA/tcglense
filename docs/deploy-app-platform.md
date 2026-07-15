@@ -7,6 +7,15 @@ provides the CDN. This is the low-ops alternative to the Droplet stack in
 GitHub releases to deploy themselves and you don't need to run a box.
 
 This deployment is **single-instance and Redis-free** by design.
+Before accepting accounts, complete the
+[production signup launch checklist](./production-signup-checklist.md). The app spec
+starts with `SIGNUPS_ENABLED=false` so its first rollout stays closed.
+
+The spec is applied by `doctl apps create/update`; the release workflow only asks an
+existing app to pull the latest image and does **not** push later spec changes. For an
+already-running app, confirm the live component still has `SIGNUPS_ENABLED=false` and
+change its health-check path to `/api/ready` in App Platform before this rollout (or
+apply the reviewed spec with `doctl apps update`, preserving its secrets and domain).
 
 ```
 internet ─▶ Cloudflare (DNS · CDN · TLS · WAF)
@@ -104,19 +113,21 @@ The spec declares the secret env vars but not their values. In **App → Setting
 |---|---|
 | `JWT_SECRET` | `openssl rand -hex 32` |
 | `DATABASE_URL` | the Managed Postgres **private** URL with `?sslmode=require` |
-| `RESEND_API_KEY` | your [Resend](https://resend.com) key (**required in production**) |
-| `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | both, or neither |
+| `RESEND_API_KEY` | your [Resend](https://resend.com) key (required before public signups) |
+| `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | both; required before public signups can be enabled |
 
 Saving triggers a redeploy. The app runs migrations against Postgres on first boot, then
 pulls the catalog from the TCGLense mirror in the background (Postgres fills to ~2 GB
 over a few minutes).
 
-> **`RESEND_API_KEY` is mandatory in production.** Unset, registration returns the
-> completion token in the response and login skips the verified-email gate — anyone could
-> activate any address. Use a verified sending domain and point `EMAIL_FROM` at it (the
-> default `onboarding@resend.dev` only delivers to the Resend account owner).
+> **`RESEND_API_KEY` is mandatory for public signups.** The server refuses to enable
+> public registration without it. In local development, leaving it unset returns the
+> completion token in the response and skips the verified-email login gate. Use a
+> verified sending domain and point `EMAIL_FROM` at it (the default
+> `onboarding@resend.dev` only delivers to the Resend account owner).
 >
-> **Turnstile keys are all-or-nothing** — set both or neither, or the API refuses to boot.
+> **Turnstile keys are all-or-nothing and required for public registration** — set
+> both before changing `SIGNUPS_ENABLED` to `true`.
 
 ## 5. Add your domain
 
@@ -182,6 +193,7 @@ change needed to go multi-instance.
 
 ```sh
 curl -s https://<your-domain>/api/health         # -> {"status":"ok"}
+curl -s https://<your-domain>/api/ready          # -> {"status":"ready"} after a DB round-trip
 curl -s https://<your-domain>/api/config          # -> {"turnstile_site_key": "..."|null}
 doctl apps logs <APP_ID> --type run | grep -iE "backend|migrat|listening"
 ```

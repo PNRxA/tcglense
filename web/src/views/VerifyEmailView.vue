@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Loader2, MailCheck, MailX } from '@lucide/vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useSecretToken } from '@/composables/useSecretToken'
 import { useTurnstile } from '@/composables/useTurnstile'
 import { ApiError, verifyEmail } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
 usePageMeta({ title: 'Verify your email', canonicalPath: '/verify-email', noindex: true })
 
-const route = useRoute()
+const token = useSecretToken()
 const turnstileEl = ref<HTMLElement>()
 const { execute } = useTurnstile(turnstileEl)
 
@@ -20,15 +21,14 @@ const state = ref<'verifying' | 'verified' | 'failed'>('verifying')
 const error = ref<string | null>(null)
 
 onMounted(async () => {
-  const token = route.query.token
-  if (typeof token !== 'string' || !token) {
+  if (!token.value) {
     state.value = 'failed'
     error.value = 'This verification link is incomplete.'
     return
   }
   try {
     const captcha_token = (await execute()) ?? undefined
-    await verifyEmail({ token, captcha_token })
+    await verifyEmail({ token: token.value, captcha_token })
     state.value = 'verified'
   } catch (err) {
     state.value = 'failed'

@@ -20,56 +20,33 @@ catalog) is planned but not implemented.
   and the access token is held in memory only, so an XSS can't exfiltrate the
   long-lived credential. In production set `COOKIE_SECURE=true` (HTTPS) and serve
   web + API same-origin (or configure cross-origin CORS credentials).
-- **Atomic rotation:** `/refresh` claims a token via a single conditional `UPDATE`
-  gated on `rows_affected`, so it's race-safe across connections — and the whole
-  rotation (claim → successor insert → lineage link → user load) runs in **one
-  transaction**, so a dropped request (axum cancels the handler future when the
-  client disconnects) or a DB blip mid-rotation rolls the claim back and the
-  presented token stays live and retriable. It used to commit the claim alone,
-  permanently stranding the browser on a dead cookie — a major residual cause of
-  #417's prod logouts (deploys SIGTERM in-flight rotations; the cold Postgres
-  errs). The one unrecoverable remainder is a rotation that *fully commits* and
-  then loses its `Set-Cookie` in transit (a proxy 5xx after the origin committed);
-  that degrades to a forced re-login. The client shrinks that window with
-  `keepalive: true` on the refresh POST (the response's `Set-Cookie` still lands
-  when the page navigates away). We deliberately do **not** try to "heal" a
-  stranded cookie server-side: a revoked-predecessor-with-live-unused-successor is
-  the *normal* steady state between refreshes, indistinguishable from the stranded
-  case, so any such heal would hand a session to anyone replaying a captured
-  predecessor.
-- **Concurrent refresh:** reuse detection is lineage-based (a token stores its
-  successor's id and its family root's id) so a benign concurrent double-submit
-  doesn't burn anything — only replay of a token whose successor was itself
-  revoked does, and the burn is scoped to that **family** (the one browser's login
-  grant, per RFC 9700 §4.14.2), not every device the user owns: a crashed browser
-  whose cookie jar reverted a few rotations (WebKit/Chromium persist cookies
-  asynchronously) must not sign the user's phone out too. Pre-migration rows
-  without a `family_id` fall back to the old revoke-everything burn and age out
-  with the 30-day expiry. The client **single-flights** `refresh()`/`tryRestore()`
-  and serializes cross-tab rotations with the Web Locks API (5s wait bound,
-  falling open to the server's race-safe handling); the loser of a benign
-  concurrent double-submit retries once after a short delay and picks up the
-  winner's cookie. Transient (non-401) refresh failures keep the in-memory session
-  — only a definitive 401 clears it, and only the server ever revokes the cookie
-  (the SPA's `authFetch` never escalates an ambiguous 401 to a cookie-revoking
-  logout, and the router guard re-attempts a transiently-failed boot restore
-  rather than pinning the session signed-out).
-- **Known limitation — revoke sweeps vs concurrent rotation (Postgres):** the
-  session-ending sweeps (`revoke_all_for_user` on password reset, `revoke_one` on
-  logout, the reuse-detection family burn) are single `UPDATE`s outside any
-  transaction. Under Postgres `READ COMMITTED`, a rotation transaction that
-  commits a *new* successor after the sweep snapshotted can leave that successor
-  live — so a session forced concurrently with an in-flight rotation can survive.
-  Pre-existing (the sweeps always worked this way; the rotation transaction didn't
-  change the outcome), narrow (needs a rotation mid-flight against the sweep), and
-  SQLite is unaffected (single writer). The robust fix is a per-user session epoch
-  checked at rotation time — tracked as a follow-up, not bundled into this fix.
+- **Atomic rotation:** `/refresh` serializes one user's session mutations, then claims
+  the presented token, checks reuse/session generation, creates and links the successor,
+  and (when needed) revokes the login family in one transaction. A disconnect or DB
+  failure rolls the whole rotation back instead of stranding a revoked predecessor.
+  The remaining transport edge case is a fully committed rotation whose `Set-Cookie`
+  never reaches the browser; the client reduces that window with `keepalive: true` on
+  the refresh POST. The server cannot safely "heal" that state because it is
+  indistinguishable from normal predecessor replay while a live successor exists.
+- **Concurrent refresh:** reuse detection is lineage-based (a token records its
+  successor and login family) so a benign concurrent double-submit does not burn the
+  family — only replay of a token whose successor was itself consumed does. Reuse
+  revokes that login/device family, never a separately-created session. The client
+  single-flights within a tab and uses the Web Locks API where available to serialize
+  refresh-cookie mutation across tabs; unsupported browsers retain the server's safe
+  concurrent-submit behavior but may need to restore again.
+- **Password-reset invalidation:** access and refresh credentials capture a per-user
+  session generation. Reset increments it transactionally, invalidates sibling reset
+  links, and revokes refresh rows under the same per-user serialization, so an in-flight
+  rotation cannot survive the sweep and already-minted access JWTs stop working without
+  waiting for their 15-minute expiry.
 - **Refresh-token pruning:** a background task deletes rows past `expires_at` every
   6h so the table can't grow unbounded; revoked-but-unexpired rows are retained so
   reuse detection still works.
 - **Gotcha — `jsonwebtoken`:** v10 needs a crypto provider feature or it panics at
-  runtime; this crate pins `default-features = false, features = ["rust_crypto"]`
-  (pure Rust, no C toolchain). Don't drop that when bumping it.
+  runtime; this crate pins `default-features = false, features = ["aws_lc_rs"]`,
+  sharing rustls's provider and avoiding unused RSA dependencies. Don't enable a
+  second provider or drop this one when bumping it.
 
 ## Public API keys (issue #284)
 
@@ -122,10 +99,12 @@ catalog) is planned but not implemented.
   the left-most entry); a multi-hop CDN chain would need a trusted-proxy list
   (future work). IPv6 clients are keyed by their **/64** (not /128) so a client
   can't rotate source addresses within its block to dodge the limit.
-  CAPTCHA and rate limiting are both **disabled by default** (no `TURNSTILE_SECRET_KEY`;
-  though rate limiting is on, it fails open when the client IP is unresolvable, e.g.
-  in-process tests) so dev/CI/e2e run without either — a production deploy must set
-  the Turnstile keys and (behind a proxy) `TRUST_PROXY_HEADERS`. Login is still not
+  CAPTCHA is disabled by default (no `TURNSTILE_SECRET_KEY`); rate limiting is enabled
+  but fails open when the client IP is unresolvable (for example in-process tests).
+  New signups are closed by default, and an internet-facing server refuses to open
+  them without both Turnstile keys, verified-domain email configuration, HTTPS, and
+  secure cookies. A production proxy must also set `TRUST_PROXY_HEADERS` safely.
+  Login is still not
   account-locked (per-IP only), so distributed credential-stuffing from many IPs
   isn't fully mitigated; the token cooldown (`issue_with_cooldown`, an atomic
   conditional insert) remains the per-user email-issue brake underneath the per-IP
@@ -185,8 +164,8 @@ catalog) is planned but not implemented.
   (no `RESEND_API_KEY`) returns the registration-completion token in the register
   response instead of emailing it** (the SPA drives straight to the set-password step;
   login skips the unverified-`403` gate — see the auth contract) — the intended dev/CI
-  posture, so don't run prod without a key (there the token stays out of the response,
-  so an unverified/unowned address can never complete registration). `onboarding@resend.dev`
+  posture, gated by `ALLOW_INSECURE_DEV_AUTH=true`; internet-facing registration
+  refuses to start in that mode. `onboarding@resend.dev`
   (the default From) only delivers to the Resend account owner's address; production
   needs a verified domain + `EMAIL_FROM`. The 60s registration/resend/forgot mail
   cooldown stays **DB-backed** (the atomic `issue_with_cooldown` insert — on Postgres a
