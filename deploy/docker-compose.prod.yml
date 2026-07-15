@@ -1,9 +1,9 @@
 # TCGLense — production stack (Docker): Caddy + web + api + Postgres + Redis.
 #
 # Topology:
-#   internet ──443──▶ caddy (TLS) ──▶ web (Caddy: SPA + /api proxy) ──▶ api
-#                                                                      ├─▶ db     (Postgres)
-#                                                                      └─▶ cache  (Redis)
+#   internet ──443──▶ caddy (TLS) ─┬─▶ web (SPA)
+#                                    └─▶ api ─┬─▶ db     (Postgres)
+#                                             └─▶ cache  (Redis)
 #
 # Bring it up:
 #   export SITE_ADDRESS=tcglense.example.com          # your domain (HTTPS via Let's Encrypt)
@@ -13,6 +13,12 @@
 #
 # Pin a release with IMAGE_TAG=vX.Y.Z (defaults to :latest). Images are on GHCR
 # (ghcr.io/pnrxa/…, no login needed) and Docker Hub (docker.io/pnrxa/…).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # Edge reverse proxy: terminates TLS and forwards to web (see deploy/edge.Caddyfile).
   caddy:
@@ -22,13 +28,15 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      SITE_ADDRESS: ${SITE_ADDRESS:?set your production domain}
+    logging: *default-logging
     volumes:
       - ./edge.Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data       # provisioned TLS certs (persist across restarts)
       - caddy_config:/config
     depends_on:
       - web
+      - api
 
   # Serves the built SPA and reverse-proxies /api to the api service.
   web:
@@ -36,6 +44,7 @@ services:
     restart: unless-stopped
     environment:
       API_UPSTREAM: api:8080
+    logging: *default-logging
     depends_on:
       - api
 
@@ -50,28 +59,44 @@ services:
       # must key on X-Forwarded-For. The edge Caddy overwrites XFF with the real client
       # IP (see deploy/edge.Caddyfile), so trusting it here is safe (not spoofable).
       TRUST_PROXY_HEADERS: "true"
-      PUBLIC_SITE_URL: https://${SITE_ADDRESS:-localhost}
-      DATABASE_URL: postgres://tcglense:${POSTGRES_PASSWORD:-tcglense}@db:5432/tcglense
+      PUBLIC_SITE_URL: https://${SITE_ADDRESS:?set your production domain}
+      DATABASE_URL: postgres://tcglense:${POSTGRES_PASSWORD:?set a strong Postgres password}@db:5432/tcglense
       REDIS_URL: redis://cache:6379
+      # Registration is an explicit launch switch. A freshly copied production
+      # stack stays closed until the operator deliberately sets this to true.
+      SIGNUPS_ENABLED: ${SIGNUPS_ENABLED:-false}
+      SIGNUPS_DISABLED_MESSAGE: ${SIGNUPS_DISABLED_MESSAGE:-New registrations are not open yet.}
+      # Production signups must prove mailbox ownership. These are required here
+      # instead of silently falling back to the local-development token bypass.
+      RESEND_API_KEY: ${RESEND_API_KEY:?set the production Resend API key}
+      EMAIL_FROM: ${EMAIL_FROM:?set a Resend-verified From address}
+      # Require the bot gate on the internet-facing reference stack. Operators
+      # deliberately using an upstream WAF can run the images directly with their
+      # own configuration, but the shipped production path stays fail-closed.
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:?set the Turnstile secret key}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:?set the Turnstile site key}
       # If a CDN (e.g. Cloudflare) fronts this stack and caches the image/icon proxy,
       # uncomment so the origin doesn't also cache images to disk. See the "Behind a
       # CDN (Cloudflare)" section in docs/self-hosting.md — mind the real-client-IP caveat there.
       # CDN_MODE: "true"
+      RUST_LOG: ${RUST_LOG:-info,sqlx::query=warn}
+    logging: *default-logging
     volumes:
       - tcglense_data:/data     # cached card images (the DB lives in Postgres)
     depends_on:
       db:
         condition: service_healthy
       cache:
-        condition: service_started
+        condition: service_healthy
 
   db:
     image: postgres:17
     restart: unless-stopped
     environment:
       POSTGRES_USER: tcglense
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tcglense}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong Postgres password}
       POSTGRES_DB: tcglense
+    logging: *default-logging
     volumes:
       - tcglense_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -83,6 +108,7 @@ services:
   cache:
     image: redis:7
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

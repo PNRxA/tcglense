@@ -11,9 +11,10 @@ After=network.target
 Type=simple
 User=tcglense
 WorkingDirectory=/srv/tcglense
-# Production env (JWT_SECRET, COOKIE_SECURE=true, HOST=127.0.0.1, DATABASE_URL —
-# sqlite:// or postgres://, optional REDIS_URL + DB_* pool vars, ...).
-# KEY=VALUE per line; start from api/.env.example.
+# Production env (JWT_SECRET, COOKIE_SECURE=true, PUBLIC_SITE_URL=https://...,
+# HOST=127.0.0.1, DATABASE_URL — sqlite:// or postgres://, optional REDIS_URL +
+# DB_* pool vars, ...). Keep both ALLOW_INSECURE_DEV_* flags false. Treat
+# api/.env.example as a reference only: it intentionally opts into local-dev auth.
 EnvironmentFile=/srv/tcglense/api.env
 ExecStart=/srv/tcglense/tcglense-api
 Restart=on-failure

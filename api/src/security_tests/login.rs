@@ -139,6 +139,7 @@ async fn an_expired_access_token_is_rejected_by_a_protected_route() {
     let claims = Claims {
         sub: uid.to_string(),
         email: "stale@example.com".to_string(),
+        session_version: 0,
         iat: past - 60,
         exp: past,
     };

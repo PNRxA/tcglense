@@ -4,6 +4,13 @@
 # `-e API_UPSTREAM=10.0.0.5:8080`. Terminate TLS in front of this container.
 :80 {
 	encode zstd gzip
+	header {
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
+	}
 
 	# Forward the API to the backend, preserving the /api prefix the API expects
 	# (`handle`, not `handle_path`). The root sitemap paths are API-served too

@@ -11,6 +11,8 @@ async fn refresh_rotates_single_use_and_detects_token_theft() {
     let (s, h2, b2) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b2["access_token"].as_str().is_some());
+    assert_eq!(b2["user"]["email"], "rotate@example.com");
+    assert!(b2["user"]["id"].as_i64().is_some());
     let t2 = refresh_token_from(&h2).expect("rotated cookie t2");
     assert_ne!(t1, t2, "rotation must mint a new token");
 
@@ -86,6 +88,37 @@ async fn reuse_detection_burns_only_the_replayed_family() {
     assert_eq!(s, StatusCode::OK, "the other device's session must survive");
 }
 
+/// Once reuse burns one login family, keeping the stolen ancestor must not let
+/// an attacker repeatedly kill sessions the user creates afterward.
+#[tokio::test]
+async fn replaying_an_old_token_cannot_kill_a_fresh_login_family() {
+    let app = test_app().await;
+    let (_, t1) = register(&app, "family@example.com", "password123").await;
+
+    // Advance this family twice so replaying t1 is unambiguous reuse.
+    let (s, h2, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
+    assert_eq!(s, StatusCode::OK);
+    let t2 = refresh_token_from(&h2).expect("t2");
+    let (s, h3, _) = send(&app, post_with_cookie("/api/auth/refresh", &t2)).await;
+    assert_eq!(s, StatusCode::OK);
+    let t3 = refresh_token_from(&h3).expect("t3");
+
+    let (reuse, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
+    assert_eq!(reuse, StatusCode::UNAUTHORIZED);
+    let (burned, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &t3)).await;
+    assert_eq!(burned, StatusCode::UNAUTHORIZED);
+
+    // A new login is a distinct family. Replaying exactly the same stolen t1
+    // again remains a 401 but cannot revoke this new cookie.
+    let (_, fresh) = login(&app, "family@example.com", "password123").await;
+    let (reuse_again, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
+    assert_eq!(reuse_again, StatusCode::UNAUTHORIZED);
+    let (fresh_status, _, fresh_body) =
+        send(&app, post_with_cookie("/api/auth/refresh", &fresh)).await;
+    assert_eq!(fresh_status, StatusCode::OK);
+    assert_eq!(fresh_body["user"]["email"], "family@example.com");
+}
+
 /// A genuinely unknown/invalid refresh cookie is a dead session: 401 AND the
 /// cookie is cleared (distinct from the benign concurrent double-submit above,
 /// which leaves the cookie intact).
@@ -121,7 +154,7 @@ async fn refresh_without_a_cookie_is_unauthorized_and_mints_nothing() {
 }
 
 #[tokio::test]
-async fn logout_revokes_the_refresh_token_and_is_idempotent() {
+async fn logout_revokes_the_refresh_family_and_is_idempotent() {
     let app = test_app().await;
     let (_, t1) = register(&app, "logout@example.com", "password123").await;
 
@@ -130,8 +163,12 @@ async fn logout_revokes_the_refresh_token_and_is_idempotent() {
     assert!(refresh_cookie_cleared(&headers));
 
     // The revoked token can no longer be exchanged.
-    let (status, _, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
+    let (status, headers, _) = send(&app, post_with_cookie("/api/auth/refresh", &t1)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        refresh_cookie_cleared(&headers),
+        "a server-revoked logout cookie is a definitive dead session"
+    );
 
     // Logout with no cookie is still a clean 204.
     let (status, _, _) = send(

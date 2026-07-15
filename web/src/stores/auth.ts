@@ -1,12 +1,13 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { LoginPayload, User } from '@/lib/api'
+import type { CompleteRegistrationPayload, LoginPayload, ResetPasswordPayload, User } from '@/lib/api'
 import {
   ApiError,
+  completeRegistration as apiCompleteRegistration,
   login as apiLogin,
   logout as apiLogout,
-  me as apiMe,
   refresh as apiRefresh,
+  resetPassword as apiResetPassword,
 } from '@/lib/api'
 
 // Cross-tab refresh coordination.
@@ -24,13 +25,7 @@ import {
 // out. Feature-detected — where Web Locks is unavailable (older Safari) we fall
 // back to an unsynchronized refresh, which the server keeps race-safe (it no
 // longer clears a live cookie on a benign concurrent double-submit).
-const REFRESH_LOCK_NAME = 'tcglense-refresh'
-// Bound how long a sibling waits for the lock before giving up and refreshing
-// unsynchronized. The refresh POST has its own 15s timeout (see `refresh` in
-// lib/api/auth.ts), but a serialized queue of slow refreshes (a session restore
-// opening several tabs against a cold prod DB) can still exceed one request's
-// worth of waiting.
-const REFRESH_LOCK_WAIT_MS = 5_000
+const SESSION_MUTATION_LOCK_NAME = 'tcglense-refresh'
 
 // Delay before the single retry of a 401-rejected refresh. The 401 may be the
 // benign answer handed to the LOSER of a concurrent double-submit (a sibling
@@ -47,22 +42,16 @@ function isSupersededRefreshError(error: unknown): error is ApiError {
   )
 }
 
-function withRefreshLock<T>(run: () => Promise<T>): Promise<T> {
+/**
+ * Serialize every refresh-cookie writer across tabs. Unlike the old refresh-only
+ * lock, this deliberately has no fall-open path: running a late refresh in parallel
+ * with logout/reset could let its Set-Cookie resurrect the session. Each holder's
+ * auth request is itself bounded, and no queued operation recursively takes the lock.
+ */
+function withSessionMutationLock<T>(run: () => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' && 'locks' in navigator ? navigator.locks : null
   if (!locks) return run()
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REFRESH_LOCK_WAIT_MS)
-  return locks
-    .request(REFRESH_LOCK_NAME, { signal: controller.signal }, run)
-    .catch((error: unknown) => {
-      // We waited too long for the lock (a sibling's refresh hung): give up on
-      // coordination and refresh anyway — the server keeps concurrent refreshes
-      // race-safe. Any other rejection is the refresh itself failing; rethrow it.
-      if (error instanceof DOMException && error.name === 'AbortError') return run()
-      throw error
-    })
-    .finally(() => clearTimeout(timer))
+  return locks.request(SESSION_MUTATION_LOCK_NAME, {}, run)
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -89,32 +78,86 @@ export const useAuthStore = defineStore('auth', () => {
   const sessionResolved = ref(false)
 
   // How long to wait for the first restore before assuming the signed-out posture. The
-  // refresh is a POST, which (unlike GETs) has no client timeout, so a half-open/captive-
-  // portal socket can leave doRestore() pending forever. Without this watchdog the
+  // auth client now bounds refresh requests, while this independent UI watchdog
+  // also covers any unexpected browser/runtime stall. Without it the
   // sessionResolved-gated chrome (UserMenu, HomeView CTAs, CollectionControls, the
   // collection/wishlist prompts) would stay skeleton indefinitely. The latch is one-way,
   // so a restore that eventually succeeds still flips isAuthenticated and re-renders.
   const RESTORE_WATCHDOG_MS = 10_000
 
-  async function login(payload: LoginPayload) {
-    const response = await apiLogin(payload)
-    accessToken.value = response.access_token
-    user.value = response.user
+  // Every endpoint that can write/clear the shared refresh cookie joins one local
+  // queue and the cross-tab lock above. The epoch makes an already-started refresh
+  // response stale as soon as logout/login/completion/reset is requested, preventing
+  // that response from resurrecting or replacing newer in-memory state.
+  let sessionEpoch = 0
+  let sessionMutationTail: Promise<void> = Promise.resolve()
+
+  function queueSessionMutation<T>(run: () => Promise<T>): Promise<T> {
+    const result = sessionMutationTail.then(
+      () => withSessionMutationLock(run),
+      () => withSessionMutationLock(run),
+    )
+    sessionMutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
-  // NOTE: there is deliberately no `register` action. Registration is email-first
-  // and never mints a session (register only sends the completion link; the
-  // session is minted by POST /api/auth/complete-registration), so the views call
-  // the API fns directly — CompleteRegistrationView then adopts the returned
-  // session via `setSession`. A register action writing into this store would
-  // flip `isAuthenticated` and bounce the visitor off the guest routes.
+  function clearSessionState() {
+    accessToken.value = null
+    user.value = null
+  }
 
-  /** Adopt a session obtained outside `login` (registration completion): the
-   * access token lives in memory, the refresh cookie was set by the server. */
-  function setSession(token: string, u: User) {
+  function adoptSession(token: string, u: User) {
     accessToken.value = token
     user.value = u
+    restoreRecoverable.value = false
     sessionResolved.value = true
+  }
+
+  function sessionChangedError() {
+    return new ApiError('Session changed. Please try again.', 409)
+  }
+
+  async function login(payload: LoginPayload) {
+    const epoch = ++sessionEpoch
+    clearSessionState()
+    restoreRecoverable.value = false
+    await queueSessionMutation(async () => {
+      const response = await apiLogin(payload)
+      if (epoch !== sessionEpoch) throw sessionChangedError()
+      adoptSession(response.access_token, response.user)
+    })
+  }
+
+  // There is deliberately no action for registration step one: sending the email
+  // never mints a session. Completion does live here because it writes the shared
+  // refresh cookie and must be ordered with refresh/logout/login/reset.
+
+  /**
+   * Enter the emailed registration-completion route without restoring a possibly
+   * different account from the shared refresh cookie. Invalidating the epoch also
+   * stops an older background refresh from repainting authenticated chrome here.
+   */
+  function prepareForRegistrationCompletion() {
+    sessionEpoch += 1
+    clearSessionState()
+    restoreRecoverable.value = false
+    sessionResolved.value = true
+  }
+
+  /** Complete registration while ordered after any older refresh-cookie mutation. */
+  async function completeRegistration(payload: CompleteRegistrationPayload) {
+    const epoch = ++sessionEpoch
+    clearSessionState()
+    restoreRecoverable.value = false
+    sessionResolved.value = true
+    await queueSessionMutation(async () => {
+      const response = await apiCompleteRegistration(payload)
+      if (epoch !== sessionEpoch) throw sessionChangedError()
+      adoptSession(response.access_token, response.user)
+    })
   }
 
   /** Replace the cached current user (e.g. after setting a username), so every
@@ -124,14 +167,44 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
-    try {
-      await apiLogout()
-    } catch {
-      // Best effort: revoke server-side if possible, but always clear locally.
-    }
-    accessToken.value = null
-    user.value = null
+    const epoch = ++sessionEpoch
+    // Clear immediately: even if an older refresh response arrives before its queued
+    // server logout, the epoch prevents that response from restoring local state.
+    clearSessionState()
     restoreRecoverable.value = false
+    sessionResolved.value = true
+    await queueSessionMutation(async () => {
+      try {
+        await apiLogout()
+      } catch {
+        // Best effort: revoke/clear server-side if possible, but always clear locally.
+      } finally {
+        if (epoch === sessionEpoch) {
+          clearSessionState()
+          restoreRecoverable.value = false
+        }
+      }
+    })
+  }
+
+  /** Resetting a password revokes every session; also remove the now-stale browser
+   * cookie and clear this tab so it cannot keep presenting the old access token. */
+  async function resetPassword(payload: ResetPasswordPayload) {
+    const epoch = ++sessionEpoch
+    await queueSessionMutation(async () => {
+      await apiResetPassword(payload)
+      try {
+        // reset-password revokes the row; logout remains useful because it emits the
+        // removal Set-Cookie even when the presented refresh token is already invalid.
+        await apiLogout()
+      } catch {
+        // The cookie is unusable after the reset and a later refresh will clear it.
+      }
+      if (epoch !== sessionEpoch) throw sessionChangedError()
+      clearSessionState()
+      restoreRecoverable.value = false
+      sessionResolved.value = true
+    })
   }
 
   // Single-flight guards: concurrent callers share one in-flight request so the
@@ -143,17 +216,18 @@ export const useAuthStore = defineStore('auth', () => {
   /** Mint a fresh access token from the refresh cookie. Clears state on failure. */
   function refresh(): Promise<boolean> {
     // Two guards, inner then outer: `refreshInFlight` coalesces concurrent callers
-    // *within this tab* into one rotation of the single-use cookie; `withRefreshLock`
-    // serializes rotations *across tabs* so siblings never submit the same cookie in
-    // parallel (which the server can only honour for one of them).
-    refreshInFlight ??= withRefreshLock(doRefresh).finally(() => {
+    // within this tab; the session-mutation queue and Web Lock serialize cookie
+    // writers locally and across tabs.
+    const epoch = sessionEpoch
+    refreshInFlight ??= queueSessionMutation(() => doRefresh(epoch)).finally(() => {
       refreshInFlight = null
     })
     return refreshInFlight
   }
 
-  async function doRefresh(): Promise<boolean> {
-    if (await attemptRefresh()) return true
+  async function doRefresh(epoch: number): Promise<boolean> {
+    if (await attemptRefresh(epoch)) return true
+    if (epoch !== sessionEpoch) return false
 
     // Transient failure (network blip, 5xx, timeout): the refresh cookie is
     // still valid server-side, so KEEP the local session and report failure —
@@ -168,7 +242,9 @@ export const useAuthStore = defineStore('auth', () => {
     // 401: retry once after a short delay (see REFRESH_RETRY_DELAY_MS — the
     // benign loser-of-a-concurrent-rotation case succeeds here).
     await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_DELAY_MS))
-    if (await attemptRefresh()) return true
+    if (epoch !== sessionEpoch) return false
+    if (await attemptRefresh(epoch)) return true
+    if (epoch !== sessionEpoch) return false
 
     if (
       lastRefreshError instanceof ApiError &&
@@ -176,8 +252,7 @@ export const useAuthStore = defineStore('auth', () => {
       !isSupersededRefreshError(lastRefreshError)
     ) {
       // Definitively dead (the server cleared the cookie): clear local state.
-      accessToken.value = null
-      user.value = null
+      clearSessionState()
       restoreRecoverable.value = false
     } else {
       // The winner's Set-Cookie is not ordered against this tab's response. If
@@ -193,9 +268,16 @@ export const useAuthStore = defineStore('auth', () => {
   // state (not a ref): only doRefresh reads it, immediately after an attempt.
   let lastRefreshError: unknown = null
 
-  async function attemptRefresh(): Promise<boolean> {
+  async function attemptRefresh(epoch: number): Promise<boolean> {
+    lastRefreshError = null
     try {
       const response = await apiRefresh()
+      if (epoch !== sessionEpoch) return false
+      // The refresh cookie is shared across tabs. Another tab may have signed into a
+      // different account since this tab's access token was minted, so refresh must
+      // replace the identity together with the token. The user-id watcher in
+      // useAuthCacheReset then drops the previous account's cached server state.
+      user.value = response.user
       accessToken.value = response.access_token
       restoreRecoverable.value = false
       return true
@@ -203,11 +285,6 @@ export const useAuthStore = defineStore('auth', () => {
       lastRefreshError = error
       return false
     }
-  }
-
-  async function fetchMe() {
-    const response = await authFetch((token) => apiMe(token))
-    user.value = response.user
   }
 
   /**
@@ -238,9 +315,7 @@ export const useAuthStore = defineStore('auth', () => {
       return true
     }
     try {
-      if (await refresh()) {
-        await fetchMe()
-      }
+      await refresh()
     } catch {
       return false
     }
@@ -260,6 +335,8 @@ export const useAuthStore = defineStore('auth', () => {
     if (!accessToken.value) {
       throw new ApiError('Not authenticated', 401)
     }
+    const initiatingUserId = user.value?.id ?? null
+    const initiatingEpoch = sessionEpoch
 
     try {
       return await call(accessToken.value)
@@ -268,15 +345,25 @@ export const useAuthStore = defineStore('auth', () => {
         throw error
       }
 
-      // Access token rejected: mint a fresh one once, then retry.
+      // Access token rejected: mint a fresh one once, then retry only for the same
+      // account that initiated the operation. A shared cookie may now belong to a
+      // different account; replaying a write under that identity would cross tenants.
       if (!(await refresh()) || !accessToken.value) {
+        throw error
+      }
+      if (sessionEpoch !== initiatingEpoch || (user.value?.id ?? null) !== initiatingUserId) {
         throw error
       }
 
       try {
         return await call(accessToken.value)
       } catch (retryError) {
-        if (retryError instanceof ApiError && retryError.status === 401) {
+        if (
+          retryError instanceof ApiError &&
+          retryError.status === 401 &&
+          sessionEpoch === initiatingEpoch &&
+          (user.value?.id ?? null) === initiatingUserId
+        ) {
           // A freshly-minted access token was rejected. Drop the in-memory
           // session, but deliberately do NOT call logout(): that POSTs
           // /api/auth/logout, revoking the refresh cookie server-side — which
@@ -286,8 +373,7 @@ export const useAuthStore = defineStore('auth', () => {
           // recoverable: mark it so the router guard re-attempts a restore on a
           // later navigation (self-healing once the infra blip clears) instead
           // of stranding the user on signed-out chrome until a manual reload.
-          accessToken.value = null
-          user.value = null
+          clearSessionState()
           restoreRecoverable.value = true
         }
         throw retryError
@@ -302,11 +388,12 @@ export const useAuthStore = defineStore('auth', () => {
     sessionResolved,
     restoreRecoverable,
     login,
-    setSession,
+    prepareForRegistrationCompletion,
+    completeRegistration,
     setUser,
     logout,
+    resetPassword,
     refresh,
-    fetchMe,
     tryRestore,
     authFetch,
   }

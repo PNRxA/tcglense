@@ -23,6 +23,16 @@ services:
       # Set true only when a TLS-terminating proxy sits in front (HTTPS refresh cookie).
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost:8080}
+      # Closed by default even on a LAN. To create accounts without a mail provider,
+      # deliberately set BOTH flags true and keep the service on a trusted network.
+      SIGNUPS_ENABLED: ${SIGNUPS_ENABLED:-false}
+      ALLOW_INSECURE_DEV_AUTH: ${ALLOW_INSECURE_DEV_AUTH:-false}
+      # Required before opening signups on a public HTTPS origin. Blank values keep
+      # the service safely closed; EMAIL_FROM must use a Resend-verified domain.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       # On first boot the API imports MTG card data from Scryfall in the background.
       # Set SYNC_ON_STARTUP=false to skip, or SEED_DUMMY_DATA=true for an offline catalog.
       # SYNC_ON_STARTUP: "true"

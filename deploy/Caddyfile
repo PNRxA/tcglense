@@ -11,6 +11,14 @@
 
 tcglense.example.com {
 	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
+	}
 
 	# API: forward /api/* to the Rust backend (bound to 127.0.0.1 in production).
 	# `handle` (not `handle_path`) preserves the /api prefix the backend expects.

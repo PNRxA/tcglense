@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSecretToken } from '@/composables/useSecretToken'
 import { useTurnstile } from '@/composables/useTurnstile'
-import { ApiError, completeRegistration } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { safeInternalPath } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 
 usePageMeta({
@@ -20,10 +22,16 @@ usePageMeta({
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
-// The emailed link carries ?token=…; anything else (missing, repeated) is invalid.
-const token = computed(() =>
-  typeof route.query.token === 'string' && route.query.token ? route.query.token : null,
-)
+const token = useSecretToken()
+const redirect = computed(() => safeInternalPath(route.query.redirect))
+const registerTo = computed(() => ({
+  path: '/register',
+  ...(redirect.value ? { query: { redirect: redirect.value } } : {}),
+}))
+const loginTo = computed(() => ({
+  path: '/login',
+  ...(redirect.value ? { query: { redirect: redirect.value } } : {}),
+}))
 
 const username = ref('')
 const password = ref('')
@@ -38,16 +46,15 @@ async function onSubmit() {
   loading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
-    const response = await completeRegistration({
+    await auth.completeRegistration({
       token: token.value,
       password: password.value,
       username: username.value.trim() || null,
       captcha_token,
     })
-    // Completion returns a session (access token + refresh cookie) — adopt it and
-    // land on the homepage signed in.
-    auth.setSession(response.access_token, response.user)
-    await router.push('/')
+    // The store adopts the returned session while ordering its refresh-cookie write
+    // after any older refresh. Return to the feature that prompted signup.
+    await router.push(redirect.value ?? '/')
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
   } finally {
@@ -68,7 +75,7 @@ async function onSubmit() {
         </CardHeader>
         <CardContent>
           <Button as-child class="w-full">
-            <RouterLink to="/register">Start again</RouterLink>
+            <RouterLink :to="registerTo">Start again</RouterLink>
           </Button>
         </CardContent>
       </template>
@@ -78,20 +85,29 @@ async function onSubmit() {
           <CardDescription>Choose a password to activate your account and sign in.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
+          <form
+            class="flex flex-col gap-4"
+            :aria-busy="loading || undefined"
+            @submit.prevent="onSubmit"
+          >
             <div class="flex flex-col gap-2">
               <Label for="username">Username (optional)</Label>
               <Input
                 id="username"
                 v-model="username"
+                name="username"
                 autocomplete="username"
                 placeholder="ada_lovelace"
+                minlength="3"
                 maxlength="20"
+                pattern="[A-Za-z0-9_]+"
                 autocapitalize="off"
                 spellcheck="false"
+                :aria-invalid="Boolean(error) || undefined"
+                :aria-describedby="error ? 'complete-username-help complete-error' : 'complete-username-help'"
               />
-              <p class="text-muted-foreground text-xs">
-                Used for your public collection link — you can set or change it later.
+              <p id="complete-username-help" class="text-muted-foreground text-xs">
+                3–20 letters, numbers, or underscores. Used for public links; you can set it later.
               </p>
             </div>
             <div class="flex flex-col gap-2">
@@ -99,23 +115,29 @@ async function onSubmit() {
               <Input
                 id="password"
                 v-model="password"
+                name="password"
                 type="password"
                 autocomplete="new-password"
                 minlength="8"
+                maxlength="1024"
                 required
+                :aria-invalid="Boolean(error) || undefined"
+                :aria-describedby="error ? 'complete-password-help complete-error' : 'complete-password-help'"
               />
-              <p class="text-muted-foreground text-xs">Must be at least 8 characters.</p>
+              <p id="complete-password-help" class="text-muted-foreground text-xs">
+                Must be at least 8 characters.
+              </p>
             </div>
-            <p v-if="error" class="text-destructive text-sm" role="alert">
+            <p v-if="error" id="complete-error" class="text-destructive text-sm" role="alert">
               {{ error }}
               <template v-if="error === 'invalid or expired token'">
-                <RouterLink to="/register" class="text-primary font-medium hover:underline">
+                <RouterLink :to="registerTo" class="text-primary font-medium hover:underline">
                   Request a fresh link
                 </RouterLink>
                 <!-- A dead token usually means the registration was already
                      completed (the link is single-use) — signing in is the fix. -->
                 or, if you already finished creating your account,
-                <RouterLink to="/login" class="text-primary font-medium hover:underline">
+                <RouterLink :to="loginTo" class="text-primary font-medium hover:underline">
                   sign in
                 </RouterLink>
               </template>
@@ -125,6 +147,26 @@ async function onSubmit() {
               <Loader2 v-if="loading" class="animate-spin" />
               {{ loading ? 'Creating account...' : 'Create account' }}
             </Button>
+            <p class="text-muted-foreground text-center text-xs text-pretty">
+              By creating an account, you agree to the
+              <RouterLink
+                to="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-primary underline-offset-4 hover:underline"
+              >
+                Terms of Service
+              </RouterLink>
+              and
+              <RouterLink
+                to="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-primary underline-offset-4 hover:underline"
+              >
+                Privacy Policy</RouterLink
+              >.
+            </p>
           </form>
         </CardContent>
       </template>

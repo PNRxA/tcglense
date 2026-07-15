@@ -7,15 +7,16 @@ vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
     ...actual,
+    completeRegistration: vi.fn<typeof actual.completeRegistration>(),
     login: vi.fn<typeof actual.login>(),
     register: vi.fn<typeof actual.register>(),
     logout: vi.fn<typeof actual.logout>(),
-    me: vi.fn<typeof actual.me>(),
     refresh: vi.fn<typeof actual.refresh>(),
+    resetPassword: vi.fn<typeof actual.resetPassword>(),
   }
 })
 
-import { ApiError, login, logout, me, refresh } from '@/lib/api'
+import { ApiError, completeRegistration, login, logout, refresh, resetPassword } from '@/lib/api'
 import type { User } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -28,12 +29,19 @@ const USER: User = {
   handle: null,
 }
 
+const OTHER_USER: User = {
+  ...USER,
+  id: 2,
+  email: 'misty@cerulean.gym',
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
+  vi.mocked(completeRegistration).mockReset()
   vi.mocked(login).mockReset()
   vi.mocked(logout).mockReset()
-  vi.mocked(me).mockReset()
   vi.mocked(refresh).mockReset()
+  vi.mocked(resetPassword).mockReset()
 })
 
 describe('auth store: token is never persisted to web storage', () => {
@@ -56,7 +64,7 @@ describe('auth store: token is never persisted to web storage', () => {
 
 describe('auth store: single-flight refresh', () => {
   it('coalesces concurrent refreshes into one rotation of the single-use cookie', async () => {
-    let resolveRefresh!: (value: { access_token: string }) => void
+    let resolveRefresh!: (value: { access_token: string; user: User }) => void
     vi.mocked(refresh).mockReturnValue(
       new Promise((resolve) => {
         resolveRefresh = resolve
@@ -66,15 +74,29 @@ describe('auth store: single-flight refresh', () => {
     const store = useAuthStore()
     const first = store.refresh()
     const second = store.refresh()
+    await Promise.resolve()
 
     // Both callers share one in-flight request — the rotating cookie is submitted
     // exactly once (a parallel submit would look like reuse and burn the session).
     expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1)
 
-    resolveRefresh({ access_token: 'rotated' })
+    resolveRefresh({ access_token: 'rotated', user: USER })
     expect(await first).toBe(true)
     expect(await second).toBe(true)
     expect(store.accessToken).toBe('rotated')
+    expect(store.user).toEqual(USER)
+  })
+
+  it('replaces the cached identity together with the token after a cross-tab account switch', async () => {
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'account-b-token', user: OTHER_USER })
+
+    const store = useAuthStore()
+    store.accessToken = 'account-a-token'
+    store.user = USER
+
+    expect(await store.refresh()).toBe(true)
+    expect(store.accessToken).toBe('account-b-token')
+    expect(store.user).toEqual(OTHER_USER)
   })
 
   it('clears session state only after the 401 retry also fails', async () => {
@@ -109,7 +131,7 @@ describe('auth store: single-flight refresh', () => {
       // must pick that cookie up instead of signing the tab out.
       vi.mocked(refresh)
         .mockRejectedValueOnce(new ApiError('refresh token superseded', 401))
-        .mockResolvedValueOnce({ access_token: 'winner-cookie-token' })
+        .mockResolvedValueOnce({ access_token: 'winner-cookie-token', user: USER })
 
       const store = useAuthStore()
       store.accessToken = 'stale'
@@ -183,7 +205,7 @@ describe('auth store: cross-tab refresh coordination', () => {
     >((_name, _opts, fn) => fn())
     Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })
     try {
-      vi.mocked(refresh).mockResolvedValue({ access_token: 'locked-fresh' })
+      vi.mocked(refresh).mockResolvedValue({ access_token: 'locked-fresh', user: USER })
 
       const store = useAuthStore()
       expect(await store.refresh()).toBe(true)
@@ -204,7 +226,7 @@ describe('auth store: cross-tab refresh coordination', () => {
     // Older browsers (Safari < 15.4) expose no navigator.locks; refresh must still
     // work — the server-side fix keeps an unsynchronized refresh race-safe.
     expect('locks' in navigator).toBe(false)
-    vi.mocked(refresh).mockResolvedValue({ access_token: 'unlocked-fresh' })
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'unlocked-fresh', user: USER })
 
     const store = useAuthStore()
     expect(await store.refresh()).toBe(true)
@@ -213,11 +235,12 @@ describe('auth store: cross-tab refresh coordination', () => {
 })
 
 describe('auth store: authFetch refresh-and-retry', () => {
-  it('refreshes once on a 401 and retries the call', async () => {
-    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh' })
+  it('refreshes once on a 401 and retries the call for the same account', async () => {
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh', user: USER })
 
     const store = useAuthStore()
     store.accessToken = 'stale'
+    store.user = USER
 
     const call = vi
       .fn<(token: string) => Promise<string>>()
@@ -227,10 +250,29 @@ describe('auth store: authFetch refresh-and-retry', () => {
     await expect(store.authFetch(call)).resolves.toBe('ok')
     expect(call).toHaveBeenCalledTimes(2)
     expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1)
+    expect(store.user).toEqual(USER)
+  })
+
+  it('never replays an operation when refresh switches to another account', async () => {
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'account-b-token', user: OTHER_USER })
+
+    const store = useAuthStore()
+    store.accessToken = 'account-a-token'
+    store.user = USER
+
+    const call = vi
+      .fn<(token: string) => Promise<string>>()
+      .mockRejectedValueOnce(new ApiError('expired', 401))
+      .mockResolvedValueOnce('must-not-run')
+
+    await expect(store.authFetch(call)).rejects.toMatchObject({ status: 401 })
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(store.accessToken).toBe('account-b-token')
+    expect(store.user).toEqual(OTHER_USER)
   })
 
   it('clears local state when the retry still 401s — WITHOUT revoking the cookie', async () => {
-    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh' })
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh', user: USER })
     vi.mocked(logout).mockResolvedValue(undefined)
 
     const store = useAuthStore()
@@ -273,8 +315,7 @@ describe('auth store: authFetch refresh-and-retry', () => {
 
 describe('auth store: sessionResolved latch', () => {
   it('flips true once the initial restore settles', async () => {
-    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh' })
-    vi.mocked(me).mockResolvedValue({ user: USER })
+    vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh', user: USER })
 
     const store = useAuthStore()
     expect(store.sessionResolved).toBe(false)
@@ -317,5 +358,97 @@ describe('auth store: logout always clears local state', () => {
     await store.logout()
     expect(store.accessToken).toBeNull()
     expect(store.user).toBeNull()
+  })
+
+  it('orders logout after an older refresh and ignores that refresh result locally', async () => {
+    const events: string[] = []
+    let resolveRefresh!: (value: { access_token: string; user: User }) => void
+    vi.mocked(refresh).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRefresh = (value) => {
+          events.push('refresh-response')
+          resolve(value)
+        }
+      }),
+    )
+    vi.mocked(logout).mockImplementation(async () => {
+      events.push('logout')
+    })
+
+    const store = useAuthStore()
+    store.accessToken = 'old-token'
+    store.user = USER
+    const refreshing = store.refresh()
+    await Promise.resolve()
+    const loggingOut = store.logout()
+
+    expect(store.accessToken).toBeNull()
+    expect(vi.mocked(logout)).not.toHaveBeenCalled()
+    resolveRefresh({ access_token: 'late-token', user: USER })
+
+    await expect(refreshing).resolves.toBe(false)
+    await loggingOut
+    expect(events).toEqual(['refresh-response', 'logout'])
+    expect(store.accessToken).toBeNull()
+    expect(store.user).toBeNull()
+  })
+})
+
+describe('auth store: registration completion ordering', () => {
+  it('waits out and ignores an older restore before adopting the completed account', async () => {
+    const NEW_USER = { ...OTHER_USER, id: 3, email: 'brock@pewter.gym' }
+    let resolveRefresh!: (value: { access_token: string; user: User }) => void
+    let resolveCompletion!: (value: { access_token: string; user: User }) => void
+    vi.mocked(refresh).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRefresh = resolve
+      }),
+    )
+    vi.mocked(completeRegistration).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCompletion = resolve
+      }),
+    )
+
+    const store = useAuthStore()
+    const restoring = store.tryRestore()
+    await Promise.resolve()
+    store.prepareForRegistrationCompletion()
+    const completing = store.completeRegistration({
+      token: 'email-token',
+      password: 'correct horse battery staple',
+      username: null,
+    })
+
+    expect(store.sessionResolved).toBe(true)
+    expect(vi.mocked(completeRegistration)).not.toHaveBeenCalled()
+    resolveRefresh({ access_token: 'old-account-token', user: USER })
+
+    await expect(restoring).resolves.toBe(false)
+    expect(store.accessToken).toBeNull()
+    expect(store.user).toBeNull()
+    expect(vi.mocked(completeRegistration)).toHaveBeenCalledTimes(1)
+    resolveCompletion({ access_token: 'completed-token', user: NEW_USER })
+    await completing
+    expect(store.accessToken).toBe('completed-token')
+    expect(store.user).toEqual(NEW_USER)
+  })
+})
+
+describe('auth store: password reset session cleanup', () => {
+  it('removes the stale refresh cookie and clears local auth after a successful reset', async () => {
+    vi.mocked(resetPassword).mockResolvedValue(undefined)
+    vi.mocked(logout).mockResolvedValue(undefined)
+    const store = useAuthStore()
+    store.accessToken = 'old-access-token'
+    store.user = USER
+
+    await store.resetPassword({ token: 'reset-token', password: 'new secure password' })
+
+    expect(vi.mocked(resetPassword)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(logout)).toHaveBeenCalledTimes(1)
+    expect(store.accessToken).toBeNull()
+    expect(store.user).toBeNull()
+    expect(store.sessionResolved).toBe(true)
   })
 })

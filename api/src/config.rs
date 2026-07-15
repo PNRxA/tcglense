@@ -1,4 +1,6 @@
-use std::{env, path::PathBuf};
+use std::{env, net::IpAddr, path::PathBuf};
+
+use url::{Host, Url};
 
 /// Application configuration, sourced from environment variables.
 ///
@@ -133,8 +135,8 @@ pub struct Config {
     /// doesn't become an open proxy to the upstream services. See
     /// [`crate::handlers::mirror`].
     pub mirror_enabled: bool,
-    /// Whether new-account registration is accepted. Default `true` (open). Set
-    /// `false` to temporarily stop new signups: `POST /api/auth/register` and
+    /// Whether new-account registration is accepted. Default `false` (closed). Set
+    /// `true` only when the signup dependencies are ready: `POST /api/auth/register` and
     /// `/complete-registration` are refused with a `403`, a password reset can't
     /// *activate* a still-pending (password-less) account either, and the SPA
     /// renders [`Self::signups_disabled_message`] and disables its signup form (the
@@ -180,7 +182,7 @@ impl std::fmt::Debug for Config {
     /// Redacts `jwt_secret` so the signing key can never leak via `{:?}`/logs.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
-            .field("database_url", &self.database_url)
+            .field("database_url", &redact_database_url(&self.database_url))
             .field("jwt_secret", &"[redacted]")
             .field(
                 "access_token_expiry_minutes",
@@ -235,7 +237,10 @@ impl std::fmt::Debug for Config {
             .field("fingerprint_algo_version", &self.fingerprint_algo_version)
             .field("fingerprint_top_k", &self.fingerprint_top_k)
             .field("fingerprint_max_distance", &self.fingerprint_max_distance)
-            .field("fingerprint_import_enabled", &self.fingerprint_import_enabled)
+            .field(
+                "fingerprint_import_enabled",
+                &self.fingerprint_import_enabled,
+            )
             .finish()
     }
 }
@@ -246,9 +251,19 @@ impl std::fmt::Debug for Config {
 /// to start. A warning is logged whenever this fallback is used.
 const DEV_ONLY_JWT_SECRET: &str = "dev-only-insecure-jwt-secret-do-not-use-in-production";
 
+/// The old `.env.example` value was long enough to pass the length check despite
+/// being public. Reject it explicitly so an existing copied config cannot silently
+/// become a shared production signing key after an upgrade.
+const LEGACY_EXAMPLE_JWT_SECRET: &str =
+    "change-me-run-openssl-rand-hex-32-to-generate-a-real-secret";
+
 /// Minimum acceptable length (in bytes) for a real `JWT_SECRET`. HS256 keys
 /// shorter than this are brute-forceable offline.
 const MIN_JWT_SECRET_LEN: usize = 32;
+
+/// Resend's shared onboarding sender is intentionally development-only: it can
+/// deliver only to the Resend account owner's address, not arbitrary signups.
+const DEFAULT_EMAIL_FROM: &str = "TCGLense <onboarding@resend.dev>";
 
 /// Generic notice shown when new signups are disabled (`SIGNUPS_ENABLED=false`)
 /// and no custom `SIGNUPS_DISABLED_MESSAGE` is configured. Surfaced both in the
@@ -272,10 +287,12 @@ fn resolve_jwt_secret(
 ) -> Result<String, String> {
     match provided {
         Some(secret) if !secret.trim().is_empty() => {
-            if secret == DEV_ONLY_JWT_SECRET {
-                return Err("JWT_SECRET is set to the public dev-only fallback value. Generate a \
+            if matches!(secret, DEV_ONLY_JWT_SECRET | LEGACY_EXAMPLE_JWT_SECRET) {
+                return Err(
+                    "JWT_SECRET is set to a public development/example value. Generate a \
                             unique secret, e.g. `openssl rand -hex 32`."
-                    .to_string());
+                        .to_string(),
+                );
             }
             if secret.len() < MIN_JWT_SECRET_LEN {
                 return Err(format!(
@@ -288,11 +305,13 @@ fn resolve_jwt_secret(
         }
         _ => {
             if !allow_insecure_dev_secret {
-                return Err("JWT_SECRET must be set. Refusing to start with the public, \
+                return Err(
+                    "JWT_SECRET must be set. Refusing to start with the public, \
                             compiled-in dev-only signing secret. Set JWT_SECRET to a unique \
                             high-entropy value, or set ALLOW_INSECURE_DEV_SECRET=true for local \
                             development only."
-                    .to_string());
+                        .to_string(),
+                );
             }
             tracing::warn!(
                 "JWT_SECRET is not set; using the INSECURE, publicly-known dev-only secret \
@@ -313,20 +332,21 @@ fn resolve_jwt_secret(
 /// widget can't render, yet the API demands a token, so *every* auth submission
 /// 400s. Kept pure (no env access, no panic) so the boot-closed check is
 /// unit-testable; [`Config::from_env`] turns `Err` into a startup panic.
-fn validate_turnstile_pair(
-    secret_key: Option<&str>,
-    site_key: Option<&str>,
-) -> Result<(), String> {
+fn validate_turnstile_pair(secret_key: Option<&str>, site_key: Option<&str>) -> Result<(), String> {
     match (secret_key.is_some(), site_key.is_some()) {
-        (true, false) => Err("TURNSTILE_SECRET_KEY is set but TURNSTILE_SITE_KEY is not. Both \
+        (true, false) => Err(
+            "TURNSTILE_SECRET_KEY is set but TURNSTILE_SITE_KEY is not. Both \
              must be set together: the API verifies the CAPTCHA token with the secret while the \
              browser widget is keyed with the site key (served to the SPA via GET /api/config). \
              Set TURNSTILE_SITE_KEY too, or unset both to disable CAPTCHA."
-            .to_string()),
-        (false, true) => Err("TURNSTILE_SITE_KEY is set but TURNSTILE_SECRET_KEY is not. Both \
+                .to_string(),
+        ),
+        (false, true) => Err(
+            "TURNSTILE_SITE_KEY is set but TURNSTILE_SECRET_KEY is not. Both \
              must be set together: the browser widget would render but the API would not verify \
              its token. Set TURNSTILE_SECRET_KEY too, or unset both to disable CAPTCHA."
-            .to_string()),
+                .to_string(),
+        ),
         _ => Ok(()),
     }
 }
@@ -357,17 +377,147 @@ pub(crate) fn env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
     env_trimmed(key).and_then(|v| v.trim().parse::<T>().ok())
 }
 
-/// Whether this looks like an internet-facing deployment rather than local dev —
-/// used *only* to decide whether to emit the production-posture startup warnings
-/// (it never changes behaviour). The signal is a non-local `PUBLIC_SITE_URL` (which
-/// a real deploy must set for correct sitemap/email links) or a concrete
-/// non-loopback bind host. The dev-common `0.0.0.0` wildcard is treated as local so
-/// container dev doesn't trip the warnings.
+/// Whether this looks like an internet-facing deployment rather than local dev.
+/// This drives both fail-closed auth validation and advisory posture warnings. The
+/// signal is a non-local `PUBLIC_SITE_URL` (which a real deploy must set for correct
+/// sitemap/email links) or a concrete non-local bind host. Wildcard and private
+/// addresses remain local so container and LAN development can opt into the explicit
+/// development-only auth bypass.
 fn looks_like_production(host: &str, public_site_url: &str) -> bool {
-    let site_is_local =
-        public_site_url.contains("localhost") || public_site_url.contains("127.0.0.1");
-    let host_is_local = matches!(host, "127.0.0.1" | "::1" | "localhost" | "0.0.0.0");
+    let site_is_local = Url::parse(public_site_url).ok().is_some_and(|url| {
+        url.host().is_some_and(|host| match host {
+            Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+            Host::Ipv4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+            Host::Ipv6(ip) => {
+                ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+            }
+        })
+    });
+    let host_is_local = host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| match ip {
+                IpAddr::V4(ip) => {
+                    ip.is_loopback() || ip.is_unspecified() || ip.is_private() || ip.is_link_local()
+                }
+                IpAddr::V6(ip) => {
+                    ip.is_loopback()
+                        || ip.is_unspecified()
+                        || ip.is_unique_local()
+                        || ip.is_unicast_link_local()
+                }
+            });
     !site_is_local || !host_is_local
+}
+
+/// Validate and canonicalise the configured public SPA origin. Email links carry
+/// credentials, so accepting an arbitrary string (credentials, query, fragment,
+/// or a non-HTTP scheme) is both an operational footgun and a phishing risk.
+fn normalize_public_site_url(raw: &str) -> Result<String, String> {
+    let value = raw.trim().trim_end_matches('/');
+    let url = Url::parse(value)
+        .map_err(|_| "PUBLIC_SITE_URL must be an absolute http(s) origin".to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        return Err(
+            "PUBLIC_SITE_URL must be a bare http(s) origin with no credentials, path, query, or fragment"
+                .to_string(),
+        );
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+/// Internet-facing deployments must not inherit development auth behavior. Keep
+/// the convenient local bypasses, but fail startup before serving a public app
+/// whose signup links cannot prove mailbox ownership or whose cookies ride HTTP.
+fn validate_public_auth_posture(
+    host: &str,
+    public_site_url: &str,
+    jwt_secret: &str,
+    cookie_secure: bool,
+    resend_api_key: Option<&str>,
+    email_from: &str,
+    signups_enabled: bool,
+    turnstile_secret_key: Option<&str>,
+    allow_insecure_dev_auth: bool,
+) -> Result<(), String> {
+    let public = looks_like_production(host, public_site_url);
+    if !public {
+        if signups_enabled && resend_api_key.is_none() && !allow_insecure_dev_auth {
+            return Err(
+                "ALLOW_INSECURE_DEV_AUTH=true is required to enable local signups without email; this bypass permits registration without mailbox proof"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    if allow_insecure_dev_auth {
+        return Err(
+            "ALLOW_INSECURE_DEV_AUTH cannot be used by an internet-facing deployment".to_string(),
+        );
+    }
+    if !public_site_url.starts_with("https://") {
+        return Err("PUBLIC_SITE_URL must use https for an internet-facing deployment".to_string());
+    }
+    if jwt_secret == DEV_ONLY_JWT_SECRET {
+        return Err(
+            "ALLOW_INSECURE_DEV_SECRET cannot be used by an internet-facing deployment".to_string(),
+        );
+    }
+    if !cookie_secure {
+        return Err(
+            "COOKIE_SECURE must be true for an internet-facing deployment".to_string(),
+        );
+    }
+    if signups_enabled {
+        if resend_api_key.is_none() {
+            return Err(
+                "RESEND_API_KEY is required before enabling signups on an internet-facing deployment; refusing the mailbox-proof bypass"
+                    .to_string(),
+            );
+        }
+        if sender_uses_resend_dev(email_from) {
+            return Err(
+                "EMAIL_FROM cannot use resend.dev when public signups are enabled; configure a sender on your verified domain"
+                    .to_string(),
+            );
+        }
+        if turnstile_secret_key.is_none() {
+            return Err(
+                "TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY are required before enabling signups on an internet-facing deployment"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn sender_uses_resend_dev(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    let address = value
+        .split_once('<')
+        .and_then(|(_, tail)| tail.split_once('>'))
+        .map_or(value.as_str(), |(address, _)| address.trim());
+    address
+        .rsplit_once('@')
+        .is_some_and(|(_, domain)| domain == "resend.dev" || domain.ends_with(".resend.dev"))
+}
+
+fn redact_database_url(database_url: &str) -> String {
+    if database_url.starts_with("sqlite:") {
+        return database_url.to_string();
+    }
+    database_url
+        .split_once("://")
+        .map(|(scheme, _)| format!("{scheme}://[redacted]"))
+        .unwrap_or_else(|| "[redacted]".to_string())
 }
 
 impl Config {
@@ -408,10 +558,10 @@ impl Config {
         // Public origin of the SPA, used for the absolute <loc>s in the sitemaps.
         // Defaults to the Vite dev origin so dev/e2e produce valid URLs. Trailing
         // slashes are trimmed so `base + "/cards/..."` never yields a doubled slash.
-        let public_site_url = env_trimmed("PUBLIC_SITE_URL")
-            .map(|v| v.trim().trim_end_matches('/').to_string())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "http://localhost:5173".to_string());
+        let public_site_url_raw =
+            env_trimmed("PUBLIC_SITE_URL").unwrap_or_else(|| "http://localhost:5173".to_string());
+        let public_site_url = normalize_public_site_url(&public_site_url_raw)
+            .unwrap_or_else(|message| panic!("{message}"));
 
         let data_dir = env_trimmed("DATA_DIR")
             .map(PathBuf::from)
@@ -436,8 +586,8 @@ impl Config {
 
         // Resend's shared onboarding sender only delivers to the account owner's
         // own address — enough for dev; production sets a verified-domain sender.
-        let email_from = env_trimmed("EMAIL_FROM")
-            .unwrap_or_else(|| "TCGLense <onboarding@resend.dev>".to_string());
+        let email_from =
+            env_trimmed("EMAIL_FROM").unwrap_or_else(|| DEFAULT_EMAIL_FROM.to_string());
 
         // Unset = CAPTCHA disabled (checks pass) — see the field.
         let turnstile_secret_key = env_trimmed("TURNSTILE_SECRET_KEY");
@@ -445,9 +595,10 @@ impl Config {
         // (so the shipped web bundle needs no rebuild to change it). Paired with the
         // secret — a mismatched pair fails the boot closed (see the field docs).
         let turnstile_site_key = env_trimmed("TURNSTILE_SITE_KEY");
-        if let Err(message) =
-            validate_turnstile_pair(turnstile_secret_key.as_deref(), turnstile_site_key.as_deref())
-        {
+        if let Err(message) = validate_turnstile_pair(
+            turnstile_secret_key.as_deref(),
+            turnstile_site_key.as_deref(),
+        ) {
             panic!("{message}");
         }
 
@@ -466,7 +617,6 @@ impl Config {
         // "startup only" (no periodic refresh). An unparseable value falls back to
         // the default rather than disabling refreshes silently.
         let sync_interval_hours = env_parse::<u64>("SYNC_INTERVAL_HOURS").unwrap_or(24);
-
         // Seed a dummy offline catalog instead of syncing real data. Parsed like the
         // other boolean flags; main.rs gives it precedence over the sync settings.
         let seed_dummy_data = env_bool("SEED_DUMMY_DATA", false);
@@ -490,27 +640,42 @@ impl Config {
         // public site turns it on (paired with SYNC_FROM_UPSTREAM=true).
         let mirror_enabled = env_bool("MIRROR_ENABLED", false);
 
-        // New signups are open by default; SIGNUPS_ENABLED=false temporarily refuses
-        // registration (existing logins are untouched). The optional message is the
-        // user-facing notice; unset falls back to a generic one at read time.
-        let signups_enabled = env_bool("SIGNUPS_ENABLED", true);
+        // New signups are closed by default. Opening registration is an explicit
+        // launch action; existing logins are untouched. Local development may opt
+        // into the no-email token bypass separately below.
+        let signups_enabled = env_bool("SIGNUPS_ENABLED", false);
         let signups_disabled_message = env_trimmed("SIGNUPS_DISABLED_MESSAGE");
+        let allow_insecure_dev_auth = env_bool("ALLOW_INSECURE_DEV_AUTH", false);
 
         // The visual-scanner fingerprint build is opt-in and off by default (only the
         // operator's index-building instance sets it); the match knobs have sane
         // defaults and are clamped where read.
         let fingerprint_build_enabled = env_bool("FINGERPRINT_BUILD_ENABLED", false);
-        let fingerprint_algo_version =
-            env_parse::<i32>("FINGERPRINT_ALGO_VERSION").unwrap_or(1);
+        let fingerprint_algo_version = env_parse::<i32>("FINGERPRINT_ALGO_VERSION").unwrap_or(1);
         let fingerprint_top_k = env_parse::<u32>("FINGERPRINT_TOP_K")
             .filter(|k| *k > 0)
             .unwrap_or(8)
             .min(25);
-        let fingerprint_max_distance =
-            env_parse::<u32>("FINGERPRINT_MAX_DISTANCE").unwrap_or(96).min(256);
+        let fingerprint_max_distance = env_parse::<u32>("FINGERPRINT_MAX_DISTANCE")
+            .unwrap_or(96)
+            .min(256);
         // On by default so an ordinary self-host's scanner just works (it pulls the tiny
         // prebuilt index from the mirror); the build instance ignores it (it has its own).
         let fingerprint_import_enabled = env_bool("FINGERPRINT_IMPORT_ENABLED", true);
+
+        if let Err(message) = validate_public_auth_posture(
+            &host,
+            &public_site_url,
+            &jwt_secret,
+            cookie_secure,
+            resend_api_key.as_deref(),
+            &email_from,
+            signups_enabled,
+            turnstile_secret_key.as_deref(),
+            allow_insecure_dev_auth,
+        ) {
+            panic!("{message}");
+        }
 
         Config {
             database_url,
@@ -630,6 +795,7 @@ mod tests {
     #[test]
     fn debug_redacts_the_jwt_secret() {
         let config = Config {
+            database_url: "postgres://tcglense:database-password@db/tcglense".to_string(),
             jwt_secret: "super-secret-signing-key-value".to_string(),
             cookie_secure: true,
             ..crate::test_support::test_config()
@@ -638,6 +804,7 @@ mod tests {
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[redacted]"));
         assert!(!rendered.contains("super-secret-signing-key-value"));
+        assert!(!rendered.contains("database-password"));
     }
 
     // ----- JWT secret policy (boot-closed) -----
@@ -658,6 +825,13 @@ mod tests {
         // Even with the insecure opt-in, an *explicitly* configured public secret
         // is still rejected (the opt-in only covers an absent secret).
         assert!(resolve_jwt_secret(Some(DEV_ONLY_JWT_SECRET), true).is_err());
+    }
+
+    #[test]
+    fn jwt_secret_rejects_the_legacy_public_example_even_when_long() {
+        assert!(LEGACY_EXAMPLE_JWT_SECRET.len() >= MIN_JWT_SECRET_LEN);
+        assert!(resolve_jwt_secret(Some(LEGACY_EXAMPLE_JWT_SECRET), false).is_err());
+        assert!(resolve_jwt_secret(Some(LEGACY_EXAMPLE_JWT_SECRET), true).is_err());
     }
 
     #[test]
@@ -718,9 +892,187 @@ mod tests {
         // A container binding 0.0.0.0 with a still-local site URL isn't flagged.
         assert!(!looks_like_production("0.0.0.0", "http://localhost:5173"));
         assert!(!looks_like_production("::1", "http://127.0.0.1:8080"));
-        // A real public site URL, or a concrete non-loopback bind host, is prod.
+        assert!(!looks_like_production(
+            "0.0.0.0",
+            "http://192.168.1.20:8080"
+        ));
+        assert!(!looks_like_production("10.0.0.5", "http://localhost:5173"));
+        // A real public site URL is production even when the process binds a
+        // wildcard/private container interface.
         assert!(looks_like_production("0.0.0.0", "https://tcglense.app"));
-        assert!(looks_like_production("10.0.0.5", "http://localhost:5173"));
+        assert!(looks_like_production("10.0.0.5", "https://tcglense.app"));
+        // Hostname parsing must be exact: an attacker-controlled domain merely
+        // containing the word localhost is still an internet-facing origin.
+        assert!(looks_like_production(
+            "0.0.0.0",
+            "https://localhost.example.com"
+        ));
+    }
+
+    #[test]
+    fn public_site_url_accepts_only_a_bare_http_origin() {
+        assert_eq!(
+            normalize_public_site_url(" https://tcglense.app/ ").as_deref(),
+            Ok("https://tcglense.app")
+        );
+        assert!(normalize_public_site_url("javascript:alert(1)").is_err());
+        assert!(normalize_public_site_url("https://user:pass@example.com").is_err());
+        assert!(normalize_public_site_url("https://example.com/app").is_err());
+        assert!(normalize_public_site_url("https://example.com/?next=evil").is_err());
+    }
+
+    #[test]
+    fn internet_facing_auth_posture_fails_closed() {
+        let public_site = "https://tcglense.app";
+        let real_secret = "0123456789abcdef0123456789abcdef";
+
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            "http://tcglense.app",
+            real_secret,
+            true,
+            Some("re_live_key"),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            DEV_ONLY_JWT_SECRET,
+            true,
+            Some("re_live_key"),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            None,
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            Some("re_live_key"),
+            DEFAULT_EMAIL_FROM,
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            Some("re_live_key"),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            None,
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            false,
+            Some("re_live_key"),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            Some("re_live_key"),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            true,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            Some("re_live_key"),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_ok());
+        // Closed registration is a safe bootstrap posture while the operator is
+        // still provisioning the widget keys.
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            None,
+            DEFAULT_EMAIL_FROM,
+            false,
+            None,
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn local_no_email_signup_bypass_requires_an_explicit_opt_in() {
+        assert!(validate_public_auth_posture(
+            "127.0.0.1",
+            "http://localhost:5173",
+            DEV_ONLY_JWT_SECRET,
+            false,
+            None,
+            DEFAULT_EMAIL_FROM,
+            true,
+            None,
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "127.0.0.1",
+            "http://localhost:5173",
+            DEV_ONLY_JWT_SECRET,
+            false,
+            None,
+            DEFAULT_EMAIL_FROM,
+            true,
+            None,
+            true,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn resend_development_sender_detection_handles_display_names_and_case() {
+        assert!(sender_uses_resend_dev(DEFAULT_EMAIL_FROM));
+        assert!(sender_uses_resend_dev("Example <USER@RESEND.DEV>"));
+        assert!(sender_uses_resend_dev("user@mail.resend.dev"));
+        assert!(!sender_uses_resend_dev("TCGLense <hello@tcglense.app>"));
+        assert!(!sender_uses_resend_dev("user@resend.dev.example.com"));
     }
 
     #[test]

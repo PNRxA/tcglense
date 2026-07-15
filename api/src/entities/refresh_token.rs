@@ -26,6 +26,9 @@ pub struct Model {
     pub revoked_at: Option<DateTimeUtc>,
     pub created_at: DateTimeUtc,
     pub replaced_by_id: Option<i32>,
+    /// Account session generation captured at issuance. Rotation is rejected
+    /// after the owning user's generation advances.
+    pub session_version: i64,
     pub family_id: Option<i32>,
 }
 

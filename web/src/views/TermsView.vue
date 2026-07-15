@@ -12,10 +12,9 @@ usePageMeta({
 </script>
 
 <template>
-  <!-- Plain-language terms drafted from actual system behavior — maintainer should review before launch; not legal advice. -->
   <LegalPageLayout
     title="Terms of Service"
-    last-updated="July 4, 2026"
+    last-updated="July 15, 2026"
     sibling-label="Privacy Policy"
     sibling-to="/privacy"
   >
@@ -73,9 +72,11 @@ usePageMeta({
     <section class="space-y-3">
       <h2 class="text-xl font-semibold tracking-tight">6. Your data</h2>
       <p class="text-muted-foreground leading-7 text-pretty">
-        Your collection and wish-list entries remain yours. Imports from external services (such as
-        Archidekt link imports, or CSV exports from Archidekt or Moxfield) are processed only to
-        fill your own collection.
+        Your collection, wish-list, and deck entries remain yours. Imports from external services
+        (such as Archidekt link imports, or CSV exports from Archidekt or Moxfield) are processed to
+        fill your own collection. Collections and decks are private by default; if you choose to
+        publish one, you can make it private again at any time. You are responsible for content you
+        put in a public deck name or description.
       </p>
     </section>
 

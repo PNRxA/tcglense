@@ -12,7 +12,11 @@ export function cn(...inputs: ClassValue[]) {
  * or backslash tricks `/\host`).
  */
 export function safeInternalPath(target: unknown): string | null {
-  if (typeof target !== 'string' || !target.startsWith('/')) return null
-  if (target[1] === '/' || target[1] === '\\') return null
+  if (typeof target !== 'string' || target.length > 2_048 || !target.startsWith('/')) return null
+  if (target.startsWith('//') || target.includes('\\')) return null
+  for (const char of target) {
+    const codepoint = char.codePointAt(0) ?? 0
+    if (codepoint <= 0x1f || (codepoint >= 0x7f && codepoint <= 0x9f)) return null
+  }
   return target
 }

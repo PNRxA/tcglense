@@ -7,6 +7,11 @@ import type {
   UsernameAvailability,
 } from './generated'
 
+// Auth/session requests must settle: the router waits for the initial refresh before
+// entering guest-only routes, so an unbounded half-open POST could otherwise make
+// /login and /register unreachable. Long-running non-auth POSTs remain unbounded.
+const AUTH_REQUEST_TIMEOUT_MS = 15_000
+
 // The response types are generated from the API's Rust DTOs into `./generated` and
 // re-exported here; the request payloads stay hand-written client types.
 export type {
@@ -26,6 +31,8 @@ export type {
 // step (`completeRegistration`), keyed by the emailed token.
 export interface RegisterPayload {
   email: string
+  /** Sanitized in-app destination to preserve through the emailed completion link. */
+  redirect?: string
   captcha_token?: string
 }
 
@@ -67,12 +74,16 @@ export interface ResetPasswordPayload {
 
 // Step one of registration. The response is deliberately generic — the same body
 // comes back whether the address was new, mid-registration, or already taken (no
-// enumeration oracle), and the completion link always arrives by email.
+// enumeration oracle), and an eligible address receives the completion link by email.
 // `completion_token` is `null` when a real email provider is configured; it is
 // only non-null when email sending is disabled (dev/e2e), carrying the token so
 // the SPA can drive straight to the set-password step. Mints no session.
 export function register(payload: RegisterPayload): Promise<RegisterResponse> {
-  return request<RegisterResponse>('/api/auth/register', { method: 'POST', body: payload })
+  return request<RegisterResponse>('/api/auth/register', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 // Step two: spend the emailed (or dev-bypass) token on a password + optional
@@ -82,15 +93,23 @@ export function completeRegistration(payload: CompleteRegistrationPayload): Prom
   return request<AuthResponse>('/api/auth/complete-registration', {
     method: 'POST',
     body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
   })
 }
 
 export function login(payload: LoginPayload): Promise<AuthResponse> {
-  return request<AuthResponse>('/api/auth/login', { method: 'POST', body: payload })
+  return request<AuthResponse>('/api/auth/login', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 export function me(token: string): Promise<{ user: User }> {
-  return request<{ user: User }>('/api/auth/me', { token })
+  return request<{ user: User }>('/api/auth/me', {
+    token,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 /** Set or change the signed-in user's username (issue #362). The server allocates a
@@ -119,36 +138,55 @@ export function checkUsername(token: string, username: string): Promise<Username
 const REFRESH_TIMEOUT_MS = 15_000
 
 export function refresh(): Promise<RefreshResponse> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS)
   return request<RefreshResponse>('/api/auth/refresh', {
     method: 'POST',
-    signal: controller.signal,
     keepalive: true,
-  }).finally(() => clearTimeout(timer))
+    timeoutMs: REFRESH_TIMEOUT_MS,
+  })
 }
 
 export function logout(): Promise<void> {
-  return request<void>('/api/auth/logout', { method: 'POST' })
+  return request<void>('/api/auth/logout', {
+    method: 'POST',
+    // Let revocation + the removal Set-Cookie finish if navigation closes the page.
+    keepalive: true,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 /** Consume an emailed verification token; the user signs in normally after. */
 export function verifyEmail(payload: VerifyEmailPayload): Promise<void> {
-  return request<void>('/api/auth/verify-email', { method: 'POST', body: payload })
+  return request<void>('/api/auth/verify-email', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 /** Always resolves generically (204) — the server never reveals whether the
  * address has an account. */
 export function resendVerification(payload: ResendVerificationPayload): Promise<void> {
-  return request<void>('/api/auth/resend-verification', { method: 'POST', body: payload })
+  return request<void>('/api/auth/resend-verification', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 /** Always resolves generically (204), like `resendVerification`. */
 export function forgotPassword(payload: ForgotPasswordPayload): Promise<void> {
-  return request<void>('/api/auth/forgot-password', { method: 'POST', body: payload })
+  return request<void>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }
 
 /** Spend an emailed reset token on a new password. Revokes every session. */
 export function resetPassword(payload: ResetPasswordPayload): Promise<void> {
-  return request<void>('/api/auth/reset-password', { method: 'POST', body: payload })
+  return request<void>('/api/auth/reset-password', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
 }

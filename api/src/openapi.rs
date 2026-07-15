@@ -308,8 +308,9 @@ mod coverage_drift {
     /// from rotting. Everything a public/API-key consumer calls as JSON is documented; only
     /// these infrastructure / binary / SPA-session routes are intentionally excluded.
     const INTENTIONALLY_UNDOCUMENTED: &[(&str, &str)] = &[
-        // --- Liveness / SPA runtime config: infra, not part of the public data API. ---
+        // --- Health probes / SPA runtime config: infra, not part of the public data API. ---
         ("/api/health", "liveness probe; not a data endpoint"),
+        ("/api/ready", "database readiness probe; not a data endpoint"),
         ("/api/config", "SPA bootstrap config (Turnstile site key); internal to the web app"),
         // --- Auth & account: the SPA's session/cookie flow. API-key *management*
         //     (`/api/auth/api-keys`) IS documented; everything else is sign-in plumbing. ---

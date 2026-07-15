@@ -183,6 +183,8 @@ jobs:
           SEED_DUMMY_DATA=true \
           SYNC_ON_STARTUP=false \
           RATE_LIMIT_ENABLED=false \
+          SIGNUPS_ENABLED=true \
+          ALLOW_INSECURE_DEV_AUTH=true \
           DATABASE_URL="sqlite://$RUNNER_TEMP/tcglense-ci.db?mode=rwc" \
           DATA_DIR="$RUNNER_TEMP/api-data" \
           HOST=127.0.0.1 \

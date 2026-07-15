@@ -57,23 +57,34 @@ async function onSubmit() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <p v-if="submitted" class="text-muted-foreground text-sm">
+        <p v-if="submitted" class="text-muted-foreground text-sm" role="status">
           The link is valid for 1 hour. Check your spam folder if it doesn't show up in a minute or
           two.
         </p>
-        <form v-else class="flex flex-col gap-4" @submit.prevent="onSubmit">
+        <form
+          v-else
+          class="flex flex-col gap-4"
+          :aria-busy="loading || undefined"
+          @submit.prevent="onSubmit"
+        >
           <div class="flex flex-col gap-2">
             <Label for="email">Email</Label>
             <Input
               id="email"
               v-model="email"
+              name="email"
               type="email"
               autocomplete="email"
+              maxlength="254"
               placeholder="you@example.com"
               required
+              :aria-invalid="Boolean(error) || undefined"
+              :aria-describedby="error ? 'forgot-error' : undefined"
             />
           </div>
-          <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
+          <p v-if="error" id="forgot-error" class="text-destructive text-sm" role="alert">
+            {{ error }}
+          </p>
           <div ref="turnstileEl" class="empty:hidden"></div>
           <Button type="submit" class="w-full" :disabled="loading">
             <Loader2 v-if="loading" class="animate-spin" />

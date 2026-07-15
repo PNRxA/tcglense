@@ -234,6 +234,7 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
             created_at: Set(at("2024-01-01T00:00:00Z")),
             updated_at: Set(at("2024-01-01T00:00:00Z")),
             email_verified_at: Set(None),
+            session_version: Set(0),
             username: Set(None),
             discriminator: Set(None),
         }
@@ -329,6 +330,7 @@ async fn collection_query_orders_by_total_copies() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
     }
@@ -401,6 +403,7 @@ async fn summary_skips_holdings_whose_card_row_is_missing() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
     }
@@ -462,6 +465,7 @@ async fn collection_query_scopes_to_a_set() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
     }
@@ -561,6 +565,7 @@ async fn owned_cards_group_into_drops_with_counts() {
         created_at: Set(at("2024-01-01T00:00:00Z")),
         updated_at: Set(at("2024-01-01T00:00:00Z")),
         email_verified_at: Set(None),
+        session_version: Set(0),
         username: Set(None),
         discriminator: Set(None),
     }

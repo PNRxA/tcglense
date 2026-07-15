@@ -4,6 +4,10 @@ A recommended production deployment of TCGLense on managed services, for a singl
 API instance at low/moderate traffic. One DigitalOcean Droplet runs the app; the
 database, cache, and CDN are managed.
 
+Before accepting accounts, complete the
+[production signup launch checklist](./production-signup-checklist.md). This stack
+defaults `SIGNUPS_ENABLED` to `false` so the first deploy can be verified safely.
+
 - **Compute** — a DigitalOcean Droplet running the **combined** Docker image (the API
   serves both `/api` and the SPA, so everything is same-origin and the httpOnly
   refresh cookie stays first-party).
@@ -169,25 +173,30 @@ Fill in `.env` (full annotated template in
 | `JWT_SECRET` | `openssl rand -hex 32` |
 | `DATABASE_URL` | the DO Managed Postgres **private** URL with `?sslmode=require` |
 | `REDIS_URL` | the Upstash `rediss://…` URL (or leave empty for the in-memory limiter) |
-| `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | both, or neither (see below) |
+| `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | both; required by this public stack |
 | `RESEND_API_KEY` / `EMAIL_FROM` | required in production (see below) |
+| `SIGNUPS_ENABLED` | leave `false` until the production signup checklist passes |
 
 ## 7. Two things not to miss
 
-- **`RESEND_API_KEY` is mandatory in production.** With it unset, registration returns
+- **Email is mandatory before public signups open.** This reference Compose stack
+  requires `RESEND_API_KEY` and a verified-domain `EMAIL_FROM` at startup; the API also
+  refuses to enable internet-facing signups without them. In local development, leaving
+  email unset makes registration return
   the completion token in the response and login skips the verified-email gate — so
-  **anyone could activate any address**. Set up [Resend](https://resend.com) with a
+  that bypass must never be exposed publicly. Set up [Resend](https://resend.com) with a
   verified sending domain and point `EMAIL_FROM` at it (the default
   `onboarding@resend.dev` only delivers to the Resend account owner).
-- **Turnstile keys are all-or-nothing.** Set **both** `TURNSTILE_SECRET_KEY` and
-  `TURNSTILE_SITE_KEY` or **neither** — a mismatched pair makes the API refuse to
-  boot. Both live on the API now; the public site key is served to the SPA at runtime
+- **Turnstile is required by this production stack.** Set **both**
+  `TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY`; a missing or mismatched pair makes
+  Compose/the API refuse to boot. Both live on the API now; the public site key is served to the SPA at runtime
   (`GET /api/config`), so you never rebuild the image to change it.
 
 ## 8. Verify
 
 ```sh
 curl -s https://<your-domain>/api/health         # -> {"status":"ok"}
+curl -s https://<your-domain>/api/ready          # -> {"status":"ready"} after a DB round-trip
 curl -s https://<your-domain>/api/config          # -> {"turnstile_site_key": "..."|null}
 docker compose -f deploy/docker-compose.do.yml logs api | grep -iE "backend|migrat|redis"
 ```

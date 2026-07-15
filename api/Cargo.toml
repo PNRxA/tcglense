@@ -17,7 +17,10 @@ governor = "0.10.4"
 hex = "0.4.3"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 indicatif = "0.18"
-jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto"] }
+# This service signs only HS256 tokens. Use jsonwebtoken's aws-lc provider (already
+# linked by rustls below) so the unused RSA implementation is not pulled into the
+# production binary; rsa 0.9 has the unfixed RUSTSEC-2023-0071 timing advisory.
+jsonwebtoken = { version = "10.4.0", default-features = false, features = ["aws_lc_rs"] }
 nonzero_ext = "0.3.0"
 rand = "0.10.1"
 # Distributed rate-limiter backend (optional at runtime via REDIS_URL). Always
@@ -62,6 +65,7 @@ tracing = "0.1.44"
 tracing-indicatif = "0.3"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 utoipa = { version = "5.5.0", features = ["chrono"] }
+url = "2.5.8"
 
 [dev-dependencies]
 # `util` brings `tower::ServiceExt::oneshot`, used by the HTTP security tests to

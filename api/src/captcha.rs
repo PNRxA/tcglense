@@ -16,10 +16,12 @@ use std::{net::IpAddr, time::Duration};
 
 use serde::Deserialize;
 use serde_json::json;
+use url::Url;
 
 use crate::{config::Config, error::AppError};
 
 const TURNSTILE_VERIFY_URL: &str = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const TURNSTILE_ACTION: &str = "auth";
 
 /// Whole-request deadline for one siteverify call. The shared client has no
 /// overall timeout, so a hung Turnstile API must not stall an auth request.
@@ -34,6 +36,7 @@ pub enum Captcha {
     Turnstile {
         http: reqwest::Client,
         secret: String,
+        expected_hostname: String,
     },
     /// Test-only: pass iff a token is present and equals the expected value,
     /// so a test can exercise the enabled (token-required) path with no network.
@@ -57,11 +60,23 @@ impl std::fmt::Debug for Captcha {
 }
 
 /// The shape of Turnstile's `siteverify` response (only the fields we consume).
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct SiteVerifyResponse {
     success: bool,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
     #[serde(default, rename = "error-codes")]
     error_codes: Vec<String>,
+}
+
+impl SiteVerifyResponse {
+    fn is_valid_for(&self, hostname: &str, action: &str) -> bool {
+        self.success
+            && self.hostname.as_deref() == Some(hostname)
+            && self.action.as_deref() == Some(action)
+    }
 }
 
 impl Captcha {
@@ -69,7 +84,17 @@ impl Captcha {
     /// otherwise disabled (dev/test mode).
     pub fn from_config(config: &Config, http: reqwest::Client) -> Self {
         match config.turnstile_secret_key.clone() {
-            Some(secret) => Captcha::Turnstile { http, secret },
+            Some(secret) => {
+                let expected_hostname = Url::parse(&config.public_site_url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned))
+                    .expect("validated PUBLIC_SITE_URL must have a hostname");
+                Captcha::Turnstile {
+                    http,
+                    secret,
+                    expected_hostname,
+                }
+            }
             None => Captcha::Disabled,
         }
     }
@@ -94,16 +119,22 @@ impl Captcha {
         token: Option<&str>,
         remote_ip: Option<IpAddr>,
     ) -> Result<(), AppError> {
-        let (http, secret) = match self {
+        let (http, secret, expected_hostname) = match self {
             Captcha::Disabled => return Ok(()),
             #[cfg(test)]
             Captcha::ExpectToken(expected) => {
                 return match token {
                     Some(t) if t == *expected => Ok(()),
-                    _ => Err(AppError::BadRequest("captcha verification failed".to_string())),
+                    _ => Err(AppError::BadRequest(
+                        "captcha verification failed".to_string(),
+                    )),
                 };
             }
-            Captcha::Turnstile { http, secret } => (http, secret),
+            Captcha::Turnstile {
+                http,
+                secret,
+                expected_hostname,
+            } => (http, secret, expected_hostname),
         };
 
         let token = token
@@ -137,8 +168,14 @@ impl Captcha {
             AppError::BadRequest("captcha verification failed".to_string())
         })?;
 
-        if !outcome.success {
-            tracing::warn!(codes = ?outcome.error_codes, "Turnstile rejected the token");
+        if !outcome.is_valid_for(expected_hostname, TURNSTILE_ACTION) {
+            tracing::warn!(
+                success = outcome.success,
+                codes = ?outcome.error_codes,
+                hostname = ?outcome.hostname,
+                action = ?outcome.action,
+                "Turnstile rejected the token or returned the wrong binding"
+            );
             return Err(AppError::BadRequest(
                 "captcha verification failed".to_string(),
             ));
@@ -178,5 +215,33 @@ mod tests {
             .verify(Some("good-token"), None)
             .await
             .expect("a matching token passes");
+    }
+
+    #[test]
+    fn siteverify_response_requires_success_hostname_and_action() {
+        let valid = SiteVerifyResponse {
+            success: true,
+            hostname: Some("tcglense.com".to_string()),
+            action: Some(TURNSTILE_ACTION.to_string()),
+            error_codes: Vec::new(),
+        };
+        assert!(valid.is_valid_for("tcglense.com", TURNSTILE_ACTION));
+
+        for invalid in [
+            SiteVerifyResponse {
+                success: false,
+                ..valid.clone()
+            },
+            SiteVerifyResponse {
+                hostname: Some("evil.example".to_string()),
+                ..valid.clone()
+            },
+            SiteVerifyResponse {
+                action: Some("contact".to_string()),
+                ..valid
+            },
+        ] {
+            assert!(!invalid.is_valid_for("tcglense.com", TURNSTILE_ACTION));
+        }
     }
 }

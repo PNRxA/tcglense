@@ -27,8 +27,8 @@ interface RequestOptions {
   /** Content-Type for a `rawBody` upload (e.g. `'text/csv'`). Ignored without `rawBody`. */
   contentType?: string
   /**
-   * Caller abort signal (e.g. a vue-query cancellation). Honored on any method; on a
-   * GET it is composed with the client's own 60s timeout. A caller-initiated abort
+   * Caller abort signal (e.g. a vue-query cancellation). Honored on any method; when
+   * a deadline applies it is composed with the client's timeout. A caller-initiated abort
    * re-throws the original `AbortError` untouched (so vue-query swallows its own
    * cancellation); a timeout-abort surfaces as `ApiError('Request timed out', 408)`.
    */
@@ -40,6 +40,12 @@ interface RequestOptions {
    * caps the request body at 64KB, so only give it to small/bodyless requests.
    */
   keepalive?: boolean
+  /**
+   * Optional whole-request deadline. GETs default to 60s; non-GETs remain
+   * unbounded unless a caller opts in (large imports/uploads deliberately do
+   * not share the short auth deadline).
+   */
+  timeoutMs?: number
 }
 
 /**
@@ -91,23 +97,23 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     headers.Authorization = `Bearer ${options.token}`
   }
 
-  // GET requests get a 60s ceiling composed by hand from one AbortController that fires
-  // on either the timeout or the caller's own signal — Safari <17.4 lacks
-  // AbortSignal.any/AbortSignal.timeout. Non-GET requests get no unilateral timeout (a
-  // large CSV import on a slow uplink must survive) but still honor a caller signal.
-  // The timer is always cleared in `finally`.
+  // GET requests get a 60s ceiling; selected non-GET callers (notably auth) can opt into
+  // a shorter one. Everything else stays unbounded so a large CSV import on a slow uplink
+  // can survive. Compose the deadline with the caller's own signal by hand — Safari <17.4
+  // lacks AbortSignal.any/AbortSignal.timeout. The timer is always cleared in `finally`.
   const callerSignal = options.signal
+  const timeoutMs = options.timeoutMs ?? (method === 'GET' ? 60_000 : undefined)
   let signal = callerSignal
   let timeoutId: ReturnType<typeof setTimeout> | undefined
   let onCallerAbort: (() => void) | undefined
   let timedOut = false
-  if (method === 'GET') {
+  if (timeoutMs !== undefined) {
     const controller = new AbortController()
     signal = controller.signal
     timeoutId = setTimeout(() => {
       timedOut = true
       controller.abort()
-    }, 60_000)
+    }, timeoutMs)
     if (callerSignal) {
       if (callerSignal.aborted) {
         controller.abort()

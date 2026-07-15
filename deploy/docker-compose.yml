@@ -7,6 +7,7 @@
 #   (cd api && cargo test -- --ignored)
 #
 # For running the API itself against Postgres:
+#   ALLOW_INSECURE_DEV_SECRET=true \
 #   DATABASE_URL=postgres://tcglense:tcglense@localhost:5432/tcglense \
 #   REDIS_URL=redis://localhost:6379 cargo run   # (create the tcglense DB/role first,
 #   or reuse the postgres superuser DB the tests carve isolated databases off)

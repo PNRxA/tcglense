@@ -39,8 +39,8 @@ use tower::ServiceExt;
 
 use crate::auth::email_token::{self, EmailTokenPurpose};
 use crate::auth::refresh;
-use crate::entities::prelude::{CardPriceHistory, CollectionItem};
-use crate::entities::{card_price_history, card_set, collection_item, user};
+use crate::entities::prelude::{CardPriceHistory, CollectionItem, RefreshToken};
+use crate::entities::{card_price_history, card_set, collection_item, refresh_token, user};
 use crate::scryfall::{GAME, snapshot_prices};
 use crate::test_support::{insert_card, insert_user, owned_counts, url_encode as enc};
 use crate::{build_router, catalog, config::Config, migrator::Migrator, state::AppState};
@@ -449,20 +449,23 @@ async fn refresh_rotation_is_single_use_on_pg() {
     let conn = db.conn();
 
     let uid = insert_user(conn, "rot@x.test").await;
-    let original = refresh::issue_refresh_token(conn, uid, 30)
+    let original = refresh::issue_refresh_token(conn, uid, 0, 30)
         .await
         .expect("issue");
-    let refresh::RotateOutcome::Rotated(rotated) =
-        refresh::rotate(conn, &original, 30).await.expect("rotate")
-    else {
-        panic!("first rotation should mint a fresh token");
+    let (first, second) = tokio::join!(
+        refresh::rotate(conn, &original, 30),
+        refresh::rotate(conn, &original, 30)
+    );
+    let rotated = match (
+        first.expect("first concurrent rotation"),
+        second.expect("second concurrent rotation"),
+    ) {
+        (refresh::RotateOutcome::Rotated(token), refresh::RotateOutcome::Superseded)
+        | (refresh::RotateOutcome::Superseded, refresh::RotateOutcome::Rotated(token)) => token,
+        _ => panic!("exactly one concurrent Postgres rotation must mint a token"),
     };
 
-    // Replaying the now-superseded original is not exchanged for a new token — and
-    // because its successor is still live this is a benign concurrent double-submit,
-    // reported as `Superseded` (not an error) so the refresh handler leaves the live
-    // cookie alone. The `rows_affected`-gated conditional UPDATE claim that makes this
-    // sound works under a real Postgres pool.
+    // Replaying the now-superseded original is still benign while its successor lives.
     let replay = refresh::rotate(conn, &original, 30).await.expect("benign superseded");
     assert!(
         matches!(replay, refresh::RotateOutcome::Superseded),
@@ -472,6 +475,61 @@ async fn refresh_rotation_is_single_use_on_pg() {
     refresh::rotate(conn, &rotated.plaintext, 30)
         .await
         .expect("successor rotates");
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn refresh_reuse_and_descendant_rotation_are_serialized_on_pg() {
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    let uid = insert_user(conn, "reuse-race@x.test").await;
+    let t1 = refresh::issue_refresh_token(conn, uid, 0, 30)
+        .await
+        .expect("issue t1");
+    let refresh::RotateOutcome::Rotated(t2) =
+        refresh::rotate(conn, &t1, 30).await.expect("rotate t1")
+    else {
+        panic!("t1 should rotate");
+    };
+    let refresh::RotateOutcome::Rotated(t3) = refresh::rotate(conn, &t2.plaintext, 30)
+        .await
+        .expect("rotate t2")
+    else {
+        panic!("t2 should rotate");
+    };
+    let family_id = RefreshToken::find()
+        .filter(refresh_token::Column::UserId.eq(uid))
+        .one(conn)
+        .await
+        .expect("query t1")
+        .expect("t1 row")
+        .family_id;
+
+    // Whichever transaction obtains the user-row lock first, replay detection
+    // must finish with no active descendant left behind.
+    let (reuse, descendant) = tokio::join!(
+        refresh::rotate(conn, &t1, 30),
+        refresh::rotate(conn, &t3.plaintext, 30)
+    );
+    assert!(matches!(reuse, Err(crate::error::AppError::Unauthorized(_))));
+    assert!(descendant.is_ok(), "descendant rotation failed unexpectedly");
+
+    let family = RefreshToken::find()
+        .filter(refresh_token::Column::UserId.eq(uid))
+        .filter(refresh_token::Column::FamilyId.eq(family_id))
+        .all(conn)
+        .await
+        .expect("query family");
+    assert!(
+        family.iter().all(|token| token.revoked_at.is_some()),
+        "reuse must leave no active token in the raced family"
+    );
 
     db.teardown().await;
 }

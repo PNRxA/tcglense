@@ -11,6 +11,9 @@ describe('safeInternalPath', () => {
   it('rejects open-redirect attempts and non-paths', () => {
     expect(safeInternalPath('//evil.com')).toBeNull()
     expect(safeInternalPath('/\\evil.com')).toBeNull()
+    expect(safeInternalPath('/safe/\\evil.com')).toBeNull()
+    expect(safeInternalPath('/safe\nnext')).toBeNull()
+    expect(safeInternalPath(`/${'a'.repeat(2_048)}`)).toBeNull()
     expect(safeInternalPath('https://evil.com')).toBeNull()
     expect(safeInternalPath('profile')).toBeNull()
     expect(safeInternalPath(undefined)).toBeNull()

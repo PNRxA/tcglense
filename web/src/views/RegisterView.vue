@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Loader2, MailCheck } from '@lucide/vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -17,10 +17,17 @@ import { useTurnstile } from '@/composables/useTurnstile'
 import { ApiError, register } from '@/lib/api'
 import { publicConfig } from '@/lib/config'
 import { usePageMeta } from '@/lib/seo'
+import { safeInternalPath } from '@/lib/utils'
 
 usePageMeta({ title: 'Create your account', canonicalPath: '/register', noindex: true })
 
 const router = useRouter()
+const route = useRoute()
+const redirect = computed(() => safeInternalPath(route.query.redirect))
+const loginTo = computed(() => ({
+  path: '/login',
+  ...(redirect.value ? { query: { redirect: redirect.value } } : {}),
+}))
 
 const email = ref('')
 const turnstileEl = ref<HTMLElement>()
@@ -57,13 +64,20 @@ async function onSubmit() {
   loading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
-    const response = await register({ email: email.value, captcha_token })
+    const response = await register({
+      email: email.value,
+      redirect: redirect.value ?? undefined,
+      captcha_token,
+    })
     if (response.completion_token) {
       // No-email dev bypass: the completion link couldn't be emailed, so its token
       // rides in the response — drive straight to the set-password step.
       await router.push({
         path: '/complete-registration',
-        query: { token: response.completion_token },
+        query: {
+          token: response.completion_token,
+          ...(redirect.value ? { redirect: redirect.value } : {}),
+        },
       })
     } else {
       // The server no longer echoes the address, so canonicalise the submitted one
@@ -79,18 +93,26 @@ async function onSubmit() {
 
 const resendLoading = ref(false)
 const resendSent = ref(false)
+const resendError = ref<string | null>(null)
 
 async function onResend() {
   if (!registeredEmail.value) return
+  resendSent.value = false
+  resendError.value = null
   resendLoading.value = true
   try {
     const captcha_token = (await execute()) ?? undefined
     // Re-registering the same address re-sends the completion link (generic 200,
     // 60s cooldown) — the same call the form makes.
-    await register({ email: registeredEmail.value, captcha_token })
+    await register({
+      email: registeredEmail.value,
+      redirect: redirect.value ?? undefined,
+      captcha_token,
+    })
     resendSent.value = true
-  } catch {
-    // Generic endpoint; a failure here is transient — the button stays available.
+  } catch (err) {
+    resendError.value =
+      err instanceof ApiError ? err.message : 'Something went wrong. Please try again.'
   } finally {
     resendLoading.value = false
   }
@@ -105,29 +127,33 @@ async function onResend() {
           <MailCheck class="text-primary size-8" />
           <CardTitle class="text-2xl">Check your email</CardTitle>
           <CardDescription>
-            We sent a link to <span class="font-medium">{{ registeredEmail }}</span> to finish
-            creating your account. Open it to choose a password and sign in.
+            If this address can be used to create an account, a link will arrive at
+            <span class="font-medium">{{ registeredEmail }}</span>. Open it to choose a password
+            and sign in.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Button as-child class="w-full">
-            <RouterLink to="/login">Go to sign in</RouterLink>
+            <RouterLink :to="loginTo">Go to sign in</RouterLink>
           </Button>
         </CardContent>
-        <CardFooter class="justify-center">
+        <CardFooter class="flex-col gap-2 text-center">
+          <p v-if="resendSent" class="text-muted-foreground text-sm" role="status">
+            If the address is eligible, another link will arrive soon.
+          </p>
+          <p v-if="resendError" class="text-destructive text-sm" role="alert">
+            {{ resendError }}
+          </p>
           <p class="text-muted-foreground text-sm">
-            <template v-if="resendSent">Link sent — check your inbox.</template>
-            <template v-else>
-              Didn't get it?
-              <button
-                type="button"
-                class="text-primary font-medium hover:underline"
-                :disabled="resendLoading"
-                @click="onResend"
-              >
-                Resend the link
-              </button>
-            </template>
+            Didn't get it?
+            <button
+              type="button"
+              class="text-primary font-medium hover:underline disabled:opacity-50"
+              :disabled="resendLoading"
+              @click="onResend"
+            >
+              {{ resendLoading ? 'Requesting...' : 'Request another link' }}
+            </button>
           </p>
         </CardFooter>
       </Card>
@@ -144,23 +170,33 @@ async function onResend() {
           >
             {{ signupsDisabledMessage ?? 'New sign-ups are temporarily disabled.' }}
           </div>
-          <form class="flex flex-col gap-4" @submit.prevent="onSubmit">
+          <form
+            class="flex flex-col gap-4"
+            :aria-busy="loading || undefined"
+            @submit.prevent="onSubmit"
+          >
             <div class="flex flex-col gap-2">
               <Label for="email">Email</Label>
               <Input
                 id="email"
                 v-model="email"
+                name="email"
                 type="email"
                 autocomplete="email"
+                maxlength="254"
                 placeholder="you@example.com"
                 required
+                :aria-invalid="Boolean(error) || undefined"
+                :aria-describedby="error ? 'register-email-help register-error' : 'register-email-help'"
                 :disabled="!signupsEnabled"
               />
-              <p class="text-muted-foreground text-xs">
+              <p id="register-email-help" class="text-muted-foreground text-xs">
                 We'll email you a link to finish creating your account.
               </p>
             </div>
-            <p v-if="error" class="text-destructive text-sm" role="alert">{{ error }}</p>
+            <p v-if="error" id="register-error" class="text-destructive text-sm" role="alert">
+              {{ error }}
+            </p>
             <Button type="submit" class="w-full" :disabled="loading || !signupsEnabled">
               <Loader2 v-if="loading" class="animate-spin" />
               {{ loading ? 'Sending link...' : 'Continue' }}
@@ -180,7 +216,7 @@ async function onResend() {
         <CardFooter class="justify-center">
           <p class="text-muted-foreground text-sm">
             Already have an account?
-            <RouterLink to="/login" class="text-primary font-medium hover:underline">
+            <RouterLink :to="loginTo" class="text-primary font-medium hover:underline">
               Sign in
             </RouterLink>
           </p>

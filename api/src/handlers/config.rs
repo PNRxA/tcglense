@@ -16,8 +16,8 @@ pub struct PublicConfig {
     /// (no `TURNSTILE_SECRET_KEY`/`TURNSTILE_SITE_KEY` set) — the SPA then skips the
     /// widget. The API is the source of truth for whether a token is required.
     pub turnstile_site_key: Option<String>,
-    /// Whether new-account registration is currently accepted. `false` when the
-    /// operator set `SIGNUPS_ENABLED=false`; the SPA then shows
+    /// Whether new-account registration is currently accepted. Closed by default;
+    /// when `false`, the SPA shows
     /// `signups_disabled_message` and disables the signup form. The API is the
     /// source of truth — it rejects `register` regardless of what the SPA renders.
     /// Existing users can always still sign in; this gates only registration.

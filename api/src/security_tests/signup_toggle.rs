@@ -94,7 +94,7 @@ async fn public_config_advertises_the_disabled_signup_state_and_message() {
 }
 
 #[tokio::test]
-async fn public_config_reports_open_signups_by_default() {
+async fn public_config_reports_enabled_signups_from_the_test_config() {
     // The shipped default posture: signups open, no disabled-message to render.
     let app = test_app().await;
 

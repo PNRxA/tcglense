@@ -1,7 +1,7 @@
 import { onUnmounted, type Ref } from 'vue'
 import { loadTurnstile, turnstileSiteKey } from '@/lib/turnstile'
 
-/** How long to wait for a Turnstile token before giving up on one request. */
+/** Whole-operation deadline: runtime config + script/widget preparation + challenge. */
 const EXECUTE_TIMEOUT_MS = 20_000
 
 /**
@@ -18,6 +18,8 @@ const EXECUTE_TIMEOUT_MS = 20_000
 export function useTurnstile(container: Ref<HTMLElement | undefined>) {
   let widgetId: string | undefined
   let pending: ((token: string | null) => void) | null = null
+  let executionTail: Promise<void> = Promise.resolve()
+  let unmounted = false
 
   function settle(token: string | null) {
     if (pending) {
@@ -35,8 +37,12 @@ export function useTurnstile(container: Ref<HTMLElement | undefined>) {
     const api = await loadTurnstile()
     // Guard against a re-entrant call that rendered while we awaited.
     if (widgetId !== undefined) return true
+    if (unmounted || !container.value) return false
     widgetId = api.render(container.value, {
       sitekey,
+      // Siteverify validates this expected action so a token minted for some
+      // other widget/context cannot be replayed against an auth endpoint.
+      action: 'auth',
       execution: 'execute',
       appearance: 'interaction-only',
       callback: (token) => settle(token),
@@ -47,32 +53,70 @@ export function useTurnstile(container: Ref<HTMLElement | undefined>) {
     return true
   }
 
-  async function execute(): Promise<string | null> {
-    let ready = false
-    try {
-      ready = await ensureWidget()
-    } catch {
-      // Script failed to load: treat as no token. If the server requires one it
-      // returns a clear error the view surfaces; if not, the flow proceeds.
-      return null
-    }
-    if (!ready || !window.turnstile || widgetId === undefined) return null
-
-    const api = window.turnstile
-    const id = widgetId
-    // Each call gets a fresh single-use token.
-    api.reset(id)
-    return new Promise<string | null>((resolve) => {
-      const timer = setTimeout(() => settle(null), EXECUTE_TIMEOUT_MS)
-      pending = (token: string | null) => {
-        clearTimeout(timer)
-        resolve(token)
-      }
-      api.execute(id)
+  async function executeOnce(): Promise<string | null> {
+    if (unmounted) return null
+    let timedOut = false
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<null>((resolve) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true
+        // If the widget is already awaiting a callback, release that promise too.
+        settle(null)
+        resolve(null)
+      }, EXECUTE_TIMEOUT_MS)
     })
+
+    const operation = (async (): Promise<string | null> => {
+      let ready = false
+      try {
+        ready = await ensureWidget()
+      } catch {
+        // A failed script load is retryable on the next execute (loadTurnstile drops
+        // its rejected cache); the server still decides whether a token is required.
+        return null
+      }
+      // The timeout may have won while config/script preparation was still running.
+      if (timedOut || unmounted || !ready || !window.turnstile || widgetId === undefined) {
+        return null
+      }
+
+      const api = window.turnstile
+      const id = widgetId
+      const token = new Promise<string | null>((resolve) => {
+        pending = resolve
+      })
+      try {
+        // Each real execution gets a fresh single-use token. Install the resolver
+        // first in case the provider reports a reset/execute error synchronously.
+        api.reset(id)
+        api.execute(id)
+      } catch {
+        settle(null)
+      }
+      return token
+    })()
+
+    try {
+      return await Promise.race([operation, timeout])
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
+    }
+  }
+
+  function execute(): Promise<string | null> {
+    // Turnstile tokens are single-use. Queue callers that reach the shared widget
+    // together so each gets a distinct reset/execute/callback cycle; sharing one
+    // promise would hand the same token to two auth requests and make one fail.
+    const result = executionTail.then(executeOnce, executeOnce)
+    executionTail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   onUnmounted(() => {
+    unmounted = true
     settle(null)
     if (widgetId !== undefined && window.turnstile) {
       window.turnstile.remove(widgetId)

@@ -99,4 +99,26 @@ describe('api client: signal + timeout', () => {
     // Passed through unwrapped (no timeout controller in front of it).
     expect(lastInit().signal).toBe(caller.signal)
   })
+
+  it('supports an opt-in deadline for a non-GET request', async () => {
+    vi.useFakeTimers()
+    try {
+      fetchMock.mockImplementationOnce((_url, init) => abortableFetch(init))
+      const p = request('/api/auth/refresh', {
+        method: 'POST',
+        timeoutMs: 15_000,
+      }).catch((e) => e)
+
+      expect(lastInit().signal).toBeInstanceOf(AbortSignal)
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      await expect(p).resolves.toMatchObject({
+        name: 'ApiError',
+        message: 'Request timed out',
+        status: 408,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
