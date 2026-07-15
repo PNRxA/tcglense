@@ -226,8 +226,11 @@ function openDeck() {
               @change="onFile"
             />
             <p class="text-muted-foreground text-xs">
-              Archidekt: CSV export. Moxfield: CSV or plain-text deck export. Files are parsed
-              server-side and do not change an existing deck.
+              <template v-if="provider === 'archidekt'">
+                Keep the CSV header row and include the Quantity, Name, and Scryfall ID columns.
+              </template>
+              <template v-else> Upload a Moxfield CSV or plain-text deck export. </template>
+              Files are parsed server-side and do not change an existing deck.
             </p>
           </div>
         </template>
