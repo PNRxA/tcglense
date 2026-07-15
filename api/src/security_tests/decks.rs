@@ -140,6 +140,92 @@ async fn create_seeds_default_sections_and_round_trips_a_card() {
 }
 
 #[tokio::test]
+async fn changing_a_printing_merges_counts_and_rejects_an_unrelated_card() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "printing-swap@example.com", PW).await;
+    let (status, _, printings) = send(
+        &app,
+        get("/api/games/mtg/cards?name=Dummy%20Reprinted%20Relic&page_size=10"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "printing lookup failed: {printings:?}");
+    let printings = printings["data"].as_array().expect("printing data");
+    assert_eq!(printings.len(), 2, "dummy catalog must contain a reprint pair");
+    let current = printings[0]["id"].as_str().expect("current id");
+    let replacement = printings[1]["id"].as_str().expect("replacement id");
+    let unrelated = sample_card_ids(&app, 1).await.remove(0);
+
+    let deck = create_deck(&app, &access, "Printing swap").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][1]["id"].as_i64().expect("section id");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{current}"),
+            &access,
+            json!({ "quantity": 3, "foil_quantity": 1, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{replacement}"),
+            &access,
+            json!({ "quantity": 2, "foil_quantity": 0, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{current}/printing"),
+            &access,
+            json!({ "new_card_id": replacement, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "printing swap failed: {body:?}");
+    assert_eq!(body["quantity"], 5);
+    assert_eq!(body["foil_quantity"], 1);
+
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    let cards = detail["cards"].as_array().expect("deck cards");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0]["card"]["id"], replacement);
+    assert_eq!(cards[0]["quantity"], 5);
+    assert_eq!(cards[0]["foil_quantity"], 1);
+
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{replacement}/printing"),
+            &access,
+            json!({ "new_card_id": unrelated, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(detail["cards"][0]["card"]["id"], replacement);
+}
+
+#[tokio::test]
 async fn a_deck_is_isolated_to_its_owner() {
     let app = test_app_with_catalog().await;
     let (alice, _) = register(&app, "alice-decks@example.com", PW).await;
@@ -166,6 +252,19 @@ async fn a_deck_is_isolated_to_its_owner() {
             &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
             &bob,
             json!({ "quantity": 1, "foil_quantity": 0, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Printing changes are owner-scoped too.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{card}/printing"),
+            &bob,
+            json!({ "new_card_id": card, "section_id": section_id }),
         ),
     )
     .await;

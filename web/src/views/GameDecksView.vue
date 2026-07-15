@@ -32,7 +32,7 @@ import {
   useFoldersQuery,
   useMoveDeckToFolderMutation,
 } from '@/composables/useDecks'
-import type { Deck } from '@/lib/api'
+import { ApiError, type Deck } from '@/lib/api'
 import { formatPresetsFor } from '@/lib/deckFormats'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
@@ -139,14 +139,31 @@ async function submitCreateFolder() {
 const deleteFolder = useDeleteFolderMutation()
 const deleteDeck = useDeleteDeckMutation()
 const moveDeck = useMoveDeckToFolderMutation()
+const deckDeleteTarget = ref<Deck | null>(null)
+const deckDeleteError = ref('')
 
 function move(deck: Deck, folderId: number | null) {
   if (deck.folder_id === folderId) return
   void moveDeck.mutateAsync({ game: props.game, deckId: deck.id, folderId })
 }
-function removeDeck(deck: Deck) {
-  if (!confirm(`Delete the deck "${deck.name}"? This can't be undone.`)) return
-  void deleteDeck.mutateAsync({ game: props.game, deckId: deck.id })
+function requestDeckDelete(deck: Deck) {
+  deckDeleteError.value = ''
+  deckDeleteTarget.value = deck
+}
+function onDeckDeleteOpenChange(open: boolean) {
+  if (!open && !deleteDeck.isPending.value) deckDeleteTarget.value = null
+}
+async function confirmDeckDelete() {
+  const target = deckDeleteTarget.value
+  if (!target || deleteDeck.isPending.value) return
+  deckDeleteError.value = ''
+  try {
+    await deleteDeck.mutateAsync({ game: props.game, deckId: target.id })
+    deckDeleteTarget.value = null
+  } catch (error) {
+    deckDeleteError.value =
+      error instanceof ApiError ? error.message : 'Could not delete this deck.'
+  }
 }
 function removeFolder(folderId: number, name: string) {
   if (!confirm(`Delete the folder "${name}"? Its decks are kept (just ungrouped).`)) return
@@ -297,7 +314,7 @@ function removeFolder(folderId: number, name: string) {
               :game="game"
               :folders="folders"
               @move="(fid) => move(deck, fid)"
-              @remove="removeDeck(deck)"
+              @remove="requestDeckDelete(deck)"
             />
           </div>
         </section>
@@ -312,11 +329,39 @@ function removeFolder(folderId: number, name: string) {
               :game="game"
               :folders="folders"
               @move="(fid) => move(deck, fid)"
-              @remove="removeDeck(deck)"
+              @remove="requestDeckDelete(deck)"
             />
           </div>
         </section>
       </div>
+
+      <Dialog :open="deckDeleteTarget != null" @update:open="onDeckDeleteOpenChange">
+        <DialogContent class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl">
+          <DialogTitle>Delete {{ deckDeleteTarget?.name }}?</DialogTitle>
+          <DialogDescription class="text-muted-foreground mt-1 text-sm">
+            This permanently deletes the deck, its sections, and every card entry. This action
+            cannot be undone.
+          </DialogDescription>
+          <p v-if="deckDeleteError" class="text-destructive mt-3 text-sm" aria-live="polite">
+            {{ deckDeleteError }}
+          </p>
+          <div class="mt-5 flex justify-end gap-2">
+            <DialogClose
+              :class="buttonVariants({ variant: 'ghost' })"
+              :disabled="deleteDeck.isPending.value"
+            >
+              Cancel
+            </DialogClose>
+            <Button
+              variant="destructive"
+              :disabled="deleteDeck.isPending.value"
+              @click="confirmDeckDelete"
+            >
+              {{ deleteDeck.isPending.value ? 'Deleting…' : 'Delete deck' }}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </template>
   </div>
 </template>

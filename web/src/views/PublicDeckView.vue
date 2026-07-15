@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { Layers } from '@lucide/vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
+import DeckStats from '@/components/decks/DeckStats.vue'
 import { usePublicDeckQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
 import type { DeckCardEntry } from '@/lib/api'
@@ -74,6 +75,8 @@ function copies(entry: DeckCardEntry): number {
           {{ deck.description }}
         </p>
       </header>
+
+      <DeckStats :cards="deck.cards" :sections="deck.sections" />
 
       <section v-for="section in visibleSections" :key="section.id" class="mb-8">
         <h2 class="mb-3 border-b pb-1.5 font-medium">

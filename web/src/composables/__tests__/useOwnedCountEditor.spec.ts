@@ -72,6 +72,7 @@ function mountEditor(
     regular: number
     foil: number
     adjust: (which: 'quantity' | 'foil', delta: number) => void
+    flush: () => Promise<boolean>
   }
 }
 
@@ -111,6 +112,21 @@ describe('useOwnedCountEditor', () => {
 
     // One PUT of the final absolute counts, not one per click.
     expect(putBodies()).toEqual([{ quantity: 3, foil_quantity: 1 }])
+  })
+
+  it('flushes a debounced edit before a structural card mutation proceeds', async () => {
+    const editor = mountEditor(ref<OwnedCountSeed | undefined>({ quantity: 1, foil_quantity: 0 }))
+    await flushPromises()
+
+    editor.adjust('quantity', 1)
+    expect(putBodies()).toHaveLength(0)
+
+    await expect(editor.flush()).resolves.toBe(true)
+    expect(putBodies()).toEqual([{ quantity: 2, foil_quantity: 0 }])
+
+    // The cleared debounce timer must not emit a duplicate trailing write.
+    await settle()
+    expect(putBodies()).toHaveLength(1)
   })
 
   it('saves to the collection endpoint by default and the wish list when targeted', async () => {

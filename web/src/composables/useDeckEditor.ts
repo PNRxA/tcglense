@@ -96,12 +96,27 @@ export function useDeckEditor(props: DeckEditorProps) {
     renameOpen.value = false
   }
 
-  function removeDeck() {
+  const deleteOpen = ref(false)
+  const deleteError = ref('')
+
+  function requestDeckDelete() {
     const current = deck.value
-    if (!current || !confirm(`Delete the deck "${current.name}"? This can't be undone.`)) return
-    void deleteDeck.mutateAsync({ game: props.game, deckId: current.id }).then(() => {
-      void router.push(`/decks/${props.game}`)
-    })
+    if (!current) return
+    deleteError.value = ''
+    deleteOpen.value = true
+  }
+
+  async function confirmDeckDelete() {
+    const current = deck.value
+    if (!current || deleteDeck.isPending.value) return
+    deleteError.value = ''
+    try {
+      await deleteDeck.mutateAsync({ game: props.game, deckId: current.id })
+      deleteOpen.value = false
+      await router.push(`/decks/${props.game}`)
+    } catch (error) {
+      deleteError.value = error instanceof ApiError ? error.message : 'Could not delete this deck.'
+    }
   }
 
   function move(folderId: number | null) {
@@ -188,6 +203,8 @@ export function useDeckEditor(props: DeckEditorProps) {
   const reorderSections = useReorderSectionsMutation()
   const newSectionOpen = ref(false)
   const newSectionName = ref('')
+  const sectionDeleteTarget = ref<{ id: number; name: string; count: number } | null>(null)
+  const sectionDeleteError = ref('')
 
   async function submitNewSection() {
     if (!newSectionName.value.trim() || !deck.value) return
@@ -211,13 +228,32 @@ export function useDeckEditor(props: DeckEditorProps) {
     })
   }
 
-  function removeSection(sectionId: number, name: string, count: number) {
+  function requestSectionDelete(sectionId: number, name: string, count: number) {
     if (!deck.value) return
-    const message = count
-      ? `Delete "${name}"? Its ${count} card(s) move to your first section.`
-      : `Delete the empty section "${name}"?`
-    if (!confirm(message)) return
-    void deleteSection.mutateAsync({ game: props.game, deckId: deck.value.id, sectionId })
+    sectionDeleteError.value = ''
+    sectionDeleteTarget.value = { id: sectionId, name, count }
+  }
+
+  function onSectionDeleteOpenChange(open: boolean) {
+    if (!open && !deleteSection.isPending.value) sectionDeleteTarget.value = null
+  }
+
+  async function confirmSectionDelete() {
+    const currentDeck = deck.value
+    const target = sectionDeleteTarget.value
+    if (!currentDeck || !target || deleteSection.isPending.value) return
+    sectionDeleteError.value = ''
+    try {
+      await deleteSection.mutateAsync({
+        game: props.game,
+        deckId: currentDeck.id,
+        sectionId: target.id,
+      })
+      sectionDeleteTarget.value = null
+    } catch (error) {
+      sectionDeleteError.value =
+        error instanceof ApiError ? error.message : 'Could not delete this section.'
+    }
   }
 
   function moveSection(sectionId: number, delta: number) {
@@ -254,7 +290,11 @@ export function useDeckEditor(props: DeckEditorProps) {
     editFormat,
     openRename,
     submitRename,
-    removeDeck,
+    deleteOpen,
+    deleteError,
+    deletingDeck: deleteDeck.isPending,
+    requestDeckDelete,
+    confirmDeckDelete,
     move,
     exporting,
     exportError,
@@ -270,7 +310,12 @@ export function useDeckEditor(props: DeckEditorProps) {
     newSectionName,
     submitNewSection,
     renameSection,
-    removeSection,
+    sectionDeleteTarget,
+    sectionDeleteError,
+    deletingSection: deleteSection.isPending,
+    requestSectionDelete,
+    onSectionDeleteOpenChange,
+    confirmSectionDelete,
     moveSection,
   }
 }

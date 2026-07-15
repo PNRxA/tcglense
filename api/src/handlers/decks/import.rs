@@ -21,8 +21,9 @@ pub const MAX_DECK_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// `POST /api/decks/{game}/import` creates a new deck from either a public provider URL
 /// (`source`) or uploaded CSV/plain-text contents (`contents` + `format`). Provider
-/// boards/categories become the deck's exact sections. The fetch/parse, card resolution,
-/// and straight insert run inline; no collection reconcile/job queue is involved.
+/// boards/categories become deck sections; generic Mainboard rows are optionally filed
+/// into preset type sections. The fetch/parse, card resolution, and straight insert run
+/// inline; no collection reconcile/job queue is involved.
 #[utoipa::path(
     post,
     path = "/api/decks/{game}/import",
@@ -60,6 +61,7 @@ pub async fn import_deck(
         )));
     }
 
+    let auto_categorize = payload.auto_categorize;
     let parsed = match (payload.source, payload.contents) {
         (Some(source), None) => {
             // Match the collection link-import gate exactly: Moxfield remains upload-only
@@ -119,7 +121,9 @@ pub async fn import_deck(
         }
     };
 
-    let created = deck_import::create_deck_from_rows(&state.db, user.id, &game, parsed).await?;
+    let created =
+        deck_import::create_deck_from_rows(&state.db, user.id, &game, parsed, auto_categorize)
+            .await?;
     Ok(Json(DeckImportResponse {
         deck: DeckResponse::from_model(&created.deck, created.card_count),
         provider: created.provider.as_str().to_string(),

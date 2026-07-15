@@ -337,6 +337,16 @@ catalog) is planned but not implemented.
   sit in several sections; deleting a section **reassigns** its cards to the deck's first
   remaining section (never orphaning them), and the deck's *last* section can't be deleted
   (a deck must always have somewhere to file a card).
+- **Automatic filing is deliberately type-only.** A normal add targets "Automatic" by default
+  and uses the card's front-face type to choose Lands / Creatures / Planeswalkers / Instants /
+  Sorceries / Enchantments / Artifacts (in that priority order); an explicit section selection
+  always wins. A missing/unknown preset uses an explicit Mainboard or Other catch-all when one
+  exists; otherwise the add UI requires a section choice instead of silently filing into the
+  first section (often Commander or Sideboard). Imports apply the same rule only to generic
+  Mainboard rows and expose an
+  `auto_categorize` switch (default true); provider categories such as Commander, Ramp, or
+  Sideboard remain authoritative. Functional buckets cannot be inferred safely from oracle text
+  (a treasure maker may or may not be "Ramp"), so they stay manual.
 - **Per-deck sharing is a boolean column, not a visibility table.** Collections needed the
   separate `collection_visibility` table because a bag of holdings has no owning row to hang a
   flag on. A deck *is* the shareable unit (one row, 1:1), so `is_public` lives on the deck row
@@ -355,12 +365,24 @@ catalog) is planned but not implemented.
   absolute-count editor (`useOwnedCountEditor`) gained an optional `saveFn` injection: decks
   pass a writer that PUTs a `(deck, section, card)` row while reusing all the tricky flush
   machinery, and the existing collection/wish-list callers are untouched (they leave it unset
-  and keep the internal mutation path).
+  and keep the internal mutation path). Before a card changes printing or section, the UI
+  explicitly flushes that debounce so a trailing absolute-count write cannot recreate the old
+  row. All three backend card mutations also serialize through a transaction-held update of the
+  parent deck row, preventing a Postgres read/merge/write race. The deck view derives colour identity, card-type,
+  nonland mana-curve, average-mana-value, and hypergeometric draw-odds analytics directly from
+  its already-bounded `DeckDetail.cards` payload, so stats add no API request. Draw odds start
+  with Commander / Companion / Sideboard / Maybeboard / Signature Spells excluded and expose
+  section checkboxes so custom deck structures remain explicit. Printing changes
+  use one atomic deck endpoint: the replacement must share the current card's `oracle_id`
+  (same-name fallback only when both ids are absent), existing target counts merge, and the
+  picker pages through the full exact-name result set (including 800+ basic-land printings).
 - **Deck import/export is a sibling pipeline, not collection reconcile (issue #389).** The
   provider *deck* endpoints and uploaded deck-list rows carry a category/board that the flat
   collection intermediate cannot represent. `deck_import` therefore produces `DeckCardRow`
-  values and writes the new deck, its exact imported sections, and its aggregated cards in one
-  transaction. It deliberately reuses the lower collection seams — foil classification,
+  values and writes the new deck, its imported sections, and its aggregated cards in one
+  transaction. Explicit provider categories stay exact; when `auto_categorize` is enabled
+  (the default), only generic Mainboard rows are filed into the preset type buckets above. It
+  deliberately reuses the lower collection seams — foil classification,
   external-id and Moxfield `(set, collector_number)` resolution, provider throttling/back-off,
   and `ImportError` mapping — but never calls collection reconcile/consolidate/smart. Empty and
   zero-match imports create nothing. Archidekt permits multiple categories per card while our

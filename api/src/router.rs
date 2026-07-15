@@ -46,10 +46,11 @@ use crate::{
         config::public_config,
         currency::currency_rates,
         decks::{
-            MAX_DECK_UPLOAD_BYTES, create_deck, create_folder, create_section, delete_deck,
-            delete_folder, delete_section, export_deck, get_deck, import_deck, list_decks,
-            list_folders, move_deck_card, move_deck_to_folder, reorder_sections, set_deck_card,
-            set_deck_visibility, update_deck, update_folder, update_section,
+            MAX_DECK_UPLOAD_BYTES, change_deck_card_printing, create_deck, create_folder,
+            create_section, delete_deck, delete_folder, delete_section, export_deck, get_deck,
+            import_deck, list_decks, list_folders, move_deck_card, move_deck_to_folder,
+            reorder_sections, set_deck_card, set_deck_visibility, update_deck, update_folder,
+            update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -337,6 +338,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/decks/{game}/{deck_id}/cards/{id}/move",
             put(move_deck_card),
+        )
+        .route(
+            "/api/decks/{game}/{deck_id}/cards/{id}/printing",
+            put(change_deck_card_printing),
         )
         // Rate limiting, two complementary middlewares (each picks a quota by path
         // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,

@@ -1,5 +1,6 @@
 import { API_URL, apiErrorFromResponse, request } from './client'
 import type {
+  ChangeDeckCardPrintingRequest,
   CollectionQuantities,
   CreateDeckRequest,
   Deck,
@@ -235,6 +236,20 @@ export function moveDeckCard(
       body: { from_section_id: fromSectionId, to_section_id: toSectionId },
       token,
     },
+  )
+}
+
+/** Atomically replace a card with another printing of the same gameplay card. */
+export function changeDeckCardPrinting(
+  token: string,
+  game: string,
+  deckId: number,
+  id: string,
+  body: ChangeDeckCardPrintingRequest,
+): Promise<CollectionQuantities> {
+  return request<CollectionQuantities>(
+    `${deckBase(game, deckId)}/cards/${encodeURIComponent(id)}/printing`,
+    { method: 'PUT', body, token },
   )
 }
 

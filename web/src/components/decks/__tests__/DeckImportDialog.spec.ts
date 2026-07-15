@@ -145,7 +145,11 @@ describe('DeckImportDialog', () => {
     await buttonNamed(wrapper, 'Import').trigger('click')
     await flushPromises()
 
-    expect(mutation.mutateAsync).toHaveBeenCalledOnce()
+    expect(mutation.mutateAsync).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ auto_categorize: true }),
+      }),
+    )
     expect(wrapper.text()).toContain('The deck could not be imported. Please retry.')
     expect(wrapper.text()).not.toContain('was created.')
     wrapper.unmount()

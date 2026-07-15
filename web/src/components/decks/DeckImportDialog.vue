@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { useImportDeckMutation } from '@/composables/useDecks'
 import { ApiError } from '@/lib/api'
 import type { CollectionProvider, DeckImportFileFormat, DeckImportResponse } from '@/lib/api'
@@ -35,6 +36,7 @@ const provider = ref<CollectionProvider>('archidekt')
 const source = ref('')
 const file = ref<File | null>(null)
 const deckName = ref('')
+const autoCategorize = ref(true)
 const errorMessage = ref('')
 const result = ref<DeckImportResponse | null>(null)
 
@@ -59,6 +61,7 @@ watch(open, (isOpen) => {
   source.value = ''
   file.value = null
   deckName.value = ''
+  autoCategorize.value = true
   errorMessage.value = ''
   result.value = null
   importDeck.reset()
@@ -111,6 +114,7 @@ async function runImport() {
           contents: null,
           format: null,
           name: null,
+          auto_categorize: autoCategorize.value,
         },
       })
       return
@@ -130,6 +134,7 @@ async function runImport() {
         contents: await picked.text(),
         format,
         name: deckName.value.trim(),
+        auto_categorize: autoCategorize.value,
       },
     })
   } catch (error) {
@@ -235,6 +240,21 @@ function openDeck() {
             </p>
           </div>
         </template>
+
+        <div class="flex items-start justify-between gap-3 rounded-md border p-3">
+          <label for="deck-import-auto-categorize" class="cursor-pointer space-y-0.5">
+            <span class="block text-sm font-medium">Automatically categorise mainboard cards</span>
+            <span class="text-muted-foreground block text-xs">
+              File uncategorised cards into preset type sections. Provider categories such as
+              Commander, Ramp, and Sideboard are kept.
+            </span>
+          </label>
+          <Switch
+            id="deck-import-auto-categorize"
+            v-model:checked="autoCategorize"
+            aria-label="Automatically categorise mainboard cards"
+          />
+        </div>
 
         <p
           v-if="importDeck.isPending.value"

@@ -19,6 +19,8 @@ const props = defineProps<{
   count?: number
   /** An add for this printing is in flight — the add affordance shows a spinner. */
   loading?: boolean
+  /** Automatic filing found no safe target; the parent asks for an explicit section. */
+  disabled?: boolean
 }>()
 defineEmits<{ add: [] }>()
 
@@ -34,7 +36,13 @@ const price = computed(() => {
   <button
     type="button"
     class="group focus-visible:ring-ring relative flex flex-col gap-1.5 rounded-lg border p-1.5 text-left transition outline-none hover:border-primary/50 focus-visible:ring-2"
-    :aria-label="`Add ${card.name} (${card.set_name})`"
+    :class="{ 'cursor-not-allowed opacity-55': disabled }"
+    :disabled="disabled"
+    :aria-label="
+      disabled
+        ? `Choose a section before adding ${card.name} (${card.set_name})`
+        : `Add ${card.name} (${card.set_name})`
+    "
     @click="$emit('add')"
   >
     <div class="relative">
@@ -55,6 +63,7 @@ const price = computed(() => {
       <!-- Add affordance, revealed on hover/focus (the whole tile is the button); while an
            add is in flight it stays visible and spins so the click reads as working. -->
       <span
+        v-if="!disabled"
         class="bg-primary text-primary-foreground absolute right-1 bottom-1 z-10 flex size-6 items-center justify-center rounded-full shadow transition"
         :class="
           loading

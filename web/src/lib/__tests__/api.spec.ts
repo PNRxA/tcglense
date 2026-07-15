@@ -1,6 +1,14 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 
-import { cardImageUrl, cardNamesPath, priceHistoryPath, setIconUrl } from '../api'
+import {
+  cardImageUrl,
+  cardNamesPath,
+  getCardPrintingsByName,
+  priceHistoryPath,
+  setIconUrl,
+} from '../api'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('cardImageUrl', () => {
   it('builds a proxy URL with the default size', () => {
@@ -54,5 +62,28 @@ describe('priceHistoryPath', () => {
     const path = priceHistoryPath('mtg', 'a/b', '30d')
     expect(path.startsWith('/api/')).toBe(true)
     expect(path).toContain('a%2Fb')
+  })
+})
+
+describe('getCardPrintingsByName', () => {
+  it('requests the selected page at the maximum printing page size', async () => {
+    const fetchMock = vi.fn<
+      (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>
+    >(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '{"data":[],"page":3,"page_size":200,"total":816,"has_more":true}',
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getCardPrintingsByName('mtg', 'Island', 3)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      '/api/games/mtg/cards?page=3&page_size=200&sort=released&dir=desc&name=Island',
+    )
   })
 })

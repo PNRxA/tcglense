@@ -40,6 +40,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
+import DeckStats from '@/components/decks/DeckStats.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckEditor } from '@/composables/useDeckEditor'
@@ -65,7 +66,11 @@ const {
   editFormat,
   openRename,
   submitRename,
-  removeDeck,
+  deleteOpen,
+  deleteError,
+  deletingDeck,
+  requestDeckDelete,
+  confirmDeckDelete,
   move,
   exporting,
   exportError,
@@ -81,7 +86,12 @@ const {
   newSectionName,
   submitNewSection,
   renameSection,
-  removeSection,
+  sectionDeleteTarget,
+  sectionDeleteError,
+  deletingSection,
+  requestSectionDelete,
+  onSectionDeleteOpenChange,
+  confirmSectionDelete,
   moveSection,
 } = useDeckEditor(props)
 
@@ -221,7 +231,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
                 >{{ folder.name }}</DropdownMenuItem
               >
               <DropdownMenuSeparator />
-              <DropdownMenuItem class="text-destructive" @click="removeDeck"
+              <DropdownMenuItem class="text-destructive" @click="requestDeckDelete"
                 ><Trash2 class="size-4" /> Delete deck</DropdownMenuItem
               >
             </DropdownMenuContent>
@@ -231,6 +241,8 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
       <p v-if="exportError" class="text-destructive -mt-3 mb-4 text-sm" aria-live="polite">
         {{ exportError }}
       </p>
+
+      <DeckStats :cards="allCards" :sections="sections" />
 
       <!-- Add cards -->
       <DeckAddCard
@@ -308,7 +320,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
                 <DropdownMenuItem
                   class="text-destructive"
                   @click="
-                    removeSection(
+                    requestSectionDelete(
                       section.id,
                       section.name,
                       cardsBySection.get(section.id)?.length ?? 0,
@@ -339,8 +351,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
                 :game="game"
                 :deck-id="deck.id"
                 :section-id="entry.section_id"
-                :card-id="entry.card.id"
-                :name="entry.card.name"
+                :card="entry.card"
                 :quantity="entry.quantity"
                 :foil-quantity="entry.foil_quantity"
                 :sections="sections"
@@ -385,6 +396,52 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
               <Button type="submit" :disabled="!editName.trim()">Save</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog :open="sectionDeleteTarget != null" @update:open="onSectionDeleteOpenChange">
+        <DialogContent class="max-w-sm">
+          <DialogTitle>Delete {{ sectionDeleteTarget?.name }}?</DialogTitle>
+          <DialogDescription v-if="sectionDeleteTarget?.count">
+            Its {{ sectionDeleteTarget.count }} card
+            {{ sectionDeleteTarget.count === 1 ? 'entry moves' : 'entries move' }} to the first
+            remaining section.
+          </DialogDescription>
+          <DialogDescription v-else>
+            This empty section will be permanently deleted.
+          </DialogDescription>
+          <p v-if="sectionDeleteError" class="text-destructive text-sm" aria-live="polite">
+            {{ sectionDeleteError }}
+          </p>
+          <div class="mt-2 flex justify-end gap-2">
+            <DialogClose :class="buttonVariants({ variant: 'ghost' })" :disabled="deletingSection">
+              Cancel
+            </DialogClose>
+            <Button variant="destructive" :disabled="deletingSection" @click="confirmSectionDelete">
+              {{ deletingSection ? 'Deleting…' : 'Delete section' }}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog v-model:open="deleteOpen">
+        <DialogContent class="max-w-sm">
+          <DialogTitle>Delete {{ deck.name }}?</DialogTitle>
+          <DialogDescription>
+            This permanently deletes the deck, its sections, and every card entry. This action
+            cannot be undone.
+          </DialogDescription>
+          <p v-if="deleteError" class="text-destructive text-sm" aria-live="polite">
+            {{ deleteError }}
+          </p>
+          <div class="mt-2 flex justify-end gap-2">
+            <DialogClose :class="buttonVariants({ variant: 'ghost' })" :disabled="deletingDeck">
+              Cancel
+            </DialogClose>
+            <Button variant="destructive" :disabled="deletingDeck" @click="confirmDeckDelete">
+              {{ deletingDeck ? 'Deleting…' : 'Delete deck' }}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </template>

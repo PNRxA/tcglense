@@ -6,6 +6,7 @@ import DeckAddPrintTile from '@/components/decks/DeckAddPrintTile.vue'
 import { useCardNameSuggestions, useCardPrintingsByName } from '@/composables/useQuickAdd'
 import { useSetDeckCardMutation } from '@/composables/useDecks'
 import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
+import { automaticDeckSection } from '@/lib/deckCategories'
 
 // The deck builder's "add cards" box (issue #363): search a card name, pick a printing, and
 // add it to a chosen section — reusing the public card-name/printings reads that power the
@@ -43,17 +44,14 @@ const pickedEnabled = computed(() => pickedName.value.length > 0)
 const printingsQuery = useCardPrintingsByName(gameRef, pickedName, { enabled: pickedEnabled })
 const printings = computed(() => printingsQuery.data.value?.data ?? [])
 
-// The section a picked printing is added to (defaults to the first section).
-const targetSectionId = ref<number | null>(null)
+// Automatic is the default: each printing files into its preset type bucket. A user can
+// still pin the add box to any explicit section for functional/custom categorisation.
+const target = ref('auto')
 watch(
   () => props.sections,
   (sections) => {
-    // Re-validate on every sections change: keep the current target if it still exists,
-    // else fall back to the first section (so deleting the targeted section can't leave the
-    // box pointed at a section that's gone).
-    const valid =
-      targetSectionId.value != null && sections.some((s) => s.id === targetSectionId.value)
-    if (!valid) targetSectionId.value = sections[0]?.id ?? null
+    if (target.value === 'auto') return
+    if (!sections.some((section) => String(section.id) === target.value)) target.value = 'auto'
   },
   { immediate: true },
 )
@@ -93,22 +91,36 @@ function currentCounts(cardId: string, sectionId: number): { quantity: number; f
 // Total copies (regular + foil) of a printing already in the current target section — the
 // progress badge on its tile. Reactive off `props.cards` + `targetSectionId`, so it ticks
 // up as the post-add refetch lands.
-function inTargetCount(cardId: string): number {
-  const sectionId = targetSectionId.value
+function targetSectionId(card: Card): number | null {
+  if (target.value === 'auto') return automaticDeckSection(card, props.sections)?.id ?? null
+  const sectionId = Number(target.value)
+  return Number.isFinite(sectionId) ? sectionId : null
+}
+
+function needsExplicitSection(card: Card): boolean {
+  return target.value === 'auto' && targetSectionId(card) == null
+}
+
+const hasUnclassifiedPrintings = computed(() =>
+  printings.value.some((card) => needsExplicitSection(card)),
+)
+
+function inTargetCount(card: Card): number {
+  const sectionId = targetSectionId(card)
   if (sectionId == null) return 0
-  const { quantity, foil } = currentCounts(cardId, sectionId)
+  const { quantity, foil } = currentCounts(card.id, sectionId)
   return quantity + foil
 }
 
 // Whether an add for this printing (in the current target section) is still in flight.
-function isPending(cardId: string): boolean {
-  const sectionId = targetSectionId.value
+function isPending(card: Card): boolean {
+  const sectionId = targetSectionId(card)
   if (sectionId == null) return false
-  return pending.value.has(keyOf(cardId, sectionId))
+  return pending.value.has(keyOf(card.id, sectionId))
 }
 
 async function addPrinting(card: Card) {
-  const sectionId = targetSectionId.value
+  const sectionId = targetSectionId(card)
   if (sectionId == null) return
   const k = keyOf(card.id, sectionId)
   const server = currentCounts(card.id, sectionId)
@@ -149,10 +161,11 @@ function reset() {
       <label class="text-muted-foreground flex items-center gap-1.5 text-sm">
         to
         <select
-          v-model.number="targetSectionId"
+          v-model="target"
           class="border-input bg-background rounded-md border px-2 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
+          <option value="auto">Automatic (by type)</option>
+          <option v-for="s in sections" :key="s.id" :value="String(s.id)">{{ s.name }}</option>
         </select>
       </label>
     </div>
@@ -179,9 +192,19 @@ function reset() {
           Clear
         </button>
       </div>
-      <Loader2 v-if="printingsQuery.isPending.value" class="text-muted-foreground size-4 animate-spin" />
+      <Loader2
+        v-if="printingsQuery.isPending.value"
+        class="text-muted-foreground size-4 animate-spin"
+      />
+      <p
+        v-else-if="hasUnclassifiedPrintings"
+        class="text-muted-foreground mb-2 text-xs"
+        role="status"
+      >
+        Some card types have no safe automatic category. Choose a section above to add them.
+      </p>
       <div
-        v-else
+        v-if="!printingsQuery.isPending.value"
         class="grid max-h-[32rem] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4"
       >
         <DeckAddPrintTile
@@ -189,8 +212,9 @@ function reset() {
           :key="card.id"
           :game="game"
           :card="card"
-          :count="inTargetCount(card.id)"
-          :loading="isPending(card.id)"
+          :count="inTargetCount(card)"
+          :loading="isPending(card)"
+          :disabled="needsExplicitSection(card)"
           @add="addPrinting(card)"
         />
       </div>
