@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import DeckTile from '@/components/decks/DeckTile.vue'
+import DeckImportDialog from '@/components/decks/DeckImportDialog.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
 import {
@@ -184,6 +185,7 @@ function removeFolder(folderId: number, name: string) {
           <p class="text-muted-foreground text-sm">{{ decks.length }} deck(s)</p>
         </div>
         <div class="flex gap-2">
+          <DeckImportDialog :game="game" />
           <Dialog v-model:open="folderOpen">
             <DialogTrigger as-child>
               <Button variant="outline"><FolderPlus class="size-4" /> New folder</Button>

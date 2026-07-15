@@ -1,4 +1,4 @@
-//! Authenticated, per-user **decks** (issue #363).
+//! Authenticated, per-user **decks** (issues #363 and #389).
 //!
 //! A deck is a first-class, named container of cards for a game
 //! (`/api/decks/{game}/...`), organised into user-orderable **sections** (Archidekt-style
@@ -14,6 +14,9 @@
 //! versus the twin holdings surfaces: the parent deck + folder + section entities and
 //! their CRUD, and a per-deck `is_public` flag for handle-addressed public sharing (the
 //! per-collection model of #361, but per deck — see `handlers::sharing::decks`).
+//! Whole-deck provider import/export is a sibling pipeline: provider categories/boards
+//! become exact sections and the new deck is inserted atomically, without collection
+//! reconciliation.
 //!
 //! Every route is in the router's `private` group (authenticated via
 //! [`AuthUser`](crate::auth::extractor::AuthUser) / [`WritableUser`](crate::auth::extractor::WritableUser),
@@ -33,13 +36,17 @@ use crate::state::AppState;
 use sea_orm::prelude::DateTimeUtc;
 
 mod cards;
+mod export;
 mod folders;
+mod import;
 mod read;
 mod sections;
 mod write;
 
 pub use cards::{move_deck_card, set_deck_card};
+pub use export::export_deck;
 pub use folders::{create_folder, delete_folder, list_folders, update_folder};
+pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
 pub use read::{get_deck, list_decks};
 pub use sections::{create_section, delete_section, reorder_sections, update_section};
 pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibility, update_deck};
@@ -50,6 +57,8 @@ pub use cards::{__path_move_deck_card, __path_set_deck_card};
 pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,
 };
+pub use export::__path_export_deck;
+pub use import::__path_import_deck;
 pub use read::{__path_get_deck, __path_list_decks};
 pub use sections::{
     __path_create_section, __path_delete_section, __path_reorder_sections, __path_update_section,
@@ -319,6 +328,36 @@ pub struct SetDeckCardRequest {
 pub struct MoveDeckCardRequest {
     pub from_section_id: i32,
     pub to_section_id: i32,
+}
+
+/// Body of `POST /api/decks/{game}/import`. Exactly one of `source` (a provider deck
+/// URL/id) or `contents` (an uploaded file read as text) must be present. Uploaded files
+/// also carry their `format` and an optional deck `name`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct DeckImportRequest {
+    pub provider: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub contents: Option<String>,
+    #[serde(default)]
+    pub format: Option<crate::deck_import::DeckImportFileFormat>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Result of a deck import: the newly created deck plus match feedback for rows skipped
+/// because their printing/name was absent from the local catalog.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct DeckImportResponse {
+    pub deck: DeckDetail,
+    pub provider: String,
+    pub total_rows: usize,
+    pub matched_cards: usize,
+    pub unmatched_cards: usize,
+    pub unmatched_sample: Vec<String>,
 }
 
 // ---------- Shared helpers ----------

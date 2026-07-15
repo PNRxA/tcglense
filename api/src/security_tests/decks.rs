@@ -190,6 +190,171 @@ async fn a_deck_is_isolated_to_its_owner() {
 }
 
 #[tokio::test]
+async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-imports@example.com", PW).await;
+    let (bob, _) = register(&app, "bob-imports@example.com", PW).await;
+
+    let (status, _, catalog) = send(&app, get("/api/games/mtg/cards?page_size=2")).await;
+    assert_eq!(status, StatusCode::OK);
+    let first = &catalog["data"][0];
+    let second = &catalog["data"][1];
+    let csv = format!(
+        "Quantity,Name,Finish,Scryfall ID,Categories\n\
+         2,,Normal,{first_id},Ramp\n\
+         1,,Foil,{first_id},ramp\n\
+         1,,Normal,{second_id},Commander\n\
+         1,Missing Card,Normal,not-in-catalog,Sideboard\n",
+        first_id = first["id"].as_str().expect("first id"),
+        second_id = second["id"].as_str().expect("second id"),
+    );
+    let (status, headers, imported) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/import",
+            &alice,
+            json!({
+                "provider": "archidekt",
+                "source": null,
+                "contents": csv,
+                "format": "csv",
+                "name": "Imported exact sections"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "deck import failed: {imported:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(imported["total_rows"], 4);
+    assert_eq!(imported["matched_cards"], 2);
+    assert_eq!(imported["unmatched_cards"], 1);
+
+    let deck = &imported["deck"];
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let sections = deck["sections"].as_array().expect("sections");
+    assert_eq!(sections.len(), 2, "imports must not seed default sections");
+    assert_eq!(sections[0]["name"], "Ramp");
+    assert_eq!(sections[1]["name"], "Commander");
+    let cards = deck["cards"].as_array().expect("cards");
+    assert_eq!(cards.len(), 2);
+    let first_entry = cards
+        .iter()
+        .find(|entry| entry["card"]["id"] == first["id"])
+        .expect("first imported card");
+    assert_eq!(first_entry["quantity"], 2);
+    assert_eq!(first_entry["foil_quantity"], 1);
+
+    // Every format is a real authenticated download and keeps imported section names.
+    let (status, headers, archidekt) = send_text(
+        &app,
+        get_with_bearer(
+            &format!("/api/decks/mtg/{deck_id}/export?format=archidekt"),
+            &alice,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type(&headers), Some("text/csv; charset=utf-8"));
+    assert!(archidekt.contains("Scryfall ID"));
+    assert!(archidekt.contains("Ramp"));
+
+    let (status, headers, moxfield_text) = send_text(
+        &app,
+        get_with_bearer(
+            &format!("/api/decks/mtg/{deck_id}/export?format=moxfield-text"),
+            &alice,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type(&headers), Some("text/plain; charset=utf-8"));
+    assert!(moxfield_text.starts_with("Ramp\n"));
+    assert!(moxfield_text.contains(" *F*"));
+
+    let (status, _, moxfield_csv) = send_text(
+        &app,
+        get_with_bearer(
+            &format!("/api/decks/mtg/{deck_id}/export?format=moxfield"),
+            &alice,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(moxfield_csv.contains("\"Collector Number\",\"Board\""));
+
+    // The sectioned text export is accepted by the upload path and recreates the
+    // same section/card/finish structure as a new deck.
+    let (status, _, round_trip) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/import",
+            &alice,
+            json!({
+                "provider": "moxfield",
+                "source": null,
+                "contents": moxfield_text,
+                "format": "text",
+                "name": "Round trip"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "text re-import failed: {round_trip:?}"
+    );
+    assert_eq!(round_trip["deck"]["sections"].as_array().unwrap().len(), 2);
+    assert_eq!(round_trip["deck"]["cards"].as_array().unwrap().len(), 2);
+    assert_eq!(round_trip["deck"]["summary"]["total_cards"], 4);
+
+    // Export ownership is the same non-oracle 404 as every other deck-scoped read.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer(
+            &format!("/api/decks/mtg/{deck_id}/export?format=moxfield"),
+            &bob,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn moxfield_live_deck_import_uses_the_collection_provider_gate() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "moxfield-decks@example.com", PW).await;
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/import",
+            &access,
+            json!({
+                "provider": "moxfield",
+                "source": "https://moxfield.com/decks/4xUdq-66IEKK6X53bhUS8Q",
+                "contents": null,
+                "format": null,
+                "name": null
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("upload")
+    );
+
+    let (_, _, list) = send(&app, get_with_bearer("/api/decks/mtg", &access)).await;
+    assert!(list["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn a_read_only_key_can_read_but_not_write_decks() {
     let app = test_app_with_catalog().await;
     let (access, _) = register(&app, "keydecks@example.com", PW).await;
@@ -209,6 +374,25 @@ async fn a_read_only_key_can_read_but_not_write_decks() {
             "/api/decks/mtg",
             &ro,
             json!({ "name": "should fail" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Import creates a deck, so it is a write too.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/import",
+            &ro,
+            json!({
+                "provider": "archidekt",
+                "source": null,
+                "contents": "Quantity,Name,Finish,Scryfall ID,Categories\n1,X,Normal,x,Mainboard\n",
+                "format": "csv",
+                "name": "should fail"
+            }),
         ),
     )
     .await;

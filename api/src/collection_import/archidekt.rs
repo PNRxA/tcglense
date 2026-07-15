@@ -85,7 +85,7 @@ struct RowCard {
 /// `pub(super)` so the CSV importer ([`super::csv_import`]) can key a CSV row's `Finish`
 /// column off the exact same rule (a CSV has no `foil` boolean, so it passes `false`),
 /// keeping the two Archidekt ingestion formats consistent on what counts as a foil.
-pub(super) fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
+pub(crate) fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
     if foil {
         return true;
     }
@@ -331,7 +331,7 @@ async fn get_page(
 /// "wait a minute" policy) and never longer than [`MAX_BACKOFF_SECS`].
 ///
 /// `pub(super)` so the Moxfield provider applies the exact same backoff policy.
-pub(super) fn backoff_after(headers: &header::HeaderMap) -> Duration {
+pub(crate) fn backoff_after(headers: &header::HeaderMap) -> Duration {
     let requested = headers
         .get(header::RETRY_AFTER)
         .and_then(|v| v.to_str().ok())

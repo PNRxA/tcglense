@@ -1,10 +1,12 @@
-import { request } from './client'
+import { API_URL, ApiError, request } from './client'
 import type {
   CollectionQuantities,
   CreateDeckRequest,
   Deck,
   DeckDetail,
   DeckFolder,
+  DeckImportRequest,
+  DeckImportResponse,
   DeckSection,
   DeckVisibility,
   SetDeckCardRequest,
@@ -27,6 +29,9 @@ export type {
   DeckCardEntry,
   DeckDetail,
   DeckFolder,
+  DeckImportFileFormat,
+  DeckImportRequest,
+  DeckImportResponse,
   DeckSection,
   DeckVisibility,
   SetDeckCardRequest,
@@ -55,6 +60,15 @@ export function createDeck(
   body: CreateDeckRequest,
 ): Promise<DeckDetail> {
   return request<DeckDetail>(base(game), { method: 'POST', body, token })
+}
+
+/** Create a new deck from a public provider link or uploaded deck-list contents. */
+export function importDeck(
+  token: string,
+  game: string,
+  body: DeckImportRequest,
+): Promise<DeckImportResponse> {
+  return request<DeckImportResponse>(`${base(game)}/import`, { method: 'POST', body, token })
 }
 
 /** Replace a deck's editable metadata (name/description/format). */
@@ -222,6 +236,31 @@ export function moveDeckCard(
       token,
     },
   )
+}
+
+// ----- Import/export -----
+
+export type DeckExportFormat = 'archidekt' | 'moxfield' | 'moxfield-text'
+
+export function deckExportPath(game: string, deckId: number, format: DeckExportFormat): string {
+  return `${deckBase(game, deckId)}/export?format=${format}`
+}
+
+/** Download a deck export. File responses bypass the JSON request wrapper. */
+export async function exportDeckFile(
+  token: string,
+  game: string,
+  deckId: number,
+  format: DeckExportFormat,
+): Promise<Blob> {
+  const response = await fetch(`${API_URL}${deckExportPath(game, deckId, format)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+  })
+  if (!response.ok) {
+    throw new ApiError(`Export failed with status ${response.status}`, response.status)
+  }
+  return response.blob()
 }
 
 // ----- Public (unauthenticated, handle-addressed) -----
