@@ -77,16 +77,74 @@ describe('auth store: single-flight refresh', () => {
     expect(store.accessToken).toBe('rotated')
   })
 
-  it('clears session state when a refresh fails', async () => {
-    vi.mocked(refresh).mockRejectedValue(new ApiError('invalid refresh token', 401))
+  it('clears session state only after the 401 retry also fails', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(refresh).mockRejectedValue(new ApiError('invalid refresh token', 401))
+
+      const store = useAuthStore()
+      store.accessToken = 'stale'
+      store.user = USER
+
+      const result = store.refresh()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(await result).toBe(false)
+
+      // One delayed retry (the benign loser-of-a-rotation case), then the
+      // session is definitively dead and local state clears.
+      expect(vi.mocked(refresh)).toHaveBeenCalledTimes(2)
+      expect(store.accessToken).toBeNull()
+      expect(store.user).toBeNull()
+      expect(store.restoreRecoverable).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers when the 401 was the benign loser of a concurrent rotation', async () => {
+    vi.useFakeTimers()
+    try {
+      // The losing tab of a concurrent double-submit gets a 401 while the
+      // winner's rotated cookie lands in the shared jar; the delayed retry
+      // must pick that cookie up instead of signing the tab out.
+      vi.mocked(refresh)
+        .mockRejectedValueOnce(new ApiError('refresh token superseded', 401))
+        .mockResolvedValueOnce({ access_token: 'winner-cookie-token' })
+
+      const store = useAuthStore()
+      store.accessToken = 'stale'
+      store.user = USER
+
+      const result = store.refresh()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(await result).toBe(true)
+
+      expect(store.accessToken).toBe('winner-cookie-token')
+      expect(store.user).toEqual(USER)
+      expect(store.restoreRecoverable).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps session state when a refresh fails transiently', async () => {
+    // A 5xx / network blip says nothing about the session: the httpOnly cookie
+    // is still valid server-side, so the in-memory session must survive — the
+    // old catch-all clear here is what painted signed-out chrome during every
+    // API hiccup ("logged out for no reason", issue #417).
+    vi.mocked(refresh).mockRejectedValue(new ApiError('bad gateway', 502))
 
     const store = useAuthStore()
     store.accessToken = 'stale'
     store.user = USER
 
     expect(await store.refresh()).toBe(false)
-    expect(store.accessToken).toBeNull()
-    expect(store.user).toBeNull()
+    // No retry for non-401s (they resolve nothing about the cookie)…
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1)
+    // …and the signed-in posture survives for the next attempt to restore.
+    expect(store.user).toEqual(USER)
+    expect(store.isAuthenticated).toBe(true)
+    expect(store.restoreRecoverable).toBe(true)
   })
 })
 
@@ -146,7 +204,7 @@ describe('auth store: authFetch refresh-and-retry', () => {
     expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1)
   })
 
-  it('logs out when the retry still returns 401', async () => {
+  it('clears local state when the retry still 401s — WITHOUT revoking the cookie', async () => {
     vi.mocked(refresh).mockResolvedValue({ access_token: 'fresh' })
     vi.mocked(logout).mockResolvedValue(undefined)
 
@@ -159,10 +217,15 @@ describe('auth store: authFetch refresh-and-retry', () => {
       .mockRejectedValue(new ApiError('expired', 401))
 
     await expect(store.authFetch(call)).rejects.toMatchObject({ status: 401 })
-    // Persistent 401 after a fresh token means the session is dead -> log out.
-    expect(vi.mocked(logout)).toHaveBeenCalledTimes(1)
+    // Persistent 401 after a fresh token: drop the in-memory session…
     expect(store.accessToken).toBeNull()
     expect(store.user).toBeNull()
+    // …but never POST /api/auth/logout here: that would revoke the httpOnly
+    // refresh cookie over what may be an infra-injected 401 (proxy/WAF blip,
+    // mid-deploy mismatch), turning it into a permanent browser-wide logout.
+    // A genuinely dead session gets its cookie cleared by the server on the
+    // next refresh 401 anyway.
+    expect(vi.mocked(logout)).not.toHaveBeenCalled()
   })
 
   it('does not refresh on non-401 errors', async () => {

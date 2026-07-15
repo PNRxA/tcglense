@@ -9,6 +9,11 @@ use sea_orm::entity::prelude::*;
 /// `replaced_by_id` points at the successor token issued when this one is rotated.
 /// It lets reuse detection tell a benign concurrent double-submit (successor still
 /// active) apart from a genuine replay of a superseded token (successor consumed).
+///
+/// `family_id` is the id of the lineage's first token (the login grant), copied to
+/// every successor, so reuse detection can burn just the compromised lineage
+/// instead of every device's session. `None` only on pre-migration rows, for which
+/// the burn falls back to revoking all of the user's tokens.
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "refresh_tokens")]
 pub struct Model {
@@ -21,6 +26,7 @@ pub struct Model {
     pub revoked_at: Option<DateTimeUtc>,
     pub created_at: DateTimeUtc,
     pub replaced_by_id: Option<i32>,
+    pub family_id: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

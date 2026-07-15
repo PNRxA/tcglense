@@ -44,6 +44,7 @@ mod m20240101_000041_create_decks_table;
 mod m20240101_000042_create_deck_sections_table;
 mod m20240101_000043_create_deck_cards_table;
 mod m20240101_000044_add_cards_foil_variant_star_index;
+mod m20240101_000045_add_refresh_token_family;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -98,6 +99,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000042_create_deck_sections_table::Migration),
             Box::new(m20240101_000043_create_deck_cards_table::Migration),
             Box::new(m20240101_000044_add_cards_foil_variant_star_index::Migration),
+            Box::new(m20240101_000045_add_refresh_token_family::Migration),
         ]
     }
 }

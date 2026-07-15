@@ -110,8 +110,22 @@ export function checkUsername(token: string, username: string): Promise<Username
   )
 }
 
+// The refresh POST is the one call the whole app can end up awaiting (the router
+// guard and every authFetch queue behind it), so unlike other POSTs it gets a
+// bounded lifetime — a half-open socket must not hang the session restore
+// forever. keepalive lets an in-flight rotation's response deliver its rotated
+// Set-Cookie even when the page navigates away mid-request; losing that cookie
+// stranded the browser on a dead token (issue #417).
+const REFRESH_TIMEOUT_MS = 15_000
+
 export function refresh(): Promise<RefreshResponse> {
-  return request<RefreshResponse>('/api/auth/refresh', { method: 'POST' })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS)
+  return request<RefreshResponse>('/api/auth/refresh', {
+    method: 'POST',
+    signal: controller.signal,
+    keepalive: true,
+  }).finally(() => clearTimeout(timer))
 }
 
 export function logout(): Promise<void> {
