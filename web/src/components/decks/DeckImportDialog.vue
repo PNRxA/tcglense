@@ -227,7 +227,8 @@ function openDeck() {
             />
             <p class="text-muted-foreground text-xs">
               <template v-if="provider === 'archidekt'">
-                Keep the CSV header row and include the Quantity, Name, and Scryfall ID columns.
+                Keep the CSV header row and include the Quantity, Name, Scryfall ID, and Categories
+                columns.
               </template>
               <template v-else> Upload a Moxfield CSV or plain-text deck export. </template>
               Files are parsed server-side and do not change an existing deck.
