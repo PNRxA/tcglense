@@ -280,13 +280,22 @@ const DEFAULT_SIGNUPS_DISABLED_MESSAGE: &str =
 /// unit-testable without mutating process-global environment state.
 ///
 /// A blank/whitespace value is treated as "absent" so an empty `JWT_SECRET=` in a
-/// stray `.env` can't silently sign tokens with the public dev key.
+/// stray `.env` can't silently sign tokens with the public dev key. A non-blank
+/// value with surrounding whitespace is rejected: invisible suffixes must not let
+/// a public example value bypass the identity check or become a guessable key.
 fn resolve_jwt_secret(
     provided: Option<&str>,
     allow_insecure_dev_secret: bool,
 ) -> Result<String, String> {
     match provided {
         Some(secret) if !secret.trim().is_empty() => {
+            if secret != secret.trim() {
+                return Err(
+                    "JWT_SECRET must not contain leading or trailing whitespace. Generate a \
+                     clean unique secret, e.g. `openssl rand -hex 32`."
+                        .to_string(),
+                );
+            }
             if matches!(secret, DEV_ONLY_JWT_SECRET | LEGACY_EXAMPLE_JWT_SECRET) {
                 return Err(
                     "JWT_SECRET is set to a public development/example value. Generate a \
@@ -832,6 +841,21 @@ mod tests {
         assert!(LEGACY_EXAMPLE_JWT_SECRET.len() >= MIN_JWT_SECRET_LEN);
         assert!(resolve_jwt_secret(Some(LEGACY_EXAMPLE_JWT_SECRET), false).is_err());
         assert!(resolve_jwt_secret(Some(LEGACY_EXAMPLE_JWT_SECRET), true).is_err());
+    }
+
+    #[test]
+    fn jwt_secret_rejects_surrounding_whitespace() {
+        let good = "0123456789abcdef0123456789abcdef";
+        for wrapped in [
+            format!(" {good}"),
+            format!("{good} "),
+            format!("{good}\n"),
+            format!(" {DEV_ONLY_JWT_SECRET}"),
+            format!("{LEGACY_EXAMPLE_JWT_SECRET} "),
+        ] {
+            assert!(resolve_jwt_secret(Some(&wrapped), false).is_err());
+            assert!(resolve_jwt_secret(Some(&wrapped), true).is_err());
+        }
     }
 
     #[test]
