@@ -226,6 +226,10 @@ describe('auth store: authFetch refresh-and-retry', () => {
     // A genuinely dead session gets its cookie cleared by the server on the
     // next refresh 401 anyway.
     expect(vi.mocked(logout)).not.toHaveBeenCalled()
+    // The refresh succeeded, so the cookie is valid and the session is
+    // recoverable: the router guard re-attempts a restore instead of stranding
+    // the user signed-out until a manual reload.
+    expect(store.restoreRecoverable).toBe(true)
   })
 
   it('does not refresh on non-401 errors', async () => {

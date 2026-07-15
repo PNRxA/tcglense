@@ -235,8 +235,8 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Run an authenticated API call, transparently refreshing an expired access token.
    * Ensures a token exists (restoring via the cookie if needed), retries once on a
-   * 401 after refreshing, and logs out if the retry still fails. Reusable by other
-   * stores for their own protected calls.
+   * 401 after refreshing, and drops the local session if the retry still fails.
+   * Reusable by other stores for their own protected calls.
    */
   async function authFetch<T>(call: (token: string) => Promise<T>): Promise<T> {
     if (!accessToken.value) {
@@ -262,16 +262,18 @@ export const useAuthStore = defineStore('auth', () => {
         return await call(accessToken.value)
       } catch (retryError) {
         if (retryError instanceof ApiError && retryError.status === 401) {
-          // A freshly-minted access token was rejected. Treat the session as
-          // dead LOCALLY, but deliberately do NOT call logout(): that POSTs
+          // A freshly-minted access token was rejected. Drop the in-memory
+          // session, but deliberately do NOT call logout(): that POSTs
           // /api/auth/logout, revoking the refresh cookie server-side — which
           // turns an infra-injected 401 (a proxy/WAF blip, a mid-deploy
-          // mismatch) into a permanent, browser-wide logout. If the session
-          // really is dead, the next refresh attempt 401s and the SERVER
-          // clears the cookie; if it wasn't, the cookie silently restores the
-          // session on the next visit instead of forcing a re-login.
+          // mismatch) into a permanent, browser-wide logout. The refresh above
+          // just SUCCEEDED, so the cookie is valid and the session is
+          // recoverable: mark it so the router guard re-attempts a restore on a
+          // later navigation (self-healing once the infra blip clears) instead
+          // of stranding the user on signed-out chrome until a manual reload.
           accessToken.value = null
           user.value = null
+          restoreRecoverable.value = true
         }
         throw retryError
       }
