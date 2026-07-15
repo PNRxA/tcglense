@@ -4,9 +4,9 @@ use regex::Regex;
 
 use crate::collection_import::archidekt::is_foil_finish as archidekt_foil;
 use crate::collection_import::csv_import::{find_column, parse_quantity, read_record};
-use crate::collection_import::{ImportError, MAX_IMPORT_ROWS, Provider};
+use crate::collection_import::{ImportError, Provider};
 
-use super::{DeckCardRow, DeckImportFileFormat, ParsedDeck};
+use super::{DeckCardRow, DeckImportFileFormat, MAX_DECK_IMPORT_ROWS, ParsedDeck};
 
 const ID_HEADERS: &[&str] = &["scryfall id", "scryfall_id", "scryfallid"];
 const QUANTITY_HEADERS: &[&str] = &["quantity", "qty", "count"];
@@ -75,6 +75,12 @@ fn parse_csv(provider: Provider, bytes: &[u8]) -> Result<Vec<DeckCardRow>, Impor
     let mut seen = 0usize;
     for record in reader.records() {
         let record = read_record(record, &mut seen)?;
+        if seen > MAX_DECK_IMPORT_ROWS {
+            return Err(ImportError::TooLarge {
+                count: seen,
+                max: MAX_DECK_IMPORT_ROWS,
+            });
+        }
         let Some(quantity) = record
             .get(quantity_idx)
             .and_then(parse_quantity)
@@ -150,10 +156,10 @@ fn parse_text(bytes: &[u8]) -> Result<Vec<DeckCardRow>, ImportError> {
             continue;
         };
         lines_seen += 1;
-        if lines_seen > MAX_IMPORT_ROWS {
+        if lines_seen > MAX_DECK_IMPORT_ROWS {
             return Err(ImportError::TooLarge {
                 count: lines_seen,
-                max: MAX_IMPORT_ROWS,
+                max: MAX_DECK_IMPORT_ROWS,
             });
         }
         let mut card = remainder.trim();
@@ -226,6 +232,8 @@ fn missing_column(name: &str) -> ImportError {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
 
     #[test]
@@ -274,5 +282,33 @@ mod tests {
         assert!(rows[0].foil);
         assert_eq!(rows[1].section, "Custom pile");
         assert_eq!(rows[1].card_name, "Lightning Bolt");
+    }
+
+    #[test]
+    fn rejects_csv_above_the_deck_row_cap() {
+        let mut csv = String::from("Quantity,Name,Scryfall ID,Categories\n");
+        for index in 0..=MAX_DECK_IMPORT_ROWS {
+            writeln!(csv, "1,Card {index},uid-{index},Mainboard").expect("write row");
+        }
+        let err = parse_csv(Provider::Archidekt, csv.as_bytes()).expect_err("oversized CSV");
+        assert!(matches!(
+            err,
+            ImportError::TooLarge { count, max }
+                if count == MAX_DECK_IMPORT_ROWS + 1 && max == MAX_DECK_IMPORT_ROWS
+        ));
+    }
+
+    #[test]
+    fn rejects_plain_text_above_the_deck_row_cap() {
+        let mut text = String::new();
+        for index in 0..=MAX_DECK_IMPORT_ROWS {
+            writeln!(text, "1 Card {index}").expect("write row");
+        }
+        let err = parse_text(text.as_bytes()).expect_err("oversized text");
+        assert!(matches!(
+            err,
+            ImportError::TooLarge { count, max }
+                if count == MAX_DECK_IMPORT_ROWS + 1 && max == MAX_DECK_IMPORT_ROWS
+        ));
     }
 }

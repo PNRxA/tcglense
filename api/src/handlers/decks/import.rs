@@ -10,7 +10,7 @@ use crate::extract::{JsonBody, Path};
 use crate::handlers::shared::require_game;
 use crate::state::AppState;
 
-use super::{DeckImportRequest, DeckImportResponse, deck_detail, validate_name};
+use super::{DeckImportRequest, DeckImportResponse, DeckResponse, validate_name};
 
 /// Maximum decoded file contents accepted in the JSON import body. The router applies
 /// the same 16 MiB cap to the encoded request; this second check keeps the parser bound
@@ -31,7 +31,7 @@ pub const MAX_DECK_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
     params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
     request_body = DeckImportRequest,
     responses(
-        (status = 200, description = "The created deck and card-match summary.", body = DeckImportResponse),
+        (status = 200, description = "The created deck header and card-match summary.", body = DeckImportResponse),
         (status = 401, description = "Missing or invalid API key."),
         (status = 403, description = "API key is read-only."),
         (status = 404, description = "Unknown game or no public deck at the provider id."),
@@ -120,10 +120,8 @@ pub async fn import_deck(
     };
 
     let created = deck_import::create_deck_from_rows(&state.db, user.id, &game, parsed).await?;
-    let handle = crate::auth::username::handle_of(&user);
-    let detail = deck_detail(&state, &created.deck, handle).await?;
     Ok(Json(DeckImportResponse {
-        deck: detail,
+        deck: DeckResponse::from_model(&created.deck, created.card_count),
         provider: created.provider.as_str().to_string(),
         total_rows: created.total_rows,
         matched_cards: created.matched_cards,

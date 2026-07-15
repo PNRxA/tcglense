@@ -4,9 +4,9 @@ use reqwest::{StatusCode, header};
 use serde::Deserialize;
 
 use crate::collection_import::archidekt::{backoff_after, is_foil_finish};
-use crate::collection_import::{ImportError, MAX_IMPORT_ROWS, Provider, ProviderContext};
+use crate::collection_import::{ImportError, Provider, ProviderContext};
 
-use super::{DeckCardRow, ParsedDeck};
+use super::{DeckCardRow, MAX_DECK_IMPORT_ROWS, ParsedDeck};
 
 const API_BASE: &str = "https://archidekt.com/api/decks";
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
@@ -84,13 +84,21 @@ pub async fn fetch_deck(
     ctx: &ProviderContext<'_>,
     deck_id: &str,
 ) -> Result<ParsedDeck, ImportError> {
+    fetch_deck_from_base(ctx, deck_id, API_BASE).await
+}
+
+async fn fetch_deck_from_base(
+    ctx: &ProviderContext<'_>,
+    deck_id: &str,
+    api_base: &str,
+) -> Result<ParsedDeck, ImportError> {
     let limiter = ctx.limiters.for_provider(Provider::Archidekt);
     let mut retries = 0u32;
     let payload: DeckPayload = loop {
         limiter.acquire().await;
         let response = ctx
             .http
-            .get(format!("{API_BASE}/{deck_id}/"))
+            .get(format!("{api_base}/{deck_id}/"))
             .header(header::ACCEPT, "application/json")
             .send()
             .await
@@ -115,10 +123,10 @@ pub async fn fetch_deck(
         })?;
     };
 
-    if payload.cards.len() > MAX_IMPORT_ROWS {
+    if payload.cards.len() > MAX_DECK_IMPORT_ROWS {
         return Err(ImportError::TooLarge {
             count: payload.cards.len(),
-            max: MAX_IMPORT_ROWS,
+            max: MAX_DECK_IMPORT_ROWS,
         });
     }
     let rows = payload
@@ -177,6 +185,12 @@ fn archidekt_format(id: Option<i32>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use axum::{Json, Router, routing::get};
+    use serde_json::json;
+
+    use crate::collection_import::rate_limit::ProviderLimiters;
+    use crate::collection_import::{ProgressReporter, ProviderSettings};
+
     use super::*;
 
     #[test]
@@ -212,5 +226,61 @@ mod tests {
             payload.cards[0].foil,
             payload.cards[0].modifier.as_deref()
         ));
+    }
+
+    #[tokio::test]
+    async fn fetches_and_normalizes_a_provider_response() {
+        let app = Router::new().route(
+            "/api/decks/{id}/",
+            get(|| async {
+                Json(json!({
+                    "name": "Provider fixture",
+                    "deckFormat": 3,
+                    "cards": [{
+                        "categories": ["Ramp", "Artifacts"],
+                        "quantity": 2,
+                        "foil": true,
+                        "modifier": "Foil",
+                        "card": {
+                            "uid": "fixture-scryfall-id",
+                            "displayName": "Sol Ring"
+                        }
+                    }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind provider fixture");
+        let address = listener.local_addr().expect("provider fixture address");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let http = reqwest::Client::new();
+        let limiters = ProviderLimiters::new(u32::MAX, u32::MAX);
+        let settings = ProviderSettings::default();
+        let progress = ProgressReporter::default();
+        let context = ProviderContext {
+            http: &http,
+            limiters: &limiters,
+            settings: &settings,
+            progress: &progress,
+        };
+        let parsed =
+            fetch_deck_from_base(&context, "12345", &format!("http://{address}/api/decks"))
+                .await
+                .expect("fetch fixture");
+
+        assert_eq!(parsed.name, "Provider fixture");
+        assert_eq!(parsed.format.as_deref(), Some("Commander"));
+        assert_eq!(parsed.rows.len(), 1);
+        assert_eq!(parsed.rows[0].section, "Ramp");
+        assert_eq!(
+            parsed.rows[0].external_card_id.as_deref(),
+            Some("fixture-scryfall-id")
+        );
+        assert_eq!(parsed.rows[0].quantity, 2);
+        assert!(parsed.rows[0].foil);
     }
 }

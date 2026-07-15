@@ -35,6 +35,11 @@ const MAX_FORMAT: usize = 50;
 const MAX_SECTION_NAME: usize = 100;
 const INSERT_CHUNK: usize = 100;
 
+/// Maximum source rows accepted for one deck import. Real constructed decks and cubes
+/// are comfortably below this, while the bound prevents a collection-sized upload from
+/// turning one synchronous request into tens of thousands of deck rows.
+pub const MAX_DECK_IMPORT_ROWS: usize = 2_000;
+
 pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportError> {
     let id = match provider {
         Provider::Archidekt => archidekt::parse_deck_id(input),
@@ -79,6 +84,12 @@ pub async fn create_deck_from_rows(
     game: &str,
     mut parsed: ParsedDeck,
 ) -> Result<CreatedDeckImport, ImportError> {
+    if parsed.rows.len() > MAX_DECK_IMPORT_ROWS {
+        return Err(ImportError::TooLarge {
+            count: parsed.rows.len(),
+            max: MAX_DECK_IMPORT_ROWS,
+        });
+    }
     if parsed.rows.is_empty() {
         return Err(ImportError::EmptyDeck);
     }
@@ -226,6 +237,10 @@ pub async fn create_deck_from_rows(
         section_ids.insert(section_name, section.id);
     }
 
+    let card_count = aggregate
+        .values()
+        .map(|(regular, foil)| i64::from(clamp_count(*regular)) + i64::from(clamp_count(*foil)))
+        .sum();
     let cards: Vec<deck_card::ActiveModel> = aggregate
         .into_iter()
         .map(
@@ -251,6 +266,7 @@ pub async fn create_deck_from_rows(
 
     Ok(CreatedDeckImport {
         deck,
+        card_count,
         provider: parsed.provider,
         total_rows,
         matched_cards: matched_ids.len(),
@@ -416,6 +432,43 @@ mod tests {
         .await
         .expect_err("zero match");
         assert!(matches!(err, ImportError::NoMatchingDeckCards));
+        assert_eq!(Deck::find().count(&db).await.expect("count"), 0);
+    }
+
+    #[tokio::test]
+    async fn database_boundary_rejects_too_many_rows_before_creating_a_deck() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "deck-cap@test.example").await;
+        let rows = vec![
+            DeckCardRow {
+                section: "Mainboard".into(),
+                card_name: "Repeated".into(),
+                external_card_id: Some("uid-a".into()),
+                set_code: None,
+                collector_number: None,
+                foil: false,
+                quantity: 1,
+            };
+            MAX_DECK_IMPORT_ROWS + 1
+        ];
+        let err = create_deck_from_rows(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ParsedDeck {
+                provider: Provider::Archidekt,
+                name: "Too large".into(),
+                format: None,
+                rows,
+            },
+        )
+        .await
+        .expect_err("oversized deck");
+        assert!(matches!(
+            err,
+            ImportError::TooLarge { count, max }
+                if count == MAX_DECK_IMPORT_ROWS + 1 && max == MAX_DECK_IMPORT_ROWS
+        ));
         assert_eq!(Deck::find().count(&db).await.expect("count"), 0);
     }
 }

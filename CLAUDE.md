@@ -172,7 +172,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   reusing #361's `resolve_public_user`). Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
-  throttling, foil, and card-resolution seams; Moxfield live URLs keep the collection import gate.
+  throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
+  a lightweight deck header; Moxfield live URLs keep the collection import gate.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

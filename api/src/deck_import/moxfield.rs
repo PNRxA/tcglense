@@ -8,9 +8,9 @@ use serde::Deserialize;
 
 use crate::collection_import::archidekt::backoff_after;
 use crate::collection_import::moxfield::{is_foil_finish, valid_id};
-use crate::collection_import::{ImportError, MAX_IMPORT_ROWS, Provider, ProviderContext};
+use crate::collection_import::{ImportError, Provider, ProviderContext};
 
-use super::{DeckCardRow, ParsedDeck};
+use super::{DeckCardRow, MAX_DECK_IMPORT_ROWS, ParsedDeck};
 
 const API_BASE: &str = "https://api2.moxfield.com/v3/decks/all";
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
@@ -31,6 +31,12 @@ struct DeckPayload {
     sideboard: HashMap<String, CardEntry>,
     #[serde(default)]
     commanders: HashMap<String, CardEntry>,
+    #[serde(default)]
+    maybeboard: HashMap<String, CardEntry>,
+    #[serde(default)]
+    companions: HashMap<String, CardEntry>,
+    #[serde(default, rename = "signatureSpells")]
+    signature_spells: HashMap<String, CardEntry>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -45,6 +51,8 @@ struct Boards {
     maybeboard: Board,
     #[serde(default)]
     companions: Board,
+    #[serde(default, rename = "signatureSpells")]
+    signature_spells: Board,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -158,35 +166,76 @@ pub async fn fetch_deck(
         })?;
     };
 
-    let has_nested_boards = !payload.boards.mainboard.cards.is_empty()
-        || !payload.boards.sideboard.cards.is_empty()
-        || !payload.boards.commanders.cards.is_empty()
-        || !payload.boards.maybeboard.cards.is_empty()
-        || !payload.boards.companions.cards.is_empty();
+    normalize_payload(payload)
+}
+
+/// Normalize the supported Moxfield payload shapes without performing network I/O.
+/// The v3 API nests boards under `boards`; older variants exposed maps at the top level.
+/// Prefer each nested board independently, falling back to its legacy counterpart when
+/// absent so a partially nested response cannot silently discard a board.
+fn normalize_payload(payload: DeckPayload) -> Result<ParsedDeck, ImportError> {
+    let DeckPayload {
+        name,
+        format,
+        boards,
+        mainboard,
+        sideboard,
+        commanders,
+        maybeboard,
+        companions,
+        signature_spells,
+    } = payload;
+    let Boards {
+        mainboard: nested_mainboard,
+        sideboard: nested_sideboard,
+        commanders: nested_commanders,
+        maybeboard: nested_maybeboard,
+        companions: nested_companions,
+        signature_spells: nested_signature_spells,
+    } = boards;
+
     let mut rows = Vec::new();
-    append_board(&mut rows, "Mainboard", payload.boards.mainboard.cards);
-    append_board(&mut rows, "Sideboard", payload.boards.sideboard.cards);
-    append_board(&mut rows, "Commander", payload.boards.commanders.cards);
-    append_board(&mut rows, "Maybeboard", payload.boards.maybeboard.cards);
-    append_board(&mut rows, "Companion", payload.boards.companions.cards);
-    if !has_nested_boards {
-        append_board(&mut rows, "Mainboard", payload.mainboard);
-        append_board(&mut rows, "Sideboard", payload.sideboard);
-        append_board(&mut rows, "Commander", payload.commanders);
-    }
-    if rows.len() > MAX_IMPORT_ROWS {
+    append_board_with_fallback(&mut rows, "Mainboard", nested_mainboard, mainboard);
+    append_board_with_fallback(&mut rows, "Sideboard", nested_sideboard, sideboard);
+    append_board_with_fallback(&mut rows, "Commander", nested_commanders, commanders);
+    append_board_with_fallback(&mut rows, "Maybeboard", nested_maybeboard, maybeboard);
+    append_board_with_fallback(&mut rows, "Companion", nested_companions, companions);
+    append_board_with_fallback(
+        &mut rows,
+        "Signature Spells",
+        nested_signature_spells,
+        signature_spells,
+    );
+    if rows.len() > MAX_DECK_IMPORT_ROWS {
         return Err(ImportError::TooLarge {
             count: rows.len(),
-            max: MAX_IMPORT_ROWS,
+            max: MAX_DECK_IMPORT_ROWS,
         });
     }
 
     Ok(ParsedDeck {
         provider: Provider::Moxfield,
-        name: payload.name,
-        format: payload.format.map(pretty_format),
+        name,
+        format: format.map(pretty_format),
         rows,
     })
+}
+
+fn append_board_with_fallback(
+    rows: &mut Vec<DeckCardRow>,
+    section: &str,
+    nested: Board,
+    legacy: HashMap<String, CardEntry>,
+) {
+    append_board(
+        rows,
+        section,
+        if nested.cards.is_empty() {
+            legacy
+        } else {
+            nested.cards
+        },
+    );
 }
 
 fn append_board(rows: &mut Vec<DeckCardRow>, section: &str, cards: HashMap<String, CardEntry>) {
@@ -249,16 +298,108 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_nested_board_shape() {
+    fn normalizes_every_nested_board_including_signature_spells() {
         let payload: DeckPayload = serde_json::from_str(
             r#"{
               "name":"Deck", "format":"commander",
-              "boards":{"mainboard":{"cards":{"a":{"quantity":2,"finish":"foil","card":{"name":"Sol Ring","scryfall_id":"uid","set":"c21","cn":"263"}}}}}
+              "boards":{
+                "mainboard":{"cards":{"a":{"quantity":2,"finish":"foil","card":{"name":"Main","scryfallId":"uid-main"}}}},
+                "sideboard":{"cards":{"b":{"card":{"name":"Side","scryfallId":"uid-side"}}}},
+                "commanders":{"cards":{"c":{"card":{"name":"Commander","scryfallId":"uid-commander"}}}},
+                "maybeboard":{"cards":{"d":{"card":{"name":"Maybe","scryfallId":"uid-maybe"}}}},
+                "companions":{"cards":{"e":{"card":{"name":"Companion","scryfallId":"uid-companion"}}}},
+                "signatureSpells":{"cards":{"f":{"card":{"name":"Signature","scryfallId":"uid-signature"}}}}
+              }
             }"#,
         )
         .expect("payload");
-        let entry = payload.boards.mainboard.cards.get("a").expect("entry");
-        assert_eq!(entry.quantity, 2);
-        assert_eq!(entry.card.scryfall_id.as_deref(), Some("uid"));
+        let parsed = normalize_payload(payload).expect("normalize");
+        assert_eq!(parsed.format.as_deref(), Some("Commander"));
+        assert_eq!(parsed.rows.len(), 6);
+        assert_eq!(
+            parsed
+                .rows
+                .iter()
+                .map(|row| row.section.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Mainboard",
+                "Sideboard",
+                "Commander",
+                "Maybeboard",
+                "Companion",
+                "Signature Spells",
+            ]
+        );
+        assert_eq!(parsed.rows[0].quantity, 2);
+        assert!(parsed.rows[0].foil);
+    }
+
+    #[test]
+    fn falls_back_per_board_to_legacy_top_level_maps() {
+        let payload: DeckPayload = serde_json::from_str(
+            r#"{
+              "name":"Legacy",
+              "boards":{"mainboard":{"cards":{"nested":{"card":{"name":"Nested main","scryfallId":"uid-main"}}}}},
+              "mainboard":{"legacy-main":{"card":{"name":"Ignored duplicate main","scryfallId":"uid-old-main"}}},
+              "sideboard":{"side":{"card":{"name":"Side","scryfallId":"uid-side"}}},
+              "commanders":{"commander":{"card":{"name":"Commander","scryfallId":"uid-commander"}}},
+              "maybeboard":{"maybe":{"card":{"name":"Maybe","scryfallId":"uid-maybe"}}},
+              "companions":{"companion":{"card":{"name":"Companion","scryfallId":"uid-companion"}}},
+              "signatureSpells":{"signature":{"card":{"name":"Signature","scryfallId":"uid-signature"}}}
+            }"#,
+        )
+        .expect("payload");
+        let parsed = normalize_payload(payload).expect("normalize");
+        assert_eq!(parsed.rows.len(), 6);
+        assert_eq!(parsed.rows[0].card_name, "Nested main");
+        assert!(
+            parsed
+                .rows
+                .iter()
+                .any(|row| row.section == "Signature Spells")
+        );
+        assert!(
+            !parsed
+                .rows
+                .iter()
+                .any(|row| row.card_name == "Ignored duplicate main")
+        );
+    }
+
+    #[test]
+    fn rejects_an_offline_payload_above_the_deck_row_cap() {
+        let cards = (0..=MAX_DECK_IMPORT_ROWS)
+            .map(|index| {
+                (
+                    index.to_string(),
+                    CardEntry {
+                        quantity: 1,
+                        finish: None,
+                        is_foil: false,
+                        card: MoxfieldCard {
+                            name: format!("Card {index}"),
+                            scryfall_id: Some(format!("uid-{index}")),
+                            set: None,
+                            cn: None,
+                        },
+                    },
+                )
+            })
+            .collect();
+        let payload = DeckPayload {
+            name: "Too large".into(),
+            boards: Boards {
+                mainboard: Board { cards },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = normalize_payload(payload).expect_err("oversized payload");
+        assert!(matches!(
+            err,
+            ImportError::TooLarge { count, max }
+                if count == MAX_DECK_IMPORT_ROWS + 1 && max == MAX_DECK_IMPORT_ROWS
+        ));
     }
 }

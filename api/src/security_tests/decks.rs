@@ -7,6 +7,8 @@
 //! Drives the real router over the seeded dummy catalog, so cards can be added by their
 //! real external ids and read back in the full catalog `Card` shape.
 
+use std::fmt::Write;
+
 use super::harness::*;
 
 const PW: &str = "correct-horse-battery-staple";
@@ -232,11 +234,23 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
 
     let deck = &imported["deck"];
     let deck_id = deck["id"].as_i64().expect("deck id");
-    let sections = deck["sections"].as_array().expect("sections");
+    assert_eq!(deck["card_count"], 4);
+    assert!(
+        deck.get("cards").is_none() && deck.get("sections").is_none(),
+        "the synchronous import response must stay lightweight"
+    );
+
+    let (status, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let sections = detail["sections"].as_array().expect("sections");
     assert_eq!(sections.len(), 2, "imports must not seed default sections");
     assert_eq!(sections[0]["name"], "Ramp");
     assert_eq!(sections[1]["name"], "Commander");
-    let cards = deck["cards"].as_array().expect("cards");
+    let cards = detail["cards"].as_array().expect("cards");
     assert_eq!(cards.len(), 2);
     let first_entry = cards
         .iter()
@@ -306,9 +320,18 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
         StatusCode::OK,
         "text re-import failed: {round_trip:?}"
     );
-    assert_eq!(round_trip["deck"]["sections"].as_array().unwrap().len(), 2);
-    assert_eq!(round_trip["deck"]["cards"].as_array().unwrap().len(), 2);
-    assert_eq!(round_trip["deck"]["summary"]["total_cards"], 4);
+    assert_eq!(round_trip["deck"]["card_count"], 4);
+    assert!(round_trip["deck"].get("cards").is_none());
+    let round_trip_id = round_trip["deck"]["id"].as_i64().expect("round-trip id");
+    let (status, _, round_trip_detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{round_trip_id}"), &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(round_trip_detail["sections"].as_array().unwrap().len(), 2);
+    assert_eq!(round_trip_detail["cards"].as_array().unwrap().len(), 2);
+    assert_eq!(round_trip_detail["summary"]["total_cards"], 4);
 
     // Export ownership is the same non-oracle 404 as every other deck-scoped read.
     let (status, _, _) = send(
@@ -320,6 +343,45 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn oversized_deck_upload_is_rejected_without_creating_a_deck() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "oversized-deck@example.com", PW).await;
+    let card_id = sample_card_ids(&app, 1).await.remove(0);
+    let mut csv = String::from("Quantity,Name,Scryfall ID,Categories\n");
+    for index in 0..=crate::deck_import::MAX_DECK_IMPORT_ROWS {
+        writeln!(csv, "1,Card {index},{card_id},Mainboard").expect("write CSV row");
+    }
+
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/import",
+            &access,
+            json!({
+                "provider": "archidekt",
+                "source": null,
+                "contents": csv,
+                "format": "csv",
+                "name": "Too large"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("limit is 2000")
+    );
+
+    let (status, _, decks) = send(&app, get_with_bearer("/api/decks/mtg", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(decks["data"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

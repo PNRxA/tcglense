@@ -28,11 +28,12 @@ pub struct ParsedDeck {
     pub rows: Vec<DeckCardRow>,
 }
 
-/// Internal result of the all-or-nothing create path. The handler expands `deck` to the
-/// normal `DeckDetail` DTO after the transaction commits.
+/// Internal result of the all-or-nothing create path. The handler returns a lightweight
+/// deck-list header; full sections/cards remain behind the normal deck detail endpoint.
 #[derive(Debug)]
 pub struct CreatedDeckImport {
     pub deck: deck::Model,
+    pub card_count: i64,
     pub provider: Provider,
     pub total_rows: usize,
     pub matched_cards: usize,

@@ -733,7 +733,7 @@ deck ids), matching the public-sharing surface.
 |---------------|------|---------|
 | `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections) |
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
-| `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name }` | `DeckImportResponse { deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). The unused source fields are `null`. Imported categories/boards become the deck's **exact** sections rather than seeding defaults. `422` for malformed/empty/zero-match sources; nothing is created on failure |
+| `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Imported categories/boards become the deck's **exact** sections rather than seeding defaults. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/export?format=archidekt\|moxfield\|moxfield-text` | — | Owner-scoped deck-list download. `archidekt` (default) and `moxfield` return CSV; `moxfield-text` returns a sectioned plain-text list. Regular and foil quantities are separate rows, and sections round-trip through each format. `404` if not the caller's |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
@@ -764,14 +764,16 @@ Deck imports run inline because each provider deck endpoint is a single-object f
 the paginated collection job. They still share the collection importer's per-provider rate
 limiter, `429` back-off, foil detection, external-id resolution, and Moxfield
 `(set, collector_number)` lookup. Archidekt uses the first category as the card's primary
-section; Moxfield boards map to Mainboard / Sideboard / Commander / Maybeboard / Companion.
+section; Moxfield boards map to Mainboard / Sideboard / Commander / Maybeboard / Companion /
+Signature Spells, with per-board fallback for older top-level payloads.
 Name-only plain text resolves to the newest exact-name printing; an explicit printing tuple
 that is absent from the local catalog stays unmatched. The write is one transaction and goes
 straight to `decks` / `deck_sections` / `deck_cards` — it never invokes collection reconcile.
 
 Moxfield **live URL** import uses the same deployment gate as collection import and remains
 disabled until the operator has an approved `MOXFIELD_USER_AGENT`; upload is the supported
-Moxfield path. Upload bodies are capped at 16 MiB and deck lists at the shared import-row cap.
+Moxfield path. Upload bodies are capped at 16 MiB and deck lists at a deck-specific 2000-row
+cap. The synchronous response stays bounded by returning a `Deck` header, never every card.
 CSV parsers accept the provider's relevant columns plus extra export metadata. The app's own
 minimal exports are deliberately re-importable: Archidekt uses Quantity / Name / Finish /
 Scryfall ID / Categories, while Moxfield uses Count / Name / Edition / Foil / Collector

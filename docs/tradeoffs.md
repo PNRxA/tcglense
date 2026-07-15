@@ -386,13 +386,18 @@ catalog) is planned but not implemented.
   and `ImportError` mapping — but never calls collection reconcile/consolidate/smart. Empty and
   zero-match imports create nothing. Archidekt permits multiple categories per card while our
   schema files one row in one section, so its first category is the primary section; this avoids
-  multiplying the card count. Moxfield's boards map directly. The inverse exports preserve
-  sections and regular/foil buckets in provider-shaped CSV or Moxfield-style text.
+  multiplying the card count. Moxfield's boards map directly, including signature spells,
+  with each nested board independently falling back to the older top-level shape. The inverse
+  exports preserve sections and regular/foil buckets in provider-shaped CSV or Moxfield-style
+  text.
 - **Live deck fetches stay small and policy-gated.** A deck is one provider object, so the route
   runs inline rather than entering the long-lived paginated collection queue, while sharing the
   same global provider limiters. Archidekt live URLs are enabled. Moxfield live URLs remain
   behind `Provider::network_import_enabled()` and the approved `MOXFIELD_USER_AGENT`, exactly
-  like collection import; CSV/plain-text upload remains available without upstream access.
+  like collection import; CSV/plain-text upload remains available without upstream access. A
+  deck-specific 2000-row cap is enforced by every parser and again at the database boundary,
+  and the synchronous response returns only the lightweight deck header; the full card DTOs are
+  loaded through the normal deck-detail read after navigation.
 
 ## Data ingest & datasets
 

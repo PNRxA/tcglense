@@ -347,12 +347,13 @@ pub struct DeckImportRequest {
     pub name: Option<String>,
 }
 
-/// Result of a deck import: the newly created deck plus match feedback for rows skipped
-/// because their printing/name was absent from the local catalog.
+/// Result of a deck import: a lightweight header for the newly created deck plus match
+/// feedback for rows skipped because their printing/name was absent from the catalog.
+/// Full sections/cards are loaded separately from the normal deck-detail endpoint.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct DeckImportResponse {
-    pub deck: DeckDetail,
+    pub deck: DeckResponse,
     pub provider: String,
     pub total_rows: usize,
     pub matched_cards: usize,
