@@ -5,6 +5,7 @@ import {
   getProduct,
   getProductCards,
   getProductCardSections,
+  getProductContainers,
   getProductContents,
   getProductFacets,
   listProducts,
@@ -140,6 +141,15 @@ export function useProductContentsQuery(game: Ref<string>, id: Ref<string>) {
   return useQuery({
     queryKey: ['product-contents', game, id],
     queryFn: ({ signal }) => getProductContents(game.value, id.value, signal),
+  })
+}
+
+/** The parent sealed products whose composition directly contains this product (the
+ * sealed-detail "Included in" section). Public read, keyed on the reactive route refs. */
+export function useProductContainersQuery(game: Ref<string>, id: Ref<string>) {
+  return useQuery({
+    queryKey: ['product-containers', game, id],
+    queryFn: ({ signal }) => getProductContainers(game.value, id.value, signal),
   })
 }
 

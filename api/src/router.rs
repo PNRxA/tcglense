@@ -31,7 +31,8 @@ use crate::{
             card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
             get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
             list_set_drops, list_set_subtypes, list_sets, product_card_sections, product_cards,
-            product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
+            product_containers, product_contents, product_facets, product_image, product_prices,
+            scan_cards, set_icon,
         },
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_movers, collection_set_drops, collection_set_subtypes,
@@ -359,6 +360,12 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/games/{game}/products/{id}/contents",
             get(product_contents),
+        )
+        // The reverse composition relation: sealed products that directly contain this
+        // product (for example, the boxes and bundles containing a booster pack).
+        .route(
+            "/api/games/{game}/products/{id}/containers",
+            get(product_containers),
         )
         // The cards this product is found to contain / can be pulled from (issue #204,
         // the reverse of `/cards/{id}/sealed`). A static-suffix sibling of `/prices`.
