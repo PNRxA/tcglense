@@ -1,11 +1,11 @@
 //! HTTP-level coverage for collection sealed products (#435).
 
 use super::harness::*;
-use crate::entities::prelude::{CollectionProductItem, Product, ProductPriceHistory};
-use crate::entities::{collection_product_item, product, product_price_history};
+use crate::entities::prelude::{Product, ProductPriceHistory};
+use crate::entities::{product, product_price_history};
 use crate::test_support::insert_product;
 use chrono::{Duration, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, Set};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
 fn product_path(id: &str) -> String {
     format!("/api/collection/mtg/products/{id}")
@@ -211,7 +211,10 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     set_product_price_history(
         db,
         internal_product_id(db, "200").await,
-        &[(yesterday, Some("20.00")), (today.clone(), Some("15.00"))],
+        &[
+            (yesterday.clone(), Some("20.00")),
+            (today.clone(), Some("15.00")),
+        ],
     )
     .await;
 
@@ -232,6 +235,16 @@ async fn sealed_holdings_feed_value_history_and_movers() {
         "no cards means no card line"
     );
     assert_eq!(today_point["sealed_value_usd"], "55.00", "2×$20 + 1×$15");
+    let yesterday_point = history["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|point| point["date"] == yesterday)
+        .expect("yesterday's point");
+    assert_eq!(
+        yesterday_point["sealed_value_usd"], "40.00",
+        "current sealed holdings are revalued before their add date"
+    );
 
     let (status, _, movers) =
         send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
@@ -251,7 +264,7 @@ async fn sealed_holdings_feed_value_history_and_movers() {
 }
 
 #[tokio::test]
-async fn ranged_value_history_carries_a_pre_cutoff_sealed_price() {
+async fn ranged_value_history_carries_a_pre_cutoff_sealed_price_for_a_new_holding() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "sealed-range-anchor@example.com", "password123").await;
@@ -259,16 +272,6 @@ async fn ranged_value_history_carries_a_pre_cutoff_sealed_price() {
     own_product(&app, &token, "300", 1).await;
 
     let product_id = internal_product_id(db, "300").await;
-    let row = CollectionProductItem::find()
-        .filter(collection_product_item::Column::ProductId.eq(product_id))
-        .one(db)
-        .await
-        .expect("query holding")
-        .expect("owned product row");
-    let mut active = row.into_active_model();
-    active.created_at = Set(Utc::now() - Duration::days(10));
-    active.update(db).await.expect("backdate holding");
-
     set_product_price_history(db, product_id, &[(day_offset(8), Some("25.00"))]).await;
 
     let (status, _, history) = send(

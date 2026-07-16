@@ -43,9 +43,9 @@ async function mountChart(
 }
 
 describe('PriceChart empty state', () => {
-  // The add-date clamp means a young collection's series is all-null until it has a priced
-  // day; row count alone would keep the chart body up and render a blank frame (issue #283
-  // review finding), so the empty state must key off there being no plottable value.
+  // A collection's series is all-null until one of its holdings has a captured price; row
+  // count alone would keep the chart body up and render a blank frame (issue #283 review
+  // finding), so the empty state must key off there being no plottable value.
   it('shows emptyText when every point is null', async () => {
     const wrapper = await mountChart([
       { date: '2024-01-01', usd: null, usd_foil: null },

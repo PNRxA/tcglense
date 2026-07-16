@@ -558,9 +558,10 @@ is priced.
 holding value and `sealed_value_usd` is the sealed-product holding value, each as a 2-dp USD
 string or `null` until that holding kind has a captured price on/before the day. Both lines
 share the union of their snapshot dates and independently carry their last captured prices
-forward. Each is an add-date-clamped revaluation of the user's **current** quantities: quantity
-changes before today are not stored, so current counts are treated as held continuously since
-the row's `created_at`; removed-and-re-added rows restart at the later add date.
+forward. Each revalues the user's **current** quantities across every captured historic date,
+regardless of when the holding was added. Quantity changes before today are not stored, so the
+graph intentionally answers what the current basket would have been worth at historic prices,
+not what the user actually owned on each date.
 
 `CollectionMovers = { as_of, day, week, month, year, two_year, three_year, all_time, sealed }`:
 `as_of` is the newest `YYYY-MM-DD` price snapshot across the user's priced card holdings, or

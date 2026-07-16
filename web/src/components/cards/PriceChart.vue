@@ -92,9 +92,9 @@ const series = computed<PricePointLike[]>(() =>
   })),
 )
 
-// "Empty" for a range means nothing plottable — either no rows at all, or (for the
-// add-date-clamped collection series) every row null because the collection is younger than
-// the window. Either way the chart body would draw a blank frame, so show emptyText instead.
+// "Empty" for a range means nothing plottable — either no rows at all, or (for the collection
+// series) every row null because no holding has a captured price anywhere in the window.
+// Either way the chart body would draw a blank frame, so show emptyText instead.
 const isEmpty = computed(
   () =>
     !query.isPending.value &&
