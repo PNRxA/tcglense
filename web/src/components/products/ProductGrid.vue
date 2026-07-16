@@ -3,11 +3,12 @@ import { computed } from 'vue'
 import type { OwnedCountsMap, Product } from '@/lib/api'
 import ProductTile from '@/components/products/ProductTile.vue'
 import ProductCountControl from '@/components/products/ProductCountControl.vue'
+import { useProductNavList } from '@/composables/useProductNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useAuthStore } from '@/stores/auth'
 
-defineProps<{
+const props = defineProps<{
   game: string
   products: Product[]
   // Wanted counts keyed by external product id (from `useWishlistProductCounts`, or the
@@ -27,6 +28,13 @@ const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
 
 // Quick-add controls (issue #364) are a signed-in feature (CardGrid parity).
 const auth = useAuthStore()
+
+// Publish the current grid order so the sealed-product modal can step with arrow keys and
+// prev/next buttons, matching card-grid modal navigation.
+useProductNavList(
+  () => props.game,
+  () => props.products.map((product) => product.id),
+)
 </script>
 
 <template>
