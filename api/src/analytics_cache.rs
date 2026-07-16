@@ -126,9 +126,7 @@ impl AnalyticsCache {
                     .query_async(&mut conn)
                     .await;
                 match result {
-                    Ok((holdings, prices)) => {
-                        Some((holdings.unwrap_or(0), prices.unwrap_or(0)))
-                    }
+                    Ok((holdings, prices)) => Some((holdings.unwrap_or(0), prices.unwrap_or(0))),
                     Err(err) => {
                         tracing::debug!(error = %err, "analytics cache version read failed; bypassing");
                         None
@@ -202,9 +200,9 @@ impl AnalyticsCache {
             }
             Backend::Memory(memory) => {
                 let bodies = memory.bodies.lock().expect("analytics bodies mutex");
-                bodies.get(key).and_then(|(stored, body)| {
-                    (stored.elapsed() < BODY_TTL).then(|| body.clone())
-                })
+                bodies
+                    .get(key)
+                    .and_then(|(stored, body)| (stored.elapsed() < BODY_TTL).then(|| body.clone()))
             }
         }
     }
@@ -251,11 +249,7 @@ impl AnalyticsCache {
 /// Build the `application/json` response for an (already-serialized) analytics
 /// body — the shape both a cache hit and a fresh computation return.
 pub fn json_body_response(body: Vec<u8>) -> Response {
-    (
-        [(header::CONTENT_TYPE, "application/json")],
-        body,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
 #[cfg(test)]
@@ -350,7 +344,9 @@ mod tests {
         let Ok(url) = std::env::var("TCGLENSE_TEST_REDIS_URL") else {
             return;
         };
-        let conn = crate::ratelimit::connect_redis(&url).await.expect("connect");
+        let conn = crate::ratelimit::connect_redis(&url)
+            .await
+            .expect("connect");
         let cache = AnalyticsCache::new(Some(conn));
 
         // A user id from the nanosecond clock so runs never collide.
@@ -363,7 +359,10 @@ mod tests {
         let key = cache.body_key(uid, "mtg", "movers", "").await.expect("key");
         assert!(cache.get_body(&key).await.is_none());
         cache.put_body(&key, b"{}").await;
-        assert_eq!(cache.get_body(&key).await.as_deref(), Some(b"{}".as_slice()));
+        assert_eq!(
+            cache.get_body(&key).await.as_deref(),
+            Some(b"{}".as_slice())
+        );
 
         cache.bump_holdings(uid, "mtg").await;
         let bumped = cache.body_key(uid, "mtg", "movers", "").await.expect("key");

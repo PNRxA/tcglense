@@ -104,7 +104,10 @@ impl AdvisoryLock {
             }
         };
         match sqlx::query(sql).bind(key).fetch_one(&mut *conn).await {
-            Ok(row) if granted(&row) => Some(Self { conn: Some(conn), key }),
+            Ok(row) if granted(&row) => Some(Self {
+                conn: Some(conn),
+                key,
+            }),
             Ok(_) => None,
             Err(err) => {
                 tracing::warn!(error = %err, key, "advisory lock: acquisition failed; failing open");
@@ -214,6 +217,9 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-        assert!(freed, "a dropped guard's lock must release when its connection closes");
+        assert!(
+            freed,
+            "a dropped guard's lock must release when its connection closes"
+        );
     }
 }
