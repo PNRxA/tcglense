@@ -162,8 +162,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:
   `handlers/shared/product_holdings.rs`, `lib/api/product-holdings.ts`, and
-  `composables/productHoldingQueries.ts`. Collection import/sync/export, public sharing,
-  card value history, and movers remain card-only.
+  `composables/productHoldingQueries.ts`. Collection import/sync/export and public sharing
+  remain card-only; collection value history and movers include both card and sealed-product
+  holdings.
 - **Decks** (`/api/decks/{game}*`, issue #363) are a **container** surface — many per user,
   in `decks`/`deck_sections`/`deck_cards`/`deck_folders` — **not** a collection/wishlist twin,
   so they don't ride `makeHoldingApi`/`makeHoldingQueries`; they live beside it and only reuse

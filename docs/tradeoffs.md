@@ -261,9 +261,11 @@ catalog) is planned but not implemented.
   a single **Quantity** and preserves the foil count on edits: a foil sealed variant is a
   separate TCGplayer SKU, not a finish of the same holding. Product lists are deliberately
   **fixed-sort (recency) and unfiltered** (no `q`/`sort`/facets) because personal sealed lists
-  are expected to stay small. The existing collection import/sync/export, public-sharing,
-  card-value-history, and movers pipelines remain card-only; adding sealed products does not
-  silently change provider round trips or historical valuation semantics.
+  are expected to stay small. Collection import/sync/export and public-sharing remain
+  card-only, so adding sealed products does not silently change provider round trips. The
+  collection value-history chart does include sealed holdings as a separate line, and the
+  movers panel switches between independent Singles and Sealed rankings; both reuse the same
+  current-count/add-date and captured-price assumptions as the original card analytics.
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing

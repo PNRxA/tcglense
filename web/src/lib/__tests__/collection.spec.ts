@@ -221,17 +221,17 @@ describe('getCollectionValueHistory', () => {
     expect(url).toContain('/api/collection/mtg/value-history?range=1y')
   })
 
-  it('maps the wire value_usd onto the chart-shaped usd field with a null foil line', async () => {
+  it('maps card and sealed wire values onto the chart-shaped primary and secondary fields', async () => {
     stubJson({
       data: [
-        { date: '2024-01-01', value_usd: null },
-        { date: '2024-01-02', value_usd: '123.45' },
+        { date: '2024-01-01', value_usd: null, sealed_value_usd: '50.00' },
+        { date: '2024-01-02', value_usd: '123.45', sealed_value_usd: '75.00' },
       ],
     })
     const result = await getCollectionValueHistory('tok', 'mtg')
     expect(result.data).toEqual([
-      { date: '2024-01-01', usd: null, usd_foil: null },
-      { date: '2024-01-02', usd: '123.45', usd_foil: null },
+      { date: '2024-01-01', usd: null, usd_foil: '50.00' },
+      { date: '2024-01-02', usd: '123.45', usd_foil: '75.00' },
     ])
   })
 })

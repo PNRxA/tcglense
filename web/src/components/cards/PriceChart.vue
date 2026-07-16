@@ -33,8 +33,11 @@ const props = withDefaults(
     title?: string
     /** Message shown when the selected range has no plottable data. */
     emptyText?: string
-    /** Plot a single USD line with no foil series — the collection total. */
+    /** Plot a single USD line with no foil series. */
     singleSeries?: boolean
+    /** Optional semantic names for the two generic USD fields. Collection analytics uses
+     * these to label its Cards and Sealed products lines. */
+    seriesLabels?: { primary: string; secondary: string }
   }>(),
   {
     title: 'Price history',
@@ -146,6 +149,7 @@ const isEmpty = computed(
         :range="range"
         :currency="money.displayCurrency.value"
         :single-series="props.singleSeries"
+        :series-labels="props.seriesLabels"
       />
     </CardContent>
   </Card>

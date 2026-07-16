@@ -32,6 +32,9 @@ export type {
   CollectionMover,
   CollectionMoverList,
   CollectionMovers,
+  CollectionSealedMover,
+  CollectionSealedMoverList,
+  CollectionSealedMovers,
   CollectionQuantities,
   CollectionSet,
   CollectionSubtypeGroup,
@@ -175,9 +178,9 @@ export const setCollectionProductEntry = productApi.setEntry
 export const getCollectionProductSummary = productApi.summary
 export const getCollectionProductCounts = productApi.counts
 
-/** A single day of the collection's total-value series, shaped like the price chart's
- * `PricePointLike` so it feeds the shared `PriceChart` unchanged: `usd` is the day's total
- * collection value and there's no separate foil line (`usd_foil` is always null). */
+/** A single day of the collection's two value series, shaped like the shared price chart:
+ * `usd` carries cards and `usd_foil` carries sealed products. The field names are chart
+ * plumbing only; GameCollectionView supplies the semantic series labels. */
 export interface CollectionValueSeriesPoint {
   date: string
   usd: string | null
@@ -191,10 +194,9 @@ export function collectionValueHistoryPath(game: string, range?: PriceRange): st
 }
 
 /**
- * The signed-in user's total collection value over time for a game, across the same
- * `?range` windows as the per-card price chart. The wire DTO's `value_usd` is mapped onto
- * the chart's `usd` field (with `usd_foil` null — a single total line), so the shared
- * `PriceChart` renders it without changes.
+ * The signed-in user's card and sealed-product values over time for a game, across the same
+ * `?range` windows as the per-item price charts. The two wire values map onto the shared
+ * chart's primary/secondary fields.
  */
 export async function getCollectionValueHistory(
   token: string,
@@ -209,7 +211,7 @@ export async function getCollectionValueHistory(
     data: response.data.map((point) => ({
       date: point.date,
       usd: point.value_usd,
-      usd_foil: null,
+      usd_foil: point.sealed_value_usd,
     })),
   }
 }
@@ -221,7 +223,8 @@ export function collectionMoversPath(game: string): string {
 
 /**
  * The signed-in user's biggest gain/loss movements (1d / 7d / 30d / 1y / 2y / 3y /
- * all-time) across the cards they own, ranked by the change in each holding's USD value.
+ * all-time) across the cards and sealed products they own. The response preserves the
+ * card lists and carries sealed products in an independent parallel series.
  * Per-user + authenticated.
  */
 export async function getCollectionMovers(token: string, game: string): Promise<CollectionMovers> {

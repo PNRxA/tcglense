@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { cn } from '@/lib/utils'
 
-// The GroupViewToggle-style segmented control both holding landings share: pick between
-// the held sets (Collected / Wishlisted) and the whole catalog ("All sets"). A thin
-// presentational wrapper over the boolean `showAllSets` v-model — the parent's setter runs
-// the same `router.replace`, keeping the scope in the URL.
-const showAllSets = defineModel<boolean>({ required: true })
-defineProps<{ collectedLabel: string }>()
+// The GroupViewToggle-style two-option segmented control used by holding landings and the
+// movers panel. The first label is caller-defined; the second defaults to "All sets" but can
+// be overridden (Singles / Sealed). The parent owns what the boolean means.
+const showSecond = defineModel<boolean>({ required: true })
+withDefaults(defineProps<{ collectedLabel: string; secondLabel?: string }>(), {
+  secondLabel: 'All sets',
+})
 </script>
 
 <template>
@@ -16,10 +17,10 @@ defineProps<{ collectedLabel: string }>()
       :class="
         cn(
           'rounded px-3 py-1.5 font-medium transition-colors',
-          !showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+          !showSecond ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
         )
       "
-      @click="showAllSets = false"
+      @click="showSecond = false"
     >
       {{ collectedLabel }}
     </button>
@@ -28,12 +29,12 @@ defineProps<{ collectedLabel: string }>()
       :class="
         cn(
           'rounded px-3 py-1.5 font-medium transition-colors',
-          showAllSets ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+          showSecond ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
         )
       "
-      @click="showAllSets = true"
+      @click="showSecond = true"
     >
-      All sets
+      {{ secondLabel }}
     </button>
   </div>
 </template>

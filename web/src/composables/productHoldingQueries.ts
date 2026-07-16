@@ -14,6 +14,8 @@ export const PRODUCT_HOLDING_PAGE_SIZE = 60
 
 interface ProductHoldingQueriesConfig {
   prefix: 'collection' | 'wishlist'
+  /** Collection product writes also change its value-history and movers analytics. */
+  invalidateAnalytics?: boolean
   getList: (
     token: string,
     game: string,
@@ -81,6 +83,10 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
     qc.invalidateQueries({
       queryKey: opts.entryId ? [entryKey, game, opts.entryId] : [entryKey, game],
     })
+    if (cfg.invalidateAnalytics) {
+      qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
+      qc.invalidateQueries({ queryKey: ['collection-movers', game] })
+    }
   }
 
   function useSetEntryMutation() {

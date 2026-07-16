@@ -29,7 +29,7 @@ import { useAuthedQuery } from '@/lib/queries'
 // `holdingQueries.ts`); this module instantiates that factory with the collection api
 // functions and re-exports each member under its existing name/signature. The collection
 // is the bulk-threshold-carrying instance (its summary/sets keys+calls thread the user's
-// bulk-value cutoff) and the one that also invalidates the `collection-value-history` key.
+// bulk-value cutoff) and the one that also invalidates the collection analytics keys.
 const queries = makeHoldingQueries({
   prefix: 'collection',
   countsKey: 'collection-owned',
@@ -86,6 +86,7 @@ export const useSetCollectionEntryMutation = queries.useSetEntryMutation
 
 const productQueries = makeProductHoldingQueries({
   prefix: 'collection',
+  invalidateAnalytics: true,
   getList: getCollectionProducts,
   getEntry: getCollectionProductEntry,
   getSummary: getCollectionProductSummary,
@@ -102,8 +103,8 @@ export const invalidateCollectionProducts = productQueries.invalidate
 export type SetCollectionProductVars = SetHoldingVars
 export const useSetCollectionProductEntryMutation = productQueries.useSetEntryMutation
 
-/** The signed-in user's biggest gain/loss movements across their collection (1d through
- * all-time), for the collection landing's movers panel. */
+/** The signed-in user's separate singles/sealed gain/loss movements (1d through all-time),
+ * for the collection landing's movers panel. */
 export function useCollectionMoversQuery(game: Ref<string>) {
   const options = {
     queryKey: ['collection-movers', game],

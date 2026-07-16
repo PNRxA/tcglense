@@ -151,7 +151,7 @@ function fetchValueHistory(range: PriceRange) {
           </div>
         </dl>
 
-        <!-- Card-only stats stay separate from sealed; value history/movers remain card-based. -->
+        <!-- Card stats stay separate from the sealed-product summary above. -->
         <dl v-if="hasStats" class="mt-3 flex flex-wrap gap-x-8 gap-y-3">
           <div>
             <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
@@ -203,23 +203,22 @@ function fetchValueHistory(range: PriceRange) {
         <CollectionSyncControls :game="game" />
       </header>
 
-      <ProductHoldingSection :game="game" list="collection" class="mb-8" />
-
-      <!-- Total collection value over time — reconstructed from historic prices and each
-           card's add-date. Shown once something is owned, unless hidden from the settings
-           menu; reuses the shared price-history chart to render the single total-value line. -->
+      <!-- Card and sealed-product value over time — two independently add-date-clamped
+           lines on the shared history chart. Show it when either holding kind exists. -->
       <PriceChart
-        v-if="hasStats && showValueChart"
+        v-if="(hasStats || hasProductStats) && showValueChart"
         title="Collection value"
         empty-text="No value history for this range yet."
-        single-series
+        :series-labels="{ primary: 'Cards', secondary: 'Sealed products' }"
         :query-key="['collection-value-history', game]"
         :fetcher="fetchValueHistory"
       />
 
-      <!-- The biggest per-card value moves (day / week / month) across the collection —
-           gated like the value chart on something being owned, plus its own settings toggle. -->
-      <CollectionMovers v-if="hasStats && showMovers" :game="game" />
+      <!-- One panel switches between independent Singles and Sealed mover rankings. -->
+      <CollectionMovers v-if="(hasStats || hasProductStats) && showMovers" :game="game" />
+
+      <!-- Keep the sealed holdings grid directly below the collection analytics. -->
+      <ProductHoldingSection :game="game" list="collection" class="mt-8 mb-8" />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

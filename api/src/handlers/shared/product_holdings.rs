@@ -24,7 +24,7 @@ use super::pagination::{DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, build_page, reso
 use super::valuation::Valuation;
 
 /// A sealed product's market prices (USD only — TCGCSV carries no eur/tix).
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPrices"))]
 pub(crate) struct ProductPricesResponse {
     pub usd: Option<String>,
@@ -34,7 +34,7 @@ pub(crate) struct ProductPricesResponse {
 /// A sealed product, as the SPA sees it. Mirrors the `Card` DTO idioms: the provider
 /// id is exposed as a string `id`, prices are nested, and images are fetched through
 /// the proxy (`has_image` says whether one is available).
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Product"))]
 pub(crate) struct ProductResponse {
     pub id: String,
