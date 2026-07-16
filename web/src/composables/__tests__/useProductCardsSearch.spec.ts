@@ -4,7 +4,11 @@ import { defineComponent, h, nextTick, type Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { PRODUCT_CARDS_DEFAULT_SORT, PRODUCT_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
-import { useProductCardsSearch } from '../useProductCardsSearch'
+import {
+  PRODUCT_CARDS_MODAL_SEARCH_KEYS,
+  useProductCardsSearch,
+  type ProductCardsSearchKeys,
+} from '../useProductCardsSearch'
 
 const VALID_SORTS = PRODUCT_CARDS_SORT_OPTIONS.map((option) => option.value)
 
@@ -13,6 +17,7 @@ function makeRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: { template: '<div />' } },
+      { path: '/sealed/:game', name: 'browse', component: { template: '<div />' } },
       { path: '/sealed/:game/:id', name: 'product', component: { template: '<div />' } },
       { path: '/cards/:game/:id', name: 'card', component: { template: '<div />' } },
     ],
@@ -22,12 +27,13 @@ function makeRouter() {
 // Mount a throwaway component that just runs the composable, so useRoute/useRouter resolve and
 // the test can drive the returned state. It lives outside <RouterView>, so navigating the router
 // doesn't unmount it — a re-mount stands in for the product view re-mounting after Back.
-function mountSearch(router: Router) {
+// `keys` defaults through the composable to the full page's plain `?q=`/`?sort=`.
+function mountSearch(router: Router, keys?: ProductCardsSearchKeys) {
   let api!: ReturnType<typeof useProductCardsSearch>
   const harness = mount(
     defineComponent({
       setup() {
-        api = useProductCardsSearch(PRODUCT_CARDS_DEFAULT_SORT, VALID_SORTS)
+        api = useProductCardsSearch(PRODUCT_CARDS_DEFAULT_SORT, VALID_SORTS, keys)
         return () => h('div')
       },
     }),
@@ -36,11 +42,11 @@ function mountSearch(router: Router) {
   return { api, harness }
 }
 
-async function start(at: string) {
+async function start(at: string, keys?: ProductCardsSearchKeys) {
   const router = makeRouter()
   await router.push(at)
   await router.isReady()
-  const { api, harness } = mountSearch(router)
+  const { api, harness } = mountSearch(router, keys)
   await nextTick()
   return { router, api, harness }
 }
@@ -147,5 +153,55 @@ describe('useProductCardsSearch', () => {
     expect(restored.query.value).toBe('goblin')
     expect(restored.searchInput.value).toBe('goblin')
     expect((restored.sort as Ref<string>).value).toBe('price:desc')
+  })
+})
+
+// The detail modal renders this list over the sealed *browse* route, whose own `useCardSearch`
+// already owns `?q=`/`?sort=`. Both are URL-backed and blind to each other, so the modal takes
+// namespaced keys — these are the crossings that would otherwise happen. The browse state below
+// (`?q=bloomburrow&sort=price:desc`) is exactly what a user filtering the grid would have.
+describe('useProductCardsSearch namespaced onto a route that owns ?q=/?sort=', () => {
+  const MODAL = '/sealed/mtg?q=bloomburrow&sort=price:desc&product=100'
+
+  it('ignores the browse’s ?q=, reading only its own ?pq=', async () => {
+    const { api } = await start(MODAL, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    expect(api.query.value).toBe('')
+    expect(api.searchInput.value).toBe('')
+
+    const { api: filtered } = await start(`${MODAL}&pq=t:goblin`, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    expect(filtered.query.value).toBe('t:goblin')
+    expect(filtered.searchInput.value).toBe('t:goblin')
+  })
+
+  it('ignores the browse’s ?sort=, even though the value is valid for both option sets', async () => {
+    // `price:desc` is in PRODUCT_SORT_OPTIONS *and* PRODUCT_CARDS_SORT_OPTIONS, so the clamp
+    // would happily pass the browse's sort through — only the key namespacing separates them.
+    const { api } = await start(MODAL, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    expect(api.sort.value).toBe(PRODUCT_CARDS_DEFAULT_SORT)
+
+    const { api: sorted } = await start(`${MODAL}&psort=name:desc`, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    expect(sorted.sort.value).toBe('name:desc')
+  })
+
+  it('commits its sort to ?psort=, leaving the browse’s ?q=/?sort= untouched', async () => {
+    const { router, api } = await start(MODAL, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    api.sort.value = 'name:desc'
+    await flushPromises()
+
+    expect(query(router).psort).toBe('name:desc')
+    expect(query(router).q).toBe('bloomburrow')
+    expect(query(router).sort).toBe('price:desc')
+    expect(query(router).product).toBe('100')
+  })
+
+  it('commits its search to ?pq=, leaving the browse’s ?q=/?sort= untouched', async () => {
+    const { router, api } = await start(MODAL, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    api.searchInput.value = 't:goblin'
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+
+    expect(query(router).pq).toBe('t:goblin')
+    expect(query(router).q).toBe('bloomburrow')
+    expect(query(router).sort).toBe('price:desc')
   })
 })

@@ -2,7 +2,10 @@
 import { computed, toRef } from 'vue'
 import type { ProductCardSection, ProductCardSectionKey } from '@/lib/api'
 import { useProductCardSectionsQuery } from '@/composables/useProducts'
-import { useProductCardsSearch } from '@/composables/useProductCardsSearch'
+import {
+  useProductCardsSearch,
+  type ProductCardsSearchKeys,
+} from '@/composables/useProductCardsSearch'
 import { searchErrorMessage } from '@/composables/useCardSearch'
 import { boosterFamilyLabel } from '@/lib/productType'
 import ProductCardsSection from '@/components/products/ProductCardsSection.vue'
@@ -22,16 +25,26 @@ import { PRODUCT_CARDS_DEFAULT_SORT, PRODUCT_CARDS_SORT_OPTIONS } from '@/lib/ca
 // A search box narrows the whole pool with the catalog's Scryfall-style grammar, filtering
 // every section's cards + the manifest live (issue #222). Renders nothing when the product
 // has no ingested contents.
-const props = defineProps<{ game: string; id: string; productType: string }>()
+const props = defineProps<{
+  game: string
+  id: string
+  productType: string
+  // The URL keys the search + sort ride. Left unset by the full product page, which owns its
+  // route's plain `?q=`/`?sort=`; the detail modal passes namespaced keys, because the browse
+  // route it overlays owns those already (see PRODUCT_CARDS_MODAL_SEARCH_KEYS). Fixed per
+  // mount — a list never changes which route it renders over.
+  searchKeys?: ProductCardsSearchKeys
+}>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
-// The shared search + sort, backed by the URL `?q=`/`?sort=` (survives opening a card + Back).
-// The sort clamps to the known option values, falling back to the natural-order default; it's
-// threaded into every section so they re-order together (the manifest is sort-independent).
+// The shared search + sort, backed by the URL (survives opening a card + Back). The sort clamps
+// to the known option values, falling back to the natural-order default; it's threaded into
+// every section so they re-order together (the manifest is sort-independent).
 const { searchInput, query, sort } = useProductCardsSearch(
   PRODUCT_CARDS_DEFAULT_SORT,
   PRODUCT_CARDS_SORT_OPTIONS.map((option) => option.value),
+  props.searchKeys,
 )
 const searching = computed(() => query.value.length > 0)
 

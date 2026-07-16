@@ -10,6 +10,7 @@ import ProductWishlistControls from '@/components/products/ProductWishlistContro
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductQuery } from '@/composables/useProducts'
+import type { ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
 import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
@@ -20,7 +21,14 @@ import { useAuthStore } from '@/stores/auth'
 // page (SealedProductView) and the browse-grid modal (ProductDetailDialog). Page chrome
 // (meta tags, breadcrumb/back link, and the modal frame) stays with the callers; both fetch
 // the same ['product', game, id] key, so the page and an overlay never double-fetch.
-const props = defineProps<{ game: string; id: string }>()
+const props = defineProps<{
+  game: string
+  id: string
+  // Forwarded to the contained-cards list, the one part of this body with URL-backed state of
+  // its own: the modal renders over a route that already owns `?q=`/`?sort=` and so must pass
+  // namespaced keys, while the page leaves this unset and keeps the plain ones.
+  searchKeys?: ProductCardsSearchKeys
+}>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 const money = useCurrency()
@@ -164,6 +172,11 @@ const releasedDate = computed(() => {
       card page's "Sealed products" section, guaranteed cards first, then this booster
       family's exclusive cards ahead of the shared pool (issue #204). Mounts off the
       route id; the family label fills in once the product loads. -->
-    <ProductCards :game="game" :id="id" :product-type="product?.product_type ?? ''" />
+    <ProductCards
+      :game="game"
+      :id="id"
+      :product-type="product?.product_type ?? ''"
+      :search-keys="searchKeys"
+    />
   </template>
 </template>

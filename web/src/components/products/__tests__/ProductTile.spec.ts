@@ -23,6 +23,7 @@ async function mountTile(path = '/sealed/mtg?sort=name') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
+      { path: '/u/:handle/decks/:id', component: { template: '<div />' } },
       { path: '/sealed/:game', component: { template: '<div />' } },
       { path: '/sealed/:game/:id', component: { template: '<div />' } },
     ],
@@ -75,5 +76,25 @@ describe('ProductTile detail modal', () => {
 
     expect(router.currentRoute.value.query.card).toBeUndefined()
     expect(router.currentRoute.value.query.product).toBe('product-1')
+  })
+
+  it('carries the game in the query on a route without a :game path param', async () => {
+    // A product grid can render where the path has no `:game` to feed the shared dialog: the
+    // public deck page reaches one through the card modal's "Sealed products" section. The tile
+    // hands its own game over in the query instead, so the dialog can still resolve it —
+    // CardTile's idiom, and the only thing that makes the modal openable there.
+    const { wrapper, router } = await mountTile('/u/alice/decks/5')
+    await wrapper.get('a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ product: 'product-1', game: 'mtg' })
+  })
+
+  it('leaves the query game alone on a route that has one in the path', async () => {
+    const { wrapper, router } = await mountTile('/sealed/mtg')
+    await wrapper.get('a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ product: 'product-1' })
   })
 })
