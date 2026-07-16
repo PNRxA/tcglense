@@ -203,8 +203,9 @@ function fetchValueHistory(range: PriceRange) {
         <CollectionSyncControls :game="game" />
       </header>
 
-      <!-- Card and sealed-product value over time — two independently add-date-clamped
-           lines on the shared history chart. Show it when either holding kind exists. -->
+      <!-- Card and sealed-product value over time — the current basket re-priced from
+           historic snapshots, as two independent lines on the shared history chart. Show it
+           when either holding kind exists. -->
       <PriceChart
         v-if="(hasStats || hasProductStats) && showValueChart"
         title="Collection value"

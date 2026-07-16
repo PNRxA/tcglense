@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { OwnedCountsMap, Product } from '@/lib/api'
 import ProductGrid from '../ProductGrid.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useProductNavStore } from '@/stores/productNav'
 
 function makeProduct(id: string): Product {
   return {
@@ -61,6 +62,19 @@ function controls(wrapper: ReturnType<typeof mountGrid>) {
 }
 
 describe('ProductGrid unified quick-add controls', () => {
+  it('publishes product order for modal previous/next navigation', () => {
+    const wrapper = mountGrid([makeProduct('100'), makeProduct('200'), makeProduct('300')])
+    expect(useProductNavStore().locate('mtg', '200')).toEqual({
+      prev: '100',
+      next: '300',
+      index: 1,
+      total: 3,
+    })
+
+    wrapper.unmount()
+    expect(useProductNavStore().locate('mtg', '200').index).toBe(-1)
+  })
+
   it('passes each product its combined wanted total, zero when absent from the map', () => {
     const wrapper = mountGrid([makeProduct('100'), makeProduct('200')], {
       '100': { quantity: 3, foil_quantity: 1 },

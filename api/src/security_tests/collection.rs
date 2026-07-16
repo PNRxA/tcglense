@@ -109,11 +109,10 @@ async fn value_history_requires_authentication() {
     assert_eq!(cache_control(&headers), Some("no-store"));
 }
 
-/// The value-over-time series is add-date-clamped and per-user: the seeded catalog carries
-/// a year of daily prices, but a holding added *today* contributes only to today's point —
-/// which must equal the collection summary's current total.
+/// The value-over-time series revalues the current basket across every captured price date
+/// and remains per-user. Its newest point must equal the collection summary's current total.
 #[tokio::test]
-async fn value_history_clamps_to_add_date_and_matches_summary() {
+async fn value_history_revalues_current_collection_and_matches_summary() {
     let app = test_app_with_catalog().await;
     let (token, _) = register(&app, "history@example.com", "password123").await;
 
@@ -131,32 +130,29 @@ async fn value_history_clamps_to_add_date_and_matches_summary() {
     }
 
     // The summary's current total is the yardstick: the newest history point (today) must
-    // equal it, since a just-added holding is add-date-clamped into today and the seed
-    // anchors today's snapshot to each card's current price.
+    // equal it because the seed anchors today's snapshot to each card's current price.
     let (_, _, summary) = send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
     let total_today = summary["total_value_usd"].clone();
     assert!(total_today.is_string(), "priced holdings -> a real total, got {total_today:?}");
 
-    // Full daily series: ~a year of history exists, but every day before today predates the
-    // holdings' add-date, so only the newest point carries a value — the add-date clamp.
+    // Full daily series: the cards were added today, but their current quantities are
+    // intentionally applied across the entire ~year of captured history.
     let (status, _, body) =
         send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
     assert_eq!(status, StatusCode::OK);
     let points = body["data"].as_array().expect("value-history data array");
     assert!(points.len() > 300, "the full daily series spans ~a year, got {}", points.len());
 
-    // Dates strictly ascend; only the final point (today) is priced, the rest are null.
+    // Dates strictly ascend and every captured day values the current basket.
     let mut prev = "";
-    for (i, point) in points.iter().enumerate() {
+    for point in points {
         let date = point["date"].as_str().expect("point date");
         assert!(date > prev, "dates ascend: {prev:?} !< {date:?}");
         prev = date;
-        if i + 1 < points.len() {
-            assert!(
-                point["value_usd"].is_null(),
-                "day {date} predates every holding, so it contributes nothing"
-            );
-        }
+        assert!(
+            point["value_usd"].is_string(),
+            "current holdings should be revalued on historic day {date}: {point:?}"
+        );
     }
     assert_eq!(
         points.last().unwrap()["value_usd"],
@@ -164,12 +160,22 @@ async fn value_history_clamps_to_add_date_and_matches_summary() {
         "today's value matches the summary total"
     );
 
-    // A windowed range downsamples but keeps the same clamp: last point priced, rest null.
+    // A windowed range downsamples the same fully revalued series. Index 0 is exempt from the
+    // priced check: a ranged series opens with a synthetic point at the window floor
+    // (`today - 365` for `1y`) carrying whatever pre-cutoff price it can, and the seed's oldest
+    // day is `today - 364` — so no earlier snapshot exists and the floor is unpriced by
+    // construction. It only reaches the response when it lands in a weekly bucket of its own
+    // (a ~1-in-7 property of today's date), so skip it either way; `last()` below still pins
+    // the revaluation.
     let (status, _, body) =
         send(&app, get_with_bearer("/api/collection/mtg/value-history?range=1y", &token)).await;
     assert_eq!(status, StatusCode::OK);
     let windowed = body["data"].as_array().expect("windowed data array");
     assert!(!windowed.is_empty() && windowed.len() < points.len(), "1y weekly < full daily");
+    assert!(
+        windowed.iter().skip(1).all(|point| point["value_usd"].is_string()),
+        "every captured day in the window values the current basket: {windowed:?}"
+    );
     assert_eq!(windowed.last().unwrap()["value_usd"], total_today);
 
     // An unknown range is a 422, like the per-card price chart.
@@ -842,10 +848,10 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
 /// from the previous available snapshot (including across a missing calendar day), while the
 /// overall `as_of` and every longer window remain anchored to the newest capture.
 ///
-/// The ten-day-old row makes the retry's baseline fetch load-bearing: the three-days-ago
-/// snapshot is not one of the main query's anchors (the day anchor is `d1`, the week anchor
-/// and earliest price are `d10`), so the correct `value_prev` of `5.00` can only come from
-/// the fallback's own at-or-before lookup — carrying forward from `d10` would report `3.00`.
+/// The ten-day-old row makes the retry's baseline resolution load-bearing: the three-days-ago
+/// snapshot reaches the ranker only as the day-before-yesterday anchor (the day anchor is `d1`,
+/// the week anchor and earliest price are `d10`), so the correct `value_prev` of `5.00` pins
+/// that anchor — carrying forward from `d10` would report `3.00`.
 #[tokio::test]
 async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     let app = test_app_with_catalog().await;
@@ -881,6 +887,50 @@ async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     // 7D stays on the newest anchor: latest 8.00 against the d10 carry-forward of 3.00.
     assert_eq!(body["week"]["gainers"][0]["value_prev"], "3.00");
     assert_eq!(body["week"]["gainers"][0]["change_usd"], "5.00");
+}
+
+/// The same fallback across a **gap in the capture history**: with no snapshot yesterday, the
+/// previous available capture is not the day anchor, so its baseline is not the day-before-
+/// yesterday anchor either and the retry must fetch one.
+///
+/// This is the other side of the branch the daily case takes. The prices are chosen so the
+/// anchors alone cannot answer it: the main query holds only `d0`/`d2` (latest and the day
+/// anchor, which the day-before-yesterday anchor lands on as well) and `d10` (week + earliest
+/// price). The retry's true baseline is the four-days-ago snapshot, reachable only through its
+/// own at-or-before lookup — carrying forward from `d10` would report `3.00`.
+#[tokio::test]
+async fn movers_day_falls_back_across_a_missing_capture_day() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-day-gap@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 1).await;
+
+    // No d1 and no d3 capture: the feed skipped them.
+    let (d0, d2, d4, d10) = (day_offset(0), day_offset(2), day_offset(4), day_offset(10));
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d10, Some("3.00"), None),
+            (d4, Some("5.00"), None),
+            (d2.clone(), Some("8.00"), None),
+            (d0.clone(), Some("8.00"), None),
+        ],
+    )
+    .await;
+
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
+    assert_eq!(body["as_of"], d0, "longer windows keep the newest anchor");
+    assert_eq!(body["day_as_of"], d2, "1D reports the previous available capture");
+    assert_eq!(mover_ids(&body["day"]["gainers"]), vec![id.clone()]);
+    assert_eq!(body["day"]["gainers"][0]["value_prev"], "5.00");
+    assert_eq!(body["day"]["gainers"][0]["value_now"], "8.00");
+    assert_eq!(body["day"]["gainers"][0]["change_usd"], "3.00");
+    assert!(body["day"]["losers"].as_array().unwrap().is_empty());
 }
 
 /// When the fallback retry also finds no movement (every capture flat), `day_as_of` must

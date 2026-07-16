@@ -142,7 +142,8 @@ pub(super) async fn test_app_signups_disabled(message: Option<&str>) -> TestApp 
 /// verification.
 pub(super) async fn test_app_email_disabled() -> TestApp {
     let mut state = test_state().await;
-    state.email = Arc::new(Emailer::Disabled);
+    // The local dev posture (tests bind a loopback host), so the full body is logged.
+    state.email = Arc::new(Emailer::Disabled { log_body: true });
     TestApp {
         router: build_router(state.clone()),
         state,

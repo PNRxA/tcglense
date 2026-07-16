@@ -34,6 +34,14 @@ pub(super) enum UserRoute {
     /// General authenticated requests — collection reads, absolute-count edits,
     /// batch owned-count lookups, `me`. A generous ceiling for a signed-in human.
     General,
+    /// The whole-collection analytics reads that scan every held card/product
+    /// against its full captured daily price history (`value-history`, `movers`) or
+    /// stream the entire collection as CSV (`export`). Each is O(cards × days), far
+    /// heavier than a page read and un-cacheable (`no-store`, per-user), so it gets a
+    /// bucket tighter than `General` — capping how fast one account can drive
+    /// full-history revaluation scans against the weak prod Postgres — but roomier
+    /// than `Import`, since a human flips chart ranges in bursts.
+    Analytics,
     /// The expensive collection/deck import, sync, and CSV-upload endpoints, which
     /// do real server-side work (an upstream fetch, a CSV parse, or database writes).
     /// A much tighter cap.
@@ -49,9 +57,15 @@ impl UserRoute {
     pub(super) fn from_path(path: &str) -> Self {
         if let Some(rest) = path.strip_prefix("/api/collection/")
             && let Some((_game, tail)) = rest.split_once('/')
-            && matches!(tail, "import" | "import/csv" | "sync")
         {
-            return Self::Import;
+            if matches!(tail, "import" | "import/csv" | "sync") {
+                return Self::Import;
+            }
+            // Whole-collection × full-history scans (+ the CSV export stream): heavy
+            // and un-cacheable, so tighter than General but not as tight as Import.
+            if matches!(tail, "value-history" | "movers" | "export") {
+                return Self::Analytics;
+            }
         }
 
         if let Some(rest) = path.strip_prefix("/api/decks/")
@@ -72,6 +86,10 @@ impl UserRoute {
             // (list + summary + batch owned-count lookups per page), tight for a
             // script grinding the API.
             Self::General => Quota::per_minute(nonzero!(300u32)),
+            // ~30/min (1 every 2s): comfortably absorbs a human flipping the value
+            // chart / movers through its range toggles in a burst, while capping a
+            // script to ~10× fewer full-history revaluation scans than General.
+            Self::Analytics => Quota::per_minute(nonzero!(30u32)),
             // Imports are heavy and already globally serialised; a low per-user cap
             // stops one account queuing / CSV-spamming them.
             Self::Import => Quota::per_minute(nonzero!(10u32)),
@@ -83,6 +101,7 @@ impl UserRoute {
     pub(super) fn class(self) -> &'static str {
         match self {
             Self::General => "general",
+            Self::Analytics => "analytics",
             Self::Import => "import",
         }
     }
@@ -94,6 +113,7 @@ impl UserRoute {
 /// [`super::per_ip::RateLimiters`].
 pub struct UserRateLimiters {
     general: UserKeyedLimiter,
+    analytics: UserKeyedLimiter,
     import: UserKeyedLimiter,
     clock: DefaultClock,
 }
@@ -102,6 +122,7 @@ impl Default for UserRateLimiters {
     fn default() -> Self {
         Self {
             general: RateLimiter::keyed(UserRoute::General.quota()),
+            analytics: RateLimiter::keyed(UserRoute::Analytics.quota()),
             import: RateLimiter::keyed(UserRoute::Import.quota()),
             clock: DefaultClock::default(),
         }
@@ -112,6 +133,7 @@ impl UserRateLimiters {
     fn limiter(&self, route: UserRoute) -> &UserKeyedLimiter {
         match route {
             UserRoute::General => &self.general,
+            UserRoute::Analytics => &self.analytics,
             UserRoute::Import => &self.import,
         }
     }
@@ -133,6 +155,7 @@ impl UserRateLimiters {
     /// [`super::per_ip::RateLimiters::retain_recent`].
     pub(super) fn retain_recent(&self) {
         self.general.retain_recent();
+        self.analytics.retain_recent();
         self.import.retain_recent();
     }
 }
@@ -297,6 +320,29 @@ mod tests {
     }
 
     #[test]
+    fn user_analytics_class_allows_its_burst_then_blocks() {
+        let limiters = UserRateLimiters::default();
+        let user = 11;
+
+        // The analytics class allows a burst of 30, then the 31st is limited — proof
+        // the whole-collection × full-history scans (value-history / movers / export)
+        // are capped tighter than the general read surface.
+        for i in 0..30 {
+            assert!(
+                limiters.check(UserRoute::Analytics, user).is_ok(),
+                "analytics request {i} within the burst should pass"
+            );
+        }
+        let retry = limiters
+            .check(UserRoute::Analytics, user)
+            .expect_err("the 31st analytics request is limited");
+        assert!(!retry.is_zero(), "a limited request reports a positive retry-after");
+
+        // A different class for the same user has its own budget (independence).
+        assert!(limiters.check(UserRoute::General, user).is_ok());
+    }
+
+    #[test]
     fn user_route_classifies_expensive_endpoints() {
         // The import / sync / CSV-upload endpoints are the tight class.
         assert_eq!(
@@ -315,6 +361,21 @@ mod tests {
             UserRoute::from_path("/api/decks/mtg/import"),
             UserRoute::Import
         );
+
+        // The whole-collection × full-history analytics reads + the CSV export stream
+        // are the intermediate analytics class (heavier than a page read, cheaper than
+        // an import). A deck export is bounded to one deck, so it stays general.
+        for analytics in [
+            "/api/collection/mtg/value-history",
+            "/api/collection/mtg/movers",
+            "/api/collection/mtg/export",
+        ] {
+            assert_eq!(
+                UserRoute::from_path(analytics),
+                UserRoute::Analytics,
+                "{analytics} should be the analytics class"
+            );
+        }
 
         // Reads, edits, job polling, and non-collection authenticated routes are general
         // (the whole wishlist surface included — it has no expensive import twin).

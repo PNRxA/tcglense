@@ -76,8 +76,33 @@ async fn seed_dev_user(db: &DatabaseConnection) {
     }
 }
 
-/// Periodic maintenance: prune expired refresh + email tokens and dead (expired or
-/// revoked) API keys so those tables can't grow unbounded, and drop replenished
+/// Days a pending (password-less) account may linger before maintenance deletes it.
+/// Comfortably past the 24h registration-completion token and the 1h reset token that
+/// are the only things that could ever activate the row, so pruning strands nothing —
+/// a re-POST to `/api/auth/register` simply recreates it.
+const PENDING_USER_TTL_DAYS: i64 = 7;
+
+/// Delete pending (never-completed) account rows older than [`PENDING_USER_TTL_DAYS`].
+///
+/// `POST /api/auth/register` inserts a permanent password-less `users` row for every
+/// unseen address (email-first sign-up). Now that registration is public, bot signups
+/// would grow the table unbounded even though the completion tokens that could ever
+/// finish them are pruned within a day — so sweep the abandoned rows too. The FK
+/// `ON DELETE CASCADE` from `refresh_token` / `email_token` clears any stragglers; a
+/// real (password-having) account never matches, so existing users are untouched.
+async fn prune_stale_pending_users(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    let cutoff = Utc::now() - chrono::Duration::days(PENDING_USER_TTL_DAYS);
+    let result = User::delete_many()
+        .filter(user::Column::PasswordHash.is_null())
+        .filter(user::Column::CreatedAt.lt(cutoff))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
+}
+
+/// Periodic maintenance: prune expired refresh + email tokens, dead (expired or
+/// revoked) API keys, and stale pending (never-completed) accounts so those tables
+/// can't grow unbounded, and drop replenished
 /// rate-limiter keys (both the per-IP
 /// and the per-user sets) so those keyspaces can't either. When a limiter is
 /// Redis-backed its keys self-evict via `PEXPIRE`, so `retain_recent` there only
@@ -111,6 +136,15 @@ fn spawn_maintenance(
                 Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(error = %err, "failed to prune dead api keys")
+                }
+            }
+            match prune_stale_pending_users(&db).await {
+                Ok(n) if n > 0 => {
+                    tracing::info!("pruned {n} stale pending (never-completed) accounts")
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to prune stale pending accounts")
                 }
             }
             rate_limiters.retain_recent();

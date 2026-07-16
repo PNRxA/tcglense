@@ -183,7 +183,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/visibility",
             get(get_collection_visibility).put(set_collection_visibility),
         )
-        // The user's total collection value over time (add-date-clamped, re-priced from
+        // The user's total collection value over time (the current basket re-priced from
         // historic snapshots) — the collection's answer to the per-card price chart.
         .route(
             "/api/collection/{game}/value-history",

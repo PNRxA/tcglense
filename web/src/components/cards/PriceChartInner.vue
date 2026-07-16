@@ -58,9 +58,10 @@ const points = computed<PricePlot[]>(() =>
 
 // No point markers: the crosshair snaps to the nearest datum on hover, so the dots are
 // redundant. The exception is a series with a single *plotted* point, which has no line
-// stroke to draw — a one-row series, or an add-date-clamped collection whose only non-null
-// day is today (older days gap over their nulls). Without a dot it'd render nothing at all.
-// Null-gapping keeps the non-null run contiguous, so two or more points always stroke a line.
+// stroke to draw — a one-row series, or a collection line whose holdings only have a captured
+// price on its newest day (older days gap over their nulls). Without a dot it'd render nothing
+// at all. Null-gapping keeps the non-null run contiguous, so two or more points always stroke
+// a line.
 const plottedUsd = computed(() => points.value.filter((p) => p.usd != null).length)
 const plottedFoil = computed(() => points.value.filter((p) => p.usdFoil != null).length)
 const showUsdDot = computed(() => points.value.length === 1 || plottedUsd.value === 1)

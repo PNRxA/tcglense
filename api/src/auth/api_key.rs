@@ -20,8 +20,8 @@
 
 use chrono::{DateTime, Duration, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set, prelude::DateTimeUtc,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set, prelude::DateTimeUtc, sea_query::Expr,
 };
 
 use crate::{
@@ -256,6 +256,27 @@ pub async fn revoke(
     Ok(true)
 }
 
+/// Soft-revoke **every** live API key a user holds, in one statement. Generic over
+/// the connection so password reset can fold it into the same transaction as the
+/// refresh-token revocation + session-generation bump (see
+/// [`crate::handlers::auth::reset_password`]): account recovery then invalidates
+/// *all* of a user's credentials — access JWT, refresh token, and programmatic key
+/// — so a key an attacker minted while holding a live session (the `SessionUser`
+/// gate on key creation) stops working after the victim resets. Already-revoked keys
+/// are left untouched (their stamp is the audit trail). Returns the number revoked.
+pub async fn revoke_all_for_user<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+) -> Result<u64, AppError> {
+    let result = ApiKey::update_many()
+        .col_expr(api_key::Column::RevokedAt, Expr::value(Utc::now()))
+        .filter(api_key::Column::UserId.eq(user_id))
+        .filter(api_key::Column::RevokedAt.is_null())
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
+}
+
 /// The user's live (usable) keys, newest first — the management list. Excludes
 /// revoked and expired keys, so the list only ever shows keys that actually work.
 pub async fn list_active_for_user(
@@ -417,6 +438,37 @@ mod tests {
         // The owner revokes it, and a second revoke is an idempotent true.
         assert!(revoke(&db, issued.model.id, owner).await.expect("revoke"));
         assert!(revoke(&db, issued.model.id, owner).await.expect("revoke"));
+    }
+
+    #[tokio::test]
+    async fn revoke_all_for_user_kills_every_live_key_and_spares_other_users() {
+        let db = setup_db().await;
+        let victim = insert_user(&db, "victim@example.com").await;
+        let other = insert_user(&db, "bystander@example.com").await;
+
+        let k1 = issue_api_key(&db, victim, "one", ApiKeyScope::ReadWrite, None)
+            .await
+            .expect("issue");
+        let k2 = issue_api_key(&db, victim, "two", ApiKeyScope::Read, None)
+            .await
+            .expect("issue");
+        let others = issue_api_key(&db, other, "theirs", ApiKeyScope::ReadWrite, None)
+            .await
+            .expect("issue");
+
+        // A bulk revoke (as password reset performs) revokes exactly the victim's live
+        // keys and reports the count.
+        assert_eq!(revoke_all_for_user(&db, victim).await.expect("revoke all"), 2);
+
+        // Both of the victim's keys now fail to resolve (401), so a key minted during a
+        // compromise can't outlive the reset...
+        assert!(resolve(&db, &k1.plaintext).await.is_err());
+        assert!(resolve(&db, &k2.plaintext).await.is_err());
+        // ...while an unrelated user's key keeps working.
+        assert!(resolve(&db, &others.plaintext).await.is_ok());
+
+        // Idempotent: a second sweep finds nothing live left to revoke.
+        assert_eq!(revoke_all_for_user(&db, victim).await.expect("revoke all"), 0);
     }
 
     #[tokio::test]

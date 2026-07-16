@@ -33,7 +33,10 @@ use crate::entities::{card, product, sealed_component, sealed_content};
 /// `override_memberships` supplement instead removes contradictory memberships for only the
 /// curated product/card pairs before inserting the fallback rows. This corrects sources that
 /// resolve the right cards under the wrong certainty (the Avatar Commander's Bundle's random
-/// pool currently arrives as guaranteed) without replacing unrelated upstream cards. A
+/// pool currently arrives as guaranteed) without replacing unrelated upstream cards. The
+/// `booster` bucket is exempt: pullable-from-boosters is an independent axis (a curated
+/// guaranteed land is still on the contained boosters' sheets), not a certainty the
+/// curation contradicts. A
 /// fallback product or card absent from our catalog, or carrying an unknown membership, is
 /// skipped and logged.
 pub(super) async fn merge_fallback(
@@ -95,6 +98,7 @@ pub(super) async fn merge_fallback(
                     row_product != product_id
                         || row_card != card_id
                         || row_membership == membership.as_str()
+                        || row_membership == sealed_content::Membership::Booster.as_str()
                 });
                 overridden += before - rows.len();
             }

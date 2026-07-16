@@ -320,11 +320,13 @@ pub async fn collection_movers(
         .transpose()?;
 
     // Aggregate the exact snapshots needed per item: the latest row, the last row at or
-    // before each fixed baseline, and the first non-null row for each finish. Prefixing each
-    // encoded snapshot with its ISO date lets MIN/MAX select the corresponding price row in
-    // the same grouped query. The database scans the covering index once per id chunk, but
-    // only these compact anchors cross the wire — never the complete daily series, and never
-    // one round trip per small group of holdings.
+    // before each fixed baseline (plus `prev_day`, the 1D fallback's own baseline), and the
+    // first non-null row for each finish. Prefixing each encoded snapshot with its ISO date
+    // lets MIN/MAX select the corresponding price row in the same grouped query. The database
+    // scans the covering index once per id chunk, but only these compact anchors cross the
+    // wire — never the complete daily series, and never one round trip per small group of
+    // holdings. That one pass serves every anchor, so an extra baseline column rides along for
+    // nearly nothing where a second query would cost another pass over the same index range.
     let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
     if let Some(targets) = &card_targets {
         for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
@@ -347,6 +349,15 @@ pub async fn collection_movers(
                         &targets.day,
                     ),
                     "day",
+                )
+                .column_as(
+                    snapshot_at_or_before(
+                        card_price_history::Column::AsOfDate,
+                        card_price_history::Column::PriceUsd,
+                        card_price_history::Column::PriceUsdFoil,
+                        &targets.prev_day,
+                    ),
+                    "prev_day",
                 )
                 .column_as(
                     snapshot_at_or_before(
@@ -445,6 +456,15 @@ pub async fn collection_movers(
                         &targets.day,
                     ),
                     "day",
+                )
+                .column_as(
+                    snapshot_at_or_before(
+                        product_price_history::Column::AsOfDate,
+                        product_price_history::Column::PriceUsd,
+                        product_price_history::Column::PriceUsdFoil,
+                        &targets.prev_day,
+                    ),
+                    "prev_day",
                 )
                 .column_as(
                     snapshot_at_or_before(
@@ -564,20 +584,24 @@ pub async fn collection_movers(
     // keep their original latest anchor, so this fallback is independent and exposed via
     // `day_as_of` — which moves only when the retry actually found movement, so an empty 1D
     // list is never labeled with a reference date older than `as_of`.
+    //
+    // The trigger is a property of the *feed*, not of the user: a flat capture empties every
+    // collection's 1D window at once, so this path is either cold or carrying the whole
+    // endpoint's traffic for the day, over a private route nothing caches. It therefore reuses
+    // the anchors already in hand wherever it can: `fallback_latest == targets.day` means the
+    // previous capture is yesterday's (the daily-feed case), whose baseline is `prev_day` —
+    // already fetched above, so the retry adds no I/O. Only a genuine hole in the capture
+    // history lands the retry on a baseline no anchor selected, and pays for a second scan.
     let mut card_day_as_of = card_latest.clone();
     if raw_window_empty(&card_windows.day)
         && let Some(targets) = card_targets.as_ref()
         && let Some(fallback_latest) = previous_available_date(&card_prices, &targets.day)
     {
         let fallback_target = previous_day(&fallback_latest)?;
-        append_card_baselines(
-            &state,
-            &game,
-            &card_ids,
-            &fallback_target,
-            &mut card_prices,
-        )
-        .await?;
+        if fallback_latest != targets.day {
+            append_card_baselines(&state, &game, &card_ids, &fallback_target, &mut card_prices)
+                .await?;
+        }
         let retried = window_movers(
             &card_holdings,
             &card_prices,
@@ -597,14 +621,16 @@ pub async fn collection_movers(
         && let Some(fallback_latest) = previous_available_date(&product_prices, &targets.day)
     {
         let fallback_target = previous_day(&fallback_latest)?;
-        append_product_baselines(
-            &state,
-            &game,
-            &product_ids,
-            &fallback_target,
-            &mut product_prices,
-        )
-        .await?;
+        if fallback_latest != targets.day {
+            append_product_baselines(
+                &state,
+                &game,
+                &product_ids,
+                &fallback_target,
+                &mut product_prices,
+            )
+            .await?;
+        }
         let retried = window_movers(
             &product_holdings,
             &product_prices,
@@ -697,6 +723,11 @@ pub async fn collection_movers(
 /// Calendar baselines measured back from one holding kind's own latest snapshot.
 struct WindowTargets {
     day: String,
+    /// The 1D fallback's baseline, not a window of its own. The previous available snapshot
+    /// is by definition at or before `day`, and on a daily feed it *is* `day` — so the retry
+    /// then measures `day` against `previous_day(day)`, which is exactly this target. Loading
+    /// it with the other anchors keeps that retry free of a second pass over the price index.
+    prev_day: String,
     week: String,
     month: String,
     year: String,
@@ -711,6 +742,7 @@ impl WindowTargets {
         })?;
         Ok(Self {
             day: format_date(latest_date - Duration::days(1)),
+            prev_day: format_date(latest_date - Duration::days(2)),
             week: format_date(latest_date - Duration::days(7)),
             month: format_date(latest_date - Duration::days(30)),
             year: format_date(latest_date - Duration::days(365)),
@@ -723,6 +755,11 @@ impl WindowTargets {
 /// The previous available snapshot date represented in the compact anchor rows. The 1D
 /// anchor query already includes every item's latest row at or before `on_or_before`, so the
 /// maximum of those dates is the holding kind's previous capture without another lookup.
+///
+/// The anchors reaching further back can't raise that maximum: each holds the newest row at or
+/// before a target older than `on_or_before`, so it lands on a row the 1D anchor was free to
+/// pick and didn't — never past it. `prev_day` included, which is why carrying it costs this
+/// answer nothing.
 fn previous_available_date(
     prices: &HashMap<i32, Vec<PriceCell>>,
     on_or_before: &str,
@@ -745,7 +782,8 @@ fn raw_window_empty((gainers, losers): &(Vec<RawMover>, Vec<RawMover>)) -> bool 
 }
 
 /// One fallback-baseline snapshot per item, shaped by the same compact aggregate used by
-/// the main all-window query.
+/// the main all-window query. Only a capture gap needs this — a daily feed's fallback
+/// baseline is the `prev_day` anchor, which the main query already carries.
 #[derive(FromQueryResult)]
 struct FallbackSnapshot {
     item_id: i32,
@@ -893,15 +931,25 @@ impl RawMoverSeries {
     }
 }
 
-/// The exact history snapshots needed to rank one card across every response window. Fixed
-/// baselines use the most recent row on/before their target; `first_*` can differ because a
-/// finish may start receiving prices later than its sibling. Each snapshot is encoded as
-/// `YYYY-MM-DD|regular|foil` by the aggregate helpers below.
+/// The exact history snapshots needed to rank one card across every response window, plus the
+/// `prev_day` row the 1D fallback needs. Fixed baselines use the most recent row on/before
+/// their target; `first_*` can differ because a finish may start receiving prices later than
+/// its sibling. Each snapshot is encoded as `YYYY-MM-DD|regular|foil` by the aggregate helpers
+/// below.
+///
+/// Every carry-forward anchor — `day` through `three_year` — is `max{row : row.date <= target}`
+/// over *all* of the item's rows, so none can hold a date past its own target, and none can be
+/// `Some` while an anchor with a later target is `None`. (`first_usd`/`first_foil` sit outside
+/// that rule: they are the earliest *priced* row for their finish, not a carry-forward.) The
+/// ordering is why the anchors don't interfere with each other: a cell any one of them
+/// contributes is a real row that some other anchor either already selected or deliberately
+/// reached past, never one that displaces another's carry-forward.
 #[derive(FromQueryResult)]
 struct PriceAnchorSnapshots {
     item_id: i32,
     latest: String,
     day: Option<String>,
+    prev_day: Option<String>,
     week: Option<String>,
     month: Option<String>,
     year: Option<String>,
@@ -921,6 +969,7 @@ impl PriceAnchorSnapshots {
         let snapshots = [
             Some(self.latest),
             self.day,
+            self.prev_day,
             self.week,
             self.month,
             self.year,
@@ -1321,6 +1370,18 @@ mod tests {
             ("2024-01-02".to_string(), None, Some("56.78".to_string()))
         );
         assert!(decode_snapshot("2024-01-02|12.34").is_err());
+    }
+
+    #[test]
+    fn prev_day_anchor_is_the_daily_feeds_fallback_baseline() {
+        // The identity the fallback's zero-query path rests on: when the previous available
+        // snapshot is `day` (any feed capturing daily), the retry measures it against
+        // `previous_day(day)` — which must be exactly the `prev_day` anchor already loaded.
+        // Crossing a leap day also pins that these are calendar steps, not string math.
+        let targets = WindowTargets::from_latest("2024-03-01").unwrap();
+        assert_eq!(targets.day, "2024-02-29");
+        assert_eq!(targets.prev_day, "2024-02-28");
+        assert_eq!(previous_day(&targets.day).unwrap(), targets.prev_day);
     }
 
     #[test]

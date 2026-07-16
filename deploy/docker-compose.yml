@@ -19,7 +19,11 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      # Loopback-only: this dev/test stack uses default superuser creds and an
+      # unauthenticated Redis, so never publish them on all interfaces (on Linux
+      # Docker's NAT rules bypass most host firewalls). Localhost is all the docs'
+      # usage needs. Not a production path — the prod composes publish only Caddy.
+      - "127.0.0.1:5432:5432"
     volumes:
       - tcglense_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -30,7 +34,9 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      # Loopback-only (see the postgres note above): unauthenticated Redis must not
+      # be reachable from the LAN.
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

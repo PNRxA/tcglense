@@ -300,10 +300,12 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
     assert_eq!(status, StatusCode::OK);
     let first = &catalog["data"][0];
     let second = &catalog["data"][1];
+    // "2 Drops" is deliberately a name the plain-text grammar would misread as a card
+    // row — the text export must bracket it so the round trip below keeps the section.
     let csv = format!(
         "Quantity,Name,Finish,Scryfall ID,Categories\n\
-         2,,Normal,{first_id},Ramp\n\
-         1,,Foil,{first_id},ramp\n\
+         2,,Normal,{first_id},2 Drops\n\
+         1,,Foil,{first_id},2 drops\n\
          1,,Normal,{second_id},Commander\n\
          1,Missing Card,Normal,not-in-catalog,Sideboard\n",
         first_id = first["id"].as_str().expect("first id"),
@@ -347,7 +349,7 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
     assert_eq!(status, StatusCode::OK);
     let sections = detail["sections"].as_array().expect("sections");
     assert_eq!(sections.len(), 2, "imports must not seed default sections");
-    assert_eq!(sections[0]["name"], "Ramp");
+    assert_eq!(sections[0]["name"], "2 Drops");
     assert_eq!(sections[1]["name"], "Commander");
     let cards = detail["cards"].as_array().expect("cards");
     assert_eq!(cards.len(), 2);
@@ -370,7 +372,7 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type(&headers), Some("text/csv; charset=utf-8"));
     assert!(archidekt.contains("Scryfall ID"));
-    assert!(archidekt.contains("Ramp"));
+    assert!(archidekt.contains("2 Drops"));
 
     let (status, headers, moxfield_text) = send_text(
         &app,
@@ -382,7 +384,10 @@ async fn uploaded_deck_import_creates_exact_sections_and_owner_scoped_exports() 
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type(&headers), Some("text/plain; charset=utf-8"));
-    assert!(moxfield_text.starts_with("Ramp\n"));
+    assert!(
+        moxfield_text.starts_with("[2 Drops]\n"),
+        "a quantity-leading section name must export bracketed, got: {moxfield_text:?}"
+    );
     assert!(moxfield_text.contains(" *F*"));
 
     let (status, _, moxfield_csv) = send_text(
