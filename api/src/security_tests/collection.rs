@@ -160,13 +160,22 @@ async fn value_history_revalues_current_collection_and_matches_summary() {
         "today's value matches the summary total"
     );
 
-    // A windowed range downsamples the same fully revalued series.
+    // A windowed range downsamples the same fully revalued series. Index 0 is exempt from the
+    // priced check: a ranged series opens with a synthetic point at the window floor
+    // (`today - 365` for `1y`) carrying whatever pre-cutoff price it can, and the seed's oldest
+    // day is `today - 364` — so no earlier snapshot exists and the floor is unpriced by
+    // construction. It only reaches the response when it lands in a weekly bucket of its own
+    // (a ~1-in-7 property of today's date), so skip it either way; `last()` below still pins
+    // the revaluation.
     let (status, _, body) =
         send(&app, get_with_bearer("/api/collection/mtg/value-history?range=1y", &token)).await;
     assert_eq!(status, StatusCode::OK);
     let windowed = body["data"].as_array().expect("windowed data array");
     assert!(!windowed.is_empty() && windowed.len() < points.len(), "1y weekly < full daily");
-    assert!(windowed.iter().all(|point| point["value_usd"].is_string()));
+    assert!(
+        windowed.iter().skip(1).all(|point| point["value_usd"].is_string()),
+        "every captured day in the window values the current basket: {windowed:?}"
+    );
     assert_eq!(windowed.last().unwrap()["value_usd"], total_today);
 
     // An unknown range is a 422, like the per-card price chart.

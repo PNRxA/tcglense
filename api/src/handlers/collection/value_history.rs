@@ -8,6 +8,15 @@
 //! product the user owns **today** at its price on `D`. Quantity changes are likewise not
 //! reconstructed. Prices before daily snapshots began (or the 2024-02-08 backfill floor)
 //! simply don't exist, so the series starts where the data does.
+//!
+//! That has a consequence worth stating plainly, because it is visible in the chart. The date
+//! axis is the union of *every* holding's snapshot days, and a single priced holding is enough
+//! to make a day a real total — so a holding whose own price history starts later than the axis
+//! does (a recent printing sitting next to older cards) contributes nothing to the earlier days
+//! instead of blanking them. Those days are reported as values, not gaps, over whichever part
+//! of the basket was priced then: the left edge of the line under-counts the collection and
+//! ramps up in steps as each holding's history begins. It is a floor on what the basket was
+//! worth, not a measurement of it.
 
 use std::collections::HashMap;
 
@@ -66,9 +75,11 @@ pub struct CollectionValuePoint {
 /// ordered oldest day first for charting. With no `range` the full daily series is returned;
 /// an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows the series and
 /// **downsamples** it to a coarser resolution the longer the window (the same vocabulary as
-/// the per-card price chart). `404` if the game is unknown; `422` for an unknown `range`; an
-/// empty `{ "data": [] }` when the user owns nothing or no captured price history falls in
-/// the window.
+/// the per-card price chart). Each holding contributes only from the first day its own price
+/// history covers, so a day predating part of the basket's history is still a real total over
+/// the priced remainder rather than a gap — early days under-count. `404` if the game is
+/// unknown; `422` for an unknown `range`; an empty `{ "data": [] }` when the user owns nothing
+/// or no captured price history falls in the window.
 #[utoipa::path(
     get,
     path = "/api/collection/{game}/value-history",
