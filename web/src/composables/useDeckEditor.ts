@@ -51,6 +51,13 @@ export function useDeckEditor(props: DeckEditorProps) {
       ? sections.value
       : sections.value.filter((section) => (cardsBySection.value.get(section.id)?.length ?? 0) > 0),
   )
+  const sectionNavItems = computed(() =>
+    visibleSections.value.map((section) => ({
+      id: section.id,
+      name: section.name,
+      count: cardsBySection.value.get(section.id)?.length ?? 0,
+    })),
+  )
 
   // Owner-only collection/wish-list overlays, batched over the deck's catalog card ids.
   const catalogCards = computed<Card[]>(() => allCards.value.map((entry) => entry.card))
@@ -282,6 +289,7 @@ export function useDeckEditor(props: DeckEditorProps) {
     cardsBySection,
     showEmpty,
     visibleSections,
+    sectionNavItems,
     ownedInCollection,
     wantedInWishlist,
     folders,

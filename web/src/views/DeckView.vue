@@ -40,10 +40,12 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
+import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckEditor } from '@/composables/useDeckEditor'
+import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { usePageMeta } from '@/lib/seo'
 
 const props = defineProps<{ game: string; id: string }>()
@@ -58,6 +60,7 @@ const {
   cardsBySection,
   showEmpty,
   visibleSections,
+  sectionNavItems,
   ownedInCollection,
   wantedInWishlist,
   folders,
@@ -281,108 +284,125 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
       </p>
 
       <!-- Sections -->
-      <section v-for="(section, index) in visibleSections" :key="section.id" class="mb-8">
-        <div class="mb-3 flex items-center justify-between gap-2 border-b pb-1.5">
-          <div class="flex items-center gap-2">
-            <h2 class="font-medium">{{ section.name }}</h2>
-            <span class="text-muted-foreground text-sm"
-              >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
-            >
-          </div>
-          <div class="flex items-center gap-0.5">
-            <button
-              class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
-              aria-label="Move section up"
-              :disabled="index === 0"
-              @click="moveSection(section.id, -1)"
-            >
-              <ChevronUp class="size-4" />
-            </button>
-            <button
-              class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
-              aria-label="Move section down"
-              :disabled="index === visibleSections.length - 1"
-              @click="moveSection(section.id, 1)"
-            >
-              <ChevronDown class="size-4" />
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                class="text-muted-foreground hover:text-foreground rounded p-1"
-                aria-label="Section actions"
-              >
-                <MoreVertical class="size-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem @click="renameSection(section.id, section.name)"
-                  >Rename</DropdownMenuItem
-                >
-                <DropdownMenuItem
-                  class="text-destructive"
-                  @click="
-                    requestSectionDelete(
-                      section.id,
-                      section.name,
-                      cardsBySection.get(section.id)?.length ?? 0,
-                    )
-                  "
-                  >Delete section</DropdownMenuItem
-                >
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-
-        <p
-          v-if="(cardsBySection.get(section.id)?.length ?? 0) === 0"
-          class="text-muted-foreground text-sm"
-        >
-          No cards here yet.
-        </p>
-        <div v-else class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-          <CardTile
-            v-for="entry in cardsBySection.get(section.id) ?? []"
-            :key="`${entry.card.id}-${entry.section_id}`"
-            :game="game"
-            :card="entry.card"
+      <div
+        v-if="visibleSections.length > 0"
+        class="xl:grid xl:grid-cols-[12rem_minmax(0,1fr)] xl:gap-6"
+      >
+        <DeckSectionNav :items="sectionNavItems" />
+        <div class="min-w-0">
+          <section
+            v-for="(section, index) in visibleSections"
+            :id="deckSectionTargetId(section.id)"
+            :key="section.id"
+            class="mb-8 scroll-mt-16"
           >
-            <template #badge>
-              <DeckCardControl
-                :game="game"
-                :deck-id="deck.id"
-                :section-id="entry.section_id"
-                :card="entry.card"
-                :quantity="entry.quantity"
-                :foil-quantity="entry.foil_quantity"
-                :sections="sections"
-              />
-              <!-- Ownership indicators (top-right): how many of this card you own
-                   (collection) and want (wish list), each shown only when non-zero. -->
-              <div
-                v-if="ownedInCollection(entry.card.id) > 0 || wantedInWishlist(entry.card.id) > 0"
-                class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1"
-              >
-                <span
-                  v-if="ownedInCollection(entry.card.id) > 0"
-                  class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
-                  :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
+            <div class="mb-3 flex items-center justify-between gap-2 border-b pb-1.5">
+              <div class="flex items-center gap-2">
+                <h2 class="font-medium">{{ section.name }}</h2>
+                <span class="text-muted-foreground text-sm"
+                  >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
                 >
-                  <Library class="size-3" aria-hidden="true" />{{
-                    ownedInCollection(entry.card.id)
-                  }}
-                </span>
-                <span
-                  v-if="wantedInWishlist(entry.card.id) > 0"
-                  class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
-                  :title="`You have ${wantedInWishlist(entry.card.id)} of this card on your wish list`"
-                >
-                  <Heart class="size-3" aria-hidden="true" />{{ wantedInWishlist(entry.card.id) }}
-                </span>
               </div>
-            </template>
-          </CardTile>
+              <div class="flex items-center gap-0.5">
+                <button
+                  class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
+                  aria-label="Move section up"
+                  :disabled="index === 0"
+                  @click="moveSection(section.id, -1)"
+                >
+                  <ChevronUp class="size-4" />
+                </button>
+                <button
+                  class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
+                  aria-label="Move section down"
+                  :disabled="index === visibleSections.length - 1"
+                  @click="moveSection(section.id, 1)"
+                >
+                  <ChevronDown class="size-4" />
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    class="text-muted-foreground hover:text-foreground rounded p-1"
+                    aria-label="Section actions"
+                  >
+                    <MoreVertical class="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem @click="renameSection(section.id, section.name)"
+                      >Rename</DropdownMenuItem
+                    >
+                    <DropdownMenuItem
+                      class="text-destructive"
+                      @click="
+                        requestSectionDelete(
+                          section.id,
+                          section.name,
+                          cardsBySection.get(section.id)?.length ?? 0,
+                        )
+                      "
+                      >Delete section</DropdownMenuItem
+                    >
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+
+            <p
+              v-if="(cardsBySection.get(section.id)?.length ?? 0) === 0"
+              class="text-muted-foreground text-sm"
+            >
+              No cards here yet.
+            </p>
+            <div v-else class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+              <CardTile
+                v-for="entry in cardsBySection.get(section.id) ?? []"
+                :key="`${entry.card.id}-${entry.section_id}`"
+                :game="game"
+                :card="entry.card"
+              >
+                <template #badge>
+                  <DeckCardControl
+                    :game="game"
+                    :deck-id="deck.id"
+                    :section-id="entry.section_id"
+                    :card="entry.card"
+                    :quantity="entry.quantity"
+                    :foil-quantity="entry.foil_quantity"
+                    :sections="sections"
+                  />
+                  <!-- Ownership indicators (top-right): how many of this card you own
+                   (collection) and want (wish list), each shown only when non-zero. -->
+                  <div
+                    v-if="
+                      ownedInCollection(entry.card.id) > 0 || wantedInWishlist(entry.card.id) > 0
+                    "
+                    class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1"
+                  >
+                    <span
+                      v-if="ownedInCollection(entry.card.id) > 0"
+                      class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
+                      :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
+                    >
+                      <Library class="size-3" aria-hidden="true" />{{
+                        ownedInCollection(entry.card.id)
+                      }}
+                    </span>
+                    <span
+                      v-if="wantedInWishlist(entry.card.id) > 0"
+                      class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
+                      :title="`You have ${wantedInWishlist(entry.card.id)} of this card on your wish list`"
+                    >
+                      <Heart class="size-3" aria-hidden="true" />{{
+                        wantedInWishlist(entry.card.id)
+                      }}
+                    </span>
+                  </div>
+                </template>
+              </CardTile>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
 
       <!-- Rename deck dialog -->
       <Dialog v-model:open="renameOpen">

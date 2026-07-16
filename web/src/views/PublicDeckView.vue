@@ -4,10 +4,12 @@ import { RouterLink } from 'vue-router'
 import { Layers } from '@lucide/vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
+import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import { usePublicDeckQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
 import type { DeckCardEntry } from '@/lib/api'
+import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { usePageMeta } from '@/lib/seo'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
@@ -40,6 +42,13 @@ const cardsBySection = computed(() => {
 })
 const visibleSections = computed(() =>
   sections.value.filter((s) => (cardsBySection.value.get(s.id)?.length ?? 0) > 0),
+)
+const sectionNavItems = computed(() =>
+  visibleSections.value.map((section) => ({
+    id: section.id,
+    name: section.name,
+    count: cardsBySection.value.get(section.id)?.length ?? 0,
+  })),
 )
 function copies(entry: DeckCardEntry): number {
   return entry.quantity + entry.foil_quantity
@@ -78,29 +87,42 @@ function copies(entry: DeckCardEntry): number {
 
       <DeckStats :cards="deck.cards" :sections="deck.sections" />
 
-      <section v-for="section in visibleSections" :key="section.id" class="mb-8">
-        <h2 class="mb-3 border-b pb-1.5 font-medium">
-          {{ section.name }}
-          <span class="text-muted-foreground text-sm"
-            >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
+      <div
+        v-if="visibleSections.length > 0"
+        class="xl:grid xl:grid-cols-[12rem_minmax(0,1fr)] xl:gap-6"
+      >
+        <DeckSectionNav :items="sectionNavItems" />
+        <div class="min-w-0">
+          <section
+            v-for="section in visibleSections"
+            :id="deckSectionTargetId(section.id)"
+            :key="section.id"
+            class="mb-8 scroll-mt-16"
           >
-        </h2>
-        <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-          <CardTile
-            v-for="entry in cardsBySection.get(section.id) ?? []"
-            :key="`${entry.card.id}-${entry.section_id}`"
-            :game="deck.game"
-            :card="entry.card"
-          >
-            <template #badge>
-              <span
-                class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
-                >×{{ copies(entry) }}</span
+            <h2 class="mb-3 border-b pb-1.5 font-medium">
+              {{ section.name }}
+              <span class="text-muted-foreground text-sm"
+                >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
               >
-            </template>
-          </CardTile>
+            </h2>
+            <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+              <CardTile
+                v-for="entry in cardsBySection.get(section.id) ?? []"
+                :key="`${entry.card.id}-${entry.section_id}`"
+                :game="deck.game"
+                :card="entry.card"
+              >
+                <template #badge>
+                  <span
+                    class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
+                    >×{{ copies(entry) }}</span
+                  >
+                </template>
+              </CardTile>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
     </template>
   </div>
 </template>
