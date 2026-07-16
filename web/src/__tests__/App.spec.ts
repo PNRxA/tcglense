@@ -58,6 +58,27 @@ describe('App', () => {
     wrapper.unmount()
   })
 
+  it('keeps the compact navigation through medium-width screens', async () => {
+    const router = makeRouter()
+    router.push('/')
+    await router.isReady()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = mount(App, {
+      global: {
+        plugins: [createPinia(), router, [VueQueryPlugin, { queryClient }]],
+      },
+    })
+
+    const mobileNav = wrapper.get('button[aria-label="Open navigation menu"]').element.parentElement
+    const mainNav = wrapper.get('a[href="/docs"]').element.closest('.ml-3')
+    expect(mobileNav?.classList.contains('lg:hidden')).toBe(true)
+    expect(mobileNav?.classList.contains('md:hidden')).toBe(false)
+    expect(mainNav?.classList.contains('hidden')).toBe(true)
+    expect(mainNav?.classList.contains('lg:block')).toBe(true)
+    expect(mainNav?.classList.contains('md:block')).toBe(false)
+    wrapper.unmount()
+  })
+
   it('shows the build-time app version in the footer', async () => {
     const pinia = createPinia()
     const router = makeRouter()

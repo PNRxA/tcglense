@@ -15,8 +15,8 @@ import { useGamesQuery } from '@/composables/useCatalog'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // The mobile counterpart to MainNav: the top-bar's Cards/Collection/Wish list
-// dropdowns don't fit alongside the brand + theme + account controls at phone width,
-// so below `md` they collapse into this hamburger, which opens a left Sheet drawer
+// dropdowns don't fit alongside the brand + theme + account controls at narrow widths,
+// so below `lg` they collapse into this hamburger, which opens a left Sheet drawer
 // (reka Dialog underneath). The nav sections — Cards + Sealed (the desktop "Products"
 // menu, split into two labeled sections here), Collection and Wish list — are driven
 // by the same cached games registry as MainNav so a new TCG shows up here

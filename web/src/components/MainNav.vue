@@ -76,11 +76,11 @@ function warmSection(value: string) {
         </NavigationMenuTrigger>
         <!-- Force a floating dropdown at every width the nav shows. The shared
              NavigationMenuContent only turns `absolute md:w-auto` at the md breakpoint;
-             MainNav is now visible from md too, but this explicit override keeps the panel
-             floating from the moment it appears — without it a statically laid-out panel's
-             z-50 goes inert and it slips under page content like the sealed-product image
-             (issue #259). Same override UserMenu already carries — MainNav dropdowns are
-             left-aligned, so no end-0. -->
+             this explicit override ties the floating to MainNav's own gate (lg) rather
+             than the primitive's, keeping the panel floating from the moment it appears —
+             without it a statically laid-out panel's z-50 goes inert and it slips under
+             page content like the sealed-product image (issue #259). Same override
+             UserMenu already carries — MainNav dropdowns are left-aligned, so no end-0. -->
         <NavigationMenuContent class="absolute top-full w-auto">
           <ul class="grid w-56 gap-1">
             <!-- Cards -->
