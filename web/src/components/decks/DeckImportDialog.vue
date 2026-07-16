@@ -156,7 +156,9 @@ function openDeck() {
       <Download class="size-4" />
       Import deck
     </DialogTrigger>
-    <DialogContent class="max-h-[90vh] w-[min(92vw,32rem)] overflow-y-auto">
+    <DialogContent
+      class="bg-background max-h-[90vh] w-[min(92vw,32rem)] overflow-y-auto rounded-xl border p-6 shadow-xl"
+    >
       <DialogTitle>Import a deck</DialogTitle>
       <DialogDescription>
         Create a new deck from a public Archidekt link or an Archidekt/Moxfield export. Categories

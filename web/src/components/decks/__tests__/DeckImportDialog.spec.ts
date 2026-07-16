@@ -19,6 +19,10 @@ vi.mock('@/composables/useDecks', () => ({
 import DeckImportDialog from '../DeckImportDialog.vue'
 
 const PassThrough = defineComponent({ template: '<div><slot /></div>' })
+const DialogContentStub = defineComponent({
+  name: 'DialogContentStub',
+  template: '<div><slot /></div>',
+})
 const ButtonStub = defineComponent({
   inheritAttrs: false,
   template: '<button v-bind="$attrs"><slot /></button>',
@@ -56,7 +60,7 @@ function mountDialog() {
         Dialog: DialogRootStub,
         DialogTrigger: ButtonStub,
         DialogClose: ButtonStub,
-        DialogContent: PassThrough,
+        DialogContent: DialogContentStub,
         DialogDescription: PassThrough,
         DialogTitle: PassThrough,
         Select: SelectStub,
@@ -79,6 +83,13 @@ describe('DeckImportDialog', () => {
   beforeEach(() => {
     mutation.mutateAsync.mockReset()
     mutation.reset.mockReset()
+  })
+
+  it('renders the dialog on an opaque background', () => {
+    const wrapper = mountDialog()
+
+    expect(wrapper.findComponent(DialogContentStub).classes()).toContain('bg-background')
+    wrapper.unmount()
   })
 
   it('uses the shadcn select and switches provider-specific upload guidance', async () => {
