@@ -234,12 +234,25 @@ fn spawn_card_sync(
 ) {
     tokio::spawn(async move {
         if sync_interval_hours == 0 {
-            // Periodic refresh disabled: import once on startup only.
+            // Periodic refresh disabled: import once on startup only. The leader
+            // lock keeps a second replica booting mid-import from starting its own
+            // full import (the version gate only short-circuits on a *completed*
+            // one); Postgres-only, trivially held on SQLite, fails open on error.
+            let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
+                &db,
+                crate::db_lock::CARD_SYNC,
+            )
+            .await
+            else {
+                tracing::info!("startup card sync skipped: another replica is syncing");
+                return;
+            };
             catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Capture today's snapshot from the freshly-imported cards + products.
             catalog::snapshot_all(&db).await;
             // Prices/history may have changed: orphan cached analytics (#413).
             bump_all_price_epochs(&analytics).await;
+            lease.release().await;
             if let Some(cfg) = backfill.take() {
                 spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone(), analytics);
             }
@@ -262,12 +275,26 @@ fn spawn_card_sync(
             // The first tick fires immediately (the startup import), then every
             // `sync_interval_hours` thereafter.
             ticker.tick().await;
+            // Leader-gate the tick (see the startup branch above): exactly one
+            // replica refreshes + snapshots per tick; the others skip and retry
+            // next tick — a crashed leader's session lock auto-releases, so the
+            // next tick self-heals with at most one missed snapshot day.
+            let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
+                &db,
+                crate::db_lock::CARD_SYNC,
+            )
+            .await
+            else {
+                tracing::info!("card-sync tick skipped: another replica is syncing");
+                continue;
+            };
             catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Always capture a daily snapshot, even when the import above was
             // version-gated and skipped — keeps the price series continuous.
             catalog::snapshot_all(&db).await;
             // Prices/history may have changed: orphan cached analytics (#413).
             bump_all_price_epochs(&analytics).await;
+            lease.release().await;
             // After the first successful sync, cards carry their tcgplayer_id, so
             // the one-time historic backfill can join against them. `take` ensures
             // it's only spawned once.

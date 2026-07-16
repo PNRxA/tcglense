@@ -213,8 +213,19 @@ This stack is single-instance by design. To run **multiple API replicas** (behin
 DO Load Balancer):
 
 - Postgres is already shared — good.
-- **Set `REDIS_URL`** (Upstash) on every replica so the per-IP rate limiters share
-  state instead of diverging per process.
+- **Set `REDIS_URL`** (Upstash) on every replica so the per-IP rate limiters (and
+  the analytics response cache) share state instead of diverging per process.
 - Keep `CDN_MODE=true` so replicas don't rely on a local image cache.
+- **Migrations and the daily card sync coordinate themselves** via Postgres
+  advisory locks (issue #413): simultaneous boots serialise `Migrator::up`, and
+  exactly one replica runs each sync tick — a peer ticking while the leader is
+  mid-import skips its turn instead of starting a second full ~500 MB import.
+  A crashed leader's session lock auto-releases, so the next tick self-heals.
+  Optionally set `SYNC_ON_STARTUP=false` on all-but-one replica anyway to skip
+  even the (cheap, version-gated) tick probes on the others — just never on
+  *every* replica, or nothing syncs.
+- The collection **import-job registry stays per-process** (a poll can 404 when a
+  non-sticky LB routes it to the other replica — a documented, accepted tradeoff;
+  see `docs/tradeoffs.md` §Collection import).
 
 Everything else is unchanged.
