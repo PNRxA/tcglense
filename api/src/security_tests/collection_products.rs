@@ -198,12 +198,16 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     own_product(&app, &token, "100", 2).await;
     own_product(&app, &token, "200", 1).await;
 
-    let (today, yesterday) = (day_offset(0), day_offset(1));
+    // Today's capture is unchanged. The 1D movers should therefore fall back to yesterday's
+    // movement against the previous available capture (three days ago; two days ago is
+    // deliberately absent).
+    let (today, yesterday, three_days_ago) = (day_offset(0), day_offset(1), day_offset(3));
     set_product_price_history(
         db,
         internal_product_id(db, "100").await,
         &[
-            (yesterday.clone(), Some("10.00")),
+            (three_days_ago.clone(), Some("10.00")),
+            (yesterday.clone(), Some("20.00")),
             (today.clone(), Some("20.00")),
         ],
     )
@@ -211,7 +215,11 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     set_product_price_history(
         db,
         internal_product_id(db, "200").await,
-        &[(yesterday, Some("20.00")), (today.clone(), Some("15.00"))],
+        &[
+            (three_days_ago, Some("20.00")),
+            (yesterday.clone(), Some("15.00")),
+            (today.clone(), Some("15.00")),
+        ],
     )
     .await;
 
@@ -242,6 +250,7 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     );
     assert_eq!(movers["day"]["gainers"], json!([]));
     assert_eq!(movers["sealed"]["as_of"], today);
+    assert_eq!(movers["sealed"]["day_as_of"], yesterday);
     let gainer = &movers["sealed"]["day"]["gainers"][0];
     assert_eq!(gainer["product"]["id"], "100");
     assert_eq!(gainer["change_usd"], "20.00", "two boxes gained $10 each");

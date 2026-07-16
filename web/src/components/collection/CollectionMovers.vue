@@ -56,9 +56,11 @@ const visible = computed(
 )
 
 // The reference date the movements are measured to, e.g. "Jul 12" — shown subtly next
-// to the title so a stale snapshot is legible as such.
+// to the title so a stale snapshot is legible as such. The 1D list can fall back to the
+// previous available snapshot day independently of the longer windows.
 const asOfText = computed(() => {
-  const asOf = activeSeries.value?.as_of
+  const asOf =
+    activeWindow.value === 'day' ? activeSeries.value?.day_as_of : activeSeries.value?.as_of
   if (!asOf) return null
   const date = new Date(`${asOf}T00:00:00`)
   if (Number.isNaN(date.getTime())) return asOf

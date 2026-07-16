@@ -738,6 +738,7 @@ async fn movers_requires_auth_and_handles_empty_and_unknown_game() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
     assert!(body["as_of"].is_null(), "no holdings -> null as_of");
+    assert!(body["day_as_of"].is_null(), "no holdings -> null day_as_of");
     for window in [
         "day",
         "week",
@@ -816,6 +817,7 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
         send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
     assert_eq!(body["as_of"].as_str(), Some(d0.as_str()), "as_of = newest owned snapshot");
+    assert_eq!(body["day_as_of"].as_str(), Some(d0.as_str()));
 
     // Day: gainers A(+$10) then C(+$2); loser B(-$10). change_usd carries the sign.
     assert_eq!(mover_ids(&body["day"]["gainers"]), vec![a.clone(), c.clone()]);
@@ -834,6 +836,42 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
     // The de-dup: the same card C is a day gainer AND a month loser, each with its card payload.
     assert!(mover_ids(&body["day"]["gainers"]).contains(c));
     assert!(mover_ids(&body["month"]["losers"]).contains(c));
+}
+
+/// An unchanged newest capture must not make 1D look history-less. The daily window retries
+/// from the previous available snapshot (including across a missing calendar day), while the
+/// overall `as_of` and every longer window remain anchored to the newest capture.
+#[tokio::test]
+async fn movers_day_falls_back_to_the_previous_available_snapshot() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-day-fallback@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 1).await;
+
+    let (d0, d1, d3) = (day_offset(0), day_offset(1), day_offset(3));
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d3, Some("5.00"), None),
+            (d1.clone(), Some("8.00"), None),
+            (d0.clone(), Some("8.00"), None),
+        ],
+    )
+    .await;
+
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
+    assert_eq!(body["as_of"], d0, "longer windows keep the newest anchor");
+    assert_eq!(body["day_as_of"], d1, "1D reports its fallback anchor");
+    assert_eq!(mover_ids(&body["day"]["gainers"]), vec![id.clone()]);
+    assert_eq!(body["day"]["gainers"][0]["value_prev"], "5.00");
+    assert_eq!(body["day"]["gainers"][0]["value_now"], "8.00");
+    assert_eq!(body["day"]["gainers"][0]["change_usd"], "3.00");
+    assert!(body["day"]["losers"].as_array().unwrap().is_empty());
 }
 
 /// When a card's history doesn't reach the window baseline, the window drops it rather than

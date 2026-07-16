@@ -45,6 +45,7 @@ function sealedList(): CollectionSealedMoverList {
 
 const movers: CollectionMoversResponse = {
   as_of: '2026-07-10',
+  day_as_of: '2026-07-09',
   day: cardList(),
   week: cardList(),
   month: cardList(),
@@ -54,6 +55,7 @@ const movers: CollectionMoversResponse = {
   all_time: cardList(),
   sealed: {
     as_of: '2026-07-11',
+    day_as_of: '2026-07-08',
     day: sealedList(),
     week: sealedList(),
     month: sealedList(),
@@ -88,11 +90,16 @@ describe('CollectionMovers holding-kind switch', () => {
     expect(wrapper.text()).not.toContain('Sealed winner')
     expect(wrapper.text()).toContain('as of Jul 10')
 
+    const day = wrapper.findAll('button').find((button) => button.text() === '1D')!
+    await day.trigger('click')
+
+    expect(wrapper.text()).toContain('as of Jul 9')
+
     const sealed = wrapper.findAll('button').find((button) => button.text() === 'Sealed')!
     await sealed.trigger('click')
 
     expect(wrapper.text()).toContain('Sealed winner')
     expect(wrapper.text()).not.toContain('Singles winner')
-    expect(wrapper.text()).toContain('as of Jul 11')
+    expect(wrapper.text()).toContain('as of Jul 8')
   })
 })
