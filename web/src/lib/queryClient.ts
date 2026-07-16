@@ -15,6 +15,24 @@ export function shouldRetryQuery(failureCount: number, error: Error): boolean {
 }
 
 /**
+ * staleTime for public catalog queries whose payload embeds the daily-refreshed
+ * prices (card detail/grids/prints embed `Card.prices`; product payloads carry
+ * `price_usd`). Catalog data turns over at most once a day, and — because the API's
+ * ETag layer runs after the handler — a client that re-asks costs the server full
+ * DB work even on a 304, so not asking is what actually saves the backend (#413).
+ * An hour keeps the embedded prices honest to the daily sync while absorbing the
+ * tab-refocus/navigation refetch storms the 5-minute default allows.
+ */
+export const PRICED_CATALOG_STALE_MS = 60 * 60 * 1000
+
+/**
+ * staleTime for structural public catalog queries with no price fields at all
+ * (the set list / one set's metadata): same daily cadence, nothing that drifts
+ * intra-day, so they can stay fresh much longer (#413).
+ */
+export const STRUCTURAL_CATALOG_STALE_MS = 6 * 60 * 60 * 1000
+
+/**
  * Build the app's QueryClient. A factory (not a module singleton) so tests can spin
  * up an isolated cache per case.
  */
