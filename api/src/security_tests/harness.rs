@@ -247,6 +247,17 @@ pub(super) fn json_post(uri: &str, body: Value) -> Request<Body> {
         .unwrap()
 }
 
+/// A GET carrying an `X-Forwarded-For`, for driving the per-IP rate limiter on the
+/// public read surfaces (only honoured by an app built via [`test_app_trusting_proxy`]).
+pub(super) fn get_from(uri: &str, forwarded_for: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header("x-forwarded-for", forwarded_for)
+        .body(Body::empty())
+        .unwrap()
+}
+
 /// A JSON POST carrying an `X-Forwarded-For`, for driving the per-IP rate limiter
 /// (only honoured by an app built via [`test_app_trusting_proxy`]).
 pub(super) fn json_post_from(uri: &str, forwarded_for: &str, body: Value) -> Request<Body> {

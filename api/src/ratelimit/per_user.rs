@@ -28,7 +28,7 @@ pub(super) type UserKeyedLimiter = RateLimiter<i32, DefaultKeyedStateStore<i32>,
 
 /// The per-user rate-limit classes for the authenticated API surface. Each gets its
 /// own keyed limiter + quota, so a burst of imports can't spend a browse session's
-/// budget and vice versa (mirroring [`super::per_ip::AuthRoute`]'s per-IP split).
+/// budget and vice versa (mirroring [`super::per_ip::IpRoute`]'s per-IP split).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UserRoute {
     /// General authenticated requests — collection reads, absolute-count edits,
