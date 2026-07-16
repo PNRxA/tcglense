@@ -10,7 +10,7 @@ use axum::{
 };
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    SelectTwo,
+    RelationTrait, SelectModel, SelectTwo, Selector, sea_query::JoinType,
 };
 
 use crate::auth::extractor::AuthUser;
@@ -21,9 +21,9 @@ use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::{
     CardResponse, CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary,
-    ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page, SortDir,
-    SummaryParams, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card, require_game,
-    resolve_set_scope, search_condition, summarize_holdings,
+    HoldingSummaryRow, ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page,
+    SortDir, SummaryParams, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card,
+    narrow_summary_rows, require_game, resolve_set_scope, search_condition, summarize_holdings,
 };
 use crate::state::AppState;
 
@@ -126,6 +126,29 @@ pub(super) fn wanted_with_cards(
     query
 }
 
+/// The summary/sets narrow variant of [`wanted_with_cards`]: the identical per-user
+/// scope and LEFT JOIN, but selecting only the columns the folds read instead of the
+/// wide card row (issue #413 — see the collection twin's `owned_summary_rows`). Keep
+/// the filters in lock-step with [`wanted_with_cards`].
+pub(super) fn wanted_summary_rows(
+    user_id: i32,
+    game: &str,
+    set_codes: Option<&[String]>,
+) -> Selector<SelectModel<HoldingSummaryRow>> {
+    let mut query = WishlistItem::find()
+        .join(JoinType::LeftJoin, wishlist_item::Relation::Card.def())
+        .filter(wishlist_item::Column::UserId.eq(user_id))
+        .filter(wishlist_item::Column::Game.eq(game));
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
+    }
+    narrow_summary_rows(
+        query,
+        wishlist_item::Column::Quantity,
+        wishlist_item::Column::FoilQuantity,
+    )
+}
+
 /// Build the wish-list query for a user + game: the [`wanted_with_cards`] base
 /// (per-user scope + optional set scope), plus the optional already-parsed search
 /// condition and the chosen sort. Kept separate from the handler so the join/filter/sort
@@ -226,7 +249,7 @@ pub(super) async fn summary(
     set_codes: Option<&[String]>,
     bulk_threshold_cents: i128,
 ) -> Result<CollectionSummary, AppError> {
-    let rows = wanted_with_cards(user_id, game, set_codes).all(db).await?;
+    let rows = wanted_summary_rows(user_id, game, set_codes).all(db).await?;
     Ok(summarize_holdings(&rows, bulk_threshold_cents))
 }
 

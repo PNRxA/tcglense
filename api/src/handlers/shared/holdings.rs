@@ -13,7 +13,12 @@
 use std::collections::{HashMap, HashSet};
 
 use sea_orm::sea_query::{Expr, SimpleExpr};
+use sea_orm::{
+    ColumnTrait, EntityTrait, FromQueryResult, QuerySelect, Select, SelectModel, Selector,
+};
 use serde::{Deserialize, Serialize};
+
+use crate::scryfall::subtypes::PrintAttrs;
 
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::{card, card_set, collection_item, deck_card, wishlist_item};
@@ -413,29 +418,148 @@ pub(crate) fn validate_quantity(value: i32, field: &str) -> Result<i32, AppError
 
 // ---------- Aggregation cores ----------
 
+/// The card-side facts the summary/sets folds read, borrowed from whichever row
+/// representation the caller fetched (a wide join tuple or a narrow projection).
+pub(crate) struct CardSummaryFacts<'a> {
+    pub set_code: &'a str,
+    pub set_name: &'a str,
+    pub price_usd: Option<&'a str>,
+    pub price_usd_foil: Option<&'a str>,
+    pub print: PrintAttrs<'a>,
+}
+
+/// A row the summary/sets folds can aggregate: the holding's counts plus the joined
+/// card's fold-relevant facts (`None` = the card row vanished in a catalog re-import
+/// — skipped for all stats, matching the list reads). Implemented for the wide
+/// `(H, Option<card::Model>)` join tuples (decks, drop/subtype pages, tests) **and**
+/// the narrow [`HoldingSummaryRow`] projection the summary/sets endpoints fetch
+/// (issue #413), so the fold logic itself stays single-copy.
+pub(crate) trait SummaryRow {
+    fn quantity(&self) -> i32;
+    fn foil_quantity(&self) -> i32;
+    fn card_facts(&self) -> Option<CardSummaryFacts<'_>>;
+}
+
+impl<H: HoldingCounts> SummaryRow for (H, Option<card::Model>) {
+    fn quantity(&self) -> i32 {
+        self.0.quantity()
+    }
+
+    fn foil_quantity(&self) -> i32 {
+        self.0.foil_quantity()
+    }
+
+    fn card_facts(&self) -> Option<CardSummaryFacts<'_>> {
+        self.1.as_ref().map(|card| CardSummaryFacts {
+            set_code: &card.set_code,
+            set_name: &card.set_name,
+            price_usd: card.price_usd.as_deref(),
+            price_usd_foil: card.price_usd_foil.as_deref(),
+            print: PrintAttrs::from(card),
+        })
+    }
+}
+
+/// One narrowly-projected holdings ⋈ cards row for the summary/sets folds: the
+/// holding's counts plus **only** the card columns the folds read, instead of the
+/// wide 60+-column card row. The landing endpoints re-fetch the user's whole
+/// collection on every mount / edit / refocus, so on a large collection the
+/// projection is the bulk of the transfer saved (issue #413).
+///
+/// Every card column is `Option` because the LEFT JOIN yields NULLs when the card
+/// row is gone (a catalog re-import); `set_code` (NOT NULL on `cards`) is the
+/// row-present sentinel the fold's skip rule keys on.
+#[derive(FromQueryResult)]
+pub(crate) struct HoldingSummaryRow {
+    quantity: i32,
+    foil_quantity: i32,
+    set_code: Option<String>,
+    set_name: Option<String>,
+    price_usd: Option<String>,
+    price_usd_foil: Option<String>,
+    collector_number: Option<String>,
+    frame_effects: Option<String>,
+    border_color: Option<String>,
+    full_art: Option<bool>,
+}
+
+impl SummaryRow for HoldingSummaryRow {
+    fn quantity(&self) -> i32 {
+        self.quantity
+    }
+
+    fn foil_quantity(&self) -> i32 {
+        self.foil_quantity
+    }
+
+    fn card_facts(&self) -> Option<CardSummaryFacts<'_>> {
+        let set_code = self.set_code.as_deref()?;
+        Some(CardSummaryFacts {
+            set_code,
+            set_name: self.set_name.as_deref().unwrap_or(""),
+            price_usd: self.price_usd.as_deref(),
+            price_usd_foil: self.price_usd_foil.as_deref(),
+            print: PrintAttrs {
+                set_code,
+                collector_number: self.collector_number.as_deref().unwrap_or(""),
+                frame_effects: self.frame_effects.as_deref(),
+                border_color: self.border_color.as_deref(),
+                full_art: self.full_art,
+            },
+        })
+    }
+}
+
+/// Apply the summary/sets narrow projection to a holdings ⋈ cards join, selecting
+/// only [`HoldingSummaryRow`]'s columns. Shared by the collection/wishlist twins
+/// (which pass their own count columns) so the projection can't drift between them;
+/// the join + per-user filters stay with each entity's query, per the module
+/// contract above.
+pub(crate) fn narrow_summary_rows<E: EntityTrait, C: ColumnTrait>(
+    query: Select<E>,
+    quantity: C,
+    foil_quantity: C,
+) -> Selector<SelectModel<HoldingSummaryRow>> {
+    query
+        .select_only()
+        .column_as(quantity, "quantity")
+        .column_as(foil_quantity, "foil_quantity")
+        .column_as(card::Column::SetCode, "set_code")
+        .column_as(card::Column::SetName, "set_name")
+        .column_as(card::Column::PriceUsd, "price_usd")
+        .column_as(card::Column::PriceUsdFoil, "price_usd_foil")
+        .column_as(card::Column::CollectorNumber, "collector_number")
+        .column_as(card::Column::FrameEffects, "frame_effects")
+        .column_as(card::Column::BorderColor, "border_color")
+        .column_as(card::Column::FullArt, "full_art")
+        .into_model::<HoldingSummaryRow>()
+}
+
 /// Fold already-fetched holdings rows (each left-joined to its card) into the
 /// aggregate summary stats: distinct cards, total copies, and the estimated USD
-/// value/bulk split. A row whose card is `None` (the card row vanished in a catalog
+/// value/bulk split. A row whose card is gone (the card row vanished in a catalog
 /// re-import) is skipped for **all** stats — matching the list reads. Prices are
 /// aggregated in Rust, never trusting the stored decimal strings to SQL arithmetic.
 /// Pure (the entity-specific query stays with each caller) so both features and their
 /// tests share the one aggregation.
-pub(crate) fn summarize_holdings<H: HoldingCounts>(
-    rows: &[(H, Option<card::Model>)],
+pub(crate) fn summarize_holdings<R: SummaryRow>(
+    rows: &[R],
     bulk_threshold_cents: i128,
 ) -> CollectionSummary {
     let mut unique_cards: i64 = 0;
     let mut total_cards: i64 = 0;
     let mut valuation = Valuation::new(bulk_threshold_cents);
-    for (item, card) in rows {
-        let Some(card) = card else { continue };
+    for row in rows {
+        let Some(card) = row.card_facts() else {
+            continue;
+        };
         unique_cards += 1;
-        total_cards += i64::from(item.quantity()) + i64::from(item.foil_quantity());
+        total_cards += i64::from(row.quantity()) + i64::from(row.foil_quantity());
         valuation.add(
-            card.price_usd.as_deref(),
-            item.quantity(),
-            card.price_usd_foil.as_deref(),
-            item.foil_quantity(),
+            card.price_usd,
+            row.quantity(),
+            card.price_usd_foil,
+            row.foil_quantity(),
         );
     }
 
@@ -470,34 +594,33 @@ struct SetAgg {
 /// (falling back to the card's own `set_name` when the set row is missing), and order
 /// newest set first (undated last), tie-broken by code for deterministic output. Pure so
 /// it can be unit-tested without a DB. Holdings whose card row is gone are skipped.
-pub(crate) fn build_collection_sets<H: HoldingCounts>(
+pub(crate) fn build_collection_sets<R: SummaryRow>(
     game: &str,
-    rows: Vec<(H, Option<card::Model>)>,
+    rows: Vec<R>,
     sets: Vec<card_set::Model>,
     bulk_threshold_cents: i128,
 ) -> Vec<CollectionSet> {
     let mut agg: HashMap<String, SetAgg> = HashMap::new();
-    for (item, card) in rows {
-        let Some(card) = card else { continue };
-        // Classify the treatment before the card's fields move into the map entry.
-        let is_special = crate::scryfall::subtypes::is_special(&card);
-        // Read the card's prices before its set_code/set_name move into the map entry,
-        // so the borrow is clean regardless of aggregation order.
-        let usd = card.price_usd.as_deref();
-        let usd_foil = card.price_usd_foil.as_deref();
+    for row in rows {
+        let Some(card) = row.card_facts() else {
+            continue;
+        };
+        let is_special = crate::scryfall::subtypes::is_special_attrs(game, card.print);
         // Each set's running valuation splits its bulk subtotal at the request's chosen
         // cutoff (default $1), matching the summary header's figure.
-        let entry = agg.entry(card.set_code).or_insert_with(|| SetAgg {
-            fallback_name: card.set_name,
-            valuation: Valuation::new(bulk_threshold_cents),
-            ..SetAgg::default()
-        });
+        let entry = agg
+            .entry(card.set_code.to_owned())
+            .or_insert_with(|| SetAgg {
+                fallback_name: card.set_name.to_owned(),
+                valuation: Valuation::new(bulk_threshold_cents),
+                ..SetAgg::default()
+            });
         entry.has_subtypes |= is_special;
         entry.owned_cards += 1;
-        entry.owned_copies += i64::from(item.quantity()) + i64::from(item.foil_quantity());
+        entry.owned_copies += i64::from(row.quantity()) + i64::from(row.foil_quantity());
         entry
             .valuation
-            .add(usd, item.quantity(), usd_foil, item.foil_quantity());
+            .add(card.price_usd, row.quantity(), card.price_usd_foil, row.foil_quantity());
     }
 
     let meta: HashMap<String, card_set::Model> =

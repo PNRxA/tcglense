@@ -18,7 +18,7 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-use super::read::{collection_query, owned_with_cards};
+use super::read::{collection_query, owned_summary_rows, owned_with_cards};
 use super::{
     CollectionDropGroup, CollectionSetsResponse, CollectionSort, CollectionSubtypeGroup, ListParams,
 };
@@ -64,9 +64,9 @@ pub(crate) async fn owned_sets(
     game: &str,
     bulk_threshold_cents: i128,
 ) -> Result<CollectionSetsResponse, AppError> {
-    // Every owned card (with its joined card row) for the game — bounded by how many
-    // distinct cards the user owns.
-    let rows = owned_with_cards(user_id, game, None).all(&state.db).await?;
+    // Every owned card's fold-relevant columns for the game (never the wide card
+    // rows) — bounded by how many distinct cards the user owns.
+    let rows = owned_summary_rows(user_id, game, None).all(&state.db).await?;
 
     // The game's set metadata, to dress each owned set as a full catalog tile.
     let sets = CardSet::find()

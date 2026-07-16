@@ -54,10 +54,40 @@ static BORDERLESS_SCENE: Subtype =
 static CURATED: &[&Subtype] =
     &[&NORMAL, &BORDERLESS, &SHOWCASE, &EXTENDED_ART, &FULL_ART, &BORDERLESS_SCENE];
 
+/// The print attributes classification reads, decoupled from the full `card::Model`
+/// so narrow row fetches (the collection/wishlist set tiles select only the fold's
+/// columns, never the wide card row — issue #413) can classify without one.
+#[derive(Clone, Copy)]
+pub struct PrintAttrs<'a> {
+    pub set_code: &'a str,
+    pub collector_number: &'a str,
+    pub frame_effects: Option<&'a str>,
+    pub border_color: Option<&'a str>,
+    pub full_art: Option<bool>,
+}
+
+impl<'a> From<&'a card::Model> for PrintAttrs<'a> {
+    fn from(card: &'a card::Model) -> Self {
+        Self {
+            set_code: &card.set_code,
+            collector_number: &card.collector_number,
+            frame_effects: card.frame_effects.as_deref(),
+            border_color: card.border_color.as_deref(),
+            full_art: card.full_art,
+        }
+    }
+}
+
 /// The sub-type a card belongs to. A curated override (by `(game, set, collector_number)`)
 /// wins; otherwise the treatment is derived from the card's print attributes.
 pub fn classify(card: &card::Model) -> &'static Subtype {
-    override_for(&card.game, &card.set_code, &card.collector_number).unwrap_or_else(|| derive(card))
+    classify_attrs(&card.game, PrintAttrs::from(card))
+}
+
+/// Attribute-level form of [`classify`], for callers holding a narrow row instead of
+/// a `card::Model`.
+pub fn classify_attrs(game: &str, attrs: PrintAttrs<'_>) -> &'static Subtype {
+    override_for(game, attrs.set_code, attrs.collector_number).unwrap_or_else(|| derive(attrs))
 }
 
 /// Whether a card has any special treatment (i.e. classifies to something other than
@@ -67,20 +97,25 @@ pub fn is_special(card: &card::Model) -> bool {
     !std::ptr::eq(classify(card), &NORMAL)
 }
 
+/// Attribute-level form of [`is_special`] (see [`PrintAttrs`]).
+pub fn is_special_attrs(game: &str, attrs: PrintAttrs<'_>) -> bool {
+    !std::ptr::eq(classify_attrs(game, attrs), &NORMAL)
+}
+
 /// Derive a card's treatment from its print attributes, in priority order. Kept in
 /// lock-step with [`has_subtype_condition`] (the SQL form of "is non-Normal"): a card is
 /// special here iff it matches that predicate, so the by-set flag and the grouped view
 /// always agree. Priority resolves the overlaps seen in real data — a borderless
 /// *showcase* card is a Showcase, a borderless *full-art* card is Borderless (measured:
 /// showcase∩extendedart and borderless∩extendedart are both empty).
-fn derive(card: &card::Model) -> &'static Subtype {
-    if has_token(card.frame_effects.as_deref(), "showcase") {
+fn derive(attrs: PrintAttrs<'_>) -> &'static Subtype {
+    if has_token(attrs.frame_effects, "showcase") {
         &SHOWCASE
-    } else if has_token(card.frame_effects.as_deref(), "extendedart") {
+    } else if has_token(attrs.frame_effects, "extendedart") {
         &EXTENDED_ART
-    } else if eq_ci(card.border_color.as_deref(), "borderless") {
+    } else if eq_ci(attrs.border_color, "borderless") {
         &BORDERLESS
-    } else if card.full_art == Some(true) {
+    } else if attrs.full_art == Some(true) {
         &FULL_ART
     } else {
         &NORMAL

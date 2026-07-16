@@ -28,8 +28,9 @@ pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
     CollectionSort, CollectionSubtypeGroup, CollectionSummary, ListParams, MAX_OWNED_IDS,
     OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams, SummaryParams,
-    build_collection_sets, copies_expr, dedupe_ids, holding_drop_page, holding_subtype_page,
-    resolve_set_scope, summarize_holdings, validate_quantity,
+    HoldingSummaryRow, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
+    holding_subtype_page, narrow_summary_rows, resolve_set_scope, summarize_holdings,
+    validate_quantity,
 };
 #[cfg(test)]
 pub(crate) use valuation::BULK_THRESHOLD_CENTS;
