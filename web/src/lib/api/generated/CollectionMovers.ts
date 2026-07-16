@@ -2,7 +2,7 @@
 import type { CollectionMoverList } from "./CollectionMoverList";
 
 /**
- * The biggest gain/loss movements across a user's collection, for each of three windows.
+ * The biggest gain/loss movements across a user's collection, for each supported window.
  */
 export type CollectionMovers = { 
 /**
@@ -10,4 +10,4 @@ export type CollectionMovers = {
  * snapshot date across the user's priced holdings, `"YYYY-MM-DD"`. `None` when no
  * owned card has any captured price history (all lists then empty).
  */
-as_of: string | null, day: CollectionMoverList, week: CollectionMoverList, month: CollectionMoverList, };
+as_of: string | null, day: CollectionMoverList, week: CollectionMoverList, month: CollectionMoverList, year: CollectionMoverList, two_year: CollectionMoverList, three_year: CollectionMoverList, all_time: CollectionMoverList, };

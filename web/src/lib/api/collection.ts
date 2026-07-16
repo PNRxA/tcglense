@@ -202,8 +202,9 @@ export function collectionMoversPath(game: string): string {
 }
 
 /**
- * The signed-in user's biggest gain/loss movements (day / week / month) across the cards
- * they own, ranked by the change in each holding's USD value. Per-user + authenticated.
+ * The signed-in user's biggest gain/loss movements (1d / 7d / 30d / 1y / 2y / 3y /
+ * all-time) across the cards they own, ranked by the change in each holding's USD value.
+ * Per-user + authenticated.
  */
 export async function getCollectionMovers(token: string, game: string): Promise<CollectionMovers> {
   return request<CollectionMovers>(collectionMoversPath(game), { token })

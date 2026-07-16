@@ -7,21 +7,25 @@ import { Skeleton } from '@/components/ui/skeleton'
 import MoverRow from '@/components/collection/MoverRow.vue'
 import { useCollectionMoversQuery } from '@/composables/useCollection'
 
-// The collection landing's "Biggest movers" panel (issue #360): the largest gain and
-// loss movements across the cards the user owns, over a day / week / month window. One
-// response carries all three windows, so the segmented toggle is purely client-side —
-// switching is instant, no refetch. Week is the default: daily moves are often tiny or
-// empty on a young collection, monthly hides the news.
+// The collection landing's "Biggest movers" panel (issues #360/#392): the largest gain and
+// loss movements across the cards the user owns, from one day through all captured history.
+// One response carries every window, so the segmented toggle is purely client-side —
+// switching is instant, no refetch. Week is the default: daily moves are often tiny or empty
+// on a young collection, while longer windows hide the news.
 const props = defineProps<{ game: string }>()
 const gameId = toRef(() => props.game)
 const query = useCollectionMoversQuery(gameId)
 
-type MoverWindow = 'day' | 'week' | 'month'
+type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
 const activeWindow = ref<MoverWindow>('week')
 const WINDOW_OPTIONS: { value: MoverWindow; label: string }[] = [
-  { value: 'day', label: 'Day' },
-  { value: 'week', label: 'Week' },
-  { value: 'month', label: 'Month' },
+  { value: 'day', label: '1D' },
+  { value: 'week', label: '7D' },
+  { value: 'month', label: '30D' },
+  { value: 'year', label: '1Y' },
+  { value: 'two_year', label: '2Y' },
+  { value: 'three_year', label: '3Y' },
+  { value: 'all_time', label: 'All' },
 ]
 
 const movers = computed(() => query.data.value)
@@ -59,7 +63,7 @@ const asOfText = computed(() => {
           <span v-if="asOfText" class="text-muted-foreground text-xs">as of {{ asOfText }}</span>
         </div>
         <div
-          class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5"
+          class="bg-muted/50 flex max-w-full flex-wrap items-center justify-end gap-1 rounded-lg p-0.5"
           role="group"
           aria-label="Biggest movers window"
         >

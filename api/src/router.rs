@@ -188,8 +188,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/value-history",
             get(collection_value_history),
         )
-        // The biggest day / week / month gain & loss movements across the user's owned
-        // cards (per-unit price change × copies held) — top gainers and losers per window.
+        // The biggest 1d / 7d / 30d / 1y / 2y / 3y / all-time gain & loss movements across
+        // the user's owned cards (per-unit price change × copies held).
         .route("/api/collection/{game}/movers", get(collection_movers))
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
