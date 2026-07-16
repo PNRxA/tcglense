@@ -190,6 +190,7 @@ pub fn spawn_import_job(
     db: DatabaseConnection,
     http: reqwest::Client,
     imports: Arc<ImportQueue>,
+    analytics: Arc<crate::analytics_cache::AnalyticsCache>,
     request: ImportRequest,
 ) -> Result<u64, AppError> {
     let (id, progress) = imports.create(request.user_id, &request.game)?;
@@ -222,6 +223,11 @@ pub fn spawn_import_job(
 
         match result {
             Ok(summary) => {
+                // The reconcile changed the holdings: orphan the user's cached
+                // analytics bodies (#413).
+                analytics
+                    .bump_holdings(request.user_id, &request.game)
+                    .await;
                 // A successful fetch is a sync of whatever saved link points at this exact
                 // collection: stamp its `last_synced_at`. Matching on (provider, external_id)
                 // means a one-off import of the saved collection (or a re-sync of it) marks

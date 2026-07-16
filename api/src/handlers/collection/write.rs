@@ -62,6 +62,8 @@ pub async fn set_collection_entry(
             .filter(collection_item::Column::CardId.eq(card.id))
             .exec(&state.db)
             .await?;
+        // The holdings changed: orphan the user's cached analytics bodies (#413).
+        state.analytics_cache.bump_holdings(user.id, &game).await;
         return Ok(Json(CollectionQuantities {
             quantity: 0,
             foil_quantity: 0,
@@ -98,6 +100,9 @@ pub async fn set_collection_entry(
         )
         .exec(&state.db)
         .await?;
+
+    // The holdings changed: orphan the user's cached analytics bodies (#413).
+    state.analytics_cache.bump_holdings(user.id, &game).await;
 
     Ok(Json(CollectionQuantities {
         quantity,

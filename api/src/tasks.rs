@@ -10,6 +10,7 @@ use reqwest::Client;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
 use crate::{
+    analytics_cache::AnalyticsCache,
     catalog,
     catalog::fingerprint_tasks::{
         FingerprintBuild, fingerprint_build, fingerprint_import, spawn_fingerprint_build,
@@ -159,14 +160,29 @@ fn spawn_maintenance(
 /// folded legacy foil-★ holdings onto their nonfoil base, whose foil price would then stay
 /// empty and value those copies at $0 (issue #209). This closes that gap against the
 /// already-synced catalog. A no-op on a fresh/dummy catalog with no such pairs.
-fn spawn_foil_price_enrichment(db: DatabaseConnection) {
+fn spawn_foil_price_enrichment(db: DatabaseConnection, analytics: Arc<AnalyticsCache>) {
     tokio::spawn(async move {
         match crate::scryfall::enrich_foil_variant_prices(&db).await {
-            Ok(rows) if rows > 0 => tracing::info!(rows, "enriched foil-variant base prices"),
+            Ok(rows) if rows > 0 => {
+                tracing::info!(rows, "enriched foil-variant base prices");
+                // Prices changed outside any user action: orphan every user's cached
+                // analytics bodies (#413).
+                bump_all_price_epochs(&analytics).await;
+            }
             Ok(_) => {}
             Err(err) => tracing::error!(error = %err, "foil-variant price enrichment failed"),
         }
     });
+}
+
+/// Advance every game's analytics price epoch — called after any background pass
+/// that may have changed price/history rows (sync tick, backfill, foil enrichment),
+/// so cached value-history/movers bodies never outlive the data they were computed
+/// from (#413).
+async fn bump_all_price_epochs(analytics: &AnalyticsCache) {
+    for game in catalog::GAMES {
+        analytics.bump_prices(game.id).await;
+    }
 }
 
 /// Parameters for the one-time TCGCSV historic price backfill, when enabled. `None`
@@ -187,12 +203,13 @@ fn spawn_price_backfill(
     http: Client,
     cfg: BackfillConfig,
     source: SyncSource,
+    analytics: Arc<AnalyticsCache>,
 ) {
     tokio::spawn(async move {
-        if let Err(err) =
-            crate::tcgcsv::backfill::run(&db, &http, &cfg.user_agent, cfg.days, &source).await
-        {
-            tracing::error!(error = %err, "tcgcsv price backfill failed");
+        match crate::tcgcsv::backfill::run(&db, &http, &cfg.user_agent, cfg.days, &source).await {
+            // A completed backfill rewrote history rows: orphan cached analytics (#413).
+            Ok(()) => bump_all_price_epochs(&analytics).await,
+            Err(err) => tracing::error!(error = %err, "tcgcsv price backfill failed"),
         }
     });
 }
@@ -213,6 +230,7 @@ fn spawn_card_sync(
     mut backfill: Option<BackfillConfig>,
     mut fingerprint: Option<FingerprintBuild>,
     source: SyncSource,
+    analytics: Arc<AnalyticsCache>,
 ) {
     tokio::spawn(async move {
         if sync_interval_hours == 0 {
@@ -220,8 +238,10 @@ fn spawn_card_sync(
             catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Capture today's snapshot from the freshly-imported cards + products.
             catalog::snapshot_all(&db).await;
+            // Prices/history may have changed: orphan cached analytics (#413).
+            bump_all_price_epochs(&analytics).await;
             if let Some(cfg) = backfill.take() {
-                spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone());
+                spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone(), analytics);
             }
             // Cards now exist, so the opt-in fingerprint build can walk them.
             if let Some(cfg) = fingerprint.take() {
@@ -246,11 +266,19 @@ fn spawn_card_sync(
             // Always capture a daily snapshot, even when the import above was
             // version-gated and skipped — keeps the price series continuous.
             catalog::snapshot_all(&db).await;
+            // Prices/history may have changed: orphan cached analytics (#413).
+            bump_all_price_epochs(&analytics).await;
             // After the first successful sync, cards carry their tcgplayer_id, so
             // the one-time historic backfill can join against them. `take` ensures
             // it's only spawned once.
             if let Some(cfg) = backfill.take() {
-                spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone());
+                spawn_price_backfill(
+                    db.clone(),
+                    http.clone(),
+                    cfg,
+                    source.clone(),
+                    analytics.clone(),
+                );
             }
             // Same one-time spawn for the opt-in fingerprint build (cards now exist to
             // walk); its own loop then re-scans on the sync interval for new cards.
@@ -322,13 +350,14 @@ pub async fn start(state: &AppState, http: &Client) {
             backfill,
             fingerprint,
             SyncSource::from_config(&state.config),
+            state.analytics_cache.clone(),
         );
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
         // No sync will run enrich_foil_variant_prices per tick, so do it once here against
         // the existing catalog — otherwise a foil-★ holding folded by the m..023 migration
         // values at $0 (issue #209).
-        spawn_foil_price_enrichment(state.db.clone());
+        spawn_foil_price_enrichment(state.db.clone(), state.analytics_cache.clone());
         // Cards already exist from a prior run (no sync this boot); if the operator opted
         // into the fingerprint build, run it against the existing catalogue.
         if state.config.fingerprint_build_enabled {

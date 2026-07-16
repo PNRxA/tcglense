@@ -1,3 +1,4 @@
+mod analytics_cache;
 mod auth;
 mod captcha;
 mod catalog;

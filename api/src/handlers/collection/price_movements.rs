@@ -22,12 +22,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use axum::{Json, extract::State};
+use axum::extract::State;
 use chrono::{Duration, NaiveDate};
 use sea_orm::sea_query::{BinOper, Expr, Func, IntoColumnRef, SimpleExpr};
 use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect};
 use serde::Serialize;
 
+use crate::analytics_cache::json_body_response;
 use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::{
     Card, CardPriceHistory, CollectionItem, CollectionProductItem, Product, ProductPriceHistory,
@@ -216,9 +217,39 @@ pub async fn collection_movers(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
-) -> Result<Json<CollectionMovers>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     require_game(&game)?;
 
+    // Version-keyed response cache (issues #413/#365): between the user's own edits
+    // and the daily price capture this response cannot change, and computing it
+    // scans every held item's whole price-history index range. `None` key = cache
+    // degraded, compute as normal. No query params, so the params segment is empty.
+    let cache_key = state
+        .analytics_cache
+        .body_key(user.id, &game, "movers", "")
+        .await;
+    if let Some(key) = &cache_key
+        && let Some(body) = state.analytics_cache.get_body(key).await
+    {
+        return Ok(json_body_response(body));
+    }
+
+    let payload = movers_payload(state.clone(), user, game).await?;
+    let body = serde_json::to_vec(&payload)
+        .map_err(|err| AppError::Internal(format!("serialize movers: {err}")))?;
+    if let Some(key) = &cache_key {
+        state.analytics_cache.put_body(key, &body).await;
+    }
+    Ok(json_body_response(body))
+}
+
+/// Compute the movers payload (the handler above wraps this in the analytics
+/// response cache; the early empty returns below are cached the same way).
+async fn movers_payload(
+    state: AppState,
+    user: crate::entities::user::Model,
+    game: String,
+) -> Result<CollectionMovers, AppError> {
     // The user's current card + sealed holdings, reduced to ids/counts. Movements value
     // today's counts at both anchors because there is no per-holding quantity history.
     let card_holdings: Vec<(i32, i32, i32)> = CollectionItem::find()
@@ -244,7 +275,7 @@ pub async fn collection_movers(
         .await?;
 
     if card_holdings.is_empty() && product_holdings.is_empty() {
-        return Ok(Json(CollectionMovers::empty()));
+        return Ok(CollectionMovers::empty());
     }
 
     let card_holdings: Vec<HoldingRow> = card_holdings
@@ -308,7 +339,7 @@ pub async fn collection_movers(
         }
     }
     if card_latest.is_none() && product_latest.is_none() {
-        return Ok(Json(CollectionMovers::empty()));
+        return Ok(CollectionMovers::empty());
     }
     let card_targets = card_latest
         .as_deref()
@@ -696,7 +727,7 @@ pub async fn collection_movers(
             .collect()
     };
 
-    Ok(Json(CollectionMovers {
+    Ok(CollectionMovers {
         as_of: card_latest,
         day_as_of: card_day_as_of,
         day: shape_card_window(card_windows.day, &cards),
@@ -717,7 +748,7 @@ pub async fn collection_movers(
             three_year: shape_sealed_window(product_windows.three_year, &products),
             all_time: shape_sealed_window(product_windows.all_time, &products),
         },
-    }))
+    })
 }
 
 /// Calendar baselines measured back from one holding kind's own latest snapshot.

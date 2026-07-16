@@ -19,7 +19,7 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-use super::read::{wanted_summary_rows, wanted_with_cards, wishlist_query};
+use super::read::{wanted_summary_rows, wishlist_query};
 
 /// List wish-list sets
 ///

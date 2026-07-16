@@ -39,7 +39,7 @@ pub struct Subtype {
 
 // `static` (not `const`) so each sub-type has a single stable address — [`classify`]
 // returns a `&'static Subtype` and callers compare identity by pointer (see
-// [`is_special`]).
+// [`is_special_attrs`]).
 pub static NORMAL: Subtype = Subtype { slug: "normal", title: "Normal", order: 0 };
 static BORDERLESS: Subtype = Subtype { slug: "borderless", title: "Borderless", order: 1 };
 static SHOWCASE: Subtype = Subtype { slug: "showcase", title: "Showcase", order: 2 };
@@ -91,13 +91,8 @@ pub fn classify_attrs(game: &str, attrs: PrintAttrs<'_>) -> &'static Subtype {
 }
 
 /// Whether a card has any special treatment (i.e. classifies to something other than
-/// [`NORMAL`]). Backs the per-set `has_subtypes` flag on the owned-set tiles, where the
-/// owned cards are already in hand so no query is needed.
-pub fn is_special(card: &card::Model) -> bool {
-    !std::ptr::eq(classify(card), &NORMAL)
-}
-
-/// Attribute-level form of [`is_special`] (see [`PrintAttrs`]).
+/// [`NORMAL`]). Backs the per-set `has_subtypes` flag on the owned-set tiles, whose
+/// narrow row fetches carry exactly these attributes (see [`PrintAttrs`]).
 pub fn is_special_attrs(game: &str, attrs: PrintAttrs<'_>) -> bool {
     !std::ptr::eq(classify_attrs(game, attrs), &NORMAL)
 }
@@ -366,8 +361,10 @@ mod tests {
 
     #[test]
     fn is_special_matches_classify() {
-        assert!(!is_special(&treated(1, None, None, None)));
-        assert!(is_special(&treated(2, Some("borderless"), None, None)));
+        let normal = treated(1, None, None, None);
+        assert!(!is_special_attrs(&normal.game, PrintAttrs::from(&normal)));
+        let borderless = treated(2, Some("borderless"), None, None);
+        assert!(is_special_attrs(&borderless.game, PrintAttrs::from(&borderless)));
     }
 
     #[test]

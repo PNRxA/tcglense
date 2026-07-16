@@ -18,7 +18,7 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-use super::read::{collection_query, owned_summary_rows, owned_with_cards};
+use super::read::{collection_query, owned_summary_rows};
 use super::{
     CollectionDropGroup, CollectionSetsResponse, CollectionSort, CollectionSubtypeGroup, ListParams,
 };
