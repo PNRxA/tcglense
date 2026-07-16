@@ -11,7 +11,13 @@ export type CollectionMovers = {
  * snapshot date across the user's priced card holdings, `"YYYY-MM-DD"`. `None` when no
  * owned card has any captured price history (all lists then empty).
  */
-as_of: string | null, day: CollectionMoverList, week: CollectionMoverList, month: CollectionMoverList, year: CollectionMoverList, two_year: CollectionMoverList, three_year: CollectionMoverList, all_time: CollectionMoverList, 
+as_of: string | null, 
+/**
+ * The snapshot date used by `day`. Normally the same as `as_of`; when the latest
+ * comparison has no movers and retrying from the previous available snapshot finds
+ * some, this reports that fallback date instead.
+ */
+day_as_of: string | null, day: CollectionMoverList, week: CollectionMoverList, month: CollectionMoverList, year: CollectionMoverList, two_year: CollectionMoverList, three_year: CollectionMoverList, all_time: CollectionMoverList, 
 /**
  * Sealed-product movers kept separate from the backward-compatible card lists above.
  */

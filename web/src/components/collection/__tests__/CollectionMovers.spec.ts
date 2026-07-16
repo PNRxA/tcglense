@@ -45,6 +45,7 @@ function sealedList(): CollectionSealedMoverList {
 
 const movers: CollectionMoversResponse = {
   as_of: '2026-07-10',
+  day_as_of: '2026-07-09',
   day: cardList(),
   week: cardList(),
   month: cardList(),
@@ -54,6 +55,7 @@ const movers: CollectionMoversResponse = {
   all_time: cardList(),
   sealed: {
     as_of: '2026-07-11',
+    day_as_of: '2026-07-08',
     day: sealedList(),
     week: sealedList(),
     month: sealedList(),
@@ -62,6 +64,14 @@ const movers: CollectionMoversResponse = {
     three_year: sealedList(),
     all_time: sealedList(),
   },
+}
+
+// Mirrors the component's Intl formatting so the expected labels track the host locale
+// (a hard-coded 'Jul 10' only passes on machines that resolve to a US-style locale).
+function asOfLabel(iso: string) {
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
+    new Date(`${iso}T00:00:00`),
+  )
 }
 
 describe('CollectionMovers holding-kind switch', () => {
@@ -86,13 +96,25 @@ describe('CollectionMovers holding-kind switch', () => {
 
     expect(wrapper.text()).toContain('Singles winner')
     expect(wrapper.text()).not.toContain('Sealed winner')
-    expect(wrapper.text()).toContain('as of Jul 10')
+    expect(wrapper.text()).toContain(`as of ${asOfLabel('2026-07-10')}`)
+
+    const day = wrapper.findAll('button').find((button) => button.text() === '1D')!
+    await day.trigger('click')
+
+    expect(wrapper.text()).toContain(`as of ${asOfLabel('2026-07-09')}`)
 
     const sealed = wrapper.findAll('button').find((button) => button.text() === 'Sealed')!
     await sealed.trigger('click')
 
     expect(wrapper.text()).toContain('Sealed winner')
     expect(wrapper.text()).not.toContain('Singles winner')
-    expect(wrapper.text()).toContain('as of Jul 11')
+    // The 1D window survives the kind switch, so this reads the sealed day_as_of…
+    expect(wrapper.text()).toContain(`as of ${asOfLabel('2026-07-08')}`)
+
+    // …while a non-day window reads the sealed series' own as_of.
+    const week = wrapper.findAll('button').find((button) => button.text() === '7D')!
+    await week.trigger('click')
+
+    expect(wrapper.text()).toContain(`as of ${asOfLabel('2026-07-11')}`)
   })
 })

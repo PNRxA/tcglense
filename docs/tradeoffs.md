@@ -324,6 +324,18 @@ catalog) is planned but not implemented.
   current-count and captured-price assumptions as the original card analytics. Value history
   deliberately ignores holding add dates, revaluing the whole current basket at every historic
   price point; movers likewise rank the current basket rather than reconstructing ownership.
+  Their 1d lists independently fall back one available snapshot when the newest comparison has
+  no non-zero movers, while longer windows stay anchored to the newest snapshot; `day_as_of`
+  reports the fallback date only when that retry actually found movement. The retry's baseline
+  normally costs **no extra query**: the anchor query already selects each item's snapshot at
+  or before `latest - 2`, which *is* that baseline whenever captures are daily. The extra
+  column is worth it because the trigger is a property of the feed, not the user — a flat
+  capture day empties every collection's 1d window at once, so a second scan there would double
+  the dominant I/O of an uncached, per-user route for every request, all day, against the weak
+  prod Postgres. Only a genuine capture gap (nothing captured yesterday) lands on a baseline no
+  anchor selected and re-reads the price index. The fallback is deliberately single-step — a
+  feed that stalls for several captures shows an empty 1d rather than walking back through the
+  history.
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing

@@ -4,4 +4,8 @@ import type { CollectionSealedMoverList } from "./CollectionSealedMoverList";
 /**
  * The sealed-product mover series, with the same windows as the card series.
  */
-export type CollectionSealedMovers = { as_of: string | null, day: CollectionSealedMoverList, week: CollectionSealedMoverList, month: CollectionSealedMoverList, year: CollectionSealedMoverList, two_year: CollectionSealedMoverList, three_year: CollectionSealedMoverList, all_time: CollectionSealedMoverList, };
+export type CollectionSealedMovers = { as_of: string | null, 
+/**
+ * The snapshot date used by `day`, with the same fallback semantics as card movers.
+ */
+day_as_of: string | null, day: CollectionSealedMoverList, week: CollectionSealedMoverList, month: CollectionSealedMoverList, year: CollectionSealedMoverList, two_year: CollectionSealedMoverList, three_year: CollectionSealedMoverList, all_time: CollectionSealedMoverList, };
