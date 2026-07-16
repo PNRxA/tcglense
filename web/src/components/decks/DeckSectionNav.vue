@@ -15,6 +15,16 @@ function targetFor(sectionId: number): HTMLElement | null {
   return document.getElementById(deckSectionTargetId(sectionId))
 }
 
+// True once scrolling has bottomed out and no heading can be brought any further up. The
+// tolerance absorbs the sub-pixel shortfall fractional zoom leaves at maximum scroll; the
+// scrollability gate keeps a deck that fits the viewport — permanently at its "end", never
+// scrolled — from reporting its last section as current on load.
+function atDocumentEnd(): boolean {
+  const doc = document.documentElement
+  if (doc.scrollHeight <= window.innerHeight) return false
+  return window.innerHeight + window.scrollY >= doc.scrollHeight - 1
+}
+
 function updateActiveSection() {
   const first = props.items[0]
   if (!first) {
@@ -23,8 +33,7 @@ function updateActiveSection() {
   }
 
   // Treat the section crossing the upper quarter of the viewport as current. This keeps the
-  // highlight useful while a heading is below the sticky mobile picker, and naturally leaves
-  // the final section selected at the bottom of the page.
+  // highlight useful while a heading is below the sticky mobile picker.
   const marker = Math.min(window.innerHeight * 0.25, 160)
   let current = first.id
   for (const item of props.items) {
@@ -32,6 +41,12 @@ function updateActiveSection() {
     if (target && target.getBoundingClientRect().top <= marker) current = item.id
     else if (target) break
   }
+
+  // A short final section's heading can sit below the marker even at maximum scroll — its cards,
+  // the page's trailing padding and the footer all take room under it — which would leave it
+  // permanently unreachable. With nowhere left to scroll, the reader is on it regardless.
+  const last = props.items[props.items.length - 1]
+  if (last && atDocumentEnd()) current = last.id
   activeSectionId.value = current
 }
 
@@ -47,6 +62,12 @@ function jumpTo(sectionId: number) {
     behavior: prefersReducedMotion() ? 'auto' : 'smooth',
     block: 'start',
   })
+  // Suppressing the fragment navigation to keep the scroll smooth also drops the focus move it
+  // would have made: without this the next Tab resumes from the nav and walks back into the first
+  // section, and a screen reader never leaves the nav at all. `preventScroll` leaves the smooth
+  // scroll in flight, and the sections' `scroll-mt-16` keeps the heading clear of the picker.
+  target.tabIndex = -1
+  target.focus({ preventScroll: true })
 }
 
 function onMobileChange(event: Event) {
