@@ -59,6 +59,19 @@ impl PriceRange {
         })
     }
 
+    /// The canonical wire token for this range (the exact [`Self::parse`] input),
+    /// used as a cache-key segment so equivalent requests share one entry.
+    pub(crate) fn token(self) -> &'static str {
+        match self {
+            PriceRange::D7 => "7d",
+            PriceRange::D30 => "30d",
+            PriceRange::Y1 => "1y",
+            PriceRange::Y2 => "2y",
+            PriceRange::Y3 => "3y",
+            PriceRange::All => "all",
+        }
+    }
+
     /// How many days back the window reaches, or `None` for all of history.
     fn window_days(self) -> Option<i64> {
         match self {

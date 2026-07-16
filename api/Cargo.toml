@@ -51,8 +51,11 @@ sevenz-rust2 = { version = "0.21.2", default-features = false, features = ["ppmd
 sha2 = "0.11.0"
 # Direct dep so the `regexp` feature is enabled on the (feature-unified) sqlx-sqlite
 # that SeaORM already uses — registers a REGEXP function on every connection for the
-# Scryfall regex filters (o:/…/, name:/…/, etc.).
-sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "regexp"] }
+# Scryfall regex filters (o:/…/, name:/…/, etc.). `postgres` is likewise already in
+# the unified feature set via SeaORM; naming it here keeps `crate::db_lock`'s use of
+# a pinned PgPool connection (session advisory locks) from depending on SeaORM's
+# feature list.
+sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "postgres", "regexp"] }
 thiserror = "2.0.18"
 time = "0.3.51"
 tokio = { version = "1.52.3", features = ["full", "test-util"] }

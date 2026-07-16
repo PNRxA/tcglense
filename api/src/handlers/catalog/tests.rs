@@ -439,7 +439,7 @@ async fn name_suggestions_are_distinct_prefix_first_and_capped() {
     // Substring match, deduplicated ("Lightning Bolt" once despite two printings),
     // prefix matches ("Bolt", "Bolt Catcher") ahead of the mid-string one, each
     // group alphabetical.
-    let got = name_suggestions_query("mtg", "bolt", 10)
+    let got = name_suggestions_query("mtg", "bolt", 10, Dialect::Sqlite)
         .into_tuple::<String>()
         .all(&db)
         .await
@@ -454,7 +454,7 @@ async fn name_suggestions_are_distinct_prefix_first_and_capped() {
     );
 
     // Case-insensitive (SQLite's ASCII LIKE), same three distinct names.
-    let upper = name_suggestions_query("mtg", "BOLT", 10)
+    let upper = name_suggestions_query("mtg", "BOLT", 10, Dialect::Sqlite)
         .into_tuple::<String>()
         .all(&db)
         .await
@@ -462,7 +462,7 @@ async fn name_suggestions_are_distinct_prefix_first_and_capped() {
     assert_eq!(upper.len(), 3);
 
     // The limit caps the suggestion count, keeping the prefix-first pair.
-    let capped = name_suggestions_query("mtg", "bolt", 2)
+    let capped = name_suggestions_query("mtg", "bolt", 2, Dialect::Sqlite)
         .into_tuple::<String>()
         .all(&db)
         .await
@@ -470,12 +470,30 @@ async fn name_suggestions_are_distinct_prefix_first_and_capped() {
     assert_eq!(capped, vec!["Bolt".to_string(), "Bolt Catcher".to_string()]);
 
     // A term nothing matches yields no suggestions.
-    let none = name_suggestions_query("mtg", "zzz", 10)
+    let none = name_suggestions_query("mtg", "zzz", 10, Dialect::Sqlite)
         .into_tuple::<String>()
         .all(&db)
         .await
         .expect("query");
     assert!(none.is_empty());
+}
+
+/// Both LIKE sides (the contains filter and the starts-with rank) compile to
+/// `LOWER(COALESCE(name, ''))` with the `''` inline — the exact expression
+/// `m..027`'s `idx_cards_name_trgm` is built on. A drift back to a bare
+/// `LOWER(name)` (or a bound `''`) silently un-indexes the autocomplete on
+/// Postgres, so pin the compiled shape.
+#[test]
+fn name_suggestions_compile_the_trgm_indexed_expression() {
+    let s = name_suggestions_query("mtg", "bolt", 10, Dialect::Postgres)
+        .build(sea_orm::DbBackend::Postgres)
+        .to_string();
+    assert_eq!(
+        s.matches("LOWER(COALESCE(name, '')) LIKE").count(),
+        2,
+        "{s}"
+    );
+    assert!(!s.contains("LOWER(\"cards\".\"name\")"), "{s}");
 }
 
 #[test]

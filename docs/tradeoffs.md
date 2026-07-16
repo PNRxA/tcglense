@@ -139,8 +139,14 @@ catalog) is planned but not implemented.
   fail-open posture), and it only engages for a request carrying a *valid* bearer token (an
   unauthenticated / bad-token request has no user to key on and is left to the
   handler's own `401`, so it is **not** an IP-level DoS guard for those routes —
-  that would still need the per-IP/WAF layer). The public catalog + image routes
-  remain unthrottled (same open posture noted under image caching).
+  that would still need the per-IP/WAF layer). Since issue #413 the **per-IP**
+  limiter also covers the DB-query public surfaces with generous quotas: the
+  catalog reads (search/autocomplete/set/product pages, ~300/min) and the public
+  sharing reads + the body-keyed `/owned` POST (~120/min — previously the one
+  wholly-unthrottled, uncacheable DB endpoint). The image/icon proxies and the
+  import-status poll are deliberately classified out (a legitimate grid page
+  fires dozens of art requests; the SPA polls status several times a second), so
+  the image routes keep the open posture noted under image caching.
 
 ## Browser security headers (CSP)
 
@@ -891,7 +897,9 @@ catalog) is planned but not implemented.
   route is public and card ids are enumerable, so
   it's open to scripted disk-fill / bandwidth-amplification abuse — there's no per-IP
   rate limit, cache budget, or eviction yet (the same open posture as the dataset
-  mirror; the per-IP limiter covers only the auth endpoints). Set icons go through the
+  mirror; the per-IP limiter deliberately classifies the image/icon routes out of
+  the public-catalog quota, since one grid page load fires dozens of art
+  requests). Set icons go through the
   same cache (`.../sets/{code}/icon`, `image/svg+xml`), so the provider is hit only
   once per asset rather than hotlinked on every view. `CDN_MODE=true` (fetch-and-serve
   only, no persistence) only makes sense behind a caching CDN — without one every view

@@ -13,6 +13,7 @@ import {
 import type { ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { findProductInCache } from '@/lib/placeholders'
+import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 
 /**
  * Shared reads for the sealed-products section. These are PUBLIC catalog endpoints
@@ -56,6 +57,8 @@ export function useProductsQuery(game: Ref<string>, opts: ProductListQueryOption
         signal,
       ),
     placeholderData: keepPreviousData,
+    // Product rows carry price_usd, which moves only on the daily sync (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -69,6 +72,8 @@ export function useProductQuery(game: Ref<string>, id: Ref<string>) {
     // instantly; the real fetch still runs (placeholderData, not initialData) and reads
     // the current refs so a product→product navigation re-evaluates.
     placeholderData: () => findProductInCache(qc, game.value, id.value),
+    // Carries price_usd — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -115,6 +120,8 @@ export function useProductCardsQuery(
       )
     },
     placeholderData: keepPreviousData,
+    // Card grids embed Card.prices — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -131,6 +138,8 @@ export function useProductCardSectionsQuery(game: Ref<string>, id: Ref<string>, 
     queryFn: ({ signal }) =>
       getProductCardSections(game.value, id.value, q.value || undefined, signal),
     placeholderData: keepPreviousData,
+    // Recomputed only by the daily sync (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -141,6 +150,8 @@ export function useProductContentsQuery(game: Ref<string>, id: Ref<string>) {
   return useQuery({
     queryKey: ['product-contents', game, id],
     queryFn: ({ signal }) => getProductContents(game.value, id.value, signal),
+    // Component lines embed linked Product rows (with prices) — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -150,6 +161,8 @@ export function useProductContainersQuery(game: Ref<string>, id: Ref<string>) {
   return useQuery({
     queryKey: ['product-containers', game, id],
     queryFn: ({ signal }) => getProductContainers(game.value, id.value, signal),
+    // Parents embed full Product rows (with prices) — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -170,5 +183,7 @@ export function useCardSealedQuery(game: Ref<string>, id: Ref<string>) {
   return useQuery({
     queryKey: ['card-sealed', game, id],
     queryFn: () => getCardSealed(game.value, id.value),
+    // Product rows with prices — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }

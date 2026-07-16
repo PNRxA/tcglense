@@ -459,6 +459,14 @@ pub fn build_router(state: AppState) -> Router {
         // every visitor and change only on redeploy, so they ride the shared CDN cache
         // like the rest of the catalog (each error still marked `no-store` by the layer).
         .route("/api/openapi.json", get(openapi_json))
+        // Per-IP rate limiting for the DB-query catalog reads (issue #413 — the
+        // classifier skips the image/icon proxies). Innermost, so a 429 still
+        // travels out through `public_cache_layer`, which marks every non-success
+        // `no-store` (a CDN must never pin a rate-limit response).
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::ratelimit::rate_limit,
+        ))
         .layer(map_response(public_cache_layer))
         .layer(from_fn(conditional_request_layer));
 
@@ -488,6 +496,14 @@ pub fn build_router(state: AppState) -> Router {
         // so no game segment is needed. Same CDN-cache + ETag layers as the reads above.
         .route("/api/u/{handle}/decks", get(public_decks))
         .route("/api/u/{handle}/decks/{deck_id}", get(public_deck))
+        // Per-IP rate limiting (issue #413): these unauthenticated reads run the
+        // same full-collection cores as the authed twins but the per-user limiter
+        // never engages (no bearer), so this is their only throttle. Innermost, so
+        // a 429 is marked `no-store` by the cache layer outside it.
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::ratelimit::rate_limit,
+        ))
         .layer(map_response(public_holdings_cache_layer))
         .layer(from_fn(conditional_request_layer));
 
@@ -499,6 +515,12 @@ pub fn build_router(state: AppState) -> Router {
     // shared-cached (mirrors why the authed `/api/collection/{game}/owned` twin is no-store).
     let public_holdings_owned = Router::new()
         .route("/api/u/{handle}/{game}/owned", post(public_owned_counts))
+        // Per-IP rate limiting (issue #413): as a body-keyed, unauthenticated POST
+        // this was the one wholly-unthrottled, uncacheable DB endpoint in the app.
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::ratelimit::rate_limit,
+        ))
         .layer(map_response(no_store_layer));
 
     let mut app = Router::new()

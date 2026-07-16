@@ -190,6 +190,7 @@ pub fn spawn_import_job(
     db: DatabaseConnection,
     http: reqwest::Client,
     imports: Arc<ImportQueue>,
+    analytics: Arc<crate::analytics_cache::AnalyticsCache>,
     request: ImportRequest,
 ) -> Result<u64, AppError> {
     let (id, progress) = imports.create(request.user_id, &request.game)?;
@@ -219,6 +220,15 @@ pub fn spawn_import_job(
             request.mode,
         )
         .await;
+
+        // Orphan the user's cached analytics bodies (#413) on success AND failure:
+        // the import pipeline commits mutations before its outcome is known (the
+        // pre-fetch star-holding fold, the reconcile's own transactions), so a
+        // failed job may still have changed the holdings. A spurious bump costs
+        // one cache miss; a missed one serves stale analytics for the body TTL.
+        analytics
+            .bump_holdings(request.user_id, &request.game)
+            .await;
 
         match result {
             Ok(summary) => {

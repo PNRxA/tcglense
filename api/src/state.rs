@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection};
 
+use crate::analytics_cache::AnalyticsCache;
 use crate::auth::password::hash_password;
 use crate::captcha::Captcha;
 use crate::catalog::fingerprints::FingerprintIndex;
@@ -54,6 +55,10 @@ pub struct AppState {
     /// keyed by the access-token user id (in-memory, or Redis-backed; see
     /// [`crate::ratelimit::UserRateLimiter`]).
     pub user_rate_limiters: Arc<UserRateLimiter>,
+    /// Version-keyed response cache for the collection analytics pair
+    /// (value-history / movers) — Redis-backed when configured, else in-process;
+    /// see [`crate::analytics_cache::AnalyticsCache`].
+    pub analytics_cache: Arc<AnalyticsCache>,
     /// The visual scanner's in-memory perceptual-hash match index. Empty until loaded
     /// from the `card_fingerprint` table at startup (and rebuilt after each build /
     /// sync pass) by [`crate::tasks`]. Read behind the lock — each scan clones the
@@ -99,10 +104,11 @@ impl AppState {
         // the same shared client; the per-IP auth limiters are in-memory.
         let captcha = Arc::new(Captcha::from_config(&config, http.clone()));
         // Redis-backed when a connection was established at boot, else in-memory.
-        // `ConnectionManager: Clone`, so both limiter sets share the one multiplexed
-        // connection.
+        // `ConnectionManager: Clone`, so the limiter sets and the analytics cache
+        // all share the one multiplexed connection.
         let rate_limiters = Arc::new(AuthRateLimiter::new(redis.clone()));
-        let user_rate_limiters = Arc::new(UserRateLimiter::new(redis));
+        let user_rate_limiters = Arc::new(UserRateLimiter::new(redis.clone()));
+        let analytics_cache = Arc::new(AnalyticsCache::new(redis));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -115,6 +121,7 @@ impl AppState {
             captcha,
             rate_limiters,
             user_rate_limiters,
+            analytics_cache,
             fingerprint_index: Arc::new(RwLock::new(Arc::new(FingerprintIndex::default()))),
         })
     }

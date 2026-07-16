@@ -28,7 +28,7 @@ pub(super) type UserKeyedLimiter = RateLimiter<i32, DefaultKeyedStateStore<i32>,
 
 /// The per-user rate-limit classes for the authenticated API surface. Each gets its
 /// own keyed limiter + quota, so a burst of imports can't spend a browse session's
-/// budget and vice versa (mirroring [`super::per_ip::AuthRoute`]'s per-IP split).
+/// budget and vice versa (mirroring [`super::per_ip::IpRoute`]'s per-IP split).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UserRoute {
     /// General authenticated requests — collection reads, absolute-count edits,
@@ -198,7 +198,7 @@ fn bearer_api_key_token(request: &Request) -> Option<String> {
 /// layered inside `no_store_layer` so the `429` is never shared-cached.
 pub async fn user_rate_limit(
     State(state): State<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     if !state.config.rate_limit_enabled {
@@ -207,16 +207,25 @@ pub async fn user_rate_limit(
     // A session JWT resolves without a DB hit; fall back to an API-key lookup so
     // key-authenticated traffic is throttled per user rather than bypassing the cap.
     // The API-key token is extracted (owned) before the await so no `&request` borrow
-    // is held across it (which would make this future non-`Send`).
+    // is held across it (which would make this future non-`Send`). The resolution is
+    // the full one (key ⋈ user in one round-trip) and is stashed in the request
+    // extensions so the auth extractor consumes it instead of re-querying — one point
+    // SELECT per keyed request where there used to be three (issue #413).
     let user_id = match bearer_user_id(&request, &state.config) {
         Some(id) => id,
         None => match bearer_api_key_token(&request) {
-            Some(token) => match crate::auth::api_key::resolve_user_id(&state.db, &token).await {
-                Ok(Some(id)) => id,
-                // Not a valid key (unknown/revoked/expired) or a lookup error: no
-                // user to key on — the extractor rejects it downstream.
-                _ => return next.run(request).await,
-            },
+            Some(token) => {
+                match crate::auth::api_key::resolve_for_rate_limit(&state.db, &token).await {
+                    Ok(Some(pre)) => {
+                        let user_id = pre.resolved.user.id;
+                        request.extensions_mut().insert(pre);
+                        user_id
+                    }
+                    // Not a valid key (unknown/revoked/expired) or a lookup error: no
+                    // user to key on — the extractor rejects it downstream.
+                    _ => return next.run(request).await,
+                }
+            }
             // No authenticated user to key on: nothing to limit here.
             None => return next.run(request).await,
         },

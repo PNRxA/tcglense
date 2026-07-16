@@ -1,3 +1,4 @@
+mod analytics_cache;
 mod auth;
 mod captcha;
 mod catalog;
@@ -7,6 +8,7 @@ mod config;
 mod currency;
 mod datasets;
 mod db;
+mod db_lock;
 mod deck_import;
 mod email;
 mod entities;
@@ -112,9 +114,17 @@ async fn main() {
         sea_orm::DatabaseBackend::MySql => "MySQL",
     };
     tracing::info!("connected to {backend} database");
+    // Serialise migrations across simultaneously booting replicas: DDL races on a
+    // shared Postgres otherwise (`seaql_migrations` is bookkeeping, not a lock). A
+    // second booter *waits* here until the first finishes, then finds every
+    // migration applied and no-ops. No-op on SQLite; fails open on lock errors.
+    tracing::info!("acquiring the migration lock (waits if another replica is migrating)");
+    let migration_lock =
+        db_lock::AdvisoryLock::acquire(&db, &config.database_url, db_lock::MIGRATIONS).await;
     Migrator::up(&db, None)
         .await
         .expect("failed to run database migrations");
+    migration_lock.release().await;
 
     // Shared HTTP client for outbound provider calls (Scryfall data + images).
     // No overall timeout: the bulk download streams for a while. A read timeout

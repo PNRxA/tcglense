@@ -29,7 +29,9 @@ where
 /// (or [`raw_vals`]) so its placeholders match the connection's backend — sea-query
 /// stores the template verbatim and only tokenizes the *backend's own* placeholder
 /// character, so a raw `?` fragment would drop its bound values on Postgres.
-pub(super) fn cust_vals<T, V, I>(dialect: Dialect, sql: T, values: I) -> SimpleExpr
+/// `pub(crate)` (re-exported beside [`escape_like`]): the card-name autocomplete
+/// builds its index-matching `LOWER(COALESCE(…))` fragment through the same seam.
+pub(crate) fn cust_vals<T, V, I>(dialect: Dialect, sql: T, values: I) -> SimpleExpr
 where
     T: Into<String>,
     V: Into<Value>,

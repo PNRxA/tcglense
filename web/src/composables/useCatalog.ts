@@ -12,6 +12,7 @@ import {
 } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 import { findCardInCache, findSetInCache } from '@/lib/placeholders'
+import { PRICED_CATALOG_STALE_MS, STRUCTURAL_CATALOG_STALE_MS } from '@/lib/queryClient'
 
 /**
  * Shared catalog reads. The game registry and per-game set list are used across the
@@ -69,6 +70,8 @@ export function useSetsQuery(game: Ref<string>) {
   return useQuery({
     queryKey: ['sets', game],
     queryFn: ({ signal }) => listSets(game.value, signal),
+    // Structural, price-free, daily-cadence data (#413).
+    staleTime: STRUCTURAL_CATALOG_STALE_MS,
   })
 }
 
@@ -83,6 +86,8 @@ export function useSetQuery(game: Ref<string>, code: Ref<string>, enabled?: Ref<
     // still runs (placeholderData, not initialData) and reads the current refs so a
     // set→set navigation re-evaluates.
     placeholderData: () => findSetInCache(qc, game.value, code.value),
+    // Structural, price-free, daily-cadence data (#413).
+    staleTime: STRUCTURAL_CATALOG_STALE_MS,
     enabled,
   })
 }
@@ -98,6 +103,8 @@ export function useCardQuery(game: Ref<string>, id: Ref<string>) {
     queryKey: ['card', game, id],
     queryFn: () => getCard(game.value, id.value),
     placeholderData: () => findCardInCache(qc, game.value, id.value),
+    // Embeds Card.prices, which move only on the daily sync (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -128,6 +135,8 @@ export function useSetCardsQuery(
       ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
+    // Card grids embed Card.prices — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -148,6 +157,8 @@ export function useAllCardsQuery(game: Ref<string>, opts: CardListQueryOptions) 
       ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
+    // Card grids embed Card.prices — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -181,6 +192,8 @@ export function useSetDropsQuery(
       ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
+    // Card grids embed Card.prices — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }
 
@@ -208,5 +221,7 @@ export function useSetSubtypesQuery(
       ),
     enabled: opts.enabled,
     placeholderData: keepPreviousData,
+    // Card grids embed Card.prices — daily cadence (#413).
+    staleTime: PRICED_CATALOG_STALE_MS,
   })
 }

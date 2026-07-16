@@ -58,10 +58,13 @@ use sea_orm_migration::prelude::*;
 /// - GIN trigram indexes add write cost to the bulk card upsert (each changed row
 ///   maintains three more indexes); GIN's pending-list (`fastupdate`) absorbs most of it
 ///   and the sync is a 6 h background job, so read latency wins over the write cost.
-/// - The name autocomplete (`name_suggestions_query`) and the sealed-`products` name
-///   search compile a *bare* `LOWER(<col>)` (the columns are `NOT NULL`, no `COALESCE`),
-///   a different expression that these indexes do not serve — left as a follow-up; the
-///   `products` table is also small enough that its scan is cheap.
+/// - The name autocomplete (`name_suggestions_query`) originally compiled a *bare*
+///   `LOWER(name)` (the column is `NOT NULL`, no `COALESCE`) — a different expression
+///   these indexes do not serve, so every per-keystroke suggestion request seq-scanned
+///   the wide `cards` table. It now compiles the indexed `LOWER(COALESCE(name, ''))`
+///   verbatim (issue #413), so `idx_cards_name_trgm` serves it. The sealed-`products`
+///   name search still compiles the bare form — deliberate: the `products` table is
+///   small enough that its scan is cheap.
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 

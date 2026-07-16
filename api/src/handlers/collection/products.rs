@@ -292,8 +292,12 @@ pub async fn set_collection_product_entry(
     Path((game, id)): Path<(String, String)>,
     JsonBody(payload): JsonBody<SetQuantitiesRequest>,
 ) -> Result<Json<CollectionQuantities>, AppError> {
-    Ok(Json(
+    let quantities =
         set_product_holding::<CollectionProductRepository>(&state, user.id, &game, &id, payload)
-            .await?,
-    ))
+            .await?;
+    // Collection analytics include sealed products: orphan the user's cached
+    // analytics bodies (#413). The wishlist twin has no analytics, so its
+    // handler deliberately has no bump.
+    state.analytics_cache.bump_holdings(user.id, &game).await;
+    Ok(Json(quantities))
 }

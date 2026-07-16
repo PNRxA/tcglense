@@ -3,6 +3,7 @@ import { computed, ref, toRef, watch } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import { useQuery } from '@tanstack/vue-query'
 import { getCardPrints } from '@/lib/api'
+import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
@@ -17,6 +18,8 @@ const id = toRef(props, 'id')
 const query = useQuery({
   queryKey: ['card-prints', game, id],
   queryFn: () => getCardPrints(game.value, id.value),
+  // Prints embed Card.prices, which move only on the daily sync (#413).
+  staleTime: PRICED_CATALOG_STALE_MS,
 })
 
 const prints = computed(() => query.data.value?.data ?? [])

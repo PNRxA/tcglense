@@ -234,3 +234,84 @@ async fn a_missing_or_invalid_bearer_is_not_per_user_limited() {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "bad bearer -> 401, never 429");
     }
 }
+
+/// The DB-query public catalog reads are per-IP limited (issue #413), while the
+/// image/icon proxies deliberately are not — a legitimate browse-grid page load
+/// fires dozens of art requests and must never 429 behind the catalog quota.
+#[tokio::test]
+async fn public_catalog_reads_are_rate_limited_per_ip_but_images_are_not() {
+    let app = test_app_trusting_proxy().await;
+    let ip = "198.51.100.41";
+
+    // The public-catalog quota allows a burst of 300 from one IP. The cell
+    // replenishes at 5/s while the loop runs, so don't pin the exact request that
+    // trips it — assert a comfortable head of the burst passes, then keep firing
+    // (far faster than the replenish rate) until the limiter bites.
+    for i in 0..100 {
+        let (status, _, _) = send(&app, get_from("/api/games/mtg/cards", ip)).await;
+        assert_eq!(status, StatusCode::OK, "catalog request {i} within burst");
+    }
+    let mut limited = None;
+    for _ in 0..600 {
+        let (status, headers, body) = send(&app, get_from("/api/games/mtg/cards", ip)).await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            limited = Some((headers, body));
+            break;
+        }
+        assert_eq!(status, StatusCode::OK);
+    }
+    // The 429 carries Retry-After and is never shared-cached.
+    let (headers, body) = limited.expect("the catalog burst must eventually be limited");
+    assert!(headers.get("retry-after").is_some(), "429 carries Retry-After");
+    assert!(body["error"].as_str().is_some());
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // The same exhausted IP can still fetch card art: images are classified out of
+    // the limiter entirely (a 404 here — no such card — but decisively not a 429).
+    let (status, _, _) = send(&app, get_from("/api/games/mtg/cards/nope/image", ip)).await;
+    assert_ne!(status, StatusCode::TOO_MANY_REQUESTS, "art is never catalog-limited");
+
+    // A different IP has its own catalog budget.
+    let (status, _, _) = send(&app, get_from("/api/games/mtg/cards", "198.51.100.42")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// The public sharing surface — including the body-keyed owned-counts POST, which is
+/// uncacheable at every HTTP layer and previously had no limiter of any kind — is
+/// per-IP limited (issue #413). The limiter runs before the handler, so even 404s
+/// for an unknown handle spend the budget (an enumeration scan can't dodge it).
+#[tokio::test]
+async fn public_holdings_reads_and_owned_posts_are_rate_limited_per_ip() {
+    let app = test_app_trusting_proxy().await;
+    let ip = "198.51.100.43";
+
+    // Reads and the owned POST share the holdings class (burst 120, replenishing
+    // at 2/s — so, as in the catalog test, assert a head of the burst passes and
+    // then fire until the limiter bites rather than pinning an exact count).
+    for i in 0..40 {
+        let (status, _, _) = send(&app, get_from("/api/u/nobody-0000/mtg", ip)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "read {i} within burst is a plain 404");
+        let (status, _, _) = send(
+            &app,
+            json_post_from("/api/u/nobody-0000/mtg/owned", ip, json!({ "ids": ["x"] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "post {i} within burst is a plain 404");
+    }
+    let mut limited = None;
+    for _ in 0..300 {
+        let (status, headers, _) = send(&app, get_from("/api/u/nobody-0000/mtg", ip)).await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            limited = Some(headers);
+            break;
+        }
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let headers = limited.expect("the holdings burst must eventually be limited");
+    assert!(headers.get("retry-after").is_some());
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // The holdings and catalog budgets are independent for one IP.
+    let (status, _, _) = send(&app, get_from("/api/games/mtg/cards", ip)).await;
+    assert_eq!(status, StatusCode::OK);
+}

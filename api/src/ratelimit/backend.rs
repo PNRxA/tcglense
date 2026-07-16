@@ -4,7 +4,7 @@
 //! (kept exactly as they are, sync `check` and all) with an optional Redis arm. The
 //! Redis arm runs the same GCRA as governor, in a Lua script, against a shared Redis
 //! so a multi-instance deploy enforces one budget. Both arms read the identical
-//! `Quota` (via `AuthRoute::quota()` / `UserRoute::quota()`), so they can't diverge.
+//! `Quota` (via `IpRoute::quota()` / `UserRoute::quota()`), so they can't diverge.
 
 use std::{
     net::IpAddr,
@@ -17,7 +17,7 @@ use std::{
 
 use governor::Quota;
 
-use super::per_ip::{AuthRoute, RateLimiters};
+use super::per_ip::{IpRoute, RateLimiters};
 use super::per_user::{UserRateLimiters, UserRoute};
 use super::{rate_limit_key, retry_after_from_wait};
 
@@ -193,8 +193,8 @@ impl AuthRateLimiter {
     /// Check `route` for `ip`. `Ok(())` allowed; `Err(retry_after)` limited. The
     /// Redis arm fails open to the in-memory fallback on any Redis error. Kept
     /// module-private (called only from the [`super::rate_limit`] middleware) so it
-    /// doesn't leak the private [`AuthRoute`] in a public signature.
-    pub(super) async fn check(&self, route: AuthRoute, ip: IpAddr) -> Result<(), Duration> {
+    /// doesn't leak the private [`IpRoute`] in a public signature.
+    pub(super) async fn check(&self, route: IpRoute, ip: IpAddr) -> Result<(), Duration> {
         match self {
             Self::InMemory(inner) => inner.check(route, ip),
             Self::Redis {
@@ -296,10 +296,12 @@ mod tests {
         // numbers below are computed from the current quotas — this test fails if a
         // quota changes without updating them, forcing a conscious re-check.
         let cases = [
-            (AuthRoute::Login, 6_000_000u64, 54_000_000u64),
-            (AuthRoute::Register, 12_000_000, 48_000_000),
-            (AuthRoute::EmailSend, 12_000_000, 48_000_000),
-            (AuthRoute::Token, 3_000_000, 57_000_000),
+            (IpRoute::Login, 6_000_000u64, 54_000_000u64),
+            (IpRoute::Register, 12_000_000, 48_000_000),
+            (IpRoute::EmailSend, 12_000_000, 48_000_000),
+            (IpRoute::Token, 3_000_000, 57_000_000),
+            (IpRoute::PublicCatalog, 200_000, 59_800_000),
+            (IpRoute::PublicHoldings, 500_000, 59_500_000),
         ];
         for (route, t, tau) in cases {
             assert_eq!(gcra_params(route.quota()), (t, tau), "{route:?}");
@@ -313,10 +315,12 @@ mod tests {
         // The invariant the parity rests on, independent of the hard-coded numbers:
         // governor's own `tau = t * (burst - 1)` (see `gcra_params`).
         for route in [
-            AuthRoute::Login,
-            AuthRoute::Register,
-            AuthRoute::EmailSend,
-            AuthRoute::Token,
+            IpRoute::Login,
+            IpRoute::Register,
+            IpRoute::EmailSend,
+            IpRoute::Token,
+            IpRoute::PublicCatalog,
+            IpRoute::PublicHoldings,
         ] {
             let q = route.quota();
             let (t, tau) = gcra_params(q);
@@ -334,7 +338,7 @@ mod tests {
         // The Redis auth key reuses the same /64 normalisation as the in-memory
         // bucket, so a client can't dodge the shared limit by rotating within a /64.
         let ip: IpAddr = "2001:db8:abcd:1234::1".parse().unwrap();
-        let key = format!("rl:auth:{}:{}", AuthRoute::Login.class(), rate_limit_key(ip));
+        let key = format!("rl:auth:{}:{}", IpRoute::Login.class(), rate_limit_key(ip));
         assert_eq!(key, "rl:auth:login:2001:db8:abcd:1234::");
     }
 
@@ -374,12 +378,12 @@ mod tests {
             .unwrap();
         for i in 0..5 {
             assert!(
-                limiter.check(AuthRoute::Register, ip).await.is_ok(),
+                limiter.check(IpRoute::Register, ip).await.is_ok(),
                 "burst {i}"
             );
         }
         let retry = limiter
-            .check(AuthRoute::Register, ip)
+            .check(IpRoute::Register, ip)
             .await
             .expect_err("the 6th is limited");
         assert!(retry.as_secs() >= 1); // Retry-After: min 1s
@@ -401,7 +405,7 @@ mod tests {
         let ip: IpAddr = format!("198.51.{}.{}", rand::random::<u8>(), rand::random::<u8>())
             .parse()
             .unwrap();
-        limiter.check(AuthRoute::Register, ip).await.unwrap();
+        limiter.check(IpRoute::Register, ip).await.unwrap();
         let key = format!("rl:auth:register:{}", rate_limit_key(ip));
         let mut c = conn.clone();
         let pttl: i64 = redis::cmd("PTTL")
@@ -426,13 +430,13 @@ mod tests {
             .unwrap();
         let ip_m: IpAddr = "203.0.113.200".parse().unwrap();
         for _ in 0..20 {
-            assert!(inmem.check(AuthRoute::Token, ip_m).is_ok()); // Token burst=20
+            assert!(inmem.check(IpRoute::Token, ip_m).is_ok()); // Token burst=20
         }
-        assert!(inmem.check(AuthRoute::Token, ip_m).is_err());
+        assert!(inmem.check(IpRoute::Token, ip_m).is_err());
         for _ in 0..20 {
-            assert!(limiter.check(AuthRoute::Token, ip_r).await.is_ok());
+            assert!(limiter.check(IpRoute::Token, ip_r).await.is_ok());
         }
-        assert!(limiter.check(AuthRoute::Token, ip_r).await.is_err());
+        assert!(limiter.check(IpRoute::Token, ip_r).await.is_err());
     }
 
     #[tokio::test]
@@ -459,10 +463,10 @@ mod tests {
             last_warn_secs: AtomicU64::new(0),
         };
         let ip: IpAddr = "203.0.113.9".parse().unwrap();
-        assert!(limiter.check(AuthRoute::Login, ip).await.is_ok()); // Redis up
+        assert!(limiter.check(IpRoute::Login, ip).await.is_ok()); // Redis up
         let _ = child.kill(); // Redis gone
         tokio::time::sleep(Duration::from_millis(200)).await;
         // Fails open to the fresh in-memory fallback (which allows), not an error.
-        assert!(limiter.check(AuthRoute::Login, ip).await.is_ok());
+        assert!(limiter.check(IpRoute::Login, ip).await.is_ok());
     }
 }

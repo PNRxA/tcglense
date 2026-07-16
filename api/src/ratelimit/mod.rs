@@ -1,8 +1,11 @@
 //! Abuse-protection rate limiting, in two complementary flavours:
 //!
 //! * **Per-IP** ([`RateLimiters`] + [`rate_limit`]) — guards the unauthenticated
-//!   auth endpoints (login/register/email-send/token) against brute-force /
-//!   mail-bombing, keyed by the resolved client IP (see [`crate::client_ip`]). When
+//!   surfaces, keyed by the resolved client IP (see [`crate::client_ip`]): the auth
+//!   endpoints (login/register/email-send/token) against brute-force /
+//!   mail-bombing, and — since issue #413 — the public catalog and public-sharing
+//!   reads against scripted enumeration driving expensive scans (generous quotas;
+//!   the image/icon proxies and the status poll are deliberately un-limited). When
 //!   the IP can't be resolved (only the in-process test harness, which has no socket
 //!   peer) the request fails open — a real deployment always has a peer address.
 //! * **Per-user** ([`UserRateLimiters`] + [`user_rate_limit`]) — guards the

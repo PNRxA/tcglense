@@ -10,7 +10,7 @@ use axum::{
 };
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    SelectTwo,
+    RelationTrait, SelectModel, SelectTwo, Selector, sea_query::JoinType,
 };
 
 use crate::auth::extractor::AuthUser;
@@ -20,8 +20,9 @@ use crate::entities::{card, collection_item};
 use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::{
-    CardResponse, Page, SortDir, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card,
-    require_game, resolve_set_scope, search_condition, summarize_holdings,
+    CardResponse, HoldingSummaryRow, Page, SortDir, apply_card_sort, build_page, copies_expr,
+    dedupe_ids, load_card, narrow_summary_rows, require_game, resolve_set_scope, search_condition,
+    summarize_holdings,
 };
 use crate::state::AppState;
 
@@ -143,6 +144,31 @@ pub(crate) fn owned_with_cards(
     query
 }
 
+/// The summary/sets narrow variant of [`owned_with_cards`]: the identical per-user
+/// scope and LEFT JOIN, but selecting only the columns the folds read instead of the
+/// wide card row. The landing endpoints re-fetch the whole collection on every mount
+/// / edit / refocus, so on a large collection the projection is the difference
+/// between shipping a handful of short columns and the full 60+-column card row per
+/// holding (issue #413). Keep the filters in lock-step with [`owned_with_cards`].
+pub(crate) fn owned_summary_rows(
+    user_id: i32,
+    game: &str,
+    set_codes: Option<&[String]>,
+) -> Selector<SelectModel<HoldingSummaryRow>> {
+    let mut query = CollectionItem::find()
+        .join(JoinType::LeftJoin, collection_item::Relation::Card.def())
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game));
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().map(String::as_str)));
+    }
+    narrow_summary_rows(
+        query,
+        collection_item::Column::Quantity,
+        collection_item::Column::FoilQuantity,
+    )
+}
+
 /// Build the collection-list query for a user + game: the [`owned_with_cards`] base
 /// (per-user scope + optional set scope), plus the optional already-parsed search
 /// condition and the chosen sort. Kept separate from the handler so the join/filter/sort
@@ -244,7 +270,7 @@ pub(crate) async fn summary(
     set_codes: Option<&[String]>,
     bulk_threshold_cents: i128,
 ) -> Result<CollectionSummary, AppError> {
-    let rows = owned_with_cards(user_id, game, set_codes).all(db).await?;
+    let rows = owned_summary_rows(user_id, game, set_codes).all(db).await?;
     Ok(summarize_holdings(&rows, bulk_threshold_cents))
 }
 

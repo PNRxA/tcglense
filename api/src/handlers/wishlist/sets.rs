@@ -19,7 +19,7 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-use super::read::{wanted_with_cards, wishlist_query};
+use super::read::{wanted_summary_rows, wishlist_query};
 
 /// List wish-list sets
 ///
@@ -49,9 +49,9 @@ pub async fn wishlist_sets(
 ) -> Result<Json<CollectionSetsResponse>, AppError> {
     require_game(&game)?;
 
-    // Every wanted card (with its joined card row) for the game — bounded by how many
-    // distinct cards the user wants.
-    let rows = wanted_with_cards(user.id, &game, None).all(&state.db).await?;
+    // Every wanted card's fold-relevant columns for the game (never the wide card
+    // rows) — bounded by how many distinct cards the user wants.
+    let rows = wanted_summary_rows(user.id, &game, None).all(&state.db).await?;
 
     // The game's set metadata, to dress each wanted set as a full catalog tile.
     let sets = CardSet::find()

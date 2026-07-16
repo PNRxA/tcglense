@@ -20,11 +20,12 @@
 
 use std::collections::HashMap;
 
-use axum::{Json, extract::State};
+use axum::extract::State;
 use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect};
 use serde::Serialize;
 
+use crate::analytics_cache::json_body_response;
 use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::{
     CardPriceHistory, CollectionItem, CollectionProductItem, ProductPriceHistory,
@@ -101,7 +102,7 @@ pub async fn collection_value_history(
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
     Query(params): Query<PriceParams>,
-) -> Result<Json<DataBody<Vec<CollectionValuePoint>>>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     require_game(&game)?;
 
     // Blank/absent range -> the full daily series; an explicit range windows + downsamples.
@@ -116,6 +117,41 @@ pub async fn collection_value_history(
         Some(value) => Some(PriceRange::parse(value)?),
     };
 
+    // Version-keyed response cache (issues #413/#365): between the user's own edits
+    // and the daily price capture this response cannot change, and it is the app's
+    // most expensive per-user read. `None` key = cache degraded, compute as normal.
+    let cache_key = state
+        .analytics_cache
+        .body_key(
+            user.id,
+            &game,
+            "value-history",
+            range.map_or("full", PriceRange::token),
+        )
+        .await;
+    if let Some(key) = &cache_key
+        && let Some(body) = state.analytics_cache.get_body(key).await
+    {
+        return Ok(json_body_response(body));
+    }
+
+    let payload = value_history_payload(state.clone(), user, game, range).await?;
+    let body = serde_json::to_vec(&payload)
+        .map_err(|err| AppError::Internal(format!("serialize value history: {err}")))?;
+    if let Some(key) = &cache_key {
+        state.analytics_cache.put_body(key, &body).await;
+    }
+    Ok(json_body_response(body))
+}
+
+/// Compute the value-history payload (the handler above wraps this in the
+/// analytics response cache; every early return below is cached the same way).
+async fn value_history_payload(
+    state: AppState,
+    user: crate::entities::user::Model,
+    game: String,
+    range: Option<PriceRange>,
+) -> Result<DataBody<Vec<CollectionValuePoint>>, AppError> {
     // The user's current card + sealed holdings. Only the three columns the fold reads are
     // pulled (never the wide catalog rows); acquisition dates deliberately do not affect a
     // historic revaluation of the current basket.
@@ -142,7 +178,7 @@ pub async fn collection_value_history(
         .await?;
 
     if card_holdings.is_empty() && product_holdings.is_empty() {
-        return Ok(Json(DataBody { data: Vec::new() }));
+        return Ok(DataBody { data: Vec::new() });
     }
 
     let to_holding = |(item_id, quantity, foil_quantity): (i32, i32, i32)| HoldingRow {
@@ -283,7 +319,7 @@ pub async fn collection_value_history(
         range.map_or(1, PriceRange::bucket_days),
         cutoff.as_deref(),
     );
-    Ok(Json(DataBody { data: points }))
+    Ok(DataBody { data: points })
 }
 
 /// A holding reduced to what the fold needs: the item and its current counts.

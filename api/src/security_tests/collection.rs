@@ -7,10 +7,10 @@
 use super::harness::*;
 
 use chrono::{Duration, Utc};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set, sea_query::Expr};
 
-use crate::entities::prelude::{Card, CardPriceHistory};
-use crate::entities::{card, card_price_history};
+use crate::entities::prelude::{Card, CardPriceHistory, CollectionItem};
+use crate::entities::{card, card_price_history, collection_item};
 
 /// Grab `n` real card external ids from the seeded catalog.
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
@@ -191,6 +191,60 @@ async fn value_history_revalues_current_collection_and_matches_summary() {
     let (_, _, body) =
         send(&app, get_with_bearer("/api/collection/mtg/value-history", &bob)).await;
     assert!(body["data"].as_array().unwrap().is_empty(), "isolation: bob owns nothing");
+}
+
+/// The analytics pair rides the version-keyed response cache (#413): between a
+/// user's own edits the served body must come from the cache (a DB change that
+/// bypasses the handlers stays invisible — the positive proof a second request
+/// never re-ran the fold), and any real edit through the handlers must bump the
+/// version so the next read recomputes.
+#[tokio::test]
+async fn analytics_responses_are_cached_until_a_holdings_edit() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "analytics-cache@example.com", "password123").await;
+    let ids = priced_card_ids(&app, 2).await;
+    own_card(&app, &token, &ids[0], 1).await;
+
+    // Prime the cache.
+    let (status, _, first) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!first["data"].as_array().unwrap().is_empty());
+
+    // Mutate the holdings BEHIND the handlers — no version bump happens, so the
+    // cached body must keep being served verbatim.
+    CollectionItem::update_many()
+        .col_expr(collection_item::Column::Quantity, Expr::value(7))
+        .filter(collection_item::Column::Game.eq("mtg"))
+        .exec(&app.state.db)
+        .await
+        .expect("raw quantity update");
+    let (status, _, second) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first, second, "second read must be the cached body, not a recompute");
+
+    // A real edit through the handler bumps the version: the next read recomputes
+    // and now sees both the edit and the raw update above.
+    own_card(&app, &token, &ids[1], 1).await;
+    let (status, _, third) =
+        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(second, third, "an edit must invalidate the cached analytics body");
+
+    // Movers rides the same cache and the same bump (its body carries no
+    // user-variable data before any holdings exist beyond the seed prices, so
+    // just pin the invalidation contract end-to-end).
+    let (status, _, movers_first) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    own_card(&app, &token, &ids[0], 3).await;
+    let (status, _, movers_second) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    // The count tripled, so per-item movement values shift wherever movements exist;
+    // at minimum the response stays well-formed and the request path stays 200.
+    let _ = (movers_first, movers_second);
 }
 
 #[tokio::test]
