@@ -35,6 +35,11 @@ tcglense.example.com {
 		reverse_proxy 127.0.0.1:8080
 	}
 
+	# The self-hosted scanner OCR assets (issue #451) keep canonical, unhashed
+	# filenames, so they must be revalidated per use rather than heuristically
+	# cached — mirror the API SPA fallback's header (file_server sends none).
+	header /tesseract/* Cache-Control "public, no-cache"
+
 	# SPA: serve the static build, falling back to index.html so client-side
 	# routes (/login, /register, ...) resolve.
 	handle {

@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
-import { readFileSync } from 'node:fs'
+import { createReadStream, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { defineConfig, type Plugin } from 'vite'
@@ -113,6 +114,76 @@ function seoDiscoveryFiles(): Plugin {
   }
 }
 
+// The card scanner's OCR runtime, self-hosted (issue #451). tesseract.js's browser
+// defaults download its worker, wasm core, and traineddata from cdn.jsdelivr.net at
+// runtime and run them with the app origin's privileges — a supply-chain exposure the
+// rest of the app doesn't have (the sibling OpenCV runtime is npm-bundled). Instead,
+// `useCardScanner.ts` points createWorker at the same-origin paths below, and this
+// plugin publishes the matching files from the lockfile-pinned packages: emitted into
+// the build for production, streamed straight out of node_modules in dev.
+//
+// The shape is constrained by tesseract.js: `corePath`/`langPath` are *directories*, and
+// the worker picks a core build by SIMD feature-detection against these exact filenames
+// — so the files must keep canonical, unhashed names (no `?url` imports, which emit
+// hashed names). Unhashed names need revalidation, not `immutable`: the API's SPA
+// fallback serves non-`/assets/` paths `public, no-cache`, and the Caddy file-server
+// topologies set the same header on /tesseract/* explicitly (deploy/Caddyfile,
+// deploy/web.Caddyfile). Only the `-lstm` cores are published: the scanner pins
+// OEM.LSTM_ONLY, and the published traineddata (`best_int`) carries no legacy model, so
+// the legacy cores could never initialise anyway. Everything here is fetched lazily when
+// the scanner first opens; tesseract.js then caches the traineddata in IndexedDB, where
+// a returning browser reads it before ever re-fetching (see docs/tradeoffs.md).
+const TESSERACT_ASSETS: Record<string, string> = {
+  'tesseract/worker.min.js': 'tesseract.js/dist/worker.min.js',
+  // worker.min.js ends with a sourceMappingURL comment; publish the map beside it or
+  // DevTools chases it into the SPA's index.html fallback and logs parse noise.
+  'tesseract/worker.min.js.map': 'tesseract.js/dist/worker.min.js.map',
+  'tesseract/core/tesseract-core-lstm.wasm.js': 'tesseract.js-core/tesseract-core-lstm.wasm.js',
+  'tesseract/core/tesseract-core-simd-lstm.wasm.js':
+    'tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
+  'tesseract/core/tesseract-core-relaxedsimd-lstm.wasm.js':
+    'tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm.js',
+  'tesseract/lang/eng.traineddata.gz': '@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz',
+}
+
+function tesseractAssets(): Plugin {
+  // require.resolve (none of the three packages restrict subpaths via `exports`) rather
+  // than a hard-coded node_modules layout.
+  const require = createRequire(import.meta.url)
+  const sources = Object.fromEntries(
+    Object.entries(TESSERACT_ASSETS).map(([out, pkgPath]) => [out, require.resolve(pkgPath)]),
+  )
+  return {
+    name: 'tcglense-tesseract-assets',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const path = req.url?.split('?')[0]
+        // Object.hasOwn, not a bare index: a plain-object lookup would answer
+        // /constructor-style URLs with Object.prototype members and 500 instead of
+        // falling through to the SPA.
+        const key = path?.startsWith('/') ? path.slice(1) : ''
+        if (!Object.hasOwn(sources, key)) return next()
+        const source = sources[key]
+        // Workers need a JS MIME type; the traineddata is opaque bytes (tesseract.js
+        // sniffs the gzip magic itself — Vite doesn't Content-Encoding .gz files, and
+        // neither do the production file servers).
+        res.setHeader(
+          'Content-Type',
+          source.endsWith('.js') ? 'text/javascript' : 'application/octet-stream',
+        )
+        // A vanished source (node_modules mid-reinstall) must 500 this request — .pipe()
+        // doesn't forward stream errors, and unhandled they kill the dev server process.
+        createReadStream(source).on('error', next).pipe(res)
+      })
+    },
+    generateBundle() {
+      for (const [fileName, source] of Object.entries(sources)) {
+        this.emitFile({ type: 'asset', fileName, source: readFileSync(source) })
+      }
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   define: {
@@ -121,7 +192,7 @@ export default defineConfig({
     // with Vite's own env injection.
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
   },
-  plugins: [vue(), vueDevTools(), tailwindcss(), seoDiscoveryFiles()],
+  plugins: [vue(), vueDevTools(), tailwindcss(), seoDiscoveryFiles(), tesseractAssets()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
