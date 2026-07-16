@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -105,6 +105,20 @@ function wantedBadges(wrapper: ReturnType<typeof mountGrid>) {
     .findAll('span')
     .filter((s) => (s.attributes('aria-label') ?? '').endsWith('wanted'))
 }
+
+describe('CardGrid detail modal links', () => {
+  it('swaps an open sealed-product modal for the card modal', async () => {
+    const wrapper = mountGrid([makeCard('a')], undefined, false)
+    const router = wrapper.vm.$router
+    await router.push('/cards/mtg/cards/a?product=product-1')
+
+    await cardLink(wrapper, 'a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.product).toBeUndefined()
+    expect(router.currentRoute.value.query.card).toBe('a')
+  })
+})
 
 describe('CardGrid quick-add controls', () => {
   it('shows a total (+ foil) count on owned cards and an add affordance on the rest', () => {
