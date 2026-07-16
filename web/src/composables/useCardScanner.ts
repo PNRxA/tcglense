@@ -18,7 +18,9 @@ import { SET_REGION, guideRect, regionInRect } from '@/lib/scan/regions'
 // `lib/scan/detect`); when detection fails (busy background, heavy rotation) it falls
 // back to warping the on-screen guide box. tesseract.js is a big WASM + trained-data
 // payload, so it's dynamically imported the first time the camera starts (never at app
-// load) and its worker is reused; it now only reads the small set-line strip.
+// load) and its worker is reused; it now only reads the small set-line strip. Its
+// worker/core/traineddata are self-hosted same-origin assets (see tesseractAssets() in
+// vite.config.ts), never a third-party CDN.
 
 export type CameraStatus = 'idle' | 'starting' | 'ready' | 'denied' | 'unavailable' | 'error'
 
@@ -239,7 +241,21 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     if (!workerInit) {
       ocrLoading.value = true
       workerInit = import('tesseract.js')
-        .then(({ createWorker }) => createWorker('eng'))
+        .then(({ createWorker, OEM }) =>
+          // Explicit same-origin asset paths — the files the tesseractAssets() plugin in
+          // vite.config.ts publishes under /tesseract/ — instead of tesseract.js's
+          // cdn.jsdelivr.net defaults, so no third-party-served code ever runs with the
+          // app origin's privileges (issue #451). OEM.LSTM_ONLY is the library default,
+          // but it's load-bearing here: only the LSTM cores and traineddata are
+          // published. workerBlobURL: false makes the worker a plain same-origin script
+          // instead of a Blob wrapper, so a `worker-src 'self'` CSP (#450) can hold.
+          createWorker('eng', OEM.LSTM_ONLY, {
+            workerPath: `${import.meta.env.BASE_URL}tesseract/worker.min.js`,
+            corePath: `${import.meta.env.BASE_URL}tesseract/core`,
+            langPath: `${import.meta.env.BASE_URL}tesseract/lang`,
+            workerBlobURL: false,
+          }),
+        )
         .then((created) => {
           // Torn down while the worker warmed up — dispose it instead of leaking a thread.
           if (disposed) {

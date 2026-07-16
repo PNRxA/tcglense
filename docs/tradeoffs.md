@@ -164,6 +164,17 @@ catalog) is planned but not implemented.
   style-src 'self' 'unsafe-inline'; base-uri 'self'; object-src 'none';
   frame-ancestors 'none'`), first as `Content-Security-Policy-Report-Only` (which never
   blocks) with a report sink, then flip to enforcing once the report stream is clean.
+  The card scanner needs no third-party or `blob:` allowance in that policy: its
+  tesseract.js worker, wasm cores, and traineddata are self-hosted and the worker loads
+  as a plain same-origin script (issue #451, §Visual card scanner) — so `'self'` covers
+  every scanner URL; do **not** re-add `cdn.jsdelivr.net` or `blob:` for it. The policy
+  as quoted does still need one addition for the scanner: `'wasm-unsafe-eval'` in
+  `script-src`, because OpenCV.js compiles wasm from embedded bytes on the **main
+  thread** (under the document's policy). The tesseract cores compile embedded wasm the
+  same way *inside the worker* — fine if the CSP header stays scoped to HTML responses
+  (a network-URL worker takes its policy from its **own** response, and inherits nothing
+  from the document), but the blanket Caddy `header` blocks stamp every response today,
+  so either scope them or keep `'wasm-unsafe-eval'` load-bearing for the worker too.
   Apply it at the edge (the four Caddyfiles) and in `spa_headers_middleware`; keep the
   API's narrow policy for JSON. **Not** applied to the Vite dev server (its HMR needs
   `'unsafe-inline'`/`'unsafe-eval'`), so this is a production-HTML concern only.
@@ -957,22 +968,36 @@ catalog) is planned but not implemented.
   computes the 32-byte fingerprint locally and uploads only that (a small, non-reversible
   vector) to `POST /api/games/{game}/scan`. The endpoint is auth-gated (scanning builds a
   signed-in user's collection) and `no-store`.
-- **OCR runtime code is still pulled from a third-party CDN — a known supply-chain gap to
-  close.** The set/collector-number OCR half of the hybrid scanner uses `tesseract.js`,
-  whose browser default fetches its worker, wasm core, and `eng.traineddata` from
-  `cdn.jsdelivr.net` at runtime (`useCardScanner.ts` calls `createWorker('eng')` with no
-  `workerPath`/`corePath`/`langPath` overrides). `tesseract.js` wraps the worker URL in a
-  **same-origin** Blob worker, so that CDN code runs with the app origin's privileges and
-  its `fetch` carries the session cookie — a compromised/MITM'd CDN artifact would have
-  authenticated API access for any user who opens the scanner. Exposure is bounded (the
-  version is lockfile-pinned and the default URLs are immutable version-pinned jsdelivr
-  paths, so it needs CDN-infrastructure compromise or TLS MITM, not a malicious npm
-  re-publish; the code loads only when a user opens the scanner), which is why it isn't a
-  launch blocker — but it contradicts the otherwise self-contained posture (the sibling
-  OpenCV runtime is npm-bundled via `@techstark/opencv-js`) and the "photo never leaves
-  the device" story (the *code* comes from a third party). The fix, post-launch: self-host
-  the three asset sets from the already-installed `tesseract.js`/`tesseract.js-core`/
-  `@tesseract.js-data/eng` packages under `web/public/` and pass explicit
-  `{ workerPath, corePath, langPath }` to `createWorker` — mirroring how OpenCV is
-  bundled — then add `script-src 'self'` / `worker-src 'self' blob:` to the SPA CSP (see
-  §Browser security headers) so any future third-party script load fails closed.
+- **OCR runtime is self-hosted — no third-party code at runtime (issue #451).** The
+  set/collector-number OCR half of the hybrid scanner uses `tesseract.js`, whose browser
+  *default* downloads its worker, wasm core, and `eng.traineddata` from
+  `cdn.jsdelivr.net` at runtime and runs them with the app origin's privileges (the
+  worker's `fetch` carries the session cookie) — a polyfill.io-class exposure the
+  pre-launch audit flagged, and a contradiction of the otherwise self-contained posture
+  (the sibling OpenCV runtime is npm-bundled). So the same lockfile-pinned files are
+  served same-origin instead: the `tesseractAssets()` plugin in `web/vite.config.ts`
+  publishes `worker.min.js`, the LSTM `tesseract-core*.wasm.js` builds, and
+  `eng.traineddata.gz` under `/tesseract/` (emitted into the build; streamed from
+  `node_modules` in dev), and `useCardScanner.ts` passes explicit
+  `{ workerPath, corePath, langPath }` plus `workerBlobURL: false` — the worker loads as
+  a plain same-origin script, so a future `worker-src 'self'` CSP can hold (see
+  §Browser security headers). Shape constraints worth knowing before "improving" it:
+  `corePath`/`langPath` are **directories** and the worker picks a core by SIMD
+  feature-detection against canonical filenames, so the files keep unhashed names and
+  can't ride Vite's hashed `?url` assets; unhashed names need revalidation, so they're
+  served `public, no-cache` — by the API's SPA fallback, and set explicitly for
+  `/tesseract/*` in the two Caddy `file_server` topologies (`deploy/Caddyfile`,
+  `deploy/web.Caddyfile`), whose `file_server` otherwise sends no `Cache-Control` and
+  would let browsers cache heuristically. That keeps the worker/core JS in step with
+  each deploy; the **traineddata is the exception** — tesseract.js consults its
+  IndexedDB cache (a versionless key) before ever re-fetching, so a data-package bump
+  only reaches browsers that haven't scanned before or whose cached model fails to
+  initialise. Acceptable for a model file that essentially never changes; a forced
+  refresh would need a versioned `langPath` or `cacheMethod: 'refresh'`. Only the
+  `-lstm` cores and the `best_int` traineddata ship, because the scanner pins
+  `OEM.LSTM_ONLY` and the legacy engine's data isn't published — requesting a legacy
+  OEM finds no legacy core (the SPA fallback answers the core URL with `index.html`,
+  which `nosniff` stops `importScripts` from running): it fails by design, not by
+  accident. A unit spec (`useCardScanner.spec.ts`) locks the
+  explicit-paths contract so a refactor can't silently fall back to the CDN. Bonus: the
+  scanner now works where jsdelivr is blocked and leaks no usage/IP to a CDN.
