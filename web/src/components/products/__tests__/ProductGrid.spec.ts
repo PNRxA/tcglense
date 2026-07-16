@@ -22,18 +22,23 @@ function makeProduct(id: string): Product {
   }
 }
 
-// A props-echoing stub so the test can assert what counts each tile's control receives,
-// without deep-rendering the real popover/editor (covered by WantedCountControl.spec).
-const WantedControlStub = {
-  name: 'WantedCountControl',
-  props: ['game', 'productId', 'name', 'quantity', 'foilQuantity'],
+// A props-echoing stub so the test can assert what counts each tile's unified control receives,
+// without deep-rendering the real popover/editor (covered by ProductCountControl.spec).
+const ProductControlStub = {
+  name: 'ProductCountControl',
+  props: ['game', 'productId', 'name', 'quantity', 'foilQuantity', 'wishlistQuantity'],
   template:
-    '<div class="wanted-stub" :data-id="productId" :data-qty="quantity" :data-foil="foilQuantity" />',
+    '<div class="wanted-stub" :data-id="productId" :data-qty="quantity" :data-foil="foilQuantity" :data-wanted="wishlistQuantity" />',
 }
 
 // Signed in unless `authenticated: false` — the quick-add controls only render for a
 // signed-in user (CardGrid parity).
-function mountGrid(products: Product[], wanted?: OwnedCountsMap, authenticated = true) {
+function mountGrid(
+  products: Product[],
+  wanted?: OwnedCountsMap,
+  authenticated = true,
+  owned?: OwnedCountsMap,
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/sealed/:game/:id', component: { template: '<div />' } }],
@@ -43,10 +48,10 @@ function mountGrid(products: Product[], wanted?: OwnedCountsMap, authenticated =
   if (authenticated) useAuthStore().accessToken = 'test-token'
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(ProductGrid, {
-    props: { game: 'mtg', products, wanted },
+    props: { game: 'mtg', products, wanted, owned },
     global: {
       plugins: [router, pinia, [VueQueryPlugin, { queryClient }]],
-      stubs: { WantedCountControl: WantedControlStub, ProductImage: true },
+      stubs: { ProductCountControl: ProductControlStub, ProductImage: true },
     },
   })
 }
@@ -55,22 +60,20 @@ function controls(wrapper: ReturnType<typeof mountGrid>) {
   return wrapper.findAll('.wanted-stub')
 }
 
-describe('ProductGrid quick-add controls', () => {
-  it('passes each product its wanted counts, zero when absent from the map', () => {
+describe('ProductGrid unified quick-add controls', () => {
+  it('passes each product its combined wanted total, zero when absent from the map', () => {
     const wrapper = mountGrid([makeProduct('100'), makeProduct('200')], {
       '100': { quantity: 3, foil_quantity: 1 },
     })
     const stubs = controls(wrapper)
     expect(stubs).toHaveLength(2)
 
-    const first = stubs.find((c) => c.attributes('data-id') === '100')!
-    expect(first.attributes('data-qty')).toBe('3')
-    expect(first.attributes('data-foil')).toBe('1')
+    const first = stubs.find((control) => control.attributes('data-id') === '100')!
+    expect(first.attributes('data-wanted')).toBe('4')
 
     // A product missing from the map rests at zero.
-    const second = stubs.find((c) => c.attributes('data-id') === '200')!
-    expect(second.attributes('data-qty')).toBe('0')
-    expect(second.attributes('data-foil')).toBe('0')
+    const second = stubs.find((control) => control.attributes('data-id') === '200')!
+    expect(second.attributes('data-wanted')).toBe('0')
   })
 
   it('renders no controls for a signed-out visitor but still renders the tile links', () => {
@@ -86,5 +89,15 @@ describe('ProductGrid quick-add controls', () => {
     expect(stubs).toHaveLength(1)
     expect(stubs[0]!.attributes('data-qty')).toBe('0')
     expect(stubs[0]!.attributes('data-foil')).toBe('0')
+    expect(stubs[0]!.attributes('data-wanted')).toBe('0')
+  })
+
+  it('passes collection counts to the collection-primary control', () => {
+    const wrapper = mountGrid([makeProduct('100')], undefined, true, {
+      '100': { quantity: 2, foil_quantity: 1 },
+    })
+    const owned = controls(wrapper)[0]!
+    expect(owned.attributes('data-qty')).toBe('2')
+    expect(owned.attributes('data-foil')).toBe('1')
   })
 })

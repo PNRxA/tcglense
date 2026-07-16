@@ -19,6 +19,7 @@ const routes = [
   { path: '/sealed/:game', name: 'game-sealed', component: { template: '<div />' } },
   { path: '/sealed/:game/:id', name: 'sealed-product', component: Host() },
   { path: '/wishlist/:game', name: 'game-wishlist', component: { template: '<div />' } },
+  { path: '/collection/:game', name: 'game-collection', component: { template: '<div />' } },
 ]
 
 // Product-route component: calls the composable with the route's `:game` and renders the
@@ -72,6 +73,13 @@ describe('useProductBackLink', () => {
     expect(await backLink('/wishlist/mtg?page=2')).toEqual({
       to: '/wishlist/mtg?page=2',
       label: 'Wish list',
+    })
+  })
+
+  it('returns to the collection it was opened from', async () => {
+    expect(await backLink('/collection/mtg')).toEqual({
+      to: '/collection/mtg',
+      label: 'Collection',
     })
   })
 

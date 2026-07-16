@@ -3,6 +3,7 @@ import { computed, reactive, toRef, watch } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import type { SealedProductRef } from '@/lib/api'
 import { useCardSealedQuery } from '@/composables/useProducts'
+import { useCollectionProductCounts } from '@/composables/useCollection'
 import { useWishlistProductCounts } from '@/composables/useWishlist'
 import ProductGrid from '@/components/products/ProductGrid.vue'
 
@@ -25,6 +26,7 @@ const refs = computed<SealedProductRef[]>(() => query.data.value?.data ?? [])
 // controls.
 const products = computed(() => refs.value.map((r) => r.product))
 const { ownership: wanted } = useWishlistProductCounts(game, products)
+const { ownership: owned } = useCollectionProductCounts(game, products)
 
 // The three buckets in display order, each with a heading + one-line explanation of how
 // strong the "is in this product" claim is.
@@ -91,6 +93,7 @@ watch(id, () => {
           v-if="expanded[section.key]"
           :game="game"
           :products="section.products"
+          :owned="owned"
           :wanted="wanted"
         />
       </div>

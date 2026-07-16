@@ -501,11 +501,33 @@ a card you don't own (setting both counts to zero deletes the row), so the table
 only owned cards. Model: `entities/collection_item.rs` (`collection_items`, unique on
 `(user_id, game, card_id)`, `user_id` FK → `users` `ON DELETE CASCADE`).
 
+The collection also holds **sealed products** (issue #435) in the independent
+`collection_product_items` table. Product ids on the wire are external TCGplayer ids;
+the handler resolves them to `products.id` for storage so rows survive catalog re-syncs.
+The UI exposes one quantity while preserving `foil_quantity` (foil sealed variants are
+separate TCGplayer SKUs), and both counts zero deletes the row. Collection product routes
+share their wire shaping, validation, pagination, and valuation with the wish list through
+`handlers/shared/product_holdings.rs`, while each surface keeps its own SeaORM queries and
+rows:
+
+| Method & path | Body | Returns |
+|---------------|------|---------|
+| `GET /api/collection/{game}/products?page&page_size` | — | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), default page size 60 / max 200 |
+| `GET /api/collection/{game}/products/summary` | — | `ProductHoldingSummary { unique_products, total_products, total_value_usd }`; value = regular×`usd` + foil×`usd_foil`, `null` when nothing owned is priced |
+| `POST /api/collection/{game}/products/owned` | `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }`; unowned ids absent, > 500 ids `422` |
+| `GET /api/collection/{game}/products/{id}` | — | `{ quantity, foil_quantity }`, zeros if not owned; unknown game/product `404` |
+| `PUT /api/collection/{game}/products/{id}` | `{ quantity, foil_quantity }` | absolute-count upsert; both-zero deletes, negative/oversized `422`, read-only key `403` |
+
+`ProductHoldingEntry = { product: Product, quantity, foil_quantity }`. Collection
+import/sync/export and public sharing remain card-only; value history and movers include
+both card and sealed-product holdings.
+
 | Method & path | Body | Returns |
 |---------------|------|---------|
 | `GET /api/collection/{game}?…&set&include_related` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`) |
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
-| `GET /api/collection/{game}/movers` | — | `CollectionMovers` `{ as_of, day, week, month, year, two_year, three_year, all_time }` — the five largest holding-value gainers and losers for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). No query parameters. |
+| `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
+| `GET /api/collection/{game}/movers` | — | `CollectionMovers` keeps the card-only `{ as_of, day, week, month, year, two_year, three_year, all_time }` contract and adds a parallel `sealed` series with the same windows — each contains its own five largest holding-value gainers/losers for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). No query parameters. |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/sets/{code}/drops?q&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
 | `GET /api/collection/{game}/sets/{code}/subtypes?q&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
@@ -532,18 +554,30 @@ of just the finishes priced **under $1 each** (the low-value commons/uncommons),
 string; `"0.00"` when something is priced but none of it is bulk, `null` when nothing owned
 is priced.
 
-`CollectionMovers = { as_of, day, week, month, year, two_year, three_year, all_time }`:
-`as_of` is the newest `YYYY-MM-DD` price snapshot across the user's priced holdings, or
+`CollectionValuePoint = { date, value_usd, sealed_value_usd }`: `value_usd` is the card
+holding value and `sealed_value_usd` is the sealed-product holding value, each as a 2-dp USD
+string or `null` until that holding kind has a captured price on/before the day. Both lines
+share the union of their snapshot dates and independently carry their last captured prices
+forward. Each is an add-date-clamped revaluation of the user's **current** quantities: quantity
+changes before today are not stored, so current counts are treated as held continuously since
+the row's `created_at`; removed-and-re-added rows restart at the later add date.
+
+`CollectionMovers = { as_of, day, week, month, year, two_year, three_year, all_time, sealed }`:
+`as_of` is the newest `YYYY-MM-DD` price snapshot across the user's priced card holdings, or
 `null` when none has history. Every window is a required `CollectionMoverList = { gainers,
 losers }`; both arrays are value-change ordered and capped at five. A `CollectionMover` is
-`{ card, quantity, foil_quantity, value_now, value_prev, change_usd, change_pct }`, with the
-three values as 2-dp USD strings and `change_pct` null when the baseline value is zero.
+the backward-compatible card shape `{ card, quantity, foil_quantity, value_now, value_prev,
+change_usd, change_pct }`. `sealed` is an independent `CollectionSealedMovers` with its own
+`as_of` and the same seven window keys; its lists contain `CollectionSealedMover` rows with
+`product` in place of `card`. Singles and sealed products do not compete in one ranking; the
+SPA switches between the two series. The three values are 2-dp USD strings and `change_pct`
+is null when the baseline value is zero.
 Movement is the per-finish unit-price change multiplied by the user's current regular/foil
 counts. Fixed windows carry forward the latest snapshot at or before their calendar
 baseline measured back from `as_of`; a finish participates only when both endpoints have a
 price. `all_time` instead compares each finish with its own earliest non-null captured price,
-so a newer printing is not excluded by an older card's history. When the user owns nothing
-or no owned card has history, `as_of` is `null` and all fourteen arrays are empty.
+so a newer catalog item is not excluded by an older item's history. A holding kind with no
+captured history has a null `as_of` and fourteen empty arrays, independently of the other kind.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
 `card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `has_subtypes` — the latter
@@ -707,29 +741,28 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 The wish list additionally holds **sealed products** (issue #364) —
 `(user, game, product) → { quantity, foil_quantity }` over its own, fully independent
 `entities/wishlist_product_item.rs` (`wishlist_product_items`, unique on
-`(user_id, game, product_id)`, `user_id` FK → `users` `ON DELETE CASCADE`). These routes
-have **no collection twin** (sealed holdings are wishlist-only by design). `{id}` is the
-external (TCGplayer) product id, resolved to the internal `products.id` on write so a row
-survives catalog re-syncs (the daily TCGCSV sweep is upsert-only); both counts zero deletes
-the row. The wire keeps the shared two-count `{ quantity, foil_quantity }` shape (foil sealed
-variants are separate TCGplayer SKUs), but the UI exposes a single **Quantity** and never edits
-the foil count: a new want is created with `foil_quantity: 0`, and an existing foil count
-(settable only via the raw API) is preserved unchanged by UI quantity edits. The two new DTOs are
-`WishlistProductEntry` (`{ product: <Product>, quantity, foil_quantity }`) and
-`WishlistProductSummary` (`{ unique_products, total_products, total_value_usd }`), both in
-`handlers/wishlist/products.rs`:
+`(user_id, game, product_id)`, `user_id` FK → `users` `ON DELETE CASCADE`). This is
+independent from the collection's matching product surface introduced by issue #435.
+`{id}` is the external (TCGplayer) product id, resolved to the internal `products.id` on
+write so a row survives catalog re-syncs (the daily TCGCSV sweep is upsert-only); both
+counts zero deletes the row. The wire keeps the shared two-count
+`{ quantity, foil_quantity }` shape (foil sealed variants are separate TCGplayer SKUs),
+but the UI exposes a single **Quantity** and preserves an existing foil count. Both
+surfaces use `ProductHoldingEntry` (`{ product: Product, quantity, foil_quantity }`) and
+`ProductHoldingSummary` (`{ unique_products, total_products, total_value_usd }`) from
+`handlers/shared/product_holdings.rs`:
 
 | Method & path | Returns |
 |---------------|---------|
-| `GET /api/wishlist/{game}/products?page&page_size` | `Page<WishlistProductEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200 |
-| `GET /api/wishlist/{game}/products/summary` | `WishlistProductSummary { unique_products, total_products, total_value_usd }` — wishlist-only aggregate for the landing header; value = regular×`usd` + foil×`usd_foil` (market prices; msrp never used); `total_value_usd` null when nothing wanted is priced; no set scope, no bulk split |
-| `POST /api/wishlist/{game}/products/counts` `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }` — batch wanted counts for the product-tile badges; un-wanted ids absent (never zero); > 500 ids = `422`; like the card `/counts`, deliberately **not** in the OpenAPI spec |
+| `GET /api/wishlist/{game}/products?page&page_size` | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200 |
+| `GET /api/wishlist/{game}/products/summary` | `ProductHoldingSummary { unique_products, total_products, total_value_usd }`; value = regular×`usd` + foil×`usd_foil` (market prices; msrp never used); `total_value_usd` null when nothing wanted is priced; no set scope, no bulk split |
+| `POST /api/wishlist/{game}/products/counts` `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }` — batch wanted counts for the product-tile badges; un-wanted ids absent (never zero); > 500 ids = `422` |
 | `GET /api/wishlist/{game}/products/{id}` | the single-product wanted counts (`CollectionQuantities`; zeros if absent, `404` unknown game/product) |
 | `PUT /api/wishlist/{game}/products/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero removes, negative/oversized `422` before product resolution, read-only key → `403`) |
 
-The wish list and the collection never read or write each other's rows (pinned by a
-security test); browse-grid badges/ghosts on wish-list pages come from `/counts` the
-same way the catalog's come from `/owned`.
+The wish list and collection never read or write each other's card or product rows
+(pinned by security tests); browse-grid badges on each surface come from its own batch
+counts route.
 
 ## Decks API contract
 

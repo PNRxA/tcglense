@@ -26,9 +26,11 @@ const props = defineProps<{
   series: PricePointLike[]
   range: PriceRange
   currency: SupportedCurrency
-  /** Plot only the USD line (no foil series) — the collection value chart's single total
-   * line. Stable per chart instance, so the once-built tooltip stays consistent with it. */
+  /** Plot only the USD line (no foil series). Stable per chart instance, so the
+   * once-built tooltip stays consistent with it. */
   singleSeries?: boolean
+  /** Semantic names for the two generic price fields when they are not regular/foil. */
+  seriesLabels?: { primary: string; secondary: string }
 }>()
 
 // One plotted day. Dates become epoch ms for a continuous x-scale; price strings become
@@ -60,17 +62,27 @@ const points = computed<PricePlot[]>(() =>
 // day is today (older days gap over their nulls). Without a dot it'd render nothing at all.
 // Null-gapping keeps the non-null run contiguous, so two or more points always stroke a line.
 const plottedUsd = computed(() => points.value.filter((p) => p.usd != null).length)
-const showDots = computed(() => points.value.length === 1 || plottedUsd.value === 1)
+const plottedFoil = computed(() => points.value.filter((p) => p.usdFoil != null).length)
+const showUsdDot = computed(() => points.value.length === 1 || plottedUsd.value === 1)
+const showFoilDot = computed(() => points.value.length === 1 || plottedFoil.value === 1)
 
 // Series legend/tooltip metadata. Colours are the theme's chart tokens, which the CSS
 // variables resolve differently in light vs dark, so the chart follows the theme. In
-// single-series mode (the collection total) the foil entry is dropped so the tooltip has no
+// single-series mode the foil entry is dropped so the tooltip has no
 // empty "USD foil" row. Keyed off the stable `singleSeries` prop (never the data), so the
 // once-built tooltip template below can't desync from the plotted lines across navigation.
 const chartConfig = computed<ChartConfig>(() => {
-  const config: ChartConfig = { usd: { label: props.currency, color: 'var(--chart-1)' } }
+  const config: ChartConfig = {
+    usd: {
+      label: props.seriesLabels?.primary ?? props.currency,
+      color: 'var(--chart-1)',
+    },
+  }
   if (!props.singleSeries) {
-    config.usdFoil = { label: `${props.currency} foil`, color: 'var(--chart-2)' }
+    config.usdFoil = {
+      label: props.seriesLabels?.secondary ?? `${props.currency} foil`,
+      color: 'var(--chart-2)',
+    }
   }
   return config
 })
@@ -122,9 +134,9 @@ const tooltipTemplate = computed(() =>
     <VisXYContainer :data="points" :margin="{ left: 8, right: 8 }">
       <VisLine :x="x" :y="usdY" color="var(--chart-1)" :line-width="2" />
       <VisLine v-if="!singleSeries" :x="x" :y="foilY" color="var(--chart-2)" :line-width="2" />
-      <VisScatter v-if="showDots" :x="x" :y="usdY" color="var(--chart-1)" :size="36" />
+      <VisScatter v-if="showUsdDot" :x="x" :y="usdY" color="var(--chart-1)" :size="36" />
       <VisScatter
-        v-if="showDots && !singleSeries"
+        v-if="showFoilDot && !singleSeries"
         :x="x"
         :y="foilY"
         color="var(--chart-2)"

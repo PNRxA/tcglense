@@ -8,17 +8,26 @@ import {
   collectionImportJobPath,
   collectionImportPath,
   collectionPath,
+  collectionProductCountsPath,
+  collectionProductEntryPath,
+  collectionProductsPath,
+  collectionProductSummaryPath,
   collectionSetDropsPath,
   collectionSourcePath,
   collectionSyncPath,
   collectionValueHistoryPath,
   exportCollectionCsv,
   getCollectionOwned,
+  getCollectionProductCounts,
+  getCollectionProductEntry,
+  getCollectionProducts,
+  getCollectionProductSummary,
   getCollectionSetDrops,
   getCollectionSets,
   getCollectionSummary,
   getCollectionValueHistory,
   importCollectionCsv,
+  setCollectionProductEntry,
 } from '../api'
 
 describe('collectionPath', () => {
@@ -212,17 +221,17 @@ describe('getCollectionValueHistory', () => {
     expect(url).toContain('/api/collection/mtg/value-history?range=1y')
   })
 
-  it('maps the wire value_usd onto the chart-shaped usd field with a null foil line', async () => {
+  it('maps card and sealed wire values onto the chart-shaped primary and secondary fields', async () => {
     stubJson({
       data: [
-        { date: '2024-01-01', value_usd: null },
-        { date: '2024-01-02', value_usd: '123.45' },
+        { date: '2024-01-01', value_usd: null, sealed_value_usd: '50.00' },
+        { date: '2024-01-02', value_usd: '123.45', sealed_value_usd: '75.00' },
       ],
     })
     const result = await getCollectionValueHistory('tok', 'mtg')
     expect(result.data).toEqual([
-      { date: '2024-01-01', usd: null, usd_foil: null },
-      { date: '2024-01-02', usd: '123.45', usd_foil: null },
+      { date: '2024-01-01', usd: null, usd_foil: '50.00' },
+      { date: '2024-01-02', usd: '123.45', usd_foil: '75.00' },
     ])
   })
 })
@@ -234,6 +243,72 @@ describe('collectionEntryPath', () => {
 
   it('encodes path segments to avoid breaking the URL', () => {
     expect(collectionEntryPath('mtg', 'a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('collection sealed products', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('builds list, entry, summary, and owned-count paths', () => {
+    expect(collectionProductsPath('mtg', { page: 2, pageSize: 60 })).toBe(
+      '/api/collection/mtg/products?page=2&page_size=60',
+    )
+    expect(collectionProductEntryPath('mtg', 'a/b')).toBe('/api/collection/mtg/products/a%2Fb')
+    expect(collectionProductSummaryPath('mtg')).toBe('/api/collection/mtg/products/summary')
+    expect(collectionProductCountsPath('mtg')).toBe('/api/collection/mtg/products/owned')
+  })
+
+  it('reads and writes through the collection product routes', async () => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async (url) =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify(
+              url.endsWith('/summary')
+                ? { unique_products: 0, total_products: 0, total_value_usd: null }
+                : url.includes('?page=')
+                  ? { data: [], page: 1, page_size: 60, total: 0, has_more: false }
+                  : { quantity: 2, foil_quantity: 0 },
+            ),
+        }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getCollectionProducts('tok', 'mtg', { page: 1 })
+    await getCollectionProductEntry('tok', 'mtg', '100')
+    await getCollectionProductSummary('tok', 'mtg')
+    await setCollectionProductEntry('tok', 'mtg', '100', {
+      quantity: 2,
+      foil_quantity: 0,
+    })
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      expect.stringContaining('/api/collection/mtg/products?page=1'),
+      expect.stringContaining('/api/collection/mtg/products/100'),
+      expect.stringContaining('/api/collection/mtg/products/summary'),
+      expect.stringContaining('/api/collection/mtg/products/100'),
+    ])
+    expect(fetchMock.mock.calls[3]![1]?.method).toBe('PUT')
+  })
+
+  it('batches collection product owned counts', async () => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ data: { '100': { quantity: 2, foil_quantity: 0 } } }),
+        }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(await getCollectionProductCounts('tok', 'mtg', ['100'])).toEqual({
+      '100': { quantity: 2, foil_quantity: 0 },
+    })
+    expect(fetchMock.mock.calls[0]![0]).toContain('/api/collection/mtg/products/owned')
+    expect(fetchMock.mock.calls[0]![1]?.method).toBe('POST')
   })
 })
 

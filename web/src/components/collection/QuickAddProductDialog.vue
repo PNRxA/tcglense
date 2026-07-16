@@ -10,8 +10,9 @@ import {
 } from '@/components/ui/dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import ProductImage from '@/components/products/ProductImage.vue'
+import { useCollectionProductEntryQuery } from '@/composables/useCollection'
 import { useWishlistProductEntryQuery } from '@/composables/useWishlist'
-import { useOwnedCountEditor } from '@/composables/useOwnedCountEditor'
+import { useOwnedCountEditor, type CardListTarget } from '@/composables/useOwnedCountEditor'
 import { useCurrency } from '@/composables/useCurrency'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import { productTypeLabel } from '@/lib/productType'
@@ -21,7 +22,10 @@ import type { Product } from '@/lib/api'
 // printings/finishes), so the print picker collapses to one confirm-quantity tile.
 // Opened by QuickAddBox once a product is picked. The reka dialog gives a focus trap,
 // Escape-to-close, and click-outside dismissal for free.
-const props = defineProps<{ game: string; product: Product | null }>()
+const props = withDefaults(
+  defineProps<{ game: string; product: Product | null; list?: CardListTarget }>(),
+  { list: 'wishlist' },
+)
 const open = defineModel<boolean>('open', { required: true })
 // Forwarded to the parent so it can return focus to the quick-add box on close (this
 // dialog is opened programmatically, without a trigger, so reka has no element to
@@ -38,12 +42,22 @@ const productId = computed(() => props.product?.id ?? '')
 // the staleTime-0 refetch runs — seeding then, and saving before it settles, would
 // clobber the true count (mirrors QuickAddPrintDialog's guard).
 const enabled = computed(() => open.value && !!props.product)
-const entryQuery = useWishlistProductEntryQuery(game, productId, { enabled, staleTime: 0 })
+const entryQuery =
+  props.list === 'wishlist'
+    ? useWishlistProductEntryQuery(game, productId, { enabled, staleTime: 0 })
+    : useCollectionProductEntryQuery(game, productId, { enabled, staleTime: 0 })
 const ready = computed(() => entryQuery.isSuccess.value && !entryQuery.isFetching.value)
 const seed = computed(() => (ready.value ? entryQuery.data.value : undefined))
-const { regular, adjust, saving, saveError } = useOwnedCountEditor(game, productId, seed, {
-  kind: 'product',
-})
+const editorOptions =
+  props.list === 'wishlist'
+    ? ({ kind: 'product' } as const)
+    : ({ kind: 'product', list: 'collection' } as const)
+const { regular, adjust, saving, saveError } = useOwnedCountEditor(
+  game,
+  productId,
+  seed,
+  editorOptions,
+)
 
 const money = useCurrency()
 
@@ -54,7 +68,9 @@ const price = computed(() => {
   const pick = displayUsdPrice(props.product.prices)
   return pick ? { text: money.formatUsd(pick.amount), foil: pick.foil } : null
 })
-const wanted = computed(() => regular.value > 0)
+const held = computed(() => regular.value > 0)
+const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
+const verb = computed(() => (props.list === 'wishlist' ? 'want' : 'own'))
 </script>
 
 <template>
@@ -67,7 +83,7 @@ const wanted = computed(() => regular.value > 0)
         Add <span class="text-primary">{{ product?.name }}</span>
       </DialogTitle>
       <DialogDescription class="text-muted-foreground mt-1 text-sm">
-        Set how many you want on your wish list. Zero removes it.
+        Set how many you {{ verb }} in your {{ listName }}. Zero removes it.
       </DialogDescription>
 
       <div v-if="product" class="mt-4 flex gap-4">
@@ -108,7 +124,7 @@ const wanted = computed(() => regular.value > 0)
                 variant="outline"
                 size="icon"
                 :disabled="!ready || regular <= 0"
-                aria-label="Remove one from your wish list"
+                :aria-label="`Remove one from your ${listName}`"
                 @click="adjust('quantity', -1)"
               >
                 <Minus />
@@ -120,7 +136,7 @@ const wanted = computed(() => regular.value > 0)
                 variant="outline"
                 size="icon"
                 :disabled="!ready"
-                aria-label="Add one to your wish list"
+                :aria-label="`Add one to your ${listName}`"
                 @click="adjust('quantity', 1)"
               >
                 <Plus />
@@ -149,7 +165,7 @@ const wanted = computed(() => regular.value > 0)
               <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
               Saving…
             </template>
-            <template v-else-if="wanted">
+            <template v-else-if="held">
               <Check class="size-3.5" aria-hidden="true" />
               Saved
             </template>

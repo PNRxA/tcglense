@@ -5,10 +5,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import MoverRow from '@/components/collection/MoverRow.vue'
+import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import { useCollectionMoversQuery } from '@/composables/useCollection'
+import type { CollectionMover, CollectionSealedMover } from '@/lib/api'
 
-// The collection landing's "Biggest movers" panel (issues #360/#392): the largest gain and
-// loss movements across the cards the user owns, from one day through all captured history.
+// The collection landing's "Biggest movers" panel (issues #360/#392/#435): the largest gain
+// and loss movements across the cards and sealed products the user owns, from one day through
+// all captured history.
 // One response carries every window, so the segmented toggle is purely client-side —
 // switching is instant, no refetch. Week is the default: daily moves are often tiny or empty
 // on a young collection, while longer windows hide the news.
@@ -18,6 +21,7 @@ const query = useCollectionMoversQuery(gameId)
 
 type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
 const activeWindow = ref<MoverWindow>('week')
+const showSealed = ref(false)
 const WINDOW_OPTIONS: { value: MoverWindow; label: string }[] = [
   { value: 'day', label: '1D' },
   { value: 'week', label: '7D' },
@@ -29,9 +33,13 @@ const WINDOW_OPTIONS: { value: MoverWindow; label: string }[] = [
 ]
 
 const movers = computed(() => query.data.value)
-const activeList = computed(() => movers.value?.[activeWindow.value])
+const activeSeries = computed(() => (showSealed.value ? movers.value?.sealed : movers.value))
+const activeList = computed(() => activeSeries.value?.[activeWindow.value])
 const gainers = computed(() => activeList.value?.gainers ?? [])
 const losers = computed(() => activeList.value?.losers ?? [])
+function moverKey(mover: CollectionMover | CollectionSealedMover) {
+  return 'product' in mover ? `product:${mover.product.id}` : `card:${mover.card.id}`
+}
 // A young collection can have day movement before week/month baselines exist, so
 // emptiness is judged per-window (both sides empty → one centered message).
 const windowEmpty = computed(() => !gainers.value.length && !losers.value.length)
@@ -40,13 +48,17 @@ const windowEmpty = computed(() => !gainers.value.length && !losers.value.length
 // window is empty, so the whole card renders nothing rather than an empty shell. The
 // pending/error states still show so the panel doesn't pop in after load.
 const visible = computed(
-  () => query.isPending.value || query.isError.value || movers.value?.as_of != null,
+  () =>
+    query.isPending.value ||
+    query.isError.value ||
+    movers.value?.as_of != null ||
+    movers.value?.sealed.as_of != null,
 )
 
 // The reference date the movements are measured to, e.g. "Jul 12" — shown subtly next
 // to the title so a stale snapshot is legible as such.
 const asOfText = computed(() => {
-  const asOf = movers.value?.as_of
+  const asOf = activeSeries.value?.as_of
   if (!asOf) return null
   const date = new Date(`${asOf}T00:00:00`)
   if (Number.isNaN(date.getTime())) return asOf
@@ -62,23 +74,26 @@ const asOfText = computed(() => {
           <CardTitle class="text-sm font-semibold">Biggest movers</CardTitle>
           <span v-if="asOfText" class="text-muted-foreground text-xs">as of {{ asOfText }}</span>
         </div>
-        <div
-          class="bg-muted/50 flex max-w-full flex-wrap items-center justify-end gap-1 rounded-lg p-0.5"
-          role="group"
-          aria-label="Biggest movers window"
-        >
-          <Button
-            v-for="opt in WINDOW_OPTIONS"
-            :key="opt.value"
-            type="button"
-            :variant="activeWindow === opt.value ? 'secondary' : 'ghost'"
-            size="sm"
-            class="h-8 px-2.5 text-xs font-medium"
-            :aria-pressed="activeWindow === opt.value"
-            @click="activeWindow = opt.value"
+        <div class="flex max-w-full flex-wrap items-center justify-end gap-2">
+          <SetsScopeToggle v-model="showSealed" collected-label="Singles" second-label="Sealed" />
+          <div
+            class="bg-muted/50 flex max-w-full flex-wrap items-center justify-end gap-1 rounded-lg p-0.5"
+            role="group"
+            aria-label="Biggest movers window"
           >
-            {{ opt.label }}
-          </Button>
+            <Button
+              v-for="opt in WINDOW_OPTIONS"
+              :key="opt.value"
+              type="button"
+              :variant="activeWindow === opt.value ? 'secondary' : 'ghost'"
+              size="sm"
+              class="h-8 px-2.5 text-xs font-medium"
+              :aria-pressed="activeWindow === opt.value"
+              @click="activeWindow = opt.value"
+            >
+              {{ opt.label }}
+            </Button>
+          </div>
         </div>
       </div>
     </CardHeader>
@@ -110,7 +125,7 @@ const asOfText = computed(() => {
             Gainers
           </h3>
           <ul v-if="gainers.length" class="mt-2 space-y-1">
-            <li v-for="mover in gainers" :key="mover.card.id">
+            <li v-for="mover in gainers" :key="moverKey(mover)">
               <MoverRow :game="game" :mover="mover" />
             </li>
           </ul>
@@ -124,7 +139,7 @@ const asOfText = computed(() => {
             Losers
           </h3>
           <ul v-if="losers.length" class="mt-2 space-y-1">
-            <li v-for="mover in losers" :key="mover.card.id">
+            <li v-for="mover in losers" :key="moverKey(mover)">
               <MoverRow :game="game" :mover="mover" />
             </li>
           </ul>

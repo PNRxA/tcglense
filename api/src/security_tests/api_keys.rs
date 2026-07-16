@@ -101,6 +101,19 @@ async fn read_write_key_authenticates_reads_and_passes_the_write_gate() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body:?}");
 
+    // Collection sealed-product writes use the same scope extractor (#435).
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/products/does-not-exist",
+            &key,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body:?}");
+
     // The sealed-product wish-list write (issue #364) likewise passes the scope gate, then
     // 404s the unknown product — again NOT a 403.
     let (status, _, body) = send(
@@ -192,6 +205,44 @@ async fn read_only_key_can_read_but_not_write() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // The collection sealed-product write is forbidden at the same scope gate.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/products/does-not-exist",
+            &key,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Its list, summary, and POST batch lookup are reads.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products", &key),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products/summary", &key),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/collection/mtg/products/owned",
+            &key,
+            json!({ "ids": ["x"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 
     // …but reading the sealed-product wish list is allowed for a read-only key.
     let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/mtg/products", &key)).await;

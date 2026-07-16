@@ -11,7 +11,7 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
-import WishlistSealedSection from '@/components/wishlist/WishlistSealedSection.vue'
+import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { useCurrency } from '@/composables/useCurrency'
@@ -31,8 +31,8 @@ import { useAuthStore } from '@/stores/auth'
 // that have any. The shared landing pipeline lives in `useHoldingsLanding` (the collection
 // landing's twin); this view keeps the wish-list wording and the header's quick-add
 // boxes — one for cards, one for sealed products (no import/sync — a wish list has
-// nothing to sync from). Wanted sealed products get their own WishlistSealedSection
-// below the header (sealed holdings are wishlist-only — issue #364). The card grids
+// nothing to sync from). Wanted sealed products use the shared ProductHoldingSection
+// below the header. The card grids
 // live on WishlistBrowseView (`/wishlist/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 const money = useCurrency()
@@ -64,9 +64,8 @@ const {
   withBulk: false,
 })
 
-// Sealed-product stats (issue #364 follow-up): wishlist-only, so fetched directly here
-// rather than through the useHoldingsLanding twin seam — the collection has no sealed
-// surface, and the shared engine must not grow a product axis. The trio self-hides
+// Sealed-product stats are fetched directly rather than through useHoldingsLanding, whose
+// set-grouping and bulk-value concerns remain card-only. The trio self-hides
 // (hasProductStats) until at least one product is wanted; while the query is pending it
 // is simply absent, like the card trio's own hasStats gate. Every product write
 // refreshes it for free — the query key sits in the ['wishlist-products', game] family
@@ -159,7 +158,7 @@ usePageMeta({
         </div>
 
         <!-- Quick add: cards (name → printing → counts) and sealed products (name → quantity).
-             Both write to the wish list; sealed products are wishlist-only (issue #364). -->
+             Both write to the wish list. -->
         <div class="mt-5 grid max-w-3xl gap-4 sm:grid-cols-2">
           <div>
             <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
@@ -179,7 +178,7 @@ usePageMeta({
       <!-- Wanted sealed products (issue #364): self-hides when nothing is wanted; each
            tile carries the hover quick-add control, and the sealed quick-add box above
            also writes here. -->
-      <WishlistSealedSection :game="game" class="mb-8" />
+      <ProductHoldingSection :game="game" list="wishlist" class="mb-8" />
 
       <!-- The set list — wishlisted sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

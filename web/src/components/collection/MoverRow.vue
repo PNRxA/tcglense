@@ -8,22 +8,31 @@ let dialogWarmed = false
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { CollectionMover } from '@/lib/api'
+import type { CollectionMover, CollectionSealedMover } from '@/lib/api'
 import CardImage from '@/components/cards/CardImage.vue'
+import ProductImage from '@/components/products/ProductImage.vue'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { useCurrency } from '@/composables/useCurrency'
+import { prefetchRouteChunks } from '@/lib/prefetch'
+import { productTypeLabel } from '@/lib/productType'
 
-// One row of the collection landing's "Biggest movers" panel: card thumbnail + name/set
-// on the left, the holding's signed value change (with a % chip and the current holding
-// value) right-aligned. The whole row is a link to the card — a plain left-click opens
-// the shared `?card=` detail modal (CardTile's idiom) so the landing keeps its state,
-// while the href stays the real card page for modifier/middle clicks and new tabs.
-const props = defineProps<{ game: string; mover: CollectionMover }>()
+// One card or sealed-product row in the collection's "Biggest movers" panel. Card clicks
+// preserve the landing under the shared detail modal; product clicks use the sealed detail
+// route. Both keep real hrefs for modifier/middle clicks and new tabs.
+const props = defineProps<{ game: string; mover: CollectionMover | CollectionSealedMover }>()
 const money = useCurrency()
 
 const route = useRoute()
 const router = useRouter()
-const to = computed(() => `/cards/${props.game}/cards/${props.mover.card.id}`)
+const card = computed(() => ('card' in props.mover ? props.mover.card : null))
+const product = computed(() => ('product' in props.mover ? props.mover.product : null))
+const isProduct = computed(() => product.value != null)
+const itemName = computed(() => product.value?.name ?? card.value?.name ?? 'Unknown item')
+const to = computed(() =>
+  isProduct.value && product.value
+    ? `/sealed/${props.game}/${product.value.id}`
+    : `/cards/${props.game}/cards/${card.value?.id ?? ''}`,
+)
 const href = computed(() => router.resolve(to.value).href)
 function onClick(event: MouseEvent) {
   if (event.defaultPrevented) return
@@ -32,14 +41,21 @@ function onClick(event: MouseEvent) {
     return
   }
   event.preventDefault()
-  void router.push({ query: { ...route.query, card: props.mover.card.id } })
+  if (isProduct.value) {
+    void router.push(to.value)
+  } else if (card.value) {
+    void router.push({ query: { ...route.query, card: card.value.id } })
+  }
 }
 
-// Fire-and-forget prefetch of the detail-dialog chunk on first hover/focus.
-function warmCardDetailDialog() {
-  if (dialogWarmed) return
-  dialogWarmed = true
-  void loadCardDetailDialog()
+// Fire-and-forget prefetch of the relevant detail surface on hover/focus.
+function warmDetail() {
+  if (isProduct.value) {
+    prefetchRouteChunks(router, to.value)
+  } else if (!dialogWarmed) {
+    dialogWarmed = true
+    void loadCardDetailDialog()
+  }
 }
 
 // Gain/loss is read off the change itself (gainers are positive, losers negative).
@@ -76,23 +92,37 @@ const chipClass = computed(() =>
     :href="href"
     class="group hover:bg-muted/50 -mx-2 flex items-center gap-3 rounded-md px-2 py-1.5"
     @click="onClick"
-    @pointerenter="warmCardDetailDialog"
-    @focusin="warmCardDetailDialog"
+    @pointerenter="warmDetail"
+    @focusin="warmDetail"
   >
     <CardImage
+      v-if="card"
       :game="game"
-      :id="mover.card.id"
-      :name="mover.card.name"
-      :has-image="mover.card.has_image"
+      :id="card.id"
+      :name="card.name"
+      :has-image="card.has_image"
+      size="small"
+      class="w-10 shrink-0"
+    />
+    <ProductImage
+      v-else-if="product"
+      :game="game"
+      :id="product.id"
+      :name="product.name"
+      :has-image="product.has_image"
       size="small"
       class="w-10 shrink-0"
     />
     <div class="min-w-0 flex-1">
-      <p class="truncate text-sm font-medium group-hover:underline" :title="mover.card.name">
-        {{ mover.card.name }}
+      <p class="truncate text-sm font-medium group-hover:underline" :title="itemName">
+        {{ itemName }}
       </p>
-      <p class="text-muted-foreground truncate text-xs">
-        {{ mover.card.set_code.toUpperCase() }} · #{{ mover.card.collector_number }}
+      <p v-if="card" class="text-muted-foreground truncate text-xs">
+        {{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}
+      </p>
+      <p v-else-if="product" class="text-muted-foreground truncate text-xs">
+        {{ product.set_name ?? product.set_code.toUpperCase() }} ·
+        {{ productTypeLabel(product.product_type) }}
       </p>
     </div>
     <div class="shrink-0 text-right">

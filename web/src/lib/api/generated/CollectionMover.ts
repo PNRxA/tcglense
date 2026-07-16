@@ -2,7 +2,7 @@
 import type { Card } from "./Card";
 
 /**
- * One card's movement: the card, the counts held, and the value change of that holding.
+ * One card's movement, counts held, and holding-value change.
  */
 export type CollectionMover = { card: Card, quantity: number, foil_quantity: number, 
 /**

@@ -13,18 +13,29 @@ interface Pt {
 // Mount with a fetcher that resolves to a fixed series. PriceChartInner (unovis) is stubbed
 // so the empty/non-empty branch is what we assert on, without pulling the chart body into
 // jsdom.
-async function mountChart(data: Pt[]) {
+async function mountChart(
+  data: Pt[],
+  props: { singleSeries?: boolean; seriesLabels?: { primary: string; secondary: string } } = {
+    singleSeries: true,
+  },
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = mount(PriceChart, {
     props: {
       queryKey: ['price-chart-test'],
       fetcher: async () => ({ data }),
       emptyText: 'NOTHING PLOTTABLE',
-      singleSeries: true,
+      ...props,
     },
     global: {
       plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
-      stubs: { PriceChartInner: true },
+      stubs: {
+        PriceChartInner: {
+          name: 'PriceChartInner',
+          props: ['seriesLabels', 'singleSeries'],
+          template: '<div class="chart-inner-stub" />',
+        },
+      },
     },
   })
   await flushPromises()
@@ -56,5 +67,15 @@ describe('PriceChart empty state', () => {
     ])
     expect(wrapper.text()).not.toContain('NOTHING PLOTTABLE')
     expect(wrapper.findComponent({ name: 'PriceChartInner' }).exists()).toBe(true)
+  })
+
+  it('forwards semantic labels for a two-line collection value chart', async () => {
+    const labels = { primary: 'Cards', secondary: 'Sealed products' }
+    const wrapper = await mountChart([{ date: '2024-01-02', usd: '12.34', usd_foil: '56.78' }], {
+      seriesLabels: labels,
+    })
+    const chart = wrapper.findComponent({ name: 'PriceChartInner' })
+    expect(chart.props('seriesLabels')).toEqual(labels)
+    expect(chart.props('singleSeries')).toBe(false)
   })
 })

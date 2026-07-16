@@ -29,20 +29,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::Game;
 use crate::db::Dialect;
-use crate::entities::prelude::{
-    Card, CardSet, Product, ProductPriceHistory, SealedComponent, SealedContent,
-};
+use crate::entities::prelude::{Card, Product, ProductPriceHistory, SealedComponent, SealedContent};
 use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
-use crate::entities::{
-    card, card_set, product, product_price_history, sealed_component, sealed_content,
-};
+use crate::entities::{card, product, product_price_history, sealed_component, sealed_content};
 use crate::extract::{Path, Query};
 use crate::error::AppError;
 use crate::handlers::shared::{
-    CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, PriceRange, SortDir, SortField,
-    apply_card_sort, build_page, cutoff_date, downsample_rows, load_card, require_game,
-    resolve_page, trim_query,
+    CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, PriceRange, ProductResponse,
+    SortDir, SortField, apply_card_sort, build_page, cutoff_date, downsample_rows, load_card,
+    load_product, product_response, require_game, resolve_page, set_name_map, trim_query,
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
@@ -52,40 +48,6 @@ use super::image::is_allowed_image_url;
 use super::{IMAGE_CACHE_CONTROL, image_error_response};
 
 // ---------- Wire DTOs ----------
-
-/// A sealed product's market prices (USD only — TCGCSV carries no eur/tix).
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductPrices"))]
-pub(crate) struct ProductPricesResponse {
-    pub usd: Option<String>,
-    pub usd_foil: Option<String>,
-}
-
-/// A sealed product, as the SPA sees it. Mirrors the `Card` DTO idioms: the provider
-/// id is exposed as a string `id`, prices are nested, and images are fetched through
-/// the proxy (`has_image` says whether one is available).
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Product"))]
-pub(crate) struct ProductResponse {
-    pub id: String,
-    pub name: String,
-    pub set_code: String,
-    /// The set's display name (resolved via `card_sets`), or `None` when the
-    /// product's group has no matching catalog set.
-    pub set_name: Option<String>,
-    pub product_type: String,
-    /// The tcgplayer.com product page URL (for buy-links).
-    pub url: Option<String>,
-    /// Whether an image is available through the product image proxy.
-    pub has_image: bool,
-    pub prices: ProductPricesResponse,
-    /// Manufacturer's suggested retail price (USD), as a decimal string, or `None` when
-    /// unknown. A **retail list** price curated from WotC announcements (no feed carries
-    /// it) — kept separate from the TCGCSV *market* prices in `prices`. The SPA hides the
-    /// MSRP line when this is absent.
-    pub msrp: Option<String>,
-    pub released_at: Option<String>,
-}
 
 /// One day's price snapshot in a product's price-over-time series (USD only).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -490,7 +452,7 @@ pub async fn list_products(
     let names = set_name_map(&state, &game).await?;
     let data: Vec<ProductResponse> = rows
         .into_iter()
-        .map(|p| into_response(p, &names))
+        .map(|p| product_response(p, &names))
         .collect();
     Ok(Json(build_page(data, page, page_size, total)))
 }
@@ -518,7 +480,7 @@ pub async fn get_product(
     require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
     let names = set_name_map(&state, &game).await?;
-    Ok(Json(into_response(product, &names)))
+    Ok(Json(product_response(product, &names)))
 }
 
 /// Get product price history
@@ -739,7 +701,7 @@ pub async fn card_sealed(
         .filter_map(|((product_id, membership), foil)| {
             // A membership row whose product row vanished (e.g. mid-reimport) is skipped.
             products.get(&product_id).map(|p| SealedProductRef {
-                product: into_response(p.clone(), &names),
+                product: product_response(p.clone(), &names),
                 membership: membership.to_string(),
                 foil,
             })
@@ -836,7 +798,7 @@ pub async fn product_contents(
             let linked_product = row
                 .child_product_id
                 .and_then(|cid| child_products.get(&cid))
-                .map(|p| into_response(p.clone(), &names));
+                .map(|p| product_response(p.clone(), &names));
             let linked_card: Option<CardResponse> = row
                 .child_card_id
                 .and_then(|cid| child_cards.get(&cid))
@@ -920,7 +882,7 @@ pub async fn product_containers(
         .into_iter()
         .filter_map(|parent| {
             quantities.get(&parent.id).map(|quantity| ProductContainer {
-                product: into_response(parent, &names),
+                product: product_response(parent, &names),
                 quantity: *quantity,
             })
         })
@@ -1557,58 +1519,6 @@ fn cn_int_key(value: Option<i32>) -> (bool, i32) {
     match value {
         Some(n) => (false, n),
         None => (true, 0),
-    }
-}
-
-/// Resolve a product by its external (TCGplayer) id within a game, 404 if unknown.
-pub(crate) async fn load_product(
-    state: &AppState,
-    game: &str,
-    id: &str,
-) -> Result<product::Model, AppError> {
-    Product::find()
-        .filter(product::Column::Game.eq(game))
-        .filter(product::Column::ExternalId.eq(id))
-        .one(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("product '{id}' not found")))
-}
-
-/// The game's `set_code -> set_name` map, for dressing products with their set name.
-pub(crate) async fn set_name_map(
-    state: &AppState,
-    game: &str,
-) -> Result<HashMap<String, String>, AppError> {
-    let rows: Vec<(String, String)> = CardSet::find()
-        .select_only()
-        .column(card_set::Column::Code)
-        .column(card_set::Column::Name)
-        .filter(card_set::Column::Game.eq(game))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-    Ok(rows.into_iter().collect())
-}
-
-/// Build the wire DTO, resolving the set name from `names` (falling back to `None`).
-pub(crate) fn into_response(p: product::Model, names: &HashMap<String, String>) -> ProductResponse {
-    let set_name = names.get(&p.set_code).cloned();
-    ProductResponse {
-        id: p.external_id,
-        name: p.name,
-        set_name,
-        set_code: p.set_code,
-        product_type: p.product_type,
-        url: p.url,
-        // A sealed product image lives at the deterministic CDN URL keyed on its id;
-        // the provider `image_url` presence is a good proxy for "has an image".
-        has_image: p.image_url.is_some(),
-        prices: ProductPricesResponse {
-            usd: p.price_usd,
-            usd_foil: p.price_usd_foil,
-        },
-        msrp: p.msrp,
-        released_at: p.released_at,
     }
 }
 

@@ -14,6 +14,7 @@ pub(crate) mod holdings;
 pub(crate) mod lookup;
 pub(crate) mod pagination;
 pub(crate) mod pricing;
+pub(crate) mod product_holdings;
 pub(crate) mod search;
 pub(crate) mod sort;
 pub(crate) mod valuation;
@@ -38,5 +39,6 @@ pub(crate) use pagination::{
     build_page, resolve_page, trim_query,
 };
 pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
+pub(crate) use product_holdings::{ProductResponse, load_product, product_response, set_name_map};
 pub(crate) use search::search_condition;
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};

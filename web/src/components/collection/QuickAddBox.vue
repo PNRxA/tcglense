@@ -23,9 +23,8 @@ import type { Product } from '@/lib/api'
 //   - `'card'` (default): suggests distinct card names; picking one opens the print
 //     picker (QuickAddPrintDialog) to choose a printing + regular/foil and add it — to
 //     the collection by default, or the wish list when `list` says so (#167).
-//   - `'product'` (#364): suggests sealed products; picking one opens
-//     QuickAddProductDialog to set the wanted quantity. Sealed products are wish-list
-//     only, so `list` is moot in this mode.
+//   - `'product'` (#364/#435): suggests sealed products; picking one opens
+//     QuickAddProductDialog to set the quantity on the selected list.
 //
 // A hand-rolled combobox (rather than reka's) so the list is driven purely by the
 // server's suggestions with full control over the async/keyboard behaviour — options
@@ -98,7 +97,7 @@ const showDropdown = computed(() => open.value && trimmedTerm.value.length >= QU
 const placeholder = isProduct ? 'Quick add a sealed product by name…' : 'Quick add a card by name…'
 const inputAriaLabel = computed(() =>
   isProduct
-    ? 'Quick add a sealed product to your wish list'
+    ? `Quick add a sealed product to your ${listName.value}`
     : `Quick add a card to your ${listName.value}`,
 )
 const listboxLabel = isProduct ? 'Sealed product suggestions' : 'Card name suggestions'
@@ -300,6 +299,7 @@ function onKeydown(event: KeyboardEvent) {
       v-model:open="dialogOpen"
       :game="game"
       :product="selectedProduct"
+      :list="list"
       @close-auto-focus="onDialogCloseAutoFocus"
     />
   </div>

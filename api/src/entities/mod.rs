@@ -4,6 +4,7 @@ pub mod card_fingerprint;
 pub mod card_price_history;
 pub mod card_set;
 pub mod collection_item;
+pub mod collection_product_item;
 pub mod collection_source;
 pub mod collection_visibility;
 pub mod deck;

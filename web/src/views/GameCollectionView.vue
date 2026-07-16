@@ -15,9 +15,15 @@ import CollectionSignInPrompt from '@/components/collection/CollectionSignInProm
 import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
 import { useGameName } from '@/composables/useCatalog'
-import { useCollectionSetsQuery, useCollectionSummaryQuery } from '@/composables/useCollection'
+import {
+  useCollectionProductSummaryQuery,
+  useCollectionSetsQuery,
+  useCollectionSummaryQuery,
+} from '@/composables/useCollection'
 import { useCollectionVisibilityQuery } from '@/composables/useCollectionVisibility'
+import { useCurrency } from '@/composables/useCurrency'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { getCollectionValueHistory } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
@@ -35,6 +41,7 @@ import type { PriceRange } from '@/lib/api'
 // stat). The actual card grids live on CollectionBrowseView (`/collection/:game/cards` +
 // `.../sets/:code`).
 const props = defineProps<{ game: string }>()
+const money = useCurrency()
 
 const {
   game,
@@ -65,6 +72,10 @@ const {
 
 const gameName = useGameName(game)
 const auth = useAuthStore()
+const productSummaryQuery = useCollectionProductSummaryQuery(game)
+const productSummary = computed(() => productSummaryQuery.data.value)
+const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
+const productsValue = computed(() => money.formatUsd(productSummary.value?.total_value_usd))
 // The value chart / movers panel show per the server-backed display prefs, toggled from
 // the header's settings menu (issue #381). While the prefs load (or with no row yet) both
 // default to shown — fail-open, so a transient prefs-query miss never hides these core
@@ -121,8 +132,27 @@ function fetchValueHistory(range: PriceRange) {
           <CollectionSettingsMenu :game="game" />
         </div>
 
-        <!-- Summary stats: distinct cards, total copies, estimated value. -->
-        <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
+        <dl v-if="hasProductStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
+          <div>
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique products</dt>
+            <dd class="text-xl font-semibold tabular-nums">
+              {{ productSummary?.unique_products.toLocaleString() }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total products</dt>
+            <dd class="text-xl font-semibold tabular-nums">
+              {{ productSummary?.total_products.toLocaleString() }}
+            </dd>
+          </div>
+          <div v-if="productsValue">
+            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Products value</dt>
+            <dd class="text-xl font-semibold tabular-nums">{{ productsValue }}</dd>
+          </div>
+        </dl>
+
+        <!-- Card stats stay separate from the sealed-product summary above. -->
+        <dl v-if="hasStats" class="mt-3 flex flex-wrap gap-x-8 gap-y-3">
           <div>
             <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
             <dd class="text-xl font-semibold tabular-nums">
@@ -147,43 +177,48 @@ function fetchValueHistory(range: PriceRange) {
           </div>
         </dl>
 
-        <!-- Quick add: type a name, pick a printing, add regular/foil — without leaving
-             this page. Useful both to seed an empty collection and to top up an
-             existing one, so it's shown regardless of what's owned. -->
-        <div class="mt-5 max-w-md">
-          <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
-            Quick add a card
-          </p>
-          <QuickAddBox :game="game" />
-          <!-- Or bulk-add with the camera: OCR a physical card and drop it straight in. -->
-          <RouterLink
-            to="/scan"
-            :class="buttonVariants({ variant: 'outline', size: 'sm' })"
-            class="mt-2 inline-flex"
-          >
-            <ScanLine />
-            Scan cards with your camera
-          </RouterLink>
+        <div class="mt-5 grid max-w-3xl gap-4 sm:grid-cols-2">
+          <div>
+            <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
+              Quick add a card
+            </p>
+            <QuickAddBox :game="game" />
+            <RouterLink
+              to="/scan"
+              :class="buttonVariants({ variant: 'outline', size: 'sm' })"
+              class="mt-2 inline-flex"
+            >
+              <ScanLine />
+              Scan cards with your camera
+            </RouterLink>
+          </div>
+          <div>
+            <p class="text-muted-foreground mb-1.5 text-xs font-medium tracking-wide uppercase">
+              Quick add a sealed product
+            </p>
+            <QuickAddBox :game="game" kind="product" />
+          </div>
         </div>
 
         <CollectionSyncControls :game="game" />
       </header>
 
-      <!-- Total collection value over time — reconstructed from historic prices and each
-           card's add-date. Shown once something is owned, unless hidden from the settings
-           menu; reuses the shared price-history chart to render the single total-value line. -->
+      <!-- Card and sealed-product value over time — two independently add-date-clamped
+           lines on the shared history chart. Show it when either holding kind exists. -->
       <PriceChart
-        v-if="hasStats && showValueChart"
+        v-if="(hasStats || hasProductStats) && showValueChart"
         title="Collection value"
         empty-text="No value history for this range yet."
-        single-series
+        :series-labels="{ primary: 'Cards', secondary: 'Sealed products' }"
         :query-key="['collection-value-history', game]"
         :fetcher="fetchValueHistory"
       />
 
-      <!-- The biggest per-card value moves (day / week / month) across the collection —
-           gated like the value chart on something being owned, plus its own settings toggle. -->
-      <CollectionMovers v-if="hasStats && showMovers" :game="game" />
+      <!-- One panel switches between independent Singles and Sealed mover rankings. -->
+      <CollectionMovers v-if="(hasStats || hasProductStats) && showMovers" :game="game" />
+
+      <!-- Keep the sealed holdings grid directly below the collection analytics. -->
+      <ProductHoldingSection :game="game" list="collection" class="mt-8 mb-8" />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year
@@ -220,10 +255,10 @@ function fetchValueHistory(range: PriceRange) {
       <p v-else-if="showAllSets && !catalogSets.length" class="text-muted-foreground py-12">
         No sets available yet.
       </p>
-      <!-- Collected mode with nothing owned anywhere: offer the all-sets view, which is
-           where adding starts. -->
+      <!-- Collected mode with no card-bearing sets: offer the all-sets view. Sealed
+           products, if any, remain visible in their independent section above. -->
       <div v-else-if="!showAllSets && !ownedSets.length" class="py-16 text-center">
-        <p class="text-muted-foreground">Your {{ gameName }} collection is empty.</p>
+        <p class="text-muted-foreground">No sets with collected cards yet.</p>
         <button
           type="button"
           :class="buttonVariants({ variant: 'default' })"

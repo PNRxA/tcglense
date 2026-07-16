@@ -4,10 +4,10 @@
 //! user wants to buy, per game (`/api/wishlist/{game}/...`) — the collection's "want"
 //! twin, with the same holding shape (`(user, game, card) -> { quantity, foil_quantity }`,
 //! both-zero deletes the row) but its own `wishlist_items` table, so a card can be owned
-//! and wanted independently. Sealed products are the wish list's alone (the collection
-//! deliberately has no sealed surface — issue #364): they live in a separate
-//! `wishlist_product_items` table under `/api/wishlist/{game}/products...` routes and
-//! have no collection twin. Every route requires a valid access token (via
+//! and wanted independently. Sealed products live in their own `wishlist_product_items`
+//! table under `/api/wishlist/{game}/products...`; the collection has an independent
+//! product-holdings table and matching route family. Every route requires a valid access
+//! token (via
 //! [`AuthUser`](crate::auth::extractor::AuthUser)) and is wired into the router's
 //! `private` group, so responses are `Cache-Control: no-store` — per-user data must
 //! never be shared-cached.
@@ -25,11 +25,10 @@
 //! card wire DTOs and params are the collection's own, reused from
 //! [`crate::handlers::shared::holdings`] so the wish list needs no new generated TS
 //! types; on this side of the API their "owned" fields simply read as "wanted". Sealed
-//! products reuse the same quantity DTOs plus one new [`products::WishlistProductEntry`];
-//! the sealed landing's header trio adds a second new DTO,
-//! [`products::WishlistProductSummary`] (`GET .../products/summary`), and the browse-grid
-//! badges are fed by a batch wanted-counts lookup (`POST .../products/counts`) that reuses
-//! the shared counts DTOs.
+//! products use the shared [`crate::handlers::shared::product_holdings`] engine and its
+//! `ProductHoldingEntry` / `ProductHoldingSummary` DTOs. Browse-grid badges are fed by a
+//! batch wanted-counts lookup (`POST .../products/counts`) that reuses the shared counts
+//! DTOs.
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
