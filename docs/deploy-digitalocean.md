@@ -113,11 +113,19 @@ state or plan to scale to more than one replica.
    deliberately shorter bulk-file TTL collapses into the catalog's):
    ```
    (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
+   or starts_with(http.request.uri.path, "/api/u/")
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
    or http.request.uri.path eq "/api/openapi.json"
    or starts_with(http.request.uri.path, "/api/mirror/")
    ```
+
+   The `/api/u/` line (issue #413) makes Cloudflare honor the public
+   shared-collection/deck reads' `s-maxage=300` — successes cache for up to 5
+   minutes, errors are `no-store` (never pinned), and un-sharing propagates within
+   the same ≤ 5-minute bound. Without it these routes emit the header but are
+   never edge-cached (Cloudflare skips `/api/*` by default), so every public share
+   view reaches the origin.
 
    **Rule 2 — bypass everything per-user or live.** *Eligibility* → Bypass cache.
    Expression:

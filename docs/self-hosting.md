@@ -128,7 +128,8 @@ a year of `immutable` — they never change once published) — and caches **no*
 (auth, the live `status` route, per-user collection/wishlist data, and every error), so
 you never have to enumerate those to keep them out.
 
-1. **Cache the public catalog, images, sitemaps, API docs, and the dataset mirror.** *Cache eligibility* →
+1. **Cache the public catalog, images, sitemaps, API docs, public shared
+   collections/decks, and the dataset mirror.** *Cache eligibility* →
    **Eligible for cache**; *Edge TTL* → **Use cache-control header if present, bypass
    cache if not** (the honor-the-origin option — pick the *bypass*-if-absent one, not
    *…use default Cloudflare caching…*); *Browser TTL* → **Respect origin**. When
@@ -136,11 +137,22 @@ you never have to enumerate those to keep them out.
 
    ```
    (starts_with(http.request.uri.path, "/api/games") and not ends_with(http.request.uri.path, "/status"))
+   or starts_with(http.request.uri.path, "/api/u/")
    or http.request.uri.path eq "/api/sitemap.xml"
    or starts_with(http.request.uri.path, "/api/sitemaps/")
    or http.request.uri.path eq "/api/openapi.json"
    or starts_with(http.request.uri.path, "/api/mirror/")
    ```
+
+   *Note: the `/api/u/` line (issue #413) covers the public shared-collection/deck
+   reads, which emit `public, max-age=60, s-maxage=300` on success and `no-store`
+   on every error — so under this honor-origin rule Cloudflare caches only
+   successful views, a private/unknown handle's `404` is never pinned, and a
+   collection made private stops being served within ≤ 5 minutes (the documented
+   contract in `api/src/handlers/cache.rs`). The owned-counts overlay under the
+   same prefix is a `no-store` POST, so it stays uncached automatically. Without
+   this line the routes emit the header but Cloudflare never caches `/api/*` by
+   default — every public share view reaches the origin.*
 
    *Note: `/api/mirror/*` (the dataset mirror) is served only on a mirror host
    (`MIRROR_ENABLED=true`, like the public site) and is a harmless no-op otherwise. Keep
