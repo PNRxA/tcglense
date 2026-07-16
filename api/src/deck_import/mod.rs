@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait, sea_query::NullOrdering,
 };
 
 use crate::collection_import::csv_import::MoxfieldCsvRow;
@@ -27,6 +27,7 @@ use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::prelude::{Card, Deck, DeckCard};
 use crate::entities::{card, deck, deck_card, deck_section};
 
+pub use parser::render_text_section_header;
 pub use types::{CreatedDeckImport, DeckCardRow, DeckImportFileFormat, ParsedDeck};
 
 const MAX_DECKS_PER_GAME: u64 = 1_000;
@@ -326,7 +327,9 @@ async fn resolve_names(
             .filter(card::Column::Name.is_in(chunk.iter().cloned()))
             // When a plain list names no printing, pick the newest catalog printing
             // deterministically; provider CSVs with set/number never take this fallback.
-            .order_by_desc(card::Column::ReleasedAt)
+            // NULLs last, or Postgres (NULLS FIRST on DESC) picks an undated printing
+            // while SQLite picks the newest dated one.
+            .order_by_with_nulls(card::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
             .order_by_desc(card::Column::Id)
             .into_tuple()
             .all(db)
