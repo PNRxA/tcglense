@@ -54,6 +54,8 @@ function onClick(event: MouseEvent) {
   // path, so carry it in the query there. Pages that already have `:game` in the path are
   // left untouched (the dialog reads the param and this stays absent).
   const query: LocationQueryRaw = { ...route.query, card: props.card.id }
+  // A card inside the sealed-product modal swaps detail surfaces instead of stacking dialogs.
+  delete query.product
   if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
   void router.push({ query })
 }

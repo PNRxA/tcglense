@@ -15,26 +15,56 @@ function queriesEqual(a: LocationQueryRaw, b: LocationQuery): boolean {
   return true
 }
 
+/** The pair of URL query keys one "Cards in this product" list rides. Which pair a caller takes
+ * depends on whether it owns the route it renders over — see the two constants below. */
+export interface ProductCardsSearchKeys {
+  /** Holds the committed Scryfall-style filter. */
+  q: string
+  /** Holds the `field:dir` sort. */
+  sort: string
+}
+
+/** The keys for the full product page (`/sealed/:game/:id`, SealedProductView). It is the only
+ * consumer of `?q=`/`?sort=` on its own route, so it takes the plain names — the ones existing
+ * links and bookmarks already carry. */
+export const PRODUCT_CARDS_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'q', sort: 'sort' }
+
+/** The keys for the detail modal (ProductDetailDialog). It overlays a *browse* route
+ * (`/sealed/:game`) whose own list controls (`useCardSearch`) already own `?q=`/`?sort=`, and
+ * neither surface can see the other — so sharing the plain names silently crosses them: the
+ * modal would read the browse's product-name search as its Scryfall card filter (the two sort
+ * option sets overlap, so a borrowed sort wouldn't even fail the clamp), and every modal
+ * search/sort write would destroy the list state underneath. Namespacing keeps the modal's card
+ * search deep-linkable and shareable while leaving the browse untouched; ProductDetailDialog
+ * strips these on close, since they belong to the overlay. */
+export const PRODUCT_CARDS_MODAL_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'pq', sort: 'psort' }
+
 /**
  * The sealed-product "Cards in this product" list controls (issue #222 search + the sort that
- * came with the filter-helper/size/sort parity work), backed by the URL `?q=`/`?sort=` so they
- * survive opening a card from the results and pressing Back (the issue #58 idiom the catalog
- * already uses) and are shareable/reload-safe. Trimmed from the catalog's `useCardSearch`: there
- * is no shared `page` to track — each card section owns and resets its own pagination — so this
- * carries only the search and the sort.
+ * came with the filter-helper/size/sort parity work), backed by the URL so they survive opening
+ * a card from the results and pressing Back (the issue #58 idiom the catalog already uses) and
+ * are shareable/reload-safe. Trimmed from the catalog's `useCardSearch`: there is no shared
+ * `page` to track — each card section owns and resets its own pagination — so this carries only
+ * the search and the sort.
  *
- * `searchInput` is the live text box, debounced 300ms into the committed `query` (the URL `?q=`);
- * a blank query drops the key (a clean canonical URL). `sort` is a writable `field:dir` option
- * value backed by `?sort=`, clamped to `validSorts` (an unknown/hand-edited value falls back to
- * `defaultSort`), and dropped from the URL when it equals `defaultSort`. Navigating to a different
- * product (the path changes) cancels a half-typed search and resyncs the box to the destination,
- * and a Back/forward that changes `?q=` under us is mirrored back into the box.
+ * `searchInput` is the live text box, debounced 300ms into the committed `query` (the URL
+ * `keys.q`); a blank query drops the key (a clean canonical URL). `sort` is a writable
+ * `field:dir` option value backed by `keys.sort`, clamped to `validSorts` (an unknown/hand-edited
+ * value falls back to `defaultSort`), and dropped from the URL when it equals `defaultSort`.
+ * Navigating to a different product (the path changes) cancels a half-typed search and resyncs
+ * the box to the destination, and a Back/forward that changes the committed query under us is
+ * mirrored back into the box.
+ *
+ * `keys` names the two params, so a list rendered over a route that already owns `?q=`/`?sort=`
+ * can namespace itself out of the way ({@link PRODUCT_CARDS_MODAL_SEARCH_KEYS}). Every other key
+ * in the query — the host route's included — is preserved on write either way.
  *
  * `defaultSort`/`validSorts` may be plain values or refs/getters, matching `useCardSearch`.
  */
 export function useProductCardsSearch(
   defaultSort: MaybeRefOrGetter<string> = '',
   validSorts?: MaybeRefOrGetter<readonly string[] | undefined>,
+  keys: ProductCardsSearchKeys = PRODUCT_CARDS_SEARCH_KEYS,
 ) {
   const route = useRoute()
   const router = useRouter()
@@ -51,17 +81,18 @@ export function useProductCardsSearch(
     if (!queriesEqual(next, route.query)) router.replace({ query: next })
   }
 
-  const query = computed(() => readString(route.query.q).trim())
+  const query = computed(() => readString(route.query[keys.q]).trim())
 
   const sort = computed({
     get: () => {
-      const raw = readString(route.query.sort)
+      const raw = readString(route.query[keys.sort])
       const valid = toValue(validSorts)
       return raw && (!valid || valid.includes(raw)) ? raw : toValue(defaultSort)
     },
     // The default sort rides the URL implicitly (drop the key); each section resets its own
     // page when the sort changes, so there's no shared page to reset here.
-    set: (value) => patch({ sort: value && value !== toValue(defaultSort) ? value : undefined }),
+    set: (value) =>
+      patch({ [keys.sort]: value && value !== toValue(defaultSort) ? value : undefined }),
   })
 
   // The text box mirrors the committed query, debounced so we don't rewrite the URL on every
@@ -73,7 +104,7 @@ export function useProductCardsSearch(
     timer = setTimeout(() => {
       const trimmed = value.trim()
       // Guard against re-committing an unchanged value (e.g. the box was just synced below).
-      if (trimmed !== query.value) patch({ q: trimmed || undefined })
+      if (trimmed !== query.value) patch({ [keys.q]: trimmed || undefined })
     }, 300)
   })
   onUnmounted(() => clearTimeout(timer))
