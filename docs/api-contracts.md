@@ -505,6 +505,7 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 |---------------|------|---------|
 | `GET /api/collection/{game}?…&set&include_related` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`) |
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
+| `GET /api/collection/{game}/movers` | — | `CollectionMovers` `{ as_of, day, week, month, year, two_year, three_year, all_time }` — the five largest holding-value gainers and losers for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). No query parameters. |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/sets/{code}/drops?q&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
 | `GET /api/collection/{game}/sets/{code}/subtypes?q&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
@@ -530,6 +531,19 @@ foil), an estimated USD value (regular copies at `usd`, foil at `usd_foil`, a 2-
 of just the finishes priced **under $1 each** (the low-value commons/uncommons), a 2-dp
 string; `"0.00"` when something is priced but none of it is bulk, `null` when nothing owned
 is priced.
+
+`CollectionMovers = { as_of, day, week, month, year, two_year, three_year, all_time }`:
+`as_of` is the newest `YYYY-MM-DD` price snapshot across the user's priced holdings, or
+`null` when none has history. Every window is a required `CollectionMoverList = { gainers,
+losers }`; both arrays are value-change ordered and capped at five. A `CollectionMover` is
+`{ card, quantity, foil_quantity, value_now, value_prev, change_usd, change_pct }`, with the
+three values as 2-dp USD strings and `change_pct` null when the baseline value is zero.
+Movement is the per-finish unit-price change multiplied by the user's current regular/foil
+counts. Fixed windows carry forward the latest snapshot at or before their calendar
+baseline measured back from `as_of`; a finish participates only when both endpoints have a
+price. `all_time` instead compares each finish with its own earliest non-null captured price,
+so a newer printing is not excluded by an older card's history. When the user owns nothing
+or no owned card has history, `as_of` is `null` and all fourteen arrays are empty.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
 `card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `has_subtypes` — the latter

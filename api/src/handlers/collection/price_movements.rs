@@ -22,9 +22,9 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
 use chrono::{Duration, NaiveDate};
-use sea_orm::sea_query::{Expr, Func, SimpleExpr};
+use sea_orm::sea_query::{BinOper, Expr, Func, SimpleExpr};
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect,
 };
 use serde::Serialize;
 
@@ -43,11 +43,6 @@ use crate::state::AppState;
 /// bound-parameter cap so an arbitrarily large collection still fetches in a handful of
 /// queries (mirrors [`super::value_history`]).
 const PRICE_ID_CHUNK: usize = 10_000;
-
-/// How many cards' exact anchor-date predicates to OR into one snapshot fetch. Each card
-/// binds its id plus at most nine dates, so 80 stays below SQLite's conservative 999-bind
-/// floor even after the game value is included.
-const PRICE_ANCHOR_CHUNK: usize = 80;
 
 /// How many movers to return per direction, per window.
 const TOP_N: usize = 5;
@@ -212,62 +207,41 @@ pub async fn collection_movers(
     let two_year_target = format_date(latest_date - Duration::days(730));
     let three_year_target = format_date(latest_date - Duration::days(1095));
 
-    // Aggregate the exact snapshot dates needed per card: the latest row, the last row at
-    // or before each fixed baseline, and the first non-null row for each finish. The database
-    // scans the covering index for the all-time minima, but only these compact date anchors
-    // cross the wire — never the complete daily series.
-    let mut anchors: Vec<PriceAnchorDates> = Vec::new();
+    // Aggregate the exact snapshots needed per card: the latest row, the last row at or
+    // before each fixed baseline, and the first non-null row for each finish. Prefixing each
+    // encoded snapshot with its ISO date lets MIN/MAX select the corresponding price row in
+    // the same grouped query. The database scans the covering index once per id chunk, but
+    // only these compact anchors cross the wire — never the complete daily series, and never
+    // one round trip per small group of holdings.
+    let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
     for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
         let rows = CardPriceHistory::find()
             .select_only()
             .column(card_price_history::Column::CardId)
-            .column_as(card_price_history::Column::AsOfDate.max(), "latest")
-            .column_as(last_date_at_or_before(&day_target), "day")
-            .column_as(last_date_at_or_before(&week_target), "week")
-            .column_as(last_date_at_or_before(&month_target), "month")
-            .column_as(last_date_at_or_before(&year_target), "year")
-            .column_as(last_date_at_or_before(&two_year_target), "two_year")
-            .column_as(last_date_at_or_before(&three_year_target), "three_year")
-            .column_as(first_priced_date(card_price_history::Column::PriceUsd), "first_usd")
+            .column_as(latest_snapshot(), "latest")
+            .column_as(snapshot_at_or_before(&day_target), "day")
+            .column_as(snapshot_at_or_before(&week_target), "week")
+            .column_as(snapshot_at_or_before(&month_target), "month")
+            .column_as(snapshot_at_or_before(&year_target), "year")
+            .column_as(snapshot_at_or_before(&two_year_target), "two_year")
+            .column_as(snapshot_at_or_before(&three_year_target), "three_year")
             .column_as(
-                first_priced_date(card_price_history::Column::PriceUsdFoil),
+                first_priced_snapshot(card_price_history::Column::PriceUsd),
+                "first_usd",
+            )
+            .column_as(
+                first_priced_snapshot(card_price_history::Column::PriceUsdFoil),
                 "first_foil",
             )
             .filter(card_price_history::Column::Game.eq(game.as_str()))
             .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
             .group_by(card_price_history::Column::CardId)
-            .into_model::<PriceAnchorDates>()
+            .into_model::<PriceAnchorSnapshots>()
             .all(&state.db)
             .await?;
-        anchors.extend(rows);
-    }
-
-    // Fetch only rows that match those per-card anchors. A card has at most nine distinct
-    // dates, so the handler retains O(cards × windows) price cells instead of O(cards × days).
-    let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
-    for chunk in anchors.chunks(PRICE_ANCHOR_CHUNK) {
-        let mut anchor_filter = Condition::any();
-        for anchor in chunk {
-            anchor_filter = anchor_filter.add(
-                Condition::all()
-                    .add(card_price_history::Column::CardId.eq(anchor.card_id))
-                    .add(card_price_history::Column::AsOfDate.is_in(anchor.dates())),
-            );
+        for anchors in rows {
+            price_rows.extend(anchors.into_price_rows()?);
         }
-        let rows = CardPriceHistory::find()
-            .select_only()
-            .column(card_price_history::Column::CardId)
-            .column(card_price_history::Column::AsOfDate)
-            .column(card_price_history::Column::PriceUsd)
-            .column(card_price_history::Column::PriceUsdFoil)
-            .filter(card_price_history::Column::Game.eq(game.as_str()))
-            .filter(anchor_filter)
-            .order_by_asc(card_price_history::Column::CardId)
-            .order_by_asc(card_price_history::Column::AsOfDate)
-            .into_tuple::<(i32, String, Option<String>, Option<String>)>()
-            .all(&state.db)
-            .await?;
-        price_rows.extend(rows);
     }
 
     // Group each card's snapshots (already ascending by date) and parse the decimal-string
@@ -330,13 +304,14 @@ pub async fn collection_movers(
     }))
 }
 
-/// The exact history dates needed to rank one card across every response window. Fixed
+/// The exact history snapshots needed to rank one card across every response window. Fixed
 /// baselines use the most recent row on/before their target; `first_*` can differ because a
-/// finish may start receiving prices later than its sibling.
+/// finish may start receiving prices later than its sibling. Each snapshot is encoded as
+/// `YYYY-MM-DD|regular|foil` by the aggregate helpers below.
 #[derive(FromQueryResult)]
-struct PriceAnchorDates {
+struct PriceAnchorSnapshots {
     card_id: i32,
-    latest: Option<String>,
+    latest: String,
     day: Option<String>,
     week: Option<String>,
     month: Option<String>,
@@ -347,27 +322,32 @@ struct PriceAnchorDates {
     first_foil: Option<String>,
 }
 
-impl PriceAnchorDates {
-    /// Sorted, de-duplicated anchor dates for the exact-row fetch.
-    fn dates(&self) -> Vec<String> {
-        let mut dates: Vec<String> = [
-            self.latest.as_ref(),
-            self.day.as_ref(),
-            self.week.as_ref(),
-            self.month.as_ref(),
-            self.year.as_ref(),
-            self.two_year.as_ref(),
-            self.three_year.as_ref(),
-            self.first_usd.as_ref(),
-            self.first_foil.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
-        dates.sort_unstable();
-        dates.dedup();
-        dates
+impl PriceAnchorSnapshots {
+    /// Decode the aggregate cells back to the compact row shape consumed by the existing
+    /// ranker. Repeated dates are harmless: grouping below keeps them adjacent, and every
+    /// encoding for a given card/date contains the same source-row prices.
+    fn into_price_rows(
+        self,
+    ) -> Result<Vec<(i32, String, Option<String>, Option<String>)>, AppError> {
+        let snapshots = [
+            Some(self.latest),
+            self.day,
+            self.week,
+            self.month,
+            self.year,
+            self.two_year,
+            self.three_year,
+            self.first_usd,
+            self.first_foil,
+        ];
+        let mut rows = Vec::with_capacity(snapshots.len());
+        for snapshot in snapshots.into_iter().flatten() {
+            let (date, usd, foil) = decode_snapshot(&snapshot)?;
+            rows.push((self.card_id, date, usd, foil));
+        }
+        rows.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+        rows.dedup();
+        Ok(rows)
     }
 }
 
@@ -398,23 +378,67 @@ struct RawMover {
     change_pct: Option<f64>,
 }
 
-/// SQL expression for the most recent history date at or before a fixed target. `CASE`
-/// makes rows after the target null; `MAX` then performs the carry-forward lookup per card.
-fn last_date_at_or_before(target: &str) -> SimpleExpr {
+/// Encode one history row as `YYYY-MM-DD|regular|foil`. ISO dates sort chronologically, so
+/// applying MIN/MAX to this string selects the whole price row for the chosen date. `||` and
+/// `COALESCE` have identical text semantics on the supported SQLite and Postgres backends;
+/// the query remains entirely parameterized through SeaQuery expressions.
+fn encoded_snapshot() -> SimpleExpr {
+    let concat = BinOper::Custom("||");
+    Expr::col(card_price_history::Column::AsOfDate)
+        .binary(concat, Expr::val("|"))
+        .binary(
+            concat,
+            Func::coalesce([
+                Expr::col(card_price_history::Column::PriceUsd).into(),
+                Expr::val("").into(),
+            ]),
+        )
+        .binary(concat, Expr::val("|"))
+        .binary(
+            concat,
+            Func::coalesce([
+                Expr::col(card_price_history::Column::PriceUsdFoil).into(),
+                Expr::val("").into(),
+            ]),
+        )
+}
+
+/// The card's most recent captured snapshot.
+fn latest_snapshot() -> SimpleExpr {
+    Func::max(encoded_snapshot()).into()
+}
+
+/// The card's most recent snapshot at or before a fixed target (carry-forward baseline).
+fn snapshot_at_or_before(target: &str) -> SimpleExpr {
     Func::max(Expr::case(
         card_price_history::Column::AsOfDate.lte(target),
-        Expr::col(card_price_history::Column::AsOfDate),
+        encoded_snapshot(),
     ))
     .into()
 }
 
-/// SQL expression for the earliest history date on which `price_column` is non-null.
-fn first_priced_date(price_column: card_price_history::Column) -> SimpleExpr {
-    Func::min(Expr::case(
-        price_column.is_not_null(),
-        Expr::col(card_price_history::Column::AsOfDate),
+/// The earliest snapshot on which `price_column` is non-null.
+fn first_priced_snapshot(price_column: card_price_history::Column) -> SimpleExpr {
+    Func::min(Expr::case(price_column.is_not_null(), encoded_snapshot())).into()
+}
+
+/// Decode a compact aggregate snapshot. Stored prices are decimal strings, so `|` cannot
+/// occur in a valid value; a malformed encoding indicates an internal data/query invariant
+/// failure rather than bad client input.
+fn decode_snapshot(encoded: &str) -> Result<(String, Option<String>, Option<String>), AppError> {
+    let mut parts = encoded.split('|');
+    let (Some(date), Some(usd), Some(foil), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(AppError::Internal(format!(
+            "malformed price snapshot aggregate {encoded:?}"
+        )));
+    };
+    Ok((
+        date.to_string(),
+        (!usd.is_empty()).then(|| usd.to_string()),
+        (!foil.is_empty()).then(|| foil.to_string()),
     ))
-    .into()
 }
 
 /// Rank the holdings by their value change between `target` (the window baseline) and
@@ -620,6 +644,38 @@ mod tests {
 
     fn changes(movers: &[RawMover]) -> Vec<i128> {
         movers.iter().map(|m| m.change_cents).collect()
+    }
+
+    #[test]
+    fn compact_snapshot_decode_preserves_null_finishes() {
+        assert_eq!(
+            decode_snapshot("2024-01-02|12.34|").unwrap(),
+            ("2024-01-02".to_string(), Some("12.34".to_string()), None)
+        );
+        assert_eq!(
+            decode_snapshot("2024-01-02||56.78").unwrap(),
+            ("2024-01-02".to_string(), None, Some("56.78".to_string()))
+        );
+        assert!(decode_snapshot("2024-01-02|12.34").is_err());
+    }
+
+    #[test]
+    fn compact_snapshot_aggregate_renders_for_both_databases() {
+        use sea_orm::sea_query::{PostgresQueryBuilder, Query, SqliteQueryBuilder};
+
+        let query = Query::select()
+            .expr(latest_snapshot())
+            .expr(snapshot_at_or_before("2024-01-02"))
+            .to_owned();
+        for sql in [
+            query.to_string(SqliteQueryBuilder),
+            query.to_string(PostgresQueryBuilder),
+        ] {
+            assert!(sql.contains("MAX("), "{sql}");
+            assert!(sql.contains(" || "), "{sql}");
+            assert!(sql.contains("COALESCE("), "{sql}");
+            assert!(sql.contains("CASE WHEN"), "{sql}");
+        }
     }
 
     #[test]
