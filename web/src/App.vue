@@ -105,13 +105,13 @@ onMounted(() => {
       <header class="border-b">
         <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
           <div class="flex min-w-0 items-center gap-1">
-            <!-- Below md the two nav dropdowns don't fit alongside the brand + theme +
-               account controls, so they collapse into MobileNav's hamburger. The brand
-               itself is fixed-width and never truncates. The md:hidden lives on this
+            <!-- Below lg the nav items don't fit alongside the brand and display/account
+               controls, so they collapse into MobileNav's hamburger. The brand
+               itself is fixed-width and never truncates. The lg:hidden lives on this
                wrapper, not on <MobileNav>: reka's Sheet (Dialog) root is renderless, so a
                class set on the component is dropped and the hamburger would never hide —
-               it would double up with MainNav from md up. -->
-            <div class="md:hidden">
+               it would double up with MainNav from lg up. -->
+            <div class="lg:hidden">
               <MobileNav />
             </div>
             <RouterLink
@@ -121,8 +121,8 @@ onMounted(() => {
             >
             <!-- MainNav renders its own <nav> landmark (reka NavigationMenu), so this is a div.
                Both dropdowns live under one NavigationMenu so the swipe/fade motion plays
-               when moving between them. Hidden below md in favour of MobileNav. -->
-            <div class="ml-3 hidden md:block">
+               when moving between them. Hidden below lg in favour of MobileNav. -->
+            <div class="ml-3 hidden lg:block">
               <MainNav />
             </div>
           </div>
