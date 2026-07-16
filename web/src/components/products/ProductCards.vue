@@ -40,8 +40,11 @@ const id = toRef(props, 'id')
 
 // The shared search + sort, backed by the URL (survives opening a card + Back). The sort clamps
 // to the known option values, falling back to the natural-order default; it's threaded into
-// every section so they re-order together (the manifest is sort-independent).
+// every section so they re-order together (the manifest is sort-independent). The id tells the
+// composable when the list is showing a different product (a step in the modal never changes
+// the path, so the id is the only signal common to both surfaces — issue #448).
 const { searchInput, query, sort } = useProductCardsSearch(
+  id,
   PRODUCT_CARDS_DEFAULT_SORT,
   PRODUCT_CARDS_SORT_OPTIONS.map((option) => option.value),
   props.searchKeys,

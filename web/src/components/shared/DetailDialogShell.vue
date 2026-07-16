@@ -31,8 +31,11 @@ const props = defineProps<{
   canonical: (game: string, id: string) => string
   // The registry the grids underneath publish their ordered ids into (`stores/nav.ts`).
   nav: NavStoreApi
-  // Further query keys this modal owns, dropped alongside `queryKey` on close — state that
-  // exists only while the overlay does (the product modal's namespaced card search).
+  // Further query keys this modal owns — state scoped to the single open item (the product
+  // modal's namespaced card search), so it is dropped whenever that item changes hands: on
+  // stepping to a neighbour (goTo) and alongside `queryKey` on close. The tiles that swap one
+  // detail surface for the other honour the same rule (see CardTile's/ProductTile's click
+  // handlers).
   ownedKeys?: string[]
 }>()
 
@@ -72,10 +75,15 @@ const hasNav = computed(() => position.value.index >= 0 && position.value.total 
 // Stepping to another item is just rewriting the id param — but with `replace`, not `push`, so
 // holding an arrow key (or clicking prev/next) to flip through a page doesn't bury the list
 // underneath dozens of history entries: Back still exits the modal in one press. The list keeps
-// its scroll/search/page state throughout (issue #275).
+// its scroll/search/page state throughout (issue #275). The keys this modal owns do NOT carry:
+// they are per-item state (a card search typed for THIS product), so the neighbour starts
+// fresh — the same reset a full-page product-to-product link gives, where a fresh URL drops
+// `?q=`/`?sort=` (issue #448).
 function goTo(id: string | null) {
   if (!id) return
-  void router.replace({ query: { ...route.query, [props.queryKey]: id } })
+  const next = { ...route.query, [props.queryKey]: id }
+  for (const key of props.ownedKeys ?? []) delete next[key]
+  void router.replace({ query: next })
 }
 
 // Left/right arrow keys mirror the buttons. The listener sits on the dialog's OWN content (see

@@ -78,6 +78,18 @@ describe('ProductTile detail modal', () => {
     expect(router.currentRoute.value.query.product).toBe('product-1')
   })
 
+  it('drops a leftover namespaced card search — it was another product’s (#448)', async () => {
+    // `?pq=`/`?psort=` only ever belong to an open product modal; anything still in the URL when
+    // a tile opens this product was typed for a different one, so the list must start fresh.
+    const { wrapper, router } = await mountTile(
+      '/sealed/mtg?card=card-1&pq=t:goblin&psort=name:desc',
+    )
+    await wrapper.get('a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ product: 'product-1' })
+  })
+
   it('carries the game in the query on a route without a :game path param', async () => {
     // A product grid can render where the path has no `:game` to feed the shared dialog: the
     // public deck page reaches one through the card modal's "Sealed products" section. The tile

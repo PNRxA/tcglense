@@ -127,6 +127,29 @@ describe('ProductDetailDialog', () => {
     expect(router.currentRoute.value.query).toEqual({ sort: 'name', q: 'bloomburrow' })
   })
 
+  it('resets its namespaced card search when stepping to the next product (#448)', async () => {
+    // A search typed for product b is b's state, not the overlay's session: stepping to c must
+    // not carry it (the full page drops `?q=`/`?sort=` the same way, via a fresh link URL).
+    const router = await open('b', ['a', 'b', 'c'], '&q=bloomburrow&pq=t:goblin&psort=name:desc')
+    byLabel('Next sealed product')!.click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({
+      sort: 'name',
+      q: 'bloomburrow',
+      product: 'c',
+    })
+  })
+
+  it('keeps a deep-linked ?pq= on open (a shared filtered modal stays filtered)', async () => {
+    // Only transitions AWAY from a product (step / swap / close) drop the namespaced keys;
+    // arriving with `?product=` + `?pq=` is the shareable-filtered-modal deep link (#443),
+    // which must open still filtered — nothing may strip the keys at mount.
+    const router = await open('b', ['a', 'b', 'c'], '&pq=t:goblin')
+    expect(dialogEl()).not.toBeNull()
+    expect(router.currentRoute.value.query.pq).toBe('t:goblin')
+  })
+
   it('hides navigation for a deep-linked product outside the registered grid', async () => {
     await open('z')
     expect(byLabel('Previous sealed product')).toBeNull()

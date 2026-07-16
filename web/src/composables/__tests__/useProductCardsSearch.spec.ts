@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { defineComponent, h, nextTick, type Ref } from 'vue'
+import { defineComponent, h, nextTick, ref, type Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { PRODUCT_CARDS_DEFAULT_SORT, PRODUCT_CARDS_SORT_OPTIONS } from '@/lib/cardSort'
@@ -27,13 +27,15 @@ function makeRouter() {
 // Mount a throwaway component that just runs the composable, so useRoute/useRouter resolve and
 // the test can drive the returned state. It lives outside <RouterView>, so navigating the router
 // doesn't unmount it — a re-mount stands in for the product view re-mounting after Back.
-// `keys` defaults through the composable to the full page's plain `?q=`/`?sort=`.
-function mountSearch(router: Router, keys?: ProductCardsSearchKeys) {
+// `keys` defaults through the composable to the full page's plain `?q=`/`?sort=`. The product
+// `id` the real views thread down as a prop is a plain ref here: a test stepping to another
+// product updates it alongside the navigation, exactly as the prop would follow the URL.
+function mountSearch(router: Router, keys?: ProductCardsSearchKeys, id: Ref<string> = ref('100')) {
   let api!: ReturnType<typeof useProductCardsSearch>
   const harness = mount(
     defineComponent({
       setup() {
-        api = useProductCardsSearch(PRODUCT_CARDS_DEFAULT_SORT, VALID_SORTS, keys)
+        api = useProductCardsSearch(id, PRODUCT_CARDS_DEFAULT_SORT, VALID_SORTS, keys)
         return () => h('div')
       },
     }),
@@ -46,9 +48,10 @@ async function start(at: string, keys?: ProductCardsSearchKeys) {
   const router = makeRouter()
   await router.push(at)
   await router.isReady()
-  const { api, harness } = mountSearch(router, keys)
+  const id = ref('100')
+  const { api, harness } = mountSearch(router, keys, id)
   await nextTick()
-  return { router, api, harness }
+  return { router, api, harness, id }
 }
 
 const query = (router: Router) => router.currentRoute.value.query
@@ -105,11 +108,12 @@ describe('useProductCardsSearch', () => {
   })
 
   it('cancels a not-yet-committed search when navigating to another product (no leak)', async () => {
-    const { router, api } = await start('/sealed/mtg/100')
+    const { router, api, id } = await start('/sealed/mtg/100')
     api.searchInput.value = 'go'
     await flushPromises() // still inside the 300ms debounce — nothing committed yet
 
     await router.replace({ path: '/sealed/mtg/200', query: {} })
+    id.value = '200'
     await flushPromises()
     // The box resyncs to the (empty) destination query immediately…
     expect(api.searchInput.value).toBe('')
@@ -122,9 +126,10 @@ describe('useProductCardsSearch', () => {
   })
 
   it('resyncs the search box to the destination query on navigation', async () => {
-    const { router, api } = await start('/sealed/mtg/100?q=elf')
+    const { router, api, id } = await start('/sealed/mtg/100?q=elf')
     expect(api.searchInput.value).toBe('elf')
     await router.replace({ path: '/sealed/mtg/200', query: { q: 'goblin' } })
+    id.value = '200'
     await flushPromises()
     expect(api.searchInput.value).toBe('goblin')
     expect(api.query.value).toBe('goblin')
@@ -203,5 +208,46 @@ describe('useProductCardsSearch namespaced onto a route that owns ?q=/?sort=', (
     expect(query(router).pq).toBe('t:goblin')
     expect(query(router).q).toBe('bloomburrow')
     expect(query(router).sort).toBe('price:desc')
+  })
+
+  // Stepping products in the modal (DetailDialogShell.goTo, prev/next or the arrow keys)
+  // rewrites only `?product=` — the path never moves, so a `route.path` watch is blind to it.
+  // The id prop is the signal that works on both surfaces (issue #448).
+  it('cancels a half-typed search when the modal steps products (no path change, #448)', async () => {
+    const { router, api, id } = await start(MODAL, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    api.searchInput.value = 'go'
+    await flushPromises() // still inside the 300ms debounce — nothing committed yet
+
+    // The step query is an explicit literal (the state goTo leaves), not a spread of the live
+    // query — spreading would carry a pq the debounce might commit under a stalled event loop,
+    // turning a runner hiccup into a false failure.
+    await router.replace({ query: { q: 'bloomburrow', sort: 'price:desc', product: '200' } })
+    id.value = '200'
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/sealed/mtg')
+    // The box resyncs to the next product's (empty) committed search immediately…
+    expect(api.searchInput.value).toBe('')
+
+    // …and the pending 'go' never lands on product 200.
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).pq).toBeUndefined()
+  })
+
+  it('follows a step that drops the previous product’s committed ?pq= (#448)', async () => {
+    const { router, api, id } = await start(`${MODAL}&pq=elf`, PRODUCT_CARDS_MODAL_SEARCH_KEYS)
+    expect(api.searchInput.value).toBe('elf')
+
+    // The URL below is the state goTo leaves behind (the strip itself is pinned by
+    // ProductDetailDialog.spec's button-click test): the visible box must follow the dropped
+    // committed search, and nothing may re-commit the stale 'elf' onto the next product.
+    await router.replace({ query: { q: 'bloomburrow', sort: 'price:desc', product: '200' } })
+    id.value = '200'
+    await flushPromises()
+    expect(api.searchInput.value).toBe('')
+
+    await new Promise((resolve) => setTimeout(resolve, 330))
+    await flushPromises()
+    expect(query(router).pq).toBeUndefined()
   })
 })

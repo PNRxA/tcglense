@@ -13,6 +13,7 @@ import { displayUsdPrice } from '@/lib/cardPrice'
 import { useCurrency } from '@/composables/useCurrency'
 import CardImage from '@/components/cards/CardImage.vue'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
+import { PRODUCT_CARDS_MODAL_SEARCH_KEYS } from '@/composables/useProductCardsSearch'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 const props = defineProps<{
@@ -54,8 +55,11 @@ function onClick(event: MouseEvent) {
   // path, so carry it in the query there. Pages that already have `:game` in the path are
   // left untouched (the dialog reads the param and this stays absent).
   const query: LocationQueryRaw = { ...route.query, card: props.card.id }
-  // A card inside the sealed-product modal swaps detail surfaces instead of stacking dialogs.
+  // A card inside the sealed-product modal swaps detail surfaces instead of stacking dialogs —
+  // and the product modal's namespaced card search leaves with it (it's that product's state,
+  // same as DetailDialogShell dropping its ownedKeys on close/step; issue #448).
   delete query.product
+  for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
   if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
   void router.push({ query })
 }
