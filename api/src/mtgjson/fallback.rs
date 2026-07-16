@@ -17,7 +17,8 @@
 //! upstream is missing. Supplements are additive by default; one can also set
 //! [`FallbackProduct::override_memberships`] when upstream resolves the right cards but
 //! assigns them the wrong bucket. That removes contradictory upstream memberships only for
-//! the curated cards before inserting their fallback rows. Cards are keyed by
+//! the curated cards before inserting their fallback rows — except `booster` rows, an
+//! independent pullable-from-boosters axis the override never touches. Cards are keyed by
 //! `(set, collector_number)` so entries are human-authorable and reviewable; the ingest
 //! resolves them to internal ids the same way it resolves MTGJSON rows.
 //!
@@ -64,10 +65,13 @@ pub struct FallbackProduct {
     pub supplement: bool,
     /// For a [`Self::supplement`] entry, make the fallback membership authoritative for
     /// each card it names: contradictory upstream memberships for the same product/card
-    /// are removed before the curated row is inserted. This is narrower than replacing a
+    /// are removed before the curated row is inserted — except `booster` rows, which are
+    /// an independent axis (a curated guaranteed card can still be pullable from the
+    /// product's boosters) and always survive. This is narrower than replacing a
     /// product's contents — upstream-only cards remain untouched — and is intended for a
     /// source that resolves a randomized pool as guaranteed cards (the Avatar Commander's
-    /// Bundle). Has no effect unless `supplement` is also true.
+    /// Bundle). It cannot correct a wrong upstream `booster` row. Has no effect unless
+    /// `supplement` is also true.
     #[serde(default)]
     pub override_memberships: bool,
     #[serde(default)]

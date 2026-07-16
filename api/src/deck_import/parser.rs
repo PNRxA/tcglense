@@ -213,8 +213,38 @@ fn known_section_header(line: &str) -> Option<&'static str> {
 }
 
 fn custom_section_header(line: &str) -> Option<String> {
-    let header = line.trim_matches(['~', '/', ':', '[', ']']).trim();
+    // A bracket-wrapped line is our own export's escape for names the bare grammar would
+    // misread (see [`render_text_section_header`]): strip exactly the one wrapping pair so
+    // bracket/trim characters belonging to the name survive verbatim.
+    let header = match line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        Some(inner) => inner.trim(),
+        None => line.trim_matches(['~', '/', ':', '[', ']']).trim(),
+    };
     (!header.is_empty() && header.chars().count() <= MAX_CELL).then(|| header.to_string())
+}
+
+/// Render `name` as a plain-text section header line that [`parse_text`] reads back as the
+/// same section. A bare name is ambiguous when the grammar above claims it for something
+/// else — a leading positive quantity ("2 Drops") reads as a card row, a leading `#` as a
+/// comment, and edge characters from the header trim set (`~ / : [ ]`) get eaten — so those
+/// wrap in one bracket pair, which [`custom_section_header`] strips back off verbatim.
+/// Interior line breaks (storable through the section API) flatten to spaces so a header
+/// can never leak an extra card-shaped line into the list. Names that reduce to a standard
+/// board alias ("Deck", "Considering", …) still normalize to that board on re-import —
+/// [`known_section_header`]'s deliberate normalization, not an escape gap. Everything else
+/// stays bare, matching Moxfield's own copy/paste shape.
+pub fn render_text_section_header(name: &str) -> String {
+    let name = name.replace(['\r', '\n'], " ");
+    let leading_quantity = name
+        .split_once(char::is_whitespace)
+        .and_then(|(quantity_token, _)| {
+            parse_quantity(quantity_token.trim_end_matches(['x', 'X']))
+        })
+        .is_some_and(|quantity| quantity > 0);
+    let ambiguous = leading_quantity
+        || name.starts_with(['#', '~', '/', ':', '[', ']'])
+        || name.ends_with(['~', '/', ':', '[', ']']);
+    if ambiguous { format!("[{name}]") } else { name }
 }
 
 fn primary_section(value: &str) -> Option<&str> {
@@ -282,6 +312,52 @@ mod tests {
         assert!(rows[0].foil);
         assert_eq!(rows[1].section, "Custom pile");
         assert_eq!(rows[1].card_name, "Lightning Bolt");
+    }
+
+    /// Section names the text grammar would misread — a leading quantity is a card row, a
+    /// leading '#' a comment, edge trim-set characters get eaten — must export bracketed
+    /// and parse back to the same section; unambiguous names stay bare.
+    #[test]
+    fn renders_ambiguous_section_headers_so_they_round_trip() {
+        assert_eq!(render_text_section_header("Ramp"), "Ramp");
+        assert_eq!(render_text_section_header("2 Drops"), "[2 Drops]");
+        assert_eq!(render_text_section_header("3x Spells"), "[3x Spells]");
+        assert_eq!(render_text_section_header("# Notes"), "[# Notes]");
+        assert_eq!(render_text_section_header("Ramp:"), "[Ramp:]");
+        // The escape is injective: a literal "[2 Drops]" cannot collide with the escaped
+        // form of "2 Drops", so the two sections stay distinct on re-import.
+        assert_eq!(render_text_section_header("[2 Drops]"), "[[2 Drops]]");
+        // A stored line break flattens so a header can never leak a card-shaped line.
+        assert_eq!(
+            render_text_section_header("Notes\n4 Lightning Bolt"),
+            "Notes 4 Lightning Bolt"
+        );
+
+        // Every rendered header parses back as exactly one section carrying the original
+        // name; none is mistaken for a card row or dropped (which would misfile the card
+        // into the previous section).
+        let names = [
+            "2 Drops",
+            "3x Spells",
+            "# Notes",
+            "Ramp:",
+            "[2 Drops]",
+            "2 Drops [v2]",
+            ":",
+            "[]",
+            "~",
+        ];
+        for name in names {
+            let text = format!(
+                "{}\n4 Cathar Commando (MID) 8\n",
+                render_text_section_header(name)
+            );
+            let rows = parse_text(text.as_bytes()).expect("text");
+            assert_eq!(rows.len(), 1, "header for {name:?} must not parse as a card row");
+            assert_eq!(rows[0].section, name, "{name:?} must survive the round trip");
+            assert_eq!(rows[0].card_name, "Cathar Commando");
+            assert_eq!(rows[0].quantity, 4);
+        }
     }
 
     #[test]

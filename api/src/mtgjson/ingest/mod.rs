@@ -694,10 +694,13 @@ mod tests {
         );
 
         // Current upstream behavior: all thirteen deck cards are marked guaranteed, even
-        // though ten form a two-of-ten random pool. It also emits the contained boosters.
+        // though ten form a two-of-ten random pool. It also emits the contained boosters'
+        // pools — including for the curated cards themselves, which are on those sheets.
         let mut rows = HashSet::from([
             (bundle, sol, "contains", false),
+            (bundle, sol, "booster", true),
             (bundle, swat, "contains", false),
+            (bundle, swat, "booster", false),
             (bundle, pull, "booster", false),
         ]);
         let covered = HashSet::from([bundle]);
@@ -707,6 +710,12 @@ mod tests {
         assert!(rows.contains(&(bundle, sol, "contains", false)));
         assert!(!rows.contains(&(bundle, swat, "contains", false)));
         assert!(rows.contains(&(bundle, swat, "variable", false)));
+        assert!(
+            rows.contains(&(bundle, sol, "booster", true))
+                && rows.contains(&(bundle, swat, "booster", false)),
+            "the booster axis is independent of the certainty correction — curated cards \
+             keep their pullable-from-boosters rows"
+        );
         assert!(
             rows.contains(&(bundle, pull, "booster", false)),
             "unrelated rows survive"
