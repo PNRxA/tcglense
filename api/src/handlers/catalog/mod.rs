@@ -13,7 +13,7 @@
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
     Select,
-    sea_query::{Expr, Func, LikeExpr, NullOrdering, SimpleExpr},
+    sea_query::{Expr, Func, NullOrdering, SimpleExpr},
 };
 use serde::Deserialize;
 
@@ -27,7 +27,7 @@ use crate::handlers::shared::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField,
     resolve_page, search_condition, trim_query,
 };
-use crate::scryfall::search::escape_like;
+use crate::scryfall::search::{cust_vals, escape_like};
 
 mod cards;
 mod image;
@@ -241,26 +241,39 @@ fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::En
 /// they match literally. Selects the `name` column only, so callers finish with
 /// `.into_tuple::<String>()`. Powers the collection quick-add autocomplete.
 ///
-/// Portable across SQLite and Postgres without a dialect param: distinct names come
-/// from `GROUP BY name` (Postgres rejects `ORDER BY <expr>` alongside `SELECT
-/// DISTINCT` when the expr isn't in the select list); case-folding is LOWER-both
-/// (`to_ascii_lowercase` matches SQLite's ASCII `LOWER()` → byte-identical results);
-/// and the starts-with-first rank is `MAX(CASE … THEN 1 ELSE 0 END)` (an integer, so
-/// it works on Postgres, which has no `max(boolean)`). All name-group rows share the
+/// Portable across SQLite and Postgres: distinct names come from `GROUP BY name`
+/// (Postgres rejects `ORDER BY <expr>` alongside `SELECT DISTINCT` when the expr
+/// isn't in the select list); case-folding is LOWER-both (`to_ascii_lowercase`
+/// matches SQLite's ASCII `LOWER()` → byte-identical results); and the
+/// starts-with-first rank is `MAX(CASE … THEN 1 ELSE 0 END)` (an integer, so it
+/// works on Postgres, which has no `max(boolean)`). All name-group rows share the
 /// rank, so `MAX` equals the rank and the ordering matches the old DISTINCT form.
-fn name_suggestions_query(game: &str, term: &str, limit: u64) -> Select<card::Entity> {
+///
+/// The LIKE sides compile to `LOWER(COALESCE(name, ''))` — the **exact** expression
+/// `m..027`'s `idx_cards_name_trgm` trigram index is built on (with the `''` inline,
+/// not bound, so the Postgres planner can match the expression index) — turning the
+/// per-keystroke full scan of the wide `cards` table into a trgm bitmap scan for
+/// terms of ≥ 3 chars (shorter needles deliberately keep the seq scan; see `m..027`).
+/// `name` is `NOT NULL`, so the `COALESCE` is an identity and the SQLite result set
+/// is byte-identical to the previous bare-`LOWER(name)` form.
+fn name_suggestions_query(
+    game: &str,
+    term: &str,
+    limit: u64,
+    dialect: Dialect,
+) -> Select<card::Entity> {
     let escaped = escape_like(term).to_ascii_lowercase();
-    let name_lower = Expr::expr(Func::lower(Expr::col((card::Entity, card::Column::Name))));
+    let name_like = |pattern: String| {
+        cust_vals(
+            dialect,
+            "LOWER(COALESCE(name, '')) LIKE ? ESCAPE '\\'",
+            [pattern],
+        )
+    };
 
-    let contains = name_lower
-        .clone()
-        .like(LikeExpr::new(format!("%{escaped}%")).escape('\\'));
+    let contains = name_like(format!("%{escaped}%"));
     // 0/1 rank so MAX() is valid on Postgres (no max(boolean)).
-    let starts_with_rank = Expr::case(
-        name_lower.like(LikeExpr::new(format!("{escaped}%")).escape('\\')),
-        1,
-    )
-    .finally(0);
+    let starts_with_rank = Expr::case(name_like(format!("{escaped}%")), 1).finally(0);
     let starts_with_rank = SimpleExpr::from(Func::max(starts_with_rank));
 
     Card::find()

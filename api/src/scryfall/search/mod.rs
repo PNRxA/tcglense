@@ -47,7 +47,7 @@ use lexer::{Token, lex};
 use parser::Parser;
 
 pub use error::SearchError;
-pub(crate) use compile::escape_like;
+pub(crate) use compile::{cust_vals, escape_like};
 
 /// A sort field a query can request via `order:`. Mapped to the catalog's own
 /// `SortField` in the handler layer.

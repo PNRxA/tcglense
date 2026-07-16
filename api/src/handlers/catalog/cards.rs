@@ -109,7 +109,7 @@ pub async fn card_names(
         .unwrap_or(DEFAULT_NAME_SUGGESTIONS)
         .clamp(1, MAX_NAME_SUGGESTIONS);
 
-    let names: Vec<String> = name_suggestions_query(&game, term, limit)
+    let names: Vec<String> = name_suggestions_query(&game, term, limit, state.dialect())
         .into_tuple::<String>()
         .all(&state.db)
         .await?;
