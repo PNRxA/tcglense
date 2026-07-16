@@ -75,8 +75,8 @@ export type SetCollectionVars = SetHoldingVars
 /** Set the owned counts for a card, then invalidate the dependent collection views. */
 export const useSetCollectionEntryMutation = queries.useSetEntryMutation
 
-/** The signed-in user's biggest gain/loss movements across their collection (day / week /
- * month), for the collection landing's movers panel. */
+/** The signed-in user's biggest gain/loss movements across their collection (1d through
+ * all-time), for the collection landing's movers panel. */
 export function useCollectionMoversQuery(game: Ref<string>) {
   const options = {
     queryKey: ['collection-movers', game],

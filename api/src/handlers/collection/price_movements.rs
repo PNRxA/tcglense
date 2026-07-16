@@ -1,12 +1,14 @@
-//! Collection price movements: the biggest daily / weekly / monthly **gain and loss
-//! movements** across the cards a signed-in user owns.
+//! Collection price movements: the biggest **gain and loss movements** across the cards a
+//! signed-in user owns, from one day through all captured history.
 //!
 //! A "movement" is the change in the USD value of the user's *holding* of a card over a
 //! window — a card's per-unit price change × the quantity owned, summed over the regular
 //! and foil finishes. Cards are ranked by that value change: top gainers (largest positive)
-//! and top losers (largest negative), for each of three windows (day = 1d, week = 7d,
-//! month = 30d), all measured back from the most recent snapshot date across the user's
-//! priced holdings.
+//! and top losers (largest negative), for seven windows (1d / 7d / 30d / 1y / 2y / 3y /
+//! all time), all measured back from the most recent snapshot date across the user's priced
+//! holdings. Fixed windows carry the most recent price at or before their baseline; all time
+//! uses each finish's own earliest captured non-null price so a newer printing is compared
+//! across all of *its* available history rather than being excluded by a global start date.
 //!
 //! Like [`super::value_history`], this reconstructs everything from the daily
 //! `card_price_history` snapshots (keyed by the same internal `card_id` a holding stores)
@@ -19,8 +21,11 @@
 use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
-use chrono::{Duration, NaiveDate, Utc};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use chrono::{Duration, NaiveDate};
+use sea_orm::sea_query::{BinOper, Expr, Func, SimpleExpr};
+use sea_orm::{
+    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect,
+};
 use serde::Serialize;
 
 use crate::auth::extractor::AuthUser;
@@ -39,21 +44,10 @@ use crate::state::AppState;
 /// queries (mirrors [`super::value_history`]).
 const PRICE_ID_CHUNK: usize = 10_000;
 
-/// How far back (from *today*) to fetch price snapshots. The window baselines are measured
-/// from `latest` (the newest snapshot the user owns), so the fetch must reach `latest - 30`
-/// for the month window's carry-forward to find a baseline. The fetch is anchored to today
-/// and `latest <= today`, so the usable margin is `LOOKBACK_DAYS - 30` days — and that margin
-/// is consumed by any lag between today and the newest snapshot. At 60 the month baseline
-/// stays reachable until the price feed is ~30 days stale, well past any healthy daily sync;
-/// beyond that the month window empties first (gracefully, and the returned `as_of` already
-/// exposes the stale date). Kept a windowed range rather than an unbounded scan so it still
-/// rides `idx_card_price_history_covering` as an index-only read.
-const LOOKBACK_DAYS: i64 = 60;
-
 /// How many movers to return per direction, per window.
 const TOP_N: usize = 5;
 
-/// The biggest gain/loss movements across a user's collection, for each of three windows.
+/// The biggest gain/loss movements across a user's collection, for each supported window.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionMovers {
@@ -64,6 +58,10 @@ pub struct CollectionMovers {
     pub day: CollectionMoverList,
     pub week: CollectionMoverList,
     pub month: CollectionMoverList,
+    pub year: CollectionMoverList,
+    pub two_year: CollectionMoverList,
+    pub three_year: CollectionMoverList,
+    pub all_time: CollectionMoverList,
 }
 
 /// The ranked movers for one window: the top gainers and the top losers.
@@ -99,6 +97,10 @@ impl CollectionMovers {
             day: CollectionMoverList::empty(),
             week: CollectionMoverList::empty(),
             month: CollectionMoverList::empty(),
+            year: CollectionMoverList::empty(),
+            two_year: CollectionMoverList::empty(),
+            three_year: CollectionMoverList::empty(),
+            all_time: CollectionMoverList::empty(),
         }
     }
 }
@@ -115,9 +117,9 @@ impl CollectionMoverList {
 /// List collection movers
 ///
 /// `GET /api/collection/{game}/movers` -> the signed-in user's biggest gain/loss movements
-/// over the day / week / month windows. `404` if the game is unknown; an all-empty
-/// `{ "as_of": null, ... }` when the user owns nothing or no owned card has captured price
-/// history. No query params — the windows and top-N are fixed.
+/// over the 1d / 7d / 30d / 1y / 2y / 3y / all-time windows. `404` if the game is unknown;
+/// an all-empty `{ "as_of": null, ... }` when the user owns nothing or no owned card has
+/// captured price history. No query params — the windows and top-N are fixed.
 #[utoipa::path(
     get,
     path = "/api/collection/{game}/movers",
@@ -127,7 +129,7 @@ impl CollectionMoverList {
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
     ),
     responses(
-        (status = 200, description = "The user's biggest gain/loss movements over the day / week / month windows (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
+        (status = 200, description = "The user's biggest gain/loss movements over the 1d / 7d / 30d / 1y / 2y / 3y / all-time windows (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
     ),
@@ -167,31 +169,79 @@ pub async fn collection_movers(
         .collect();
 
     let card_ids: Vec<i32> = holdings.iter().map(|h| h.card_id).collect();
-    // Only the last LOOKBACK_DAYS (60) days of snapshots are needed: the 30d month baseline
-    // plus a 30d margin for feed staleness (see the constant's doc).
-    let cutoff = format_date(Utc::now().date_naive() - Duration::days(LOOKBACK_DAYS));
 
-    // Historic prices for exactly those cards, windowed to the lookback. Chunk the id list
-    // so the `IN (...)` never exceeds the bound-parameter cap; the (game, card_id,
-    // as_of_date) unique index serves each chunk. Only the four columns the fold reads are
-    // fetched, ordered so each card's snapshots arrive ascending by date.
+    // Find the collection-wide reference date first. The aggregate stays inside the
+    // (game, card_id, date) index and returns one scalar per id chunk, regardless of how
+    // much history has accumulated.
+    let mut latest: Option<String> = None;
+    for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
+        let chunk_latest = CardPriceHistory::find()
+            .select_only()
+            .column_as(card_price_history::Column::AsOfDate.max(), "latest")
+            .filter(card_price_history::Column::Game.eq(game.as_str()))
+            .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
+            .into_tuple::<Option<String>>()
+            .one(&state.db)
+            .await?
+            .flatten();
+        if let Some(candidate) = chunk_latest
+            && latest.as_ref().map_or(true, |current| candidate.as_str() > current.as_str())
+        {
+            latest = Some(candidate);
+        }
+    }
+    let Some(latest) = latest else {
+        return Ok(Json(CollectionMovers::empty()));
+    };
+
+    // The reference date is DB-sourced and always well-formed; a parse failure is an
+    // internal invariant break, not a client error (there's no `From<ParseError>` for
+    // `AppError`, so map it explicitly rather than leaking a bare `?`).
+    let latest_date = NaiveDate::parse_from_str(&latest, "%Y-%m-%d")
+        .map_err(|e| AppError::Internal(format!("unparseable snapshot date {latest:?}: {e}")))?;
+
+    let day_target = format_date(latest_date - Duration::days(1));
+    let week_target = format_date(latest_date - Duration::days(7));
+    let month_target = format_date(latest_date - Duration::days(30));
+    let year_target = format_date(latest_date - Duration::days(365));
+    let two_year_target = format_date(latest_date - Duration::days(730));
+    let three_year_target = format_date(latest_date - Duration::days(1095));
+
+    // Aggregate the exact snapshots needed per card: the latest row, the last row at or
+    // before each fixed baseline, and the first non-null row for each finish. Prefixing each
+    // encoded snapshot with its ISO date lets MIN/MAX select the corresponding price row in
+    // the same grouped query. The database scans the covering index once per id chunk, but
+    // only these compact anchors cross the wire — never the complete daily series, and never
+    // one round trip per small group of holdings.
     let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
     for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
         let rows = CardPriceHistory::find()
             .select_only()
             .column(card_price_history::Column::CardId)
-            .column(card_price_history::Column::AsOfDate)
-            .column(card_price_history::Column::PriceUsd)
-            .column(card_price_history::Column::PriceUsdFoil)
+            .column_as(latest_snapshot(), "latest")
+            .column_as(snapshot_at_or_before(&day_target), "day")
+            .column_as(snapshot_at_or_before(&week_target), "week")
+            .column_as(snapshot_at_or_before(&month_target), "month")
+            .column_as(snapshot_at_or_before(&year_target), "year")
+            .column_as(snapshot_at_or_before(&two_year_target), "two_year")
+            .column_as(snapshot_at_or_before(&three_year_target), "three_year")
+            .column_as(
+                first_priced_snapshot(card_price_history::Column::PriceUsd),
+                "first_usd",
+            )
+            .column_as(
+                first_priced_snapshot(card_price_history::Column::PriceUsdFoil),
+                "first_foil",
+            )
             .filter(card_price_history::Column::Game.eq(game.as_str()))
             .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
-            .filter(card_price_history::Column::AsOfDate.gte(cutoff.as_str()))
-            .order_by_asc(card_price_history::Column::CardId)
-            .order_by_asc(card_price_history::Column::AsOfDate)
-            .into_tuple::<(i32, String, Option<String>, Option<String>)>()
+            .group_by(card_price_history::Column::CardId)
+            .into_model::<PriceAnchorSnapshots>()
             .all(&state.db)
             .await?;
-        price_rows.extend(rows);
+        for anchors in rows {
+            price_rows.extend(anchors.into_price_rows()?);
+        }
     }
 
     // Group each card's snapshots (already ascending by date) and parse the decimal-string
@@ -205,49 +255,21 @@ pub async fn collection_movers(
         });
     }
 
-    // Reference date = the most recent snapshot across every fetched cell (zero-padded
-    // `YYYY-MM-DD` compares lexicographically = chronologically). No cells at all -> the
-    // collection has no captured price history in the window, so nothing to rank.
-    let latest = prices
-        .values()
-        .flat_map(|cells| cells.iter())
-        .map(|c| c.date.as_str())
-        .max();
-    let Some(latest) = latest.map(str::to_string) else {
-        return Ok(Json(CollectionMovers::empty()));
-    };
-
-    // The reference date is DB-sourced and always well-formed; a parse failure is an
-    // internal invariant break, not a client error (there's no `From<ParseError>` for
-    // `AppError`, so map it explicitly rather than leaking a bare `?`).
-    let latest_date = NaiveDate::parse_from_str(&latest, "%Y-%m-%d")
-        .map_err(|e| AppError::Internal(format!("unparseable snapshot date {latest:?}: {e}")))?;
-
-    let day_target = format_date(latest_date - Duration::days(1));
-    let week_target = format_date(latest_date - Duration::days(7));
-    let month_target = format_date(latest_date - Duration::days(30));
-
-    let (day_gainers, day_losers) = window_movers(&holdings, &prices, &latest, &day_target, TOP_N);
-    let (week_gainers, week_losers) =
-        window_movers(&holdings, &prices, &latest, &week_target, TOP_N);
-    let (month_gainers, month_losers) =
-        window_movers(&holdings, &prices, &latest, &month_target, TOP_N);
+    let day = window_movers(&holdings, &prices, &latest, &day_target, TOP_N);
+    let week = window_movers(&holdings, &prices, &latest, &week_target, TOP_N);
+    let month = window_movers(&holdings, &prices, &latest, &month_target, TOP_N);
+    let year = window_movers(&holdings, &prices, &latest, &year_target, TOP_N);
+    let two_year = window_movers(&holdings, &prices, &latest, &two_year_target, TOP_N);
+    let three_year = window_movers(&holdings, &prices, &latest, &three_year_target, TOP_N);
+    let all_time = all_time_movers(&holdings, &prices, &latest, TOP_N);
 
     // The union of every card that survived into any final list. A card can rank in several
     // windows (and as a gainer in one, a loser in another), so de-duplicate before fetching.
     let mut needed: HashSet<i32> = HashSet::new();
-    for raw in [
-        &day_gainers,
-        &day_losers,
-        &week_gainers,
-        &week_losers,
-        &month_gainers,
-        &month_losers,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        needed.insert(raw.card_id);
+    for (gainers, losers) in [&day, &week, &month, &year, &two_year, &three_year, &all_time] {
+        for raw in gainers.iter().chain(losers) {
+            needed.insert(raw.card_id);
+        }
     }
 
     // Fetch just those cards, keyed by the internal id the raw movers carry (capture the id
@@ -272,19 +294,61 @@ pub async fn collection_movers(
 
     Ok(Json(CollectionMovers {
         as_of: Some(latest),
-        day: CollectionMoverList {
-            gainers: shape_movers(day_gainers, &cards),
-            losers: shape_movers(day_losers, &cards),
-        },
-        week: CollectionMoverList {
-            gainers: shape_movers(week_gainers, &cards),
-            losers: shape_movers(week_losers, &cards),
-        },
-        month: CollectionMoverList {
-            gainers: shape_movers(month_gainers, &cards),
-            losers: shape_movers(month_losers, &cards),
-        },
+        day: shape_window(day, &cards),
+        week: shape_window(week, &cards),
+        month: shape_window(month, &cards),
+        year: shape_window(year, &cards),
+        two_year: shape_window(two_year, &cards),
+        three_year: shape_window(three_year, &cards),
+        all_time: shape_window(all_time, &cards),
     }))
+}
+
+/// The exact history snapshots needed to rank one card across every response window. Fixed
+/// baselines use the most recent row on/before their target; `first_*` can differ because a
+/// finish may start receiving prices later than its sibling. Each snapshot is encoded as
+/// `YYYY-MM-DD|regular|foil` by the aggregate helpers below.
+#[derive(FromQueryResult)]
+struct PriceAnchorSnapshots {
+    card_id: i32,
+    latest: String,
+    day: Option<String>,
+    week: Option<String>,
+    month: Option<String>,
+    year: Option<String>,
+    two_year: Option<String>,
+    three_year: Option<String>,
+    first_usd: Option<String>,
+    first_foil: Option<String>,
+}
+
+impl PriceAnchorSnapshots {
+    /// Decode the aggregate cells back to the compact row shape consumed by the existing
+    /// ranker. Repeated dates are harmless: grouping below keeps them adjacent, and every
+    /// encoding for a given card/date contains the same source-row prices.
+    fn into_price_rows(
+        self,
+    ) -> Result<Vec<(i32, String, Option<String>, Option<String>)>, AppError> {
+        let snapshots = [
+            Some(self.latest),
+            self.day,
+            self.week,
+            self.month,
+            self.year,
+            self.two_year,
+            self.three_year,
+            self.first_usd,
+            self.first_foil,
+        ];
+        let mut rows = Vec::with_capacity(snapshots.len());
+        for snapshot in snapshots.into_iter().flatten() {
+            let (date, usd, foil) = decode_snapshot(&snapshot)?;
+            rows.push((self.card_id, date, usd, foil));
+        }
+        rows.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+        rows.dedup();
+        Ok(rows)
+    }
 }
 
 /// A holding reduced to what the ranking needs: the card and its current counts.
@@ -314,6 +378,69 @@ struct RawMover {
     change_pct: Option<f64>,
 }
 
+/// Encode one history row as `YYYY-MM-DD|regular|foil`. ISO dates sort chronologically, so
+/// applying MIN/MAX to this string selects the whole price row for the chosen date. `||` and
+/// `COALESCE` have identical text semantics on the supported SQLite and Postgres backends;
+/// the query remains entirely parameterized through SeaQuery expressions.
+fn encoded_snapshot() -> SimpleExpr {
+    let concat = BinOper::Custom("||");
+    Expr::col(card_price_history::Column::AsOfDate)
+        .binary(concat, Expr::val("|"))
+        .binary(
+            concat,
+            Func::coalesce([
+                Expr::col(card_price_history::Column::PriceUsd).into(),
+                Expr::val("").into(),
+            ]),
+        )
+        .binary(concat, Expr::val("|"))
+        .binary(
+            concat,
+            Func::coalesce([
+                Expr::col(card_price_history::Column::PriceUsdFoil).into(),
+                Expr::val("").into(),
+            ]),
+        )
+}
+
+/// The card's most recent captured snapshot.
+fn latest_snapshot() -> SimpleExpr {
+    Func::max(encoded_snapshot()).into()
+}
+
+/// The card's most recent snapshot at or before a fixed target (carry-forward baseline).
+fn snapshot_at_or_before(target: &str) -> SimpleExpr {
+    Func::max(Expr::case(
+        card_price_history::Column::AsOfDate.lte(target),
+        encoded_snapshot(),
+    ))
+    .into()
+}
+
+/// The earliest snapshot on which `price_column` is non-null.
+fn first_priced_snapshot(price_column: card_price_history::Column) -> SimpleExpr {
+    Func::min(Expr::case(price_column.is_not_null(), encoded_snapshot())).into()
+}
+
+/// Decode a compact aggregate snapshot. Stored prices are decimal strings, so `|` cannot
+/// occur in a valid value; a malformed encoding indicates an internal data/query invariant
+/// failure rather than bad client input.
+fn decode_snapshot(encoded: &str) -> Result<(String, Option<String>, Option<String>), AppError> {
+    let mut parts = encoded.split('|');
+    let (Some(date), Some(usd), Some(foil), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(AppError::Internal(format!(
+            "malformed price snapshot aggregate {encoded:?}"
+        )));
+    };
+    Ok((
+        date.to_string(),
+        (!usd.is_empty()).then(|| usd.to_string()),
+        (!foil.is_empty()).then(|| foil.to_string()),
+    ))
+}
+
 /// Rank the holdings by their value change between `target` (the window baseline) and
 /// `latest` (the reference date), returning `(gainers, losers)` — gainers sorted by change
 /// descending, losers by change ascending (most negative first), each capped at `top_n`.
@@ -331,17 +458,53 @@ fn window_movers(
     target: &str,
     top_n: usize,
 ) -> (Vec<RawMover>, Vec<RawMover>) {
+    rank_movers(holdings, prices, latest, Some(target), top_n)
+}
+
+/// Rank movements across every captured price for each finish. Unlike a fixed window, an
+/// all-time comparison has no shared calendar anchor: a card first printed last year should
+/// still participate even when another owned card has ten years of history. Each finish
+/// therefore uses its own earliest non-null captured price as the baseline.
+fn all_time_movers(
+    holdings: &[HoldingRow],
+    prices: &HashMap<i32, Vec<PriceCell>>,
+    latest: &str,
+    top_n: usize,
+) -> (Vec<RawMover>, Vec<RawMover>) {
+    rank_movers(holdings, prices, latest, None, top_n)
+}
+
+/// Shared ranker for fixed-window (`target = Some(date)`) and all-time (`target = None`)
+/// movement. Fixed windows take both baseline finish prices from the last snapshot at or
+/// before `target`; all time finds the first non-null baseline independently per finish.
+fn rank_movers(
+    holdings: &[HoldingRow],
+    prices: &HashMap<i32, Vec<PriceCell>>,
+    latest: &str,
+    target: Option<&str>,
+    top_n: usize,
+) -> (Vec<RawMover>, Vec<RawMover>) {
     let mut movers: Vec<RawMover> = Vec::new();
 
     for holding in holdings {
         let Some(cells) = prices.get(&holding.card_id) else {
             continue;
         };
-        // The most recent snapshot at each anchor, carried forward across missing days.
-        let (Some(now_cell), Some(prev_cell)) =
-            (priced_at(cells, latest), priced_at(cells, target))
-        else {
+        // The most recent snapshot at the common `latest` anchor, carried forward across a
+        // missing day for this card.
+        let Some(now_cell) = priced_at(cells, latest) else {
             continue;
+        };
+        let (prev_usd, prev_foil) = if let Some(target) = target {
+            let Some(prev_cell) = priced_at(cells, target) else {
+                continue;
+            };
+            (prev_cell.usd_cents, prev_cell.foil_cents)
+        } else {
+            (
+                cells.iter().find_map(|cell| cell.usd_cents),
+                cells.iter().find_map(|cell| cell.foil_cents),
+            )
         };
 
         let mut value_now_cents: i128 = 0;
@@ -350,8 +513,8 @@ fn window_movers(
         let mut contributed = false;
 
         for (now, prev, qty) in [
-            (now_cell.usd_cents, prev_cell.usd_cents, holding.quantity),
-            (now_cell.foil_cents, prev_cell.foil_cents, holding.foil_quantity),
+            (now_cell.usd_cents, prev_usd, holding.quantity),
+            (now_cell.foil_cents, prev_foil, holding.foil_quantity),
         ] {
             if qty > 0
                 && let (Some(now), Some(prev)) = (now, prev)
@@ -433,6 +596,17 @@ fn shape_movers(raws: Vec<RawMover>, cards: &HashMap<i32, CardResponse>) -> Vec<
         .collect()
 }
 
+/// Dress both sides of one raw window with their card payloads.
+fn shape_window(
+    (gainers, losers): (Vec<RawMover>, Vec<RawMover>),
+    cards: &HashMap<i32, CardResponse>,
+) -> CollectionMoverList {
+    CollectionMoverList {
+        gainers: shape_movers(gainers, cards),
+        losers: shape_movers(losers, cards),
+    }
+}
+
 /// Format a signed cent delta as a 2-dp USD string that always carries a leading `-` for a
 /// negative value — including the `(-100, 0)` range where [`format_cents`] alone drops the
 /// sign (its dollar part is a signless zero, so `-50` would render as `"0.50"`).
@@ -470,6 +644,38 @@ mod tests {
 
     fn changes(movers: &[RawMover]) -> Vec<i128> {
         movers.iter().map(|m| m.change_cents).collect()
+    }
+
+    #[test]
+    fn compact_snapshot_decode_preserves_null_finishes() {
+        assert_eq!(
+            decode_snapshot("2024-01-02|12.34|").unwrap(),
+            ("2024-01-02".to_string(), Some("12.34".to_string()), None)
+        );
+        assert_eq!(
+            decode_snapshot("2024-01-02||56.78").unwrap(),
+            ("2024-01-02".to_string(), None, Some("56.78".to_string()))
+        );
+        assert!(decode_snapshot("2024-01-02|12.34").is_err());
+    }
+
+    #[test]
+    fn compact_snapshot_aggregate_renders_for_both_databases() {
+        use sea_orm::sea_query::{PostgresQueryBuilder, Query, SqliteQueryBuilder};
+
+        let query = Query::select()
+            .expr(latest_snapshot())
+            .expr(snapshot_at_or_before("2024-01-02"))
+            .to_owned();
+        for sql in [
+            query.to_string(SqliteQueryBuilder),
+            query.to_string(PostgresQueryBuilder),
+        ] {
+            assert!(sql.contains("MAX("), "{sql}");
+            assert!(sql.contains(" || "), "{sql}");
+            assert!(sql.contains("COALESCE("), "{sql}");
+            assert!(sql.contains("CASE WHEN"), "{sql}");
+        }
     }
 
     #[test]
@@ -613,6 +819,29 @@ mod tests {
         assert!(losers.is_empty());
         assert_eq!(ids(&gainers), vec![1]);
         assert_eq!(gainers[0].change_cents, 300);
+    }
+
+    #[test]
+    fn all_time_uses_each_finish_earliest_non_null_price() {
+        // Regular history begins on 01-01 while foil starts on 01-02. All time compares
+        // each finish to its own honest first price: regular $1->$4 and foil $3->$5.
+        let holdings = vec![holding(1, 1, 1)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("1.00"), None),
+                cell("2024-01-02", Some("2.00"), Some("3.00")),
+                cell("2024-01-03", Some("4.00"), Some("5.00")),
+            ],
+        );
+
+        let (gainers, losers) = all_time_movers(&holdings, &prices, "2024-01-03", TOP_N);
+        assert!(losers.is_empty());
+        assert_eq!(ids(&gainers), vec![1]);
+        assert_eq!(gainers[0].value_prev_cents, 400);
+        assert_eq!(gainers[0].value_now_cents, 900);
+        assert_eq!(gainers[0].change_cents, 500);
     }
 
     #[test]

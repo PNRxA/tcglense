@@ -738,7 +738,15 @@ async fn movers_requires_auth_and_handles_empty_and_unknown_game() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
     assert!(body["as_of"].is_null(), "no holdings -> null as_of");
-    for window in ["day", "week", "month"] {
+    for window in [
+        "day",
+        "week",
+        "month",
+        "year",
+        "two_year",
+        "three_year",
+        "all_time",
+    ] {
         assert!(body[window]["gainers"].as_array().unwrap().is_empty());
         assert!(body[window]["losers"].as_array().unwrap().is_empty());
     }
@@ -862,4 +870,53 @@ async fn movers_month_window_empties_when_baseline_predates_history() {
     // Month: no snapshot at/before the 30d target -> empty, not a bogus delta.
     assert!(body["month"]["gainers"].as_array().unwrap().is_empty());
     assert!(body["month"]["losers"].as_array().unwrap().is_empty());
+}
+
+/// The long-range windows use the same carry-forward baseline semantics as the short ones,
+/// while all-time reaches beyond three years to the finish's earliest captured price.
+#[tokio::test]
+async fn movers_supports_year_two_year_three_year_and_all_time() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-long-ranges@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 1).await;
+
+    let (d0, d365, d730, d1095, d1200) = (
+        day_offset(0),
+        day_offset(365),
+        day_offset(730),
+        day_offset(1095),
+        day_offset(1200),
+    );
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d1200, Some("1.00"), None),
+            (d1095, Some("2.00"), None),
+            (d730, Some("3.00"), None),
+            (d365, Some("4.00"), None),
+            (d0.clone(), Some("10.00"), None),
+        ],
+    )
+    .await;
+
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
+    assert_eq!(body["as_of"].as_str(), Some(d0.as_str()));
+
+    for (window, value_prev, change_usd) in [
+        ("year", "4.00", "6.00"),
+        ("two_year", "3.00", "7.00"),
+        ("three_year", "2.00", "8.00"),
+        ("all_time", "1.00", "9.00"),
+    ] {
+        assert_eq!(mover_ids(&body[window]["gainers"]), vec![id.clone()]);
+        assert_eq!(body[window]["gainers"][0]["value_prev"], value_prev);
+        assert_eq!(body[window]["gainers"][0]["change_usd"], change_usd);
+        assert!(body[window]["losers"].as_array().unwrap().is_empty());
+    }
 }
