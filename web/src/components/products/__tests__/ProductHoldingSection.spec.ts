@@ -2,30 +2,31 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick, ref, type Ref } from 'vue'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import type { WishlistProductEntry, WishlistProductPage } from '@/lib/api'
-import WishlistSealedSection from '../WishlistSealedSection.vue'
+import type { ProductHoldingEntry, ProductHoldingPage } from '@/lib/api'
+import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 
-// Drive the section off controlled query state rather than the network: the wish-list
-// products composable is mocked so the test exercises the section's render gating (self-hides
-// when nothing is wanted), its header counts, the wanted-count map it hands the grid, and the
-// page-when-needed rule — not the query layer (covered by the API path + backend tests).
+// Drive the section off controlled query state rather than the network: both product
+// composables are mocked so the test exercises render gating, header counts, both holding
+// maps handed to the grid, and the page-when-needed rule — not the query layer (covered by
+// the API path + backend tests).
 // `page` and `dataRef` capture the real refs handed to the mock on the most recent mount, so a
 // test can mutate them after mounting to exercise clamp-page reactivity — the other fields are
 // only read as seed values at mount time.
 const state = vi.hoisted(() => ({
-  data: undefined as WishlistProductPage | undefined,
+  data: undefined as ProductHoldingPage | undefined,
   isPlaceholderData: false,
   isSuccess: true,
   page: undefined as Ref<number> | undefined,
-  dataRef: undefined as Ref<WishlistProductPage | undefined> | undefined,
+  dataRef: undefined as Ref<ProductHoldingPage | undefined> | undefined,
+  otherCounts: {} as Record<string, { quantity: number; foil_quantity: number }>,
 }))
 
 vi.mock('@/composables/useWishlist', () => ({
   WISHLIST_PRODUCT_PAGE_SIZE: 60,
   useWishlistProductsQuery: (_game: unknown, page: Ref<number>) => {
     state.page = page
-    const dataRef = ref(state.data) as Ref<WishlistProductPage | undefined>
+    const dataRef = ref(state.data) as Ref<ProductHoldingPage | undefined>
     state.dataRef = dataRef
     return {
       data: dataRef,
@@ -33,18 +34,33 @@ vi.mock('@/composables/useWishlist', () => ({
       isSuccess: ref(state.isSuccess),
     }
   },
+  useWishlistProductCounts: () => ({ ownership: ref(state.otherCounts) }),
 }))
 
-// A props-echoing ProductGrid stub: the section now hands the grid a `wanted` counts map
-// (keyed by product id) instead of a #badge slot, so the test asserts on the stub's props
-// without deep-rendering the real tiles/images.
+vi.mock('@/composables/useCollection', () => ({
+  COLLECTION_PRODUCT_PAGE_SIZE: 60,
+  useCollectionProductsQuery: (_game: unknown, page: Ref<number>) => {
+    state.page = page
+    const dataRef = ref(state.data) as Ref<ProductHoldingPage | undefined>
+    state.dataRef = dataRef
+    return {
+      data: dataRef,
+      isPlaceholderData: ref(state.isPlaceholderData),
+      isSuccess: ref(state.isSuccess),
+    }
+  },
+  useCollectionProductCounts: () => ({ ownership: ref(state.otherCounts) }),
+}))
+
+// A props-echoing ProductGrid stub lets the test assert both counts maps without
+// deep-rendering the real tiles/images.
 const ProductGridStub = {
   name: 'ProductGrid',
-  props: ['game', 'products', 'wanted'],
+  props: ['game', 'products', 'wanted', 'owned'],
   template: '<div class="grid-stub" />',
 }
 
-function entry(id: string, quantity: number, foilQuantity = 0): WishlistProductEntry {
+function entry(id: string, quantity: number, foilQuantity = 0): ProductHoldingEntry {
   return {
     product: {
       id,
@@ -63,19 +79,22 @@ function entry(id: string, quantity: number, foilQuantity = 0): WishlistProductE
   }
 }
 
-function pageData(entries: WishlistProductEntry[], total = entries.length): WishlistProductPage {
+function pageData(entries: ProductHoldingEntry[], total = entries.length): ProductHoldingPage {
   return { data: entries, page: 1, page_size: 60, total, has_more: total > 60 }
 }
 
-async function mountSection(path = '/wishlist/mtg') {
+async function mountSection(path = '/wishlist/mtg', list: 'collection' | 'wishlist' = 'wishlist') {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/wishlist/:game', component: { template: '<div />' } }],
+    routes: [
+      { path: '/wishlist/:game', component: { template: '<div />' } },
+      { path: '/collection/:game', component: { template: '<div />' } },
+    ],
   })
   await router.push(path)
 
-  const wrapper = mount(WishlistSealedSection, {
-    props: { game: 'mtg' },
+  const wrapper = mount(ProductHoldingSection, {
+    props: { game: 'mtg', list },
     global: {
       plugins: [router],
       stubs: {
@@ -94,9 +113,10 @@ beforeEach(() => {
   state.isSuccess = true
   state.page = undefined
   state.dataRef = undefined
+  state.otherCounts = {}
 })
 
-describe('WishlistSealedSection', () => {
+describe('ProductHoldingSection', () => {
   it('renders nothing while data is undefined', async () => {
     state.data = undefined
     const { wrapper } = await mountSection()
@@ -126,6 +146,7 @@ describe('WishlistSealedSection', () => {
       '100': { quantity: 3, foil_quantity: 0 },
       '200': { quantity: 1, foil_quantity: 2 },
     })
+    expect(grid.props('owned')).toEqual({})
   })
 
   it('paginates only when the total exceeds one page (60)', async () => {
@@ -136,6 +157,21 @@ describe('WishlistSealedSection', () => {
     // Over a page: the pager renders.
     state.data = pageData([entry('100', 1)], 100)
     expect((await mountSection()).wrapper.findComponent(CardPagination).exists()).toBe(true)
+  })
+
+  it('uses the same section for collection products and passes owned counts', async () => {
+    state.data = pageData([entry('100', 2, 1)])
+    state.otherCounts = { '100': { quantity: 4, foil_quantity: 0 } }
+    const { wrapper } = await mountSection('/collection/mtg', 'collection')
+
+    expect(wrapper.get('h2').text()).toContain('1 owned')
+    const grid = wrapper.getComponent(ProductGridStub)
+    expect(grid.props('owned')).toEqual({
+      '100': { quantity: 2, foil_quantity: 1 },
+    })
+    expect(grid.props('wanted')).toEqual({
+      '100': { quantity: 4, foil_quantity: 0 },
+    })
   })
 
   it('restores page 2 from the URL and clamps the URL when the total shrinks', async () => {

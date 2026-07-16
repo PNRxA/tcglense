@@ -1,4 +1,4 @@
-//! Wish-list sealed-product routes backed by the shared product-holding engine.
+//! Collection sealed-product routes backed by the shared product-holding engine.
 
 use axum::{Json, extract::State};
 use chrono::Utc;
@@ -9,12 +9,10 @@ use sea_orm::{
 };
 
 use crate::auth::extractor::{AuthUser, WritableUser};
-use crate::entities::prelude::{Product, WishlistProductItem};
-use crate::entities::{product, wishlist_product_item};
+use crate::entities::prelude::{CollectionProductItem, Product};
+use crate::entities::{collection_product_item, product};
 use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
-#[cfg(test)]
-use crate::handlers::shared::product_holdings::summarize_product_rows;
 use crate::handlers::shared::product_holdings::{
     ProductHoldingEntry, ProductHoldingListParams, ProductHoldingRepository, ProductHoldingRow,
     ProductHoldingSummary, get_product_holding, list_product_holdings, product_holding_counts,
@@ -25,19 +23,19 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-pub(super) fn wanted_products_query(
+fn owned_products_query(
     user_id: i32,
     game: &str,
-) -> SelectTwo<wishlist_product_item::Entity, product::Entity> {
-    WishlistProductItem::find()
+) -> SelectTwo<collection_product_item::Entity, product::Entity> {
+    CollectionProductItem::find()
         .find_also_related(Product)
-        .filter(wishlist_product_item::Column::UserId.eq(user_id))
-        .filter(wishlist_product_item::Column::Game.eq(game))
-        .order_by_desc(wishlist_product_item::Column::UpdatedAt)
-        .order_by_desc(wishlist_product_item::Column::Id)
+        .filter(collection_product_item::Column::UserId.eq(user_id))
+        .filter(collection_product_item::Column::Game.eq(game))
+        .order_by_desc(collection_product_item::Column::UpdatedAt)
+        .order_by_desc(collection_product_item::Column::Id)
 }
 
-fn row(item: wishlist_product_item::Model) -> ProductHoldingRow {
+fn row(item: collection_product_item::Model) -> ProductHoldingRow {
     ProductHoldingRow {
         product_id: item.product_id,
         quantity: item.quantity,
@@ -45,9 +43,9 @@ fn row(item: wishlist_product_item::Model) -> ProductHoldingRow {
     }
 }
 
-struct WishlistProductRepository;
+struct CollectionProductRepository;
 
-impl ProductHoldingRepository for WishlistProductRepository {
+impl ProductHoldingRepository for CollectionProductRepository {
     async fn page(
         db: &DatabaseConnection,
         user_id: i32,
@@ -55,7 +53,7 @@ impl ProductHoldingRepository for WishlistProductRepository {
         page: u64,
         page_size: u64,
     ) -> Result<(u64, Vec<(ProductHoldingRow, Option<product::Model>)>), AppError> {
-        let paginator = wanted_products_query(user_id, game).paginate(db, page_size);
+        let paginator = owned_products_query(user_id, game).paginate(db, page_size);
         let total = paginator.num_items().await?;
         let rows = paginator
             .fetch_page(page - 1)
@@ -71,7 +69,7 @@ impl ProductHoldingRepository for WishlistProductRepository {
         user_id: i32,
         game: &str,
     ) -> Result<Vec<(ProductHoldingRow, Option<product::Model>)>, AppError> {
-        Ok(wanted_products_query(user_id, game)
+        Ok(owned_products_query(user_id, game)
             .all(db)
             .await?
             .into_iter()
@@ -85,10 +83,10 @@ impl ProductHoldingRepository for WishlistProductRepository {
         game: &str,
         product_id: i32,
     ) -> Result<Option<ProductHoldingRow>, AppError> {
-        Ok(WishlistProductItem::find()
-            .filter(wishlist_product_item::Column::UserId.eq(user_id))
-            .filter(wishlist_product_item::Column::Game.eq(game))
-            .filter(wishlist_product_item::Column::ProductId.eq(product_id))
+        Ok(CollectionProductItem::find()
+            .filter(collection_product_item::Column::UserId.eq(user_id))
+            .filter(collection_product_item::Column::Game.eq(game))
+            .filter(collection_product_item::Column::ProductId.eq(product_id))
             .one(db)
             .await?
             .map(row))
@@ -100,10 +98,10 @@ impl ProductHoldingRepository for WishlistProductRepository {
         game: &str,
         product_ids: Vec<i32>,
     ) -> Result<Vec<ProductHoldingRow>, AppError> {
-        Ok(WishlistProductItem::find()
-            .filter(wishlist_product_item::Column::UserId.eq(user_id))
-            .filter(wishlist_product_item::Column::Game.eq(game))
-            .filter(wishlist_product_item::Column::ProductId.is_in(product_ids))
+        Ok(CollectionProductItem::find()
+            .filter(collection_product_item::Column::UserId.eq(user_id))
+            .filter(collection_product_item::Column::Game.eq(game))
+            .filter(collection_product_item::Column::ProductId.is_in(product_ids))
             .all(db)
             .await?
             .into_iter()
@@ -117,10 +115,10 @@ impl ProductHoldingRepository for WishlistProductRepository {
         game: &str,
         product_id: i32,
     ) -> Result<(), AppError> {
-        WishlistProductItem::delete_many()
-            .filter(wishlist_product_item::Column::UserId.eq(user_id))
-            .filter(wishlist_product_item::Column::Game.eq(game))
-            .filter(wishlist_product_item::Column::ProductId.eq(product_id))
+        CollectionProductItem::delete_many()
+            .filter(collection_product_item::Column::UserId.eq(user_id))
+            .filter(collection_product_item::Column::Game.eq(game))
+            .filter(collection_product_item::Column::ProductId.eq(product_id))
             .exec(db)
             .await?;
         Ok(())
@@ -135,7 +133,7 @@ impl ProductHoldingRepository for WishlistProductRepository {
         foil_quantity: i32,
     ) -> Result<(), AppError> {
         let now = Utc::now();
-        WishlistProductItem::insert(wishlist_product_item::ActiveModel {
+        CollectionProductItem::insert(collection_product_item::ActiveModel {
             user_id: Set(user_id),
             game: Set(game.to_string()),
             product_id: Set(product_id),
@@ -147,14 +145,14 @@ impl ProductHoldingRepository for WishlistProductRepository {
         })
         .on_conflict(
             OnConflict::columns([
-                wishlist_product_item::Column::UserId,
-                wishlist_product_item::Column::Game,
-                wishlist_product_item::Column::ProductId,
+                collection_product_item::Column::UserId,
+                collection_product_item::Column::Game,
+                collection_product_item::Column::ProductId,
             ])
             .update_columns([
-                wishlist_product_item::Column::Quantity,
-                wishlist_product_item::Column::FoilQuantity,
-                wishlist_product_item::Column::UpdatedAt,
+                collection_product_item::Column::Quantity,
+                collection_product_item::Column::FoilQuantity,
+                collection_product_item::Column::UpdatedAt,
             ])
             .to_owned(),
         )
@@ -164,22 +162,11 @@ impl ProductHoldingRepository for WishlistProductRepository {
     }
 }
 
-#[cfg(test)]
-pub(super) async fn product_summary(
-    db: &DatabaseConnection,
-    user_id: i32,
-    game: &str,
-) -> Result<ProductHoldingSummary, AppError> {
-    let rows =
-        <WishlistProductRepository as ProductHoldingRepository>::all(db, user_id, game).await?;
-    Ok(summarize_product_rows(rows))
-}
-
-/// List wanted sealed products
+/// List owned sealed products
 #[utoipa::path(
     get,
-    path = "/api/wishlist/{game}/products",
-    tag = "Wish list",
+    path = "/api/collection/{game}/products",
+    tag = "Collection",
     security(("api_key" = [])),
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
@@ -187,103 +174,104 @@ pub(super) async fn product_summary(
         ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
     ),
     responses(
-        (status = 200, description = "A page of the signed-in user's wanted sealed products.", body = Page<ProductHoldingEntry>),
+        (status = 200, description = "A page of the signed-in user's owned sealed products.", body = Page<ProductHoldingEntry>),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
     ),
 )]
-pub async fn list_wishlist_products(
+pub async fn list_collection_products(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
     Query(params): Query<ProductHoldingListParams>,
 ) -> Result<Json<Page<ProductHoldingEntry>>, AppError> {
     Ok(Json(
-        list_product_holdings::<WishlistProductRepository>(&state, user.id, &game, params).await?,
+        list_product_holdings::<CollectionProductRepository>(&state, user.id, &game, params)
+            .await?,
     ))
 }
 
-/// Get wish list sealed summary
+/// Get collection sealed summary
 #[utoipa::path(
     get,
-    path = "/api/wishlist/{game}/products/summary",
-    tag = "Wish list",
+    path = "/api/collection/{game}/products/summary",
+    tag = "Collection",
     security(("api_key" = [])),
     params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
     responses(
-        (status = 200, description = "Aggregate stats for the user's wanted sealed products.", body = ProductHoldingSummary),
+        (status = 200, description = "Aggregate stats for the user's owned sealed products.", body = ProductHoldingSummary),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
     ),
 )]
-pub async fn wishlist_product_summary(
+pub async fn collection_product_summary(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
 ) -> Result<Json<ProductHoldingSummary>, AppError> {
     Ok(Json(
-        summarize_product_holdings::<WishlistProductRepository>(&state, user.id, &game).await?,
+        summarize_product_holdings::<CollectionProductRepository>(&state, user.id, &game).await?,
     ))
 }
 
-/// Batch wanted product counts
+/// Batch owned product counts
 #[utoipa::path(
     post,
-    path = "/api/wishlist/{game}/products/counts",
-    tag = "Wish list",
+    path = "/api/collection/{game}/products/owned",
+    tag = "Collection",
     security(("api_key" = [])),
     params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
     request_body = OwnedCountsRequest,
     responses(
-        (status = 200, description = "Wanted counts for requested external product ids; unwanted ids are absent.", body = OwnedCountsResponse),
+        (status = 200, description = "Owned counts for requested external product ids; unowned ids are absent.", body = OwnedCountsResponse),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
         (status = 422, description = "More than the per-request id cap was requested."),
     ),
 )]
-pub async fn wishlist_product_counts(
+pub async fn collection_product_counts(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
     JsonBody(payload): JsonBody<OwnedCountsRequest>,
 ) -> Result<Json<OwnedCountsResponse>, AppError> {
     Ok(Json(
-        product_holding_counts::<WishlistProductRepository>(&state, user.id, &game, payload)
+        product_holding_counts::<CollectionProductRepository>(&state, user.id, &game, payload)
             .await?,
     ))
 }
 
-/// Get wish list product counts
+/// Get collection product counts
 #[utoipa::path(
     get,
-    path = "/api/wishlist/{game}/products/{id}",
-    tag = "Wish list",
+    path = "/api/collection/{game}/products/{id}",
+    tag = "Collection",
     security(("api_key" = [])),
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
         ("id" = String, Path, description = "External (TCGplayer) product id"),
     ),
     responses(
-        (status = 200, description = "How many of the product the user wants (zeros if none).", body = CollectionQuantities),
+        (status = 200, description = "How many of the product the user owns (zeros if none).", body = CollectionQuantities),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game or product."),
     ),
 )]
-pub async fn get_wishlist_product_entry(
+pub async fn get_collection_product_entry(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path((game, id)): Path<(String, String)>,
 ) -> Result<Json<CollectionQuantities>, AppError> {
     Ok(Json(
-        get_product_holding::<WishlistProductRepository>(&state, user.id, &game, &id).await?,
+        get_product_holding::<CollectionProductRepository>(&state, user.id, &game, &id).await?,
     ))
 }
 
-/// Update wish list product counts
+/// Update collection product counts
 #[utoipa::path(
     put,
-    path = "/api/wishlist/{game}/products/{id}",
-    tag = "Wish list",
+    path = "/api/collection/{game}/products/{id}",
+    tag = "Collection",
     security(("api_key" = [])),
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
@@ -291,21 +279,21 @@ pub async fn get_wishlist_product_entry(
     ),
     request_body = SetQuantitiesRequest,
     responses(
-        (status = 200, description = "The resulting wanted counts (both zero removes the holding).", body = CollectionQuantities),
+        (status = 200, description = "The resulting owned counts (both zero removes the holding).", body = CollectionQuantities),
         (status = 401, description = "Missing or invalid API key."),
         (status = 403, description = "A read-scoped API key cannot write."),
         (status = 404, description = "Unknown game or product."),
         (status = 422, description = "A negative or oversized count."),
     ),
 )]
-pub async fn set_wishlist_product_entry(
+pub async fn set_collection_product_entry(
     State(state): State<AppState>,
     WritableUser(user): WritableUser,
     Path((game, id)): Path<(String, String)>,
     JsonBody(payload): JsonBody<SetQuantitiesRequest>,
 ) -> Result<Json<CollectionQuantities>, AppError> {
     Ok(Json(
-        set_product_holding::<WishlistProductRepository>(&state, user.id, &game, &id, payload)
+        set_product_holding::<CollectionProductRepository>(&state, user.id, &game, &id, payload)
             .await?,
     ))
 }

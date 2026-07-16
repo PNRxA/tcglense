@@ -1,5 +1,3 @@
-import type { Ref } from 'vue'
-import { keepPreviousData, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import {
   getWishlist,
   getWishlistCounts,
@@ -15,18 +13,11 @@ import {
   setWishlistEntry,
   setWishlistProductEntry,
 } from '@/lib/api'
-import type {
-  ApiError,
-  CollectionQuantities,
-  WishlistProductPage,
-  WishlistProductSummary,
-} from '@/lib/api'
+import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
 import {
-  makeHoldingQueries,
-  useBatchCounts,
-  type SetHoldingVars,
-} from '@/composables/holdingQueries'
-import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
+  makeProductHoldingQueries,
+  PRODUCT_HOLDING_PAGE_SIZE,
+} from '@/composables/productHoldingQueries'
 
 // Server state for the signed-in user's wish list (issue #167) — the collection's twin
 // for cards they *want to buy*, minting a parallel `['wishlist', …]` query-key family
@@ -87,111 +78,20 @@ export type SetWishlistVars = SetHoldingVars
 /** Set the wanted counts for a card, then invalidate the dependent wish-list views. */
 export const useSetWishlistEntryMutation = queries.useSetEntryMutation
 
-// ---------- Wanted sealed products (wishlist-only, issue #364) ----------
-//
-// Sealed products can be wished for, but have no collection twin, so the seam rule
-// (extend the shared engine, never fork it) doesn't apply — these are wishlist-only
-// siblings that live beside the factory instance rather than as a factory axis. The key
-// families all head-start with `wishlist` (`wishlist-products`, `wishlist-product-entry`,
-// and the new `wishlist-product-counts`) so `useAuthCacheReset` wipes them on identity
-// change; element-wise partial matching keeps `['wishlist-products', …]` independent of
-// the card factory's `['wishlist', game]` invalidation. As in `holdingQueries.ts`, each
-// vue-query option object is an intermediate variable (not an inline literal) so
-// TanStack's deeply-reactive types don't trip excess-property checks through the authed
-// wrappers.
+const productQueries = makeProductHoldingQueries({
+  prefix: 'wishlist',
+  getList: getWishlistProducts,
+  getEntry: getWishlistProductEntry,
+  getSummary: getWishlistProductSummary,
+  getCounts: getWishlistProductCounts,
+  setEntry: setWishlistProductEntry,
+})
 
-/** Page size for the wanted sealed-products list (mirrors the sealed browse grid). */
-export const WISHLIST_PRODUCT_PAGE_SIZE = 60
-
-/** A page of the user's wanted sealed products, newest edit first. */
-export function useWishlistProductsQuery(game: Ref<string>, page: Ref<number>) {
-  const options = {
-    queryKey: ['wishlist-products', game, page],
-    queryFn: (token: string) =>
-      getWishlistProducts(token, game.value, {
-        page: page.value,
-        pageSize: WISHLIST_PRODUCT_PAGE_SIZE,
-      }),
-    placeholderData: keepPreviousData,
-  }
-  return useAuthedQuery<WishlistProductPage>(options)
-}
-
-/** How many of one sealed product the user wants — for the product-page/dialog steppers.
- * `enabled`/`staleTime` as in the card entry hook: pass `staleTime: 0` + an open-gate so
- * absolute-count editors never seed off a stale cached holding. */
-export function useWishlistProductEntryQuery(
-  game: Ref<string>,
-  id: Ref<string>,
-  opts: { enabled?: Ref<boolean>; staleTime?: number } = {},
-) {
-  const options = {
-    queryKey: ['wishlist-product-entry', game, id],
-    queryFn: (token: string) => getWishlistProductEntry(token, game.value, id.value),
-    enabled: opts.enabled,
-    staleTime: opts.staleTime,
-  }
-  return useAuthedQuery<CollectionQuantities>(options)
-}
-
-/** Aggregate stats for the wanted sealed products — the wish-list landing's product
- * stat trio. Keyed inside the `['wishlist-products', game]` family so
- * `invalidateWishlistProducts`' prefix invalidation refreshes it after every product
- * write for free (`'summary'` never collides with the list's numeric page key). */
-export function useWishlistProductSummaryQuery(game: Ref<string>) {
-  const options = {
-    queryKey: ['wishlist-products', game, 'summary'],
-    queryFn: (token: string) => getWishlistProductSummary(token, game.value),
-  }
-  return useAuthedQuery<WishlistProductSummary>(options)
-}
-
-/** Wanted counts for the sealed products currently on screen, keyed by external id —
- * the resting badges on the product-tile quick-add controls (the product twin of
- * `useWishlistCounts`). */
-export function useWishlistProductCounts(game: Ref<string>, products: Ref<{ id: string }[]>) {
-  return useBatchCounts('wishlist-product-counts', getWishlistProductCounts, game, products)
-}
-
-/** Refresh the views that depend on wanted sealed products after a product write — the
- * list, the per-product entry steppers, the browse-grid wanted-count badges, and the
- * landing's summary trio (which lives inside the `['wishlist-products', game]` family). */
-export function invalidateWishlistProducts(
-  qc: QueryClient,
-  game: string,
-  opts: { entryId?: string } = {},
-) {
-  qc.invalidateQueries({ queryKey: ['wishlist-products', game] })
-  qc.invalidateQueries({ queryKey: ['wishlist-product-counts', game] })
-  qc.invalidateQueries({
-    queryKey: opts.entryId
-      ? ['wishlist-product-entry', game, opts.entryId]
-      : ['wishlist-product-entry', game],
-  })
-}
-
-/** Variables for a sealed-product want write: which product, and the absolute counts. */
+export const WISHLIST_PRODUCT_PAGE_SIZE = PRODUCT_HOLDING_PAGE_SIZE
+export const useWishlistProductsQuery = productQueries.useProductsQuery
+export const useWishlistProductEntryQuery = productQueries.useEntryQuery
+export const useWishlistProductSummaryQuery = productQueries.useSummaryQuery
+export const useWishlistProductCounts = productQueries.useCounts
+export const invalidateWishlistProducts = productQueries.invalidate
 export type SetWishlistProductVars = SetHoldingVars
-
-/** Set the wanted counts for a sealed product, then invalidate the dependent views. */
-export function useSetWishlistProductEntryMutation() {
-  const qc = useQueryClient()
-  const options = {
-    mutationFn: (token: string, vars: SetWishlistProductVars) =>
-      setWishlistProductEntry(token, vars.game, vars.id, {
-        quantity: vars.quantity,
-        foil_quantity: vars.foil_quantity,
-      }),
-    onSuccess: (data: CollectionQuantities, vars: SetWishlistProductVars) => {
-      qc.setQueryData(['wishlist-product-entry', vars.game, vars.id], data)
-    },
-    onSettled: (
-      _data: CollectionQuantities | undefined,
-      _error: ApiError | null,
-      vars: SetWishlistProductVars,
-    ) => {
-      invalidateWishlistProducts(qc, vars.game, { entryId: vars.id })
-    },
-  }
-  return useAuthedMutation<CollectionQuantities, SetWishlistProductVars>(options)
-}
+export const useSetWishlistProductEntryMutation = productQueries.useSetEntryMutation

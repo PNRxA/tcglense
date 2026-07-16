@@ -7,12 +7,12 @@ use sea_orm::entity::prelude::*;
 /// the user does not want has no row (the row is deleted once both counts reach zero), so
 /// the table holds only wish-listed products.
 ///
-/// The sealed-product twin of [`super::wishlist_item`]: the wish list holds both cards and
-/// sealed products, in separate tables, so a product can be wanted independently of any
-/// card. Wishlist-only — the collection deliberately has **no** sealed-product holdings
-/// (issue #364). `product_id` references `products.id` — the internal integer id, not the
-/// provider's external id — so a wish-list row survives a catalog re-import (the daily
-/// TCGCSV sweep is upsert-only); `game` is denormalised from the product so a user's
+/// The sealed-product sibling of [`super::wishlist_item`]: the wish list holds cards and
+/// sealed products in separate tables, so a product can be wanted independently of any
+/// card or collection product row. `product_id` references `products.id` — the internal
+/// integer id, not the provider's external id — so a wish-list row survives a catalog
+/// re-import (the daily TCGCSV sweep is upsert-only); `game` is denormalised from the
+/// product so a user's
 /// per-game sealed wish list can be listed and counted without joining `products`.
 ///
 /// `Eq` is derivable — every column is an integer, string, or timestamp.

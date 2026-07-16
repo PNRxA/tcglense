@@ -307,9 +307,8 @@ async fn per_user_isolation() {
 }
 
 /// The sealed-product wish list is its own table: wanting a product touches neither the
-/// card wish list nor the collection, and wanting a card leaves the products list empty.
-/// The sealed-product extension of the pinned collection/wish-list independence invariant
-/// — the collection deliberately has no sealed surface at all (issue #364).
+/// card wish list nor either collection table, and wanting a card leaves the products list
+/// empty. This extends the pinned collection/wish-list independence invariant.
 #[tokio::test]
 async fn independent_of_card_wishlist_and_collection() {
     let app = test_app().await;
@@ -334,7 +333,13 @@ async fn independent_of_card_wishlist_and_collection() {
     let (_, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg", &token)).await;
     assert_eq!(body["total"], 1, "the card wish list still holds only the one card");
     let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
-    assert_eq!(body["total"], 0, "the collection has no sealed surface");
+    assert_eq!(body["total"], 0, "the card collection remains untouched");
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products", &token),
+    )
+    .await;
+    assert_eq!(body["total"], 0, "the sealed collection remains untouched");
 
     // …and the product is where it belongs.
     let (_, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg/products", &token)).await;

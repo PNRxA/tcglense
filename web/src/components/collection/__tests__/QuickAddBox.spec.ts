@@ -61,7 +61,7 @@ const DialogStub = {
 // The sealed-product step-two dialog (#364), stubbed the same way.
 const ProductDialogStub = {
   name: 'QuickAddProductDialog',
-  props: ['open', 'game', 'product'],
+  props: ['open', 'game', 'product', 'list'],
   emits: ['update:open'],
   template: '<div class="product-dialog-stub" :data-open="String(open)">{{ product?.name }}</div>',
 }
@@ -144,7 +144,7 @@ describe('QuickAddBox', () => {
   it('suggests sealed products and opens the product dialog in kind="product" (#364)', async () => {
     const wrapper = mountBox({ kind: 'product' })
     expect(wrapper.find('input').attributes('aria-label')).toBe(
-      'Quick add a sealed product to your wish list',
+      'Quick add a sealed product to your collection',
     )
 
     await wrapper.find('input').setValue('bloom')
@@ -162,6 +162,7 @@ describe('QuickAddBox', () => {
     const productDialog = wrapper.findComponent(ProductDialogStub)
     expect(productDialog.props('open')).toBe(true)
     expect(productDialog.props('product')).toMatchObject({ id: '200' })
+    expect(productDialog.props('list')).toBe('collection')
     // The card print picker never mounts in product mode.
     expect(wrapper.findComponent(DialogStub).exists()).toBe(false)
     // The box resets so the next quick-add starts fresh.

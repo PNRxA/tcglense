@@ -1,14 +1,6 @@
-import { makeHoldingApi, postCountsBatched } from './holdings'
-import { listQuery, request } from './client'
-import type { OwnedCountsMap } from './collection'
-import type {
-  CollectionQuantities,
-  CollectionSet,
-  CollectionSummary,
-  Page,
-  WishlistProductEntry,
-  WishlistProductSummary,
-} from './generated'
+import { makeHoldingApi } from './holdings'
+import { makeProductHoldingApi } from './product-holdings'
+import type { CollectionSet, CollectionSummary } from './generated'
 
 // ---------- Wish list (per-user, authenticated) ----------
 //
@@ -79,91 +71,22 @@ export const getWishlistEntry = api.getEntry
 /** Set the wanted counts for one card (absolute, not a delta). Both zero removes it. */
 export const setWishlistEntry = api.setEntry
 
-// ---------- Wanted sealed products (wishlist-only, issue #364) ----------
-//
-// Sealed products can be wished for too, but — unlike cards — there is no collection
-// twin (the collection deliberately has no sealed surface), so these live beside the
-// `makeHoldingApi` instance rather than as a factory axis. The endpoints mirror the card
-// wish list's per-entry read/write, but the list carries the full public product payload
-// (`WishlistProductEntry = { product, quantity, foil_quantity }`) and is fixed
-// recency-desc (no q/sort). The id on the wire is the external (TCGplayer) product id.
+// Sealed products instantiate the same product-holding client as the collection (#435).
+const productApi = makeProductHoldingApi('wishlist', 'counts')
 
-export type { WishlistProductEntry, WishlistProductSummary } from './generated'
+export type { ProductHoldingEntry, ProductHoldingSummary } from './generated'
+export type {
+  ProductHoldingEntry as WishlistProductEntry,
+  ProductHoldingSummary as WishlistProductSummary,
+} from './generated'
+export type { ProductHoldingPage as WishlistProductPage } from './product-holdings'
 
-/** A page of the user's wanted sealed products plus pagination cursors. */
-export type WishlistProductPage = Page<WishlistProductEntry>
-
-/** Relative `/api/wishlist/{game}/products` path (paged). */
-export function wishlistProductsPath(
-  game: string,
-  params: { page?: number; pageSize?: number } = {},
-): string {
-  return `/api/wishlist/${encodeURIComponent(game)}/products${listQuery(params)}`
-}
-
-/** Relative `/api/wishlist/{game}/products/{id}` path for one product's wanted counts. */
-export function wishlistProductEntryPath(game: string, id: string): string {
-  return `/api/wishlist/${encodeURIComponent(game)}/products/${encodeURIComponent(id)}`
-}
-
-/** The signed-in user's wanted sealed products, most-recently-updated first. */
-export function getWishlistProducts(
-  token: string,
-  game: string,
-  params?: { page?: number; pageSize?: number },
-): Promise<WishlistProductPage> {
-  return request<WishlistProductPage>(wishlistProductsPath(game, params), { token })
-}
-
-/** How many of one sealed product the user wants (zeros when not on the wish list). */
-export function getWishlistProductEntry(
-  token: string,
-  game: string,
-  id: string,
-): Promise<CollectionQuantities> {
-  return request<CollectionQuantities>(wishlistProductEntryPath(game, id), { token })
-}
-
-/** Set the wanted counts for one sealed product (absolute, not a delta). Both zero removes it. */
-export function setWishlistProductEntry(
-  token: string,
-  game: string,
-  id: string,
-  body: CollectionQuantities,
-): Promise<CollectionQuantities> {
-  return request<CollectionQuantities>(wishlistProductEntryPath(game, id), {
-    method: 'PUT',
-    body,
-    token,
-  })
-}
-
-/** Relative `/api/wishlist/{game}/products/summary` path (the sealed stats trio). */
-export function wishlistProductSummaryPath(game: string): string {
-  return `/api/wishlist/${encodeURIComponent(game)}/products/summary`
-}
-
-/** Aggregate stats (unique products, total copies, estimated cost) for the user's
- * wanted sealed products. `total_value_usd` is null when nothing wanted is priced. */
-export function getWishlistProductSummary(
-  token: string,
-  game: string,
-): Promise<WishlistProductSummary> {
-  return request<WishlistProductSummary>(wishlistProductSummaryPath(game), { token })
-}
-
-/** Relative `/api/wishlist/{game}/products/counts` path (batch wanted counts). */
-export function wishlistProductCountsPath(game: string): string {
-  return `/api/wishlist/${encodeURIComponent(game)}/products/counts`
-}
-
-/** Wanted counts for the given external product ids that are on the user's wish list,
- * keyed by external id (products not on the list are simply absent) — POSTed and
- * batched under the id cap, exactly like the card counts. */
-export function getWishlistProductCounts(
-  token: string,
-  game: string,
-  ids: string[],
-): Promise<OwnedCountsMap> {
-  return postCountsBatched(wishlistProductCountsPath(game), token, ids)
-}
+export const wishlistProductsPath = productApi.productsPath
+export const wishlistProductEntryPath = productApi.entryPath
+export const wishlistProductSummaryPath = productApi.summaryPath
+export const wishlistProductCountsPath = productApi.countsPath
+export const getWishlistProducts = productApi.list
+export const getWishlistProductEntry = productApi.getEntry
+export const setWishlistProductEntry = productApi.setEntry
+export const getWishlistProductSummary = productApi.summary
+export const getWishlistProductCounts = productApi.counts

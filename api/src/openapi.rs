@@ -103,6 +103,10 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::collection::collection_summary,
         crate::handlers::collection::get_collection_entry,
         crate::handlers::collection::set_collection_entry,
+        crate::handlers::collection::list_collection_products,
+        crate::handlers::collection::get_collection_product_entry,
+        crate::handlers::collection::set_collection_product_entry,
+        crate::handlers::collection::collection_product_summary,
         // --- Wish list ---
         crate::handlers::wishlist::list_wishlist,
         crate::handlers::wishlist::wishlist_summary,
@@ -132,6 +136,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::collection::collection_value_history,
         crate::handlers::collection::collection_movers,
         crate::handlers::collection::owned_counts,
+        crate::handlers::collection::collection_product_counts,
         crate::handlers::collection::export_collection,
         crate::handlers::collection::import_collection,
         crate::handlers::collection::import_collection_csv,

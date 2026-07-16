@@ -5,40 +5,45 @@ import { RouterLink, useRoute } from 'vue-router'
 import type { Product } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useCollectionProductEntryQuery } from '@/composables/useCollection'
 import { useWishlistProductEntryQuery } from '@/composables/useWishlist'
-import { useOwnedCountEditor } from '@/composables/useOwnedCountEditor'
+import { useOwnedCountEditor, type CardListTarget } from '@/composables/useOwnedCountEditor'
 import { useAuthStore } from '@/stores/auth'
 
-// "How many do I want?" control for the sealed-product detail page — the "regular add" of
-// issue #364. Reads the current wanted count and lets a signed-in user adjust it; the route
-// is public, so signed-out visitors get a sign-in nudge instead. The debounced/serialized
-// save loop is the same useOwnedCountEditor shared with the collection/wish-list card
-// controls, here in `kind: 'product'` mode (writes to the wish list's sealed-product
-// holding). Sealed products are wishlist-only — there's no collection counterpart — so
-// there's no `list` prop and just one "Quantity" row (foil stays 0).
-const props = defineProps<{ game: string; product: Product }>()
+// One list-targeted sealed-product control. The detail page instantiates it for both the
+// collection and wish list; both use the shared product holding editor/query engines.
+const props = withDefaults(
+  defineProps<{ game: string; product: Product; list?: CardListTarget }>(),
+  { list: 'wishlist' },
+)
 const auth = useAuthStore()
 const route = useRoute()
 
 const game = toRef(props, 'game')
 const productId = computed(() => props.product.id)
 
-const entryQuery = useWishlistProductEntryQuery(game, productId)
+const entryQuery =
+  props.list === 'wishlist'
+    ? useWishlistProductEntryQuery(game, productId)
+    : useCollectionProductEntryQuery(game, productId)
 const seed = computed(() => entryQuery.data.value)
 const { regular, adjust, saving, saveError } = useOwnedCountEditor(game, productId, seed, {
   kind: 'product',
+  list: props.list,
 })
 
 // Disable the steppers until the initial holding has loaded, so an early click can't
 // adjust off a stale zero.
 const loading = computed(() => auth.isAuthenticated && entryQuery.isLoading.value)
 const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullPath } }))
+const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
+const verb = computed(() => (props.list === 'wishlist' ? 'want' : 'own'))
 </script>
 
 <template>
   <section class="mt-6 rounded-lg border p-4">
     <div class="mb-3 flex items-center justify-between gap-2">
-      <h2 class="text-sm font-semibold">Your wish list</h2>
+      <h2 class="text-sm font-semibold">Your {{ listName }}</h2>
       <!-- Save status (signed-in only). -->
       <span
         v-if="auth.isAuthenticated"
@@ -68,7 +73,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
       <RouterLink :to="loginTo" class="text-primary font-medium hover:underline"
         >Sign in</RouterLink
       >
-      to keep a wish list of sealed products you want to buy.
+      to track sealed products in your {{ listName }}.
     </p>
 
     <div v-else class="space-y-3">
@@ -79,7 +84,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
             variant="outline"
             size="icon"
             :disabled="loading || regular <= 0"
-            aria-label="Remove one from your wish list"
+            :aria-label="`Remove one from your ${listName}`"
             @click="adjust('quantity', -1)"
           >
             <Minus />
@@ -89,7 +94,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
             variant="outline"
             size="icon"
             :disabled="loading"
-            aria-label="Add one to your wish list"
+            :aria-label="`Add one to your ${listName}`"
             @click="adjust('quantity', 1)"
           >
             <Plus />
@@ -98,8 +103,8 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
       </div>
 
       <p class="text-muted-foreground text-xs">
-        <template v-if="regular > 0"> You want {{ regular }}. </template>
-        <template v-else> Not on your wish list yet. </template>
+        <template v-if="regular > 0"> You {{ verb }} {{ regular }}. </template>
+        <template v-else> Not in your {{ listName }} yet. </template>
       </p>
     </div>
   </section>

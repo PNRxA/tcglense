@@ -231,6 +231,24 @@ describe('useOwnedCountEditor', () => {
     expect(calls[0]!.body).toEqual({ quantity: 1, foil_quantity: 0 })
   })
 
+  it('saves to the collection product endpoint when product mode targets collection', async () => {
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }),
+      ref('prod-1'),
+      'collection',
+      'product',
+    )
+    await flushPromises()
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+
+    const calls = putCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toContain('/api/collection/mtg/products/prod-1')
+    expect(calls[0]!.body).toEqual({ quantity: 1, foil_quantity: 0 })
+  })
+
   it('collapses rapid product adjusts into one PUT of the final count', async () => {
     const editor = mountEditor(
       ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }),

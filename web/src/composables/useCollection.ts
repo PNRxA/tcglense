@@ -4,14 +4,23 @@ import {
   getCollectionEntry,
   getCollectionMovers,
   getCollectionOwned,
+  getCollectionProductCounts,
+  getCollectionProductEntry,
+  getCollectionProducts,
+  getCollectionProductSummary,
   getCollectionSetDrops,
   getCollectionSets,
   getCollectionSetSubtypes,
   getCollectionSummary,
   setCollectionEntry,
+  setCollectionProductEntry,
 } from '@/lib/api'
 import type { CollectionMovers } from '@/lib/api'
 import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
+import {
+  makeProductHoldingQueries,
+  PRODUCT_HOLDING_PAGE_SIZE,
+} from '@/composables/productHoldingQueries'
 import { useAuthedQuery } from '@/lib/queries'
 
 // Server state for the signed-in user's card collection — the `['collection', …]`
@@ -74,6 +83,24 @@ export type SetCollectionVars = SetHoldingVars
 
 /** Set the owned counts for a card, then invalidate the dependent collection views. */
 export const useSetCollectionEntryMutation = queries.useSetEntryMutation
+
+const productQueries = makeProductHoldingQueries({
+  prefix: 'collection',
+  getList: getCollectionProducts,
+  getEntry: getCollectionProductEntry,
+  getSummary: getCollectionProductSummary,
+  getCounts: getCollectionProductCounts,
+  setEntry: setCollectionProductEntry,
+})
+
+export const COLLECTION_PRODUCT_PAGE_SIZE = PRODUCT_HOLDING_PAGE_SIZE
+export const useCollectionProductsQuery = productQueries.useProductsQuery
+export const useCollectionProductEntryQuery = productQueries.useEntryQuery
+export const useCollectionProductSummaryQuery = productQueries.useSummaryQuery
+export const useCollectionProductCounts = productQueries.useCounts
+export const invalidateCollectionProducts = productQueries.invalidate
+export type SetCollectionProductVars = SetHoldingVars
+export const useSetCollectionProductEntryMutation = productQueries.useSetEntryMutation
 
 /** The signed-in user's biggest gain/loss movements across their collection (1d through
  * all-time), for the collection landing's movers panel. */

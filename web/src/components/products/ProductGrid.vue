@@ -16,6 +16,9 @@ defineProps<{
   // signed-out grids — the controls only render while signed in, so a signed-out visitor's
   // grid carries neither badges nor add affordances.
   wanted?: OwnedCountsMap
+  // Owned counts for the collection twin (#435). Both controls share the same component
+  // and fetch their authoritative single-entry seed only when opened.
+  owned?: OwnedCountsMap
 }>()
 
 // The grid density follows the shared card-size preference (set via CardSizeMenu) so
@@ -36,6 +39,15 @@ const auth = useAuthStore()
         popover opens. -->
       <template v-if="auth.isAuthenticated" #badge>
         <WantedCountControl
+          list="collection"
+          :game="game"
+          :product-id="product.id"
+          :name="product.name"
+          :quantity="owned?.[product.id]?.quantity ?? 0"
+          :foil-quantity="owned?.[product.id]?.foil_quantity ?? 0"
+        />
+        <WantedCountControl
+          list="wishlist"
           :game="game"
           :product-id="product.id"
           :name="product.name"

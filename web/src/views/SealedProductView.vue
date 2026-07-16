@@ -17,6 +17,7 @@ import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices, productImageUrl } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
+import { useAuthStore } from '@/stores/auth'
 import {
   breadcrumbList,
   graph,
@@ -35,6 +36,7 @@ const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 const money = useCurrency()
+const auth = useAuthStore()
 
 const productQuery = useProductQuery(game, id)
 const product = computed(() => productQuery.data.value)
@@ -201,10 +203,14 @@ usePageMeta({
           </div>
           <p v-else class="text-muted-foreground mt-6 text-sm">No current price.</p>
 
-          <!-- "Regular add" to the wish list (issue #364): read/adjust how many of this sealed
-            product you want. Wishlist-only (no collection sealed surface); signed-out visitors
-            get a sign-in nudge. -->
-          <ProductWishlistControls :game="game" :product="product" />
+          <!-- Independent collection + wish-list sealed holdings (#364/#435). -->
+          <ProductWishlistControls
+            v-if="auth.isAuthenticated"
+            :game="game"
+            :product="product"
+            list="collection"
+          />
+          <ProductWishlistControls :game="game" :product="product" list="wishlist" />
         </div>
       </div>
 

@@ -1,5 +1,8 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
-import { useSetCollectionEntryMutation } from '@/composables/useCollection'
+import {
+  useSetCollectionEntryMutation,
+  useSetCollectionProductEntryMutation,
+} from '@/composables/useCollection'
 import {
   useSetWishlistEntryMutation,
   useSetWishlistProductEntryMutation,
@@ -39,8 +42,7 @@ export interface OwnedCountSeed {
  *
  * `opts.list` picks which list the saves write to — the collection (default) or the
  * wish list, whose mutations share the same variables/response shape. `opts.kind:
- * 'product'` instead targets the wish list's sealed-product holding (there is no
- * collection sealed surface, so `list` is moot then); `cardId` is then the external
+ * 'product'` targets the selected list's sealed-product holding; `cardId` is then the external
  * TCGplayer product id, and product callers render only the regular row — `foil` is
  * seeded from the server holding same as always but never adjusted by the UI, so a save
  * preserves whatever foil count the seed carried (0 for a fresh want) instead of clobbering
@@ -63,7 +65,9 @@ export function useOwnedCountEditor(
 ) {
   const mutation =
     opts.kind === 'product'
-      ? useSetWishlistProductEntryMutation()
+      ? opts.list === 'collection'
+        ? useSetCollectionProductEntryMutation()
+        : useSetWishlistProductEntryMutation()
       : opts.list === 'wishlist'
         ? useSetWishlistEntryMutation()
         : useSetCollectionEntryMutation()

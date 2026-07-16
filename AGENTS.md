@@ -156,12 +156,14 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   **closed**. `TRUST_PROXY_HEADERS=true` only behind a proxy that overwrites
   `X-Forwarded-For` (else clients spoof their IP).
 - Collection and wish list are **independent tables** that share the ts-rs DTOs in
-  `handlers/shared/holdings.rs` — editing a shared shape changes both wire surfaces.
-  Holdings use **external** card ids; both counts zero deletes the row. The wish list
-  additionally holds **sealed products** in its own `wishlist_product_items` table
-  (`/api/wishlist/{game}/products*`, external TCGplayer ids on the wire, same
-  both-zero-deletes rule); the collection deliberately has **no** sealed surface — don't
-  add one.
+  `handlers/shared/holdings.rs` — editing a shared card shape changes both wire surfaces.
+  Card holdings use **external** card ids; both counts zero deletes the row. Both surfaces
+  also hold sealed products in independent `collection_product_items` /
+  `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
+  TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:
+  `handlers/shared/product_holdings.rs`, `lib/api/product-holdings.ts`, and
+  `composables/productHoldingQueries.ts`. Collection import/sync/export, public sharing,
+  card value history, and movers remain card-only.
 - **Decks** (`/api/decks/{game}*`, issue #363) are a **container** surface — many per user,
   in `decks`/`deck_sections`/`deck_cards`/`deck_folders` — **not** a collection/wishlist twin,
   so they don't ride `makeHoldingApi`/`makeHoldingQueries`; they live beside it and only reuse

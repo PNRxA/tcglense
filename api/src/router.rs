@@ -36,12 +36,13 @@ use crate::{
             scan_cards, set_icon,
         },
         collection::{
-            collection_movers, collection_set_drops, collection_set_subtypes, collection_sets,
-            collection_summary, collection_value_history, delete_collection_source,
-            export_collection, get_collection_entry, get_collection_source, get_import_job,
-            import_collection, import_collection_csv, list_collection, owned_counts,
-            save_collection_source, set_collection_entry, sync_collection_source,
-            MAX_CSV_UPLOAD_BYTES,
+            collection_movers, collection_product_counts, collection_product_summary,
+            collection_set_drops, collection_set_subtypes, collection_sets, collection_summary,
+            collection_value_history, delete_collection_source, export_collection,
+            get_collection_entry, get_collection_product_entry, get_collection_source,
+            get_import_job, import_collection, import_collection_csv, list_collection,
+            list_collection_products, owned_counts, save_collection_source, set_collection_entry,
+            set_collection_product_entry, sync_collection_source, MAX_CSV_UPLOAD_BYTES,
         },
         config::public_config,
         currency::currency_rates,
@@ -238,6 +239,24 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),
         )
+        // Sealed-product holdings (#435): parallel to the wish-list product routes, but
+        // backed by an independent collection table. `/owned` remains a read despite POST.
+        .route(
+            "/api/collection/{game}/products",
+            get(list_collection_products),
+        )
+        .route(
+            "/api/collection/{game}/products/summary",
+            get(collection_product_summary),
+        )
+        .route(
+            "/api/collection/{game}/products/owned",
+            post(collection_product_counts),
+        )
+        .route(
+            "/api/collection/{game}/products/{id}",
+            get(get_collection_product_entry).put(set_collection_product_entry),
+        )
         // Per-user wish lists: the collection's "want" twin (same holding shape and
         // routes, minus import/sync — a wish list has nothing to import). Authenticated
         // (via AuthUser) and no-store. Registered before the rate-limit layers below so
@@ -263,8 +282,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/wishlist/{game}/cards/{id}",
             get(get_wishlist_entry).put(set_wishlist_entry),
         )
-        // Sealed-product wants (issue #364): the wish list also holds sealed products, in
-        // its own table and routes. The collection deliberately has no sealed surface.
+        // Sealed-product wants (issue #364): the wish list holds sealed products in its
+        // own table and routes, independently from the collection product table (#435).
         // `products` is a new static segment — no conflict with `/cards/{id}`, `/summary`,
         // `/sets`, or `/counts`.
         .route("/api/wishlist/{game}/products", get(list_wishlist_products))

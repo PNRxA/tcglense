@@ -4,15 +4,18 @@ import { Check, Loader2, Minus, Plus } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
+import { useCollectionProductEntryQuery } from '@/composables/useCollection'
 import { useWishlistProductEntryQuery } from '@/composables/useWishlist'
-import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
+import {
+  useOwnedCountEditor,
+  type CardListTarget,
+  type OwnedCountSeed,
+} from '@/composables/useOwnedCountEditor'
 
 // Quick-add control overlaid on a sealed-product tile (issues #95/#364): the product twin
-// of OwnedCountControl. A corner trigger shows the wanted count (or a "+" on a product not
-// yet wanted) and opens a small popover with a single quantity stepper, so a signed-in user
-// can add to or adjust their wish list without leaving the grid. Wish-list only — sealed
-// products have no collection holding — so it needs no `list` prop and no foil row (the
-// seeded foil want is preserved on save; full foil-want editing lives on the product page).
+// of OwnedCountControl. A corner trigger shows the selected list's count (or a "+") and
+// opens a small popover with a single quantity stepper. Collection and wish list instantiate
+// this same control through `list`; hidden foil counts are preserved on save.
 // Rendered by ProductGrid only while signed in; it self-positions in ProductTile's bare
 // #badge slot as a SIBLING of the stretched link, so its clicks open the popover instead of
 // navigating (the CardTile idiom).
@@ -22,13 +25,17 @@ import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwned
 // the save writes ABSOLUTE counts, the editor is instead seeded from the authoritative
 // single-product holding fetched when the popover opens, and the steppers stay disabled
 // until it resolves — so an early click can never clobber the real count with a stale zero.
-const props = defineProps<{
-  game: string
-  productId: string
-  name: string
-  quantity: number
-  foilQuantity: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    game: string
+    productId: string
+    name: string
+    quantity: number
+    foilQuantity: number
+    list?: CardListTarget
+  }>(),
+  { list: 'wishlist' },
+)
 
 const open = ref(false)
 const game = toRef(props, 'game')
@@ -40,7 +47,10 @@ const productId = toRef(props, 'productId')
 // off a stale cached count. Until ready, seed the display from the grid counts so a wanted
 // product doesn't flash "0"; the steppers stay disabled, so acting on the fallback is
 // impossible.
-const entryQuery = useWishlistProductEntryQuery(game, productId, { enabled: open, staleTime: 0 })
+const entryQuery =
+  props.list === 'wishlist'
+    ? useWishlistProductEntryQuery(game, productId, { enabled: open, staleTime: 0 })
+    : useCollectionProductEntryQuery(game, productId, { enabled: open, staleTime: 0 })
 const seed = computed<OwnedCountSeed>(
   () => entryQuery.data.value ?? { quantity: props.quantity, foil_quantity: props.foilQuantity },
 )
@@ -51,12 +61,14 @@ const ready = computed(() => entryQuery.isSuccess.value && !entryQuery.isFetchin
 // trio and the wanted-count badges.
 const { regular, adjust, saving, saveError } = useOwnedCountEditor(game, productId, seed, {
   kind: 'product',
+  list: props.list,
 })
 
 // The resting trigger reflects the grid's display counts; the live edited count shows in
 // the panel.
 const displayTotal = computed(() => props.quantity + props.foilQuantity)
-const wanted = computed(() => displayTotal.value > 0)
+const held = computed(() => displayTotal.value > 0)
+const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
 </script>
 
 <template>
@@ -71,22 +83,23 @@ const wanted = computed(() => displayTotal.value > 0)
         behind hover/focus from sm up, to keep a dense desktop grid clean. -->
       <button
         type="button"
-        class="group/add absolute bottom-2 left-2 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
-        :class="
-          wanted
+        class="group/add absolute bottom-2 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
+        :class="[
+          list === 'wishlist' ? 'right-2' : 'left-2',
+          held
             ? ''
-            : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
-        "
+            : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100',
+        ]"
         :aria-label="
-          wanted ? `Edit copies of ${name} in your wish list` : `Add ${name} to your wish list`
+          held ? `Edit copies of ${name} in your ${listName}` : `Add ${name} to your ${listName}`
         "
         @click.stop
       >
         <OwnedCountBadge
-          v-if="wanted"
+          v-if="held"
           :quantity="quantity"
           :foil-quantity="foilQuantity"
-          kind="wanted"
+          :kind="list === 'wishlist' ? 'wanted' : 'owned'"
           :tooltip="false"
           hover-as-add
         />
@@ -101,7 +114,12 @@ const wanted = computed(() => displayTotal.value > 0)
 
     <!-- Opens above the bottom-left trigger (over the product art) so it doesn't cover the
       name/price below; reka flips it if there isn't room above. -->
-    <PopoverContent side="top" align="start" :side-offset="6" class="w-56 p-3">
+    <PopoverContent
+      side="top"
+      :align="list === 'wishlist' ? 'end' : 'start'"
+      :side-offset="6"
+      class="w-56 p-3"
+    >
       <div class="mb-3 flex items-center justify-between gap-2">
         <p class="truncate text-sm font-medium" :title="name">{{ name }}</p>
         <span
@@ -136,7 +154,7 @@ const wanted = computed(() => displayTotal.value > 0)
             :disabled="!ready"
             :aria-disabled="regular <= 0"
             :class="{ 'pointer-events-none opacity-50': regular <= 0 }"
-            :aria-label="`Remove one ${name} from your wish list`"
+            :aria-label="`Remove one ${name} from your ${listName}`"
             @click="adjust('quantity', -1)"
           >
             <Minus />
@@ -152,7 +170,7 @@ const wanted = computed(() => displayTotal.value > 0)
             variant="outline"
             size="icon"
             :disabled="!ready"
-            :aria-label="`Add one ${name} to your wish list`"
+            :aria-label="`Add one ${name} to your ${listName}`"
             @click="adjust('quantity', 1)"
           >
             <Plus />

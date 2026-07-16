@@ -19,6 +19,7 @@ mod caching;
 mod captcha;
 mod collection;
 mod collection_import;
+mod collection_products;
 mod cors;
 mod decks;
 mod email_verification;

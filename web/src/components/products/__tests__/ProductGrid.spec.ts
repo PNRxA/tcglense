@@ -26,14 +26,19 @@ function makeProduct(id: string): Product {
 // without deep-rendering the real popover/editor (covered by WantedCountControl.spec).
 const WantedControlStub = {
   name: 'WantedCountControl',
-  props: ['game', 'productId', 'name', 'quantity', 'foilQuantity'],
+  props: ['game', 'productId', 'name', 'quantity', 'foilQuantity', 'list'],
   template:
-    '<div class="wanted-stub" :data-id="productId" :data-qty="quantity" :data-foil="foilQuantity" />',
+    '<div class="wanted-stub" :data-list="list" :data-id="productId" :data-qty="quantity" :data-foil="foilQuantity" />',
 }
 
 // Signed in unless `authenticated: false` — the quick-add controls only render for a
 // signed-in user (CardGrid parity).
-function mountGrid(products: Product[], wanted?: OwnedCountsMap, authenticated = true) {
+function mountGrid(
+  products: Product[],
+  wanted?: OwnedCountsMap,
+  authenticated = true,
+  owned?: OwnedCountsMap,
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/sealed/:game/:id', component: { template: '<div />' } }],
@@ -43,7 +48,7 @@ function mountGrid(products: Product[], wanted?: OwnedCountsMap, authenticated =
   if (authenticated) useAuthStore().accessToken = 'test-token'
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(ProductGrid, {
-    props: { game: 'mtg', products, wanted },
+    props: { game: 'mtg', products, wanted, owned },
     global: {
       plugins: [router, pinia, [VueQueryPlugin, { queryClient }]],
       stubs: { WantedCountControl: WantedControlStub, ProductImage: true },
@@ -61,14 +66,20 @@ describe('ProductGrid quick-add controls', () => {
       '100': { quantity: 3, foil_quantity: 1 },
     })
     const stubs = controls(wrapper)
-    expect(stubs).toHaveLength(2)
+    expect(stubs).toHaveLength(4)
 
-    const first = stubs.find((c) => c.attributes('data-id') === '100')!
+    const first = stubs.find(
+      (control) =>
+        control.attributes('data-list') === 'wishlist' && control.attributes('data-id') === '100',
+    )!
     expect(first.attributes('data-qty')).toBe('3')
     expect(first.attributes('data-foil')).toBe('1')
 
     // A product missing from the map rests at zero.
-    const second = stubs.find((c) => c.attributes('data-id') === '200')!
+    const second = stubs.find(
+      (control) =>
+        control.attributes('data-list') === 'wishlist' && control.attributes('data-id') === '200',
+    )!
     expect(second.attributes('data-qty')).toBe('0')
     expect(second.attributes('data-foil')).toBe('0')
   })
@@ -83,8 +94,19 @@ describe('ProductGrid quick-add controls', () => {
   it('renders controls at zero counts when no wanted map is given', () => {
     const wrapper = mountGrid([makeProduct('100')])
     const stubs = controls(wrapper)
-    expect(stubs).toHaveLength(1)
-    expect(stubs[0]!.attributes('data-qty')).toBe('0')
-    expect(stubs[0]!.attributes('data-foil')).toBe('0')
+    expect(stubs).toHaveLength(2)
+    expect(stubs.every((control) => control.attributes('data-qty') === '0')).toBe(true)
+    expect(stubs.every((control) => control.attributes('data-foil') === '0')).toBe(true)
+  })
+
+  it('passes collection counts to the independent owned control', () => {
+    const wrapper = mountGrid([makeProduct('100')], undefined, true, {
+      '100': { quantity: 2, foil_quantity: 1 },
+    })
+    const owned = controls(wrapper).find(
+      (control) => control.attributes('data-list') === 'collection',
+    )!
+    expect(owned.attributes('data-qty')).toBe('2')
+    expect(owned.attributes('data-foil')).toBe('1')
   })
 })

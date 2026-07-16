@@ -250,23 +250,20 @@ catalog) is planned but not implemented.
   emit the full provider header (all 23 / 13 columns) so the file re-imports cleanly into
   the real services, not just our own uploader. Export is offered for the collection only,
   not the wish list (the wish list has no export-shaped provider format to target).
-- **Sealed products are wishlist-only (issue #364):** the wish list tracks **sealed
-  products** (a shopping list) but the collection deliberately has **no** sealed surface, so
-  the product routes (`/api/wishlist/{game}/products*`) have **no collection twin** and the
-  twin-engine seams (`handlers/shared/holdings.rs`, `makeHoldingApi`, `makeHoldingQueries`,
-  `useHoldings*`) are untouched — this is a wishlist-only sibling, not a copy-pasted twin, so
-  the sealed hooks/client fns live *beside* the factory instances rather than as a factory
-  axis. The wire reuses the shared two-count `{ quantity, foil_quantity }` shape for free
-  reuse of the holdings DTOs + the `useOwnedCountEditor` plumbing, while the UI exposes a
-  single **Quantity** and never edits the foil count: a new want is created with
-  `foil_quantity: 0`, and an existing foil count (settable only via the raw API) is preserved
-  unchanged by UI quantity edits — a foil sealed variant is a *separate* TCGplayer SKU, not a
-  finish of the same holding. Storage is a **separate**
-  `wishlist_product_items` table, not a nullable `product_id` on `wishlist_items`: a NULL
-  `product_id` would poison the NOT-NULL `(user, game, product)` unique upsert key, and
-  NULLs in unique indexes behave differently across SQLite/Postgres. The wanted-products
-  list is deliberately **fixed-sort (recency) and unfiltered** (no `q`/`sort`/facets) —
-  personal sealed lists are small, so it isn't worth the collection list's machinery.
+- **Sealed products use independent holding tables (issues #364/#435):** collection and
+  wish list each track sealed products through matching route families and a shared lower
+  engine (`handlers/shared/product_holdings.rs`, `lib/api/product-holdings.ts`, and
+  `composables/productHoldingQueries.ts`). The tables remain independent —
+  `collection_product_items` and `wishlist_product_items` — instead of putting a nullable
+  `product_id` on either card-holdings table: a NULL product id would poison the NOT-NULL
+  `(user, game, product)` upsert key, and NULLs in unique indexes behave differently across
+  SQLite/Postgres. The shared wire shape is `{ quantity, foil_quantity }`, but the UI exposes
+  a single **Quantity** and preserves the foil count on edits: a foil sealed variant is a
+  separate TCGplayer SKU, not a finish of the same holding. Product lists are deliberately
+  **fixed-sort (recency) and unfiltered** (no `q`/`sort`/facets) because personal sealed lists
+  are expected to stay small. The existing collection import/sync/export, public-sharing,
+  card-value-history, and movers pipelines remain card-only; adding sealed products does not
+  silently change provider round trips or historical valuation semantics.
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing
@@ -319,7 +316,7 @@ catalog) is planned but not implemented.
   (`handlers/shared/holdings.rs`, `makeHoldingApi`, `makeHoldingQueries`). A deck is a
   *first-class, one-of-many* container, so it can't ride that engine (there is nowhere for a
   `deck_id` axis in a flat `/api/{base}/{game}/…` URL or a `[prefix, game]` query key). Decks
-  therefore live **beside** the factory — exactly as the wishlist's sealed products do — with
+  therefore live **beside** the flat card-holdings factory — with
   their own tables (`decks` / `deck_sections` / `deck_cards` / `deck_folders`), their own
   `handlers::decks` module, and their own web api/composable modules keyed under
   `deck`/`decks`. But a deck *card* is shape-identical to a holding, so `deck_card::Model`

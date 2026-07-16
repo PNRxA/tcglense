@@ -1,5 +1,6 @@
 import { API_URL, apiErrorFromResponse, request } from './client'
 import { makeHoldingApi } from './holdings'
+import { makeProductHoldingApi } from './product-holdings'
 import type { PriceRange } from './catalog'
 import type {
   CollectionDropGroup,
@@ -156,6 +157,23 @@ export const getCollectionEntry = api.getEntry
 
 /** Set the owned counts for one card (absolute, not a delta). Both zero removes it. */
 export const setCollectionEntry = api.setEntry
+
+// Sealed products use the same holding contract as the wish list's products, backed by
+// the independent collection_product_items table (#435).
+const productApi = makeProductHoldingApi('collection', 'owned')
+
+export type { ProductHoldingEntry, ProductHoldingSummary } from './generated'
+export type { ProductHoldingPage as CollectionProductPage } from './product-holdings'
+
+export const collectionProductsPath = productApi.productsPath
+export const collectionProductEntryPath = productApi.entryPath
+export const collectionProductSummaryPath = productApi.summaryPath
+export const collectionProductCountsPath = productApi.countsPath
+export const getCollectionProducts = productApi.list
+export const getCollectionProductEntry = productApi.getEntry
+export const setCollectionProductEntry = productApi.setEntry
+export const getCollectionProductSummary = productApi.summary
+export const getCollectionProductCounts = productApi.counts
 
 /** A single day of the collection's total-value series, shaped like the price chart's
  * `PricePointLike` so it feeds the shared `PriceChart` unchanged: `usd` is the day's total
