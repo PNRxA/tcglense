@@ -12,6 +12,7 @@ import { useCurrency } from '@/composables/useCurrency'
 import { productTypeLabel } from '@/lib/productType'
 import ProductImage from '@/components/products/ProductImage.vue'
 import { loadProductDetailDialog } from '@/components/products/detailDialogLoader'
+import { PRODUCT_CARDS_MODAL_SEARCH_KEYS } from '@/composables/useProductCardsSearch'
 
 const props = defineProps<{
   game: string
@@ -44,6 +45,9 @@ function onClick(event: MouseEvent) {
   event.preventDefault()
   const query: LocationQueryRaw = { ...route.query, product: props.product.id }
   delete query.card
+  // Any namespaced card search still in the URL was typed for a *different* product (its modal
+  // dropped these on close/step/swap — issue #448); this product's list starts fresh.
+  for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
   if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
   void router.push({ query })
 }

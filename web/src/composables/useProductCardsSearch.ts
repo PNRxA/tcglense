@@ -35,8 +35,10 @@ export const PRODUCT_CARDS_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'q', sort:
  * modal would read the browse's product-name search as its Scryfall card filter (the two sort
  * option sets overlap, so a borrowed sort wouldn't even fail the clamp), and every modal
  * search/sort write would destroy the list state underneath. Namespacing keeps the modal's card
- * search deep-linkable and shareable while leaving the browse untouched; ProductDetailDialog
- * strips these on close, since they belong to the overlay. */
+ * search deep-linkable and shareable while leaving the browse untouched. These keys belong to
+ * the open *product*, not the overlay session: every transition that changes or removes
+ * `?product=` strips them — a prev/next step and close (DetailDialogShell), the surface swaps
+ * (CardTile/ProductTile) — and only a deep link arriving with `?product=` keeps them (#448). */
 export const PRODUCT_CARDS_MODAL_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'pq', sort: 'psort' }
 
 /**
@@ -51,7 +53,7 @@ export const PRODUCT_CARDS_MODAL_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'pq'
  * `keys.q`); a blank query drops the key (a clean canonical URL). `sort` is a writable
  * `field:dir` option value backed by `keys.sort`, clamped to `validSorts` (an unknown/hand-edited
  * value falls back to `defaultSort`), and dropped from the URL when it equals `defaultSort`.
- * Navigating to a different product (the path changes) cancels a half-typed search and resyncs
+ * Navigating to a different product (`id` changes) cancels a half-typed search and resyncs
  * the box to the destination, and a Back/forward that changes the committed query under us is
  * mirrored back into the box.
  *
@@ -59,9 +61,15 @@ export const PRODUCT_CARDS_MODAL_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'pq'
  * can namespace itself out of the way ({@link PRODUCT_CARDS_MODAL_SEARCH_KEYS}). Every other key
  * in the query — the host route's included — is preserved on write either way.
  *
- * `defaultSort`/`validSorts` may be plain values or refs/getters, matching `useCardSearch`.
+ * `id` is the product whose cards the list shows — the signal a "different product" is read
+ * from. It must NOT be inferred from `route.path`: the full page does change its path when it
+ * steps products, but the modal steps by rewriting only `?product=` (DetailDialogShell.goTo),
+ * so a path watch never fires there and a half-typed search leaks across (issue #448).
+ *
+ * `id`/`defaultSort`/`validSorts` may be plain values or refs/getters, matching `useCardSearch`.
  */
 export function useProductCardsSearch(
+  id: MaybeRefOrGetter<string>,
   defaultSort: MaybeRefOrGetter<string> = '',
   validSorts?: MaybeRefOrGetter<readonly string[] | undefined>,
   keys: ProductCardsSearchKeys = PRODUCT_CARDS_SEARCH_KEYS,
@@ -109,10 +117,11 @@ export function useProductCardsSearch(
   })
   onUnmounted(() => clearTimeout(timer))
 
-  // A different product (the path changes) must not carry a half-typed, not-yet-committed
-  // search across: cancel the pending debounce and resync the box to wherever we landed.
+  // A different product must not carry a half-typed, not-yet-committed search across: cancel
+  // the pending debounce and resync the box to wherever we landed. Keyed on the product id, not
+  // `route.path` — in the modal, stepping products rewrites only the query (issue #448).
   watch(
-    () => route.path,
+    () => toValue(id),
     () => {
       clearTimeout(timer)
       searchInput.value = query.value

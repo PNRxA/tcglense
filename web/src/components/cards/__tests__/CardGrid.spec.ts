@@ -118,6 +118,19 @@ describe('CardGrid detail modal links', () => {
     expect(router.currentRoute.value.query.product).toBeUndefined()
     expect(router.currentRoute.value.query.card).toBe('a')
   })
+
+  it('takes the product modal’s namespaced card search with it on the swap (#448)', async () => {
+    // The swap closes the product modal, and `?pq=`/`?psort=` are that modal's per-product
+    // state — leaving them behind would pre-filter the next product modal opened from here.
+    const wrapper = mountGrid([makeCard('a')], undefined, false)
+    const router = wrapper.vm.$router
+    await router.push('/cards/mtg/cards/a?product=product-1&pq=t:goblin&psort=name:desc')
+
+    await cardLink(wrapper, 'a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ card: 'a' })
+  })
 })
 
 describe('CardGrid quick-add controls', () => {

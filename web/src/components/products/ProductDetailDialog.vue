@@ -15,7 +15,8 @@ const canonical = (game: string, id: string) => `/sealed/${game}/${id}`
 
 // Unlike the card body, this one carries URL-backed state of its own: the contained-cards list
 // searches and sorts through the query. It overlays a browse route that already owns `?q=`/
-// `?sort=`, so it takes namespaced keys — which, being the overlay's, leave with it on close.
+// `?sort=`, so it takes namespaced keys — per-product state the shell drops on stepping to a
+// neighbour and on close alike (issue #448).
 const ownedKeys = Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)
 </script>
 
