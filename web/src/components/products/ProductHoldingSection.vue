@@ -51,9 +51,9 @@ const localCounts = computed<OwnedCountsMap>(() =>
     ]),
   ),
 )
-// ProductGrid always exposes both list controls. The current surface's counts are already
-// embedded in the page; fetch the other surface in one batch so its resting badges are
-// authoritative too (and never show a misleading zero for a cross-listed product).
+// ProductGrid's unified control exposes both lists. The current surface's counts are already
+// embedded in the page; fetch the other surface in one batch so its combined resting badge
+// is authoritative too (and never shows a misleading zero for a cross-listed product).
 const otherCounts =
   props.list === 'wishlist'
     ? useCollectionProductCounts(game, products).ownership
