@@ -131,6 +131,12 @@ pub struct ResolvedApiKey {
 pub struct PreresolvedApiKey {
     /// SHA-256 hex of the presented plaintext this resolution was made for.
     token_hash: String,
+    /// The live key row, carried so the **consumer** can stamp `last_used_at` at
+    /// authentication time via [`Self::touch`]. The middleware that resolves the
+    /// key deliberately does not stamp: `last_used_at` documents the key's most
+    /// recent *authentication*, so a request the limiter 429s — or one on a route
+    /// that never runs an auth extractor — must leave it untouched.
+    key: api_key::Model,
     pub resolved: ResolvedApiKey,
 }
 
@@ -139,6 +145,12 @@ impl PreresolvedApiKey {
     /// plaintext is never stored).
     pub fn matches(&self, presented: &str) -> bool {
         super::secret::sha256_hex(presented) == self.token_hash
+    }
+
+    /// Best-effort, throttled `last_used_at` stamp — called by the auth extractor
+    /// exactly when a request authenticates with this key (see the `key` field).
+    pub async fn touch(&self, db: &DatabaseConnection) {
+        touch_last_used(db, self.key.clone()).await;
     }
 }
 
@@ -215,20 +227,27 @@ fn live_filter(now: DateTimeUtc) -> sea_orm::sea_query::SimpleExpr {
 /// path). Rejects an unknown / revoked / expired key, or one whose user is gone,
 /// with `Unauthorized`. Best-effort stamps `last_used_at` (throttled).
 pub async fn resolve(db: &DatabaseConnection, presented: &str) -> Result<ResolvedApiKey, AppError> {
-    Ok(resolve_for_rate_limit(db, presented)
+    let pre = resolve_for_rate_limit(db, presented)
         .await?
-        .ok_or_else(|| AppError::Unauthorized("invalid or expired api key".to_string()))?
-        .resolved)
+        .ok_or_else(|| AppError::Unauthorized("invalid or expired api key".to_string()))?;
+    // Direct resolution *is* an authentication, so it stamps immediately (the
+    // middleware path defers the stamp to the extractor's consume — see `touch`).
+    pre.touch(db).await;
+    Ok(pre.resolved)
 }
 
 /// Full resolution for the per-user rate-limit middleware: the same one-round-trip
-/// key⋈user lookup and throttled `last_used_at` stamp as [`resolve`], but an
-/// unknown / revoked / expired key (or one whose user is gone) is `Ok(None)` — the
-/// middleware passes it through untouched and the extractor, which owns the auth
-/// decision, rejects it with the 401. The middleware stashes the returned
-/// [`PreresolvedApiKey`] in the request extensions so the extractor consumes this
-/// resolution instead of repeating it — one point SELECT per keyed request where
-/// there used to be three (issue #413).
+/// key⋈user lookup as [`resolve`], but an unknown / revoked / expired key (or one
+/// whose user is gone) is `Ok(None)` — the middleware passes it through untouched
+/// and the extractor, which owns the auth decision, rejects it with the 401. The
+/// middleware stashes the returned [`PreresolvedApiKey`] in the request extensions
+/// so the extractor consumes this resolution instead of repeating it — one point
+/// SELECT per keyed request where there used to be three (issue #413).
+///
+/// Deliberately does **not** stamp `last_used_at`: this runs before the quota
+/// check and before any auth extractor, and the timestamp documents the key's
+/// most recent *authentication* — the consumer stamps via
+/// [`PreresolvedApiKey::touch`] only when a request actually authenticates.
 pub async fn resolve_for_rate_limit(
     db: &DatabaseConnection,
     presented: &str,
@@ -237,17 +256,16 @@ pub async fn resolve_for_rate_limit(
     let Some((row, user)) = live else {
         return Ok(None);
     };
-    // A key whose owner row is gone is as dead as a revoked one (never stamped).
     let Some(user) = user else {
+        // A key whose owner row is gone is as dead as a revoked one.
         return Ok(None);
     };
 
     let scope = ApiKeyScope::from_str_lenient(&row.scope);
 
-    touch_last_used(db, row).await;
-
     Ok(Some(PreresolvedApiKey {
         token_hash,
+        key: row,
         resolved: ResolvedApiKey { user, scope },
     }))
 }
@@ -433,6 +451,33 @@ mod tests {
         assert_eq!(pre.resolved.scope, ApiKeyScope::ReadWrite);
         assert!(pre.matches(&issued.plaintext));
         assert!(!pre.matches("tcgl_somethingelse"));
+
+        // The middleware resolve alone must NOT stamp last_used_at — the timestamp
+        // records authentications, and a resolved key may still be 429'd or never
+        // reach an auth extractor. Only the consumer's touch() stamps.
+        let fresh = issue_api_key(&db, user_id, "untouched", ApiKeyScope::Read, None)
+            .await
+            .expect("issue");
+        let pre = resolve_for_rate_limit(&db, &fresh.plaintext)
+            .await
+            .expect("resolve")
+            .expect("live key");
+        let row = ApiKey::find_by_id(fresh.model.id)
+            .one(&db)
+            .await
+            .expect("query")
+            .expect("row");
+        assert!(
+            row.last_used_at.is_none(),
+            "resolve_for_rate_limit alone must not stamp last_used_at"
+        );
+        pre.touch(&db).await;
+        let row = ApiKey::find_by_id(fresh.model.id)
+            .one(&db)
+            .await
+            .expect("query")
+            .expect("row");
+        assert!(row.last_used_at.is_some(), "touch() stamps at consume time");
     }
 
     #[tokio::test]

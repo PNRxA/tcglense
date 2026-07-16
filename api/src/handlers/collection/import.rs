@@ -145,13 +145,14 @@ pub async fn import_collection_csv(
         return Err(AppError::Validation("no CSV file was uploaded".to_string()));
     }
 
-    let summary = collection_import::execute_csv_import(&state.db, user.id, &game, mode, &body)
-        .await
-        .map_err(AppError::from)?;
-    // The reconcile changed the holdings: orphan the user's cached analytics
-    // bodies (#413).
+    let result = collection_import::execute_csv_import(&state.db, user.id, &game, mode, &body).await;
+    // Orphan the user's cached analytics bodies (#413) on success AND failure: the
+    // reconcile commits mutations before its outcome is known (the star-holding
+    // fold runs in its own transaction ahead of the plan apply), so a failed
+    // import may still have changed the holdings. A spurious bump costs one cache
+    // miss; a missed one serves stale analytics for the body TTL.
     state.analytics_cache.bump_holdings(user.id, &game).await;
-    Ok(Json(summary))
+    Ok(Json(result.map_err(AppError::from)?))
 }
 
 /// Get import job

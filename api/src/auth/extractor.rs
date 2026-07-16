@@ -58,7 +58,14 @@ async fn resolve_principal(parts: &Parts, state: &AppState) -> Result<Principal,
         // the middleware doesn't run on (rate limiting disabled, a route outside
         // the limited group, extractor-level tests).
         let resolved = match parts.extensions.get::<api_key::PreresolvedApiKey>() {
-            Some(pre) if pre.matches(token) => pre.resolved.clone(),
+            Some(pre) if pre.matches(token) => {
+                // Consuming the resolution is the authentication, so the
+                // (throttled, best-effort) last-used stamp lands here — never in
+                // the middleware, whose resolve also runs for requests the
+                // limiter then 429s or that no extractor ever authenticates.
+                pre.touch(&state.db).await;
+                pre.resolved.clone()
+            }
             _ => api_key::resolve(&state.db, token).await?,
         };
         return Ok(Principal {

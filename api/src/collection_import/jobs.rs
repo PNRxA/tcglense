@@ -221,13 +221,17 @@ pub fn spawn_import_job(
         )
         .await;
 
+        // Orphan the user's cached analytics bodies (#413) on success AND failure:
+        // the import pipeline commits mutations before its outcome is known (the
+        // pre-fetch star-holding fold, the reconcile's own transactions), so a
+        // failed job may still have changed the holdings. A spurious bump costs
+        // one cache miss; a missed one serves stale analytics for the body TTL.
+        analytics
+            .bump_holdings(request.user_id, &request.game)
+            .await;
+
         match result {
             Ok(summary) => {
-                // The reconcile changed the holdings: orphan the user's cached
-                // analytics bodies (#413).
-                analytics
-                    .bump_holdings(request.user_id, &request.game)
-                    .await;
                 // A successful fetch is a sync of whatever saved link points at this exact
                 // collection: stamp its `last_synced_at`. Matching on (provider, external_id)
                 // means a one-off import of the saved collection (or a re-sync of it) marks

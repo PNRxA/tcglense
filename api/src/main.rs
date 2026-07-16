@@ -118,7 +118,9 @@ async fn main() {
     // shared Postgres otherwise (`seaql_migrations` is bookkeeping, not a lock). A
     // second booter *waits* here until the first finishes, then finds every
     // migration applied and no-ops. No-op on SQLite; fails open on lock errors.
-    let migration_lock = db_lock::AdvisoryLock::acquire(&db, db_lock::MIGRATIONS).await;
+    tracing::info!("acquiring the migration lock (waits if another replica is migrating)");
+    let migration_lock =
+        db_lock::AdvisoryLock::acquire(&db, &config.database_url, db_lock::MIGRATIONS).await;
     Migrator::up(&db, None)
         .await
         .expect("failed to run database migrations");

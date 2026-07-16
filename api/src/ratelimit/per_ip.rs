@@ -74,12 +74,21 @@ impl IpRoute {
 
         if let Some(rest) = path.strip_prefix("/api/games/") {
             // Art, the status poll, and the authed scan stay un-limited (see the
-            // variant docs); everything else under a game is a DB-query read.
-            if rest.ends_with("/image")
-                || rest.ends_with("/icon")
-                || rest.ends_with("/status")
-                || rest.ends_with("/scan")
-            {
+            // variant docs); everything else under a game is a DB-query read. The
+            // exclusions are matched **structurally** against the exact route
+            // shapes — a bare suffix match would let an attacker-chosen `{id}`
+            // segment (e.g. `/cards/scan`, `/products/status`) dodge the limiter
+            // while still reaching a per-request DB lookup.
+            let segments: Vec<&str> = rest.split('/').collect();
+            let excluded = matches!(
+                segments.as_slice(),
+                [_game, "scan"]
+                    | [_game, "status"]
+                    | [_game, "sets", _, "icon"]
+                    | [_game, "cards", _, "image"]
+                    | [_game, "products", _, "image"]
+            );
+            if excluded {
                 return None;
             }
             return Some(Self::PublicCatalog);
@@ -329,15 +338,33 @@ mod tests {
         }
 
         // ...but the art proxies (dozens per legitimate grid page), the SPA's
-        // import-status poll, and the authed scan POST are deliberately not.
+        // ingest-status poll, and the authed scan POST are deliberately not.
         for excluded in [
             "/api/games/mtg/cards/abc123/image",
             "/api/games/mtg/products/17/image",
             "/api/games/mtg/sets/neo/icon",
-            "/api/games/mtg/import/status",
+            "/api/games/mtg/status",
             "/api/games/mtg/scan",
         ] {
             assert_eq!(IpRoute::from_path(excluded), None, "{excluded} is un-limited");
+        }
+
+        // The exclusions are structural, not suffix matches: an attacker-chosen
+        // `{id}` segment spelling an excluded word still routes to a DB-query
+        // handler (get_card / get_set / get_product) and MUST stay limited.
+        for dodge in [
+            "/api/games/mtg/cards/scan",
+            "/api/games/mtg/cards/image",
+            "/api/games/mtg/cards/status",
+            "/api/games/mtg/sets/icon",
+            "/api/games/mtg/products/status",
+            "/api/games/mtg/products/17/icon",
+        ] {
+            assert_eq!(
+                IpRoute::from_path(dodge),
+                Some(IpRoute::PublicCatalog),
+                "{dodge} must not dodge the limiter"
+            );
         }
 
         // The bare game list is static (no DB) and un-limited.

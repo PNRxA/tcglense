@@ -231,6 +231,7 @@ fn spawn_card_sync(
     mut fingerprint: Option<FingerprintBuild>,
     source: SyncSource,
     analytics: Arc<AnalyticsCache>,
+    database_url: String,
 ) {
     tokio::spawn(async move {
         if sync_interval_hours == 0 {
@@ -238,15 +239,15 @@ fn spawn_card_sync(
             // lock keeps a second replica booting mid-import from starting its own
             // full import (the version gate only short-circuits on a *completed*
             // one); Postgres-only, trivially held on SQLite, fails open on error.
-            let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
-                &db,
-                crate::db_lock::CARD_SYNC,
-            )
-            .await
-            else {
-                tracing::info!("startup card sync skipped: another replica is syncing");
-                return;
-            };
+            // This one-shot branch has no later tick to retry on, so it *waits*
+            // (blocking acquire) rather than skipping: if the leader finishes,
+            // the version gate makes this pass a cheap no-op; if the leader
+            // crashed mid-import, its session lock died with it and this replica
+            // takes over instead of nobody ever syncing.
+            tracing::info!("startup card sync: waiting for the sync leader lock");
+            let lease =
+                crate::db_lock::AdvisoryLock::acquire(&db, &database_url, crate::db_lock::CARD_SYNC)
+                    .await;
             catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Capture today's snapshot from the freshly-imported cards + products.
             catalog::snapshot_all(&db).await;
@@ -281,6 +282,7 @@ fn spawn_card_sync(
             // next tick self-heals with at most one missed snapshot day.
             let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
                 &db,
+                &database_url,
                 crate::db_lock::CARD_SYNC,
             )
             .await
@@ -378,6 +380,7 @@ pub async fn start(state: &AppState, http: &Client) {
             fingerprint,
             SyncSource::from_config(&state.config),
             state.analytics_cache.clone(),
+            state.config.database_url.clone(),
         );
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
