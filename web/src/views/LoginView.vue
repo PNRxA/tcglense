@@ -94,19 +94,12 @@ async function onResend() {
               :aria-describedby="error ? 'login-error' : undefined"
             />
           </div>
-          <div class="flex flex-col gap-2">
-            <div class="flex items-center justify-between">
-              <Label for="password">Password</Label>
-              <RouterLink
-                to="/forgot-password"
-                class="text-muted-foreground text-xs hover:underline"
-              >
-                Forgot password?
-              </RouterLink>
-            </div>
+          <div class="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-2">
+            <Label for="password" class="col-start-1 row-start-1">Password</Label>
             <Input
               id="password"
               v-model="password"
+              class="col-span-2 row-start-2"
               name="password"
               type="password"
               autocomplete="current-password"
@@ -115,6 +108,12 @@ async function onResend() {
               :aria-invalid="Boolean(error) || undefined"
               :aria-describedby="error ? 'login-error' : undefined"
             />
+            <RouterLink
+              to="/forgot-password"
+              class="text-muted-foreground col-start-2 row-start-1 text-xs hover:underline"
+            >
+              Forgot password?
+            </RouterLink>
           </div>
           <p v-if="error" id="login-error" class="text-destructive text-sm" role="alert">
             {{ error }}
