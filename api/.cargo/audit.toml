@@ -1,0 +1,13 @@
+# cargo-audit configuration (RustSec advisory-db scan of Cargo.lock).
+#
+# RUSTSEC-2023-0071 (rsa 0.9 "Marvin Attack" timing side-channel, no fixed upgrade)
+# is a LOCKFILE-ONLY entry, NOT a real exposure: `rsa` is an optional dependency of
+# `sqlx-mysql`, which this crate never compiles (we build only `sqlx-postgres` +
+# `sqlx-sqlite`). `cargo tree -i rsa` prints "nothing to print" — it is resolved into
+# Cargo.lock by Cargo's feature-agnostic resolver but is never in the built graph.
+# `jsonwebtoken` is likewise pinned `default-features = false, features = ["aws_lc_rs"]`
+# (see api/Cargo.toml) so no RSA is pulled in for JWTs either. Ignore the advisory so a
+# manual or CI `cargo audit` exits clean; re-verify with `cargo tree -i rsa` if the
+# dependency graph changes (e.g. a sqlx MySQL feature is ever enabled).
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]

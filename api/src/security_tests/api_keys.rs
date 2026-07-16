@@ -130,6 +130,47 @@ async fn read_write_key_authenticates_reads_and_passes_the_write_gate() {
 }
 
 #[tokio::test]
+async fn password_reset_revokes_the_users_api_keys() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "resetkeys@example.com", PW).await;
+    let key = create_key(&app, &access, "will-be-revoked", "read_write").await;
+
+    // The key authenticates a read before the reset.
+    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &key)).await;
+    assert_eq!(status, StatusCode::OK, "key should work before the reset");
+
+    // Run a real forgot -> reset cycle for the same account.
+    let (status, _, _) = send(
+        &app,
+        json_post(
+            "/api/auth/forgot-password",
+            json!({ "email": "resetkeys@example.com" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let token = latest_email_token(&app, "resetkeys@example.com").await;
+    let (status, _, body) = send(
+        &app,
+        json_post(
+            "/api/auth/reset-password",
+            json!({ "token": token, "password": "brand-new-password-123" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "reset failed: {body:?}");
+
+    // The pre-reset key is now dead (401): a key an attacker minted from a compromised
+    // session cannot outlive the victim's password recovery.
+    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &key)).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the API key must be revoked by the password reset"
+    );
+}
+
+#[tokio::test]
 async fn read_only_key_can_read_but_not_write() {
     let app = test_app().await;
     let (access, _) = register(&app, "ro@example.com", PW).await;

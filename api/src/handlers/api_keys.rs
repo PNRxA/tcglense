@@ -154,13 +154,27 @@ pub async fn create_api_key(
         Some(days) => Some(Utc::now() + Duration::days(i64::from(days))),
     };
 
-    if api_key::count_active_for_user(&state.db, user.id).await? >= MAX_API_KEYS_PER_USER {
-        return Err(AppError::Conflict(format!(
+    let over_cap = || {
+        AppError::Conflict(format!(
             "you already have the maximum of {MAX_API_KEYS_PER_USER} active api keys; revoke one first"
-        )));
+        ))
+    };
+
+    if api_key::count_active_for_user(&state.db, user.id).await? >= MAX_API_KEYS_PER_USER {
+        return Err(over_cap());
     }
 
     let issued = api_key::issue_api_key(&state.db, user.id, name, scope, expires_at).await?;
+
+    // The count check above and the insert aren't atomic, so concurrent creates could
+    // each pass the check before any row lands and blow past the cap. Re-count now that
+    // the row exists; if we overshot, soft-revoke the key we just made and 409. The
+    // plaintext hasn't left the handler yet, so rolling it back is invisible to the
+    // caller — and once the persisted count reaches the cap every later create 409s.
+    if api_key::count_active_for_user(&state.db, user.id).await? > MAX_API_KEYS_PER_USER {
+        api_key::revoke(&state.db, issued.model.id, user.id).await?;
+        return Err(over_cap());
+    }
 
     Ok((
         StatusCode::CREATED,

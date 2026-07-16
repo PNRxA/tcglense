@@ -248,10 +248,13 @@ fn spa_link(state: &AppState, path: &str, token: &str, redirect: Option<&str>) -
     link.to_string()
 }
 
-/// Fire-and-forget email send for the anti-enumeration endpoints: the send runs
-/// off the request path so response timing can't reveal whether an account
-/// exists, and failures are logged, never surfaced (a 502 would only ever fire
-/// for existing accounts — leaking exactly what those endpoints must not).
+/// Fire-and-forget email send for the anti-enumeration endpoints: the send — with
+/// its latency and any failure — runs off the request path, so mail delivery can't
+/// reveal whether an account exists, and failures are logged, never surfaced (a 502
+/// would only ever fire for existing accounts — leaking exactly what those endpoints
+/// must not). One residual remains: token issuance is a DB write that runs on-path
+/// only when the account exists, a sub-millisecond timing difference that sits behind
+/// the CAPTCHA + per-IP limit (see docs/tradeoffs.md, §Transactional email).
 fn spawn_send(state: &AppState, email: OutgoingEmail) {
     let emailer = state.email.clone();
     tokio::spawn(async move {
@@ -890,9 +893,11 @@ pub async fn forgot_password(
 /// `POST /api/auth/reset-password`
 ///
 /// Consumes an emailed reset token (single-use, 1h expiry), re-hashes the
-/// password, and revokes every refresh token — a changed password ends all
-/// existing sessions. Completing a reset also proves mailbox ownership, so it
-/// stamps a still-unverified account verified.
+/// password, and revokes every refresh token **and API key** — a changed password
+/// ends all existing sessions and programmatic credentials, so a key an attacker
+/// minted while holding a compromised session can't survive the victim's recovery.
+/// Completing a reset also proves mailbox ownership, so it stamps a still-unverified
+/// account verified.
 pub async fn reset_password(
     State(state): State<AppState>,
     ClientIp(client_ip): ClientIp,
@@ -977,6 +982,11 @@ pub async fn reset_password(
     // link prevents an older email from undoing this password change later.
     invalidate_all_for_user(&txn, user_id, EmailTokenPurpose::ResetPassword).await?;
     revoke_all_for_user(&txn, user_id).await?;
+    // Also revoke every programmatic API key: a `tcgl_` key resolves only on
+    // `revoked_at`/`expires_at` (it carries no session generation), so without this a
+    // key minted during a compromise would outlive the reset. Same transaction, so a
+    // rollback leaves all credentials intact together.
+    crate::auth::api_key::revoke_all_for_user(&txn, user_id).await?;
     txn.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
