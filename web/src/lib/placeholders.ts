@@ -11,10 +11,12 @@ import type { Card, CardSet, Product } from '@/lib/api'
 // shape check is defensive — a matched entry may be a keepPreviousData placeholder
 // (undefined) or hold an unrelated shape — and the first hit wins.
 
-// Pull the `.data` array out of a Page-like / DataBody-like payload; [] for anything else.
+// Pull rows out of a Page/DataBody payload or an InfiniteData `{ pages }` wrapper (the
+// exact-name printing picker); [] for anything else.
 function pageRows(payload: unknown): unknown[] {
-  const data = (payload as { data?: unknown } | null)?.data
-  return Array.isArray(data) ? data : []
+  const shaped = payload as { data?: unknown; pages?: unknown } | null
+  if (Array.isArray(shaped?.data)) return shaped.data
+  return Array.isArray(shaped?.pages) ? shaped.pages.flatMap(pageRows) : []
 }
 
 // A nested field off a row object (the holding's `.card`, the sealed ref's `.product`).

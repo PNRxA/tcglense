@@ -119,21 +119,29 @@ export function getCardNames(
   return request<{ data: string[] }>(cardNamesPath(game, q, limit))
 }
 
-/** Upper bound on printings fetched for one name (the all-cards endpoint caps a
- * page at 200 — comfortably more than any non-basic card's printing count). */
+/** Page size for exact-name printing discovery. The picker loads further pages on
+ * demand, so basic lands and other names with more than 200 printings stay reachable. */
 export const MAX_PRINTINGS = 200
 
-/** Every printing of an exact card `name` in a game, newest printing first — the
- * quick-add "pick which printing" step. Reuses the all-cards endpoint's exact-name
- * filter, so no card-id is needed (the name comes straight from the autocomplete). */
-export function getCardPrintingsByName(game: string, name: string, page = 1): Promise<CardPage> {
-  return listCards(game, {
-    page,
-    name,
-    pageSize: MAX_PRINTINGS,
-    sort: 'released',
-    dir: 'desc',
-  })
+/** One page of an exact card `name`'s printings, newest first. Reuses the all-cards
+ * endpoint's exact-name filter, so no card id is needed. */
+export function getCardPrintingsByName(
+  game: string,
+  name: string,
+  page = 1,
+  signal?: AbortSignal,
+): Promise<CardPage> {
+  return listCards(
+    game,
+    {
+      page,
+      name,
+      pageSize: MAX_PRINTINGS,
+      sort: 'released',
+      dir: 'desc',
+    },
+    signal,
+  )
 }
 
 /** Browse a drop-grouped set (e.g. Secret Lair) broken into named drops,

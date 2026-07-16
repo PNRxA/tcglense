@@ -52,7 +52,10 @@ describe('findCardInCache', () => {
 
   it('hits a card-printings entry', () => {
     const qc = client()
-    qc.setQueryData(['card-printings', 'mtg', 'Lightning Bolt'], { data: [card('lb')] })
+    qc.setQueryData(['card-printings', 'mtg', 'Lightning Bolt'], {
+      pages: [{ data: [card('lb')] }],
+      pageParams: [1],
+    })
     expect(findCardInCache(qc, 'mtg', 'lb')?.id).toBe('lb')
   })
 

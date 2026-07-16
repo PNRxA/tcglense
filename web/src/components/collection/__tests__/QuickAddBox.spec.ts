@@ -44,12 +44,6 @@ vi.mock('@/composables/useQuickAdd', () => ({
     data: ref({ data: products }),
     isFetching: ref(false),
   }),
-  useCardPrintingsByName: () => ({
-    data: ref(undefined),
-    isFetching: ref(false),
-    isPending: ref(false),
-    isError: ref(false),
-  }),
 }))
 
 import QuickAddBox from '../QuickAddBox.vue'

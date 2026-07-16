@@ -376,6 +376,20 @@ catalog) is planned but not implemented.
   use one atomic deck endpoint: the replacement must share the current card's `oracle_id`
   (same-name fallback only when both ids are absent), existing target counts merge, and the
   picker pages through the full exact-name result set (including 800+ basic-land printings).
+- **Printing discovery is shared; mutations are not (issue #430).** Collection/wish-list
+  quick add, deck quick add, and deck replacement all consume `usePrintingPicker` plus
+  `PrintingPickerGrid` / `PrintingTile`. The query is one infinite family keyed exactly as
+  `['card-printings', game, name]`, accumulating the all-cards endpoint's 200-row pages so
+  every printing remains reachable; callers no longer mint incompatible paged/unpaged cache
+  entries. Filtering stays client-side over the **loaded pages only** — fetching every page
+  before the first render would add several requests for basic lands — and the shared grid
+  explicitly says so whenever more pages remain, with Load more still available even on a
+  zero-match filter. The tile owns artwork + printing metadata + display-currency price and
+  common current/loading/disabled states, while slots/thin wrappers keep absolute holding
+  editors, additive deck writes, and atomic replacement out of a domain-mode switch. The
+  scanner keeps its compact Select but shares the same query + metadata label; when OCR gives
+  a set code it loads all pages before auto-picking, avoiding a partial-list fuzzy match that
+  could hide the exact older printing beyond row 200.
 - **Deck import/export is a sibling pipeline, not collection reconcile (issue #389).** The
   provider *deck* endpoints and uploaded deck-list rows carry a category/board that the flat
   collection intermediate cannot represent. `deck_import` therefore produces `DeckCardRow`

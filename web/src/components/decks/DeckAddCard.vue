@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Loader2, Search } from '@lucide/vue'
+import { Search } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import DeckAddPrintTile from '@/components/decks/DeckAddPrintTile.vue'
-import { useCardNameSuggestions, useCardPrintingsByName } from '@/composables/useQuickAdd'
+import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
+import { useCardNameSuggestions } from '@/composables/useQuickAdd'
+import { usePrintingPicker } from '@/composables/usePrintings'
 import { useSetDeckCardMutation } from '@/composables/useDecks'
 import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
 import { automaticDeckSection } from '@/lib/deckCategories'
@@ -41,8 +43,7 @@ watch(term, () => {
   if (pickedName.value) pickedName.value = ''
 })
 const pickedEnabled = computed(() => pickedName.value.length > 0)
-const printingsQuery = useCardPrintingsByName(gameRef, pickedName, { enabled: pickedEnabled })
-const printings = computed(() => printingsQuery.data.value?.data ?? [])
+const picker = usePrintingPicker(gameRef, pickedName, { enabled: pickedEnabled })
 
 // Automatic is the default: each printing files into its preset type bucket. A user can
 // still pin the add box to any explicit section for functional/custom categorisation.
@@ -102,7 +103,7 @@ function needsExplicitSection(card: Card): boolean {
 }
 
 const hasUnclassifiedPrintings = computed(() =>
-  printings.value.some((card) => needsExplicitSection(card)),
+  picker.printings.value.some((card) => needsExplicitSection(card)),
 )
 
 function inTargetCount(card: Card): number {
@@ -192,32 +193,36 @@ function reset() {
           Clear
         </button>
       </div>
-      <Loader2
-        v-if="printingsQuery.isPending.value"
-        class="text-muted-foreground size-4 animate-spin"
-      />
       <p
-        v-else-if="hasUnclassifiedPrintings"
+        v-if="!picker.isPending.value && hasUnclassifiedPrintings"
         class="text-muted-foreground mb-2 text-xs"
         role="status"
       >
         Some card types have no safe automatic category. Choose a section above to add them.
       </p>
-      <div
-        v-if="!printingsQuery.isPending.value"
-        class="grid max-h-[32rem] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4"
+      <PrintingPickerGrid
+        v-model:filter="picker.filter.value"
+        class="max-h-[36rem] overflow-y-auto pr-1"
+        :printings="picker.printings.value"
+        :filtered-printings="picker.filteredPrintings.value"
+        :total="picker.total.value"
+        :pending="picker.isPending.value"
+        :error="picker.failed.value"
+        :has-more="picker.hasNextPage.value"
+        :loading-more="picker.isFetchingNextPage.value"
+        @load-more="picker.loadMore"
       >
-        <DeckAddPrintTile
-          v-for="card in printings"
-          :key="card.id"
-          :game="game"
-          :card="card"
-          :count="inTargetCount(card)"
-          :loading="isPending(card)"
-          :disabled="needsExplicitSection(card)"
-          @add="addPrinting(card)"
-        />
-      </div>
+        <template #tile="{ printing }">
+          <DeckAddPrintTile
+            :game="game"
+            :card="printing"
+            :count="inTargetCount(printing)"
+            :loading="isPending(printing)"
+            :disabled="needsExplicitSection(printing)"
+            @add="addPrinting(printing)"
+          />
+        </template>
+      </PrintingPickerGrid>
     </div>
   </div>
 </template>

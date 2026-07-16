@@ -1,20 +1,9 @@
 import { computed, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import {
-  getCardNames,
-  getCardPrintingsByName,
-  listProducts,
-  type CardPage,
-  type ProductPage,
-} from '@/lib/api'
+import { getCardNames, listProducts, type ProductPage } from '@/lib/api'
 
-/**
- * Server state for the collection quick-add box (`GameCollectionView`): the
- * distinct card-name hints the text box suggests, and every printing of a chosen
- * name to pick from. Both are public catalog reads, so they use plain `useQuery`
- * (like `useCatalog`) rather than the authed wrapper — the actual add is what's
- * authenticated, and it goes through the existing collection mutation.
- */
+/** Public suggestion queries for the collection/wish-list and deck quick-add boxes.
+ * Exact-name printing discovery lives in `usePrintings`, shared with replacement/scanner. */
 
 /** Minimum characters before the quick-add box queries for name hints — short
  * enough to feel responsive, long enough to keep the suggestion set tight. */
@@ -46,26 +35,6 @@ export function useProductSuggestions(game: Ref<string>, term: Ref<string>) {
   return useQuery<ProductPage>({
     queryKey: ['product-suggest', game, trimmed],
     queryFn: () => listProducts(game.value, { q: trimmed.value, pageSize: 10 }),
-    enabled,
-    placeholderData: keepPreviousData,
-    staleTime: 60_000,
-  })
-}
-
-/** Every printing of the exact card `name`, newest printing first — the quick-add
- * "pick which printing" step. `opts.enabled` lets the caller defer the fetch until
- * the print picker is actually open (so choosing a name is what triggers it). */
-export function useCardPrintingsByName(
-  game: Ref<string>,
-  name: Ref<string>,
-  opts: { enabled?: Ref<boolean>; page?: Ref<number> } = {},
-) {
-  const enabled = computed(() => name.value.length > 0 && (opts.enabled?.value ?? true))
-  return useQuery<CardPage>({
-    queryKey: opts.page
-      ? ['card-printings', game, name, opts.page]
-      : ['card-printings', game, name],
-    queryFn: () => getCardPrintingsByName(game.value, name.value, opts.page?.value ?? 1),
     enabled,
     placeholderData: keepPreviousData,
     staleTime: 60_000,

@@ -1,96 +1,137 @@
-import { describe, expect, it, vi } from 'vitest'
-import { defineComponent, nextTick, ref } from 'vue'
-import { mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
 import type { Card } from '@/lib/api'
+import { makeCard } from '@/test/fixtures'
 
-const queryState = vi.hoisted(() => ({ page: undefined as { value: number } | undefined }))
+const mocks = vi.hoisted(() => ({
+  mutateAsync: vi.fn<(variables: unknown) => Promise<void>>(),
+  loadMore: vi.fn<() => Promise<void>>(),
+}))
 
-vi.mock('@/composables/useQuickAdd', async () => {
-  const { computed, ref: vueRef } = await import('vue')
-  return {
-    useCardPrintingsByName: (
-      _game: unknown,
-      _name: unknown,
-      opts: { page?: { value: number } },
-    ) => {
-      queryState.page = opts.page
-      return {
-        data: computed(() => ({
-          data: [
-            {
-              id: `print-${opts.page?.value ?? 1}`,
-              name: 'Island',
-              set_name: `Set page ${opts.page?.value ?? 1}`,
-              set_code: 'tst',
-              collector_number: String(opts.page?.value ?? 1),
-              has_image: false,
-            },
-          ],
-          page: opts.page?.value ?? 1,
-          page_size: 200,
-          total: 816,
-          has_more: (opts.page?.value ?? 1) < 5,
-        })),
-        isPending: vueRef(false),
-        isFetching: vueRef(false),
-        isError: vueRef(false),
-      }
+vi.mock('@/composables/usePrintings', async () => {
+  const { computed, ref } = await import('vue')
+  const printings = ref([
+    {
+      id: 'current',
+      name: 'Island',
+      set_name: 'Current Set',
+      set_code: 'cur',
+      collector_number: '1',
     },
+    {
+      id: 'target',
+      name: 'Island',
+      set_name: 'Target Set',
+      set_code: 'tgt',
+      collector_number: '201',
+    },
+  ] as Card[])
+  const filter = ref('')
+  return {
+    usePrintingPicker: () => ({
+      filter,
+      printings,
+      filteredPrintings: computed(() => printings.value),
+      total: ref(816),
+      isPending: ref(false),
+      failed: ref(false),
+      hasNextPage: ref(true),
+      isFetchingNextPage: ref(false),
+      loadMore: mocks.loadMore,
+    }),
   }
 })
 
-vi.mock('@/composables/useDecks', () => ({
-  useChangeDeckCardPrintingMutation: () => ({
-    mutateAsync: vi.fn<(variables: unknown) => Promise<void>>(),
-    isPending: ref(false),
-  }),
-}))
+vi.mock('@/composables/useDecks', async () => {
+  const { ref } = await import('vue')
+  return {
+    useChangeDeckCardPrintingMutation: () => ({
+      mutateAsync: mocks.mutateAsync,
+      isPending: ref(false),
+    }),
+  }
+})
 
-import DeckPrintingDialog from '../DeckPrintingDialog.vue'
+import DeckPrintingDialog from '@/components/decks/DeckPrintingDialog.vue'
 
 const PassThrough = defineComponent({ template: '<div><slot /></div>' })
 const ButtonStub = defineComponent({
   inheritAttrs: false,
   template: '<button v-bind="$attrs"><slot /></button>',
 })
+const PrintingTileStub = defineComponent({
+  props: {
+    card: { type: Object, required: true },
+    current: Boolean,
+    disabled: Boolean,
+  },
+  emits: ['select'],
+  template: `
+    <button :data-id="card.id" :disabled="disabled" @click="$emit('select')">
+      {{ card.set_name }}<span v-if="current"> Current</span>
+    </button>
+  `,
+})
 
-describe('DeckPrintingDialog pagination', () => {
-  it('navigates beyond the first 200 exact-name printings', async () => {
-    const wrapper = mount(DeckPrintingDialog, {
-      props: {
-        open: true,
-        game: 'mtg',
-        deckId: 1,
-        sectionId: 2,
-        card: { id: 'current', name: 'Island' } as Card,
-        quantity: 4,
-        foilQuantity: 0,
+function mountDialog() {
+  return mount(DeckPrintingDialog, {
+    props: {
+      open: true,
+      game: 'mtg',
+      deckId: 1,
+      sectionId: 2,
+      card: makeCard('current'),
+      quantity: 3,
+      foilQuantity: 1,
+    },
+    global: {
+      stubs: {
+        Button: ButtonStub,
+        Dialog: PassThrough,
+        DialogClose: ButtonStub,
+        DialogContent: PassThrough,
+        DialogDescription: PassThrough,
+        DialogTitle: PassThrough,
+        PrintingTile: PrintingTileStub,
       },
-      global: {
-        stubs: {
-          Button: ButtonStub,
-          CardImage: PassThrough,
-          Dialog: PassThrough,
-          DialogClose: ButtonStub,
-          DialogContent: PassThrough,
-          DialogDescription: PassThrough,
-          DialogTitle: PassThrough,
-        },
-      },
+    },
+  })
+}
+
+beforeEach(() => {
+  mocks.mutateAsync.mockReset().mockResolvedValue(undefined)
+  mocks.loadMore.mockReset().mockResolvedValue(undefined)
+})
+
+describe('DeckPrintingDialog action adapter', () => {
+  it('uses the shared loaded-page scope and pagination control', async () => {
+    const wrapper = mountDialog()
+    expect(wrapper.text()).toContain('2 of 816 printings loaded')
+    expect(wrapper.text()).toContain('Filter searches loaded printings only.')
+    expect(wrapper.get('[data-id="current"]').text()).toContain('Current')
+
+    const loadMore = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('Load more printings'))
+    if (!loadMore) throw new Error('missing load-more button')
+    await loadMore.trigger('click')
+    expect(mocks.loadMore).toHaveBeenCalledOnce()
+  })
+
+  it('performs one atomic replacement and closes on success', async () => {
+    const wrapper = mountDialog()
+    await wrapper.get('[data-id="target"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.mutateAsync).toHaveBeenCalledWith({
+      game: 'mtg',
+      deckId: 1,
+      sectionId: 2,
+      id: 'current',
+      newCardId: 'target',
     })
-
-    expect(wrapper.text()).toContain('Showing 1–200 of 816 printings')
-    expect(wrapper.text()).toContain('1 / 5')
-    expect(queryState.page?.value).toBe(1)
-
-    const next = wrapper.findAll('button').find((button) => button.text().trim() === 'Next')
-    if (!next) throw new Error('missing Next button')
-    await next.trigger('click')
-    await nextTick()
-
-    expect(queryState.page?.value).toBe(2)
-    expect(wrapper.text()).toContain('Showing 201–400 of 816 printings')
-    expect(wrapper.text()).toContain('Set page 2')
-    expect(wrapper.text()).toContain('2 / 5')
+    const openEvents = wrapper.emitted('update:open') ?? []
+    expect(openEvents[openEvents.length - 1]).toEqual([false])
   })
 })
