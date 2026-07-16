@@ -10,6 +10,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::Deserialize;
 
 use crate::auth::extractor::AuthUser;
+use crate::deck_import::render_text_section_header;
 use crate::entities::prelude::{Card, DeckCard, DeckSection};
 use crate::entities::{card, deck_card, deck_section};
 use crate::error::AppError;
@@ -250,12 +251,12 @@ fn build_text(
             if !output.is_empty() {
                 output.push('\n');
             }
-            output.push_str(
+            output.push_str(&render_text_section_header(
                 sections
                     .get(&item.section_id)
                     .map(|value| value.1.as_str())
                     .unwrap_or("Mainboard"),
-            );
+            ));
             output.push('\n');
             current_section = Some(item.section_id);
         }

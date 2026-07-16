@@ -558,9 +558,10 @@ is priced.
 holding value and `sealed_value_usd` is the sealed-product holding value, each as a 2-dp USD
 string or `null` until that holding kind has a captured price on/before the day. Both lines
 share the union of their snapshot dates and independently carry their last captured prices
-forward. Each is an add-date-clamped revaluation of the user's **current** quantities: quantity
-changes before today are not stored, so current counts are treated as held continuously since
-the row's `created_at`; removed-and-re-added rows restart at the later add date.
+forward. Each revalues the user's **current** quantities across every captured historic date,
+regardless of when the holding was added. Quantity changes before today are not stored, so the
+graph intentionally answers what the current basket would have been worth at historic prices,
+not what the user actually owned on each date.
 
 `CollectionMovers = { as_of, day, week, month, year, two_year, three_year, all_time, sealed }`:
 `as_of` is the newest `YYYY-MM-DD` price snapshot across the user's priced card holdings, or
@@ -796,7 +797,7 @@ deck ids), matching the public-sharing surface.
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
 | `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name, auto_categorize }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Explicit provider categories/boards become deck sections. `auto_categorize` defaults to `true` when omitted and files generic Mainboard rows into the matching preset type section; set it to `false` to preserve Mainboard exactly. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
-| `GET /api/decks/{game}/{deck_id}/export?format=archidekt\|moxfield\|moxfield-text` | — | Owner-scoped deck-list download. `archidekt` (default) and `moxfield` return CSV; `moxfield-text` returns a sectioned plain-text list. Regular and foil quantities are separate rows, and sections round-trip through each format. `404` if not the caller's |
+| `GET /api/decks/{game}/{deck_id}/export?format=archidekt\|moxfield\|moxfield-text` | — | Owner-scoped deck-list download. `archidekt` (default) and `moxfield` return CSV; `moxfield-text` returns a sectioned plain-text list. Regular and foil quantities are separate rows, and sections round-trip through each format — a text section header the plain-text grammar would misread (a leading quantity like `2 Drops`, a leading `#`, or edge `~ / : [ ]` characters) is emitted wrapped in one bracket pair (`[2 Drops]`), which the importer strips back off verbatim. Two text-format caveats: line breaks inside a section name flatten to spaces, and a name that reduces to a standard board alias (`Deck`, `Considering`, …) re-imports as that board. `404` if not the caller's |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
 | `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
 | `PUT /api/decks/{game}/{deck_id}/folder` | `{ folder_id }` | `Deck` — file the deck under a folder, or `null` to loosen it (`404` for a folder that isn't the caller's) |

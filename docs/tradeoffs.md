@@ -265,7 +265,9 @@ catalog) is planned but not implemented.
   card-only, so adding sealed products does not silently change provider round trips. The
   collection value-history chart does include sealed holdings as a separate line, and the
   movers panel switches between independent Singles and Sealed rankings; both reuse the same
-  current-count/add-date and captured-price assumptions as the original card analytics.
+  current-count and captured-price assumptions as the original card analytics. Value history
+  deliberately ignores holding add dates, revaluing the whole current basket at every historic
+  price point; movers likewise rank the current basket rather than reconstructing ownership.
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing
