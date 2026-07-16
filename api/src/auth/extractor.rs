@@ -51,7 +51,16 @@ async fn resolve_principal(parts: &Parts, state: &AppState) -> Result<Principal,
         .ok_or_else(|| AppError::Unauthorized("malformed authorization header".to_string()))?;
 
     if token.starts_with(KEY_PLAINTEXT_PREFIX) {
-        let resolved = api_key::resolve(&state.db, token).await?;
+        // The per-user rate-limit middleware already resolved this key (one
+        // key ⋈ user round-trip) and stashed the result in the request extensions;
+        // reuse it instead of repeating the lookup. The `matches` guard pins the
+        // resolution to this exact credential, and the fallback covers every path
+        // the middleware doesn't run on (rate limiting disabled, a route outside
+        // the limited group, extractor-level tests).
+        let resolved = match parts.extensions.get::<api_key::PreresolvedApiKey>() {
+            Some(pre) if pre.matches(token) => pre.resolved.clone(),
+            _ => api_key::resolve(&state.db, token).await?,
+        };
         return Ok(Principal {
             user: resolved.user,
             method: AuthMethod::ApiKey(resolved.scope),

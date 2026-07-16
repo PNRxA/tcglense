@@ -111,10 +111,35 @@ pub struct IssuedApiKey {
 }
 
 /// The result of authenticating a presented key: the owning user and the key's scope.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedApiKey {
     pub user: user::Model,
     pub scope: ApiKeyScope,
+}
+
+/// A [`ResolvedApiKey`] the per-user rate-limit middleware already resolved for the
+/// current request, stashed in the request extensions so the auth extractor reuses
+/// it instead of repeating the identical lookup (which used to cost a keyed request
+/// two extra point SELECTs — issue #413). Request-scoped by construction: extensions
+/// die with the request, so there is no staleness window and nothing to invalidate.
+///
+/// Belt-and-braces, the resolution records which credential it belongs to (its
+/// SHA-256, never the plaintext) and the extractor checks [`Self::matches`] before
+/// trusting it — so even a future mis-wiring that stashed a resolution for a
+/// different token could never authenticate the wrong principal.
+#[derive(Debug, Clone)]
+pub struct PreresolvedApiKey {
+    /// SHA-256 hex of the presented plaintext this resolution was made for.
+    token_hash: String,
+    pub resolved: ResolvedApiKey,
+}
+
+impl PreresolvedApiKey {
+    /// Whether this resolution was made for `presented` (hash comparison — the
+    /// plaintext is never stored).
+    pub fn matches(&self, presented: &str) -> bool {
+        super::secret::sha256_hex(presented) == self.token_hash
+    }
 }
 
 /// Mint a new key for `user_id`, persisting only its hash. Returns the plaintext
@@ -147,22 +172,27 @@ pub async fn issue_api_key(
     Ok(IssuedApiKey { plaintext, model })
 }
 
-/// Look up the live (non-revoked, non-expired) key row matching `presented`, if any.
-async fn find_live(
+/// Look up the live (non-revoked, non-expired) key row matching `presented` together
+/// with its owning user, in **one** round-trip (a `find_also_related` LEFT JOIN via
+/// the `api_keys` → `users` relation). Returns the presented key's hash alongside so
+/// callers building a [`PreresolvedApiKey`] don't re-hash.
+async fn find_live_with_user(
     db: &DatabaseConnection,
     presented: &str,
-) -> Result<Option<api_key::Model>, AppError> {
+) -> Result<(String, Option<(api_key::Model, Option<user::Model>)>), AppError> {
     let hash = super::secret::sha256_hex(presented);
     let row = ApiKey::find()
-        .filter(api_key::Column::TokenHash.eq(hash))
+        .filter(api_key::Column::TokenHash.eq(hash.clone()))
         .filter(api_key::Column::RevokedAt.is_null())
+        .find_also_related(User)
         .one(db)
         .await?;
 
-    Ok(match row {
-        Some(row) if is_expired(&row, Utc::now()) => None,
+    let live = match row {
+        Some((row, _)) if is_expired(&row, Utc::now()) => None,
         other => other,
-    })
+    };
+    Ok((hash, live))
 }
 
 fn is_expired(row: &api_key::Model, now: DateTime<Utc>) -> bool {
@@ -185,31 +215,41 @@ fn live_filter(now: DateTimeUtc) -> sea_orm::sea_query::SimpleExpr {
 /// path). Rejects an unknown / revoked / expired key, or one whose user is gone,
 /// with `Unauthorized`. Best-effort stamps `last_used_at` (throttled).
 pub async fn resolve(db: &DatabaseConnection, presented: &str) -> Result<ResolvedApiKey, AppError> {
-    let invalid = || AppError::Unauthorized("invalid or expired api key".to_string());
-
-    let row = find_live(db, presented).await?.ok_or_else(invalid)?;
-
-    let user = User::find_by_id(row.user_id)
-        .one(db)
+    Ok(resolve_for_rate_limit(db, presented)
         .await?
-        .ok_or_else(invalid)?;
+        .ok_or_else(|| AppError::Unauthorized("invalid or expired api key".to_string()))?
+        .resolved)
+}
+
+/// Full resolution for the per-user rate-limit middleware: the same one-round-trip
+/// key⋈user lookup and throttled `last_used_at` stamp as [`resolve`], but an
+/// unknown / revoked / expired key (or one whose user is gone) is `Ok(None)` — the
+/// middleware passes it through untouched and the extractor, which owns the auth
+/// decision, rejects it with the 401. The middleware stashes the returned
+/// [`PreresolvedApiKey`] in the request extensions so the extractor consumes this
+/// resolution instead of repeating it — one point SELECT per keyed request where
+/// there used to be three (issue #413).
+pub async fn resolve_for_rate_limit(
+    db: &DatabaseConnection,
+    presented: &str,
+) -> Result<Option<PreresolvedApiKey>, AppError> {
+    let (token_hash, live) = find_live_with_user(db, presented).await?;
+    let Some((row, user)) = live else {
+        return Ok(None);
+    };
+    // A key whose owner row is gone is as dead as a revoked one (never stamped).
+    let Some(user) = user else {
+        return Ok(None);
+    };
 
     let scope = ApiKeyScope::from_str_lenient(&row.scope);
 
     touch_last_used(db, row).await;
 
-    Ok(ResolvedApiKey { user, scope })
-}
-
-/// Resolve a presented key to just its owning user id — the cheap lookup the
-/// per-user rate limiter needs (no user load, no `last_used_at` write). `Ok(None)`
-/// for an unknown / revoked / expired key, so the limiter passes it through (the
-/// extractor then rejects it with 401).
-pub async fn resolve_user_id(
-    db: &DatabaseConnection,
-    presented: &str,
-) -> Result<Option<i32>, AppError> {
-    Ok(find_live(db, presented).await?.map(|row| row.user_id))
+    Ok(Some(PreresolvedApiKey {
+        token_hash,
+        resolved: ResolvedApiKey { user, scope },
+    }))
 }
 
 /// Best-effort, throttled `last_used_at` stamp. A failure here must never fail the
@@ -383,11 +423,16 @@ mod tests {
             .expect("row");
         assert!(row.last_used_at.is_some());
 
-        // The rate-limiter helper returns the same user.
-        assert_eq!(
-            resolve_user_id(&db, &issued.plaintext).await.expect("uid"),
-            Some(user_id)
-        );
+        // The rate-limiter helper returns the same user, and its stashed resolution
+        // is pinned to the presented credential (and only that credential).
+        let pre = resolve_for_rate_limit(&db, &issued.plaintext)
+            .await
+            .expect("resolve")
+            .expect("live key");
+        assert_eq!(pre.resolved.user.id, user_id);
+        assert_eq!(pre.resolved.scope, ApiKeyScope::ReadWrite);
+        assert!(pre.matches(&issued.plaintext));
+        assert!(!pre.matches("tcgl_somethingelse"));
     }
 
     #[tokio::test]
@@ -397,7 +442,12 @@ mod tests {
 
         // Unknown.
         assert!(resolve(&db, "tcgl_deadbeef").await.is_err());
-        assert_eq!(resolve_user_id(&db, "tcgl_deadbeef").await.unwrap(), None);
+        assert!(
+            resolve_for_rate_limit(&db, "tcgl_deadbeef")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         // Revoked.
         let issued = issue_api_key(&db, user_id, "revoke-me", ApiKeyScope::Read, None)
@@ -405,7 +455,12 @@ mod tests {
             .expect("issue");
         assert!(revoke(&db, issued.model.id, user_id).await.expect("revoke"));
         assert!(resolve(&db, &issued.plaintext).await.is_err());
-        assert_eq!(resolve_user_id(&db, &issued.plaintext).await.unwrap(), None);
+        assert!(
+            resolve_for_rate_limit(&db, &issued.plaintext)
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         // Expired (planted in the past).
         let expired = issue_api_key(
