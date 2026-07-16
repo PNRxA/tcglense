@@ -62,7 +62,8 @@ pub struct CollectionMovers {
     /// owned card has any captured price history (all lists then empty).
     pub as_of: Option<String>,
     /// The snapshot date used by `day`. Normally the same as `as_of`; when the latest
-    /// comparison has no movers, this falls back to the previous available snapshot.
+    /// comparison has no movers and retrying from the previous available snapshot finds
+    /// some, this reports that fallback date instead.
     pub day_as_of: Option<String>,
     pub day: CollectionMoverList,
     pub week: CollectionMoverList,
@@ -561,7 +562,8 @@ pub async fn collection_movers(
     // upstream feed has not moved yet). In that case, retry 1D from the previous available
     // snapshot instead of returning a misleading "not enough history" state. Longer windows
     // keep their original latest anchor, so this fallback is independent and exposed via
-    // `day_as_of`.
+    // `day_as_of` — which moves only when the retry actually found movement, so an empty 1D
+    // list is never labeled with a reference date older than `as_of`.
     let mut card_day_as_of = card_latest.clone();
     if raw_window_empty(&card_windows.day)
         && let Some(targets) = card_targets.as_ref()
@@ -576,14 +578,17 @@ pub async fn collection_movers(
             &mut card_prices,
         )
         .await?;
-        card_windows.day = window_movers(
+        let retried = window_movers(
             &card_holdings,
             &card_prices,
             &fallback_latest,
             &fallback_target,
             TOP_N,
         );
-        card_day_as_of = Some(fallback_latest);
+        if !raw_window_empty(&retried) {
+            card_windows.day = retried;
+            card_day_as_of = Some(fallback_latest);
+        }
     }
 
     let mut product_day_as_of = product_latest.clone();
@@ -600,14 +605,17 @@ pub async fn collection_movers(
             &mut product_prices,
         )
         .await?;
-        product_windows.day = window_movers(
+        let retried = window_movers(
             &product_holdings,
             &product_prices,
             &fallback_latest,
             &fallback_target,
             TOP_N,
         );
-        product_day_as_of = Some(fallback_latest);
+        if !raw_window_empty(&retried) {
+            product_windows.day = retried;
+            product_day_as_of = Some(fallback_latest);
+        }
     }
 
     // The union of every item that survived into any final list. An item can rank in several

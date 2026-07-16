@@ -567,7 +567,8 @@ all_time, sealed }`:
 `as_of` is the newest `YYYY-MM-DD` price snapshot across the user's priced card holdings, or
 `null` when none has history. `day_as_of` is the date used by the 1d comparison: normally
 `as_of`, but when that comparison has no non-zero movers it retries from the previous
-available snapshot and reports that date instead. Every window is a required
+available snapshot and, when the retry finds movement, reports that date instead (a retry
+that also finds nothing keeps `day_as_of` at `as_of`). Every window is a required
 `CollectionMoverList = { gainers, losers }`; both arrays are value-change ordered and capped
 at five. A `CollectionMover` is
 the backward-compatible card shape `{ card, quantity, foil_quantity, value_now, value_prev,

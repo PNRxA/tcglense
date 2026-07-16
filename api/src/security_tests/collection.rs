@@ -841,6 +841,11 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
 /// An unchanged newest capture must not make 1D look history-less. The daily window retries
 /// from the previous available snapshot (including across a missing calendar day), while the
 /// overall `as_of` and every longer window remain anchored to the newest capture.
+///
+/// The ten-day-old row makes the retry's baseline fetch load-bearing: the three-days-ago
+/// snapshot is not one of the main query's anchors (the day anchor is `d1`, the week anchor
+/// and earliest price are `d10`), so the correct `value_prev` of `5.00` can only come from
+/// the fallback's own at-or-before lookup — carrying forward from `d10` would report `3.00`.
 #[tokio::test]
 async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     let app = test_app_with_catalog().await;
@@ -850,11 +855,12 @@ async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     let id = &ids[0];
     own_card(&app, &token, id, 1).await;
 
-    let (d0, d1, d3) = (day_offset(0), day_offset(1), day_offset(3));
+    let (d0, d1, d3, d10) = (day_offset(0), day_offset(1), day_offset(3), day_offset(10));
     set_price_history(
         db,
         internal_card_id(db, id).await,
         &[
+            (d10, Some("3.00"), None),
             (d3, Some("5.00"), None),
             (d1.clone(), Some("8.00"), None),
             (d0.clone(), Some("8.00"), None),
@@ -871,6 +877,41 @@ async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     assert_eq!(body["day"]["gainers"][0]["value_prev"], "5.00");
     assert_eq!(body["day"]["gainers"][0]["value_now"], "8.00");
     assert_eq!(body["day"]["gainers"][0]["change_usd"], "3.00");
+    assert!(body["day"]["losers"].as_array().unwrap().is_empty());
+    // 7D stays on the newest anchor: latest 8.00 against the d10 carry-forward of 3.00.
+    assert_eq!(body["week"]["gainers"][0]["value_prev"], "3.00");
+    assert_eq!(body["week"]["gainers"][0]["change_usd"], "5.00");
+}
+
+/// When the fallback retry also finds no movement (every capture flat), `day_as_of` must
+/// stay on the newest snapshot — an empty 1D list never claims an older reference date.
+#[tokio::test]
+async fn movers_day_keeps_the_newest_anchor_when_the_fallback_is_also_empty() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-day-flat@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 1).await;
+
+    let (d0, d1, d2) = (day_offset(0), day_offset(1), day_offset(2));
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d2, Some("5.00"), None),
+            (d1, Some("5.00"), None),
+            (d0.clone(), Some("5.00"), None),
+        ],
+    )
+    .await;
+
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
+    assert_eq!(body["as_of"], d0);
+    assert_eq!(body["day_as_of"], d0, "an empty retry keeps the newest anchor");
+    assert!(body["day"]["gainers"].as_array().unwrap().is_empty());
     assert!(body["day"]["losers"].as_array().unwrap().is_empty());
 }
 

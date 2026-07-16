@@ -200,12 +200,17 @@ async fn sealed_holdings_feed_value_history_and_movers() {
 
     // Today's capture is unchanged. The 1D movers should therefore fall back to yesterday's
     // movement against the previous available capture (three days ago; two days ago is
-    // deliberately absent).
-    let (today, yesterday, three_days_ago) = (day_offset(0), day_offset(1), day_offset(3));
+    // deliberately absent). The ten-day-old rows keep the three-days-ago snapshot out of the
+    // main query's anchors (it becomes neither the week anchor nor the earliest price), so
+    // the day assertions only pass when the fallback's own baseline fetch works — and they
+    // give the week window a newest-anchor movement to pin the non-fallback sealed ranking.
+    let (today, yesterday, three_days_ago, ten_days_ago) =
+        (day_offset(0), day_offset(1), day_offset(3), day_offset(10));
     set_product_price_history(
         db,
         internal_product_id(db, "100").await,
         &[
+            (ten_days_ago.clone(), Some("10.00")),
             (three_days_ago.clone(), Some("10.00")),
             (yesterday.clone(), Some("20.00")),
             (today.clone(), Some("20.00")),
@@ -216,6 +221,7 @@ async fn sealed_holdings_feed_value_history_and_movers() {
         db,
         internal_product_id(db, "200").await,
         &[
+            (ten_days_ago, Some("20.00")),
             (three_days_ago, Some("20.00")),
             (yesterday.clone(), Some("15.00")),
             (today.clone(), Some("15.00")),
@@ -257,6 +263,14 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     let loser = &movers["sealed"]["day"]["losers"][0];
     assert_eq!(loser["product"]["id"], "200");
     assert_eq!(loser["change_usd"], "-5.00");
+    // The week window ranks on the non-fallback path: today's capture against the
+    // ten-day-old carry-forward, anchored at the sealed series' own newest snapshot.
+    let week_gainer = &movers["sealed"]["week"]["gainers"][0];
+    assert_eq!(week_gainer["product"]["id"], "100");
+    assert_eq!(week_gainer["change_usd"], "20.00", "two boxes gained $10 each since d10");
+    let week_loser = &movers["sealed"]["week"]["losers"][0];
+    assert_eq!(week_loser["product"]["id"], "200");
+    assert_eq!(week_loser["change_usd"], "-5.00");
 }
 
 #[tokio::test]

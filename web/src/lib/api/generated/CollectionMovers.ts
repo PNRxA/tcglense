@@ -14,7 +14,8 @@ export type CollectionMovers = {
 as_of: string | null, 
 /**
  * The snapshot date used by `day`. Normally the same as `as_of`; when the latest
- * comparison has no movers, this falls back to the previous available snapshot.
+ * comparison has no movers and retrying from the previous available snapshot finds
+ * some, this reports that fallback date instead.
  */
 day_as_of: string | null, day: CollectionMoverList, week: CollectionMoverList, month: CollectionMoverList, year: CollectionMoverList, two_year: CollectionMoverList, three_year: CollectionMoverList, all_time: CollectionMoverList, 
 /**

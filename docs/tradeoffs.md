@@ -267,7 +267,10 @@ catalog) is planned but not implemented.
   movers panel switches between independent Singles and Sealed rankings; both reuse the same
   current-count/add-date and captured-price assumptions as the original card analytics. Their
   1d lists independently fall back one available snapshot when the newest comparison has no
-  non-zero movers, while longer windows stay anchored to the newest snapshot.
+  non-zero movers, while longer windows stay anchored to the newest snapshot; `day_as_of`
+  reports the fallback date only when that retry actually found movement. The fallback is
+  deliberately single-step — a feed that stalls for several captures shows an empty 1d
+  rather than paying unbounded extra baseline queries per request.
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing
