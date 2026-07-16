@@ -54,15 +54,20 @@ export function useScanSession(game: Ref<string>) {
 
   // Monotonic id per committed entry (stable session-log key across each unshift).
   let nextEntryId = 0
-  // Guards commitCurrent against a concurrent second invocation (an in-flight auto tick
-  // racing the Stop/unmount commit), which would otherwise double-write and double-log.
-  let commitInFlight = false
+  // A Stop/navigation finalizer can race the auto-advance commit. Share the same promise so
+  // both callers wait for one write instead of either double-writing or treating the in-flight
+  // commit as a failed/no-op save.
+  let commitInFlight: Promise<boolean> | null = null
+  let finalizeInFlight: Promise<boolean> | null = null
+  let undoInFlight: Promise<boolean> | null = null
 
   const match = ref<ScanMatch | null>(null)
   const selectedName = ref('')
   const selectedId = ref('')
   const seeded = ref(false)
   const resolving = ref(false)
+  const finalizing = ref(false)
+  const undoing = ref(false)
   // True when the last capture matched no catalog card (nothing within the visual
   // confidence radius) — drives the "not recognised" nudge.
   const unrecognized = ref(false)
@@ -73,8 +78,14 @@ export function useScanSession(game: Ref<string>) {
   // card (its art, not just a name).
   const candidates = ref<ApiScanMatch[]>([])
 
+  const actionsLocked = () => finalizing.value || resolving.value || undoing.value
+
   // Absolute counts to write on commit: owned + the scanned copy, then user-adjustable.
   const target = reactive<CollectionQuantities>({ quantity: 0, foil_quantity: 0 })
+  // Frozen baseline that `target` was seeded from. The live owned query can refetch while the
+  // user edits; absolute writes and session-log Undo must still compare against the baseline
+  // behind the tentative delta. A same-printing Undo rebases both values below.
+  const seedBase = reactive<CollectionQuantities>({ quantity: 0, foil_quantity: 0 })
 
   // Every printing of the chosen name (public read, cached — re-scans are instant).
   const printsEnabled = computed(() => selectedName.value.length > 0)
@@ -97,6 +108,15 @@ export function useScanSession(game: Ref<string>) {
   const selectedCard = computed<Card | null>(
     () => prints.value.find((card) => card.id === selectedId.value) ?? null,
   )
+  // A failed initial/next-page request must not turn an incomplete list into a valid OCR
+  // resolution. The user can retry or explicitly choose one of the loaded printings.
+  const printsError = computed(
+    () =>
+      printsEnabled.value &&
+      printsPicker.failed.value &&
+      !printsPicker.isFetching.value &&
+      !printsPicker.isFetchingNextPage.value,
+  )
 
   // Authoritative owned counts for the selected printing (authed; refetched on each switch
   // so an absolute write never seeds off a stale count — see OwnedCountControl's guard).
@@ -118,7 +138,16 @@ export function useScanSession(game: Ref<string>) {
     () => ownedEnabled.value && entryQuery.isError.value && !entryQuery.isFetching.value,
   )
   function retryOwned() {
+    if (actionsLocked()) return
     void entryQuery.refetch()
+  }
+  function retryPrintings() {
+    if (actionsLocked()) return
+    if (printsPicker.hasNextPage.value) {
+      void printsPicker.loadMore()
+      return
+    }
+    void printsPicker.refetch()
   }
   // The steppers/commit are trustworthy only once the seed has been applied off a settled
   // holding.
@@ -129,14 +158,22 @@ export function useScanSession(game: Ref<string>) {
   // Guards against a fast double-scan advancing before the previous card's holding loads —
   // its commit would be skipped (unseeded) and the card silently dropped.
   const currentSettled = computed(
-    () => !match.value || ready.value || (!printsLoading.value && !selectedCard.value),
+    () =>
+      !match.value ||
+      ready.value ||
+      (!printsLoading.value && !printsError.value && !selectedCard.value),
   )
 
-  function selectId(id: string) {
+  function applySelectedId(id: string) {
     if (id === selectedId.value) return
     // A different printing must re-seed off its own holding (writes are absolute).
     seeded.value = false
     selectedId.value = id
+  }
+
+  function selectId(id: string) {
+    if (actionsLocked()) return
+    applySelectedId(id)
   }
 
   // Auto-pick a printing once the needed pages have settled: when OCR supplied a set code,
@@ -153,12 +190,17 @@ export function useScanSession(game: Ref<string>) {
       return
     }
     if (selectedCard.value) return
-    if (match.value?.hint.setCode && printsPicker.hasNextPage.value && !printsPicker.failed.value) {
-      void printsPicker.loadMore()
-      return
+    if (match.value?.hint.setCode) {
+      // The hinted printing may still be outside the partial result set after a failed page.
+      // Never fall through to `prints[0]`; retry or a deliberate manual pick is required.
+      if (printsPicker.failed.value) return
+      if (printsPicker.hasNextPage.value) {
+        void printsPicker.loadMore()
+        return
+      }
     }
     const picked = matchPrinting(prints.value, match.value?.hint ?? {}) ?? prints.value[0]
-    if (picked) selectId(picked.id)
+    if (picked) applySelectedId(picked.id)
   })
 
   // Seed the target counts off the settled holding, once per printing.
@@ -166,8 +208,10 @@ export function useScanSession(game: Ref<string>) {
     [selectedId, ownedReady],
     () => {
       if (selectedId.value && ownedReady.value && !seeded.value) {
-        target.quantity = owned.value.quantity + SCANNED_COPIES
-        target.foil_quantity = owned.value.foil_quantity
+        seedBase.quantity = owned.value.quantity
+        seedBase.foil_quantity = owned.value.foil_quantity
+        target.quantity = seedBase.quantity + SCANNED_COPIES
+        target.foil_quantity = seedBase.foil_quantity
         seeded.value = true
       }
     },
@@ -178,34 +222,36 @@ export function useScanSession(game: Ref<string>) {
     match.value = next
     unrecognized.value = false
     selectedName.value = next.name
-    selectId('')
+    applySelectedId('')
   }
 
   /** Switch the resolved name to another candidate (re-resolves printings + counts). */
   function setName(name: string) {
+    if (actionsLocked()) return
     if (!match.value || name === match.value.name) return
     match.value = { ...match.value, name }
     selectedName.value = name
-    selectId('')
+    applySelectedId('')
   }
 
   /** Pick one of the ranked visual candidates (a tap on the pick strip): switch to its
    * name if different, then select that exact printing. */
   function pickCandidate(card: Card) {
+    if (actionsLocked()) return
     if (!match.value) return
     if (card.name !== match.value.name) setName(card.name)
-    selectId(card.id)
+    applySelectedId(card.id)
   }
 
   function adjust(which: 'quantity' | 'foil_quantity', delta: number) {
-    if (!seeded.value) return
+    if (!seeded.value || actionsLocked()) return
     target[which] = Math.max(0, target[which] + delta)
   }
 
   function clearCurrent() {
     match.value = null
     selectedName.value = ''
-    selectId('')
+    applySelectedId('')
     seeded.value = false
     commitError.value = false
     candidates.value = []
@@ -213,14 +259,15 @@ export function useScanSession(game: Ref<string>) {
 
   /** Drop the on-screen match without adding it (a misread you don't want). */
   function discardCurrent() {
+    if (actionsLocked()) return
     clearCurrent()
   }
 
   /** Explicitly add the current match now, then clear the panel for the next card. On a
    * failed save the panel is kept (with the error) so it can be retried. */
   async function confirmCurrent(): Promise<void> {
-    await commitCurrent()
-    if (!commitError.value) clearCurrent()
+    if (actionsLocked()) return
+    if (await finalizeCurrent()) clearCurrent()
   }
 
   /** The distinct card names of the ranked visual matches, best first, capped — the
@@ -237,39 +284,81 @@ export function useScanSession(game: Ref<string>) {
 
   /** Write the current match's absolute counts, unless nothing changed. Logs the add with
    * its pre-add counts for undo. Returns whether a write actually happened. */
-  async function commitCurrent(): Promise<boolean> {
+  function commitCurrent(): Promise<boolean> {
+    if (commitInFlight) return commitInFlight
     const card = selectedCard.value
-    if (!card || !seeded.value) return false
-    const previous = { ...owned.value }
+    if (!card || !seeded.value) return Promise.resolve(false)
+    const previous = { ...seedBase }
     if (target.quantity === previous.quantity && target.foil_quantity === previous.foil_quantity) {
-      return false
+      return Promise.resolve(false)
     }
-    // A concurrent commit is already writing this same match (Stop/unmount racing an in-flight
-    // auto tick) — don't double-write and double-log it.
-    if (commitInFlight) return false
-    commitInFlight = true
-    try {
-      await mutation.mutateAsync({
-        game: game.value,
-        id: card.id,
-        quantity: target.quantity,
-        foil_quantity: target.foil_quantity,
+    const quantity = target.quantity
+    const foilQuantity = target.foil_quantity
+    commitInFlight = (async () => {
+      try {
+        await mutation.mutateAsync({
+          game: game.value,
+          id: card.id,
+          quantity,
+          foil_quantity: foilQuantity,
+        })
+        commitError.value = false
+        log.value.unshift({
+          id: nextEntryId++,
+          card,
+          quantity,
+          foil_quantity: foilQuantity,
+          previous,
+        })
+        return true
+      } catch {
+        commitError.value = true
+        return false
+      } finally {
+        commitInFlight = null
+      }
+    })()
+    return commitInFlight
+  }
+
+  /** Wait for printing resolution and owned-count seeding, then save the tentative card.
+   * Returns whether it is safe for Stop/navigation to discard the local panel. A printing
+   * pagination error or holding error returns false and leaves the match visible for retry. */
+  async function runFinalizeCurrent(): Promise<boolean> {
+    const pendingUndo = undoInFlight
+    if (pendingUndo && !(await pendingUndo)) return false
+    if (!match.value) return true
+    const printingBlocked = () => printsError.value && !selectedCard.value
+    if (!currentSettled.value && !ownedError.value && !printingBlocked()) {
+      await new Promise<void>((resolve) => {
+        const stop = watch(
+          [currentSettled, ownedError, printsError, selectedCard, match],
+          () => {
+            // A printing error blocks auto-resolution only while no loaded printing has been
+            // chosen manually. After a choice, keep waiting for that printing's owned count.
+            if (currentSettled.value || ownedError.value || printingBlocked() || !match.value) {
+              stop()
+              resolve()
+            }
+          },
+        )
       })
-      commitError.value = false
-      log.value.unshift({
-        id: nextEntryId++,
-        card,
-        quantity: target.quantity,
-        foil_quantity: target.foil_quantity,
-        previous,
-      })
-      return true
-    } catch {
-      commitError.value = true
-      return false
-    } finally {
-      commitInFlight = false
     }
+    if (!match.value) return true
+    if (!ready.value) return false
+    await commitCurrent()
+    return !commitError.value
+  }
+
+  function finalizeCurrent(): Promise<boolean> {
+    if (finalizeInFlight) return finalizeInFlight
+    if (!match.value && !undoInFlight) return Promise.resolve(true)
+    finalizing.value = true
+    finalizeInFlight = runFinalizeCurrent().finally(() => {
+      finalizing.value = false
+      finalizeInFlight = null
+    })
+    return finalizeInFlight
   }
 
   /**
@@ -280,7 +369,7 @@ export function useScanSession(game: Ref<string>) {
    */
   async function handleCapture(capture: ScanCapture): Promise<CaptureOutcome> {
     // Don't advance past a match whose holding is still loading — commit it first.
-    if (!currentSettled.value) return 'busy'
+    if (finalizing.value || undoing.value || !currentSettled.value) return 'busy'
     resolving.value = true
     try {
       let matches: ApiScanMatch[]
@@ -332,28 +421,55 @@ export function useScanSession(game: Ref<string>) {
   }
 
   /** Revert a logged add back to the counts it had before (both-zero deletes the row). */
-  async function undo(index: number): Promise<void> {
+  function undo(index: number): Promise<boolean> {
+    if (finalizing.value || resolving.value) return Promise.resolve(false)
+    if (undoInFlight) return undoInFlight
     const entry = log.value[index]
-    if (!entry) return
-    try {
-      await mutation.mutateAsync({
-        game: game.value,
-        id: entry.card.id,
-        quantity: entry.previous.quantity,
-        foil_quantity: entry.previous.foil_quantity,
-      })
-      // Remove by identity, not the click-time index: a concurrent scan commit can unshift
-      // the log during the await, so the numeric index would point at the wrong row by now.
-      const at = log.value.indexOf(entry)
-      if (at !== -1) log.value.splice(at, 1)
-      commitError.value = false
-    } catch {
-      commitError.value = true
-    }
+    if (!entry) return Promise.resolve(false)
+    undoing.value = true
+    undoInFlight = (async () => {
+      try {
+        await mutation.mutateAsync({
+          game: game.value,
+          id: entry.card.id,
+          quantity: entry.previous.quantity,
+          foil_quantity: entry.previous.foil_quantity,
+        })
+        // Remove by identity, not the click-time index: a concurrent scan commit can unshift
+        // the log during the await, so the numeric index would point at the wrong row by now.
+        const at = log.value.indexOf(entry)
+        if (at !== -1) log.value.splice(at, 1)
+        if (selectedCard.value?.id === entry.card.id && seeded.value) {
+          // Keep the tentative edit (normally +1 scanned copy) while moving its absolute
+          // baseline to the count restored by Undo. Without this, 1 owned -> tentative 2 ->
+          // Undo to 0 would still commit 2, making the Undo ineffective.
+          const quantityDelta = target.quantity - seedBase.quantity
+          const foilDelta = target.foil_quantity - seedBase.foil_quantity
+          seedBase.quantity = entry.previous.quantity
+          seedBase.foil_quantity = entry.previous.foil_quantity
+          target.quantity = Math.max(0, seedBase.quantity + quantityDelta)
+          target.foil_quantity = Math.max(0, seedBase.foil_quantity + foilDelta)
+        }
+        commitError.value = false
+        return true
+      } catch {
+        commitError.value = true
+        return false
+      } finally {
+        undoing.value = false
+        undoInFlight = null
+      }
+    })()
+    return undoInFlight
   }
 
   const committing = computed(() => mutation.isPending.value)
   const addedCount = computed(() => log.value.length)
+
+  function loadMorePrintings() {
+    if (actionsLocked()) return
+    void printsPicker.loadMore()
+  }
 
   return {
     // match state
@@ -361,6 +477,7 @@ export function useScanSession(game: Ref<string>) {
     prints,
     printsLoading,
     printsLoadingMore,
+    printsError,
     printsTotal: printsPicker.total,
     printsHasMore: printsPicker.hasNextPage,
     selectedId,
@@ -369,6 +486,8 @@ export function useScanSession(game: Ref<string>) {
     target,
     ready,
     resolving,
+    finalizing,
+    undoing,
     ownedError,
     candidates,
     // session
@@ -380,6 +499,7 @@ export function useScanSession(game: Ref<string>) {
     // actions
     handleCapture,
     commitCurrent,
+    finalizeCurrent,
     confirmCurrent,
     discardCurrent,
     selectId,
@@ -387,7 +507,8 @@ export function useScanSession(game: Ref<string>) {
     adjust,
     undo,
     retryOwned,
+    retryPrintings,
     pickCandidate,
-    loadMorePrintings: printsPicker.loadMore,
+    loadMorePrintings,
   }
 }

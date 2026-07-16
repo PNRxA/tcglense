@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { Camera, CameraOff, Loader2, ScanLine, SwitchCamera, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import CardImage from '@/components/cards/CardImage.vue'
@@ -39,6 +40,7 @@ const {
   prints,
   printsLoading,
   printsLoadingMore,
+  printsError,
   printsTotal,
   printsHasMore,
   selectedId,
@@ -47,6 +49,8 @@ const {
   target,
   ready,
   resolving,
+  finalizing,
+  undoing,
   ownedError,
   candidates,
   log,
@@ -54,7 +58,7 @@ const {
   unrecognized,
   commitError,
   handleCapture,
-  commitCurrent,
+  finalizeCurrent,
   confirmCurrent,
   discardCurrent,
   selectId,
@@ -62,12 +66,14 @@ const {
   adjust,
   undo,
   retryOwned,
+  retryPrintings,
   pickCandidate,
   loadMorePrintings,
 } = useScanSession(game)
 
 // True while a frame is being processed — gates overlapping captures and drives the UI.
 const reading = ref(false)
+const stopping = ref(false)
 
 const isReady = computed(() => status.value === 'ready')
 
@@ -95,7 +101,15 @@ const outlinePoints = computed(() =>
 // Only fires when a card is locked on (the green outline is showing) — capturing an empty
 // frame would just warp the guide box into a guaranteed non-match, so we gate it out.
 async function captureNow() {
-  if (!isReady.value || reading.value || !cardDetected.value) return
+  if (
+    !isReady.value ||
+    reading.value ||
+    finalizing.value ||
+    undoing.value ||
+    !cardDetected.value
+  ) {
+    return
+  }
   reading.value = true
   try {
     const cap = await capture()
@@ -111,17 +125,40 @@ async function startScanning() {
 
 async function stopScanning() {
   // Capturing the next card commits the previous — so does stopping: save the last one.
-  await commitCurrent()
-  discardCurrent()
-  stop()
+  // Do not race a frame that is still being captured/matched: it could install a new tentative
+  // match after this finalizer has discarded the previous one and stopped the camera.
+  if (stopping.value || finalizing.value || reading.value || resolving.value) return
+  stopping.value = true
+  try {
+    // Printing pagination and the selected printing's owned count can still be resolving after
+    // capture returns. Keep the camera/session open on an error so the user can retry or pick a
+    // loaded printing instead of silently discarding the final card.
+    if (!(await finalizeCurrent())) return
+    discardCurrent()
+    stop()
+  } finally {
+    stopping.value = false
+  }
 }
 
 onBeforeUnmount(() => {
-  // Best-effort save of the tentative card if the user navigates away mid-scan.
-  void commitCurrent()
+  // Best effort for non-router teardown. Normal SPA navigation is held by the async route
+  // guard below until printing resolution and the final save settle.
+  void finalizeCurrent()
+})
+
+onBeforeRouteLeave(async () => {
+  // A capture already in flight can still install a new tentative match. Cancel this navigation
+  // attempt until it finishes; the next attempt will finalize that newly resolved card.
+  if (reading.value || resolving.value) return false
+  if (!(await finalizeCurrent())) return false
+  discardCurrent()
+  return true
 })
 
 const statusHint = computed(() => {
+  if (finalizing.value) return 'Saving the final card…'
+  if (undoing.value) return 'Updating the session…'
   if (resolving.value) return 'Matching…'
   if (reading.value) return 'Scanning…'
   if (match.value) return 'Capture the next card to add this one.'
@@ -148,10 +185,17 @@ const statusHint = computed(() => {
       <section class="min-w-0">
         <div
           class="bg-muted relative mx-auto w-full max-w-md overflow-hidden rounded-xl border"
-          :class="{ 'cursor-pointer': isReady && !reading && cardDetected }"
+          :class="{
+            'cursor-pointer': isReady && !reading && !finalizing && !undoing && cardDetected,
+          }"
           :style="{ aspectRatio: String(videoAspect) }"
           role="button"
-          :aria-label="isReady && cardDetected ? 'Tap to scan the card in view' : undefined"
+          :aria-label="
+            isReady && cardDetected && !reading && !finalizing && !undoing
+              ? 'Tap to scan the card in view'
+              : undefined
+          "
+          :aria-disabled="reading || finalizing || undoing || undefined"
           @click="captureNow"
         >
           <!-- The live frame (always mounted so the ref/stream can attach); overlays sit on
@@ -189,7 +233,7 @@ const statusHint = computed(() => {
           <!-- Tap-to-scan hint (idle-ready): green + "Tap to scan" when a card is locked
                on, else a nudge to line one up. -->
           <div
-            v-if="isReady && !reading && !resolving"
+            v-if="isReady && !reading && !resolving && !finalizing && !undoing"
             class="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full px-2.5 py-1 text-xs font-medium text-white"
             :class="cardDetected ? 'bg-green-600/85' : 'bg-black/60'"
           >
@@ -198,11 +242,11 @@ const statusHint = computed(() => {
 
           <!-- Scanning / matching pulse. -->
           <div
-            v-if="isReady && (reading || resolving)"
+            v-if="isReady && (reading || resolving || finalizing || undoing)"
             class="absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
           >
             <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-            {{ resolving ? 'Matching' : 'Scanning' }}
+            {{ finalizing ? 'Saving' : undoing ? 'Updating' : resolving ? 'Matching' : 'Scanning' }}
           </div>
 
           <!-- Idle: start CTA. -->
@@ -260,7 +304,7 @@ const statusHint = computed(() => {
 
           <div class="flex flex-wrap items-center justify-center gap-2">
             <Button
-              :disabled="reading || !cardDetected"
+              :disabled="reading || finalizing || undoing || !cardDetected"
               aria-label="Capture the card in view"
               @click="captureNow"
             >
@@ -268,13 +312,24 @@ const statusHint = computed(() => {
               Capture
             </Button>
 
-            <Button variant="outline" size="icon" aria-label="Switch camera" @click="switchCamera">
+            <Button
+              variant="outline"
+              size="icon"
+              :disabled="finalizing || undoing"
+              aria-label="Switch camera"
+              @click="switchCamera"
+            >
               <SwitchCamera class="size-4" aria-hidden="true" />
             </Button>
 
-            <Button variant="outline" @click="stopScanning">
-              <CameraOff class="size-4" aria-hidden="true" />
-              Stop
+            <Button
+              variant="outline"
+              :disabled="finalizing || reading || resolving"
+              @click="stopScanning"
+            >
+              <Loader2 v-if="stopping" class="size-4 animate-spin" aria-hidden="true" />
+              <CameraOff v-else class="size-4" aria-hidden="true" />
+              {{ stopping ? 'Saving…' : 'Stop' }}
             </Button>
           </div>
         </div>
@@ -321,6 +376,7 @@ const statusHint = computed(() => {
               class="group shrink-0 rounded-md focus-visible:ring-2 focus-visible:outline-none"
               :aria-label="`Pick ${candidate.card.name}`"
               :aria-pressed="candidate.card.id === selectedId"
+              :disabled="finalizing || resolving || undoing"
               @click="pickCandidate(candidate.card)"
             >
               <CardImage
@@ -348,6 +404,7 @@ const statusHint = computed(() => {
             :prints="prints"
             :prints-loading="printsLoading"
             :prints-loading-more="printsLoadingMore"
+            :prints-error="printsError"
             :prints-total="printsTotal"
             :prints-has-more="printsHasMore"
             :selected-card="selectedCard"
@@ -356,12 +413,14 @@ const statusHint = computed(() => {
             :target="target"
             :ready="ready"
             :resolving="resolving"
+            :disabled="finalizing || resolving || undoing"
             @name="setName"
             @select="selectId"
             @adjust="adjust"
             @confirm="confirmCurrent"
             @discard="discardCurrent"
             @load-more="loadMorePrintings"
+            @retry-printings="retryPrintings"
           />
         </div>
 
@@ -384,7 +443,12 @@ const statusHint = computed(() => {
             Added this session
             <span class="text-muted-foreground tabular-nums">({{ addedCount }})</span>
           </h2>
-          <ScanSessionList :game="game" :entries="log" @undo="undo" />
+          <ScanSessionList
+            :game="game"
+            :entries="log"
+            :disabled="finalizing || resolving || undoing"
+            @undo="undo"
+          />
         </div>
       </section>
     </div>

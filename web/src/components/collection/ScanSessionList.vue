@@ -9,6 +9,7 @@ import type { SessionEntry } from '@/composables/useScanSession'
 defineProps<{
   game: string
   entries: SessionEntry[]
+  disabled: boolean
 }>()
 
 const emit = defineEmits<{ undo: [number] }>()
@@ -40,6 +41,7 @@ const emit = defineEmits<{ undo: [number] }>()
         variant="ghost"
         size="sm"
         class="text-muted-foreground shrink-0"
+        :disabled="disabled"
         :aria-label="`Undo adding ${entry.card.name}`"
         @click="emit('undo', index)"
       >

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Loader2, Minus, Plus, Sparkles, X } from '@lucide/vue'
+import { Check, Loader2, Minus, Plus, Sparkles, TriangleAlert, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -26,6 +26,7 @@ const props = defineProps<{
   prints: Card[]
   printsLoading: boolean
   printsLoadingMore: boolean
+  printsError: boolean
   printsTotal: number
   printsHasMore: boolean
   selectedCard: Card | null
@@ -34,6 +35,7 @@ const props = defineProps<{
   target: CollectionQuantities
   ready: boolean
   resolving: boolean
+  disabled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -43,6 +45,7 @@ const emit = defineEmits<{
   confirm: []
   discard: []
   loadMore: []
+  retryPrintings: []
 }>()
 
 const money = useCurrency()
@@ -100,6 +103,7 @@ const rows = computed(() => [
         <Select
           v-if="match.candidates.length > 1"
           :model-value="match.name"
+          :disabled="disabled"
           @update:model-value="(v) => emit('name', String(v))"
         >
           <SelectTrigger class="mt-1 w-full" aria-label="Matched card name">
@@ -124,6 +128,7 @@ const rows = computed(() => [
         <Select
           v-else-if="prints.length"
           :model-value="selectedId"
+          :disabled="disabled"
           @update:model-value="(v) => emit('select', String(v))"
         >
           <SelectTrigger class="w-full" aria-label="Printing">
@@ -136,18 +141,41 @@ const rows = computed(() => [
             </SelectItem>
           </SelectContent>
         </Select>
-        <p v-else class="text-muted-foreground text-sm">No printings found.</p>
+        <p v-else-if="!printsError" class="text-muted-foreground text-sm">No printings found.</p>
+        <div
+          v-if="printsError"
+          class="border-destructive/40 text-destructive mt-2 flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-xs"
+          role="alert"
+        >
+          <TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            {{
+              prints.length
+                ? "Couldn't load every printing. Retry or choose a loaded printing manually."
+                : "Couldn't load printings. Please retry."
+            }}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            class="ml-auto h-7 px-2"
+            :disabled="disabled"
+            @click="emit('retryPrintings')"
+          >
+            Retry
+          </Button>
+        </div>
         <div
           v-if="prints.length"
           class="text-muted-foreground mt-1.5 flex flex-wrap items-center justify-between gap-2 text-xs"
         >
           <span>{{ prints.length }} of {{ printsTotal }} printings loaded</span>
           <Button
-            v-if="printsHasMore"
+            v-if="printsHasMore && !printsError"
             variant="ghost"
             size="sm"
             class="h-7 px-2"
-            :disabled="printsLoadingMore"
+            :disabled="printsLoadingMore || disabled"
             @click="emit('loadMore')"
           >
             <Loader2 v-if="printsLoadingMore" class="size-3.5 animate-spin" aria-hidden="true" />
@@ -178,7 +206,7 @@ const rows = computed(() => [
               variant="outline"
               size="icon"
               class="size-8"
-              :disabled="!ready"
+              :disabled="!ready || disabled"
               :aria-disabled="row.value <= 0"
               :class="{ 'pointer-events-none opacity-50': row.value <= 0 }"
               :aria-label="`Remove one ${row.label.toLowerCase()} copy`"
@@ -196,7 +224,7 @@ const rows = computed(() => [
               variant="outline"
               size="icon"
               class="size-8"
-              :disabled="!ready"
+              :disabled="!ready || disabled"
               :aria-label="`Add one ${row.label.toLowerCase()} copy`"
               @click="emit('adjust', row.key, 1)"
             >
@@ -209,11 +237,17 @@ const rows = computed(() => [
       <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
         <p class="text-muted-foreground text-xs">Or capture the next card to add this one.</p>
         <div class="flex items-center gap-2">
-          <Button size="sm" :disabled="!ready" @click="emit('confirm')">
+          <Button size="sm" :disabled="!ready || disabled" @click="emit('confirm')">
             <Check class="size-4" aria-hidden="true" />
             Confirm
           </Button>
-          <Button variant="ghost" size="sm" class="text-muted-foreground" @click="emit('discard')">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="text-muted-foreground"
+            :disabled="disabled"
+            @click="emit('discard')"
+          >
             <X class="size-4" aria-hidden="true" />
             Discard
           </Button>
