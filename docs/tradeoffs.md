@@ -39,7 +39,13 @@ catalog) is planned but not implemented.
   session generation. Reset increments it transactionally, invalidates sibling reset
   links, and revokes refresh rows under the same per-user serialization, so an in-flight
   rotation cannot survive the sweep and already-minted access JWTs stop working without
-  waiting for their 15-minute expiry.
+  waiting for their 15-minute expiry. The same transaction also soft-revokes **every
+  programmatic `tcgl_` API key** the user holds (`api_key::revoke_all_for_user`): a key
+  carries no session generation — it resolves purely on `revoked_at`/`expires_at` — so
+  without this, a key an attacker minted while holding a compromised session (key
+  creation only needs a live `SessionUser`) would outlive the victim's recovery. Account
+  recovery therefore invalidates *all* credential classes together, not just the browser
+  session.
 - **Refresh-token pruning:** a background task deletes rows past `expires_at` every
   6h so the table can't grow unbounded; revoked-but-unexpired rows are retained so
   reuse detection still works.
@@ -81,7 +87,12 @@ catalog) is planned but not implemented.
   stamp (audit trail; an in-flight request sees it), expiry is optional per key, and
   dead (expired/revoked) rows are pruned by the same 6h maintenance loop as the other
   token tables. `last_used_at` is a best-effort, ≤once/60s throttled write so a busy
-  key doesn't pay a DB write per request.
+  key doesn't pay a DB write per request. The cap is **best-effort**: creation counts
+  live keys, inserts, then re-counts and rolls back (soft-revokes the just-minted key,
+  before its plaintext is returned) if the insert raced past the cap — so a concurrent
+  burst converges to 25 rather than being hard-blocked by a transaction/row-lock on the
+  hot path. A password reset revokes every one of the user's keys (see
+  §Password-reset invalidation).
 
 ## Rate limiting & anti-abuse
 
@@ -114,9 +125,15 @@ catalog) is planned but not implemented.
   (`ratelimit/per_user.rs`'s `UserRateLimiters` + the `user_rate_limit` middleware), keyed by
   the access-token user id rather than the IP, so it caps what a single account can
   do no matter how many IPs it comes from — the per-user complement to the per-IP
-  auth limits above. Two classes: a generous `general` bucket (reads/edits/batch
-  lookups, ~300/min) and a tight `import` bucket (the expensive import/sync/CSV
-  endpoints, ~10/min); over-limit is `429` + `Retry-After` + `no-store`. It gates on
+  auth limits above. Three classes (`ratelimit/per_user.rs`'s `UserRoute`): a generous
+  `general` bucket (reads/edits/batch lookups, ~300/min); a middle `analytics` bucket
+  (~30/min) for the whole-collection × full-price-history reads and the CSV export —
+  `GET …/collection/{game}/value-history`, `…/movers`, `…/export` — which each scan
+  O(cards × captured days) and are `no-store` (no CDN shields them), so one account
+  can't sustain full-history revaluation scans against the weak prod Postgres, while a
+  human flipping chart ranges in a burst still fits; and a tight `import` bucket (the
+  expensive import/sync/CSV-upload endpoints, ~10/min). Over-limit is `429` +
+  `Retry-After` + `no-store`. It gates on
   the same `RATE_LIMIT_ENABLED` switch and shares the per-IP limiter's caveats:
   in-memory by default, or Redis-backed via `REDIS_URL` (shared across instances, same
   fail-open posture), and it only engages for a request carrying a *valid* bearer token (an
@@ -124,6 +141,32 @@ catalog) is planned but not implemented.
   handler's own `401`, so it is **not** an IP-level DoS guard for those routes —
   that would still need the per-IP/WAF layer). The public catalog + image routes
   remain unthrottled (same open posture noted under image caching).
+
+## Browser security headers (CSP)
+
+- **The shipped Content-Security-Policy is narrow — `base-uri 'self'; object-src 'none';
+  frame-ancestors 'none'` — and deliberately has no `script-src`/`default-src` yet.** It
+  is set both by the API's `security_headers_middleware` (`router.rs`) and repeated in
+  every deploy Caddyfile, and it stops clickjacking, `<base>` hijacking, and plugin
+  embeds, but it does **not** constrain script execution. The token-storage model already
+  resists XSS exfiltration (the access token is memory-only; the refresh cookie is
+  `HttpOnly` + `SameSite=Lax`), and the SPA is Vue with default output escaping and no
+  known injection sink — so a full `script-src` is **defence-in-depth, not a fix for a
+  live bug**. It is intentionally deferred rather than shipped blind because getting it
+  wrong breaks the app for everyone, and one interaction can't be verified without a
+  live prod deploy: **Cloudflare Turnstile** on the auth forms loads
+  `challenges.cloudflare.com` script + iframe, so the enforced policy must allow-list
+  exactly those origins or *signups themselves break*. The rollout, post-launch: relocate
+  the inline theme `<script>` in `web/index.html` to a static file (so no per-build hash
+  is needed), then serve — on the SPA's HTML responses only, not the API JSON — a full
+  policy (`default-src 'self'; script-src 'self' https://challenges.cloudflare.com;
+  frame-src https://challenges.cloudflare.com; connect-src 'self'; img-src 'self' data:;
+  style-src 'self' 'unsafe-inline'; base-uri 'self'; object-src 'none';
+  frame-ancestors 'none'`), first as `Content-Security-Policy-Report-Only` (which never
+  blocks) with a report sink, then flip to enforcing once the report stream is clean.
+  Apply it at the edge (the four Caddyfiles) and in `spa_headers_middleware`; keep the
+  API's narrow policy for JSON. **Not** applied to the Vite dev server (its HMR needs
+  `'unsafe-inline'`/`'unsafe-eval'`), so this is a production-HTML concern only.
 
 ## Postgres dual-backend
 
@@ -165,7 +208,20 @@ catalog) is planned but not implemented.
   response instead of emailing it** (the SPA drives straight to the set-password step;
   login skips the unverified-`403` gate — see the auth contract) — the intended dev/CI
   posture, gated by `ALLOW_INSECURE_DEV_AUTH=true`; internet-facing registration
-  refuses to start in that mode. `onboarding@resend.dev`
+  refuses to start in that mode. The disabled emailer normally **logs the whole message
+  body** so the otherwise-unrecoverable dev link can be read from stdout — but that body
+  carries a live single-use reset/verification token, so `Emailer::from_config`
+  **withholds the body on an internet-facing host** (`Config::looks_like_production()`):
+  a public deploy that runs with signups closed but no `RESEND_API_KEY` (existing users
+  can still request a reset) then never writes a live token into aggregated logs. Set
+  `RESEND_API_KEY` so account mail is actually delivered. **Residual timing channel:**
+  the send runs off the request path, but token *issuance* is an on-path DB write that
+  happens only when the account exists, so register/forgot/resend carry a
+  sub-millisecond exists-vs-not timing difference. It's left unmitigated (login is the
+  one path given explicit dummy-hash equalization) because every probe costs a fresh
+  Turnstile solve plus the per-IP budget, making statistical sampling of a few-ms delta
+  impractical; the observable response semantics (identical status + empty body) stay
+  generic. `onboarding@resend.dev`
   (the default From) only delivers to the Resend account owner's address; production
   needs a verified domain + `EMAIL_FROM`. The 60s registration/resend/forgot mail
   cooldown stays **DB-backed** (the atomic `issue_with_cooldown` insert — on Postgres a
@@ -887,3 +943,22 @@ catalog) is planned but not implemented.
   computes the 32-byte fingerprint locally and uploads only that (a small, non-reversible
   vector) to `POST /api/games/{game}/scan`. The endpoint is auth-gated (scanning builds a
   signed-in user's collection) and `no-store`.
+- **OCR runtime code is still pulled from a third-party CDN — a known supply-chain gap to
+  close.** The set/collector-number OCR half of the hybrid scanner uses `tesseract.js`,
+  whose browser default fetches its worker, wasm core, and `eng.traineddata` from
+  `cdn.jsdelivr.net` at runtime (`useCardScanner.ts` calls `createWorker('eng')` with no
+  `workerPath`/`corePath`/`langPath` overrides). `tesseract.js` wraps the worker URL in a
+  **same-origin** Blob worker, so that CDN code runs with the app origin's privileges and
+  its `fetch` carries the session cookie — a compromised/MITM'd CDN artifact would have
+  authenticated API access for any user who opens the scanner. Exposure is bounded (the
+  version is lockfile-pinned and the default URLs are immutable version-pinned jsdelivr
+  paths, so it needs CDN-infrastructure compromise or TLS MITM, not a malicious npm
+  re-publish; the code loads only when a user opens the scanner), which is why it isn't a
+  launch blocker — but it contradicts the otherwise self-contained posture (the sibling
+  OpenCV runtime is npm-bundled via `@techstark/opencv-js`) and the "photo never leaves
+  the device" story (the *code* comes from a third party). The fix, post-launch: self-host
+  the three asset sets from the already-installed `tesseract.js`/`tesseract.js-core`/
+  `@tesseract.js-data/eng` packages under `web/public/` and pass explicit
+  `{ workerPath, corePath, langPath }` to `createWorker` — mirroring how OpenCV is
+  bundled — then add `script-src 'self'` / `worker-src 'self' blob:` to the SPA CSP (see
+  §Browser security headers) so any future third-party script load fails closed.

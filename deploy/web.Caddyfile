@@ -5,6 +5,11 @@
 :80 {
 	encode zstd gzip
 	header {
+		# TLS is terminated in front of this container, so set HSTS here too — the
+		# other deploy topologies (edge/do/Caddyfile) and the API's own middleware
+		# emit it, but this split-image path otherwise served SPA/HTML with none.
+		# Add `; includeSubDomains` once every subdomain of your apex is HTTPS.
+		Strict-Transport-Security "max-age=31536000"
 		Referrer-Policy "no-referrer"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"

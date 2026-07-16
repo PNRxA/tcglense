@@ -736,6 +736,16 @@ impl Config {
         }
     }
 
+    /// Whether this configuration looks like an internet-facing deployment (a
+    /// non-local `PUBLIC_SITE_URL` or bind host) rather than local dev — the same
+    /// signal that drives the boot-closed auth validation and posture warnings.
+    /// Exposed so runtime code can adopt a production-safe posture: the disabled
+    /// emailer uses it to avoid logging live reset/verification tokens on a public
+    /// host (see [`crate::email::Emailer`]).
+    pub fn looks_like_production(&self) -> bool {
+        looks_like_production(&self.host, &self.public_site_url)
+    }
+
     /// The user-facing notice to show when new signups are disabled
     /// (`signups_enabled == false`): the operator-configured
     /// `SIGNUPS_DISABLED_MESSAGE`, or [`DEFAULT_SIGNUPS_DISABLED_MESSAGE`] when

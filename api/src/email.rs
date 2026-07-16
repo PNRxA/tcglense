@@ -53,8 +53,11 @@ impl Mailbox {
 /// The configured email sender, built once in `AppState::new`.
 #[derive(Clone)]
 pub enum Emailer {
-    /// No `RESEND_API_KEY` configured: skip the send and log the message.
-    Disabled,
+    /// No `RESEND_API_KEY` configured: skip the send and log the message. On a local
+    /// dev host `log_body` is true so the otherwise-unrecoverable emailed link is
+    /// logged; on an internet-facing host it is false, so the body (which carries a
+    /// live single-use reset/verification token) is kept out of the logs.
+    Disabled { log_body: bool },
     /// Send through Resend's HTTPS API with the configured key + From address.
     Resend {
         http: reqwest::Client,
@@ -71,7 +74,7 @@ pub enum Emailer {
 impl std::fmt::Debug for Emailer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Emailer::Disabled => f.write_str("Emailer::Disabled"),
+            Emailer::Disabled { .. } => f.write_str("Emailer::Disabled"),
             Emailer::Resend { from, .. } => f
                 .debug_struct("Emailer::Resend")
                 .field("api_key", &"[redacted]")
@@ -93,7 +96,11 @@ impl Emailer {
                 api_key,
                 from: config.email_from.clone(),
             },
-            None => Emailer::Disabled,
+            // Log the full body only on a local dev host — on a public one the body
+            // carries a live token that must never reach aggregated logs.
+            None => Emailer::Disabled {
+                log_body: !config.looks_like_production(),
+            },
         }
     }
 
@@ -106,7 +113,7 @@ impl Emailer {
     /// test suites still exercise the real email-first flow (the token stays
     /// out of the response and is read from the captured email).
     pub fn is_enabled(&self) -> bool {
-        !matches!(self, Emailer::Disabled)
+        !matches!(self, Emailer::Disabled { .. })
     }
 
     /// Deliver one message. Callers on anti-enumeration endpoints must log and
@@ -114,16 +121,31 @@ impl Emailer {
     /// attempted, i.e. that the account exists); see `handlers::auth`.
     pub async fn send(&self, email: OutgoingEmail) -> Result<(), AppError> {
         match self {
-            Emailer::Disabled => {
-                // Deliberately loud, and it includes the message body: in this
-                // mode the emailed link is otherwise unrecoverable (only the
-                // token's hash is stored), and a production deploy missing its
-                // key should be impossible to miss in the logs.
+            Emailer::Disabled { log_body: true } => {
+                // Local dev: the emailed link is otherwise unrecoverable (only the
+                // token's hash is stored), so log the whole body deliberately loudly —
+                // it's how the offline registration/reset journeys get their link, and
+                // a dev deploy missing its key should be impossible to miss.
                 tracing::warn!(
                     to = %email.to,
                     subject = %email.subject,
                     body = %email.text,
                     "email sending is disabled (RESEND_API_KEY unset); logging the message instead"
+                );
+                Ok(())
+            }
+            Emailer::Disabled { log_body: false } => {
+                // Internet-facing host with no email provider (e.g. signups closed but
+                // existing users can still request a reset): the body carries a live
+                // single-use reset/verification token, so it must NOT be written to the
+                // logs. Record only that a send was skipped — loudly, since account mail
+                // isn't being delivered.
+                tracing::warn!(
+                    to = %email.to,
+                    subject = %email.subject,
+                    "email sending is disabled (RESEND_API_KEY unset) on an internet-facing \
+                     deployment; the message body is withheld from logs because it contains a \
+                     live token. Configure RESEND_API_KEY so account mail is delivered."
                 );
                 Ok(())
             }
@@ -263,11 +285,19 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_emailer_swallows_sends_and_capture_records_them() {
-        let disabled = Emailer::Disabled;
-        disabled
-            .send(verification_email("a@example.com", "https://x.test/v?token=t"))
-            .await
-            .expect("disabled send is a logged no-op");
+        // Both postures swallow the send as a logged no-op and count as disabled; the
+        // only difference (whether the token-bearing body is logged) is not observable
+        // through the return value.
+        for disabled in [
+            Emailer::Disabled { log_body: true },
+            Emailer::Disabled { log_body: false },
+        ] {
+            assert!(!disabled.is_enabled());
+            disabled
+                .send(verification_email("a@example.com", "https://x.test/v?token=t"))
+                .await
+                .expect("disabled send is a logged no-op");
+        }
 
         let mailbox = Mailbox::default();
         let capture = Emailer::Capture(mailbox.clone());
