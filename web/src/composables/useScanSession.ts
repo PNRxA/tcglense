@@ -1,6 +1,6 @@
 import { computed, reactive, ref, watch, type Ref } from 'vue'
 import type { Card, CollectionQuantities, ScanMatch as ApiScanMatch } from '@/lib/api'
-import { useCardPrintingsByName } from '@/composables/useQuickAdd'
+import { usePrintingPicker } from '@/composables/usePrintings'
 import { useCollectionEntryQuery, useSetCollectionEntryMutation } from '@/composables/useCollection'
 import { useScanMutation } from '@/composables/useScan'
 import { matchPrinting } from '@/lib/scan/match'
@@ -78,9 +78,22 @@ export function useScanSession(game: Ref<string>) {
 
   // Every printing of the chosen name (public read, cached — re-scans are instant).
   const printsEnabled = computed(() => selectedName.value.length > 0)
-  const printsQuery = useCardPrintingsByName(game, selectedName, { enabled: printsEnabled })
-  const prints = computed<Card[]>(() => printsQuery.data.value?.data ?? [])
-  const printsLoading = computed(() => printsEnabled.value && printsQuery.isFetching.value)
+  const printsPicker = usePrintingPicker(game, selectedName, { enabled: printsEnabled })
+  const prints = printsPicker.printings
+  // A set-code OCR hint is resolved only after all pages are loaded. Picking against a
+  // partial list could incorrectly fuzzy-match a similar set code while the exact old
+  // printing sits beyond the first 200 results.
+  const resolvingPrintingHint = computed(
+    () =>
+      !selectedId.value &&
+      Boolean(match.value?.hint.setCode) &&
+      !printsPicker.failed.value &&
+      (printsPicker.hasNextPage.value || printsPicker.isFetchingNextPage.value),
+  )
+  const printsLoading = computed(
+    () => printsEnabled.value && (printsPicker.isPending.value || resolvingPrintingHint.value),
+  )
+  const printsLoadingMore = computed(() => printsPicker.isFetchingNextPage.value)
   const selectedCard = computed<Card | null>(
     () => prints.value.find((card) => card.id === selectedId.value) ?? null,
   )
@@ -126,13 +139,24 @@ export function useScanSession(game: Ref<string>) {
     selectedId.value = id
   }
 
-  // Auto-pick a printing once the name's printings have settled: the set/collector hint's
-  // target if it resolves, else the newest (prints are newest-first). Guarded so a manual
-  // pick (a now-valid selection) is never overridden, and so we never pick off a list
-  // that's still loading for the new name.
-  watch([selectedName, prints, printsLoading], () => {
-    if (!selectedName.value || printsLoading.value || !prints.value.length) return
+  // Auto-pick a printing once the needed pages have settled: when OCR supplied a set code,
+  // load every page before matching so an old basic-land printing is not hidden beyond 200.
+  // Without a set code the newest loaded printing remains the honest default. A manual pick
+  // is never overridden.
+  watch([selectedName, prints, printsPicker.isPending, printsPicker.isFetchingNextPage], () => {
+    if (
+      !selectedName.value ||
+      printsPicker.isPending.value ||
+      printsPicker.isFetchingNextPage.value ||
+      !prints.value.length
+    ) {
+      return
+    }
     if (selectedCard.value) return
+    if (match.value?.hint.setCode && printsPicker.hasNextPage.value && !printsPicker.failed.value) {
+      void printsPicker.loadMore()
+      return
+    }
     const picked = matchPrinting(prints.value, match.value?.hint ?? {}) ?? prints.value[0]
     if (picked) selectId(picked.id)
   })
@@ -336,6 +360,9 @@ export function useScanSession(game: Ref<string>) {
     match,
     prints,
     printsLoading,
+    printsLoadingMore,
+    printsTotal: printsPicker.total,
+    printsHasMore: printsPicker.hasNextPage,
     selectedId,
     selectedCard,
     owned,
@@ -361,5 +388,6 @@ export function useScanSession(game: Ref<string>) {
     undo,
     retryOwned,
     pickCandidate,
+    loadMorePrintings: printsPicker.loadMore,
   }
 }

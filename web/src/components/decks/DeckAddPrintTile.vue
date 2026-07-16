@@ -1,10 +1,7 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
-import { Loader2, Plus } from '@lucide/vue'
-import CardImage from '@/components/cards/CardImage.vue'
-import { displayUsdPrice } from '@/lib/cardPrice'
+import { Plus } from '@lucide/vue'
+import PrintingTile from '@/components/printings/PrintingTile.vue'
 import type { Card } from '@/lib/api'
-import { useCurrency } from '@/composables/useCurrency'
 
 // One printing in the deck builder's "add cards" grid (issue #391): full card art plus
 // set/number/rarity/price, the whole tile a button that adds one copy. Art makes visually
@@ -12,7 +9,7 @@ import { useCurrency } from '@/composables/useCurrency'
 // row didn't. Deliberately purely presentational and ADDITIVE (a click emits `add` = +1),
 // unlike the collection's QuickAddPrintTile absolute steppers: the parent owns the deck
 // mutation and the optimistic count, so this component never writes.
-const props = defineProps<{
+defineProps<{
   game: string
   card: Card
   /** Copies of this printing already in the target section, for the progress badge. */
@@ -23,37 +20,23 @@ const props = defineProps<{
   disabled?: boolean
 }>()
 defineEmits<{ add: [] }>()
-
-const card = toRef(props, 'card')
-const money = useCurrency()
-const price = computed(() => {
-  const picked = displayUsdPrice(props.card.prices)
-  return picked ? money.formatUsd(picked.amount) : null
-})
 </script>
 
 <template>
-  <button
-    type="button"
-    class="group focus-visible:ring-ring relative flex flex-col gap-1.5 rounded-lg border p-1.5 text-left transition outline-none hover:border-primary/50 focus-visible:ring-2"
-    :class="{ 'cursor-not-allowed opacity-55': disabled }"
+  <PrintingTile
+    :game="game"
+    :card="card"
+    selectable
+    :loading="loading"
     :disabled="disabled"
     :aria-label="
       disabled
         ? `Choose a section before adding ${card.name} (${card.set_name})`
         : `Add ${card.name} (${card.set_name})`
     "
-    @click="$emit('add')"
+    @select="$emit('add')"
   >
-    <div class="relative">
-      <CardImage
-        :game="game"
-        :id="card.id"
-        :name="card.name"
-        :has-image="card.has_image"
-        size="normal"
-        class="w-full rounded-md"
-      />
+    <template #overlay>
       <!-- Copies already in the target section, so building a playset shows progress. -->
       <span
         v-if="count"
@@ -61,29 +44,14 @@ const price = computed(() => {
         >×{{ count }}</span
       >
       <!-- Add affordance, revealed on hover/focus (the whole tile is the button); while an
-           add is in flight it stays visible and spins so the click reads as working. -->
+        add is in flight the shared tile's common loading marker takes this position. -->
       <span
-        v-if="!disabled"
-        class="bg-primary text-primary-foreground absolute right-1 bottom-1 z-10 flex size-6 items-center justify-center rounded-full shadow transition"
-        :class="
-          loading
-            ? 'opacity-100'
-            : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'
-        "
+        v-if="!disabled && !loading"
+        class="bg-primary text-primary-foreground absolute right-1 bottom-1 z-10 flex size-6 items-center justify-center rounded-full opacity-0 shadow transition group-hover:opacity-100 group-focus-visible:opacity-100"
         aria-hidden="true"
       >
-        <Loader2 v-if="loading" class="size-4 animate-spin" />
-        <Plus v-else class="size-4" />
+        <Plus class="size-4" />
       </span>
-    </div>
-
-    <div class="min-w-0 px-0.5">
-      <p class="truncate text-xs font-medium" :title="card.set_name">{{ card.set_name }}</p>
-      <p class="text-muted-foreground flex flex-wrap items-center gap-x-1 text-xs">
-        <span>{{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}</span>
-        <span v-if="card.rarity" class="capitalize">· {{ card.rarity }}</span>
-        <span v-if="price" class="tabular-nums">· {{ price }}</span>
-      </p>
-    </div>
-  </button>
+    </template>
+  </PrintingTile>
 </template>

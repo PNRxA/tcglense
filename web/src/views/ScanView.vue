@@ -38,6 +38,9 @@ const {
   match,
   prints,
   printsLoading,
+  printsLoadingMore,
+  printsTotal,
+  printsHasMore,
   selectedId,
   selectedCard,
   owned,
@@ -60,6 +63,7 @@ const {
   undo,
   retryOwned,
   pickCandidate,
+  loadMorePrintings,
 } = useScanSession(game)
 
 // True while a frame is being processed — gates overlapping captures and drives the UI.
@@ -343,6 +347,9 @@ const statusHint = computed(() => {
             :match="match"
             :prints="prints"
             :prints-loading="printsLoading"
+            :prints-loading-more="printsLoadingMore"
+            :prints-total="printsTotal"
+            :prints-has-more="printsHasMore"
             :selected-card="selectedCard"
             :selected-id="selectedId"
             :owned="owned"
@@ -354,6 +361,7 @@ const statusHint = computed(() => {
             @adjust="adjust"
             @confirm="confirmCurrent"
             @discard="discardCurrent"
+            @load-more="loadMorePrintings"
           />
         </div>
 

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select'
 import CardImage from '@/components/cards/CardImage.vue'
 import { displayUsdPrice } from '@/lib/cardPrice'
+import { printingMetadataLabel } from '@/lib/printings'
 import type { Card, CollectionQuantities } from '@/lib/api'
 import type { ScanMatch } from '@/composables/useScanSession'
 import { useCurrency } from '@/composables/useCurrency'
@@ -24,6 +25,9 @@ const props = defineProps<{
   match: ScanMatch
   prints: Card[]
   printsLoading: boolean
+  printsLoadingMore: boolean
+  printsTotal: number
+  printsHasMore: boolean
   selectedCard: Card | null
   selectedId: string
   owned: CollectionQuantities
@@ -38,6 +42,7 @@ const emit = defineEmits<{
   adjust: ['quantity' | 'foil_quantity', number]
   confirm: []
   discard: []
+  loadMore: []
 }>()
 
 const money = useCurrency()
@@ -45,13 +50,6 @@ const price = computed(() => {
   const picked = props.selectedCard ? displayUsdPrice(props.selectedCard.prices) : null
   return picked ? { ...picked, text: money.formatUsd(picked.amount) } : null
 })
-
-// Newest-first printings labelled for the picker (set code · #number · rarity).
-function printingLabel(card: Card): string {
-  const bits = [`${card.set_code.toUpperCase()} · #${card.collector_number}`]
-  if (card.rarity) bits.push(card.rarity)
-  return bits.join(' · ')
-}
 
 const rows = computed(() => [
   {
@@ -134,11 +132,28 @@ const rows = computed(() => [
           <SelectContent>
             <SelectItem v-for="card in prints" :key="card.id" :value="card.id">
               <span class="truncate">{{ card.set_name }}</span>
-              <span class="text-muted-foreground ml-1">— {{ printingLabel(card) }}</span>
+              <span class="text-muted-foreground ml-1">— {{ printingMetadataLabel(card) }}</span>
             </SelectItem>
           </SelectContent>
         </Select>
         <p v-else class="text-muted-foreground text-sm">No printings found.</p>
+        <div
+          v-if="prints.length"
+          class="text-muted-foreground mt-1.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+        >
+          <span>{{ prints.length }} of {{ printsTotal }} printings loaded</span>
+          <Button
+            v-if="printsHasMore"
+            variant="ghost"
+            size="sm"
+            class="h-7 px-2"
+            :disabled="printsLoadingMore"
+            @click="emit('loadMore')"
+          >
+            <Loader2 v-if="printsLoadingMore" class="size-3.5 animate-spin" aria-hidden="true" />
+            {{ printsLoadingMore ? 'Loading…' : 'Load more' }}
+          </Button>
+        </div>
         <p v-if="price" class="text-muted-foreground mt-1 text-xs tabular-nums">
           {{ price.text }}<span v-if="price.foil" class="ml-0.5 uppercase opacity-70">foil</span>
         </p>
