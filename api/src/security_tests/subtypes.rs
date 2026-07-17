@@ -133,3 +133,41 @@ async fn set_list_reports_has_subtypes() {
     let (_, _, one) = send(&app, get("/api/games/mtg/sets/tst")).await;
     assert_eq!(one["has_subtypes"].as_bool(), Some(true));
 }
+
+/// A curated Borderless Scene override (issue #315) surfaces as its own group on the
+/// by-sub-type view — the shipped snapshot promotes a card the bulk fields classify as a
+/// plain Borderless. Depends on `subtype_overrides.json` shipping the `acr` Florence
+/// panorama (collector number 111); regenerate with `gen-subtype-overrides.mjs`.
+#[tokio::test]
+async fn set_subtypes_surfaces_curated_borderless_scene() {
+    let state = test_state().await;
+    card_set::Model { id: 1, ..card_set_model("acr") }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert set");
+    // From the bulk data this is only a Borderless card; the override reclassifies it.
+    card::Model {
+        set_code: "acr".into(),
+        collector_number: "111".into(),
+        collector_number_int: Some(111),
+        border_color: Some("borderless".into()),
+        ..card_model(1)
+    }
+    .into_active_model()
+    .insert(&state.db)
+    .await
+    .expect("insert card");
+    let app = crate::build_router(state);
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/acr/subtypes")).await;
+    assert_eq!(status, StatusCode::OK, "subtypes must succeed: {body:?}");
+    let groups = body["data"].as_array().expect("subtype groups");
+    let titles: Vec<&str> = groups.iter().map(|g| g["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, vec!["Borderless Scene"], "the override wins over Borderless: {body:?}");
+    assert_eq!(groups[0]["slug"].as_str(), Some("borderless-scene"));
+
+    // A curated-only set still offers the toggle (its code is folded into `has_subtypes`).
+    let (_, _, one) = send(&app, get("/api/games/mtg/sets/acr")).await;
+    assert_eq!(one["has_subtypes"].as_bool(), Some(true));
+}
