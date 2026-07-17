@@ -150,7 +150,15 @@ pub async fn fetch(
     let mut page = 1usize;
 
     while page <= max_pages {
-        let body = get_page(http, limiter, collection_id, page, None, &mut rate_limit_retries).await?;
+        let body = get_page(
+            http,
+            limiter,
+            collection_id,
+            page,
+            None,
+            &mut rate_limit_retries,
+        )
+        .await?;
         check_size(&body, &mut checked_size)?;
         // On the first page, publish the collection's total so the poll endpoint can show a
         // determinate progress bar (the page's `count` is the whole-collection row total).
@@ -211,9 +219,15 @@ pub async fn fetch_smart(
     let mut page = 1usize;
 
     while page <= max_pages {
-        let body =
-            get_page(http, limiter, collection_id, page, Some(ORDER_RECENT), &mut rate_limit_retries)
-                .await?;
+        let body = get_page(
+            http,
+            limiter,
+            collection_id,
+            page,
+            Some(ORDER_RECENT),
+            &mut rate_limit_retries,
+        )
+        .await?;
         check_size(&body, &mut checked_size)?;
 
         if body.results.is_empty() {
@@ -347,7 +361,10 @@ mod tests {
     #[test]
     fn parses_bare_numeric_id() {
         assert_eq!(parse_collection_id("1042487").as_deref(), Some("1042487"));
-        assert_eq!(parse_collection_id("  1042487  ").as_deref(), Some("1042487"));
+        assert_eq!(
+            parse_collection_id("  1042487  ").as_deref(),
+            Some("1042487")
+        );
     }
 
     #[test]
@@ -374,7 +391,10 @@ mod tests {
     fn rejects_sources_without_an_id() {
         assert_eq!(parse_collection_id(""), None);
         assert_eq!(parse_collection_id("   "), None);
-        assert_eq!(parse_collection_id("https://archidekt.com/collection/"), None);
+        assert_eq!(
+            parse_collection_id("https://archidekt.com/collection/"),
+            None
+        );
         assert_eq!(parse_collection_id("not-a-url"), None);
     }
 
@@ -393,11 +413,17 @@ mod tests {
         }"#;
         let page: CollectionPage = serde_json::from_str(json).expect("parse page");
         assert_eq!(page.count, 3);
-        assert_eq!(page.next.as_deref(), Some("http://archidekt.com/api/collection/1/?page=2"));
+        assert_eq!(
+            page.next.as_deref(),
+            Some("http://archidekt.com/api/collection/1/?page=2")
+        );
         assert_eq!(page.results.len(), 2);
         assert_eq!(page.results[0].card.uid, "aaa");
         assert_eq!(page.results[0].modifier.as_deref(), Some("Foil"));
-        assert!(!page.results[0].foil, "the boolean is left false even for the foil row");
+        assert!(
+            !page.results[0].foil,
+            "the boolean is left false even for the foil row"
+        );
         assert_eq!(page.results[0].quantity, 2);
         assert_eq!(page.results[1].modifier.as_deref(), Some("Normal"));
     }
@@ -406,11 +432,13 @@ mod tests {
     fn missing_modifier_defaults_to_none() {
         // An older/renamed payload without `modifier` still parses; the finish then
         // falls back to the `foil` boolean.
-        let json =
-            r#"{ "count": 1, "next": null, "results": [ { "quantity": 1, "foil": true, "card": { "uid": "aaa" } } ] }"#;
+        let json = r#"{ "count": 1, "next": null, "results": [ { "quantity": 1, "foil": true, "card": { "uid": "aaa" } } ] }"#;
         let page: CollectionPage = serde_json::from_str(json).expect("parse page");
         assert!(page.results[0].modifier.is_none());
-        assert!(is_foil_finish(page.results[0].foil, page.results[0].modifier.as_deref()));
+        assert!(is_foil_finish(
+            page.results[0].foil,
+            page.results[0].modifier.as_deref()
+        ));
     }
 
     #[test]

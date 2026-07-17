@@ -18,17 +18,9 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(WishlistItems::UserId)
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(WishlistItems::UserId).integer().not_null())
                     .col(ColumnDef::new(WishlistItems::Game).string().not_null())
-                    .col(
-                        ColumnDef::new(WishlistItems::CardId)
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(WishlistItems::CardId).integer().not_null())
                     .col(
                         ColumnDef::new(WishlistItems::Quantity)
                             .integer()

@@ -163,7 +163,8 @@ pub async fn rotate(
     };
 
     let txn = db.begin().await?;
-    let decision = rotate_in_transaction(&txn, &token_hash, owner_hint.user_id, expiry_days).await?;
+    let decision =
+        rotate_in_transaction(&txn, &token_hash, owner_hint.user_id, expiry_days).await?;
     txn.commit().await?;
     match decision {
         RotateDecision::Outcome(outcome) => Ok(outcome),
@@ -223,14 +224,8 @@ async fn rotate_in_transaction<C: ConnectionTrait>(
 
     // A legacy family-less predecessor adopts its own id for its successors.
     let family_id = row.family_id.or(Some(row.id));
-    let successor = insert_token(
-        db,
-        owner_hint,
-        row.session_version,
-        expiry_days,
-        family_id,
-    )
-    .await?;
+    let successor =
+        insert_token(db, owner_hint, row.session_version, expiry_days, family_id).await?;
     let linked = RefreshToken::update_many()
         .col_expr(
             refresh_token::Column::ReplacedById,
@@ -328,10 +323,7 @@ pub async fn revoke_one(
 
 /// Revoke all active refresh tokens for an account. Generic over a connection so
 /// password reset can keep the generation bump and revocation in one transaction.
-pub async fn revoke_all_for_user<C: ConnectionTrait>(
-    db: &C,
-    user_id: i32,
-) -> Result<(), AppError> {
+pub async fn revoke_all_for_user<C: ConnectionTrait>(db: &C, user_id: i32) -> Result<(), AppError> {
     RefreshToken::update_many()
         .col_expr(refresh_token::Column::RevokedAt, Expr::value(Utc::now()))
         .filter(refresh_token::Column::UserId.eq(user_id))
@@ -456,11 +448,7 @@ mod tests {
             .await
             .expect("other device");
         let t2 = expect_rotated(rotate(&db, &t1, 30).await.expect("t1 -> t2"));
-        let t3 = expect_rotated(
-            rotate(&db, &t2.plaintext, 30)
-                .await
-                .expect("t2 -> t3"),
-        );
+        let t3 = expect_rotated(rotate(&db, &t2.plaintext, 30).await.expect("t2 -> t3"));
 
         let err = rotate(&db, &t1, 30).await.unwrap_err();
         assert!(matches!(err, AppError::Unauthorized(_)));
@@ -512,7 +500,12 @@ mod tests {
             | (RotateOutcome::Superseded, RotateOutcome::Rotated(token)) => token,
             _ => panic!("exactly one request must rotate"),
         };
-        assert!(find_row(&db, &successor.plaintext).await.revoked_at.is_none());
+        assert!(
+            find_row(&db, &successor.plaintext)
+                .await
+                .revoked_at
+                .is_none()
+        );
         expect_rotated(
             rotate(&db, &successor.plaintext, 30)
                 .await
@@ -554,7 +547,12 @@ mod tests {
             rotate(&db, &original, 30).await,
             Err(AppError::Unauthorized(_))
         ));
-        assert!(find_row(&db, &successor.plaintext).await.revoked_at.is_some());
+        assert!(
+            find_row(&db, &successor.plaintext)
+                .await
+                .revoked_at
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -613,7 +611,12 @@ mod tests {
 
         revoke_one(&db, &ancestor).await.expect("logout family");
 
-        assert!(find_row(&db, &successor.plaintext).await.revoked_at.is_some());
+        assert!(
+            find_row(&db, &successor.plaintext)
+                .await
+                .revoked_at
+                .is_some()
+        );
         assert!(find_row(&db, &other_device).await.revoked_at.is_none());
     }
 }

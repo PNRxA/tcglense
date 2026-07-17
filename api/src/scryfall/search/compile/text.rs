@@ -3,10 +3,10 @@
 use sea_orm::Condition;
 use sea_orm::sea_query::SimpleExpr;
 
-use crate::db::Dialect;
-use super::common::{cond_one, cust_vals, escape_like};
 use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
+use super::common::{cond_one, cust_vals, escape_like};
+use crate::db::Dialect;
 
 /// Case-insensitive substring match; total (NULL → no match). Folds both sides to
 /// lower-case (`LOWER(col) LIKE lowered-pattern`) so the match is case-insensitive

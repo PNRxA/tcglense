@@ -95,7 +95,9 @@ async function onSubmit() {
                 maxlength="1024"
                 required
                 :aria-invalid="Boolean(error) || undefined"
-                :aria-describedby="error ? 'reset-password-help reset-error' : 'reset-password-help'"
+                :aria-describedby="
+                  error ? 'reset-password-help reset-error' : 'reset-password-help'
+                "
               />
               <p id="reset-password-help" class="text-muted-foreground text-xs">
                 Must be at least 8 characters.

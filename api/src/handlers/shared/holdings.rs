@@ -344,7 +344,11 @@ impl ListParams {
     /// defaulting to most-recently-updated. An unrecognised key/direction is a 422 —
     /// consistent with a malformed `q` — rather than being silently ignored.
     pub(crate) fn sort_spec(&self) -> Result<(CollectionSort, SortDir), AppError> {
-        let (sort, default_dir) = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        let (sort, default_dir) = match self
+            .sort
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
             // The holdings lists' natural default (and its explicit key) is recency.
             None | Some("updated" | "recent") => (CollectionSort::Recent, SortDir::Desc),
@@ -618,9 +622,12 @@ pub(crate) fn build_collection_sets<R: SummaryRow>(
         entry.has_subtypes |= is_special;
         entry.owned_cards += 1;
         entry.owned_copies += i64::from(row.quantity()) + i64::from(row.foil_quantity());
-        entry
-            .valuation
-            .add(card.price_usd, row.quantity(), card.price_usd_foil, row.foil_quantity());
+        entry.valuation.add(
+            card.price_usd,
+            row.quantity(),
+            card.price_usd_foil,
+            row.foil_quantity(),
+        );
     }
 
     let meta: HashMap<String, card_set::Model> =

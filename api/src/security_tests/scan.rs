@@ -15,7 +15,11 @@ fn scan_body(fingerprint: &[u8]) -> Value {
 /// One real seeded card external id.
 async fn one_card_id(app: &Router) -> String {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=1")).await;
-    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
     body["data"][0]["id"].as_str().expect("card id").to_string()
 }
 
@@ -44,8 +48,11 @@ async fn index_card(app: &TestApp, external_id: &str, hash: &[u8]) {
 async fn scan_requires_authentication() {
     let app = test_app_with_catalog().await;
     // No bearer token -> 401, and the response must never be shared-cached.
-    let (status, headers, _) =
-        send(&app, json_post("/api/games/mtg/scan", scan_body(&[0u8; 32]))).await;
+    let (status, headers, _) = send(
+        &app,
+        json_post("/api/games/mtg/scan", scan_body(&[0u8; 32])),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(cache_control(&headers), Some("no-store"));
 }
@@ -71,7 +78,12 @@ async fn scan_rejects_an_empty_fingerprint_list() {
     let (token, _) = register(&app, "scanner@example.com", "password123").await;
     let (status, _, body) = send(
         &app,
-        json_with_bearer("POST", "/api/games/mtg/scan", &token, json!({ "fingerprints": [] })),
+        json_with_bearer(
+            "POST",
+            "/api/games/mtg/scan",
+            &token,
+            json!({ "fingerprints": [] }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:?}");
@@ -156,7 +168,12 @@ async fn scan_returns_no_match_beyond_the_radius() {
     // radius, so it resolves to no match (an empty 200) rather than a distant false hit.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("POST", "/api/games/mtg/scan", &token, scan_body(&[0xFFu8; 32])),
+        json_with_bearer(
+            "POST",
+            "/api/games/mtg/scan",
+            &token,
+            scan_body(&[0xFFu8; 32]),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");

@@ -306,8 +306,14 @@ mod tests {
         for (route, t, tau) in cases {
             assert_eq!(gcra_params(route.quota()), (t, tau), "{route:?}");
         }
-        assert_eq!(gcra_params(UserRoute::General.quota()), (200_000, 59_800_000));
-        assert_eq!(gcra_params(UserRoute::Import.quota()), (6_000_000, 54_000_000));
+        assert_eq!(
+            gcra_params(UserRoute::General.quota()),
+            (200_000, 59_800_000)
+        );
+        assert_eq!(
+            gcra_params(UserRoute::Import.quota()),
+            (6_000_000, 54_000_000)
+        );
     }
 
     #[test]
@@ -447,7 +453,14 @@ mod tests {
         // still returns Ok — via the in-memory fallback, not a propagated error.
         let port = 20000 + (rand::random::<u16>() % 20000);
         let Ok(mut child) = std::process::Command::new("redis-server")
-            .args(["--port", &port.to_string(), "--save", "", "--appendonly", "no"])
+            .args([
+                "--port",
+                &port.to_string(),
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+            ])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

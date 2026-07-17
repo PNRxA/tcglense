@@ -102,7 +102,11 @@ fn deeply_nested_parentheses_are_rejected() {
     // against stack exhaustion. It fires before the token cap (MAX_DEPTH*2 + 1
     // tokens < MAX_TOKENS), so this is a distinct DoS bound that
     // `too_many_tokens_is_rejected` would not catch if it regressed.
-    let q = format!("{}a{}", "(".repeat(MAX_DEPTH + 2), ")".repeat(MAX_DEPTH + 2));
+    let q = format!(
+        "{}a{}",
+        "(".repeat(MAX_DEPTH + 2),
+        ")".repeat(MAX_DEPTH + 2)
+    );
     assert!(
         matches!(parse(&q, Dialect::Sqlite), Err(SearchError::TooComplex)),
         "deep nesting must be rejected as too complex: {:?}",
@@ -119,8 +123,14 @@ fn search_error_maps_to_422_validation() {
 
 #[test]
 fn malformed_and_unknown_filters_are_rejected() {
-    assert!(parse("(t:creature", Dialect::Sqlite).is_err(), "unbalanced parenthesis");
-    assert!(parse("boguskey:value", Dialect::Sqlite).is_err(), "unknown filter key");
+    assert!(
+        parse("(t:creature", Dialect::Sqlite).is_err(),
+        "unbalanced parenthesis"
+    );
+    assert!(
+        parse("boguskey:value", Dialect::Sqlite).is_err(),
+        "unknown filter key"
+    );
 }
 
 #[test]
@@ -215,7 +225,10 @@ fn power_cross_column() {
     // Both columns' integer-string guards are re-ANDed as total outer guards ahead of
     // the two guarded CASEs, so the leaf stays total and `-pow>tou` negates cleanly.
     assert!(s.contains(") AND (toughness IS NOT NULL"), "{s}");
-    assert!(s.contains("CAST(power AS REAL) ELSE NULL END > CASE WHEN toughness"), "{s}");
+    assert!(
+        s.contains("CAST(power AS REAL) ELSE NULL END > CASE WHEN toughness"),
+        "{s}"
+    );
     assert!(s.contains("CAST(toughness AS REAL) ELSE NULL END"), "{s}");
 }
 
@@ -224,8 +237,14 @@ fn prices_cast() {
     // The decimal guard is re-ANDed outside the CASE so the leaf stays total (a missing
     // price fails the guard → 0/1, never NULL) and `-usd<1` still matches unpriced cards.
     let u = sql("usd<1");
-    assert!(u.contains("(price_usd IS NOT NULL AND price_usd <> '') AND (CASE WHEN"), "{u}");
-    assert!(u.contains("CAST(price_usd AS REAL) ELSE NULL END < 1)"), "{u}");
+    assert!(
+        u.contains("(price_usd IS NOT NULL AND price_usd <> '') AND (CASE WHEN"),
+        "{u}"
+    );
+    assert!(
+        u.contains("CAST(price_usd AS REAL) ELSE NULL END < 1)"),
+        "{u}"
+    );
     assert!(sql("tix<=0.25").contains("CAST(price_tix AS REAL) ELSE NULL END <= 0.25"));
 }
 
@@ -406,7 +425,10 @@ fn is_predicates() {
 #[test]
 fn type_derived_is_predicates() {
     let perm = sql("is:permanent");
-    assert!(perm.contains("LOWER(type_line) LIKE '%creature%'"), "{perm}");
+    assert!(
+        perm.contains("LOWER(type_line) LIKE '%creature%'"),
+        "{perm}"
+    );
     assert!(perm.contains("NOT LIKE '%instant%'"), "{perm}");
     assert!(perm.contains("NOT LIKE '%sorcery%'"), "{perm}");
     // is:spell tests only the FRONT face's type for land-ness, so a spell//land
@@ -458,8 +480,14 @@ fn err(input: &str) -> SearchError {
 fn error_cases() {
     assert!(matches!(err("foo:bar"), SearchError::UnknownKey(_)));
     // Deferred filters (Tagger tags #140, cube #141, Phase-5 aggregates) still 422.
-    assert!(matches!(err("cube:vintage"), SearchError::UnsupportedKey(_)));
-    assert!(matches!(err("otag:removal"), SearchError::UnsupportedKey(_)));
+    assert!(matches!(
+        err("cube:vintage"),
+        SearchError::UnsupportedKey(_)
+    ));
+    assert!(matches!(
+        err("otag:removal"),
+        SearchError::UnsupportedKey(_)
+    ));
     assert!(matches!(err("block:rtr"), SearchError::UnsupportedKey(_)));
     assert!(matches!(
         err("set>dom"),
@@ -488,7 +516,10 @@ fn error_cases() {
 #[test]
 fn too_many_tokens_is_rejected() {
     let big = "a ".repeat(MAX_TOKENS + 10);
-    assert!(matches!(parse(&big, Dialect::Sqlite), Err(SearchError::TooComplex)));
+    assert!(matches!(
+        parse(&big, Dialect::Sqlite),
+        Err(SearchError::TooComplex)
+    ));
 }
 
 #[test]
@@ -527,13 +558,19 @@ fn cmc_parity_rejects_relational_operator() {
 #[test]
 fn oversized_query_is_rejected() {
     let big = "a".repeat(MAX_QUERY_BYTES + 1);
-    assert!(matches!(parse(&big, Dialect::Sqlite), Err(SearchError::TooComplex)));
+    assert!(matches!(
+        parse(&big, Dialect::Sqlite),
+        Err(SearchError::TooComplex)
+    ));
 }
 
 #[test]
 fn too_many_mana_symbols_rejected() {
     let q = format!("m:{}", "{W}".repeat(MAX_MANA_SYMBOLS + 1));
-    assert!(matches!(parse(&q, Dialect::Sqlite), Err(SearchError::InvalidValue { .. })));
+    assert!(matches!(
+        parse(&q, Dialect::Sqlite),
+        Err(SearchError::InvalidValue { .. })
+    ));
 }
 
 // ----- Column-backed filters (search parity, Phase 2) -----
@@ -583,9 +620,17 @@ fn print_detail_filters_compile() {
 
 #[test]
 fn deferred_filters_still_422() {
-    for q in ["cube:vintage", "otag:removal", "atag:squirrel", "devotion:2"] {
+    for q in [
+        "cube:vintage",
+        "otag:removal",
+        "atag:squirrel",
+        "devotion:2",
+    ] {
         assert!(
-            matches!(parse(q, Dialect::Sqlite), Err(SearchError::UnsupportedKey(_))),
+            matches!(
+                parse(q, Dialect::Sqlite),
+                Err(SearchError::UnsupportedKey(_))
+            ),
             "{q} should still be unsupported"
         );
     }
@@ -594,7 +639,11 @@ fn deferred_filters_still_422() {
 #[test]
 fn result_shaping_directives_are_extracted() {
     // order:/direction:/unique: are pulled out of the filter and don't 422.
-    let q = parse_query("c:r order:edhrec direction:desc unique:cards", Dialect::Sqlite).unwrap();
+    let q = parse_query(
+        "c:r order:edhrec direction:desc unique:cards",
+        Dialect::Sqlite,
+    )
+    .unwrap();
     assert_eq!(q.order, Some(SortKey::Edhrec));
     assert_eq!(q.direction, Some(Direction::Desc));
     assert_eq!(q.unique, Some(UniqueMode::Cards));
@@ -607,7 +656,9 @@ fn result_shaping_directives_are_extracted() {
     assert!(rendered.contains("colors"), "{rendered}");
     // Last-one-wins on duplicates.
     assert_eq!(
-        parse_query("order:name order:cmc", Dialect::Sqlite).unwrap().order,
+        parse_query("order:name order:cmc", Dialect::Sqlite)
+            .unwrap()
+            .order,
         Some(SortKey::Cmc)
     );
     // A negated directive is rejected; an unknown value 422s.
@@ -775,7 +826,10 @@ fn mana_relational_operators() {
     assert!(sql("m>{R}").contains("> 1"), "{}", sql("m>{R}"));
     assert!(sql("m!={R}").contains("NOT"));
     // Subset (`<`, `<=`) is still unsupported.
-    assert!(matches!(err("m<=2"), SearchError::UnsupportedOperator { .. }));
+    assert!(matches!(
+        err("m<=2"),
+        SearchError::UnsupportedOperator { .. }
+    ));
 }
 
 #[test]
@@ -992,7 +1046,10 @@ fn placeholders_renumber_only_on_postgres() {
     // single-quoted string literal is left alone.
     assert_eq!(Dialect::Postgres.placeholders("a ? b ? c"), "a $1 b $2 c");
     assert_eq!(Dialect::Sqlite.placeholders("a ? b ? c"), "a ? b ? c");
-    assert_eq!(Dialect::Postgres.placeholders("x = '?' AND y = ?"), "x = '?' AND y = $1");
+    assert_eq!(
+        Dialect::Postgres.placeholders("x = '?' AND y = ?"),
+        "x = '?' AND y = $1"
+    );
 }
 
 #[test]
@@ -1000,7 +1057,10 @@ fn pg_name_substring_is_lower_coalesce_and_bound() {
     let s = pg_sql("bolt");
     // LOWER-both case fold; the value is bound (renumbered to a `$N`), never a bare `?`.
     assert!(s.contains("LOWER(COALESCE(name, '')) LIKE '%bolt%'"), "{s}");
-    assert!(!s.contains("LIKE ?"), "placeholder must be renumbered on PG: {s}");
+    assert!(
+        !s.contains("LIKE ?"),
+        "placeholder must be renumbered on PG: {s}"
+    );
 }
 
 #[test]
@@ -1019,7 +1079,10 @@ fn pg_legality_uses_jsonb_arrow_and_bare_key() {
     assert!(!pg.contains("'$.standard'"), "{pg}");
     // SQLite still uses json_extract with the `$.fmt` JSONPath.
     let lite = sql("f:standard");
-    assert!(lite.contains("json_extract(legalities, '$.standard')"), "{lite}");
+    assert!(
+        lite.contains("json_extract(legalities, '$.standard')"),
+        "{lite}"
+    );
 }
 
 #[test]
@@ -1038,7 +1101,10 @@ fn pg_prices_cast_has_decimal_guard() {
     // guarded by a decimal-shape POSIX regex, re-ANDed outside the CASE (F1 totality).
     let s = pg_sql("usd<1");
     assert!(s.contains(r"~ '^[0-9]+(\.[0-9]+)?$'"), "{s}");
-    assert!(s.contains("CAST(price_usd AS REAL) ELSE NULL END < 1"), "{s}");
+    assert!(
+        s.contains("CAST(price_usd AS REAL) ELSE NULL END < 1"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -1067,6 +1133,12 @@ fn pg_multi_placeholder_fragment_binds_all_values_in_order() {
         .build(PostgresQueryBuilder);
     // {2}×1 and {W}×2 → two containment clauses, each binding (symbol, threshold).
     assert_eq!(values.0.len(), 4, "all four values bound: {rendered}");
-    assert!(rendered.contains("$1") && rendered.contains("$4"), "{rendered}");
-    assert!(!rendered.contains(" ?"), "no bare `?` left on PG: {rendered}");
+    assert!(
+        rendered.contains("$1") && rendered.contains("$4"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains(" ?"),
+        "no bare `?` left on PG: {rendered}"
+    );
 }

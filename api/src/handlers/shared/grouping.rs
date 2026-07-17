@@ -40,7 +40,10 @@ pub(crate) struct Bucket<T> {
 /// buckets in ascending `order`. A bucket exists only once a row lands in it (empty groups
 /// never appear), and the first row to land names it. The shared core of the by-drop and
 /// by-sub-type passes.
-fn group_by<T>(rows: Vec<T>, key: impl Fn(&T) -> (usize, Option<String>, String)) -> Vec<Bucket<T>> {
+fn group_by<T>(
+    rows: Vec<T>,
+    key: impl Fn(&T) -> (usize, Option<String>, String),
+) -> Vec<Bucket<T>> {
     let mut buckets: BTreeMap<usize, Bucket<T>> = BTreeMap::new();
     for row in rows {
         let (order, slug, title) = key(&row);
@@ -86,7 +89,11 @@ pub(crate) fn group_into_subtypes<T>(
 ) -> Vec<Bucket<T>> {
     group_by(rows, |row| {
         let subtype: &Subtype = subtypes::classify(card(row));
-        (subtype.order, Some(subtype.slug.to_string()), subtype.title.to_string())
+        (
+            subtype.order,
+            Some(subtype.slug.to_string()),
+            subtype.title.to_string(),
+        )
     })
 }
 
@@ -95,10 +102,7 @@ pub(crate) fn group_into_subtypes<T>(
 /// name" box — applied after grouping and *before* pagination, so the filter spans the
 /// whole set's drops rather than only the page on screen. A blank `needle` matches every
 /// drop (`contains("")` is always true), so callers skip the call for an absent filter.
-pub(crate) fn filter_drops_by_title<T>(
-    buckets: Vec<Bucket<T>>,
-    needle: &str,
-) -> Vec<Bucket<T>> {
+pub(crate) fn filter_drops_by_title<T>(buckets: Vec<Bucket<T>>, needle: &str) -> Vec<Bucket<T>> {
     let needle = needle.to_lowercase();
     buckets
         .into_iter()
@@ -216,8 +220,14 @@ mod tests {
 
     #[test]
     fn group_into_subtypes_orders_normal_then_treatments() {
-        let borderless = card::Model { border_color: Some("borderless".into()), ..card_model(1) };
-        let showcase = card::Model { frame_effects: Some("showcase".into()), ..card_model(2) };
+        let borderless = card::Model {
+            border_color: Some("borderless".into()),
+            ..card_model(1)
+        };
+        let showcase = card::Model {
+            frame_effects: Some("showcase".into()),
+            ..card_model(2)
+        };
         let normal = card_model(3);
         // Input order is scrambled; output is Normal (order 0) first, then the treatments
         // in sub-type order (Borderless=1, Showcase=2). Sub-types no card matches (Extended

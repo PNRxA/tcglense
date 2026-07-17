@@ -3,11 +3,11 @@
 //! error mapping, auth, cache headers) in-process via `tower`'s `oneshot`.
 
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
-    http::{header, HeaderMap, HeaderName, HeaderValue, Method},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, header},
     middleware::{from_fn, from_fn_with_state, map_response},
     routing::{any, delete, get, post, put},
-    Router,
 };
 use tower_http::{
     cors::CorsLayer,
@@ -36,13 +36,14 @@ use crate::{
             scan_cards, set_icon,
         },
         collection::{
-            collection_movers, collection_product_counts, collection_product_summary,
-            collection_set_drops, collection_set_subtypes, collection_sets, collection_summary,
-            collection_value_history, delete_collection_source, export_collection,
-            get_collection_entry, get_collection_product_entry, get_collection_source,
-            get_import_job, import_collection, import_collection_csv, list_collection,
-            list_collection_products, owned_counts, save_collection_source, set_collection_entry,
-            set_collection_product_entry, sync_collection_source, MAX_CSV_UPLOAD_BYTES,
+            MAX_CSV_UPLOAD_BYTES, collection_movers, collection_product_counts,
+            collection_product_summary, collection_set_drops, collection_set_subtypes,
+            collection_sets, collection_summary, collection_value_history,
+            delete_collection_source, export_collection, get_collection_entry,
+            get_collection_product_entry, get_collection_source, get_import_job, import_collection,
+            import_collection_csv, list_collection, list_collection_products, owned_counts,
+            save_collection_source, set_collection_entry, set_collection_product_entry,
+            sync_collection_source,
         },
         config::public_config,
         currency::currency_rates,
@@ -337,14 +338,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/decks/{game}/{deck_id}/visibility",
             put(set_deck_visibility),
         )
-        .route(
-            "/api/decks/{game}/{deck_id}/export",
-            get(export_deck),
-        )
-        .route(
-            "/api/decks/{game}/{deck_id}/sections",
-            post(create_section),
-        )
+        .route("/api/decks/{game}/{deck_id}/export", get(export_deck))
+        .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
         .route(
             "/api/decks/{game}/{deck_id}/sections/reorder",
             put(reorder_sections),

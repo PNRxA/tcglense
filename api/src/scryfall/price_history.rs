@@ -204,7 +204,12 @@ mod tests {
         let steady = insert_card_with_usd(&db, "steady", "5.00").await;
 
         // Day's first snapshot: one row per card.
-        assert_eq!(snapshot_prices(&db, crate::scryfall::GAME, day).await.unwrap(), 2);
+        assert_eq!(
+            snapshot_prices(&db, crate::scryfall::GAME, day)
+                .await
+                .unwrap(),
+            2
+        );
 
         // A real intra-day price move on one card only.
         card::ActiveModel {
@@ -218,7 +223,12 @@ mod tests {
 
         // Re-snapshot the same day: still one row per (card, day), the changed card now
         // reflects its new price, the untouched card is left as-is.
-        assert_eq!(snapshot_prices(&db, crate::scryfall::GAME, day).await.unwrap(), 2);
+        assert_eq!(
+            snapshot_prices(&db, crate::scryfall::GAME, day)
+                .await
+                .unwrap(),
+            2
+        );
 
         let mover_rows = CardPriceHistory::find()
             .filter(card_price_history::Column::CardId.eq(mover))
@@ -226,7 +236,11 @@ mod tests {
             .all(&db)
             .await
             .unwrap();
-        assert_eq!(mover_rows.len(), 1, "same-day re-snapshot upserts, never duplicates");
+        assert_eq!(
+            mover_rows.len(),
+            1,
+            "same-day re-snapshot upserts, never duplicates"
+        );
         assert_eq!(
             mover_rows[0].price_usd.as_deref(),
             Some("2.00"),

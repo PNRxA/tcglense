@@ -101,13 +101,7 @@ const outlinePoints = computed(() =>
 // Only fires when a card is locked on (the green outline is showing) — capturing an empty
 // frame would just warp the guide box into a guaranteed non-match, so we gate it out.
 async function captureNow() {
-  if (
-    !isReady.value ||
-    reading.value ||
-    finalizing.value ||
-    undoing.value ||
-    !cardDetected.value
-  ) {
+  if (!isReady.value || reading.value || finalizing.value || undoing.value || !cardDetected.value) {
     return
   }
   reading.value = true

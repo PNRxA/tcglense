@@ -14,7 +14,10 @@ impl MigrationTrait for Migration {
         // SQLite allows only one ALTER option per statement, so add each column
         // in its own `ALTER TABLE`.
         for column in [
-            ColumnDef::new(Cards::TcgplayerId).integer().null().to_owned(),
+            ColumnDef::new(Cards::TcgplayerId)
+                .integer()
+                .null()
+                .to_owned(),
             ColumnDef::new(Cards::TcgplayerEtchedId)
                 .integer()
                 .null()

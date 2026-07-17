@@ -36,9 +36,9 @@ use crate::entities::{card, collection_item};
 
 pub use error::ImportError;
 pub use progress::{ProgressReporter, ProgressSnapshot};
-pub use types::*;
 use reconcile::{reconcile_holdings, reconcile_smart};
 use smart::smart_absorb_page;
+pub use types::*;
 
 /// Hard cap on how many holding rows we'll pull from a provider in one import, so a
 /// request can't make us fan out an unbounded number of upstream page fetches.
@@ -331,9 +331,10 @@ pub(crate) async fn moxfield_rows_to_holdings(
                 // Unmatched: keep the readable placeholder so the summary's
                 // unmatched sample names the card, not an opaque key.
                 .unwrap_or_else(|| {
-                    placeholder_by_pair.get(&pair).cloned().unwrap_or_else(|| {
-                        format!("{} #{}", row.set_code, row.collector_number)
-                    })
+                    placeholder_by_pair
+                        .get(&pair)
+                        .cloned()
+                        .unwrap_or_else(|| format!("{} #{}", row.set_code, row.collector_number))
                 });
             FetchedHolding {
                 external_card_id,
@@ -381,12 +382,27 @@ mod tests {
         .await
         .expect("csv import");
 
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((0, 2)), "a imported as foil");
-        assert_eq!(owned_counts(&db, user_id, b).await, Some((3, 0)), "b imported as regular");
-        assert_eq!(owned_counts(&db, user_id, stale).await, None, "stale mirrored away");
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((0, 2)),
+            "a imported as foil"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, b).await,
+            Some((3, 0)),
+            "b imported as regular"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, stale).await,
+            None,
+            "stale mirrored away"
+        );
         assert_eq!(summary.provider, "archidekt");
         assert_eq!(summary.matched_cards, 2);
-        assert_eq!(summary.unmatched_cards, 1, "the ghost card isn't in the catalog");
+        assert_eq!(
+            summary.unmatched_cards, 1,
+            "the ghost card isn't in the catalog"
+        );
         assert_eq!(summary.removed_cards, 1);
     }
 
@@ -444,9 +460,20 @@ mod tests {
         .await
         .expect("csv import");
 
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((0, 1)), "foil row applied");
-        assert_eq!(owned_counts(&db, user_id, b).await, Some((2, 0)), "regular row applied");
-        assert_eq!(summary.provider, "moxfield", "the shape was sniffed as Moxfield");
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((0, 1)),
+            "foil row applied"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, b).await,
+            Some((2, 0)),
+            "regular row applied"
+        );
+        assert_eq!(
+            summary.provider, "moxfield",
+            "the shape was sniffed as Moxfield"
+        );
         assert_eq!(summary.matched_cards, 2);
         assert_eq!(summary.unmatched_cards, 1);
         assert_eq!(
@@ -503,6 +530,10 @@ mod tests {
         .await
         .expect_err("empty upload must be refused");
         assert!(matches!(err, ImportError::EmptyCollection));
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((3, 0)), "collection untouched");
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((3, 0)),
+            "collection untouched"
+        );
     }
 }

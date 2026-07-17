@@ -166,8 +166,14 @@ mod tests {
     #[test]
     fn cheapest_single_takes_the_lower_priced_finish() {
         // Both finishes priced -> the cheaper one wins, regardless of which is which.
-        assert_eq!(cheapest_single_cents(Some("2.00"), Some("10.00")), Some(200));
-        assert_eq!(cheapest_single_cents(Some("10.00"), Some("2.00")), Some(200));
+        assert_eq!(
+            cheapest_single_cents(Some("2.00"), Some("10.00")),
+            Some(200)
+        );
+        assert_eq!(
+            cheapest_single_cents(Some("10.00"), Some("2.00")),
+            Some(200)
+        );
         // Only one finish priced (a foil-only or regular-only printing) -> that one.
         assert_eq!(cheapest_single_cents(None, Some("3.50")), Some(350));
         assert_eq!(cheapest_single_cents(Some("4.25"), None), Some(425));

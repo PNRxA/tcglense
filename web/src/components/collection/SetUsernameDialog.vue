@@ -99,8 +99,8 @@ async function submit() {
       <DialogTitle class="text-lg font-semibold">Choose a username</DialogTitle>
       <DialogDescription class="text-muted-foreground mt-1 text-sm">
         Your public collections are shared at
-        <code class="font-mono text-xs">/u/your-name</code>. A #0000 tag is added
-        automatically, so a common name is fine.
+        <code class="font-mono text-xs">/u/your-name</code>. A #0000 tag is added automatically, so
+        a common name is fine.
       </DialogDescription>
 
       <form class="mt-4 space-y-4" @submit.prevent="submit">
@@ -130,11 +130,7 @@ async function submit() {
           </p>
         </div>
 
-        <p
-          v-if="saveError"
-          class="text-destructive flex items-start gap-1.5 text-sm"
-          role="alert"
-        >
+        <p v-if="saveError" class="text-destructive flex items-start gap-1.5 text-sm" role="alert">
           <TriangleAlert class="mt-0.5 size-4 shrink-0" />
           <span>{{ saveError }}</span>
         </p>

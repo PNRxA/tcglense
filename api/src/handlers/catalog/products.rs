@@ -29,12 +29,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::Game;
 use crate::db::Dialect;
-use crate::entities::prelude::{Card, Product, ProductPriceHistory, SealedComponent, SealedContent};
+use crate::entities::prelude::{
+    Card, Product, ProductPriceHistory, SealedComponent, SealedContent,
+};
 use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 use crate::entities::{card, product, product_price_history, sealed_component, sealed_content};
-use crate::extract::{Path, Query};
 use crate::error::AppError;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, PriceRange, ProductResponse,
     SortDir, SortField, apply_card_sort, build_page, cutoff_date, downsample_rows, load_card,
@@ -430,8 +432,11 @@ pub async fn list_products(
         for word in term.split_whitespace() {
             let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
             query = query.filter(
-                Expr::expr(Func::lower(Expr::col((product::Entity, product::Column::Name))))
-                    .like(LikeExpr::new(pattern).escape('\\')),
+                Expr::expr(Func::lower(Expr::col((
+                    product::Entity,
+                    product::Column::Name,
+                ))))
+                .like(LikeExpr::new(pattern).escape('\\')),
             );
         }
     }
@@ -947,8 +952,12 @@ pub async fn product_cards(
 ) -> Result<Json<Page<ProductCardEntry>>, AppError> {
     let game_meta = require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
-    let (page, page_size) =
-        resolve_page(params.page, params.page_size, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+    let (page, page_size) = resolve_page(
+        params.page,
+        params.page_size,
+        DEFAULT_PAGE_SIZE,
+        MAX_PAGE_SIZE,
+    );
     // Parse the optional section + sort filters up front so a bad value 422s before any DB work.
     let section = match trim_query(params.section.as_deref()) {
         Some(value) => Some(CardSection::parse(value)?),
@@ -982,8 +991,8 @@ pub async fn product_cards(
     };
     // Narrow to the cards matching the optional `q` search (issue #222), still in order;
     // a malformed query 422s here before the page is loaded.
-    let selected = filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &selected)
-        .await?;
+    let selected =
+        filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &selected).await?;
 
     let total = selected.len() as u64;
     let start = (page - 1).saturating_mul(page_size) as usize;
@@ -1056,8 +1065,8 @@ pub async fn product_card_sections(
     let index = build_product_card_index(&state, &game, &product).await?;
     // Restrict the counted ids to those matching the optional `q` search, still in display
     // order (issue #222) — so a section with no matches drops out of the manifest.
-    let ordered = filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &index.ordered)
-        .await?;
+    let ordered =
+        filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &index.ordered).await?;
 
     // Count per section by walking the already-ordered ids: first appearance fixes the
     // section's slot, so the manifest comes out in the same display order the list uses. A
@@ -1114,7 +1123,10 @@ impl ProductCardIndex {
     /// family-exclusive vs shared), or `None` if the id isn't in the index.
     fn section_of(&self, card_id: i32) -> Option<CardSection> {
         let (_, membership, _) = self.best.get(&card_id)?;
-        Some(CardSection::classify(membership, self.exclusive.contains(&card_id)))
+        Some(CardSection::classify(
+            membership,
+            self.exclusive.contains(&card_id),
+        ))
     }
 }
 
@@ -1315,7 +1327,11 @@ async fn filter_ordered_by_search(
     }
 
     // Keep the product's display order; drop everything the search didn't match.
-    Ok(ordered.iter().copied().filter(|cid| matched.contains(cid)).collect())
+    Ok(ordered
+        .iter()
+        .copied()
+        .filter(|cid| matched.contains(cid))
+        .collect())
 }
 
 /// Collapse a product's raw membership rows `(card_id, membership, foil)` to one entry
@@ -1594,7 +1610,10 @@ mod tests {
     fn product_sort_parses_and_defaults() {
         assert_eq!(ProductSort::parse("name").unwrap(), ProductSort::Name);
         assert_eq!(ProductSort::parse("price").unwrap(), ProductSort::Price);
-        assert_eq!(ProductSort::parse("released").unwrap(), ProductSort::Released);
+        assert_eq!(
+            ProductSort::parse("released").unwrap(),
+            ProductSort::Released
+        );
         assert!(ProductSort::parse("nope").is_err());
         assert_eq!(ProductSort::Name.default_dir(), SortDir::Asc);
         assert_eq!(ProductSort::Price.default_dir(), SortDir::Desc);
@@ -1681,8 +1700,14 @@ mod tests {
             Some(BoosterFamily::Collector)
         );
         // Only play/set/draft (or non-boosters) -> no premium tier to split out.
-        assert_eq!(premium_booster_family(&types(&["play_pack", "set_pack"])), None);
-        assert_eq!(premium_booster_family(&types(&["commander_deck", "bundle"])), None);
+        assert_eq!(
+            premium_booster_family(&types(&["play_pack", "set_pack"])),
+            None
+        );
+        assert_eq!(
+            premium_booster_family(&types(&["commander_deck", "bundle"])),
+            None
+        );
         assert_eq!(premium_booster_family(&[]), None);
     }
 }

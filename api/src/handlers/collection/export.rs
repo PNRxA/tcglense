@@ -163,7 +163,9 @@ pub async fn export_collection(
     require_game(&game)?;
     let format = ExportFormat::parse(params.format.as_deref())?;
 
-    let mut rows = owned_with_cards(user.id, &game, None).all(&state.db).await?;
+    let mut rows = owned_with_cards(user.id, &game, None)
+        .all(&state.db)
+        .await?;
     // Stable, alphabetical order (by card name, then set + collector number) so the file
     // reads well and re-exports deterministically — the genuine exports are name-sorted.
     rows.sort_by(|a, b| sort_key(a.1.as_ref()).cmp(&sort_key(b.1.as_ref())));
@@ -205,17 +207,32 @@ fn build_csv(
     for (item, card) in rows {
         let Some(card) = card else { continue };
         if item.quantity > 0 {
-            write_row(&mut writer, format, item, card, Finish::Regular, item.quantity)?;
+            write_row(
+                &mut writer,
+                format,
+                item,
+                card,
+                Finish::Regular,
+                item.quantity,
+            )?;
         }
         if item.foil_quantity > 0 {
-            write_row(&mut writer, format, item, card, Finish::Foil, item.foil_quantity)?;
+            write_row(
+                &mut writer,
+                format,
+                item,
+                card,
+                Finish::Foil,
+                item.foil_quantity,
+            )?;
         }
     }
 
     let bytes = writer.into_inner().map_err(|e| {
         AppError::Internal(format!("failed to finalize export CSV: {}", e.into_error()))
     })?;
-    String::from_utf8(bytes).map_err(|_| AppError::Internal("export CSV was not valid UTF-8".into()))
+    String::from_utf8(bytes)
+        .map_err(|_| AppError::Internal("export CSV was not valid UTF-8".into()))
 }
 
 /// Write one holding-finish row in the given shape.
@@ -449,7 +466,10 @@ mod tests {
     #[test]
     fn export_format_parses_case_insensitively_and_defaults() {
         assert_eq!(ExportFormat::parse(None).unwrap(), ExportFormat::Archidekt);
-        assert_eq!(ExportFormat::parse(Some("")).unwrap(), ExportFormat::Archidekt);
+        assert_eq!(
+            ExportFormat::parse(Some("")).unwrap(),
+            ExportFormat::Archidekt
+        );
         assert_eq!(
             ExportFormat::parse(Some(" Archidekt ")).unwrap(),
             ExportFormat::Archidekt
@@ -485,7 +505,11 @@ mod tests {
     fn type_line_splits_into_types_subtypes_supertypes() {
         assert_eq!(
             split_type_line(Some("Legendary Creature — Human Avatar Ally")),
-            ("Creature".into(), "Human,Avatar,Ally".into(), "Legendary".into())
+            (
+                "Creature".into(),
+                "Human,Avatar,Ally".into(),
+                "Legendary".into()
+            )
         );
         assert_eq!(
             split_type_line(Some("Basic Land — Forest")),
@@ -511,7 +535,11 @@ mod tests {
     fn archidekt_csv_has_the_right_header_and_a_row_per_finish() {
         let rows = vec![(
             holding(1, 2, 1),
-            Some(card(1, "Aang, Air Nomad", "Legendary Creature — Human Avatar")),
+            Some(card(
+                1,
+                "Aang, Air Nomad",
+                "Legendary Creature — Human Avatar",
+            )),
         )];
         let csv = build_csv(ExportFormat::Archidekt, &rows).unwrap();
         let lines: Vec<&str> = csv.lines().collect();
@@ -530,7 +558,10 @@ mod tests {
 
     #[test]
     fn moxfield_csv_quotes_every_field_and_mirrors_count_into_tradelist() {
-        let rows = vec![(holding(5, 3, 0), Some(card(5, "Aang's Iceberg", "Enchantment")))];
+        let rows = vec![(
+            holding(5, 3, 0),
+            Some(card(5, "Aang's Iceberg", "Enchantment")),
+        )];
         let csv = build_csv(ExportFormat::Moxfield, &rows).unwrap();
         let lines: Vec<&str> = csv.lines().collect();
 

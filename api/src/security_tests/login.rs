@@ -150,7 +150,11 @@ async fn a_deleted_users_access_token_is_rejected() {
     // The still-unexpired token no longer authenticates — not to `/me`, nor to the
     // authenticated per-user data surface (the extractor gates both).
     let (me, _, _) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
-    assert_eq!(me, StatusCode::UNAUTHORIZED, "a deleted user's token must not authenticate");
+    assert_eq!(
+        me,
+        StatusCode::UNAUTHORIZED,
+        "a deleted user's token must not authenticate"
+    );
     let (collection, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &access)).await;
     assert_eq!(collection, StatusCode::UNAUTHORIZED);
 }
@@ -195,7 +199,11 @@ async fn an_expired_access_token_is_rejected_by_a_protected_route() {
     .expect("encode expired token");
 
     let (me, _, _) = send(&app, get_with_bearer("/api/auth/me", &expired)).await;
-    assert_eq!(me, StatusCode::UNAUTHORIZED, "an expired token must not authenticate");
+    assert_eq!(
+        me,
+        StatusCode::UNAUTHORIZED,
+        "an expired token must not authenticate"
+    );
     let (collection, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &expired)).await;
     assert_eq!(collection, StatusCode::UNAUTHORIZED);
 }

@@ -1,10 +1,7 @@
 //! Collection write endpoint: set the absolute owned counts for one card (both-zero
 //! deletes the holding).
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};

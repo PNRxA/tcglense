@@ -11,9 +11,17 @@ use super::harness::*;
 /// Grab `n` real card external ids from the seeded catalog.
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=25")).await;
-    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
     let data = body["data"].as_array().expect("cards data array");
-    assert!(data.len() >= n, "need >= {n} seeded cards, got {}", data.len());
+    assert!(
+        data.len() >= n,
+        "need >= {n} seeded cards, got {}",
+        data.len()
+    );
     data.iter()
         .take(n)
         .map(|c| c["id"].as_str().expect("card id").to_string())
@@ -31,7 +39,11 @@ async fn first_set_card_id(app: &Router, set_code: &str) -> String {
         get(&format!("/api/games/mtg/sets/{set_code}/cards?page_size=1")),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "listing set {set_code} failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing set {set_code} failed: {body:?}"
+    );
     body["data"][0]["id"].as_str().expect("card id").to_string()
 }
 
@@ -82,7 +94,9 @@ async fn wishlist_requires_authentication() {
             .method("PUT")
             .uri(card_path(&ids[0]))
             .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({ "quantity": 1, "foil_quantity": 0 }).to_string()))
+            .body(Body::from(
+                json!({ "quantity": 1, "foil_quantity": 0 }).to_string(),
+            ))
             .unwrap(),
     )
     .await;
@@ -106,7 +120,12 @@ async fn set_get_and_remove_round_trip() {
     // Want 3 regular + 1 foil.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 3, "foil_quantity": 1 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 3, "foil_quantity": 1 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "set failed: {body:?}");
@@ -127,7 +146,10 @@ async fn set_get_and_remove_round_trip() {
     assert_eq!(entry["quantity"], 3);
     assert_eq!(entry["foil_quantity"], 1);
     assert_eq!(entry["card"]["id"], id.as_str());
-    assert!(entry["card"]["name"].as_str().is_some(), "entry embeds the card");
+    assert!(
+        entry["card"]["name"].as_str().is_some(),
+        "entry embeds the card"
+    );
 
     // Summary aggregates copies (3 + 1 = 4) over one unique card.
     let (status, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg/summary", &token)).await;
@@ -137,7 +159,10 @@ async fn set_get_and_remove_round_trip() {
 
     // The per-set landing lists the one set that card belongs to, with wanted counts,
     // and a set-scoped summary matches the whole-wish-list one (only one set wanted).
-    let set_code = entry["card"]["set_code"].as_str().expect("card set_code").to_string();
+    let set_code = entry["card"]["set_code"]
+        .as_str()
+        .expect("card set_code")
+        .to_string();
     let (status, headers, body) =
         send(&app, get_with_bearer("/api/wishlist/mtg/sets", &token)).await;
     assert_eq!(status, StatusCode::OK);
@@ -147,7 +172,10 @@ async fn set_get_and_remove_round_trip() {
     assert_eq!(sets[0]["code"], set_code);
     assert_eq!(sets[0]["owned_cards"], 1);
     assert_eq!(sets[0]["owned_copies"], 4);
-    assert!(sets[0]["name"].as_str().is_some(), "set tile carries a name");
+    assert!(
+        sets[0]["name"].as_str().is_some(),
+        "set tile carries a name"
+    );
 
     let (status, _, body) = send(
         &app,
@@ -169,7 +197,12 @@ async fn set_get_and_remove_round_trip() {
     // Updating the same card upserts (no duplicate row).
     let (_, _, body) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 5, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 5, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(body["quantity"], 5);
@@ -180,7 +213,12 @@ async fn set_get_and_remove_round_trip() {
     // Zeroing both counts removes the card from the wish list.
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 0, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -201,7 +239,12 @@ async fn wish_lists_are_isolated_per_user() {
 
     send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &alice, json!({ "quantity": 2, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &alice,
+            json!({ "quantity": 2, "foil_quantity": 0 }),
+        ),
     )
     .await;
 
@@ -247,12 +290,20 @@ async fn wishlist_and_collection_are_independent() {
         get_with_bearer(&format!("/api/collection/mtg/cards/{id}"), &token),
     )
     .await;
-    assert_eq!(body["quantity"], 4, "collection is untouched by the wish list");
+    assert_eq!(
+        body["quantity"], 4,
+        "collection is untouched by the wish list"
+    );
 
     // Removing the wish-list row leaves the collection holding alone.
     let (_, _, _) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 0, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 0 }),
+        ),
     )
     .await;
     let (_, _, body) = send(
@@ -298,11 +349,7 @@ async fn include_related_spans_the_set_group() {
     want_card(&app, &token, &token_id, 1).await;
 
     // A single-set scope sees only that set's wanted card.
-    let (status, _, body) = send(
-        &app,
-        get_with_bearer("/api/wishlist/mtg?set=dmb", &token),
-    )
-    .await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg?set=dmb", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1, "plain set scope stays a single set");
     assert_eq!(body["data"][0]["card"]["set_code"], "dmb");
@@ -321,7 +368,10 @@ async fn include_related_spans_the_set_group() {
         .iter()
         .map(|e| e["card"]["set_code"].as_str().unwrap())
         .collect();
-    assert!(codes.contains(&"dmb") && codes.contains(&"tdmb"), "got {codes:?}");
+    assert!(
+        codes.contains(&"dmb") && codes.contains(&"tdmb"),
+        "got {codes:?}"
+    );
 
     // Entering from the sub-set resolves the same group (rooted at `dmb`).
     let (_, _, body) = send(
@@ -413,12 +463,20 @@ async fn counts_batch_returns_wanted_cards_only_and_caps_the_id_list() {
     assert_eq!(status, StatusCode::OK, "counts failed: {body:?}");
     assert_eq!(cache_control(&headers), Some("no-store"));
     assert_eq!(body["data"][wanted]["quantity"], 2);
-    assert!(body["data"].get(unwanted).is_none(), "unwanted id must be absent");
+    assert!(
+        body["data"].get(unwanted).is_none(),
+        "unwanted id must be absent"
+    );
 
     // An empty id list is an empty map, not an error.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("POST", "/api/wishlist/mtg/counts", &token, json!({ "ids": [] })),
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/counts",
+            &token,
+            json!({ "ids": [] }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -445,7 +503,10 @@ async fn unknown_sort_or_dir_is_rejected() {
     let (token, _) = register(&app, "sort-wish@example.com", "password123").await;
 
     // An unrecognised sort key or direction is a 422, consistent with a malformed `q`.
-    for uri in ["/api/wishlist/mtg?sort=nonsense", "/api/wishlist/mtg?dir=sideways"] {
+    for uri in [
+        "/api/wishlist/mtg?sort=nonsense",
+        "/api/wishlist/mtg?dir=sideways",
+    ] {
         let (status, _, body) = send(&app, get_with_bearer(uri, &token)).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uri}: {body:?}");
     }
@@ -467,7 +528,12 @@ async fn counts_batch_is_isolated_per_user() {
     // Bob asks for the card Alice wants — he wants none, so it's absent from his map.
     let (status, headers, body) = send(
         &app,
-        json_with_bearer("POST", "/api/wishlist/mtg/counts", &bob, json!({ "ids": [id] })),
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/counts",
+            &bob,
+            json!({ "ids": [id] }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "counts failed: {body:?}");
@@ -480,7 +546,12 @@ async fn counts_batch_is_isolated_per_user() {
     // Alice sees her own count.
     let (_, _, body) = send(
         &app,
-        json_with_bearer("POST", "/api/wishlist/mtg/counts", &alice, json!({ "ids": [id] })),
+        json_with_bearer(
+            "POST",
+            "/api/wishlist/mtg/counts",
+            &alice,
+            json!({ "ids": [id] }),
+        ),
     )
     .await;
     assert_eq!(body["data"][id.as_str()]["quantity"], 2);
@@ -502,7 +573,10 @@ async fn wishlist_writes_are_isolated_between_users() {
 
     // Distinct rows: neither write overwrote the other's wanted count.
     let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &alice)).await;
-    assert_eq!(body["quantity"], 2, "alice's wanted count is unchanged by bob's write");
+    assert_eq!(
+        body["quantity"], 2,
+        "alice's wanted count is unchanged by bob's write"
+    );
     let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &bob)).await;
     assert_eq!(body["quantity"], 5);
 

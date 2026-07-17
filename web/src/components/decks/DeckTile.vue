@@ -44,10 +44,7 @@ const emit = defineEmits<{ move: [folderId: number | null]; remove: [] }>()
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>Move to folder</DropdownMenuLabel>
-        <DropdownMenuItem
-          v-if="deck.folder_id != null"
-          @click="emit('move', null)"
-        >
+        <DropdownMenuItem v-if="deck.folder_id != null" @click="emit('move', null)">
           Remove from folder
         </DropdownMenuItem>
         <DropdownMenuItem

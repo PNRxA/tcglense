@@ -567,7 +567,14 @@ impl Resolver<'_> {
                     variable: Vec::new(),
                     other: Vec::new(),
                 };
-                self.walk_inner(tcg_id, &view, Some(Membership::Variable), visited, depth, out);
+                self.walk_inner(
+                    tcg_id,
+                    &view,
+                    Some(Membership::Variable),
+                    visited,
+                    depth,
+                    out,
+                );
             }
         }
         // Nested sealed products: recurse, attributing leaves to the outer product.
@@ -737,7 +744,10 @@ mod tests {
         let rows = build_memberships(&fixture());
         // p-noid has contents but no tcgplayerProductId, so it contributes nothing: the
         // only product ids in the output are the five that carry a tcgplayerProductId.
-        let products: HashSet<&str> = rows.iter().map(|r| r.tcgplayer_product_id.as_str()).collect();
+        let products: HashSet<&str> = rows
+            .iter()
+            .map(|r| r.tcgplayer_product_id.as_str())
+            .collect();
         assert_eq!(
             products,
             HashSet::from(["1001", "1002", "1003", "1004", "1005"]),
@@ -750,10 +760,7 @@ mod tests {
         let rows = build_memberships(&fixture());
         let mut seen = HashSet::new();
         for r in &rows {
-            assert!(
-                seen.insert(r.clone()),
-                "duplicate membership row: {r:?}"
-            );
+            assert!(seen.insert(r.clone()), "duplicate membership row: {r:?}");
         }
     }
 
@@ -781,7 +788,8 @@ mod tests {
                 ]
             } }
         });
-        let all: AllPrintings = serde_json::from_value(json).expect("parses despite missing fields");
+        let all: AllPrintings =
+            serde_json::from_value(json).expect("parses despite missing fields");
         let rows = build_memberships(&all);
         // The uuid-less card still resolves by (set, number).
         assert!(rows.iter().any(|r| {

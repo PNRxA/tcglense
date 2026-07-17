@@ -20,7 +20,10 @@ async fn openapi_json_serves_a_cacheable_spec() {
     );
     // A well-formed OpenAPI 3.x document with our info + the api-key security scheme.
     assert!(
-        body["openapi"].as_str().unwrap_or_default().starts_with("3."),
+        body["openapi"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("3."),
         "carries an openapi version: {body:?}"
     );
     assert!(body["paths"].is_object(), "documents some paths");
@@ -31,5 +34,8 @@ async fn openapi_json_serves_a_cacheable_spec() {
 
     // Public, CDN-cacheable (in the public router group).
     let cc = cache_control(&headers).unwrap_or_default();
-    assert!(cc.contains("public"), "spec should be shared-cacheable: {cc:?}");
+    assert!(
+        cc.contains("public"),
+        "spec should be shared-cacheable: {cc:?}"
+    );
 }

@@ -51,14 +51,14 @@ usePageMeta({
     <section class="space-y-3">
       <h2 class="text-xl font-semibold tracking-tight">4. Third-party services</h2>
       <p class="text-muted-foreground leading-7 text-pretty">
-        We use Resend to deliver account emails, so your email address and the content of the account
-        message are sent to Resend. Cloudflare provides CAPTCHA, content-delivery, and security
-        services and processes connection data for those purposes. Our hosting and database
+        We use Resend to deliver account emails, so your email address and the content of the
+        account message are sent to Resend. Cloudflare provides CAPTCHA, content-delivery, and
+        security services and processes connection data for those purposes. Our hosting and database
         providers process and back up service data as needed to run TCGLense. Card data and prices
-        come from Scryfall, TCGCSV, and MTGJSON. Card images are served through our proxy, so ordinary
-        catalog browsing does not send your browser directly to those data providers. When you ask
-        us to import or sync an external collection, we contact the selected provider using the
-        collection identifier you supplied.
+        come from Scryfall, TCGCSV, and MTGJSON. Card images are served through our proxy, so
+        ordinary catalog browsing does not send your browser directly to those data providers. When
+        you ask us to import or sync an external collection, we contact the selected provider using
+        the collection identifier you supplied.
       </p>
     </section>
 

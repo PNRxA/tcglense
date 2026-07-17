@@ -36,13 +36,15 @@ use super::GAME;
 use super::ingest::{self, IngestError};
 use super::map;
 use super::price_history;
-use catalog::{dummy_cards, dummy_sets};
-use crate::entities::prelude::{Card, Product, ProductPriceHistory, SealedComponent, SealedContent};
+use crate::entities::prelude::{
+    Card, Product, ProductPriceHistory, SealedComponent, SealedContent,
+};
 use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 use crate::entities::{
     card, card_price_history, product, product_price_history, sealed_component, sealed_content,
 };
+use catalog::{dummy_cards, dummy_sets};
 use prices::price_walk;
 use products::dummy_products;
 
@@ -105,8 +107,10 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
     let total = models.len() as u64;
     let mut iter = models.into_iter();
     loop {
-        let chunk: Vec<card_price_history::ActiveModel> =
-            iter.by_ref().take(price_history::PRICE_HISTORY_BATCH).collect();
+        let chunk: Vec<card_price_history::ActiveModel> = iter
+            .by_ref()
+            .take(price_history::PRICE_HISTORY_BATCH)
+            .collect();
         if chunk.is_empty() {
             break;
         }
@@ -184,8 +188,10 @@ async fn seed_product_price_history(db: &DatabaseConnection) -> Result<u64, Inge
     let total = models.len() as u64;
     let mut iter = models.into_iter();
     loop {
-        let chunk: Vec<product_price_history::ActiveModel> =
-            iter.by_ref().take(price_history::PRICE_HISTORY_BATCH).collect();
+        let chunk: Vec<product_price_history::ActiveModel> = iter
+            .by_ref()
+            .take(price_history::PRICE_HISTORY_BATCH)
+            .collect();
         if chunk.is_empty() {
             break;
         }
@@ -231,19 +237,49 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
     // Can be pulled from: base-set boosters (collector box + play pack) and the Universe
     // draft box. The foil-only showcase is a foil pull from the collector box.
     for n in 1..=10 {
-        seed.push((format!("dummy-dmb-{n:04}"), "900001", Membership::Booster, false));
+        seed.push((
+            format!("dummy-dmb-{n:04}"),
+            "900001",
+            Membership::Booster,
+            false,
+        ));
     }
     for n in 1..=5 {
-        seed.push((format!("dummy-dmb-{n:04}"), "900002", Membership::Booster, false));
+        seed.push((
+            format!("dummy-dmb-{n:04}"),
+            "900002",
+            Membership::Booster,
+            false,
+        ));
     }
     for n in 1..=8 {
-        seed.push((format!("dummy-dmu-{n:04}"), "900005", Membership::Booster, false));
+        seed.push((
+            format!("dummy-dmu-{n:04}"),
+            "900005",
+            Membership::Booster,
+            false,
+        ));
     }
-    seed.push(("dummy-dmb-0079".to_string(), "900001", Membership::Booster, true));
+    seed.push((
+        "dummy-dmb-0079".to_string(),
+        "900001",
+        Membership::Booster,
+        true,
+    ));
     // May be in: the starlit promo is a randomized foil box insert; the werewolf a
     // randomized bundle insert.
-    seed.push(("dummy-dmb-0077".to_string(), "900001", Membership::Variable, true));
-    seed.push(("dummy-dmb-0076".to_string(), "900003", Membership::Variable, false));
+    seed.push((
+        "dummy-dmb-0077".to_string(),
+        "900001",
+        Membership::Variable,
+        true,
+    ));
+    seed.push((
+        "dummy-dmb-0076".to_string(),
+        "900003",
+        Membership::Variable,
+        false,
+    ));
 
     // Resolve external ids -> internal ids from the just-seeded rows.
     let card_exts: Vec<String> = seed.iter().map(|(c, ..)| c.clone()).collect();
@@ -315,7 +351,15 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
 async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestError> {
     // (product ext, position, kind, name, quantity, child product ext, child card ext).
     // Product ids match `dummy::products`; card ids match `dummy::catalog`.
-    let seed: Vec<(&str, i32, ComponentKind, &str, i32, Option<&str>, Option<&str>)> = vec![
+    let seed: Vec<(
+        &str,
+        i32,
+        ComponentKind,
+        &str,
+        i32,
+        Option<&str>,
+        Option<&str>,
+    )> = vec![
         // The base-set bundle (900003): 6 play boosters (linked to the pack product 900002),
         // a foil promo (linked to a card), a spindown, and a storage box.
         (
@@ -336,8 +380,24 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
             None,
             Some("dummy-dmb-0078"),
         ),
-        ("900003", 2, ComponentKind::Other, "Spindown life counter", 1, None, None),
-        ("900003", 3, ComponentKind::Other, "Card storage box", 1, None, None),
+        (
+            "900003",
+            2,
+            ComponentKind::Other,
+            "Spindown life counter",
+            1,
+            None,
+            None,
+        ),
+        (
+            "900003",
+            3,
+            ComponentKind::Other,
+            "Card storage box",
+            1,
+            None,
+            None,
+        ),
         // The collector booster box (900001): 12 booster packs (linked to the pack product).
         (
             "900001",
@@ -387,22 +447,24 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
     let now = Utc::now();
     let models: Vec<sealed_component::ActiveModel> = seed
         .into_iter()
-        .filter_map(|(parent, position, kind, name, quantity, child_product, child_card)| {
-            let product_id = *product_ids.get(parent)?;
-            Some(sealed_component::ActiveModel {
-                id: NotSet,
-                game: Set(GAME.to_string()),
-                product_id: Set(product_id),
-                position: Set(position),
-                kind: Set(kind.as_str().to_string()),
-                name: Set(name.to_string()),
-                quantity: Set(quantity),
-                child_product_id: Set(child_product.and_then(|c| product_ids.get(c).copied())),
-                child_card_id: Set(child_card.and_then(|c| card_ids.get(c).copied())),
-                created_at: Set(now),
-                updated_at: Set(now),
-            })
-        })
+        .filter_map(
+            |(parent, position, kind, name, quantity, child_product, child_card)| {
+                let product_id = *product_ids.get(parent)?;
+                Some(sealed_component::ActiveModel {
+                    id: NotSet,
+                    game: Set(GAME.to_string()),
+                    product_id: Set(product_id),
+                    position: Set(position),
+                    kind: Set(kind.as_str().to_string()),
+                    name: Set(name.to_string()),
+                    quantity: Set(quantity),
+                    child_product_id: Set(child_product.and_then(|c| product_ids.get(c).copied())),
+                    child_card_id: Set(child_card.and_then(|c| card_ids.get(c).copied())),
+                    created_at: Set(now),
+                    updated_at: Set(now),
+                })
+            },
+        )
         .collect();
 
     SealedComponent::delete_many()
@@ -455,10 +517,7 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     let sets_imported = ingest::import_sets(db, &sets).await?;
 
     let now = Utc::now();
-    let models: Vec<card::ActiveModel> = cards
-        .into_iter()
-        .map(|c| map::map_card(c, now))
-        .collect();
+    let models: Vec<card::ActiveModel> = cards.into_iter().map(|c| map::map_card(c, now)).collect();
     let cards_imported = models.len() as i32;
     let mut iter = models.into_iter();
     loop {
@@ -485,12 +544,18 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     // Card -> sealed-product memberships, so the card-detail "Sealed products" section
     // has data offline. Runs after both cards and products are seeded (it joins them).
     let membership_rows = seed_sealed_contents(db).await?;
-    tracing::info!(rows = membership_rows, "seeded dummy sealed-product memberships");
+    tracing::info!(
+        rows = membership_rows,
+        "seeded dummy sealed-product memberships"
+    );
 
     // Sealed-product compositions ("what's in the box"), so the sealed-detail contents
     // section renders offline. Also joins cards + products, so it runs after both.
     let component_rows = seed_sealed_components(db).await?;
-    tracing::info!(rows = component_rows, "seeded dummy sealed-product components");
+    tracing::info!(
+        rows = component_rows,
+        "seeded dummy sealed-product components"
+    );
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not
@@ -525,8 +590,8 @@ mod tests {
 
     #[tokio::test]
     async fn seeds_multi_day_price_history_and_reseed_is_idempotent() {
-        use crate::entities::prelude::{Card, CardPriceHistory};
         use crate::entities::card_price_history;
+        use crate::entities::prelude::{Card, CardPriceHistory};
         use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect};
 
         let db = crate::test_support::migrated_memory_db().await;
@@ -542,7 +607,10 @@ mod tests {
             .count(&db)
             .await
             .unwrap();
-        assert_eq!(rows, expected_rows, "expected {PRICE_HISTORY_DAYS} days per card");
+        assert_eq!(
+            rows, expected_rows,
+            "expected {PRICE_HISTORY_DAYS} days per card"
+        );
 
         // The series spans exactly `PRICE_HISTORY_DAYS` distinct dates.
         let dates: Vec<String> = CardPriceHistory::find()
@@ -586,7 +654,10 @@ mod tests {
             .count(&db)
             .await
             .unwrap();
-        assert_eq!(rows_again, expected_rows, "reseed must not duplicate price history");
+        assert_eq!(
+            rows_again, expected_rows,
+            "reseed must not duplicate price history"
+        );
     }
 
     #[tokio::test]

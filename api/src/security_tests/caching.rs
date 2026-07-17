@@ -11,7 +11,10 @@ use axum::http::header::{ETAG, IF_NONE_MATCH};
 
 /// The `ETag` header value as an owned string, or `None` if absent.
 fn etag(headers: &HeaderMap) -> Option<String> {
-    headers.get(ETAG).and_then(|v| v.to_str().ok()).map(str::to_owned)
+    headers
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
 }
 
 /// A `GET` carrying an `If-None-Match`, to drive a conditional (revalidation) request.
@@ -134,8 +137,14 @@ async fn cacheable_read_carries_a_weak_etag_and_revalidates_to_304() {
     let (status, headers, body) = send(&app, get("/api/games")).await;
     assert_eq!(status, StatusCode::OK);
     let tag = etag(&headers).expect("a cacheable success must carry an ETag");
-    assert!(tag.starts_with("W/\""), "the validator should be a weak ETag: {tag}");
-    assert!(!body.is_null(), "the first (unconditional) read carries the full body");
+    assert!(
+        tag.starts_with("W/\""),
+        "the validator should be a weak ETag: {tag}"
+    );
+    assert!(
+        !body.is_null(),
+        "the first (unconditional) read carries the full body"
+    );
 
     // Revalidating with that exact tag is a bodyless 304 that still carries the
     // validator and the freshness policy, so the cache can extend its entry.
@@ -185,10 +194,18 @@ async fn etag_is_content_addressed_so_a_different_page_is_not_suppressed() {
     let tag1 = etag(&headers).expect("page 1 carries an ETag");
 
     let (status, _, _) = send(&app, get_if_none_match(page1, &tag1)).await;
-    assert_eq!(status, StatusCode::NOT_MODIFIED, "same body revalidates to 304");
+    assert_eq!(
+        status,
+        StatusCode::NOT_MODIFIED,
+        "same body revalidates to 304"
+    );
 
     let (status, headers, body) = send(&app, get_if_none_match(page2, &tag1)).await;
-    assert_eq!(status, StatusCode::OK, "a different body must not 304 on page 1's tag");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a different body must not 304 on page 1's tag"
+    );
     assert!(!body.is_null());
     assert_ne!(etag(&headers).as_deref(), Some(tag1.as_str()));
 }
@@ -204,7 +221,8 @@ async fn sitemaps_also_revalidate_to_304() {
     let tag = etag(&headers).expect("the sitemap carries an ETag");
     assert!(!body.is_empty());
 
-    let (status, headers, body) = send_text(&app, get_if_none_match("/api/sitemap.xml", &tag)).await;
+    let (status, headers, body) =
+        send_text(&app, get_if_none_match("/api/sitemap.xml", &tag)).await;
     assert_eq!(status, StatusCode::NOT_MODIFIED);
     assert!(body.is_empty(), "a 304 sitemap carries no body");
     assert_eq!(
@@ -220,7 +238,11 @@ async fn no_store_and_error_responses_never_carry_an_etag() {
     // Per-user auth is on the private (no-store) router — never even reaches the
     // ETag layer.
     let (_, headers, _) = send(&app, get("/api/auth/me")).await;
-    assert_eq!(etag(&headers), None, "auth responses must not be validated/cached");
+    assert_eq!(
+        etag(&headers),
+        None,
+        "auth responses must not be validated/cached"
+    );
 
     // The live import-status route is no-store.
     let (_, headers, _) = send(&app, get("/api/games/mtg/status")).await;
@@ -247,7 +269,11 @@ async fn head_requests_carry_the_cache_policy_but_no_etag() {
         Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
         "HEAD still advertises the cache policy"
     );
-    assert_eq!(etag(&headers), None, "HEAD carries no ETag (the body is stripped)");
+    assert_eq!(
+        etag(&headers),
+        None,
+        "HEAD carries no ETag (the body is stripped)"
+    );
 }
 
 #[tokio::test]

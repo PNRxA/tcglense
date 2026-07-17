@@ -18,17 +18,9 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(CollectionItems::UserId)
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(CollectionItems::UserId).integer().not_null())
                     .col(ColumnDef::new(CollectionItems::Game).string().not_null())
-                    .col(
-                        ColumnDef::new(CollectionItems::CardId)
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(CollectionItems::CardId).integer().not_null())
                     .col(
                         ColumnDef::new(CollectionItems::Quantity)
                             .integer()

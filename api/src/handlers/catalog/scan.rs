@@ -98,7 +98,9 @@ pub async fn scan_cards(
     let mut queries: Vec<[u8; PHASH_BYTES]> = Vec::with_capacity(payload.fingerprints.len());
     for fp in &payload.fingerprints {
         let arr: [u8; PHASH_BYTES] = fp.as_slice().try_into().map_err(|_| {
-            AppError::Validation(format!("each fingerprint must be exactly {PHASH_BYTES} bytes"))
+            AppError::Validation(format!(
+                "each fingerprint must be exactly {PHASH_BYTES} bytes"
+            ))
         })?;
         queries.push(arr);
     }

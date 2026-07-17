@@ -114,8 +114,10 @@ async fn refresh_inner(
         .as_ref()
         .filter(|s| s.status == "complete")
         .and_then(|s| s.source_updated_at.clone());
-    let (prior_etag, prior_fallback, prior_sld, prior_derivation) =
-        stored.as_deref().map(split_version).unwrap_or((None, None, None, None));
+    let (prior_etag, prior_fallback, prior_sld, prior_derivation) = stored
+        .as_deref()
+        .map(split_version)
+        .unwrap_or((None, None, None, None));
     let fallback_version = fallback::version();
     let fallback_changed = prior_fallback != Some(fallback_version);
     // The Secret Lair drop→cards derivation reads `sld_drops.json` + curated overrides;
@@ -175,7 +177,10 @@ async fn refresh_inner(
     let all = *all;
     let (memberships, components): (Vec<RawMembership>, Vec<RawComponent>) =
         tokio::task::spawn_blocking(move || {
-            (model::build_memberships(&all), model::build_compositions(&all))
+            (
+                model::build_memberships(&all),
+                model::build_compositions(&all),
+            )
         })
         .await
         .map_err(|err| MtgjsonError::Join(err.to_string()))?;
@@ -192,13 +197,18 @@ async fn refresh_inner(
             .iter()
             .map(|m| &m.tcgplayer_product_id)
             .chain(components.iter().map(|c| &c.tcgplayer_product_id))
-            .chain(components.iter().filter_map(|c| c.child_tcgplayer_product_id.as_ref())),
+            .chain(
+                components
+                    .iter()
+                    .filter_map(|c| c.child_tcgplayer_product_id.as_ref()),
+            ),
     );
     let card_ext: Vec<String> = distinct(
-        memberships
-            .iter()
-            .map(|m| &m.scryfall_id)
-            .chain(components.iter().filter_map(|c| c.child_scryfall_id.as_ref())),
+        memberships.iter().map(|m| &m.scryfall_id).chain(
+            components
+                .iter()
+                .filter_map(|c| c.child_scryfall_id.as_ref()),
+        ),
     );
     progress.set_stage("matching to catalog");
     let products = resolve_products(db, &product_ext).await?;
@@ -209,9 +219,10 @@ async fn refresh_inner(
     let mut rows: HashSet<Row> = HashSet::new();
     let mut mtgjson_products: HashSet<i32> = HashSet::new();
     for m in &memberships {
-        if let (Some(&product_id), Some(&card_id)) =
-            (products.get(&m.tcgplayer_product_id), cards.get(&m.scryfall_id))
-        {
+        if let (Some(&product_id), Some(&card_id)) = (
+            products.get(&m.tcgplayer_product_id),
+            cards.get(&m.scryfall_id),
+        ) {
             rows.insert((product_id, card_id, m.membership, m.foil));
             mtgjson_products.insert(product_id);
         }
@@ -267,7 +278,11 @@ async fn refresh_inner(
     let component_models = components_to_models(&component_rows, now);
     let matched = models.len();
     let component_count = component_models.len();
-    let product_count = rows.iter().map(|&(pid, ..)| pid).collect::<HashSet<i32>>().len();
+    let product_count = rows
+        .iter()
+        .map(|&(pid, ..)| pid)
+        .collect::<HashSet<i32>>()
+        .len();
     progress.set_rows("writing", (matched + component_count) as u64);
 
     // Replace the game's rows in one transaction so a reader never sees a half-rebuilt table
@@ -330,7 +345,12 @@ async fn refresh_inner(
     txn.commit().await?;
 
     drop(progress);
-    let version = compose_version(etag.as_deref(), fallback_version, sld_version, DERIVATION_VERSION);
+    let version = compose_version(
+        etag.as_deref(),
+        fallback_version,
+        sld_version,
+        DERIVATION_VERSION,
+    );
     let detail = format!(
         "{matched} memberships across {product_count} products \
          ({from_mtgjson} from mtgjson, {from_fallback} from fallback, {from_sld} from sld drops, \
@@ -372,16 +392,18 @@ async fn refresh_inner(
 /// Materialise a resolved row set as insertable models, all stamped `now`.
 fn rows_to_models(rows: &HashSet<Row>, now: DateTimeUtc) -> Vec<sealed_content::ActiveModel> {
     rows.iter()
-        .map(|&(product_id, card_id, membership, foil)| sealed_content::ActiveModel {
-            id: NotSet,
-            game: Set(GAME.to_string()),
-            product_id: Set(product_id),
-            card_id: Set(card_id),
-            membership: Set(membership.to_string()),
-            foil: Set(foil),
-            created_at: Set(now),
-            updated_at: Set(now),
-        })
+        .map(
+            |&(product_id, card_id, membership, foil)| sealed_content::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                product_id: Set(product_id),
+                card_id: Set(card_id),
+                membership: Set(membership.to_string()),
+                foil: Set(foil),
+                created_at: Set(now),
+                updated_at: Set(now),
+            },
+        )
         .collect()
 }
 
@@ -409,7 +431,10 @@ fn resolve_component_rows(
             .child_tcgplayer_product_id
             .as_ref()
             .and_then(|id| products.get(id).copied());
-        let child_card_id = c.child_scryfall_id.as_ref().and_then(|id| cards.get(id).copied());
+        let child_card_id = c
+            .child_scryfall_id
+            .as_ref()
+            .and_then(|id| cards.get(id).copied());
         let position = next_position.entry(product_id).or_insert(0);
         rows.push(ComponentRow {
             product_id,
@@ -528,7 +553,11 @@ mod tests {
             updated_at: Set(now),
             ..Default::default()
         };
-        card::Entity::insert(model).exec(db).await.unwrap().last_insert_id
+        card::Entity::insert(model)
+            .exec(db)
+            .await
+            .unwrap()
+            .last_insert_id
     }
 
     /// Build a one-product fallback dataset for the merge tests.
@@ -606,7 +635,9 @@ mod tests {
         let db = migrated_memory_db().await;
         let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
         insert_card_at(&db, "sf-swat", "tle", "311").await;
-        let map = resolve_cards_by_setnum(&db, &[("tle".into(), "316".into())]).await.unwrap();
+        let map = resolve_cards_by_setnum(&db, &[("tle".into(), "316".into())])
+            .await
+            .unwrap();
         assert_eq!(map.get(&("tle".to_string(), "316".to_string())), Some(&sol));
     }
 
@@ -626,7 +657,9 @@ mod tests {
         );
 
         let mut rows = HashSet::new();
-        let added = merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_fallback(&db, &data, &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
         assert_eq!(added, 2);
         assert!(rows.contains(&(product, sol, "contains", false)));
         assert!(rows.contains(&(product, swat, "variable", false)));
@@ -642,7 +675,9 @@ mod tests {
 
         let mut rows = HashSet::new();
         let covered = HashSet::from([product]);
-        let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
+        let added = merge_fallback(&db, &data, &covered, &mut rows)
+            .await
+            .unwrap();
         assert_eq!(added, 0);
         assert!(rows.is_empty());
     }
@@ -666,12 +701,19 @@ mod tests {
 
         // Upstream described the bundle: a booster row (its sealed recursion) plus one
         // row identical to a supplement row (as if upstream had started authoring it).
-        let mut rows =
-            HashSet::from([(bundle, sol, "booster", true), (bundle, sol, "contains", false)]);
+        let mut rows = HashSet::from([
+            (bundle, sol, "booster", true),
+            (bundle, sol, "contains", false),
+        ]);
         let covered = HashSet::from([bundle]);
-        let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
+        let added = merge_fallback(&db, &data, &covered, &mut rows)
+            .await
+            .unwrap();
         assert_eq!(added, 1, "the upstream-duplicated row dedups away");
-        assert!(rows.contains(&(bundle, sol, "booster", true)), "upstream rows untouched");
+        assert!(
+            rows.contains(&(bundle, sol, "booster", true)),
+            "upstream rows untouched"
+        );
         assert!(rows.contains(&(bundle, sol, "contains", false)));
         assert!(rows.contains(&(bundle, swat, "variable", false)));
     }
@@ -704,7 +746,9 @@ mod tests {
             (bundle, pull, "booster", false),
         ]);
         let covered = HashSet::from([bundle]);
-        let added = merge_fallback(&db, &data, &covered, &mut rows).await.unwrap();
+        let added = merge_fallback(&db, &data, &covered, &mut rows)
+            .await
+            .unwrap();
 
         assert_eq!(added, 1, "the matching guaranteed row already exists");
         assert!(rows.contains(&(bundle, sol, "contains", false)));
@@ -730,13 +774,23 @@ mod tests {
         insert_product(&db, "648686").await;
         let data = one_product("648686", vec![fb_card("tle", "316", "contains", false)]);
         let mut rows = HashSet::new();
-        assert_eq!(merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap(), 0);
+        assert_eq!(
+            merge_fallback(&db, &data, &HashSet::new(), &mut rows)
+                .await
+                .unwrap(),
+            0
+        );
         assert!(rows.is_empty());
 
         // Card exists but the product is not on TCGplayer / not in the catalog.
         insert_card_at(&db, "sf-sol", "tle", "316").await;
         let data = one_product("999999", vec![fb_card("tle", "316", "contains", false)]);
-        assert_eq!(merge_fallback(&db, &data, &HashSet::new(), &mut rows).await.unwrap(), 0);
+        assert_eq!(
+            merge_fallback(&db, &data, &HashSet::new(), &mut rows)
+                .await
+                .unwrap(),
+            0
+        );
         assert!(rows.is_empty());
     }
 
@@ -806,11 +860,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(added, 3);
-        assert_eq!(rows.iter().map(|r| r.position).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(
+            rows.iter().map(|r| r.position).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
         assert_eq!(rows[0].product_id, bundle);
         assert_eq!(rows[0].child_product_id, Some(play));
         assert_eq!(rows[0].quantity, 9);
-        assert_eq!(rows[2].child_product_id, None, "unresolved child stays textual");
+        assert_eq!(
+            rows[2].child_product_id, None,
+            "unresolved child stays textual"
+        );
     }
 
     /// A `card` composition component links by `(set, number)` like the membership path.
@@ -837,7 +897,10 @@ mod tests {
     async fn merge_fallback_components_skips_covered_product() {
         let db = migrated_memory_db().await;
         let bundle = insert_product(&db, "648686").await;
-        let data = one_product_components("648686", vec![fb_component("sealed", "Play Booster", 9, None)]);
+        let data = one_product_components(
+            "648686",
+            vec![fb_component("sealed", "Play Booster", 9, None)],
+        );
 
         let mut rows = Vec::new();
         let covered = HashSet::from([bundle]);
@@ -891,7 +954,10 @@ mod tests {
 
         // Every `card` component the bundle authored, in position order.
         let cards: Vec<&ComponentRow> = {
-            let bundle = rows.iter().find(|r| r.name == "Sol Ring").map(|r| r.product_id);
+            let bundle = rows
+                .iter()
+                .find(|r| r.name == "Sol Ring")
+                .map(|r| r.product_id);
             let mut v: Vec<&ComponentRow> = rows
                 .iter()
                 .filter(|r| Some(r.product_id) == bundle && r.kind == "card")
@@ -963,7 +1029,9 @@ mod tests {
         ];
         let covered = HashSet::from([bundle]);
 
-        merge_fallback(&db, fallback::data(), &covered, &mut rows).await.unwrap();
+        merge_fallback(&db, fallback::data(), &covered, &mut rows)
+            .await
+            .unwrap();
         merge_fallback_components(&db, fallback::data(), &covered, &mut components)
             .await
             .unwrap();
@@ -977,11 +1045,16 @@ mod tests {
         assert!(rows.contains(&(bundle, plains, "contains", false)));
         assert!(rows.contains(&(bundle, plains, "contains", true)));
         assert!(rows.contains(&(bundle, appa, "contains", true)));
-        assert!(rows.contains(&(bundle, pull, "booster", false)), "upstream row untouched");
+        assert!(
+            rows.contains(&(bundle, pull, "booster", false)),
+            "upstream row untouched"
+        );
         // The composition is upstream's, verbatim: the deck line stays and the entry's
         // authored components stay gated out (they only fill a null-contents regression).
-        let bundle_components: Vec<&ComponentRow> =
-            components.iter().filter(|r| r.product_id == bundle).collect();
+        let bundle_components: Vec<&ComponentRow> = components
+            .iter()
+            .filter(|r| r.product_id == bundle)
+            .collect();
         assert_eq!(bundle_components.len(), 2, "upstream composition untouched");
         assert!(bundle_components.iter().any(|r| r.kind == "deck"));
     }
@@ -1060,10 +1133,18 @@ mod tests {
         let composed = compose_version(Some("\"etag-123\""), "fbhash", "sldhash", "dvtag");
         assert_eq!(
             split_version(&composed),
-            (Some("\"etag-123\""), Some("fbhash"), Some("sldhash"), Some("dvtag"))
+            (
+                Some("\"etag-123\""),
+                Some("fbhash"),
+                Some("sldhash"),
+                Some("dvtag")
+            )
         );
         // A pre-feature bare ETag: nothing after it recorded.
-        assert_eq!(split_version("\"legacy-etag\""), (Some("\"legacy-etag\""), None, None, None));
+        assert_eq!(
+            split_version("\"legacy-etag\""),
+            (Some("\"legacy-etag\""), None, None, None)
+        );
         // A three-part version from before the derivation field: it reads as absent -> rebuild once.
         let three_part = format!("\"etag\"{VERSION_SEP}fbhash{VERSION_SEP}sldhash");
         assert_eq!(
@@ -1120,7 +1201,10 @@ mod tests {
 
         let added = merge_contained_booster_pools(&mut rows, &components);
         assert_eq!(added, 3, "3 booster cards inherited (2 play + 1 collector)");
-        assert_eq!(boosters_of(&rows, bundle), vec![(10, false), (11, false), (20, true)]);
+        assert_eq!(
+            boosters_of(&rows, bundle),
+            vec![(10, false), (11, false), (20, true)]
+        );
         // The children and the bundle's own guarantee are unchanged.
         assert!(rows.contains(&(bundle, 1, "contains", false)));
     }
@@ -1199,8 +1283,14 @@ mod tests {
 
         // The empty sleeved pack + the empty display both inherit the 3-card canonical pool.
         assert_eq!(added, 6);
-        assert_eq!(boosters_of(&rows, sleeved), vec![(10, false), (11, false), (12, true)]);
-        assert_eq!(boosters_of(&rows, display), vec![(10, false), (11, false), (12, true)]);
+        assert_eq!(
+            boosters_of(&rows, sleeved),
+            vec![(10, false), (11, false), (12, true)]
+        );
+        assert_eq!(
+            boosters_of(&rows, display),
+            vec![(10, false), (11, false), (12, true)]
+        );
         // The sample pack keeps ONLY its own curated pool (not inherited).
         assert_eq!(boosters_of(&rows, sample), vec![(99, false)]);
         // The other set (no pool anywhere in its group) gains nothing.
@@ -1239,11 +1329,17 @@ mod tests {
         ];
 
         let written = write_for_test(&db, &memberships).await;
-        assert_eq!(written, 2, "only the two rows with a matched product are written");
+        assert_eq!(
+            written, 2,
+            "only the two rows with a matched product are written"
+        );
 
         let rows = SealedContent::find().all(&db).await.unwrap();
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|r| r.product_id == product_id && r.card_id == card_a));
+        assert!(
+            rows.iter()
+                .all(|r| r.product_id == product_id && r.card_id == card_a)
+        );
         assert!(rows.iter().any(|r| r.membership == "contains" && !r.foil));
         assert!(rows.iter().any(|r| r.membership == "booster" && r.foil));
 
@@ -1266,9 +1362,10 @@ mod tests {
         let now = Utc::now();
         let mut models: Vec<sealed_content::ActiveModel> = Vec::new();
         for m in memberships {
-            let (Some(&product_id), Some(&card_id)) =
-                (products.get(&m.tcgplayer_product_id), cards.get(&m.scryfall_id))
-            else {
+            let (Some(&product_id), Some(&card_id)) = (
+                products.get(&m.tcgplayer_product_id),
+                cards.get(&m.scryfall_id),
+            ) else {
                 continue;
             };
             models.push(sealed_content::ActiveModel {
@@ -1330,7 +1427,11 @@ mod tests {
             updated_at: Set(now),
             ..Default::default()
         };
-        product::Entity::insert(model).exec(db).await.unwrap().last_insert_id
+        product::Entity::insert(model)
+            .exec(db)
+            .await
+            .unwrap()
+            .last_insert_id
     }
 
     /// Seed the five cards of the shipped "Cats of Chaos" drop (collector numbers
@@ -1347,26 +1448,42 @@ mod tests {
         seed_cats_of_chaos_cards(&db).await;
         // An unrelated sld card that must NOT be attached to the drop product.
         insert_card_at(&db, "sf-9999", "sld", "9999").await;
-        let pid =
-            insert_sld_product(&db, "700795", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition").await;
+        let pid = insert_sld_product(
+            &db,
+            "700795",
+            "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+        )
+        .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_sld_derived(&db, &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
 
         // Exactly the drop's five cards, as non-foil `contains` memberships of this product.
         assert_eq!(added, 5);
         assert_eq!(rows.len(), 5);
-        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "contains" && !f));
+        assert!(
+            rows.iter()
+                .all(|&(p, _, m, f)| p == pid && m == "contains" && !f)
+        );
     }
 
     #[tokio::test]
     async fn derived_foil_edition_marks_cards_foil() {
         let db = migrated_memory_db().await;
         seed_cats_of_chaos_cards(&db).await;
-        insert_sld_product(&db, "700796", "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition").await;
+        insert_sld_product(
+            &db,
+            "700796",
+            "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition",
+        )
+        .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+        merge_sld_derived(&db, &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 5);
         assert!(rows.iter().all(|&(_, _, m, f)| m == "contains" && f));
@@ -1376,8 +1493,12 @@ mod tests {
     async fn sld_derivation_skips_already_covered_products() {
         let db = migrated_memory_db().await;
         seed_cats_of_chaos_cards(&db).await;
-        let pid =
-            insert_sld_product(&db, "700795", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition").await;
+        let pid = insert_sld_product(
+            &db,
+            "700795",
+            "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+        )
+        .await;
 
         // MTGJSON (or the fallback) already described this product -> derivation is a no-op,
         // so upstream contents are never doubled up or overwritten.
@@ -1396,11 +1517,17 @@ mod tests {
         // A non-sld product (a different set) is never a candidate.
         insert_product(&db, "111").await;
         // An sld product whose name matches no drop stays empty (never a wrong drop).
-        insert_sld_product(&db, "222", "Secret Lair Drop: A Totally Made Up Nonexistent Drop - Non-Foil Edition")
-            .await;
+        insert_sld_product(
+            &db,
+            "222",
+            "Secret Lair Drop: A Totally Made Up Nonexistent Drop - Non-Foil Edition",
+        )
+        .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        let added = merge_sld_derived(&db, &HashSet::new(), &mut rows).await.unwrap();
+        let added = merge_sld_derived(&db, &HashSet::new(), &mut rows)
+            .await
+            .unwrap();
 
         assert_eq!(added, 0);
     }
@@ -1433,7 +1560,10 @@ mod tests {
         // Exactly the two pool cards, as non-foil `variable` ("may be in") memberships.
         assert_eq!(added, 2);
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|&(p, _, m, f)| p == pid && m == "variable" && !f));
+        assert!(
+            rows.iter()
+                .all(|&(p, _, m, f)| p == pid && m == "variable" && !f)
+        );
     }
 
     #[tokio::test]
@@ -1442,7 +1572,9 @@ mod tests {
         // A foil Spider-Man drop ships its shared bonus pool (7013–7021) foil.
         seed_sld_cards(
             &db,
-            &["7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021"],
+            &[
+                "7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021",
+            ],
         )
         .await;
         insert_sld_product(
@@ -1511,8 +1643,12 @@ mod tests {
         let db = migrated_memory_db().await;
         seed_cats_of_chaos_cards(&db).await;
         // Cats of Chaos has no curated bonus pool -> nothing attaches (never a wrong card).
-        insert_sld_product(&db, "930003", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition")
-            .await;
+        insert_sld_product(
+            &db,
+            "930003",
+            "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+        )
+        .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
         let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
@@ -1524,7 +1660,11 @@ mod tests {
     async fn covered_avatar_product_keeps_its_bonus_pool_through_the_pass_sequence() {
         let db = migrated_memory_db().await;
         // The drop's own cards (2295–2299) plus the shared bonus pool (7062/7063).
-        seed_sld_cards(&db, &["2295", "2296", "2297", "2298", "2299", "7062", "7063"]).await;
+        seed_sld_cards(
+            &db,
+            &["2295", "2296", "2297", "2298", "2299", "7062", "7063"],
+        )
+        .await;
         let pid = insert_sld_product(
             &db,
             "930011",
@@ -1537,7 +1677,10 @@ mod tests {
         // bonus pool as `variable`. This is the regression the feature guards against.
         let covered = HashSet::from([pid]);
         let mut rows: HashSet<Row> = HashSet::new();
-        assert_eq!(merge_sld_derived(&db, &covered, &mut rows).await.unwrap(), 0);
+        assert_eq!(
+            merge_sld_derived(&db, &covered, &mut rows).await.unwrap(),
+            0
+        );
         merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
         // Only the bonus pool is present, as `variable` — the drop's own cards came from (skipped)

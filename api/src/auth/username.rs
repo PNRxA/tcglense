@@ -47,22 +47,101 @@ const PROBE_ATTEMPTS: usize = 12;
 static RESERVED: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // Brand / impersonation
-        "tcglense", "tcglens", "official", "staff", "team", "support", "helpdesk",
-        "moderator", "moderators", "mod", "mods", "admin", "admins", "administrator",
-        "owner", "billing", "security", "abuse", "legal", "privacy", "terms",
+        "tcglense",
+        "tcglens",
+        "official",
+        "staff",
+        "team",
+        "support",
+        "helpdesk",
+        "moderator",
+        "moderators",
+        "mod",
+        "mods",
+        "admin",
+        "admins",
+        "administrator",
+        "owner",
+        "billing",
+        "security",
+        "abuse",
+        "legal",
+        "privacy",
+        "terms",
         // Roles / system
-        "root", "superuser", "sysadmin", "system", "service", "bot", "robot",
-        "anonymous", "anon", "everyone", "here", "channel", "guest", "user", "users",
-        "me", "self", "null", "undefined", "none", "nil", "nan",
+        "root",
+        "superuser",
+        "sysadmin",
+        "system",
+        "service",
+        "bot",
+        "robot",
+        "anonymous",
+        "anon",
+        "everyone",
+        "here",
+        "channel",
+        "guest",
+        "user",
+        "users",
+        "me",
+        "self",
+        "null",
+        "undefined",
+        "none",
+        "nil",
+        "nan",
         // Routes / technical (future-proofs the /u/ and top-level namespace)
-        "api", "u", "auth", "oauth", "login", "logout", "signin", "signup", "register",
-        "account", "accounts", "settings", "profile", "home", "about", "help",
-        "contact", "faq", "docs", "doc", "blog", "status", "search",
-        "collection", "collections", "wishlist", "wishlists", "card", "cards",
-        "set", "sets", "price", "prices", "game", "games",
-        "mail", "email", "webmaster", "postmaster", "noreply", "no-reply",
-        "test", "testing", "demo", "example", "dev", "developer",
-        "favicon", "robots", "sitemap",
+        "api",
+        "u",
+        "auth",
+        "oauth",
+        "login",
+        "logout",
+        "signin",
+        "signup",
+        "register",
+        "account",
+        "accounts",
+        "settings",
+        "profile",
+        "home",
+        "about",
+        "help",
+        "contact",
+        "faq",
+        "docs",
+        "doc",
+        "blog",
+        "status",
+        "search",
+        "collection",
+        "collections",
+        "wishlist",
+        "wishlists",
+        "card",
+        "cards",
+        "set",
+        "sets",
+        "price",
+        "prices",
+        "game",
+        "games",
+        "mail",
+        "email",
+        "webmaster",
+        "postmaster",
+        "noreply",
+        "no-reply",
+        "test",
+        "testing",
+        "demo",
+        "example",
+        "dev",
+        "developer",
+        "favicon",
+        "robots",
+        "sitemap",
     ]
     .into_iter()
     .collect()
@@ -98,7 +177,10 @@ pub fn validate(raw: &str) -> Result<String, AppError> {
         )));
     }
 
-    if !display.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if !display
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return Err(AppError::Validation(
             "username may only contain letters, numbers, and underscores".to_string(),
         ));
@@ -262,27 +344,39 @@ mod tests {
     #[test]
     fn validate_rejects_bad_length() {
         assert!(matches!(validate("ab"), Err(AppError::Validation(_))));
-        assert!(matches!(validate(&"a".repeat(21)), Err(AppError::Validation(_))));
+        assert!(matches!(
+            validate(&"a".repeat(21)),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]
     fn validate_rejects_bad_charset() {
         for name in ["bad-name", "bad name", "näme", "dot.dot", "at@sign"] {
-            assert!(matches!(validate(name), Err(AppError::Validation(_))), "{name}");
+            assert!(
+                matches!(validate(name), Err(AppError::Validation(_))),
+                "{name}"
+            );
         }
     }
 
     #[test]
     fn validate_rejects_bad_underscore_structure() {
         for name in ["_lead", "trail_", "a__b"] {
-            assert!(matches!(validate(name), Err(AppError::Validation(_))), "{name}");
+            assert!(
+                matches!(validate(name), Err(AppError::Validation(_))),
+                "{name}"
+            );
         }
     }
 
     #[test]
     fn validate_rejects_reserved_case_insensitively() {
         for name in ["admin", "ADMIN", "TCGLense", "Support"] {
-            assert!(matches!(validate(name), Err(AppError::Validation(_))), "{name}");
+            assert!(
+                matches!(validate(name), Err(AppError::Validation(_))),
+                "{name}"
+            );
         }
     }
 
@@ -315,7 +409,10 @@ mod tests {
     #[test]
     fn handle_round_trips() {
         assert_eq!(format_handle("Ada_Lovelace", 7), "Ada_Lovelace-0007");
-        assert_eq!(parse_handle("Ada_Lovelace-0007"), Some(("Ada_Lovelace".to_string(), 7)));
+        assert_eq!(
+            parse_handle("Ada_Lovelace-0007"),
+            Some(("Ada_Lovelace".to_string(), 7))
+        );
     }
 
     #[test]

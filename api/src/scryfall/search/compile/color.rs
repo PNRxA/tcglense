@@ -3,11 +3,11 @@
 use sea_orm::Condition;
 use sea_orm::sea_query::SimpleExpr;
 
-use crate::db::Dialect;
-use super::common::{cmp_sql, cust_vals, raw, raw_vals};
 use super::super::WUBRG;
 use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
+use super::common::{cmp_sql, cust_vals, raw, raw_vals};
+use crate::db::Dialect;
 
 enum ColorOperand {
     Letters(Vec<char>),

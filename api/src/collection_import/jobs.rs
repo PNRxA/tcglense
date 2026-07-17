@@ -199,7 +199,10 @@ pub fn spawn_import_job(
         // Wait for the import slot — this is the queue; status stays `queued` until now.
         // `acquire_owned` only errors if the semaphore is closed, which we never do.
         let Ok(_permit) = imports.permits.clone().acquire_owned().await else {
-            imports.set(id, JobStatus::Failed("import queue unavailable".to_string()));
+            imports.set(
+                id,
+                JobStatus::Failed("import queue unavailable".to_string()),
+            );
             return;
         };
         imports.set(id, JobStatus::Running);
@@ -316,7 +319,10 @@ mod tests {
     fn create_then_status_is_queued_and_owner_scoped() {
         let q = ImportQueue::default();
         let (id, _progress) = q.create(1, "mtg").expect("create");
-        assert!(matches!(status_of(&q, id, 1, "mtg"), Some(JobStatus::Queued)));
+        assert!(matches!(
+            status_of(&q, id, 1, "mtg"),
+            Some(JobStatus::Queued)
+        ));
         // Wrong user, wrong game, or unknown id all read as absent (=> 404).
         assert!(q.view(id, 2, "mtg").is_none());
         assert!(q.view(id, 1, "pokemon").is_none());
@@ -328,9 +334,15 @@ mod tests {
         let q = ImportQueue::default();
         let (id, _progress) = q.create(7, "mtg").expect("create");
         q.set(id, JobStatus::Running);
-        assert!(matches!(status_of(&q, id, 7, "mtg"), Some(JobStatus::Running)));
+        assert!(matches!(
+            status_of(&q, id, 7, "mtg"),
+            Some(JobStatus::Running)
+        ));
         q.set(id, JobStatus::Complete(summary()));
-        assert!(matches!(status_of(&q, id, 7, "mtg"), Some(JobStatus::Complete(_))));
+        assert!(matches!(
+            status_of(&q, id, 7, "mtg"),
+            Some(JobStatus::Complete(_))
+        ));
     }
 
     #[test]

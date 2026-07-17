@@ -115,7 +115,16 @@ mod tests {
         insert(&db, 2, "741★", "foil", "ora-chaos", None, Some("29.39")).await;
         // An ambiguous base (itself foilable) and its star -> NOT enriched (rule needs a
         // strictly-nonfoil base).
-        insert(&db, 3, "33", "nonfoil,foil", "ora-proctor", Some("1.00"), Some("2.00")).await;
+        insert(
+            &db,
+            3,
+            "33",
+            "nonfoil,foil",
+            "ora-proctor",
+            Some("1.00"),
+            Some("2.00"),
+        )
+        .await;
         insert(&db, 4, "33★", "foil", "ora-proctor", None, Some("9.99")).await;
         // A plain card with no star sibling -> untouched.
         insert(&db, 5, "100", "nonfoil", "ora-plain", Some("5.00"), None).await;
@@ -127,11 +136,31 @@ mod tests {
         let n = enrich_foil_variant_prices(&db).await.expect("enrich");
 
         assert_eq!(n, 2, "only the clean nonfoil bases are enriched");
-        assert_eq!(foil_price(&db, "ext-1").await.as_deref(), Some("29.39"), "base gets star foil price");
-        assert_eq!(foil_price(&db, "ext-2").await.as_deref(), Some("29.39"), "star unchanged");
-        assert_eq!(foil_price(&db, "ext-3").await.as_deref(), Some("2.00"), "ambiguous base kept its own");
-        assert_eq!(foil_price(&db, "ext-5").await, None, "no-sibling card untouched");
-        assert_eq!(foil_price(&db, "ext-6").await.as_deref(), Some("3.33"), "alphanumeric base gets star foil price");
+        assert_eq!(
+            foil_price(&db, "ext-1").await.as_deref(),
+            Some("29.39"),
+            "base gets star foil price"
+        );
+        assert_eq!(
+            foil_price(&db, "ext-2").await.as_deref(),
+            Some("29.39"),
+            "star unchanged"
+        );
+        assert_eq!(
+            foil_price(&db, "ext-3").await.as_deref(),
+            Some("2.00"),
+            "ambiguous base kept its own"
+        );
+        assert_eq!(
+            foil_price(&db, "ext-5").await,
+            None,
+            "no-sibling card untouched"
+        );
+        assert_eq!(
+            foil_price(&db, "ext-6").await.as_deref(),
+            Some("3.33"),
+            "alphanumeric base gets star foil price"
+        );
     }
 
     #[tokio::test]
@@ -159,6 +188,10 @@ mod tests {
         star.update(&db).await.expect("bump star price");
 
         enrich_foil_variant_prices(&db).await.expect("re-enrich");
-        assert_eq!(foil_price(&db, "ext-1").await.as_deref(), Some("31.00"), "base tracks the new star price");
+        assert_eq!(
+            foil_price(&db, "ext-1").await.as_deref(),
+            Some("31.00"),
+            "base tracks the new star price"
+        );
     }
 }

@@ -77,7 +77,9 @@ export function getPublicCollectionDrops(
 ): Promise<CollectionDropGroupPage> {
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  return request<CollectionDropGroupPage>(`${base(handle)}/${g}/sets/${c}/drops${listQuery(params ?? {})}`)
+  return request<CollectionDropGroupPage>(
+    `${base(handle)}/${g}/sets/${c}/drops${listQuery(params ?? {})}`,
+  )
 }
 
 /** A page (by card sub-type / treatment) of a user's public collection in a set —
@@ -90,7 +92,9 @@ export function getPublicCollectionSubtypes(
 ): Promise<CollectionSubtypeGroupPage> {
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  return request<CollectionSubtypeGroupPage>(`${base(handle)}/${g}/sets/${c}/subtypes${listQuery(params ?? {})}`)
+  return request<CollectionSubtypeGroupPage>(
+    `${base(handle)}/${g}/sets/${c}/subtypes${listQuery(params ?? {})}`,
+  )
 }
 
 /** Which of the given catalog card ids the owner holds, keyed by external id (cards they

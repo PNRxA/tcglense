@@ -255,7 +255,11 @@ pub async fn conditional_request_layer(request: Request, next: Next) -> Response
     // body of unknown or over-cap size is passed through untouched rather than
     // buffered — defensive only; the catalog/sitemap bodies are always well under.
     let (mut parts, body) = response.into_parts();
-    if body.size_hint().upper().is_none_or(|u| u > MAX_ETAG_BODY_BYTES as u64) {
+    if body
+        .size_hint()
+        .upper()
+        .is_none_or(|u| u > MAX_ETAG_BODY_BYTES as u64)
+    {
         return Response::from_parts(parts, body);
     }
     let bytes = match to_bytes(body, MAX_ETAG_BODY_BYTES).await {
@@ -359,7 +363,10 @@ mod tests {
         // `no-store` (an error under the public layer) must never carry a validator.
         assert!(!is_etaggable(StatusCode::OK, Some(NO_STORE)));
         // A non-2xx is never etaggable regardless of the (nonsensical) header.
-        assert!(!is_etaggable(StatusCode::NOT_FOUND, Some(PUBLIC_CATALOG_CACHE)));
+        assert!(!is_etaggable(
+            StatusCode::NOT_FOUND,
+            Some(PUBLIC_CATALOG_CACHE)
+        ));
         // No `Cache-Control` at all (shouldn't happen on the public layer) → skip.
         assert!(!is_etaggable(StatusCode::OK, None));
     }

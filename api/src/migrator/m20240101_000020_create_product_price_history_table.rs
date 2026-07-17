@@ -57,10 +57,7 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_product_price_history_product")
-                            .from(
-                                ProductPriceHistory::Table,
-                                ProductPriceHistory::ProductId,
-                            )
+                            .from(ProductPriceHistory::Table, ProductPriceHistory::ProductId)
                             .to(Products::Table, Products::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -88,11 +85,7 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(
-                Table::drop()
-                    .table(ProductPriceHistory::Table)
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(ProductPriceHistory::Table).to_owned())
             .await?;
         Ok(())
     }

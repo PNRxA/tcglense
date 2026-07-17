@@ -11,11 +11,14 @@ use crate::test_support::{card_model, card_set_model, url_encode};
 /// Seed `tst` (one card of each derivable treatment) plus `pln` (a single Normal card).
 async fn seed_treated_sets(state: &crate::state::AppState) {
     for (id, code) in [(1, "tst"), (2, "pln")] {
-        card_set::Model { id, ..card_set_model(code) }
-            .into_active_model()
-            .insert(&state.db)
-            .await
-            .expect("insert set");
+        card_set::Model {
+            id,
+            ..card_set_model(code)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert set");
     }
     // tst: Normal, Borderless (border_color), Showcase (frame_effects).
     for (id, cn, border, frame) in [
@@ -60,7 +63,10 @@ async fn set_subtypes_groups_cards_by_treatment() {
     let (status, _, body) = send(&app, get("/api/games/mtg/sets/tst/subtypes")).await;
     assert_eq!(status, StatusCode::OK, "subtypes must succeed: {body:?}");
     let groups = body["data"].as_array().expect("subtype groups");
-    let titles: Vec<&str> = groups.iter().map(|g| g["title"].as_str().unwrap()).collect();
+    let titles: Vec<&str> = groups
+        .iter()
+        .map(|g| g["title"].as_str().unwrap())
+        .collect();
     assert_eq!(titles, vec!["Normal", "Borderless", "Showcase"]);
     assert_eq!(groups[0]["slug"].as_str(), Some("normal"));
     assert!(groups.iter().all(|g| g["card_count"].as_u64() == Some(1)));
@@ -77,9 +83,16 @@ async fn set_subtypes_search_narrows_cards() {
     let app = crate::build_router(state);
 
     // border:borderless keeps only the one borderless card, so only its group survives.
-    let uri = format!("/api/games/mtg/sets/tst/subtypes?q={}", url_encode("border:borderless"));
+    let uri = format!(
+        "/api/games/mtg/sets/tst/subtypes?q={}",
+        url_encode("border:borderless")
+    );
     let (status, _, body) = send(&app, get(&uri)).await;
-    assert_eq!(status, StatusCode::OK, "searched subtypes must succeed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "searched subtypes must succeed: {body:?}"
+    );
     let groups = body["data"].as_array().expect("subtype groups");
     assert_eq!(groups.len(), 1, "one matching group: {body:?}");
     assert_eq!(groups[0]["title"].as_str(), Some("Borderless"));
@@ -109,7 +122,11 @@ async fn set_list_reports_has_subtypes() {
             .find(|s| s["code"].as_str() == Some(code))
             .and_then(|s| s["has_subtypes"].as_bool())
     };
-    assert_eq!(flag("tst"), Some(true), "set with treatments offers the view");
+    assert_eq!(
+        flag("tst"),
+        Some(true),
+        "set with treatments offers the view"
+    );
     assert_eq!(flag("pln"), Some(false), "all-Normal set does not");
 
     // The single-set endpoint agrees.

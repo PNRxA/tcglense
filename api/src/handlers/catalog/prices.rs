@@ -1,10 +1,7 @@
 //! Catalog price-history endpoint: a card's price-over-time series, optionally windowed
 //! and downsampled by `?range`.
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::Serialize;
@@ -77,7 +74,12 @@ pub async fn card_prices(
 
     // Blank/absent range -> the full daily series (original contract); an explicit
     // range windows + downsamples. Unknown values 422, like a bad `sort`.
-    let range = match params.range.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let range = match params
+        .range
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         None => None,
         Some(value) => Some(PriceRange::parse(value)?),
     };

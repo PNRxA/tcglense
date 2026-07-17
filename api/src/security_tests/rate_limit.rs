@@ -40,7 +40,10 @@ async fn register_is_rate_limited_per_ip_when_behind_a_trusted_proxy() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert!(headers.get("retry-after").is_some(), "429 carries Retry-After");
+    assert!(
+        headers.get("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
     assert!(body["error"].as_str().is_some());
     // Rate-limit responses must never be shared-cached.
     assert_eq!(cache_control(&headers), Some("no-store"));
@@ -90,7 +93,10 @@ async fn complete_registration_is_rate_limited_per_ip_when_behind_a_trusted_prox
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert!(headers.get("retry-after").is_some(), "429 carries Retry-After");
+    assert!(
+        headers.get("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
     assert!(body["error"].as_str().is_some());
 
     // A different IP has its own Token budget and still reaches the 401.
@@ -184,7 +190,9 @@ fn csv_import(token: &str) -> Request<Body> {
         .uri("/api/collection/mtg/import/csv?mode=overwrite")
         .header(AUTHORIZATION, format!("Bearer {token}"))
         .header(CONTENT_TYPE, "text/csv")
-        .body(Body::from("Scryfall ID,Finish,Quantity\ndummy-dmb-0001,Normal,1\n"))
+        .body(Body::from(
+            "Scryfall ID,Finish,Quantity\ndummy-dmb-0001,Normal,1\n",
+        ))
         .unwrap()
 }
 
@@ -196,26 +204,41 @@ async fn authenticated_imports_are_rate_limited_per_user() {
     // The per-user import class allows a burst of 10 imports from one account...
     for i in 0..10 {
         let (status, _, body) = send(&app, csv_import(&alice)).await;
-        assert_eq!(status, StatusCode::OK, "import {i} within the burst: {body:?}");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "import {i} within the burst: {body:?}"
+        );
     }
 
     // ...the 11th is throttled with a 429 carrying Retry-After, and — being per-user
     // data — the response must never be shared-cached.
     let (status, headers, body) = send(&app, csv_import(&alice)).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert!(headers.get("retry-after").is_some(), "429 carries Retry-After");
+    assert!(
+        headers.get("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
     assert!(body["error"].as_str().is_some());
     assert_eq!(cache_control(&headers), Some("no-store"));
 
     // A different account has an entirely independent import budget.
     let (bob, _) = register(&app, "rl-import-2@example.com", "password123").await;
     let (status, _, body) = send(&app, csv_import(&bob)).await;
-    assert_eq!(status, StatusCode::OK, "a second user is unaffected: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a second user is unaffected: {body:?}"
+    );
 
     // And the *general* class is a separate budget for Alice: a plain collection read
     // still succeeds even though her import class is exhausted.
     let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &alice)).await;
-    assert_eq!(status, StatusCode::OK, "the general class is a separate budget");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the general class is a separate budget"
+    );
 }
 
 #[tokio::test]
@@ -227,11 +250,22 @@ async fn a_missing_or_invalid_bearer_is_not_per_user_limited() {
 
     for _ in 0..15 {
         let (status, _, _) = send(&app, get("/api/collection/mtg")).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "no bearer -> 401, never 429");
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "no bearer -> 401, never 429"
+        );
 
-        let (status, _, _) =
-            send(&app, get_with_bearer("/api/collection/mtg", "not-a-real-token")).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "bad bearer -> 401, never 429");
+        let (status, _, _) = send(
+            &app,
+            get_with_bearer("/api/collection/mtg", "not-a-real-token"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "bad bearer -> 401, never 429"
+        );
     }
 }
 
@@ -262,14 +296,21 @@ async fn public_catalog_reads_are_rate_limited_per_ip_but_images_are_not() {
     }
     // The 429 carries Retry-After and is never shared-cached.
     let (headers, body) = limited.expect("the catalog burst must eventually be limited");
-    assert!(headers.get("retry-after").is_some(), "429 carries Retry-After");
+    assert!(
+        headers.get("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
     assert!(body["error"].as_str().is_some());
     assert_eq!(cache_control(&headers), Some("no-store"));
 
     // The same exhausted IP can still fetch card art: images are classified out of
     // the limiter entirely (a 404 here — no such card — but decisively not a 429).
     let (status, _, _) = send(&app, get_from("/api/games/mtg/cards/nope/image", ip)).await;
-    assert_ne!(status, StatusCode::TOO_MANY_REQUESTS, "art is never catalog-limited");
+    assert_ne!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "art is never catalog-limited"
+    );
 
     // A different IP has its own catalog budget.
     let (status, _, _) = send(&app, get_from("/api/games/mtg/cards", "198.51.100.42")).await;
@@ -290,13 +331,21 @@ async fn public_holdings_reads_and_owned_posts_are_rate_limited_per_ip() {
     // then fire until the limiter bites rather than pinning an exact count).
     for i in 0..40 {
         let (status, _, _) = send(&app, get_from("/api/u/nobody-0000/mtg", ip)).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "read {i} within burst is a plain 404");
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "read {i} within burst is a plain 404"
+        );
         let (status, _, _) = send(
             &app,
             json_post_from("/api/u/nobody-0000/mtg/owned", ip, json!({ "ids": ["x"] })),
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "post {i} within burst is a plain 404");
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "post {i} within burst is a plain 404"
+        );
     }
     let mut limited = None;
     for _ in 0..300 {

@@ -40,12 +40,10 @@ describe('useTurnstile', () => {
   it('queues concurrent calls so each receives a fresh single-use token', async () => {
     let callback: ((token: string) => void) | undefined
     const api: TurnstileApi = {
-      render: vi.fn<TurnstileApi['render']>(
-        (_el: HTMLElement, options: TurnstileRenderOptions) => {
-          callback = options.callback
-          return 'widget-1'
-        },
-      ),
+      render: vi.fn<TurnstileApi['render']>((_el: HTMLElement, options: TurnstileRenderOptions) => {
+        callback = options.callback
+        return 'widget-1'
+      }),
       execute: vi.fn<TurnstileApi['execute']>(),
       reset: vi.fn<TurnstileApi['reset']>(),
       remove: vi.fn<TurnstileApi['remove']>(),

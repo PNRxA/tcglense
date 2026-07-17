@@ -620,7 +620,9 @@ mod tests {
             "expected a showcase card",
         );
         assert!(
-            cards.iter().any(|c| c.border_color.as_deref() == Some("borderless")),
+            cards
+                .iter()
+                .any(|c| c.border_color.as_deref() == Some("borderless")),
             "expected a borderless card",
         );
     }

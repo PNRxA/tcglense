@@ -174,7 +174,10 @@ function removeFolder(folderId: number, name: string) {
 <template>
   <div class="mx-auto max-w-6xl px-4 py-8">
     <!-- Signed-out: prompt in place rather than bouncing to /login. -->
-    <div v-if="auth.sessionResolved && !auth.isAuthenticated" class="mx-auto max-w-md py-16 text-center">
+    <div
+      v-if="auth.sessionResolved && !auth.isAuthenticated"
+      class="mx-auto max-w-md py-16 text-center"
+    >
       <div class="bg-muted mx-auto flex size-12 items-center justify-center rounded-lg">
         <Layers class="size-6" aria-hidden="true" />
       </div>
@@ -184,7 +187,9 @@ function removeFolder(folderId: number, name: string) {
         free account to get started.
       </p>
       <div class="mt-6 flex justify-center gap-3">
-        <RouterLink :class="buttonVariants()" :to="{ path: '/login', query: { redirect: `/decks/${game}` } }"
+        <RouterLink
+          :class="buttonVariants()"
+          :to="{ path: '/login', query: { redirect: `/decks/${game}` } }"
           >Sign in</RouterLink
         >
         <RouterLink

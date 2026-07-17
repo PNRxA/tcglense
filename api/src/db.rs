@@ -242,7 +242,11 @@ where
         .join(" OR ");
     // No comparable columns (keys/timestamps only) → nothing can differ; always update
     // (degenerate: our callers always have content columns, so this never fires).
-    Expr::cust(if pred.is_empty() { "TRUE".to_string() } else { pred })
+    Expr::cust(if pred.is_empty() {
+        "TRUE".to_string()
+    } else {
+        pred
+    })
 }
 
 #[cfg(test)]

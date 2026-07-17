@@ -1,20 +1,17 @@
 //! Wish-list per-set endpoints: the wanted-set landing tiles and the wanted cards of a
 //! drop-grouped set, grouped by Secret Lair drop.
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::auth::extractor::AuthUser;
-use crate::entities::prelude::CardSet;
 use crate::entities::card_set;
+use crate::entities::prelude::CardSet;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CollectionDropGroup, CollectionSetsResponse, CollectionSort, CollectionSubtypeGroup, ListParams,
-    Page, SetsParams, SortDir, SortField, build_collection_sets, holding_drop_page,
+    CollectionDropGroup, CollectionSetsResponse, CollectionSort, CollectionSubtypeGroup,
+    ListParams, Page, SetsParams, SortDir, SortField, build_collection_sets, holding_drop_page,
     holding_subtype_page, load_set, require_drop_table, require_game, search_condition,
 };
 use crate::state::AppState;
@@ -51,7 +48,9 @@ pub async fn wishlist_sets(
 
     // Every wanted card's fold-relevant columns for the game (never the wide card
     // rows) — bounded by how many distinct cards the user wants.
-    let rows = wanted_summary_rows(user.id, &game, None).all(&state.db).await?;
+    let rows = wanted_summary_rows(user.id, &game, None)
+        .all(&state.db)
+        .await?;
 
     // The game's set metadata, to dress each wanted set as a full catalog tile.
     let sets = CardSet::find()

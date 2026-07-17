@@ -8,7 +8,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
 use super::harness::*;
 use crate::auth::{
-    email_token::{issue, EmailTokenPurpose},
+    email_token::{EmailTokenPurpose, issue},
     password::hash_password,
 };
 use crate::entities::{prelude::User, user};
@@ -212,7 +212,10 @@ async fn a_registration_completion_token_cannot_reset_a_password() {
     // is a registration-COMPLETION token (purpose complete_registration).
     send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "cross@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "cross@example.com" }),
+        ),
     )
     .await;
     let completion = latest_email_token(&app, "cross@example.com").await;
@@ -404,7 +407,10 @@ async fn a_completion_token_is_refused_after_the_account_is_activated_via_reset(
     // do NOT complete it.
     send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "revive@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "revive@example.com" }),
+        ),
     )
     .await;
     let completion = token_for_subject(&app, "revive@example.com", "Finish creating").await;

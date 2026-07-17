@@ -10,7 +10,11 @@ use super::harness::*;
 /// Grab `n` real card external ids from the seeded catalog.
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=25")).await;
-    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
     body["data"]
         .as_array()
         .expect("cards data array")
@@ -55,7 +59,12 @@ async fn create_key(app: &TestApp, access: &str, scope: &str) -> String {
 async fn set_username(app: &TestApp, token: &str, name: &str) -> (StatusCode, Value) {
     let (status, _, body) = send(
         app,
-        json_with_bearer("PUT", "/api/auth/username", token, json!({ "username": name })),
+        json_with_bearer(
+            "PUT",
+            "/api/auth/username",
+            token,
+            json!({ "username": name }),
+        ),
     )
     .await;
     (status, body)
@@ -70,7 +79,10 @@ async fn set_username_reflects_in_me_and_hides_secrets() {
     assert_eq!(status, StatusCode::OK, "set username failed: {body:?}");
     assert_eq!(body["username"], "ash_ketchum");
     let disc = body["discriminator"].as_i64().expect("discriminator");
-    assert!((1..=9999).contains(&disc), "discriminator out of range: {disc}");
+    assert!(
+        (1..=9999).contains(&disc),
+        "discriminator out of range: {disc}"
+    );
     assert_eq!(body["handle"], format!("ash_ketchum-{disc:04}"));
 
     // `/me` now carries the handle, and no response ever leaks the password hash.
@@ -111,7 +123,10 @@ async fn rename_keeps_discriminator_when_free() {
     let (status, second) = set_username(&app, &access, "grace").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(second["username"], "grace");
-    assert_eq!(second["discriminator"].as_i64().expect("discriminator"), disc);
+    assert_eq!(
+        second["discriminator"].as_i64().expect("discriminator"),
+        disc
+    );
 }
 
 #[tokio::test]
@@ -171,7 +186,12 @@ async fn enable_public_without_username_is_409_then_works() {
     // No username yet: enabling public is a 409 the SPA branches on.
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": true })),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "public": true }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -180,28 +200,48 @@ async fn enable_public_without_username_is_409_then_works() {
     set_username(&app, &access, "toggler").await;
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": true })),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "public": true }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "enable failed: {body:?}");
     assert_eq!(body["public"], true);
-    assert!(body["handle"].as_str().is_some_and(|h| h.starts_with("toggler-")));
+    assert!(
+        body["handle"]
+            .as_str()
+            .is_some_and(|h| h.starts_with("toggler-"))
+    );
 
     // Reading the state back reflects it.
-    let (status, _, get_body) =
-        send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    let (status, _, get_body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &access),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(get_body["public"], true);
 
     // Disabling flips it back.
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": false })),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "public": false }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (_, _, get_body) =
-        send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    let (_, _, get_body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &access),
+    )
+    .await;
     assert_eq!(get_body["public"], false);
 }
 
@@ -215,13 +255,22 @@ async fn read_only_key_cannot_toggle_visibility() {
     let key = create_key(&app, &access, "read").await;
 
     // The read-only key can READ the visibility state (a read)...
-    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &key)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &key),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // ...but not flip it (a write) — 403.
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", "/api/collection/mtg/visibility", &key, json!({ "public": true })),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &key,
+            json!({ "public": true }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -235,8 +284,11 @@ async fn display_prefs_default_to_shown_and_persist_independently() {
     let (access, _) = register(&app, "prefs@example.test", "password one two").await;
 
     // Fresh account, no row yet: both sections show, collection private.
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &access),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["public"], false);
     assert_eq!(body["show_value_chart"], true);
@@ -259,7 +311,11 @@ async fn display_prefs_default_to_shown_and_persist_independently() {
     assert_eq!(body["public"], false);
 
     // Persisted on read-back.
-    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &access),
+    )
+    .await;
     assert_eq!(body["show_value_chart"], false);
     assert_eq!(body["show_movers"], true);
 }
@@ -274,7 +330,12 @@ async fn display_prefs_survive_public_toggle_and_dont_clobber_sharing() {
     // (the patch touches only its own column, no read-modify-write clobber).
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": true })),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "public": true }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -290,18 +351,33 @@ async fn display_prefs_survive_public_toggle_and_dont_clobber_sharing() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["public"], true, "a display patch must not clobber sharing");
+    assert_eq!(
+        body["public"], true,
+        "a display patch must not clobber sharing"
+    );
     assert_eq!(body["show_movers"], false);
 
     // Toggle back to private: the row is retained, so the hidden-movers pref survives.
     let (_, _, _) = send(
         &app,
-        json_with_bearer("PUT", "/api/collection/mtg/visibility", &access, json!({ "public": false })),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/visibility",
+            &access,
+            json!({ "public": false }),
+        ),
     )
     .await;
-    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &access)).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &access),
+    )
+    .await;
     assert_eq!(body["public"], false);
-    assert_eq!(body["show_movers"], false, "a display pref must survive a private toggle");
+    assert_eq!(
+        body["show_movers"], false,
+        "a display pref must survive a private toggle"
+    );
 }
 
 #[tokio::test]
@@ -311,7 +387,11 @@ async fn read_only_key_cannot_set_display_prefs() {
     let key = create_key(&app, &access, "read").await;
 
     // Reading prefs with a read-only key is fine...
-    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &key)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &key),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // ...but writing one is a write — 403.
@@ -375,7 +455,14 @@ async fn display_prefs_are_isolated_per_user() {
     )
     .await;
 
-    let (_, _, bob_body) = send(&app, get_with_bearer("/api/collection/mtg/visibility", &bob)).await;
-    assert_eq!(bob_body["show_value_chart"], true, "Alice's prefs must not leak to Bob");
+    let (_, _, bob_body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/visibility", &bob),
+    )
+    .await;
+    assert_eq!(
+        bob_body["show_value_chart"], true,
+        "Alice's prefs must not leak to Bob"
+    );
     assert_eq!(bob_body["show_movers"], true);
 }

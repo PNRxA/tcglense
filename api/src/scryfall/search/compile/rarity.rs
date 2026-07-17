@@ -2,11 +2,11 @@
 
 use sea_orm::Condition;
 
-use crate::db::Dialect;
-use super::common::{raw, raw_vals, text_eq, text_ne};
 use super::super::RARITIES;
 use super::super::error::{SearchError, invalid};
 use super::super::lexer::Op;
+use super::common::{raw, raw_vals, text_eq, text_ne};
+use crate::db::Dialect;
 
 fn normalize_rarity(v: &str) -> Option<&'static str> {
     match v.to_lowercase().as_str() {
@@ -37,7 +37,11 @@ pub(super) fn rarity(dialect: Dialect, op: Op, value: &str) -> Result<Condition,
                 return Ok(raw("1 = 0"));
             }
             let placeholders = vec!["?"; names.len()].join(", ");
-            Ok(raw_vals(dialect, format!("COALESCE(rarity, '') IN ({placeholders})"), names))
+            Ok(raw_vals(
+                dialect,
+                format!("COALESCE(rarity, '') IN ({placeholders})"),
+                names,
+            ))
         }
     }
 }

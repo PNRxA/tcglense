@@ -168,14 +168,22 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
     };
     query = match field {
         SortField::Number => query
-            .order_by_with_nulls(card::Column::CollectorNumberInt, dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(
+                card::Column::CollectorNumberInt,
+                dir.order(),
+                NullOrdering::Last,
+            )
             .order_by(card::Column::CollectorNumber, dir.order()),
         // Preserve the previous all-cards tiebreak (set, then collector number)
         // so the default listing order is unchanged.
         SortField::Name => query
             .order_by(card::Column::Name, dir.order())
             .order_by_asc(card::Column::SetCode)
-            .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last),
+            .order_by_with_nulls(
+                card::Column::CollectorNumberInt,
+                Order::Asc,
+                NullOrdering::Last,
+            ),
         SortField::Rarity => query
             .order_by_with_nulls(rarity_rank_expr(), dir.order(), NullOrdering::Last)
             .order_by_asc(card::Column::Name),
@@ -197,12 +205,20 @@ pub(crate) fn apply_card_sort<Q: QueryOrder>(
             .order_by_asc(card::Column::Name),
         SortField::Set => query
             .order_by(card::Column::SetCode, dir.order())
-            .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last),
+            .order_by_with_nulls(
+                card::Column::CollectorNumberInt,
+                Order::Asc,
+                NullOrdering::Last,
+            ),
         SortField::Color => query
             .order_by_with_nulls(color_rank_expr(), dir.order(), NullOrdering::Last)
             .order_by_asc(card::Column::Name),
         SortField::Power => query
-            .order_by_with_nulls(numeric_col_expr("power", dialect), dir.order(), NullOrdering::Last)
+            .order_by_with_nulls(
+                numeric_col_expr("power", dialect),
+                dir.order(),
+                NullOrdering::Last,
+            )
             .order_by_asc(card::Column::Name),
         SortField::Toughness => query
             .order_by_with_nulls(
@@ -268,7 +284,9 @@ fn price_real_expr(cols: &[&str], dialect: Dialect) -> SimpleExpr {
         .iter()
         .map(|col| match dialect {
             Dialect::Sqlite => {
-                format!("CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END")
+                format!(
+                    "CASE WHEN {col} IS NULL OR {col} = '' THEN NULL ELSE CAST({col} AS REAL) END"
+                )
             }
             Dialect::Postgres => format!(
                 "CASE WHEN {} THEN CAST({col} AS REAL) ELSE NULL END",
@@ -341,7 +359,10 @@ mod tests {
             test_card(4, None, None),
             test_card(5, Some(""), Some("8.00")),
         ] {
-            c.into_active_model().insert(&db).await.expect("insert card");
+            c.into_active_model()
+                .insert(&db)
+                .await
+                .expect("insert card");
         }
 
         let ids = |rows: Vec<card::Model>| rows.iter().map(|r| r.id).collect::<Vec<_>>();

@@ -5,12 +5,12 @@ use sea_orm::Condition;
 use sea_orm::Value;
 use sea_orm::sea_query::SimpleExpr;
 
-use crate::db::Dialect;
-use super::common::cust_vals;
 use super::super::MAX_MANA_SYMBOLS;
 use super::super::WUBRG;
 use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
+use super::common::cust_vals;
+use crate::db::Dialect;
 
 /// Normalise a mana symbol's interior (uppercase; order a two-colour hybrid WUBRG).
 fn normalize_symbol(inner: &str) -> String {

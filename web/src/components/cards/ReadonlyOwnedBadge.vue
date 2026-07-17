@@ -16,6 +16,11 @@ const total = computed(() => props.quantity + props.foilQuantity)
 
 <template>
   <span v-if="total > 0" class="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center">
-    <OwnedCountBadge :quantity="quantity" :foil-quantity="foilQuantity" kind="owned" :tooltip="false" />
+    <OwnedCountBadge
+      :quantity="quantity"
+      :foil-quantity="foilQuantity"
+      kind="owned"
+      :tooltip="false"
+    />
   </span>
 </template>

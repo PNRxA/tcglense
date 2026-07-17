@@ -1,10 +1,7 @@
 //! Catalog card endpoints: the all-cards list (search + paginate), one card's full
 //! detail, and a card's other printings.
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
 use crate::entities::card;
@@ -66,7 +63,8 @@ pub async fn list_cards(
     }
     let (sort, dir) = params.sort_spec_with(SortField::Name, shape.order, shape.direction)?;
     let query = apply_unique(query, shape.unique, dialect);
-    let paginator = apply_card_sort(query, sort, dir, false, dialect).paginate(&state.db, page_size);
+    let paginator =
+        apply_card_sort(query, sort, dir, false, dialect).paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;

@@ -176,11 +176,7 @@ export function usePublicCollectionSubtypesQuery(
  * non-placeholder result has settled) so the grid's ghost dimming doesn't flash before the
  * counts land — mirroring `useBatchCounts`.
  */
-export function usePublicOwnedCounts(
-  handle: Ref<string>,
-  game: Ref<string>,
-  cards: Ref<Card[]>,
-) {
+export function usePublicOwnedCounts(handle: Ref<string>, game: Ref<string>, cards: Ref<Card[]>) {
   const cardIds = computed(() => cards.value.map((card) => card.id))
   const idsKey = computed(() => [...cardIds.value].sort().join(','))
   const query = useQuery<OwnedCountsMap, ApiError>({

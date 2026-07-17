@@ -147,7 +147,8 @@ fn parse_archidekt_rows(
     headers: &csv::StringRecord,
     id_idx: usize,
 ) -> Result<Vec<FetchedHolding>, ImportError> {
-    let finish_idx = find_column(headers, FINISH_HEADERS).ok_or_else(|| missing_column("Finish"))?;
+    let finish_idx =
+        find_column(headers, FINISH_HEADERS).ok_or_else(|| missing_column("Finish"))?;
     let quantity_idx =
         find_column(headers, QUANTITY_HEADERS).ok_or_else(|| missing_column("Quantity"))?;
 
@@ -207,9 +208,7 @@ fn parse_moxfield_rows(
         }
 
         let set_code = match record.get(edition_idx).map(str::trim) {
-            Some(s) if !s.is_empty() && s.len() <= MAX_SET_OR_NUMBER_LEN => {
-                s.to_ascii_lowercase()
-            }
+            Some(s) if !s.is_empty() && s.len() <= MAX_SET_OR_NUMBER_LEN => s.to_ascii_lowercase(),
             _ => continue,
         };
         let collector_number = match record.get(number_idx).map(str::trim) {
@@ -346,7 +345,10 @@ mod tests {
         assert_eq!(holdings.len(), 2);
         let a = holding(&holdings, UID_A).expect("uid a present");
         assert!(a.foil, "\"Foil\" finish is a foil");
-        assert_eq!(a.quantity, 2, "the embedded comma in the name didn't desync columns");
+        assert_eq!(
+            a.quantity, 2,
+            "the embedded comma in the name didn't desync columns"
+        );
         let b = holding(&holdings, UID_B).expect("uid b present");
         assert!(!b.foil, "\"Normal\" finish is a regular card");
         assert_eq!(b.quantity, 3);
@@ -361,7 +363,10 @@ mod tests {
         assert_eq!(holdings.len(), 1);
         let a = &holdings[0];
         assert_eq!(a.external_card_id, UID_A);
-        assert!(a.foil, "Etched (any non-Normal finish) is a foil in our model");
+        assert!(
+            a.foil,
+            "Etched (any non-Normal finish) is a foil in our model"
+        );
         assert_eq!(a.quantity, 4);
     }
 
@@ -392,7 +397,10 @@ mod tests {
         let ImportError::InvalidSource(msg) = err else {
             panic!("expected InvalidSource");
         };
-        assert!(msg.contains("Archidekt"), "names the Archidekt format: {msg}");
+        assert!(
+            msg.contains("Archidekt"),
+            "names the Archidekt format: {msg}"
+        );
         assert!(msg.contains("Moxfield"), "names the Moxfield format: {msg}");
     }
 
@@ -470,7 +478,10 @@ mod tests {
         assert_eq!(rows[1].set_code, "tla", "set codes are lowercased");
         assert_eq!(rows[1].collector_number, "203");
         assert!(!rows[1].foil, "a blank Foil cell is a regular card");
-        assert_eq!(rows[1].quantity, 2, "Count (not Tradelist Count) is the owned count");
+        assert_eq!(
+            rows[1].quantity, 2,
+            "Count (not Tradelist Count) is the owned count"
+        );
     }
 
     #[test]

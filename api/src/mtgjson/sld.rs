@@ -115,7 +115,11 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
     // (7004–7008). MTGJSON authors only each drop's own per-drop card (7001/7002/7003), so this
     // shared pool is added on top; per-card dedup keeps the upstream card too.
     RandomBonusPool {
-        drop_slugs: &["final-fantasy-game-over", "final-fantasy-grimoire", "final-fantasy-weapons"],
+        drop_slugs: &[
+            "final-fantasy-game-over",
+            "final-fantasy-grimoire",
+            "final-fantasy-weapons",
+        ],
         pool: &["7004", "7005", "7006", "7007", "7008"],
     },
     // Marvel's Spider-Man superdrop — shared "Bonus Cards" gallery (7013–7021) no product is
@@ -129,7 +133,9 @@ const RANDOM_BONUS_POOLS: &[RandomBonusPool] = &[
             "marvel-s-spider-man-venom-unleashed-inks",
             "marvel-s-spider-man-villainous-plots",
         ],
-        pool: &["7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021"],
+        pool: &[
+            "7013", "7014", "7015", "7016", "7017", "7018", "7019", "7020", "7021",
+        ],
     },
     // TMNT "Totally TubuLair" superdrop — the shared Slime Against Humanity chase (7077/7078/7083)
     // can appear in any drop; MTGJSON marks these products `other: "Bonus card unknown"`.
@@ -222,7 +228,9 @@ pub fn slug_is_reachable(table: &DropTable, slug: &str) -> bool {
     };
     let (base, _) = strip_finish(&drop.title);
     let core = strip_prefixes(&base);
-    table.drop_by_title(&drops::normalize_title(&core)).is_some_and(|d| d.slug == slug)
+    table
+        .drop_by_title(&drops::normalize_title(&core))
+        .is_some_and(|d| d.slug == slug)
 }
 
 /// Whether a stripped finish clause denotes a foil printing: an explicit "non-foil" wins
@@ -321,7 +329,10 @@ fn strip_prefixes(base: &str) -> String {
     for re in PREFIX_STRIPS.iter() {
         core = re.replace(&core, "").into_owned();
     }
-    INNER_SECRET_LAIR_X.replace_all(&core, "").trim().to_string()
+    INNER_SECRET_LAIR_X
+        .replace_all(&core, "")
+        .trim()
+        .to_string()
 }
 
 /// A stable content hash of everything this derivation reads — the embedded drop snapshot
@@ -367,17 +378,28 @@ mod tests {
 
     #[test]
     fn extracts_core_title_across_name_shapes() {
-        assert_eq!(core("Secret Lair Drop: Cats of Chaos - Non-Foil Edition"), "Cats of Chaos");
-        assert_eq!(core("Secret Lair Drop: Purr Majesty - Traditional Foil Edition"), "Purr Majesty");
         assert_eq!(
-            core("Secret Lair Drop: Secret Lair x Garfield: Motivationally Challenged - Non-Foil Edition"),
+            core("Secret Lair Drop: Cats of Chaos - Non-Foil Edition"),
+            "Cats of Chaos"
+        );
+        assert_eq!(
+            core("Secret Lair Drop: Purr Majesty - Traditional Foil Edition"),
+            "Purr Majesty"
+        );
+        assert_eq!(
+            core(
+                "Secret Lair Drop: Secret Lair x Garfield: Motivationally Challenged - Non-Foil Edition"
+            ),
             "Garfield: Motivationally Challenged",
         );
         assert_eq!(
             core("Secret Lair x FINAL FANTASY: Game Over - JP Non-Foil Edition"),
             "FINAL FANTASY: Game Over",
         );
-        assert_eq!(core("Secret Lair Drop: Witch's Familiar - Traditional Foil Edition"), "Witch's Familiar");
+        assert_eq!(
+            core("Secret Lair Drop: Witch's Familiar - Traditional Foil Edition"),
+            "Witch's Familiar"
+        );
         // A superdrop segment between the prefix and the drop name comes off too.
         assert_eq!(
             core("Secret Lair Drop: Summer Superdrop - Mountain, Go - Traditional Foil Edition"),
@@ -391,7 +413,9 @@ mod tests {
         );
         // A drop title that genuinely ends in "Edition" is NOT over-stripped.
         assert_eq!(
-            core("Secret Lair Drop: Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition - Non-Foil Edition"),
+            core(
+                "Secret Lair Drop: Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition - Non-Foil Edition"
+            ),
             "Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition",
         );
     }
@@ -399,29 +423,51 @@ mod tests {
     #[test]
     fn strip_finish_reports_foil_from_the_clause_only() {
         assert_eq!(strip_finish("Cats of Chaos - Non-Foil Edition").1, false);
-        assert_eq!(strip_finish("Cats of Chaos - Traditional Foil Edition").1, true);
+        assert_eq!(
+            strip_finish("Cats of Chaos - Traditional Foil Edition").1,
+            true
+        );
         assert_eq!(strip_finish("Nuestra Magia (SP Rainbow Foil)").1, true);
         // Any finish name strips, even one not in a fixed list.
-        assert_eq!(strip_finish("March of the Machine Vol. 1 - Surge Foil Edition"),
-                   ("March of the Machine Vol. 1".to_string(), true));
+        assert_eq!(
+            strip_finish("March of the Machine Vol. 1 - Surge Foil Edition"),
+            ("March of the Machine Vol. 1".to_string(), true)
+        );
         // Foil is read from the finish clause, so "foil" inside the drop *title* doesn't
         // mislabel a non-foil product.
-        assert_eq!(strip_finish("Foil-Jumpstart Lands - Non-Foil Edition").1, false);
+        assert_eq!(
+            strip_finish("Foil-Jumpstart Lands - Non-Foil Edition").1,
+            false
+        );
         // No finish clause -> unchanged, defaults non-foil.
-        assert_eq!(strip_finish("A Plain Name"), ("A Plain Name".to_string(), false));
+        assert_eq!(
+            strip_finish("A Plain Name"),
+            ("A Plain Name".to_string(), false)
+        );
     }
 
     #[test]
     fn resolves_product_to_drop_by_name() {
         let table = table().expect("sld drop table present");
-        let resolved = resolve_product_drop(table, "700795", "Secret Lair Drop: Cats of Chaos - Non-Foil Edition")
-            .expect("resolves");
+        let resolved = resolve_product_drop(
+            table,
+            "700795",
+            "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+        )
+        .expect("resolves");
         assert_eq!(resolved.drop.slug, "cats-of-chaos");
         assert!(!resolved.foil);
-        assert_eq!(resolved.drop.collector_numbers, ["2690", "2691", "2692", "2693", "2694"]);
+        assert_eq!(
+            resolved.drop.collector_numbers,
+            ["2690", "2691", "2692", "2693", "2694"]
+        );
 
-        let foil = resolve_product_drop(table, "700796", "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition")
-            .expect("resolves");
+        let foil = resolve_product_drop(
+            table,
+            "700796",
+            "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition",
+        )
+        .expect("resolves");
         assert!(foil.foil);
     }
 
@@ -445,7 +491,10 @@ mod tests {
             "Secret Lair Drop: Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition - Non-Foil Edition",
         )
         .expect("pool-party-edition resolves");
-        assert_eq!(pool.drop.slug, "marvel-s-deadpool-i-fixed-it-you-re-welcome-pool-party-edition");
+        assert_eq!(
+            pool.drop.slug,
+            "marvel-s-deadpool-i-fixed-it-you-re-welcome-pool-party-edition"
+        );
         assert!(!pool.foil);
     }
 
@@ -454,9 +503,12 @@ mod tests {
         let table = table().expect("sld drop table present");
         // The storefront name "… x NALAC Drop: Nuestra Magia" matches no gallery title, but
         // the override maps the TCGplayer id straight to the drop.
-        let resolved =
-            resolve_product_drop(table, "638088", "Secret Lair x NALAC Drop: Nuestra Magia (SP Non-Foil)")
-                .expect("override resolves");
+        let resolved = resolve_product_drop(
+            table,
+            "638088",
+            "Secret Lair x NALAC Drop: Nuestra Magia (SP Non-Foil)",
+        )
+        .expect("override resolves");
         assert_eq!(resolved.drop.slug, "secret-lair-presents-nuestra-magia");
         assert!(!resolved.foil);
     }
@@ -497,7 +549,10 @@ mod tests {
             "avatar-the-last-airbender-the-ember-island-players",
         ] {
             let pool = random_bonus_pool(slug);
-            assert!(pool.contains(&"7062") && pool.contains(&"7063"), "avatar drop {slug} pool");
+            assert!(
+                pool.contains(&"7062") && pool.contains(&"7063"),
+                "avatar drop {slug} pool"
+            );
         }
     }
 
@@ -506,8 +561,12 @@ mod tests {
         let table = table().expect("sld drop table present");
         // A single-card promo that has no gallery drop -> no match (shows nothing, safely).
         assert!(
-            resolve_product_drop(table, "554987", "Secret Lair Drop: Secret Lair Promo: Seedborn Muse - Rainbow Foil Edition")
-                .is_none()
+            resolve_product_drop(
+                table,
+                "554987",
+                "Secret Lair Drop: Secret Lair Promo: Seedborn Muse - Rainbow Foil Edition"
+            )
+            .is_none()
         );
     }
 
@@ -523,7 +582,10 @@ mod tests {
         let mut slugs = std::collections::HashSet::new();
         for entry in RANDOM_BONUS_POOLS {
             assert!(!entry.pool.is_empty(), "a bonus pool is never empty");
-            assert!(!entry.drop_slugs.is_empty(), "a bonus pool attaches to a drop");
+            assert!(
+                !entry.drop_slugs.is_empty(),
+                "a bonus pool attaches to a drop"
+            );
             for slug in entry.drop_slugs {
                 // Every attached drop must exist in the shipped snapshot, else the pool is dead
                 // weight (no product can ever resolve to that slug).
@@ -531,12 +593,18 @@ mod tests {
                     table.drop_by_slug(slug).is_some(),
                     "bonus-pool drop slug {slug:?} is present in sld_drops.json"
                 );
-                assert!(slugs.insert(*slug), "drop slug {slug:?} appears in one pool entry only");
+                assert!(
+                    slugs.insert(*slug),
+                    "drop slug {slug:?} appears in one pool entry only"
+                );
             }
             for cn in entry.pool {
                 // Pool numbers are `sld` collector numbers; guard a stray non-numeric typo (all
                 // curated entries are plain digits — the derivation would just skip others).
-                assert!(cn.bytes().all(|b| b.is_ascii_digit()), "pool number {cn:?} is numeric");
+                assert!(
+                    cn.bytes().all(|b| b.is_ascii_digit()),
+                    "pool number {cn:?} is numeric"
+                );
             }
         }
     }

@@ -3,12 +3,7 @@
 //! provider fetch + reconcile live in [`crate::collection_import`]; these handlers
 //! validate, enqueue, and shape the responses.
 
-use axum::{
-    Json,
-    body::Bytes,
-    extract::State,
-    http::StatusCode,
-};
+use axum::{Json, body::Bytes, extract::State, http::StatusCode};
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
@@ -145,7 +140,8 @@ pub async fn import_collection_csv(
         return Err(AppError::Validation("no CSV file was uploaded".to_string()));
     }
 
-    let result = collection_import::execute_csv_import(&state.db, user.id, &game, mode, &body).await;
+    let result =
+        collection_import::execute_csv_import(&state.db, user.id, &game, mode, &body).await;
     // Orphan the user's cached analytics bodies (#413) on success AND failure: the
     // reconcile commits mutations before its outcome is known (the star-holding
     // fold runs in its own transaction ahead of the plan apply), so a failed

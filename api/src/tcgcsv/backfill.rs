@@ -139,7 +139,8 @@ async fn run_inner(
 
         match super::client::fetch_archive(http, &base_url, user_agent, date).await {
             Ok(Some(bytes)) => {
-                let rows_written = process_day(db, bytes.to_vec(), date, &map, &product_map).await?;
+                let rows_written =
+                    process_day(db, bytes.to_vec(), date, &map, &product_map).await?;
                 total_rows = total_rows.saturating_add(rows_written as i64);
                 tracing::debug!(date = %date, rows = rows_written, "tcgcsv day backfilled");
             }
@@ -367,7 +368,9 @@ fn extract_and_aggregate(
             match serde_json::from_slice::<PriceFile>(&buf) {
                 Ok(file) => records.extend(file.results),
                 // A single malformed prices file shouldn't abort the whole day.
-                Err(err) => tracing::warn!(entry = entry.name(), error = %err, "skipping bad prices file"),
+                Err(err) => {
+                    tracing::warn!(entry = entry.name(), error = %err, "skipping bad prices file")
+                }
             }
             Ok(true)
         })
@@ -388,9 +391,7 @@ fn is_prices_entry(name: &str, category_id: u32) -> bool {
 
 /// Build the `tcgplayer_id -> cards.id` map for the game (only cards that carry an
 /// id). Keyed by `i64` to match the archive's `productId`.
-async fn load_tcgplayer_map(
-    db: &DatabaseConnection,
-) -> Result<HashMap<i64, i32>, BackfillError> {
+async fn load_tcgplayer_map(db: &DatabaseConnection) -> Result<HashMap<i64, i32>, BackfillError> {
     let rows: Vec<(i32, Option<i32>)> = Card::find()
         .select_only()
         .column(card::Column::Id)
@@ -409,9 +410,7 @@ async fn load_tcgplayer_map(
 /// Build the `productId -> products.id` map for the game. The `products.external_id`
 /// stores the TCGplayer `productId` as a string, so this parses it back to the `i64`
 /// the archive aggregate is keyed by (skipping any unparseable id).
-async fn load_product_map(
-    db: &DatabaseConnection,
-) -> Result<HashMap<i64, i32>, BackfillError> {
+async fn load_product_map(db: &DatabaseConnection) -> Result<HashMap<i64, i32>, BackfillError> {
     let rows: Vec<(i32, String)> = Product::find()
         .select_only()
         .column(product::Column::Id)
@@ -518,7 +517,13 @@ mod tests {
             },
         );
         // Owned but no price → dropped.
-        agg.insert(200, DayPrice { usd: None, usd_foil: None });
+        agg.insert(
+            200,
+            DayPrice {
+                usd: None,
+                usd_foil: None,
+            },
+        );
         // Priced but not owned (no card) → dropped.
         agg.insert(
             999,
@@ -551,7 +556,13 @@ mod tests {
                 usd_foil: None,
             },
         );
-        agg.insert(200, DayPrice { usd: None, usd_foil: None });
+        agg.insert(
+            200,
+            DayPrice {
+                usd: None,
+                usd_foil: None,
+            },
+        );
         agg.insert(
             999,
             DayPrice {

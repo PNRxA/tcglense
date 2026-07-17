@@ -1,10 +1,7 @@
 //! Wish-list write endpoint: set the absolute wanted counts for one card (both-zero
 //! deletes the row).
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};

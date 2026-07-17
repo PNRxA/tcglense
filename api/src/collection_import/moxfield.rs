@@ -334,7 +334,12 @@ async fn get_page(
         }
         let response = match request.send().await {
             Ok(r) => r,
-            Err(e) => return Err(fetch_failure(ctx, format!("request to Moxfield failed: {e}"))),
+            Err(e) => {
+                return Err(fetch_failure(
+                    ctx,
+                    format!("request to Moxfield failed: {e}"),
+                ));
+            }
         };
 
         let status = response.status();
@@ -404,9 +409,15 @@ mod tests {
     #[test]
     fn parses_bare_id() {
         assert_eq!(parse_collection_id(ID).as_deref(), Some(ID));
-        assert_eq!(parse_collection_id(&format!("  {ID}  ")).as_deref(), Some(ID));
+        assert_eq!(
+            parse_collection_id(&format!("  {ID}  ")).as_deref(),
+            Some(ID)
+        );
         // Underscores are part of the base64url charset.
-        assert_eq!(parse_collection_id("abc_DEF-01234").as_deref(), Some("abc_DEF-01234"));
+        assert_eq!(
+            parse_collection_id("abc_DEF-01234").as_deref(),
+            Some("abc_DEF-01234")
+        );
     }
 
     #[test]
@@ -429,13 +440,25 @@ mod tests {
     fn rejects_sources_without_a_plausible_id() {
         assert_eq!(parse_collection_id(""), None);
         assert_eq!(parse_collection_id("   "), None);
-        assert_eq!(parse_collection_id("https://moxfield.com/collection/"), None);
+        assert_eq!(
+            parse_collection_id("https://moxfield.com/collection/"),
+            None
+        );
         // Too short / bad charset.
         assert_eq!(parse_collection_id("abc"), None);
-        assert_eq!(parse_collection_id("https://moxfield.com/collection/a b c d e f"), None);
+        assert_eq!(
+            parse_collection_id("https://moxfield.com/collection/a b c d e f"),
+            None
+        );
         // A deck or binder URL isn't a collection (binders are a different endpoint).
-        assert_eq!(parse_collection_id("https://moxfield.com/decks/aBcDeFgHiJkLmNo"), None);
-        assert_eq!(parse_collection_id("https://moxfield.com/binders/aBcDeFgHiJkLmNo"), None);
+        assert_eq!(
+            parse_collection_id("https://moxfield.com/decks/aBcDeFgHiJkLmNo"),
+            None
+        );
+        assert_eq!(
+            parse_collection_id("https://moxfield.com/binders/aBcDeFgHiJkLmNo"),
+            None
+        );
         // An id long enough but with an invalid character.
         assert_eq!(parse_collection_id("abcdefghij!lmnop"), None);
     }
@@ -477,9 +500,21 @@ mod tests {
             },
         };
         // The finish string wins over the boolean.
-        assert!(row_to_holding(row(Some("foil"), false, false)).expect("kept").foil);
-        assert!(row_to_holding(row(Some("etched"), false, false)).expect("kept").foil);
-        assert!(!row_to_holding(row(Some("nonFoil"), true, false)).expect("kept").foil);
+        assert!(
+            row_to_holding(row(Some("foil"), false, false))
+                .expect("kept")
+                .foil
+        );
+        assert!(
+            row_to_holding(row(Some("etched"), false, false))
+                .expect("kept")
+                .foil
+        );
+        assert!(
+            !row_to_holding(row(Some("nonFoil"), true, false))
+                .expect("kept")
+                .foil
+        );
         // Absent finish falls back to the boolean.
         assert!(row_to_holding(row(None, true, false)).expect("kept").foil);
         assert!(!row_to_holding(row(None, false, false)).expect("kept").foil);

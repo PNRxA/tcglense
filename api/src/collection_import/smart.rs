@@ -68,8 +68,7 @@ pub(super) fn smart_absorb_page(
     // contribution reads as "keep paging".
     let page_in_sync = !touched.is_empty()
         && touched.iter().all(|uid| {
-            running.get(uid).copied()
-                == local.get(uid).map(|&(r, f)| (i64::from(r), i64::from(f)))
+            running.get(uid).copied() == local.get(uid).map(|&(r, f)| (i64::from(r), i64::from(f)))
         });
     // ...but the per-page check above can't see a card whose rows straddle a page boundary:
     // seen (mid-aggregate, under-counted) on an earlier page, absent from this one. Stopping
@@ -141,7 +140,13 @@ mod tests {
         let local = HashMap::from([("a".to_string(), (2, 0))]);
         let mut running = HashMap::new();
         let mut holdings = Vec::new();
-        let all = smart_absorb_page(&mut running, &mut holdings, &local, &HashMap::new(), Vec::new());
+        let all = smart_absorb_page(
+            &mut running,
+            &mut holdings,
+            &local,
+            &HashMap::new(),
+            Vec::new(),
+        );
         assert!(!all, "an empty page contribution must keep paging");
         assert!(holdings.is_empty());
     }
@@ -188,7 +193,10 @@ mod tests {
             &remap,
             vec![("star".to_string(), false, 1)],
         );
-        assert!(all, "the folded star matches the consolidated local -> stop signal");
+        assert!(
+            all,
+            "the folded star matches the consolidated local -> stop signal"
+        );
         assert_eq!(
             holdings,
             vec![FetchedHolding {
@@ -231,7 +239,10 @@ mod tests {
             &HashMap::new(),
             vec![("b".to_string(), false, 1)],
         );
-        assert!(!page2, "a still below its local count -> must not stop and strand its tail row");
+        assert!(
+            !page2,
+            "a still below its local count -> must not stop and strand its tail row"
+        );
 
         // Page 3: a's second row lands; now the whole aggregate matches local -> stop.
         let page3 = smart_absorb_page(
@@ -241,7 +252,10 @@ mod tests {
             &HashMap::new(),
             vec![("a".to_string(), false, 1)],
         );
-        assert!(page3, "a now fully aggregated (2,0) and everything matches -> stop");
+        assert!(
+            page3,
+            "a now fully aggregated (2,0) and everything matches -> stop"
+        );
     }
 
     #[test]
@@ -261,7 +275,10 @@ mod tests {
             &HashMap::new(),
             vec![("grew".to_string(), false, 3)],
         );
-        assert!(!page1, "grew (3,0) != local (1,0) on its own page -> keep paging");
+        assert!(
+            !page1,
+            "grew (3,0) != local (1,0) on its own page -> keep paging"
+        );
 
         // Page 2: an unchanged card, in sync. `grew` is above (not below) local, so it must
         // not block the stop.
@@ -272,7 +289,10 @@ mod tests {
             &HashMap::new(),
             vec![("same".to_string(), false, 2)],
         );
-        assert!(page2, "no card is below local (grew is above) -> stop signal fires");
+        assert!(
+            page2,
+            "no card is below local (grew is above) -> stop signal fires"
+        );
     }
 
     #[tokio::test]
@@ -309,8 +329,15 @@ mod tests {
         }
 
         // The middle page must not have stopped the fetch, so both of a's rows were absorbed.
-        assert!(stopped_early, "still stops early once a is fully aggregated on page 3");
-        assert_eq!(running["ext-a"], (2, 0), "a fully aggregated, not stranded at 1");
+        assert!(
+            stopped_early,
+            "still stops early once a is fully aggregated on page 3"
+        );
+        assert_eq!(
+            running["ext-a"],
+            (2, 0),
+            "a fully aggregated, not stranded at 1"
+        );
 
         reconcile_smart(
             &db,

@@ -67,7 +67,10 @@ async fn create_returns_plaintext_once_and_list_hides_it() {
     let items = body["data"].as_array().expect("data array");
     assert_eq!(items.len(), 1);
     let item = &items[0];
-    assert!(item.get("key").is_none(), "list must not carry the plaintext");
+    assert!(
+        item.get("key").is_none(),
+        "list must not carry the plaintext"
+    );
     assert!(
         item.get("token_hash").is_none(),
         "list must not carry the stored hash"
@@ -261,11 +264,7 @@ async fn read_only_key_can_read_but_not_write() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Its list, summary, and POST batch lookup are reads.
-    let (status, _, _) = send(
-        &app,
-        get_with_bearer("/api/collection/mtg/products", &key),
-    )
-    .await;
+    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg/products", &key)).await;
     assert_eq!(status, StatusCode::OK);
     let (status, _, _) = send(
         &app,
@@ -303,8 +302,11 @@ async fn read_only_key_can_read_but_not_write() {
     assert_eq!(status, StatusCode::OK);
 
     // …and the sealed-product summary is a read too.
-    let (status, _, _) =
-        send(&app, get_with_bearer("/api/wishlist/mtg/products/summary", &key)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products/summary", &key),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -368,7 +370,11 @@ async fn keys_are_isolated_and_revoke_is_scoped_and_idempotent() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Alice's key still works.
-    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &alice_plaintext)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg", &alice_plaintext),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // Alice revokes it -> 204; the key stops working (401); re-revoke is idempotent 204.
@@ -378,7 +384,11 @@ async fn keys_are_isolated_and_revoke_is_scoped_and_idempotent() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg", &alice_plaintext)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg", &alice_plaintext),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _, _) = send(
         &app,
@@ -388,7 +398,11 @@ async fn keys_are_isolated_and_revoke_is_scoped_and_idempotent() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     // A never-existed id is 404.
-    let (status, _, _) = send(&app, delete_with_bearer("/api/auth/api-keys/999999", &alice)).await;
+    let (status, _, _) = send(
+        &app,
+        delete_with_bearer("/api/auth/api-keys/999999", &alice),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -396,7 +410,11 @@ async fn keys_are_isolated_and_revoke_is_scoped_and_idempotent() {
 async fn unknown_or_missing_credential_is_401() {
     let app = test_app().await;
     // A bogus tcgl_ key resolves to no user.
-    let (status, _, _) = send(&app, get_with_bearer("/api/collection/mtg", "tcgl_deadbeef")).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg", "tcgl_deadbeef"),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     // No credential at all.
     let (status, _, _) = send(&app, get("/api/collection/mtg")).await;

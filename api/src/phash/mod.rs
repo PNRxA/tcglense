@@ -205,16 +205,8 @@ mod tests {
     /// (run this test to see the new hex; update it here and in the TS spec).
     #[test]
     fn golden_hashes_are_stable() {
-        let cases = [
-            ("grad", 146, 204),
-            ("checker", 146, 204),
-            ("lcg", 64, 64),
-        ];
-        let expected = [
-            "grad-146x204",
-            "checker-146x204",
-            "lcg-64x64",
-        ];
+        let cases = [("grad", 146, 204), ("checker", 146, 204), ("lcg", 64, 64)];
+        let expected = ["grad-146x204", "checker-146x204", "lcg-64x64"];
         // Printed so a deliberate change is easy to copy into both suites.
         for ((kind, w, h), label) in cases.iter().zip(expected.iter()) {
             let luma = synth_luma(kind, *w, *h);
@@ -222,12 +214,18 @@ mod tests {
             println!("PHASH_GOLDEN {label} = {}", hex(&h256));
         }
         // The pinned values (kept identical in the TS spec).
-        assert_eq!(hex(&phash_from_luma(&synth_luma("grad", 146, 204), 146, 204)), GOLDEN_GRAD);
+        assert_eq!(
+            hex(&phash_from_luma(&synth_luma("grad", 146, 204), 146, 204)),
+            GOLDEN_GRAD
+        );
         assert_eq!(
             hex(&phash_from_luma(&synth_luma("checker", 146, 204), 146, 204)),
             GOLDEN_CHECKER
         );
-        assert_eq!(hex(&phash_from_luma(&synth_luma("lcg", 64, 64), 64, 64)), GOLDEN_LCG);
+        assert_eq!(
+            hex(&phash_from_luma(&synth_luma("lcg", 64, 64), 64, 64)),
+            GOLDEN_LCG
+        );
     }
 
     // Pinned goldens — see `golden_hashes_are_stable`. Mirrored in the TS spec.
@@ -242,14 +240,23 @@ mod tests {
             phash_from_luma(&luma, 146, 204),
             phash_from_luma(&luma, 146, 204)
         );
-        assert_eq!(hamming(&phash_from_luma(&luma, 146, 204), &phash_from_luma(&luma, 146, 204)), 0);
+        assert_eq!(
+            hamming(
+                &phash_from_luma(&luma, 146, 204),
+                &phash_from_luma(&luma, 146, 204)
+            ),
+            0
+        );
     }
 
     #[test]
     fn different_images_differ() {
         let a = phash_from_luma(&synth_luma("grad", 146, 204), 146, 204);
         let b = phash_from_luma(&synth_luma("checker", 146, 204), 146, 204);
-        assert!(hamming(&a, &b) > 20, "distinct patterns should be far apart");
+        assert!(
+            hamming(&a, &b) > 20,
+            "distinct patterns should be far apart"
+        );
     }
 
     #[test]

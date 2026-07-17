@@ -40,7 +40,7 @@ use sea_orm::{
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 
-use super::{FetchedHolding, ImportError, IN_CHUNK};
+use super::{FetchedHolding, IN_CHUNK, ImportError};
 
 /// The Scryfall "foil variant" collector-number suffix (U+2605 BLACK STAR).
 const FOIL_STAR: char = '★';
@@ -83,13 +83,15 @@ pub(super) async fn load_foil_variant_pairs(
         .await
         .map_err(ImportError::Db)?
         .into_iter()
-        .map(|(id, external_id, set_code, collector_number, oracle_id)| StarCard {
-            id,
-            external_id,
-            set_code,
-            collector_number,
-            oracle_id,
-        })
+        .map(
+            |(id, external_id, set_code, collector_number, oracle_id)| StarCard {
+                id,
+                external_id,
+                set_code,
+                collector_number,
+                oracle_id,
+            },
+        )
         .collect();
     if stars.is_empty() {
         return Ok(Vec::new());
@@ -99,7 +101,10 @@ pub(super) async fn load_foil_variant_pairs(
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut base_pairs: Vec<(String, String)> = Vec::new();
     for s in &stars {
-        let key = (s.set_code.clone(), s.collector_number.replace(FOIL_STAR, ""));
+        let key = (
+            s.set_code.clone(),
+            s.collector_number.replace(FOIL_STAR, ""),
+        );
         if seen.insert(key.clone()) {
             base_pairs.push(key);
         }
@@ -390,28 +395,103 @@ mod tests {
     async fn pairs_cover_only_a_foil_star_with_a_nonfoil_base() {
         let db = migrated_memory_db().await;
         // The issue's case: nonfoil 741 + foil 741★ (share an oracle id) -> a pair.
-        insert(&db, 1, "ext-741", "sld", "741", "nonfoil", Some("ora-chaos")).await;
-        insert(&db, 2, "ext-741-star", "sld", "741★", "foil", Some("ora-chaos")).await;
+        insert(
+            &db,
+            1,
+            "ext-741",
+            "sld",
+            "741",
+            "nonfoil",
+            Some("ora-chaos"),
+        )
+        .await;
+        insert(
+            &db,
+            2,
+            "ext-741-star",
+            "sld",
+            "741★",
+            "foil",
+            Some("ora-chaos"),
+        )
+        .await;
         // A foil star whose base is itself foilable -> NOT a pair (ambiguous).
-        insert(&db, 3, "ext-33", "stx", "33", "nonfoil,foil", Some("ora-proctor")).await;
-        insert(&db, 4, "ext-33-star", "stx", "33★", "foil", Some("ora-proctor")).await;
+        insert(
+            &db,
+            3,
+            "ext-33",
+            "stx",
+            "33",
+            "nonfoil,foil",
+            Some("ora-proctor"),
+        )
+        .await;
+        insert(
+            &db,
+            4,
+            "ext-33-star",
+            "stx",
+            "33★",
+            "foil",
+            Some("ora-proctor"),
+        )
+        .await;
         // An etched star -> NOT a pair (a distinct premium finish).
-        insert(&db, 5, "ext-159", "sld", "159", "nonfoil,foil", Some("ora-belz")).await;
-        insert(&db, 6, "ext-159-star", "sld", "159★", "etched", Some("ora-belz")).await;
+        insert(
+            &db,
+            5,
+            "ext-159",
+            "sld",
+            "159",
+            "nonfoil,foil",
+            Some("ora-belz"),
+        )
+        .await;
+        insert(
+            &db,
+            6,
+            "ext-159-star",
+            "sld",
+            "159★",
+            "etched",
+            Some("ora-belz"),
+        )
+        .await;
         // An orphan foil star (no base sibling) -> NOT a pair.
-        insert(&db, 7, "ext-orphan", "pxln", "1★", "foil", Some("ora-orphan")).await;
+        insert(
+            &db,
+            7,
+            "ext-orphan",
+            "pxln",
+            "1★",
+            "foil",
+            Some("ora-orphan"),
+        )
+        .await;
 
         let pairs = load_foil_variant_pairs(&db, "mtg").await.expect("pairs");
         assert_eq!(pairs.len(), 1, "only the clean nonfoil-base case pairs");
         let remap = ext_remap(&pairs);
-        assert_eq!(remap.get("ext-741-star").map(String::as_str), Some("ext-741"));
+        assert_eq!(
+            remap.get("ext-741-star").map(String::as_str),
+            Some("ext-741")
+        );
     }
 
     #[tokio::test]
     async fn pairs_skip_a_sibling_with_a_mismatched_oracle_id() {
         let db = migrated_memory_db().await;
         insert(&db, 1, "ext-b", "sld", "500", "nonfoil", Some("ora-a")).await;
-        insert(&db, 2, "ext-s", "sld", "500★", "foil", Some("ora-different")).await;
+        insert(
+            &db,
+            2,
+            "ext-s",
+            "sld",
+            "500★",
+            "foil",
+            Some("ora-different"),
+        )
+        .await;
         let pairs = load_foil_variant_pairs(&db, "mtg").await.expect("pairs");
         assert!(pairs.is_empty(), "oracle-id mismatch is not paired");
     }
@@ -424,7 +504,11 @@ mod tests {
             vec![holding("star", false, 2), holding("other", false, 1)],
             &remap,
         );
-        assert_eq!(out[0], holding("base", true, 2), "remapped to base + forced foil");
+        assert_eq!(
+            out[0],
+            holding("base", true, 2),
+            "remapped to base + forced foil"
+        );
         assert_eq!(out[1], holding("other", false, 1), "untouched");
     }
 
@@ -442,31 +526,83 @@ mod tests {
     async fn fold_existing_moves_a_manual_star_holding_onto_the_base_and_deletes_it() {
         let db = migrated_memory_db().await;
         let user = insert_user(&db, "folder@test.example").await;
-        let base = insert(&db, 1, "ext-741", "sld", "741", "nonfoil", Some("ora-chaos")).await;
-        let star = insert(&db, 2, "ext-741-star", "sld", "741★", "foil", Some("ora-chaos")).await;
+        let base = insert(
+            &db,
+            1,
+            "ext-741",
+            "sld",
+            "741",
+            "nonfoil",
+            Some("ora-chaos"),
+        )
+        .await;
+        let star = insert(
+            &db,
+            2,
+            "ext-741-star",
+            "sld",
+            "741★",
+            "foil",
+            Some("ora-chaos"),
+        )
+        .await;
         // Base owned 1 regular; a manual star holding of 2 (stored as regular).
         insert_holding(&db, user, base, 1, 0).await;
         insert_holding(&db, user, star, 2, 0).await;
 
         let pairs = load_foil_variant_pairs(&db, "mtg").await.expect("pairs");
-        fold_existing_star_holdings(&db, user, "mtg", &pairs).await.expect("fold");
+        fold_existing_star_holdings(&db, user, "mtg", &pairs)
+            .await
+            .expect("fold");
 
-        assert_eq!(owned_counts(&db, user, base).await, Some((1, 2)), "star folded into base foil");
-        assert_eq!(owned_counts(&db, user, star).await, None, "star holding removed");
+        assert_eq!(
+            owned_counts(&db, user, base).await,
+            Some((1, 2)),
+            "star folded into base foil"
+        );
+        assert_eq!(
+            owned_counts(&db, user, star).await,
+            None,
+            "star holding removed"
+        );
     }
 
     #[tokio::test]
     async fn fold_existing_inserts_a_base_when_only_the_star_is_held() {
         let db = migrated_memory_db().await;
         let user = insert_user(&db, "folder@test.example").await;
-        let base = insert(&db, 1, "ext-741", "sld", "741", "nonfoil", Some("ora-chaos")).await;
-        let star = insert(&db, 2, "ext-741-star", "sld", "741★", "foil", Some("ora-chaos")).await;
+        let base = insert(
+            &db,
+            1,
+            "ext-741",
+            "sld",
+            "741",
+            "nonfoil",
+            Some("ora-chaos"),
+        )
+        .await;
+        let star = insert(
+            &db,
+            2,
+            "ext-741-star",
+            "sld",
+            "741★",
+            "foil",
+            Some("ora-chaos"),
+        )
+        .await;
         insert_holding(&db, user, star, 0, 3).await; // 3 foil, no base holding
 
         let pairs = load_foil_variant_pairs(&db, "mtg").await.expect("pairs");
-        fold_existing_star_holdings(&db, user, "mtg", &pairs).await.expect("fold");
+        fold_existing_star_holdings(&db, user, "mtg", &pairs)
+            .await
+            .expect("fold");
 
-        assert_eq!(owned_counts(&db, user, base).await, Some((0, 3)), "base created as foil");
+        assert_eq!(
+            owned_counts(&db, user, base).await,
+            Some((0, 3)),
+            "base created as foil"
+        );
         assert_eq!(owned_counts(&db, user, star).await, None);
     }
 
@@ -474,13 +610,37 @@ mod tests {
     async fn fold_existing_is_a_noop_when_no_star_is_held() {
         let db = migrated_memory_db().await;
         let user = insert_user(&db, "folder@test.example").await;
-        let base = insert(&db, 1, "ext-741", "sld", "741", "nonfoil", Some("ora-chaos")).await;
-        insert(&db, 2, "ext-741-star", "sld", "741★", "foil", Some("ora-chaos")).await;
+        let base = insert(
+            &db,
+            1,
+            "ext-741",
+            "sld",
+            "741",
+            "nonfoil",
+            Some("ora-chaos"),
+        )
+        .await;
+        insert(
+            &db,
+            2,
+            "ext-741-star",
+            "sld",
+            "741★",
+            "foil",
+            Some("ora-chaos"),
+        )
+        .await;
         insert_holding(&db, user, base, 2, 1).await;
 
         let pairs = load_foil_variant_pairs(&db, "mtg").await.expect("pairs");
-        fold_existing_star_holdings(&db, user, "mtg", &pairs).await.expect("fold");
+        fold_existing_star_holdings(&db, user, "mtg", &pairs)
+            .await
+            .expect("fold");
 
-        assert_eq!(owned_counts(&db, user, base).await, Some((2, 1)), "untouched");
+        assert_eq!(
+            owned_counts(&db, user, base).await,
+            Some((2, 1)),
+            "untouched"
+        );
     }
 }

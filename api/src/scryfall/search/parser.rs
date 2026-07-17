@@ -1,8 +1,8 @@
 //! Recursive-descent parser: token stream -> `Node` AST (with the nesting-depth cap).
 
+use super::MAX_DEPTH;
 use super::error::SearchError;
 use super::lexer::{Op, Token, describe};
-use super::MAX_DEPTH;
 
 #[derive(Debug)]
 pub(super) enum Node {

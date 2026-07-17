@@ -36,7 +36,10 @@ async fn huge_page_param_is_an_empty_page_not_a_dropped_connection() {
     ] {
         let (status, _, body) = send(&app, get_with_bearer(&uri, &token)).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body:?}");
-        assert!(body["data"].as_array().is_some_and(Vec::is_empty), "{body:?}");
+        assert!(
+            body["data"].as_array().is_some_and(Vec::is_empty),
+            "{body:?}"
+        );
         assert_eq!(body["has_more"].as_bool(), Some(false), "{body:?}");
     }
 }

@@ -523,7 +523,10 @@ mod tests {
         let db = IngestError::Db(sea_orm::DbErr::Custom(
             "SELECT secret_column FROM internal_table".to_string(),
         ));
-        assert_eq!(db.public_detail(), "database error while importing card data");
+        assert_eq!(
+            db.public_detail(),
+            "database error while importing card data"
+        );
         assert!(!db.public_detail().contains("secret"));
         // The `Display` (log-only) still carries the full detail for operators.
         assert!(db.to_string().contains("secret_column"));

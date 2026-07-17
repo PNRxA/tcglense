@@ -44,7 +44,8 @@ pub async fn snapshot_prices(
 
     let now = Utc::now();
     let mut total: u64 = 0;
-    let mut batch: Vec<product_price_history::ActiveModel> = Vec::with_capacity(PRICE_HISTORY_BATCH);
+    let mut batch: Vec<product_price_history::ActiveModel> =
+        Vec::with_capacity(PRICE_HISTORY_BATCH);
     for (product_id, usd, usd_foil) in rows {
         batch.push(product_price_history::ActiveModel {
             id: NotSet,
@@ -173,7 +174,10 @@ mod tests {
         let mover = insert_product(&db, "100", Some("10.00")).await;
         let steady = insert_product(&db, "200", Some("20.00")).await;
 
-        assert_eq!(snapshot_prices(&db, super::super::GAME, day).await.unwrap(), 2);
+        assert_eq!(
+            snapshot_prices(&db, super::super::GAME, day).await.unwrap(),
+            2
+        );
 
         // A real intra-day price move on one product only.
         product::ActiveModel {
@@ -185,7 +189,10 @@ mod tests {
         .await
         .expect("bump product price");
 
-        assert_eq!(snapshot_prices(&db, super::super::GAME, day).await.unwrap(), 2);
+        assert_eq!(
+            snapshot_prices(&db, super::super::GAME, day).await.unwrap(),
+            2
+        );
 
         let mover_rows = ProductPriceHistory::find()
             .filter(product_price_history::Column::ProductId.eq(mover))
@@ -193,7 +200,11 @@ mod tests {
             .all(&db)
             .await
             .unwrap();
-        assert_eq!(mover_rows.len(), 1, "same-day re-snapshot upserts, never duplicates");
+        assert_eq!(
+            mover_rows.len(),
+            1,
+            "same-day re-snapshot upserts, never duplicates"
+        );
         assert_eq!(
             mover_rows[0].price_usd.as_deref(),
             Some("11.00"),

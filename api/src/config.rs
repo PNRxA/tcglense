@@ -486,9 +486,7 @@ fn validate_public_auth_posture(
         );
     }
     if !cookie_secure {
-        return Err(
-            "COOKIE_SECURE must be true for an internet-facing deployment".to_string(),
-        );
+        return Err("COOKIE_SECURE must be true for an internet-facing deployment".to_string());
     }
     if signups_enabled {
         if resend_api_key.is_none() {
@@ -970,144 +968,166 @@ mod tests {
         let public_site = "https://tcglense.app";
         let real_secret = "0123456789abcdef0123456789abcdef";
 
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            "http://tcglense.app",
-            real_secret,
-            true,
-            Some("re_live_key"),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            DEV_ONLY_JWT_SECRET,
-            true,
-            Some("re_live_key"),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            None,
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            Some("re_live_key"),
-            DEFAULT_EMAIL_FROM,
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            Some("re_live_key"),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            None,
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            false,
-            Some("re_live_key"),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            Some("re_live_key"),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            true,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            Some("re_live_key"),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                "http://tcglense.app",
+                real_secret,
+                true,
+                Some("re_live_key"),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                DEV_ONLY_JWT_SECRET,
+                true,
+                Some("re_live_key"),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                None,
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                Some("re_live_key"),
+                DEFAULT_EMAIL_FROM,
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                Some("re_live_key"),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                None,
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                false,
+                Some("re_live_key"),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                Some("re_live_key"),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                true,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                Some("re_live_key"),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_ok()
+        );
         // Closed registration is a safe bootstrap posture while the operator is
         // still provisioning the widget keys.
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            None,
-            DEFAULT_EMAIL_FROM,
-            false,
-            None,
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                None,
+                DEFAULT_EMAIL_FROM,
+                false,
+                None,
+                false,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn local_no_email_signup_bypass_requires_an_explicit_opt_in() {
-        assert!(validate_public_auth_posture(
-            "127.0.0.1",
-            "http://localhost:5173",
-            DEV_ONLY_JWT_SECRET,
-            false,
-            None,
-            DEFAULT_EMAIL_FROM,
-            true,
-            None,
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "127.0.0.1",
-            "http://localhost:5173",
-            DEV_ONLY_JWT_SECRET,
-            false,
-            None,
-            DEFAULT_EMAIL_FROM,
-            true,
-            None,
-            true,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "127.0.0.1",
+                "http://localhost:5173",
+                DEV_ONLY_JWT_SECRET,
+                false,
+                None,
+                DEFAULT_EMAIL_FROM,
+                true,
+                None,
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "127.0.0.1",
+                "http://localhost:5173",
+                DEV_ONLY_JWT_SECRET,
+                false,
+                None,
+                DEFAULT_EMAIL_FROM,
+                true,
+                None,
+                true,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
