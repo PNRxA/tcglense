@@ -45,9 +45,12 @@ Everything else (Postgres, command matrix, CI, releases): `docs/operations.md`.
 
 **Before calling a change done:** `cargo check` + `cargo test` for `api/` work;
 `npm run type-check && npm run lint && npm run test:unit -- --run` for `web/` work.
-CI runs the test suites **plus a ts-rs drift check** (generated types in
-`web/src/lib/api/generated/` must match the Rust DTOs) but does **not** run
-lint/format/clippy — the checklist above is the only thing catching those.
+Also format: `cargo fmt --all` (in `api/`) and `npm run format` (in `web/`) — CI's
+`format` job gates both with `cargo fmt --all -- --check` and `npm run format:check`
+(oxfmt), so unformatted code fails the build. CI runs the test suites **plus a ts-rs
+drift check** (generated types in `web/src/lib/api/generated/` must match the Rust
+DTOs) and the `format` gate, but still does **not** run lint/clippy — the checklist
+above is the only thing catching those.
 
 **e2e gotcha:** Playwright starts only the *web* server. Start the API yourself with
 `SEED_DUMMY_DATA=true` first — the specs probe `/api/health` and **silently skip**
