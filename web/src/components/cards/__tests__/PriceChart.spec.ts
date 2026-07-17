@@ -15,7 +15,11 @@ interface Pt {
 // jsdom.
 async function mountChart(
   data: Pt[],
-  props: { singleSeries?: boolean; seriesLabels?: { primary: string; secondary: string } } = {
+  props: {
+    singleSeries?: boolean
+    seriesLabels?: { primary: string; secondary: string }
+    toggleable?: boolean
+  } = {
     singleSeries: true,
   },
 ) {
@@ -32,7 +36,7 @@ async function mountChart(
       stubs: {
         PriceChartInner: {
           name: 'PriceChartInner',
-          props: ['seriesLabels', 'singleSeries'],
+          props: ['seriesLabels', 'singleSeries', 'toggleable'],
           template: '<div class="chart-inner-stub" />',
         },
       },
@@ -77,5 +81,14 @@ describe('PriceChart empty state', () => {
     const chart = wrapper.findComponent({ name: 'PriceChartInner' })
     expect(chart.props('seriesLabels')).toEqual(labels)
     expect(chart.props('singleSeries')).toBe(false)
+  })
+
+  it('forwards the toggleable flag to the chart body', async () => {
+    const wrapper = await mountChart([{ date: '2024-01-02', usd: '12.34', usd_foil: '56.78' }], {
+      seriesLabels: { primary: 'Cards', secondary: 'Sealed products' },
+      toggleable: true,
+    })
+    const chart = wrapper.findComponent({ name: 'PriceChartInner' })
+    expect(chart.props('toggleable')).toBe(true)
   })
 })
