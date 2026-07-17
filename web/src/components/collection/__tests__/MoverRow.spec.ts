@@ -99,6 +99,9 @@ describe('MoverRow mixed catalog items', () => {
     expect(wrapper.find('.card-image-stub').exists()).toBe(false)
     expect(wrapper.text()).toContain('Test Bundle')
     expect(wrapper.text()).toContain('Test Set · Bundle')
+    // The owned count is surfaced (2 copies, no foils → total chip only).
+    expect(wrapper.find('[aria-label="2 owned"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label$="foil"]').exists()).toBe(false)
     expect(wrapper.get('a').attributes('href')).toBe('/sealed/mtg/product-1')
 
     await wrapper.get('a').trigger('click')
@@ -120,11 +123,29 @@ describe('MoverRow mixed catalog items', () => {
 
     expect(wrapper.find('.card-image-stub').exists()).toBe(true)
     expect(wrapper.text()).toContain('TST · #42')
+    expect(wrapper.find('[aria-label="1 owned"]').exists()).toBe(true)
     expect(wrapper.get('a').attributes('href')).toBe('/cards/mtg/cards/card-1')
 
     await wrapper.get('a').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/collection/mtg')
     expect(router.currentRoute.value.query.card).toBe('card-1')
+  })
+
+  it('shows a foil count alongside the total when some copies are foil', async () => {
+    const card = makeCard()
+    const { wrapper } = await mountRow({
+      card,
+      quantity: 2,
+      foil_quantity: 1,
+      value_now: '30.00',
+      value_prev: '20.00',
+      change_usd: '10.00',
+      change_pct: 50,
+    })
+
+    // Total is regular + foil (3); the separate foil chip counts just the foils (1).
+    expect(wrapper.find('[aria-label="3 owned"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="1 foil"]').exists()).toBe(true)
   })
 })
