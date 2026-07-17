@@ -21,6 +21,38 @@ pub(crate) fn format_cents(cents: i128) -> String {
     format!("{dollars}.{rem:02}")
 }
 
+/// The cheapest way to own one copy of a card: the lower of its regular (`usd`) and foil
+/// (`usd_foil`) price, in integer cents, or `None` when neither finish is priced. Unlike a
+/// [`Valuation`] (which totals held copies of *both* finishes) this collapses a card to its
+/// single cheapest finish — whichever that is, since a foil-only or oddly-priced printing
+/// can have the regular price missing or dearer than the foil.
+pub(crate) fn cheapest_single_cents(usd: Option<&str>, usd_foil: Option<&str>) -> Option<i128> {
+    match (price_cents(usd), price_cents(usd_foil)) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Total the "cheapest singles" cost of a group of cards: each card contributes its cheapest
+/// finish (see [`cheapest_single_cents`]), summed in integer cents and rendered as a 2-dp USD
+/// string. `None` when no card is priced (matching [`Valuation::total_usd`]'s all-unpriced
+/// case); a card with neither finish priced simply contributes nothing. The scope is exactly
+/// the cards passed in — a Secret Lair drop that lists a foil-variant printing under its own
+/// collector number totals that printing too, so the figure agrees with the drop's card count.
+pub(crate) fn cheapest_singles_total<'a>(
+    cards: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>)>,
+) -> Option<String> {
+    let mut total: i128 = 0;
+    let mut any_priced = false;
+    for (usd, usd_foil) in cards {
+        if let Some(cents) = cheapest_single_cents(usd, usd_foil) {
+            total += cents;
+            any_priced = true;
+        }
+    }
+    any_priced.then(|| format_cents(total))
+}
+
 /// Default per-unit price (in cents) at or above which a card is *not* bulk: $1.00. Any
 /// single copy priced strictly under the threshold counts toward the "bulk" value — the
 /// low-value commons/uncommons you'd sell by the box rather than one at a time. The SPA
@@ -148,6 +180,45 @@ mod tests {
         assert_eq!(format_cents(5), "0.05");
         assert_eq!(format_cents(100), "1.00");
         assert_eq!(format_cents(0), "0.00");
+    }
+
+    #[test]
+    fn cheapest_single_takes_the_lower_priced_finish() {
+        // Both finishes priced -> the cheaper one wins, regardless of which is which.
+        assert_eq!(cheapest_single_cents(Some("2.00"), Some("10.00")), Some(200));
+        assert_eq!(cheapest_single_cents(Some("10.00"), Some("2.00")), Some(200));
+        // Only one finish priced (a foil-only or regular-only printing) -> that one.
+        assert_eq!(cheapest_single_cents(None, Some("3.50")), Some(350));
+        assert_eq!(cheapest_single_cents(Some("4.25"), None), Some(425));
+        // An empty/unparseable finish is treated as absent, not $0.
+        assert_eq!(cheapest_single_cents(Some(""), Some("3.50")), Some(350));
+        // Neither finish priced -> nothing to contribute.
+        assert_eq!(cheapest_single_cents(None, None), None);
+        assert_eq!(cheapest_single_cents(Some(""), Some("n/a")), None);
+    }
+
+    #[test]
+    fn cheapest_singles_total_sums_each_card_s_cheapest_finish() {
+        // 2.00 (regular < 10.00 foil) + 3.50 (foil-only) + 5.00 (regular-only) = 10.50.
+        let cards = [
+            (Some("2.00"), Some("10.00")),
+            (None, Some("3.50")),
+            (Some("5.00"), None),
+        ];
+        assert_eq!(cheapest_singles_total(cards).as_deref(), Some("10.50"));
+    }
+
+    #[test]
+    fn cheapest_singles_total_skips_unpriced_cards_and_is_null_when_all_unpriced() {
+        // An unpriced card contributes nothing; the total is over the priced ones only.
+        let mixed = [(Some("1.25"), None), (None, None), (Some(""), Some(""))];
+        assert_eq!(cheapest_singles_total(mixed).as_deref(), Some("1.25"));
+        // No card priced -> null, not "0.00" (mirrors Valuation::total_usd).
+        let none = [(None, None), (Some(""), None)];
+        assert_eq!(cheapest_singles_total(none), None);
+        // An empty group is likewise null.
+        let empty: [(Option<&str>, Option<&str>); 0] = [];
+        assert_eq!(cheapest_singles_total(empty), None);
     }
 
     #[test]

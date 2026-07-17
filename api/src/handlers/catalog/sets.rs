@@ -19,8 +19,8 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page,
-    filter_drops_by_title, group_into_drops, group_into_subtypes, load_group_set_codes, load_set,
-    paginate_buckets, require_drop_table, require_game,
+    cheapest_singles_total, filter_drops_by_title, group_into_drops, group_into_subtypes,
+    load_group_set_codes, load_set, paginate_buckets, require_drop_table, require_game,
 };
 use crate::state::AppState;
 
@@ -78,6 +78,13 @@ pub struct DropGroupResponse {
     pub slug: Option<String>,
     pub title: String,
     pub card_count: usize,
+    /// The drop's "cheapest singles" total: the sum, over the cards below, of each card's
+    /// cheapest finish (the lower of its regular and foil USD price). A canonical USD
+    /// decimal string (`"42.50"`); the SPA renders it in the viewer's display currency.
+    /// `None` when no card in the drop is priced. Its scope is exactly `card_count` — every
+    /// card shown is counted, so a foil-variant printing listed under its own collector
+    /// number contributes its own cheapest price too.
+    pub cheapest_singles_usd: Option<String>,
     pub cards: Vec<CardResponse>,
 }
 
@@ -332,10 +339,18 @@ pub async fn list_set_drops(
 
     let (page, page_size) = params.drop_page_and_size();
     Ok(Json(paginate_buckets(buckets, page, page_size, |b| {
+        // Total each card's cheapest finish before consuming the models into DTOs, so the
+        // drop header can show what its singles cost at their cheapest.
+        let cheapest_singles_usd = cheapest_singles_total(
+            b.cards
+                .iter()
+                .map(|c| (c.price_usd.as_deref(), c.price_usd_foil.as_deref())),
+        );
         DropGroupResponse {
             slug: b.slug,
             title: b.title,
             card_count: b.cards.len(),
+            cheapest_singles_usd,
             cards: b.cards.into_iter().map(CardResponse::from).collect(),
         }
     })))

@@ -182,3 +182,63 @@ async fn set_drops_title_filter_narrows_by_drop_name() {
     assert_eq!(body["data"].as_array().map(Vec::len), Some(0));
     assert_eq!(body["total"].as_u64(), Some(0));
 }
+
+/// Each drop header carries a `cheapest_singles_usd` total: the sum, over the drop's cards,
+/// of each card's cheaper finish (regular vs foil). A drop with no priced card reports
+/// `null` rather than `"0.00"` (issue #456).
+#[tokio::test]
+async fn set_drops_report_cheapest_singles_total() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+
+    crate::test_support::card_set_model("sld")
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld set");
+
+    // "Wild in Bloom" (2658..2662): a card whose regular price beats its foil, a foil-only
+    // printing, and an unpriced card that must not drag the total to $0. "Inked" (168): a
+    // lone unpriced card, so its drop reports a null total.
+    let priced: [(i32, &str, Option<&str>, Option<&str>); 4] = [
+        (1, "2658", Some("2.00"), Some("10.00")), // cheapest = 2.00 (regular)
+        (2, "2659", None, Some("3.50")),          // cheapest = 3.50 (foil-only)
+        (3, "2660", None, None),                  // unpriced -> contributes nothing
+        (4, "168", None, None),                   // "Inked" -> whole drop unpriced
+    ];
+    for (id, cn, usd, foil) in priced {
+        crate::entities::card::Model {
+            set_code: "sld".into(),
+            set_name: "Secret Lair Drop".into(),
+            collector_number: cn.into(),
+            collector_number_int: cn.parse().ok(),
+            price_usd: usd.map(str::to_string),
+            price_usd_foil: foil.map(str::to_string),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld card");
+    }
+    let app = crate::build_router(state);
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/drops?page=1&page_size=20")).await;
+    assert_eq!(status, StatusCode::OK, "drops must succeed: {body:?}");
+    let groups = body["data"].as_array().expect("drop groups");
+
+    let bloom = groups
+        .iter()
+        .find(|g| g["title"] == "Wild in Bloom")
+        .expect("Wild in Bloom present");
+    // 2.00 (2658, regular) + 3.50 (2659, foil) + nothing (2660, unpriced) = 5.50.
+    assert_eq!(bloom["cheapest_singles_usd"].as_str(), Some("5.50"));
+
+    let inked = groups
+        .iter()
+        .find(|g| g["title"] == "Inked")
+        .expect("Inked present");
+    // Its only card is unpriced, so the total is null (not "0.00").
+    assert!(inked["cheapest_singles_usd"].is_null(), "unpriced drop -> null: {inked:?}");
+}

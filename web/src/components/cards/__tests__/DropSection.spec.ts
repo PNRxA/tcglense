@@ -3,10 +3,13 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import DropSection from '../DropSection.vue'
 
-function mountSection(drop: { slug: string | null; title: string; card_count: number }) {
+function mountSection(
+  drop: { slug: string | null; title: string; card_count: number },
+  slots: Record<string, string> = {},
+) {
   return mount(DropSection, {
     props: { drop },
-    slots: { default: '<div class="grid-body">cards</div>' },
+    slots: { default: '<div class="grid-body">cards</div>', ...slots },
   })
 }
 
@@ -29,6 +32,19 @@ describe('DropSection', () => {
     expect(mountSection({ slug: 'normal', title: 'Normal', card_count: 1 }).text()).toContain(
       '1 card',
     )
+  })
+
+  it('renders trailing header content from the meta slot, beside (not inside) the toggle', () => {
+    const wrapper = mountSection(borderless, { meta: '<span class="total">$42.50</span>' })
+    // The slotted content lands in the h2 header…
+    expect(wrapper.find('h2').text()).toContain('$42.50')
+    // …but outside the disclosure button, so it isn't part of the toggle's accessible name.
+    expect(wrapper.find('button[aria-expanded]').find('.total').exists()).toBe(false)
+  })
+
+  it('renders no meta element when the slot is unprovided', () => {
+    // With no meta slot the header holds only the disclosure button — no trailing span.
+    expect(mountSection(borderless).find('h2').element.children.length).toBe(1)
   })
 
   it('anchors the section on the group slug, and omits the id when there is none', () => {
