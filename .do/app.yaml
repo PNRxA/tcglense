@@ -45,9 +45,11 @@ services:
     http_port: 8080        # App Platform injects PORT=8080; the API binds it on 0.0.0.0.
 
     health_check:
-      # Routing liveness: the API only starts listening after DB connect + migrations,
-      # and this stays 200 in planned maintenance so /api/config + coded 503s remain
-      # reachable. Monitor /api/ready separately for dependency readiness.
+      # Routing liveness: the API binds the listener right after the DB connection opens
+      # and runs migrations in the BACKGROUND, so this answers 200 within the window even
+      # when a large migration takes minutes (a startup gate 503s app traffic + drains
+      # /api/ready meanwhile). It also stays 200 in planned maintenance so /api/config +
+      # coded 503s remain reachable. Monitor /api/ready separately for dependency readiness.
       http_path: /api/health
       initial_delay_seconds: 30
       period_seconds: 15

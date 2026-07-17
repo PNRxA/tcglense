@@ -16,8 +16,12 @@ existing app to pull the latest image and does **not** push later spec changes. 
 already-running app, confirm the live component has `SIGNUPS_ENABLED=false` and
 `MAINTENANCE_MODE=false`, and change its health-check path to `/api/health` in App
 Platform before this rollout (or apply the reviewed spec with `doctl apps update`,
-preserving its secrets and domain). The API only listens after database connection and
-migrations; using liveness for platform routing also keeps planned-maintenance responses
+preserving its secrets and domain). The API binds the listener as soon as the database
+connection is open and runs the schema migrations in the background, so `/api/health`
+answers the platform health check within its window even when a large migration takes
+minutes; a startup gate drains `/api/ready` and returns `503 {"status":"starting"}` for
+application traffic until the migrations finish, so nothing queries a half-migrated
+schema. Using liveness for platform routing also keeps planned-maintenance responses
 reachable, while `/api/ready` remains the separately monitored dependency/drain signal.
 
 ```

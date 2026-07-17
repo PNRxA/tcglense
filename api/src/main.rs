@@ -34,6 +34,7 @@ mod security_tests;
 mod test_support;
 
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use sea_orm::{ConnectionTrait, Database};
@@ -100,8 +101,8 @@ async fn main() {
     let port = config.port;
     let database_url = config.database_url.clone();
 
-    // Connect to the database (with SQLite WAL + cache pragmas; see `db`) and run
-    // migrations.
+    // Connect to the database (with SQLite WAL + cache pragmas; see `db`). Migrations
+    // run later, in the background — see the startup task below.
     let db = Database::connect(db::connect_options(database_url))
         .await
         .expect("failed to connect to the database");
@@ -114,17 +115,6 @@ async fn main() {
         sea_orm::DatabaseBackend::MySql => "MySQL",
     };
     tracing::info!("connected to {backend} database");
-    // Serialise migrations across simultaneously booting replicas: DDL races on a
-    // shared Postgres otherwise (`seaql_migrations` is bookkeeping, not a lock). A
-    // second booter *waits* here until the first finishes, then finds every
-    // migration applied and no-ops. No-op on SQLite; fails open on lock errors.
-    tracing::info!("acquiring the migration lock (waits if another replica is migrating)");
-    let migration_lock =
-        db_lock::AdvisoryLock::acquire(&db, &config.database_url, db_lock::MIGRATIONS).await;
-    Migrator::up(&db, None)
-        .await
-        .expect("failed to run database migrations");
-    migration_lock.release().await;
 
     // Shared HTTP client for outbound provider calls (Scryfall data + images).
     // No overall timeout: the bulk download streams for a while. A read timeout
@@ -175,26 +165,28 @@ async fn main() {
     let state = AppState::new(config, db, http.clone(), image_http, redis)
         .expect("failed to assemble application state");
 
-    // A maintenance boot exists to apply migrations while the instance is drained;
-    // don't start cleanup, catalog sync, or fingerprint jobs until normal service
-    // resumes. Migrations have already completed above.
-    if state.config.maintenance_mode {
-        tracing::warn!(
-            "MAINTENANCE_MODE enabled; migrations completed and background tasks are disabled"
-        );
-    } else {
-        // Spawn background maintenance (refresh-token pruning) and either the offline
-        // dummy-catalog seed or the periodic card-data sync, per config.
-        tasks::start(&state, &http).await;
-    }
+    // Serve liveness immediately: bind the listener and run the boot migrations in the
+    // background so `/api/health` answers within the platform's health-check window even
+    // when a large migration takes minutes (an App Platform deploy is marked failed if
+    // `/api/health` stays unreachable past the window). Close the startup gate for that
+    // window so the router drains `/api/ready` and 503s application traffic until the
+    // schema is ready — no handler runs against a half-migrated DB (see `build_router`).
+    state.migrations_complete.store(false, Ordering::SeqCst);
 
-    let app = build_router(state);
+    let app = build_router(state.clone());
 
     let listener = TcpListener::bind((host.as_str(), port))
         .await
         .expect("failed to bind TCP listener");
 
     tracing::info!("TCGLense API listening on http://{host}:{port}");
+
+    // Run migrations, then open the gate and start background jobs. Spawned so the
+    // listener above starts answering health checks right away; a migration *failure*
+    // exits the process (rather than only aborting this task) so the deploy rolls back.
+    let startup_state = state.clone();
+    let startup_http = http.clone();
+    tokio::spawn(async move { run_startup(startup_state, startup_http).await });
 
     // `into_make_service_with_connect_info` surfaces the socket peer address as a
     // `ConnectInfo<SocketAddr>` extension so the auth rate limiter can key on the
@@ -205,4 +197,43 @@ async fn main() {
     )
     .await
     .expect("server error");
+}
+
+/// Run the boot-time schema migrations, then open the startup gate and kick off the
+/// background jobs. Invoked on a spawned task so `axum::serve` can answer `/api/health`
+/// while a long migration runs (see the startup gate in `build_router`).
+async fn run_startup(state: AppState, http: reqwest::Client) {
+    // Serialise migrations across simultaneously booting replicas: DDL races on a
+    // shared Postgres otherwise (`seaql_migrations` is bookkeeping, not a lock). A
+    // second booter *waits* here until the first finishes, then finds every
+    // migration applied and no-ops. No-op on SQLite; fails open on lock errors.
+    tracing::info!("acquiring the migration lock (waits if another replica is migrating)");
+    let migration_lock =
+        db_lock::AdvisoryLock::acquire(&state.db, &state.config.database_url, db_lock::MIGRATIONS)
+            .await;
+    if let Err(error) = Migrator::up(&state.db, None).await {
+        // Exit the whole process (not just this task) so the orchestrator sees the boot
+        // fail and rolls the deploy back, rather than serving 503s forever.
+        tracing::error!(%error, "failed to run database migrations; shutting down");
+        migration_lock.release().await;
+        std::process::exit(1);
+    }
+    migration_lock.release().await;
+
+    // Open the gate: the schema is ready, so the router may serve application traffic.
+    state.migrations_complete.store(true, Ordering::SeqCst);
+    tracing::info!("database migrations complete; serving application traffic");
+
+    // A maintenance boot exists to apply migrations while the instance is drained;
+    // don't start cleanup, catalog sync, or fingerprint jobs until normal service
+    // resumes. Migrations have completed above.
+    if state.config.maintenance_mode {
+        tracing::warn!(
+            "MAINTENANCE_MODE enabled; migrations completed and background tasks are disabled"
+        );
+    } else {
+        // Spawn background maintenance (refresh-token pruning) and either the offline
+        // dummy-catalog seed or the periodic card-data sync, per config.
+        tasks::start(&state, &http).await;
+    }
 }

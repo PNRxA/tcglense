@@ -3,12 +3,14 @@
 //! error mapping, auth, cache headers) in-process via `tower`'s `oneshot`.
 
 use axum::{
-    Router,
-    extract::DefaultBodyLimit,
-    http::{HeaderMap, HeaderName, HeaderValue, Method, header},
+    Json, Router,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{from_fn, from_fn_with_state, map_response},
+    response::{IntoResponse, Response},
     routing::{any, delete, get, post, put},
 };
+use serde_json::json;
 use tower_http::{
     cors::CorsLayer,
     services::{ServeDir, ServeFile},
@@ -581,10 +583,60 @@ pub fn build_router(state: AppState) -> Router {
             .fallback_service(serve_spa);
     }
 
-    app.layer(cors_layer())
+    // Startup gate (innermost of the shared layers, so it wraps every merged route
+    // group but still sits inside CORS/trace/security-headers — a gated 503 keeps
+    // those). While `migrations_complete` is false (the boot-migration window
+    // `main.rs` opens before it starts serving), only liveness and the SPA's config
+    // probe pass through; readiness drains and everything else is a non-cacheable
+    // 503, so no handler touches a half-migrated schema. A pure pass-through once the
+    // gate opens.
+    app.layer(from_fn_with_state(state.clone(), startup_gate_middleware))
+        .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
         .layer(from_fn(security_headers_middleware))
         .with_state(state)
+}
+
+/// Reject application traffic until the boot-time schema migrations have finished.
+///
+/// `main.rs` binds the listener before running migrations so `/api/health` answers
+/// within the platform's health-check window even when a large migration takes
+/// minutes (App Platform marks a deploy failed if `/api/health` stays unreachable).
+/// This gate is what keeps that safe: while [`AppState::migrations_complete`] is
+/// `false` it keeps liveness up and the SPA's boot-time `/api/config` probe
+/// reachable, drains `/api/ready` with a `starting` 503, and answers every other
+/// request with a non-cacheable 503 — so no handler runs a query against a schema
+/// that is still being migrated. Once the flag flips it is a pure pass-through.
+async fn startup_gate_middleware(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use std::sync::atomic::Ordering;
+
+    if state.migrations_complete.load(Ordering::Acquire) {
+        return next.run(request).await;
+    }
+
+    let path = request.uri().path();
+    // Liveness and the cached SPA's boot-time config check stay reachable so the
+    // platform health check passes and a returning visitor can see a starting screen.
+    if path == "/api/health" || path == "/api/config" {
+        return next.run(request).await;
+    }
+
+    // Readiness drains explicitly (like maintenance mode) so a load balancer waits;
+    // everything else is refused. Both are `no-store` so a CDN never pins a startup 503.
+    let body = if path == "/api/ready" {
+        json!({ "status": "starting" })
+    } else {
+        json!({ "error": "service is starting", "code": "starting" })
+    };
+    let mut response = (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// Browser hardening shared by API-only and combined-image deployments. The edge
