@@ -3,6 +3,7 @@ import { createContext } from 'reka-ui'
 
 export { default as ChartContainer } from './ChartContainer.vue'
 export { default as ChartLegendContent } from './ChartLegendContent.vue'
+export { default as ChartSeriesLegend } from './ChartSeriesLegend.vue'
 export { default as ChartTooltipContent } from './ChartTooltipContent.vue'
 export { componentToString } from './utils'
 

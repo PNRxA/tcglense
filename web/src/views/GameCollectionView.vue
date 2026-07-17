@@ -204,8 +204,8 @@ function fetchValueHistory(range: PriceRange) {
       </header>
 
       <!-- Card and sealed-product value over time — the current basket re-priced from
-           historic snapshots, as two independent lines on the shared history chart. Show it
-           when either holding kind exists. -->
+           historic snapshots, as two independent lines on the shared history chart, each
+           toggleable via the legend. Show it when either holding kind exists. -->
       <PriceChart
         v-if="(hasStats || hasProductStats) && showValueChart"
         title="Collection value"
@@ -213,6 +213,7 @@ function fetchValueHistory(range: PriceRange) {
         :series-labels="{ primary: 'Cards', secondary: 'Sealed products' }"
         :query-key="['collection-value-history', game]"
         :fetcher="fetchValueHistory"
+        toggleable
       />
 
       <!-- One panel switches between independent Singles and Sealed mover rankings. -->

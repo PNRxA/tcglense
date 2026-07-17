@@ -38,6 +38,9 @@ const props = withDefaults(
     /** Optional semantic names for the two generic USD fields. Collection analytics uses
      * these to label its Cards and Sealed products lines. */
     seriesLabels?: { primary: string; secondary: string }
+    /** Show a clickable legend that toggles each line on/off. Opt-in — the collection value
+     * chart enables it to switch its Cards / Sealed products lines; detail charts leave it off. */
+    toggleable?: boolean
   }>(),
   {
     title: 'Price history',
@@ -150,6 +153,7 @@ const isEmpty = computed(
         :currency="money.displayCurrency.value"
         :single-series="props.singleSeries"
         :series-labels="props.seriesLabels"
+        :toggleable="props.toggleable"
       />
     </CardContent>
   </Card>
