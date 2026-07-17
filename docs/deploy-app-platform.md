@@ -19,10 +19,12 @@ Platform before this rollout (or apply the reviewed spec with `doctl apps update
 preserving its secrets and domain). The API binds the listener as soon as the database
 connection is open and runs the schema migrations in the background, so `/api/health`
 answers the platform health check within its window even when a large migration takes
-minutes; a startup gate drains `/api/ready` and returns `503 {"status":"starting"}` for
-application traffic until the migrations finish, so nothing queries a half-migrated
-schema. Using liveness for platform routing also keeps planned-maintenance responses
-reachable, while `/api/ready` remains the separately monitored dependency/drain signal.
+minutes; a startup gate presents the site as under maintenance until the migrations
+finish — `/api/config` reports `maintenance_mode: true`, `/api/ready` drains with
+`{"status":"maintenance"}`, and application traffic gets the maintenance `503` — so the
+SPA shows its maintenance screen and nothing queries a half-migrated schema. Using
+liveness for platform routing also keeps planned-maintenance responses reachable, while
+`/api/ready` remains the separately monitored dependency/drain signal.
 
 ```
 internet ─▶ Cloudflare (DNS · CDN · TLS · WAF)

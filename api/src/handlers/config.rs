@@ -12,9 +12,11 @@ use crate::state::AppState;
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PublicConfig {
-    /// Whether the API is accepting application traffic. The config route remains
-    /// available and non-cacheable during maintenance so an already-cached SPA can
-    /// replace its normal shell with the maintenance screen.
+    /// Whether the API is accepting application traffic. `true` when
+    /// `MAINTENANCE_MODE` is set **and** while the boot-time schema migrations are
+    /// still running (the startup window presents as maintenance). The config route
+    /// remains available and non-cacheable then, so an already-cached SPA can replace
+    /// its normal shell with the maintenance screen.
     pub maintenance_mode: bool,
     /// The Cloudflare Turnstile public site key, or `null` when CAPTCHA is disabled
     /// (no `TURNSTILE_SECRET_KEY`/`TURNSTILE_SITE_KEY` set) — the SPA then skips the
@@ -39,8 +41,13 @@ pub struct PublicConfig {
 /// redeploy and the payload is tiny, so there is nothing to cache. Panic-free.
 pub async fn public_config(State(state): State<AppState>) -> impl IntoResponse {
     let signups_enabled = state.config.signups_enabled;
+    // The boot-migration window presents as maintenance (see the startup gate in
+    // `router`), so the SPA shows its maintenance screen until the schema is ready.
+    let migrating = !state
+        .migrations_complete
+        .load(std::sync::atomic::Ordering::Acquire);
     Json(PublicConfig {
-        maintenance_mode: state.config.maintenance_mode,
+        maintenance_mode: state.config.maintenance_mode || migrating,
         turnstile_site_key: state.config.turnstile_site_key.clone(),
         signups_enabled,
         // Only surface the notice when signups are actually off, so the SPA renders

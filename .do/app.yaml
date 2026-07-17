@@ -47,9 +47,10 @@ services:
     health_check:
       # Routing liveness: the API binds the listener right after the DB connection opens
       # and runs migrations in the BACKGROUND, so this answers 200 within the window even
-      # when a large migration takes minutes (a startup gate 503s app traffic + drains
-      # /api/ready meanwhile). It also stays 200 in planned maintenance so /api/config +
-      # coded 503s remain reachable. Monitor /api/ready separately for dependency readiness.
+      # when a large migration takes minutes (meanwhile a startup gate presents the site
+      # as under maintenance — /api/config reports maintenance, /api/ready drains, app
+      # traffic gets the maintenance 503). It also stays 200 in planned maintenance so
+      # /api/config + coded 503s remain reachable. Monitor /api/ready separately for readiness.
       http_path: /api/health
       initial_delay_seconds: 30
       period_seconds: 15

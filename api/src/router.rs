@@ -3,14 +3,13 @@
 //! error mapping, auth, cache headers) in-process via `tower`'s `oneshot`.
 
 use axum::{
-    Json, Router,
+    Router,
     extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, header},
     middleware::{from_fn, from_fn_with_state, map_response},
     response::{IntoResponse, Response},
     routing::{any, delete, get, post, put},
 };
-use serde_json::json;
 use tower_http::{
     cors::CorsLayer,
     services::{ServeDir, ServeFile},
@@ -586,10 +585,10 @@ pub fn build_router(state: AppState) -> Router {
     // Startup gate (innermost of the shared layers, so it wraps every merged route
     // group but still sits inside CORS/trace/security-headers — a gated 503 keeps
     // those). While `migrations_complete` is false (the boot-migration window
-    // `main.rs` opens before it starts serving), only liveness and the SPA's config
-    // probe pass through; readiness drains and everything else is a non-cacheable
-    // 503, so no handler touches a half-migrated schema. A pure pass-through once the
-    // gate opens.
+    // `main.rs` opens before it starts serving), the site presents as under
+    // maintenance: only liveness and the SPA's config probe pass through, readiness
+    // drains, and everything else is the non-cacheable maintenance 503 — so no handler
+    // touches a half-migrated schema. A pure pass-through once the gate opens.
     app.layer(from_fn_with_state(state.clone(), startup_gate_middleware))
         .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
@@ -597,16 +596,20 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Reject application traffic until the boot-time schema migrations have finished.
+/// Present the site as under maintenance until the boot-time migrations have finished.
 ///
 /// `main.rs` binds the listener before running migrations so `/api/health` answers
 /// within the platform's health-check window even when a large migration takes
 /// minutes (App Platform marks a deploy failed if `/api/health` stays unreachable).
 /// This gate is what keeps that safe: while [`AppState::migrations_complete`] is
-/// `false` it keeps liveness up and the SPA's boot-time `/api/config` probe
-/// reachable, drains `/api/ready` with a `starting` 503, and answers every other
-/// request with a non-cacheable 503 — so no handler runs a query against a schema
-/// that is still being migrated. Once the flag flips it is a pure pass-through.
+/// `false` it keeps liveness up and the SPA's boot-time `/api/config` probe reachable
+/// (that probe reports `maintenance_mode: true` meanwhile), drains `/api/ready`, and
+/// answers every other request with the **same** non-cacheable maintenance `503` the
+/// planned-maintenance router serves. Reusing the maintenance code + message means the
+/// SPA's existing maintenance path lights up — a freshly-loaded shell via the config
+/// flag, an already-open tab via the `code: "maintenance"` response — with no separate
+/// "starting" state, and no handler runs a query against a half-migrated schema. Once
+/// the flag flips it is a pure pass-through.
 async fn startup_gate_middleware(
     State(state): State<AppState>,
     request: axum::extract::Request,
@@ -620,19 +623,18 @@ async fn startup_gate_middleware(
 
     let path = request.uri().path();
     // Liveness and the cached SPA's boot-time config check stay reachable so the
-    // platform health check passes and a returning visitor can see a starting screen.
+    // platform health check passes and the SPA can render the maintenance screen.
     if path == "/api/health" || path == "/api/config" {
         return next.run(request).await;
     }
 
-    // Readiness drains explicitly (like maintenance mode) so a load balancer waits;
-    // everything else is refused. Both are `no-store` so a CDN never pins a startup 503.
-    let body = if path == "/api/ready" {
-        json!({ "status": "starting" })
+    // Identical to planned maintenance: readiness drains, everything else is the
+    // maintenance-coded 503. `no-store` so a CDN never pins it.
+    let mut response = if path == "/api/ready" {
+        maintenance_ready().await.into_response()
     } else {
-        json!({ "error": "service is starting", "code": "starting" })
+        maintenance().await.into_response()
     };
-    let mut response = (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response();
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
