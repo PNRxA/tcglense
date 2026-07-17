@@ -32,6 +32,7 @@ pub(crate) use holdings::{
     holding_subtype_page, narrow_summary_rows, resolve_set_scope, summarize_holdings,
     validate_quantity,
 };
+pub(crate) use valuation::{cheapest_single_cents, format_cents};
 #[cfg(test)]
 pub(crate) use valuation::BULK_THRESHOLD_CENTS;
 pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};

@@ -21,6 +21,19 @@ pub(crate) fn format_cents(cents: i128) -> String {
     format!("{dollars}.{rem:02}")
 }
 
+/// The cheapest way to own one copy of a printing: the lower of its regular (`usd`) and foil
+/// (`usd_foil`) price, in integer cents, or `None` when neither finish is priced. Unlike a
+/// [`Valuation`] (which totals held copies of *both* finishes) this collapses a printing to its
+/// single cheapest finish — whichever that is, since a foil-only or oddly-priced printing can
+/// have the regular price missing or dearer than the foil. Used to floor a card's price across
+/// all its printings (see the Secret Lair drops handler).
+pub(crate) fn cheapest_single_cents(usd: Option<&str>, usd_foil: Option<&str>) -> Option<i128> {
+    match (price_cents(usd), price_cents(usd_foil)) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Default per-unit price (in cents) at or above which a card is *not* bulk: $1.00. Any
 /// single copy priced strictly under the threshold counts toward the "bulk" value — the
 /// low-value commons/uncommons you'd sell by the box rather than one at a time. The SPA
@@ -148,6 +161,21 @@ mod tests {
         assert_eq!(format_cents(5), "0.05");
         assert_eq!(format_cents(100), "1.00");
         assert_eq!(format_cents(0), "0.00");
+    }
+
+    #[test]
+    fn cheapest_single_takes_the_lower_priced_finish() {
+        // Both finishes priced -> the cheaper one wins, regardless of which is which.
+        assert_eq!(cheapest_single_cents(Some("2.00"), Some("10.00")), Some(200));
+        assert_eq!(cheapest_single_cents(Some("10.00"), Some("2.00")), Some(200));
+        // Only one finish priced (a foil-only or regular-only printing) -> that one.
+        assert_eq!(cheapest_single_cents(None, Some("3.50")), Some(350));
+        assert_eq!(cheapest_single_cents(Some("4.25"), None), Some(425));
+        // An empty/unparseable finish is treated as absent, not $0.
+        assert_eq!(cheapest_single_cents(Some(""), Some("3.50")), Some(350));
+        // Neither finish priced -> nothing to contribute.
+        assert_eq!(cheapest_single_cents(None, None), None);
+        assert_eq!(cheapest_single_cents(Some(""), Some("n/a")), None);
     }
 
     #[test]

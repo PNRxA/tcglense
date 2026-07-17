@@ -1,6 +1,8 @@
 //! Catalog set endpoints: the set list, one set's metadata, its SVG icon proxy, and a
 //! set's cards (flat, include-related, or grouped by Secret Lair drop).
 
+use std::collections::{HashMap, HashSet};
+
 use axum::{
     Json,
     extract::State,
@@ -8,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::NullOrdering,
 };
 use serde::Serialize;
@@ -19,8 +21,9 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page,
-    filter_drops_by_title, group_into_drops, group_into_subtypes, load_group_set_codes, load_set,
-    paginate_buckets, require_drop_table, require_game,
+    cheapest_single_cents, filter_drops_by_title, format_cents, group_into_drops,
+    group_into_subtypes, load_group_set_codes, load_set, paginate_buckets, require_drop_table,
+    require_game,
 };
 use crate::state::AppState;
 
@@ -78,6 +81,14 @@ pub struct DropGroupResponse {
     pub slug: Option<String>,
     pub title: String,
     pub card_count: usize,
+    /// The drop's "cheapest prints" total: for each distinct card in the drop, the price of
+    /// its cheapest available printing *anywhere in the catalog* (the lower of that printing's
+    /// regular and foil price) — so a card is floored at its cheap reprint, not its pricier
+    /// Secret Lair printing. Distinct by gameplay identity (`oracle_id`), so a foil-variant
+    /// printing listed under its own collector number isn't double-counted. A canonical USD
+    /// decimal string (`"42.50"`); the SPA renders it in the viewer's display currency.
+    /// `None` when no card in the drop has a priced printing.
+    pub cheapest_prints_usd: Option<String>,
     pub cards: Vec<CardResponse>,
 }
 
@@ -330,15 +341,103 @@ pub async fn list_set_drops(
         buckets = filter_drops_by_title(buckets, needle);
     }
 
+    // Paginate by drop, then price each on-page drop's "cheapest prints" total. That floors
+    // every card at its cheapest printing *anywhere* (not the pricier Secret Lair printing),
+    // so it needs one cross-set lookup — scoped to just the cards on this page, keyed by the
+    // indexed `(game, oracle_id)`.
     let (page, page_size) = params.drop_page_and_size();
-    Ok(Json(paginate_buckets(buckets, page, page_size, |b| {
-        DropGroupResponse {
-            slug: b.slug,
-            title: b.title,
-            card_count: b.cards.len(),
-            cards: b.cards.into_iter().map(CardResponse::from).collect(),
+    let total = buckets.len() as u64;
+    let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
+    let on_page: Vec<_> = buckets.into_iter().skip(start).take(page_size as usize).collect();
+
+    let oracle_ids: HashSet<&str> = on_page
+        .iter()
+        .flat_map(|bucket| bucket.cards.iter())
+        .filter_map(|card| card.oracle_id.as_deref().filter(|id| !id.is_empty()))
+        .collect();
+    let cheapest_by_oracle = load_cheapest_by_oracle(&state, &game, &oracle_ids).await?;
+
+    let data: Vec<DropGroupResponse> = on_page
+        .into_iter()
+        .map(|bucket| DropGroupResponse {
+            slug: bucket.slug,
+            title: bucket.title,
+            card_count: bucket.cards.len(),
+            cheapest_prints_usd: drop_cheapest_prints(&bucket.cards, &cheapest_by_oracle),
+            cards: bucket.cards.into_iter().map(CardResponse::from).collect(),
+        })
+        .collect();
+    Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// The cheapest single (in integer cents) for each gameplay identity among a page of drops'
+/// cards: one indexed `(game, oracle_id)` lookup spanning *every* printing of those cards, so
+/// a card's floor price can come from a cheap reprint in another set rather than its Secret
+/// Lair printing. Keyed by `oracle_id`; a printing with no priced finish doesn't contribute,
+/// so an identity whose printings are all unpriced is simply absent from the map.
+async fn load_cheapest_by_oracle(
+    state: &AppState,
+    game: &str,
+    oracle_ids: &HashSet<&str>,
+) -> Result<HashMap<String, i128>, AppError> {
+    if oracle_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows: Vec<(Option<String>, Option<String>, Option<String>)> = Card::find()
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::OracleId.is_in(oracle_ids.iter().map(|id| id.to_string())))
+        .select_only()
+        .column(card::Column::OracleId)
+        .column(card::Column::PriceUsd)
+        .column(card::Column::PriceUsdFoil)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+
+    let mut cheapest: HashMap<String, i128> = HashMap::new();
+    for (oracle_id, usd, usd_foil) in rows {
+        let Some(oracle_id) = oracle_id else { continue };
+        if let Some(cents) = cheapest_single_cents(usd.as_deref(), usd_foil.as_deref()) {
+            cheapest
+                .entry(oracle_id)
+                .and_modify(|best| *best = (*best).min(cents))
+                .or_insert(cents);
         }
-    })))
+    }
+    Ok(cheapest)
+}
+
+/// One drop's "cheapest prints" total: for each *distinct* card in the drop (by gameplay
+/// identity, so a foil-variant printing under its own collector number isn't counted twice),
+/// the price of its cheapest printing anywhere — from `cheapest_by_oracle` when the card has
+/// an `oracle_id`, else its own cheapest finish (a card with no identity has no sibling
+/// printings that could be cheaper). Summed in cents; `None` when nothing in the drop is
+/// priced (never `"0.00"`).
+fn drop_cheapest_prints(
+    cards: &[card::Model],
+    cheapest_by_oracle: &HashMap<String, i128>,
+) -> Option<String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut total: i128 = 0;
+    let mut any_priced = false;
+    for card in cards {
+        let (key, cents) = match card.oracle_id.as_deref().filter(|id| !id.is_empty()) {
+            Some(oracle_id) => (oracle_id, cheapest_by_oracle.get(oracle_id).copied()),
+            // No identity → no siblings; price it by its own finishes, keyed on its unique id.
+            None => (
+                card.external_id.as_str(),
+                cheapest_single_cents(card.price_usd.as_deref(), card.price_usd_foil.as_deref()),
+            ),
+        };
+        if !seen.insert(key) {
+            continue; // count each distinct card once
+        }
+        if let Some(cents) = cents {
+            total += cents;
+            any_priced = true;
+        }
+    }
+    any_priced.then(|| format_cents(total))
 }
 
 /// List set sub-types
@@ -399,4 +498,46 @@ pub async fn list_set_subtypes(
             cards: b.cards.into_iter().map(CardResponse::from).collect(),
         }
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::card_model;
+
+    fn card(id: i32, oracle: Option<&str>, usd: Option<&str>, foil: Option<&str>) -> card::Model {
+        card::Model {
+            oracle_id: oracle.map(str::to_string),
+            price_usd: usd.map(str::to_string),
+            price_usd_foil: foil.map(str::to_string),
+            ..card_model(id)
+        }
+    }
+
+    #[test]
+    fn drop_cheapest_prints_dedupes_by_identity_and_floors_from_the_map() {
+        // The cross-printing floor: or-a at 1.50 (a cheap reprint), or-b at 3.00.
+        let cheapest = HashMap::from([("or-a".to_string(), 150_i128), ("or-b".to_string(), 300)]);
+        let cards = vec![
+            // Two printings of the same card in the drop — counted once, at the 1.50 floor,
+            // not per printing and not at these pricey Secret Lair prices.
+            card(1, Some("or-a"), Some("20.00"), Some("30.00")),
+            card(2, Some("or-a"), Some("25.00"), None),
+            card(3, Some("or-b"), None, None), // priced only via the map (3.00)
+            card(4, None, Some("2.00"), Some("8.00")), // no identity -> its own cheapest, 2.00
+            card(5, Some("or-none"), None, None), // absent from the map -> contributes nothing
+        ];
+        // 1.50 + 3.00 + 2.00 = 6.50.
+        assert_eq!(drop_cheapest_prints(&cards, &cheapest).as_deref(), Some("6.50"));
+    }
+
+    #[test]
+    fn drop_cheapest_prints_is_null_when_nothing_is_priced() {
+        let empty = HashMap::new();
+        let cards = vec![
+            card(1, Some("or-x"), None, None), // no priced printing (absent from map)
+            card(2, None, None, None),         // no identity, no price
+        ];
+        assert_eq!(drop_cheapest_prints(&cards, &empty), None);
+    }
 }

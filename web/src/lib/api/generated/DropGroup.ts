@@ -11,4 +11,14 @@ export type DropGroup = {
  * Stable slug for anchors/links; `None` for the catch-all "Other" group of
  * cards the snapshot doesn't place in a drop.
  */
-slug: string | null, title: string, card_count: number, cards: Array<Card>, };
+slug: string | null, title: string, card_count: number, 
+/**
+ * The drop's "cheapest prints" total: for each distinct card in the drop, the price of
+ * its cheapest available printing *anywhere in the catalog* (the lower of that printing's
+ * regular and foil price) — so a card is floored at its cheap reprint, not its pricier
+ * Secret Lair printing. Distinct by gameplay identity (`oracle_id`), so a foil-variant
+ * printing listed under its own collector number isn't double-counted. A canonical USD
+ * decimal string (`"42.50"`); the SPA renders it in the viewer's display currency.
+ * `None` when no card in the drop has a priced printing.
+ */
+cheapest_prints_usd: string | null, cards: Array<Card>, };

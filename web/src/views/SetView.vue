@@ -27,6 +27,7 @@ import {
   useSetSubtypesQuery,
 } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
+import { useCurrency } from '@/composables/useCurrency'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useSetGrouping } from '@/composables/useSetGrouping'
 import { useWishlistCounts } from '@/composables/useWishlist'
@@ -136,6 +137,17 @@ const visibleCards = computed<Card[]>(() =>
 const { ownership } = useOwnedCounts(game, visibleCards)
 // Wish-list wanted counts for the same cards — a Heart chip flags wishlisted cards (#364).
 const { ownership: wishlistOwnership } = useWishlistCounts(game, visibleCards)
+
+// Each by-drop header shows the drop's "cheapest prints" total — for each card in the drop,
+// its cheapest printing anywhere in the catalog, summed server-side
+// (DropGroup.cheapest_prints_usd) — rendered in the viewer's display currency (null when
+// nothing in the drop is priced). Read straight off the drops query (only drops carry the
+// field), which in the by-drop view *is* `groups`, so the array aligns index-for-index with
+// the section v-for below (#456).
+const money = useCurrency()
+const printsTotals = computed(() =>
+  (dropsQuery.data.value?.data ?? []).map((drop) => money.formatUsd(drop.cheapest_prints_usd)),
+)
 
 // The list's loading / error / empty state reads from whichever query drives the current
 // view. cardsQuery waits on the set list, so an as-yet-undecided grouped set shows the
@@ -323,10 +335,18 @@ const searchError = computed(() => searchErrorMessage(listError.value))
           </div>
           <UpdatingOverlay :loading="groupLoading">
             <DropSection
-              v-for="cardGroup in groups"
+              v-for="(cardGroup, i) in groups"
               :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
               :drop="cardGroup"
             >
+              <!-- Drops only: the cheapest-prints total, right-aligned in the header.
+                   Omitted for sub-type groups and for drops with nothing priced. -->
+              <template v-if="byDrop && printsTotals[i]" #meta>
+                <span class="text-muted-foreground text-sm font-normal">cheapest prints</span>
+                <span class="text-foreground ml-1 text-sm font-medium tabular-nums">
+                  {{ printsTotals[i] }}
+                </span>
+              </template>
               <CardGrid
                 :game="game"
                 :cards="cardGroup.cards"
