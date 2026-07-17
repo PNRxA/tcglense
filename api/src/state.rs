@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection};
@@ -65,6 +66,16 @@ pub struct AppState {
     /// inner `Arc` and matches against it without holding the lock (see
     /// [`Self::fingerprint_index`]); a rebuild swaps the inner `Arc` wholesale.
     pub fingerprint_index: Arc<RwLock<Arc<FingerprintIndex>>>,
+    /// Startup gate: `true` once the boot-time schema migrations have finished, so the
+    /// router may serve application traffic. `main.rs` binds the TCP listener *before*
+    /// running migrations (so `/api/health` answers within the platform's health-check
+    /// window even when a large migration takes minutes), flips this to `false` for that
+    /// window, then back to `true` when `Migrator::up` completes. While it is `false` the
+    /// startup gate keeps liveness up, drains readiness, and 503s every other request so
+    /// no handler runs against a half-migrated schema (see [`crate::build_router`]).
+    /// Defaults to `true` so the test/lib harnesses — which build state over an
+    /// already-migrated DB — serve immediately with the gate open.
+    pub migrations_complete: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -123,6 +134,9 @@ impl AppState {
             user_rate_limiters,
             analytics_cache,
             fingerprint_index: Arc::new(RwLock::new(Arc::new(FingerprintIndex::default()))),
+            // Gate open by default (harnesses build over a migrated DB); `main.rs`
+            // closes it while the boot migrations run.
+            migrations_complete: Arc::new(AtomicBool::new(true)),
         })
     }
 
