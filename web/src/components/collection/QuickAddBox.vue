@@ -5,6 +5,7 @@ import { Loader2, Search } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import QuickAddPrintDialog from '@/components/collection/QuickAddPrintDialog.vue'
 import QuickAddProductDialog from '@/components/collection/QuickAddProductDialog.vue'
+import ProductImage from '@/components/products/ProductImage.vue'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import {
   QUICK_ADD_MIN_CHARS,
@@ -23,8 +24,9 @@ import type { Product } from '@/lib/api'
 //   - `'card'` (default): suggests distinct card names; picking one opens the print
 //     picker (QuickAddPrintDialog) to choose a printing + regular/foil and add it — to
 //     the collection by default, or the wish list when `list` says so (#167).
-//   - `'product'` (#364/#435): suggests sealed products; picking one opens
-//     QuickAddProductDialog to set the quantity on the selected list.
+//   - `'product'` (#364/#435): suggests sealed products — each row carries a small
+//     product thumbnail so a box stays recognisable when its name truncates (#462) — and
+//     picking one opens QuickAddProductDialog to set the quantity on the selected list.
 //
 // A hand-rolled combobox (rather than reka's) so the list is driven purely by the
 // server's suggestions with full control over the async/keyboard behaviour — options
@@ -46,6 +48,7 @@ interface QuickAddOption {
   key: string
   label: string
   sublabel?: string
+  hasImage?: boolean
   product?: Product
 }
 
@@ -77,6 +80,7 @@ const suggestions = computed<QuickAddOption[]>(() => {
       key: p.id,
       label: p.name,
       sublabel: `${p.set_name ?? p.set_code.toUpperCase()} · ${productTypeLabel(p.product_type)}`,
+      hasImage: p.has_image,
       product: p,
     }))
   }
@@ -260,12 +264,25 @@ function onKeydown(event: KeyboardEvent) {
         role="option"
         tabindex="-1"
         :aria-selected="index === activeIndex"
-        class="flex w-full items-center rounded-sm px-3 py-1.5 text-left text-sm outline-none transition-colors"
+        class="flex w-full items-center gap-2.5 rounded-sm px-3 py-1.5 text-left text-sm outline-none transition-colors"
         :class="index === activeIndex ? 'bg-accent text-accent-foreground' : ''"
         @mousedown.prevent
         @mouseenter="activeIndex = index"
         @click="pick(option)"
       >
+        <!-- Product suggestions carry a small thumbnail so a box stays recognisable when its
+          name truncates (#462); the option's text already names it, so the image is
+          decorative (aria-hidden). Card-name suggestions have no single representative art. -->
+        <ProductImage
+          v-if="isProduct"
+          :game="game"
+          :id="option.key"
+          :name="option.label"
+          :has-image="option.hasImage"
+          size="small"
+          class="w-10 shrink-0"
+          aria-hidden="true"
+        />
         <span class="min-w-0 flex-1">
           <span class="block truncate">{{ option.label }}</span>
           <span v-if="option.sublabel" class="text-muted-foreground block truncate text-xs">{{

@@ -66,11 +66,23 @@ const ProductDialogStub = {
   template: '<div class="product-dialog-stub" :data-open="String(open)">{{ product?.name }}</div>',
 }
 
+// The per-suggestion thumbnail (#462), stubbed so the test asserts which product each row
+// renders an image for without pulling in the image-load internals.
+const ProductImageStub = {
+  name: 'ProductImage',
+  props: ['game', 'id', 'name', 'hasImage', 'size'],
+  template: '<div class="product-image-stub" :data-id="id" :data-size="size" />',
+}
+
 function mountBox(props: Record<string, unknown> = {}) {
   return mount(QuickAddBox, {
     props: { game: 'mtg', ...props },
     global: {
-      stubs: { QuickAddPrintDialog: DialogStub, QuickAddProductDialog: ProductDialogStub },
+      stubs: {
+        QuickAddPrintDialog: DialogStub,
+        QuickAddProductDialog: ProductDialogStub,
+        ProductImage: ProductImageStub,
+      },
     },
   })
 }
@@ -90,6 +102,8 @@ describe('QuickAddBox', () => {
     // Options are navigated via arrow keys + aria-activedescendant, so they stay out of
     // the tab order (the input is the single tab stop).
     expect(options.every((o) => o.attributes('tabindex') === '-1')).toBe(true)
+    // Card-name suggestions have no single representative art, so no thumbnail (#462).
+    expect(wrapper.find('.product-image-stub').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -155,6 +169,11 @@ describe('QuickAddBox', () => {
     expect(options[0]!.text()).toContain('Bloomburrow Play Booster Box')
     expect(options[0]!.text()).toContain('Bloomburrow')
     expect(options[0]!.text()).toContain('Play Booster Box')
+    // …and a small thumbnail so the box is recognisable when its name truncates (#462).
+    const thumbs = wrapper.findAll('.product-image-stub')
+    expect(thumbs).toHaveLength(2)
+    expect(thumbs.map((t) => t.attributes('data-id'))).toEqual(['100', '200'])
+    expect(thumbs.every((t) => t.attributes('data-size') === 'small')).toBe(true)
 
     await options[1]!.trigger('click')
     await flushPromises()
