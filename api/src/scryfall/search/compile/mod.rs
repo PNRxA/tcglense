@@ -22,10 +22,10 @@ mod text;
 
 use sea_orm::Condition;
 
-use crate::db::Dialect;
 use super::error::SearchError;
 use super::lexer::Op;
 use super::parser::{Leaf, Node};
+use crate::db::Dialect;
 
 use color::color;
 use common::{artists_count, cond_one, frame, has_predicate, keyword, legality, str_eq};
@@ -70,7 +70,12 @@ fn compile_leaf(leaf: &Leaf, dialect: Dialect) -> Result<Condition, SearchError>
     }
 }
 
-fn compile_filter(key: &str, op: Op, value: &str, dialect: Dialect) -> Result<Condition, SearchError> {
+fn compile_filter(
+    key: &str,
+    op: Op,
+    value: &str,
+    dialect: Dialect,
+) -> Result<Condition, SearchError> {
     match key {
         "name" | "n" => Ok(cond_one(text_pattern(dialect, "name", value)?)),
         "t" | "type" => text_field(dialect, "type_line", "type", op, value),

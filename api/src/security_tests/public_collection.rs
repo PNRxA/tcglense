@@ -7,7 +7,11 @@ use super::harness::*;
 
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=25")).await;
-    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
     body["data"]
         .as_array()
         .expect("cards data array")
@@ -34,7 +38,12 @@ async fn own_card(app: &Router, token: &str, id: &str, quantity: i64) {
 async fn set_username(app: &Router, token: &str, name: &str) -> String {
     let (status, _, body) = send(
         app,
-        json_with_bearer("PUT", "/api/auth/username", token, json!({ "username": name })),
+        json_with_bearer(
+            "PUT",
+            "/api/auth/username",
+            token,
+            json!({ "username": name }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "set username failed: {body:?}");
@@ -78,7 +87,11 @@ async fn private_game_is_404_no_store() {
         format!("/api/u/{handle}/mtg/sets"),
     ] {
         let (status, headers, _) = send(&app, get(&path)).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{path} should 404 while private");
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{path} should 404 while private"
+        );
         assert_eq!(cache_control(&headers), Some("no-store"), "{path} cache");
     }
 }
@@ -137,7 +150,10 @@ async fn public_reads_leak_no_pii() {
         assert_eq!(status, StatusCode::OK, "{path} failed: {body:?}");
         let raw = body.to_string();
         assert!(!raw.contains(email), "{path} leaked the owner's email");
-        assert!(!raw.contains("password_hash"), "{path} leaked a password hash");
+        assert!(
+            !raw.contains("password_hash"),
+            "{path} leaked a password hash"
+        );
     }
 }
 
@@ -145,11 +161,11 @@ async fn public_reads_leak_no_pii() {
 async fn bad_handles_are_404_no_store() {
     let app = test_app_with_catalog().await;
     for path in [
-        "/api/u/nodash/mtg",      // no discriminator separator
-        "/api/u/alice-xx/mtg",    // non-numeric discriminator
-        "/api/u/alice-0/mtg",     // discriminator out of range
-        "/api/u/ghost-0001/mtg",  // well-formed but unknown user
-        "/api/u/ghost-0001",      // unknown profile
+        "/api/u/nodash/mtg",     // no discriminator separator
+        "/api/u/alice-xx/mtg",   // non-numeric discriminator
+        "/api/u/alice-0/mtg",    // discriminator out of range
+        "/api/u/ghost-0001/mtg", // well-formed but unknown user
+        "/api/u/ghost-0001",     // unknown profile
     ] {
         let (status, headers, _) = send(&app, get(path)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path} should 404");
@@ -294,22 +310,41 @@ async fn public_summary_sets_and_subtypes_are_readable() {
     // Summary: the owner owns 2 copies of exactly one card (see `owner_with_card`).
     let (status, headers, body) = send(&app, get(&format!("/api/u/{handle}/mtg/summary"))).await;
     assert_eq!(status, StatusCode::OK, "public summary failed: {body:?}");
-    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE));
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE)
+    );
     assert_eq!(body["unique_cards"], 1);
     assert_eq!(body["total_cards"], 2);
 
     // Per-set landing: the set the owned card belongs to is present, shared-cacheable.
     let (status, headers, body) = send(&app, get(&format!("/api/u/{handle}/mtg/sets"))).await;
     assert_eq!(status, StatusCode::OK, "public sets failed: {body:?}");
-    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE));
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE)
+    );
     let sets = body["data"].as_array().expect("sets data array");
-    assert!(!sets.is_empty(), "an owner of a card owns cards in >= 1 set");
+    assert!(
+        !sets.is_empty(),
+        "an owner of a card owns cards in >= 1 set"
+    );
 
     // Sub-type view: reachable publicly for the set the owned card is in (the shared
     // owned_subtype_page core, handle-resolved). A 200 confirms the read path works.
     let code = sets[0]["code"].as_str().expect("set code");
-    let (status, headers, _) =
-        send(&app, get(&format!("/api/u/{handle}/mtg/sets/{code}/subtypes"))).await;
-    assert_eq!(status, StatusCode::OK, "public set subtypes should be readable while public");
-    assert_eq!(cache_control(&headers), Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE));
+    let (status, headers, _) = send(
+        &app,
+        get(&format!("/api/u/{handle}/mtg/sets/{code}/subtypes")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public set subtypes should be readable while public"
+    );
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE)
+    );
 }

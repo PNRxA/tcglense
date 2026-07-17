@@ -54,18 +54,18 @@ pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibili
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
+pub use export::__path_export_deck;
 pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,
 };
-pub use export::__path_export_deck;
 pub use import::__path_import_deck;
 pub use read::{__path_get_deck, __path_list_decks};
 pub use sections::{
     __path_create_section, __path_delete_section, __path_reorder_sections, __path_update_section,
 };
 pub use write::{
-    __path_create_deck, __path_delete_deck, __path_move_deck_to_folder,
-    __path_set_deck_visibility, __path_update_deck,
+    __path_create_deck, __path_delete_deck, __path_move_deck_to_folder, __path_set_deck_visibility,
+    __path_update_deck,
 };
 
 // The `deck_id`-parameterised detail core, reused by the public sharing handler

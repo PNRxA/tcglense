@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 
-use super::IN_CHUNK;
 use super::super::{GAME, MtgjsonError};
+use super::IN_CHUNK;
 use crate::entities::prelude::{Card, Product};
 use crate::entities::{card, product};
 

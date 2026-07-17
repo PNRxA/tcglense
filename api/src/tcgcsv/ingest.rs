@@ -136,16 +136,27 @@ async fn refresh_inner(
     let progress = SyncProgress::start_products(groups_total as u64);
     for (i, group) in groups.iter().enumerate() {
         tokio::time::sleep(REQUEST_SPACING).await;
-        let products =
-            super::client::fetch_products(http, &base_url, user_agent, MTG_CATEGORY_ID, group.group_id)
-                .await?
-                .results;
+        let products = super::client::fetch_products(
+            http,
+            &base_url,
+            user_agent,
+            MTG_CATEGORY_ID,
+            group.group_id,
+        )
+        .await?
+        .results;
 
         tokio::time::sleep(REQUEST_SPACING).await;
         let prices = aggregate_prices(
-            super::client::fetch_prices(http, &base_url, user_agent, MTG_CATEGORY_ID, group.group_id)
-                .await?
-                .results,
+            super::client::fetch_prices(
+                http,
+                &base_url,
+                user_agent,
+                MTG_CATEGORY_ID,
+                group.group_id,
+            )
+            .await?
+            .results,
         );
 
         let models = build_group_products(group, products, &prices, msrp, now);
@@ -190,7 +201,9 @@ async fn refresh_inner(
             dataset: PRODUCTS_DATASET,
             status: "complete",
             source_updated_at: Some(&version),
-            detail: &format!("imported {total_products} sealed products from {groups_total} groups"),
+            detail: &format!(
+                "imported {total_products} sealed products from {groups_total} groups"
+            ),
             sets_imported: groups_total,
             cards_imported: total_products,
             started_at: started,
@@ -370,7 +383,10 @@ mod tests {
             .expect("sealed box present");
         assert_eq!(box_model.set_code.as_ref(), "mkm");
         assert_eq!(box_model.product_type.as_ref(), "collector_display");
-        assert_eq!(box_model.released_at.as_ref().as_deref(), Some("2024-02-09"));
+        assert_eq!(
+            box_model.released_at.as_ref().as_deref(),
+            Some("2024-02-09")
+        );
         assert_eq!(box_model.price_usd.as_ref().as_deref(), Some("199.99"));
         assert!(box_model.price_usd_foil.as_ref().is_none());
         // The curated MSRP is attached to the listed product.
@@ -437,7 +453,11 @@ mod tests {
         upsert_products(&db, second).await.expect("second upsert");
 
         let all = Product::find().all(&db).await.unwrap();
-        assert_eq!(all.len(), 1, "same (game, external_id) upserts, not duplicates");
+        assert_eq!(
+            all.len(),
+            1,
+            "same (game, external_id) upserts, not duplicates"
+        );
         assert_eq!(all[0].price_usd.as_deref(), Some("149.99"));
     }
 
@@ -457,8 +477,16 @@ mod tests {
         // Two editions of a real drop present in the shipped snapshot, neither in the
         // curated map: MSRP is derived from the gallery drop by foilness.
         let products = vec![
-            src_product(700795, "Secret Lair Drop: Cats of Chaos - Non-Foil Edition", &[]),
-            src_product(700796, "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition", &[]),
+            src_product(
+                700795,
+                "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+                &[],
+            ),
+            src_product(
+                700796,
+                "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition",
+                &[],
+            ),
         ];
         let models = build_group_products(
             &sld_group(),
@@ -486,7 +514,11 @@ mod tests {
         let msrp: HashMap<i64, String> = HashMap::from([(700795, "49.99".to_string())]);
         let models = build_group_products(
             &sld_group(),
-            vec![src_product(700795, "Secret Lair Drop: Cats of Chaos - Non-Foil Edition", &[])],
+            vec![src_product(
+                700795,
+                "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+                &[],
+            )],
             &HashMap::new(),
             &msrp,
             Utc::now(),

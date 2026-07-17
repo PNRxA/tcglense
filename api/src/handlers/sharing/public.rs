@@ -131,7 +131,11 @@ pub async fn public_summary(
 ) -> Result<Json<CollectionSummary>, AppError> {
     require_game(&game)?;
     let user_id = require_public_handle(&state, &handle, &game).await?;
-    let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let set = params
+        .set
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let set_codes =
         resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?;
     Ok(Json(

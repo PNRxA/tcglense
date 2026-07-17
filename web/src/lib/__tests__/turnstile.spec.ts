@@ -18,18 +18,14 @@ describe('loadTurnstile', () => {
     const { loadTurnstile } = await import('../turnstile')
 
     const first = loadTurnstile()
-    const firstScript = document.head.querySelector<HTMLScriptElement>(
-      '[data-tcglense-turnstile]',
-    )
+    const firstScript = document.head.querySelector<HTMLScriptElement>('[data-tcglense-turnstile]')
     expect(firstScript).not.toBeNull()
     queueMicrotask(() => firstScript?.dispatchEvent(new Event('error')))
     await expect(first).rejects.toThrow('failed to load Turnstile')
     expect(firstScript?.isConnected).toBe(false)
 
     const second = loadTurnstile()
-    const secondScript = document.head.querySelector<HTMLScriptElement>(
-      '[data-tcglense-turnstile]',
-    )
+    const secondScript = document.head.querySelector<HTMLScriptElement>('[data-tcglense-turnstile]')
     expect(secondScript).not.toBeNull()
     expect(secondScript).not.toBe(firstScript)
 

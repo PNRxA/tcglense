@@ -518,10 +518,7 @@ mod tests {
     fn carries_price_forward_over_missing_days() {
         // Card 1 has no snapshot on the 2nd; card 2 does, so the 2nd is on the axis and
         // card 1 must carry its last price ($5) forward rather than dropping out.
-        let holdings = vec![
-            holding(1, 1, 0),
-            holding(2, 1, 0),
-        ];
+        let holdings = vec![holding(1, 1, 0), holding(2, 1, 0)];
         let mut prices = HashMap::new();
         prices.insert(
             1,
@@ -563,10 +560,7 @@ mod tests {
     fn unpriced_card_does_not_gate_the_day() {
         // Card 1 is unpriced on the 1st; card 2 is priced, so the day is a real total, not
         // a null — one unpriced holding must not blank the whole collection's value.
-        let holdings = vec![
-            holding(1, 1, 0),
-            holding(2, 1, 0),
-        ];
+        let holdings = vec![holding(1, 1, 0), holding(2, 1, 0)];
         let mut prices = HashMap::new();
         prices.insert(1, vec![cell("2024-01-01", None, None)]);
         prices.insert(2, vec![cell("2024-01-01", Some("4.00"), None)]);

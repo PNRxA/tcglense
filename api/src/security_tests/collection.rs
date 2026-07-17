@@ -15,9 +15,17 @@ use crate::entities::{card, card_price_history, collection_item};
 /// Grab `n` real card external ids from the seeded catalog.
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=25")).await;
-    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
     let data = body["data"].as_array().expect("cards data array");
-    assert!(data.len() >= n, "need >= {n} seeded cards, got {}", data.len());
+    assert!(
+        data.len() >= n,
+        "need >= {n} seeded cards, got {}",
+        data.len()
+    );
     data.iter()
         .take(n)
         .map(|c| c["id"].as_str().expect("card id").to_string())
@@ -35,7 +43,11 @@ async fn first_set_card_id(app: &Router, set_code: &str) -> String {
         get(&format!("/api/games/mtg/sets/{set_code}/cards?page_size=1")),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "listing set {set_code} failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing set {set_code} failed: {body:?}"
+    );
     body["data"][0]["id"].as_str().expect("card id").to_string()
 }
 
@@ -43,7 +55,11 @@ async fn first_set_card_id(app: &Router, set_code: &str) -> String {
 /// valuation over them is a real number rather than null.
 async fn priced_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=50")).await;
-    assert_eq!(status, StatusCode::OK, "listing seeded cards failed: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
     let ids: Vec<String> = body["data"]
         .as_array()
         .expect("cards data array")
@@ -52,7 +68,11 @@ async fn priced_card_ids(app: &Router, n: usize) -> Vec<String> {
         .take(n)
         .map(|c| c["id"].as_str().expect("card id").to_string())
         .collect();
-    assert!(ids.len() >= n, "need >= {n} priced seeded cards, got {}", ids.len());
+    assert!(
+        ids.len() >= n,
+        "need >= {n} priced seeded cards, got {}",
+        ids.len()
+    );
     ids
 }
 
@@ -92,7 +112,9 @@ async fn collection_requires_authentication() {
             .method("PUT")
             .uri(card_path(&ids[0]))
             .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({ "quantity": 1, "foil_quantity": 0 }).to_string()))
+            .body(Body::from(
+                json!({ "quantity": 1, "foil_quantity": 0 }).to_string(),
+            ))
             .unwrap(),
     )
     .await;
@@ -117,11 +139,17 @@ async fn value_history_revalues_current_collection_and_matches_summary() {
     let (token, _) = register(&app, "history@example.com", "password123").await;
 
     // Empty collection -> an empty series (and no-store, per-user).
-    let (status, headers, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
-    assert!(body["data"].as_array().unwrap().is_empty(), "empty collection has no series");
+    assert!(
+        body["data"].as_array().unwrap().is_empty(),
+        "empty collection has no series"
+    );
 
     // Own a few priced cards today.
     let ids = priced_card_ids(&app, 3).await;
@@ -133,15 +161,25 @@ async fn value_history_revalues_current_collection_and_matches_summary() {
     // equal it because the seed anchors today's snapshot to each card's current price.
     let (_, _, summary) = send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
     let total_today = summary["total_value_usd"].clone();
-    assert!(total_today.is_string(), "priced holdings -> a real total, got {total_today:?}");
+    assert!(
+        total_today.is_string(),
+        "priced holdings -> a real total, got {total_today:?}"
+    );
 
     // Full daily series: the cards were added today, but their current quantities are
     // intentionally applied across the entire ~year of captured history.
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let points = body["data"].as_array().expect("value-history data array");
-    assert!(points.len() > 300, "the full daily series spans ~a year, got {}", points.len());
+    assert!(
+        points.len() > 300,
+        "the full daily series spans ~a year, got {}",
+        points.len()
+    );
 
     // Dates strictly ascend and every captured day values the current basket.
     let mut prev = "";
@@ -167,13 +205,22 @@ async fn value_history_revalues_current_collection_and_matches_summary() {
     // construction. It only reaches the response when it lands in a weekly bucket of its own
     // (a ~1-in-7 property of today's date), so skip it either way; `last()` below still pins
     // the revaluation.
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history?range=1y", &token)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history?range=1y", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let windowed = body["data"].as_array().expect("windowed data array");
-    assert!(!windowed.is_empty() && windowed.len() < points.len(), "1y weekly < full daily");
     assert!(
-        windowed.iter().skip(1).all(|point| point["value_usd"].is_string()),
+        !windowed.is_empty() && windowed.len() < points.len(),
+        "1y weekly < full daily"
+    );
+    assert!(
+        windowed
+            .iter()
+            .skip(1)
+            .all(|point| point["value_usd"].is_string()),
         "every captured day in the window values the current basket: {windowed:?}"
     );
     assert_eq!(windowed.last().unwrap()["value_usd"], total_today);
@@ -188,9 +235,15 @@ async fn value_history_revalues_current_collection_and_matches_summary() {
 
     // A second user sees only their own (empty) history.
     let (bob, _) = register(&app, "bob-history@example.com", "password123").await;
-    let (_, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history", &bob)).await;
-    assert!(body["data"].as_array().unwrap().is_empty(), "isolation: bob owns nothing");
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history", &bob),
+    )
+    .await;
+    assert!(
+        body["data"].as_array().unwrap().is_empty(),
+        "isolation: bob owns nothing"
+    );
 }
 
 /// The analytics pair rides the version-keyed response cache (#413): between a
@@ -206,8 +259,11 @@ async fn analytics_responses_are_cached_until_a_holdings_edit() {
     own_card(&app, &token, &ids[0], 1).await;
 
     // Prime the cache.
-    let (status, _, first) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    let (status, _, first) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(!first["data"].as_array().unwrap().is_empty());
 
@@ -219,18 +275,30 @@ async fn analytics_responses_are_cached_until_a_holdings_edit() {
         .exec(&app.state.db)
         .await
         .expect("raw quantity update");
-    let (status, _, second) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    let (status, _, second) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(first, second, "second read must be the cached body, not a recompute");
+    assert_eq!(
+        first, second,
+        "second read must be the cached body, not a recompute"
+    );
 
     // A real edit through the handler bumps the version: the next read recomputes
     // and now sees both the edit and the raw update above.
     own_card(&app, &token, &ids[1], 1).await;
-    let (status, _, third) =
-        send(&app, get_with_bearer("/api/collection/mtg/value-history", &token)).await;
+    let (status, _, third) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-history", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_ne!(second, third, "an edit must invalidate the cached analytics body");
+    assert_ne!(
+        second, third,
+        "an edit must invalidate the cached analytics body"
+    );
 
     // Movers rides the same cache and the same bump (its body carries no
     // user-variable data before any holdings exist beyond the seed prices, so
@@ -264,7 +332,12 @@ async fn set_get_and_remove_round_trip() {
     // Add 3 regular + 1 foil.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 3, "foil_quantity": 1 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 3, "foil_quantity": 1 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "set failed: {body:?}");
@@ -285,17 +358,24 @@ async fn set_get_and_remove_round_trip() {
     assert_eq!(entry["quantity"], 3);
     assert_eq!(entry["foil_quantity"], 1);
     assert_eq!(entry["card"]["id"], id.as_str());
-    assert!(entry["card"]["name"].as_str().is_some(), "entry embeds the card");
+    assert!(
+        entry["card"]["name"].as_str().is_some(),
+        "entry embeds the card"
+    );
 
     // Summary aggregates copies (3 + 1 = 4) over one unique card.
-    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["unique_cards"], 1);
     assert_eq!(body["total_cards"], 4);
 
     // The per-set landing lists the one set that card belongs to, with owned counts,
     // and a set-scoped summary matches the whole-collection one (only one set owned).
-    let set_code = entry["card"]["set_code"].as_str().expect("card set_code").to_string();
+    let set_code = entry["card"]["set_code"]
+        .as_str()
+        .expect("card set_code")
+        .to_string();
     let (status, headers, body) =
         send(&app, get_with_bearer("/api/collection/mtg/sets", &token)).await;
     assert_eq!(status, StatusCode::OK);
@@ -305,11 +385,17 @@ async fn set_get_and_remove_round_trip() {
     assert_eq!(sets[0]["code"], set_code);
     assert_eq!(sets[0]["owned_cards"], 1);
     assert_eq!(sets[0]["owned_copies"], 4);
-    assert!(sets[0]["name"].as_str().is_some(), "set tile carries a name");
+    assert!(
+        sets[0]["name"].as_str().is_some(),
+        "set tile carries a name"
+    );
 
     let (status, _, body) = send(
         &app,
-        get_with_bearer(&format!("/api/collection/mtg/summary?set={set_code}"), &token),
+        get_with_bearer(
+            &format!("/api/collection/mtg/summary?set={set_code}"),
+            &token,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -327,7 +413,12 @@ async fn set_get_and_remove_round_trip() {
     // Updating the same card upserts (no duplicate row).
     let (_, _, body) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 5, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 5, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(body["quantity"], 5);
@@ -338,7 +429,12 @@ async fn set_get_and_remove_round_trip() {
     // Zeroing both counts removes the card from the collection.
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &token, json!({ "quantity": 0, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -359,7 +455,12 @@ async fn collections_are_isolated_per_user() {
 
     send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &alice, json!({ "quantity": 2, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &alice,
+            json!({ "quantity": 2, "foil_quantity": 0 }),
+        ),
     )
     .await;
 
@@ -409,11 +510,8 @@ async fn include_related_spans_the_set_group() {
     own_card(&app, &token, &token_id, 1).await;
 
     // A single-set scope sees only that set's owned card.
-    let (status, _, body) = send(
-        &app,
-        get_with_bearer("/api/collection/mtg?set=dmb", &token),
-    )
-    .await;
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg?set=dmb", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1, "plain set scope stays a single set");
     assert_eq!(body["data"][0]["card"]["set_code"], "dmb");
@@ -432,7 +530,10 @@ async fn include_related_spans_the_set_group() {
         .iter()
         .map(|e| e["card"]["set_code"].as_str().unwrap())
         .collect();
-    assert!(codes.contains(&"dmb") && codes.contains(&"tdmb"), "got {codes:?}");
+    assert!(
+        codes.contains(&"dmb") && codes.contains(&"tdmb"),
+        "got {codes:?}"
+    );
 
     // Entering from the sub-set resolves the same group (rooted at `dmb`).
     let (_, _, body) = send(
@@ -517,7 +618,12 @@ async fn owned_batch_is_isolated_per_user() {
     // map (and per-user data is never shared-cached).
     let (status, headers, body) = send(
         &app,
-        json_with_bearer("POST", "/api/collection/mtg/owned", &bob, json!({ "ids": [id] })),
+        json_with_bearer(
+            "POST",
+            "/api/collection/mtg/owned",
+            &bob,
+            json!({ "ids": [id] }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "owned failed: {body:?}");
@@ -530,7 +636,12 @@ async fn owned_batch_is_isolated_per_user() {
     // Alice sees her own count.
     let (_, _, body) = send(
         &app,
-        json_with_bearer("POST", "/api/collection/mtg/owned", &alice, json!({ "ids": [id] })),
+        json_with_bearer(
+            "POST",
+            "/api/collection/mtg/owned",
+            &alice,
+            json!({ "ids": [id] }),
+        ),
     )
     .await;
     assert_eq!(body["data"][id.as_str()]["quantity"], 3);
@@ -553,20 +664,33 @@ async fn writes_and_aggregations_are_isolated_between_users() {
     // Both own the SAME card, different counts, via the same path (different token).
     let (_, _, a_body) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &alice, json!({ "quantity": 2, "foil_quantity": 1 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &alice,
+            json!({ "quantity": 2, "foil_quantity": 1 }),
+        ),
     )
     .await;
     assert_eq!(a_body["quantity"], 2);
     let (_, _, b_body) = send(
         &app,
-        json_with_bearer("PUT", &card_path(id), &bob, json!({ "quantity": 5, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &card_path(id),
+            &bob,
+            json!({ "quantity": 5, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(b_body["quantity"], 5);
 
     // Distinct rows: Bob's write did not overwrite Alice's holding, and vice versa.
     let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &alice)).await;
-    assert_eq!(body["quantity"], 2, "alice's count is unchanged by bob's write");
+    assert_eq!(
+        body["quantity"], 2,
+        "alice's count is unchanged by bob's write"
+    );
     assert_eq!(body["foil_quantity"], 1);
     let (_, _, body) = send(&app, get_with_bearer(&card_path(id), &bob)).await;
     assert_eq!(body["quantity"], 5);
@@ -612,14 +736,20 @@ async fn quantity_sort_orders_the_owned_list_by_copies() {
     }
 
     // Default direction is most copies first.
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg?sort=quantity", &token)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg?sort=quantity", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "quantity sort failed: {body:?}");
     assert_eq!(quantities(&body), vec![5, 3, 1]);
 
     // An explicit ascending direction reverses it (fewest copies first).
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg?sort=quantity&dir=asc", &token)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg?sort=quantity&dir=asc", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "quantity asc sort failed: {body:?}");
     assert_eq!(quantities(&body), vec![1, 3, 5]);
 }
@@ -667,7 +797,10 @@ async fn export_requires_auth_and_produces_provider_csv() {
     assert_eq!(content_type(&headers), Some("text/csv; charset=utf-8"));
     assert_eq!(cache_control(&headers), Some("no-store"));
     let disposition = content_disposition(&headers);
-    assert!(disposition.contains("attachment"), "disposition: {disposition}");
+    assert!(
+        disposition.contains("attachment"),
+        "disposition: {disposition}"
+    );
     assert!(
         disposition.contains("tcglense-mtg-collection-archidekt.csv"),
         "disposition: {disposition}"
@@ -681,9 +814,18 @@ async fn export_requires_auth_and_produces_provider_csv() {
     );
     let data: Vec<&str> = lines.collect();
     assert_eq!(data.len(), 3, "regular + foil + regular rows: {data:?}");
-    assert!(data.iter().any(|r| r.contains(&ids[0])), "card A id missing: {data:?}");
-    assert!(data.iter().any(|r| r.contains(&ids[1])), "card B id missing: {data:?}");
-    assert!(data.iter().any(|r| r.contains(",Foil,")), "no foil row: {data:?}");
+    assert!(
+        data.iter().any(|r| r.contains(&ids[0])),
+        "card A id missing: {data:?}"
+    );
+    assert!(
+        data.iter().any(|r| r.contains(&ids[1])),
+        "card B id missing: {data:?}"
+    );
+    assert!(
+        data.iter().any(|r| r.contains(",Foil,")),
+        "no foil row: {data:?}"
+    );
 
     // Moxfield shape: quote-every-field, its own 13-column header + filename.
     let (status, headers, body) = send_text(
@@ -873,14 +1015,20 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
     )
     .await;
 
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
-    assert_eq!(body["as_of"].as_str(), Some(d0.as_str()), "as_of = newest owned snapshot");
+    assert_eq!(
+        body["as_of"].as_str(),
+        Some(d0.as_str()),
+        "as_of = newest owned snapshot"
+    );
     assert_eq!(body["day_as_of"].as_str(), Some(d0.as_str()));
 
     // Day: gainers A(+$10) then C(+$2); loser B(-$10). change_usd carries the sign.
-    assert_eq!(mover_ids(&body["day"]["gainers"]), vec![a.clone(), c.clone()]);
+    assert_eq!(
+        mover_ids(&body["day"]["gainers"]),
+        vec![a.clone(), c.clone()]
+    );
     assert_eq!(body["day"]["gainers"][0]["change_usd"], "10.00");
     assert_eq!(body["day"]["gainers"][0]["value_now"], "20.00");
     assert_eq!(body["day"]["gainers"][0]["value_prev"], "10.00");
@@ -890,7 +1038,10 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
 
     // Month: gainer A(+$10); losers most-negative-first C(-$40) then B(-$10).
     assert_eq!(mover_ids(&body["month"]["gainers"]), vec![a.clone()]);
-    assert_eq!(mover_ids(&body["month"]["losers"]), vec![c.clone(), b.clone()]);
+    assert_eq!(
+        mover_ids(&body["month"]["losers"]),
+        vec![c.clone(), b.clone()]
+    );
     assert_eq!(body["month"]["losers"][0]["change_usd"], "-40.00");
 
     // The de-dup: the same card C is a day gainer AND a month loser, each with its card payload.
@@ -928,8 +1079,7 @@ async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     )
     .await;
 
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
     assert_eq!(body["as_of"], d0, "longer windows keep the newest anchor");
     assert_eq!(body["day_as_of"], d1, "1D reports its fallback anchor");
@@ -975,11 +1125,13 @@ async fn movers_day_falls_back_across_a_missing_capture_day() {
     )
     .await;
 
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
     assert_eq!(body["as_of"], d0, "longer windows keep the newest anchor");
-    assert_eq!(body["day_as_of"], d2, "1D reports the previous available capture");
+    assert_eq!(
+        body["day_as_of"], d2,
+        "1D reports the previous available capture"
+    );
     assert_eq!(mover_ids(&body["day"]["gainers"]), vec![id.clone()]);
     assert_eq!(body["day"]["gainers"][0]["value_prev"], "5.00");
     assert_eq!(body["day"]["gainers"][0]["value_now"], "8.00");
@@ -1010,11 +1162,13 @@ async fn movers_day_keeps_the_newest_anchor_when_the_fallback_is_also_empty() {
     )
     .await;
 
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
     assert_eq!(body["as_of"], d0);
-    assert_eq!(body["day_as_of"], d0, "an empty retry keeps the newest anchor");
+    assert_eq!(
+        body["day_as_of"], d0,
+        "an empty retry keeps the newest anchor"
+    );
     assert!(body["day"]["gainers"].as_array().unwrap().is_empty());
     assert!(body["day"]["losers"].as_array().unwrap().is_empty());
 }
@@ -1043,8 +1197,7 @@ async fn movers_month_window_empties_when_baseline_predates_history() {
     )
     .await;
 
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["as_of"].as_str(), Some(d0.as_str()));
     // Day + week: a +$3 gainer.
@@ -1086,8 +1239,7 @@ async fn movers_supports_year_two_year_three_year_and_all_time() {
     )
     .await;
 
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
     assert_eq!(body["as_of"].as_str(), Some(d0.as_str()));
 

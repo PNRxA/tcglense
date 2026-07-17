@@ -4,10 +4,7 @@
 
 use std::collections::HashMap;
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     RelationTrait, SelectModel, SelectTwo, Selector, sea_query::JoinType,
@@ -79,9 +76,16 @@ pub async fn list_wishlist(
     let set_codes =
         resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
 
-    let paginator =
-        wishlist_query(user.id, &game, set_codes.as_deref(), search, sort, dir, dialect)
-            .paginate(&state.db, page_size);
+    let paginator = wishlist_query(
+        user.id,
+        &game,
+        set_codes.as_deref(),
+        search,
+        sort,
+        dir,
+        dialect,
+    )
+    .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
 
@@ -221,7 +225,11 @@ pub async fn wishlist_summary(
     // Resolve the optional scope: one set, or its whole group under include-related, or
     // `None` for the whole wish list — the same resolution the wish-list list uses, so
     // the value spans identical sets. Then aggregate over exactly those rows.
-    let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let set = params
+        .set
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let set_codes =
         resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?;
     Ok(Json(
@@ -249,7 +257,9 @@ pub(super) async fn summary(
     set_codes: Option<&[String]>,
     bulk_threshold_cents: i128,
 ) -> Result<CollectionSummary, AppError> {
-    let rows = wanted_summary_rows(user_id, game, set_codes).all(db).await?;
+    let rows = wanted_summary_rows(user_id, game, set_codes)
+        .all(db)
+        .await?;
     Ok(summarize_holdings(&rows, bulk_threshold_cents))
 }
 

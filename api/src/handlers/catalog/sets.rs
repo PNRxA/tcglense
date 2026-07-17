@@ -128,7 +128,11 @@ pub async fn list_sets(
         .filter(card_set::Column::Game.eq(game.as_str()))
         // Explicit NULLS LAST so a NULL release date sorts last under DESC on Postgres
         // too (SQLite's DESC already parks NULL last, so this is a no-op there).
-        .order_by_with_nulls(card_set::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
+        .order_by_with_nulls(
+            card_set::Column::ReleasedAt,
+            Order::Desc,
+            NullOrdering::Last,
+        )
         .order_by_asc(card_set::Column::Name)
         .all(&state.db)
         .await?;
@@ -168,7 +172,8 @@ pub async fn get_set(
 ) -> Result<Json<SetResponse>, AppError> {
     require_game(&game)?;
     let set = load_set(&state, &game, &code).await?;
-    let has_subtypes = crate::scryfall::subtypes::set_has_subtypes(&state.db, &game, &set.code).await?;
+    let has_subtypes =
+        crate::scryfall::subtypes::set_has_subtypes(&state.db, &game, &set.code).await?;
     let mut response = SetResponse::from(set);
     response.has_subtypes = has_subtypes;
     Ok(Json(response))
@@ -348,7 +353,11 @@ pub async fn list_set_drops(
     let (page, page_size) = params.drop_page_and_size();
     let total = buckets.len() as u64;
     let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
-    let on_page: Vec<_> = buckets.into_iter().skip(start).take(page_size as usize).collect();
+    let on_page: Vec<_> = buckets
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .collect();
 
     let oracle_ids: HashSet<&str> = on_page
         .iter()
@@ -528,7 +537,10 @@ mod tests {
             card(5, Some("or-none"), None, None), // absent from the map -> contributes nothing
         ];
         // 1.50 + 3.00 + 2.00 = 6.50.
-        assert_eq!(drop_cheapest_prints(&cards, &cheapest).as_deref(), Some("6.50"));
+        assert_eq!(
+            drop_cheapest_prints(&cards, &cheapest).as_deref(),
+            Some("6.50")
+        );
     }
 
     #[test]

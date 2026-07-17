@@ -163,7 +163,11 @@ impl UserRateLimiters {
 /// Pull the raw `Authorization: Bearer <token>` value out of a request, if present
 /// and non-empty. Shared by the JWT and API-key user-id resolvers below.
 fn bearer_token(request: &Request) -> Option<&str> {
-    let value = request.headers().get(header::AUTHORIZATION)?.to_str().ok()?;
+    let value = request
+        .headers()
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
     value
         .strip_prefix("Bearer ")
         .map(str::trim)
@@ -290,7 +294,10 @@ mod tests {
         let retry = limiters
             .check(UserRoute::General, user)
             .expect_err("the 301st general request is limited");
-        assert!(!retry.is_zero(), "a limited request reports a positive retry-after");
+        assert!(
+            !retry.is_zero(),
+            "a limited request reports a positive retry-after"
+        );
     }
 
     #[test]
@@ -345,7 +352,10 @@ mod tests {
         let retry = limiters
             .check(UserRoute::Analytics, user)
             .expect_err("the 31st analytics request is limited");
-        assert!(!retry.is_zero(), "a limited request reports a positive retry-after");
+        assert!(
+            !retry.is_zero(),
+            "a limited request reports a positive retry-after"
+        );
 
         // A different class for the same user has its own budget (independence).
         assert!(limiters.check(UserRoute::General, user).is_ok());

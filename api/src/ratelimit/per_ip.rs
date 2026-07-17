@@ -346,7 +346,11 @@ mod tests {
             "/api/games/mtg/status",
             "/api/games/mtg/scan",
         ] {
-            assert_eq!(IpRoute::from_path(excluded), None, "{excluded} is un-limited");
+            assert_eq!(
+                IpRoute::from_path(excluded),
+                None,
+                "{excluded} is un-limited"
+            );
         }
 
         // The exclusions are structural, not suffix matches: an attacker-chosen

@@ -15,8 +15,8 @@ use reqwest::{
     header::{ETAG, IF_NONE_MATCH},
 };
 
-use super::model::AllPrintings;
 use super::MtgjsonError;
+use super::model::AllPrintings;
 
 /// The result of a conditional fetch: either the server said "unchanged" (`304`) or we
 /// downloaded + parsed a fresh copy (with its new `ETag`, when present).

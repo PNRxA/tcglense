@@ -104,9 +104,11 @@ pub fn derive(set_code: &str, external_id: &str, name: &str) -> Option<String> {
 fn price_for<'a>(overrides: &'a HashMap<String, OverrideEntry>, slug: &str, foil: bool) -> &'a str {
     let over = overrides.get(slug);
     if foil {
-        over.and_then(|o| o.foil.as_deref()).unwrap_or(STANDARD_FOIL)
+        over.and_then(|o| o.foil.as_deref())
+            .unwrap_or(STANDARD_FOIL)
     } else {
-        over.and_then(|o| o.non_foil.as_deref()).unwrap_or(STANDARD_NON_FOIL)
+        over.and_then(|o| o.non_foil.as_deref())
+            .unwrap_or(STANDARD_NON_FOIL)
     }
 }
 
@@ -207,7 +209,10 @@ mod tests {
                 e.non_foil.is_some() || e.foil.is_some(),
                 "override {slug:?} sets at least one edition price"
             );
-            for price in [e.non_foil.as_deref(), e.foil.as_deref()].into_iter().flatten() {
+            for price in [e.non_foil.as_deref(), e.foil.as_deref()]
+                .into_iter()
+                .flatten()
+            {
                 assert!(
                     is_valid_price(price),
                     "override {slug:?} price {price:?} is a valid 2-dp USD amount"

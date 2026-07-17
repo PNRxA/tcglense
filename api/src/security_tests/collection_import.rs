@@ -59,10 +59,14 @@ async fn saved_source_lifecycle() {
     let (token, _) = register(&app, "syncer@example.com", "password123").await;
 
     // Nothing saved yet -> null (and no-store).
-    let (status, headers, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
-    assert!(body.is_null(), "no saved source should serialize as null: {body:?}");
+    assert!(
+        body.is_null(),
+        "no saved source should serialize as null: {body:?}"
+    );
 
     // Save a link from a full Archidekt URL -> the numeric id is extracted.
     let (status, _, body) = send(
@@ -79,7 +83,10 @@ async fn saved_source_lifecycle() {
     assert_eq!(body["provider"], "archidekt");
     assert_eq!(body["external_id"], "1042487");
     assert_eq!(body["url"], "https://archidekt.com/collection/v2/1042487");
-    assert!(body["last_synced_at"].is_null(), "a freshly-saved link has never synced");
+    assert!(
+        body["last_synced_at"].is_null(),
+        "a freshly-saved link has never synced"
+    );
     assert_eq!(body["smart"], false, "smart sync defaults off when omitted");
 
     // Read it back.
@@ -124,9 +131,17 @@ async fn saved_source_lifecycle() {
     // covered by `collection_import::moxfield`'s unit tests.)
 
     // Forget it -> 204, then it reads back as null again (delete is idempotent).
-    let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &token)).await;
+    let (status, _, _) = send(
+        &app,
+        delete_with_bearer("/api/collection/mtg/source", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &token)).await;
+    let (status, _, _) = send(
+        &app,
+        delete_with_bearer("/api/collection/mtg/source", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
     assert_eq!(status, StatusCode::OK);
@@ -158,7 +173,10 @@ async fn saved_source_is_isolated_per_user() {
 
     // Bob has no saved link of his own — Alice's is invisible to him.
     let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &bob)).await;
-    assert!(body.is_null(), "another user's saved link must not leak: {body:?}");
+    assert!(
+        body.is_null(),
+        "another user's saved link must not leak: {body:?}"
+    );
 
     // Bob saving his own link creates a separate row; it must not overwrite Alice's.
     let (status, _, body) = send(
@@ -174,13 +192,19 @@ async fn saved_source_is_isolated_per_user() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["external_id"], "222");
     let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &alice)).await;
-    assert_eq!(body["external_id"], "111", "bob's save must not overwrite alice's link");
+    assert_eq!(
+        body["external_id"], "111",
+        "bob's save must not overwrite alice's link"
+    );
 
     // Bob deleting his link leaves Alice's intact (delete is scoped to his own row).
     let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &bob)).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &alice)).await;
-    assert_eq!(body["external_id"], "111", "bob's delete must not remove alice's link");
+    assert_eq!(
+        body["external_id"], "111",
+        "bob's delete must not remove alice's link"
+    );
     let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &bob)).await;
     assert!(body.is_null(), "bob's own link is gone");
 }
@@ -201,7 +225,11 @@ async fn save_and_import_reject_bad_provider_and_source() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "unknown provider: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "unknown provider: {body:?}"
+    );
 
     // Known provider but a source with no id in it -> 422 (resolves before any fetch).
     let (status, _, _) = send(
@@ -266,7 +294,11 @@ async fn moxfield_link_import_and_save_are_temporarily_disabled() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "moxfield import disabled: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "moxfield import disabled: {body:?}"
+    );
     assert!(
         body["error"].as_str().is_some_and(|e| e.contains("CSV")),
         "the error points the user at the CSV upload: {body:?}"
@@ -284,12 +316,19 @@ async fn moxfield_link_import_and_save_are_temporarily_disabled() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "moxfield save disabled: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "moxfield save disabled: {body:?}"
+    );
 
     // Nothing was saved, so there's still no source on file.
     let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.is_null(), "a disabled provider's link is never saved: {body:?}");
+    assert!(
+        body.is_null(),
+        "a disabled provider's link is never saved: {body:?}"
+    );
 }
 
 #[tokio::test]
@@ -311,7 +350,11 @@ async fn unknown_game_is_404_for_source_routes() {
     let app = test_app_with_catalog().await;
     let (token, _) = register(&app, "wrong-game@example.com", "password123").await;
 
-    let (status, _, _) = send(&app, get_with_bearer("/api/collection/pokemon/source", &token)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/pokemon/source", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -361,7 +404,9 @@ async fn csv_import_requires_authentication() {
         .method("POST")
         .uri("/api/collection/mtg/import/csv?mode=overwrite")
         .header(CONTENT_TYPE, "text/csv")
-        .body(Body::from("Scryfall ID,Finish,Quantity\ndummy-dmb-0001,Normal,1\n"))
+        .body(Body::from(
+            "Scryfall ID,Finish,Quantity\ndummy-dmb-0001,Normal,1\n",
+        ))
         .unwrap();
     let (status, headers, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -375,7 +420,11 @@ async fn csv_import_rejects_a_missing_or_bad_mode() {
     let csv = "Scryfall ID,Finish,Quantity\ndummy-dmb-0001,Normal,1\n";
 
     // No mode query param at all.
-    let (status, _, _) = send(&app, csv_upload("/api/collection/mtg/import/csv", &token, csv)).await;
+    let (status, _, _) = send(
+        &app,
+        csv_upload("/api/collection/mtg/import/csv", &token, csv),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // An unrecognised mode.
@@ -480,13 +529,22 @@ async fn csv_import_sniffs_a_moxfield_export_and_resolves_by_set_and_number() {
     .await;
     assert_eq!(status, StatusCode::OK, "import failed: {body:?}");
     assert_eq!(cache_control(&headers), Some("no-store"));
-    assert_eq!(body["provider"], "moxfield", "the shape was sniffed as Moxfield");
-    assert_eq!(body["matched_cards"], 2, "the uppercase Edition still matched");
+    assert_eq!(
+        body["provider"], "moxfield",
+        "the shape was sniffed as Moxfield"
+    );
+    assert_eq!(
+        body["matched_cards"], 2,
+        "the uppercase Edition still matched"
+    );
     assert_eq!(body["unmatched_cards"], 1);
     assert_eq!(body["foil_copies"], 2);
     assert_eq!(body["regular_copies"], 3);
 
     let (status, _, list) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(list["total"], 2, "the proxy and the unknown card were not imported");
+    assert_eq!(
+        list["total"], 2,
+        "the proxy and the unknown card were not imported"
+    );
 }

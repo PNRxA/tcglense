@@ -67,9 +67,7 @@ impl MigrationTrait for Migration {
             // plain-column index for them (uniqueness stays on the functional index).
             manager
                 .get_connection()
-                .execute_unprepared(
-                    r#"CREATE INDEX "idx_users_email_lookup" ON "users" ("email")"#,
-                )
+                .execute_unprepared(r#"CREATE INDEX "idx_users_email_lookup" ON "users" ("email")"#)
                 .await?;
         } else {
             manager

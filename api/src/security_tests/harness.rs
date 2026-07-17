@@ -48,8 +48,12 @@ pub(super) async fn test_state() -> AppState {
 
     // Plain clients: the import routes that use them aren't exercised over the
     // network in these in-process tests.
-    let http = reqwest::Client::builder().build().expect("build http client");
-    let image_http = reqwest::Client::builder().build().expect("build image client");
+    let http = reqwest::Client::builder()
+        .build()
+        .expect("build http client");
+    let image_http = reqwest::Client::builder()
+        .build()
+        .expect("build image client");
 
     // No Redis in the in-process security tests: the in-memory limiter is exercised
     // (identical behaviour), so the per-IP rate-limit test passes unchanged.
@@ -110,10 +114,13 @@ pub(super) async fn test_app_trusting_proxy() -> TestApp {
         trust_proxy_headers: true,
         ..crate::test_support::test_config()
     };
-    let http = reqwest::Client::builder().build().expect("build http client");
-    let image_http = reqwest::Client::builder().build().expect("build image client");
-    let state =
-        AppState::new(config, db, http, image_http, None).expect("assemble test app state");
+    let http = reqwest::Client::builder()
+        .build()
+        .expect("build http client");
+    let image_http = reqwest::Client::builder()
+        .build()
+        .expect("build image client");
+    let state = AppState::new(config, db, http, image_http, None).expect("assemble test app state");
     test_app_over(state)
 }
 
@@ -129,10 +136,13 @@ pub(super) async fn test_app_signups_disabled(message: Option<&str>) -> TestApp 
         signups_disabled_message: message.map(str::to_string),
         ..crate::test_support::test_config()
     };
-    let http = reqwest::Client::builder().build().expect("build http client");
-    let image_http = reqwest::Client::builder().build().expect("build image client");
-    let state =
-        AppState::new(config, db, http, image_http, None).expect("assemble test app state");
+    let http = reqwest::Client::builder()
+        .build()
+        .expect("build http client");
+    let image_http = reqwest::Client::builder()
+        .build()
+        .expect("build image client");
+    let state = AppState::new(config, db, http, image_http, None).expect("assemble test app state");
     test_app_over(state)
 }
 
@@ -201,12 +211,19 @@ pub(super) async fn send_text(app: &Router, req: Request<Body>) -> (StatusCode, 
     let bytes = to_bytes(res.into_body(), usize::MAX)
         .await
         .expect("read response body");
-    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+    (
+        status,
+        headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
 
 /// Like [`send`] but returns the raw body bytes, for binary routes (e.g. the mirror's
 /// fingerprint-index payload) whose bodies are neither JSON nor UTF-8 text.
-pub(super) async fn send_bytes(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+pub(super) async fn send_bytes(
+    app: &Router,
+    req: Request<Body>,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
     let res = app
         .clone()
         .oneshot(req)
@@ -290,12 +307,7 @@ pub(super) fn get_with_bearer(uri: &str, token: &str) -> Request<Body> {
 
 /// A request with a JSON body and a bearer access token, for authenticated writes
 /// (e.g. `PUT`/`POST` on the collection routes).
-pub(super) fn json_with_bearer(
-    method: &str,
-    uri: &str,
-    token: &str,
-    body: Value,
-) -> Request<Body> {
+pub(super) fn json_with_bearer(method: &str, uri: &str, token: &str, body: Value) -> Request<Body> {
     Request::builder()
         .method(method)
         .uri(uri)
@@ -360,7 +372,10 @@ pub(super) async fn register(app: &TestApp, email: &str, password: &str) -> (Str
         StatusCode::OK,
         "complete-registration failed: {body:?}"
     );
-    let access = body["access_token"].as_str().expect("access_token").to_string();
+    let access = body["access_token"]
+        .as_str()
+        .expect("access_token")
+        .to_string();
     let refresh = refresh_token_from(&headers).expect("refresh cookie");
     (access, refresh)
 }
@@ -376,7 +391,10 @@ pub(super) async fn login(app: &TestApp, email: &str, password: &str) -> (String
     )
     .await;
     assert_eq!(status, StatusCode::OK, "login failed: {body:?}");
-    let access = body["access_token"].as_str().expect("access_token").to_string();
+    let access = body["access_token"]
+        .as_str()
+        .expect("access_token")
+        .to_string();
     let refresh = refresh_token_from(&headers).expect("refresh cookie");
     (access, refresh)
 }

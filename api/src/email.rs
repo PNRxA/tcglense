@@ -267,20 +267,47 @@ mod tests {
 
     #[test]
     fn message_builders_embed_the_link_and_recipient() {
-        let complete =
-            registration_email("a@example.com", "https://x.test/complete-registration?token=abc");
+        let complete = registration_email(
+            "a@example.com",
+            "https://x.test/complete-registration?token=abc",
+        );
         assert_eq!(complete.to, "a@example.com");
-        assert!(complete.html.contains("https://x.test/complete-registration?token=abc"));
-        assert!(complete.text.contains("https://x.test/complete-registration?token=abc"));
+        assert!(
+            complete
+                .html
+                .contains("https://x.test/complete-registration?token=abc")
+        );
+        assert!(
+            complete
+                .text
+                .contains("https://x.test/complete-registration?token=abc")
+        );
 
         let verify = verification_email("a@example.com", "https://x.test/verify-email?token=abc");
         assert_eq!(verify.to, "a@example.com");
-        assert!(verify.html.contains("https://x.test/verify-email?token=abc"));
-        assert!(verify.text.contains("https://x.test/verify-email?token=abc"));
+        assert!(
+            verify
+                .html
+                .contains("https://x.test/verify-email?token=abc")
+        );
+        assert!(
+            verify
+                .text
+                .contains("https://x.test/verify-email?token=abc")
+        );
 
-        let reset = password_reset_email("a@example.com", "https://x.test/reset-password?token=abc");
-        assert!(reset.html.contains("https://x.test/reset-password?token=abc"));
-        assert!(reset.text.contains("https://x.test/reset-password?token=abc"));
+        let reset =
+            password_reset_email("a@example.com", "https://x.test/reset-password?token=abc");
+        assert!(
+            reset
+                .html
+                .contains("https://x.test/reset-password?token=abc")
+        );
+        assert!(
+            reset
+                .text
+                .contains("https://x.test/reset-password?token=abc")
+        );
     }
 
     #[tokio::test]
@@ -294,7 +321,10 @@ mod tests {
         ] {
             assert!(!disabled.is_enabled());
             disabled
-                .send(verification_email("a@example.com", "https://x.test/v?token=t"))
+                .send(verification_email(
+                    "a@example.com",
+                    "https://x.test/v?token=t",
+                ))
                 .await
                 .expect("disabled send is a logged no-op");
         }
@@ -302,7 +332,10 @@ mod tests {
         let mailbox = Mailbox::default();
         let capture = Emailer::Capture(mailbox.clone());
         capture
-            .send(verification_email("b@example.com", "https://x.test/v?token=t2"))
+            .send(verification_email(
+                "b@example.com",
+                "https://x.test/v?token=t2",
+            ))
             .await
             .expect("capture send succeeds");
         let sent = mailbox.emails();

@@ -292,11 +292,7 @@ async fn touch_last_used(db: &DatabaseConnection, row: api_key::Model) {
 /// Soft-revoke the key `key_id` owned by `user_id`. Returns `false` when no such
 /// key exists for that user (so the caller can 404 without leaking another user's
 /// key ids); revoking an already-revoked key is an idempotent `true`.
-pub async fn revoke(
-    db: &DatabaseConnection,
-    key_id: i32,
-    user_id: i32,
-) -> Result<bool, AppError> {
+pub async fn revoke(db: &DatabaseConnection, key_id: i32, user_id: i32) -> Result<bool, AppError> {
     let Some(row) = ApiKey::find_by_id(key_id)
         .filter(api_key::Column::UserId.eq(user_id))
         .one(db)
@@ -352,10 +348,7 @@ pub async fn list_active_for_user(
 /// How many live (usable) keys the user currently holds — the per-user cap check.
 /// Counts only keys that still work (not revoked, not expired), matching the list, so
 /// an already-dead key never blocks a new one; pruning hard-deletes it shortly after.
-pub async fn count_active_for_user(
-    db: &DatabaseConnection,
-    user_id: i32,
-) -> Result<u64, AppError> {
+pub async fn count_active_for_user(db: &DatabaseConnection, user_id: i32) -> Result<u64, AppError> {
     Ok(ApiKey::find()
         .filter(api_key::Column::UserId.eq(user_id))
         .filter(live_filter(Utc::now()))
@@ -395,8 +388,14 @@ mod tests {
         // "tcgl_" (5) + 32 bytes -> 64 hex chars.
         assert_eq!(a.len(), 5 + 64);
         assert_ne!(a, b);
-        assert_eq!(crate::auth::secret::sha256_hex(&a), crate::auth::secret::sha256_hex(&a));
-        assert_ne!(crate::auth::secret::sha256_hex(&a), crate::auth::secret::sha256_hex(&b));
+        assert_eq!(
+            crate::auth::secret::sha256_hex(&a),
+            crate::auth::secret::sha256_hex(&a)
+        );
+        assert_ne!(
+            crate::auth::secret::sha256_hex(&a),
+            crate::auth::secret::sha256_hex(&b)
+        );
         // The display prefix is the label + 8 hex chars and is a strict prefix.
         let prefix = display_prefix(&a);
         assert_eq!(prefix.len(), 5 + 8);
@@ -558,7 +557,10 @@ mod tests {
 
         // A bulk revoke (as password reset performs) revokes exactly the victim's live
         // keys and reports the count.
-        assert_eq!(revoke_all_for_user(&db, victim).await.expect("revoke all"), 2);
+        assert_eq!(
+            revoke_all_for_user(&db, victim).await.expect("revoke all"),
+            2
+        );
 
         // Both of the victim's keys now fail to resolve (401), so a key minted during a
         // compromise can't outlive the reset...
@@ -568,7 +570,10 @@ mod tests {
         assert!(resolve(&db, &others.plaintext).await.is_ok());
 
         // Idempotent: a second sweep finds nothing live left to revoke.
-        assert_eq!(revoke_all_for_user(&db, victim).await.expect("revoke all"), 0);
+        assert_eq!(
+            revoke_all_for_user(&db, victim).await.expect("revoke all"),
+            0
+        );
     }
 
     #[tokio::test]
@@ -591,7 +596,9 @@ mod tests {
         )
         .await
         .expect("issue");
-        revoke(&db, revoked.model.id, user_id).await.expect("revoke");
+        revoke(&db, revoked.model.id, user_id)
+            .await
+            .expect("revoke");
 
         // List/count show only usable keys — the revoked and expired ones (both dead,
         // both rejected by `resolve`) are excluded, so just the live key remains.

@@ -197,7 +197,11 @@ async fn get(router: &Router, uri: &str) -> (StatusCode, Value) {
         .uri(uri)
         .body(Body::empty())
         .unwrap();
-    let res = router.clone().oneshot(req).await.expect("router infallible");
+    let res = router
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("router infallible");
     let status = res.status();
     let bytes = to_bytes(res.into_body(), usize::MAX).await.expect("body");
     let json = if bytes.is_empty() {
@@ -254,7 +258,9 @@ async fn migration_down_up_roundtrip_on_pg() {
     // Reverts all 17 (strongest exercise of the PG `down` arms: m017's DELETE-NULLs +
     // SET NOT NULL — 0 rows on a fresh DB — and m001's DROP TABLE), then re-applies.
     Migrator::down(db.conn(), None).await.expect("migrate down");
-    Migrator::up(db.conn(), None).await.expect("migrate back up");
+    Migrator::up(db.conn(), None)
+        .await
+        .expect("migrate back up");
     db.teardown().await;
 }
 
@@ -378,8 +384,16 @@ async fn public_handle_resolves_case_insensitively_on_pg() {
     // spellings all return the owner's one owned card.
     for handle in ["Alice-0007", "alice-0007", "ALICE-0007"] {
         let (status, body) = get(&router, &format!("/api/u/{handle}/mtg")).await;
-        assert_eq!(status, StatusCode::OK, "handle {handle} should resolve: {body:?}");
-        assert_eq!(data_len(&body), 1, "handle {handle} should list the owned card");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "handle {handle} should resolve: {body:?}"
+        );
+        assert_eq!(
+            data_len(&body),
+            1,
+            "handle {handle} should list the owned card"
+        );
     }
     // A wrong discriminator is a 404 (not a different user's collection).
     let (status, _) = get(&router, "/api/u/alice-0008/mtg").await;
@@ -406,7 +420,10 @@ async fn issue_with_cooldown_holds_on_pg() {
     let second = email_token::issue_with_cooldown(conn, uid, EmailTokenPurpose::VerifyEmail)
         .await
         .expect("second issue");
-    assert!(second.is_none(), "the immediate re-issue is inside the cooldown");
+    assert!(
+        second.is_none(),
+        "the immediate re-issue is inside the cooldown"
+    );
 
     // The critical concurrency invariant (mirrors the SQLite unit test on real pooled
     // Postgres): a 20-way burst must issue EXACTLY ONE token. On Postgres the atomic
@@ -427,7 +444,10 @@ async fn issue_with_cooldown_holds_on_pg() {
             issued += 1;
         }
     }
-    assert_eq!(issued, 1, "exactly one token may be issued within the cooldown");
+    assert_eq!(
+        issued, 1,
+        "exactly one token may be issued within the cooldown"
+    );
 
     let rows = crate::entities::prelude::EmailToken::find()
         .filter(crate::entities::email_token::Column::UserId.eq(burst_uid))
@@ -466,7 +486,9 @@ async fn refresh_rotation_is_single_use_on_pg() {
     };
 
     // Replaying the now-superseded original is still benign while its successor lives.
-    let replay = refresh::rotate(conn, &original, 30).await.expect("benign superseded");
+    let replay = refresh::rotate(conn, &original, 30)
+        .await
+        .expect("benign superseded");
     assert!(
         matches!(replay, refresh::RotateOutcome::Superseded),
         "a superseded refresh token can't be rotated again, but is a benign double-submit"
@@ -517,7 +539,10 @@ async fn refresh_reuse_and_descendant_rotation_are_serialized_on_pg() {
         refresh::rotate(conn, &t1, 30),
         refresh::rotate(conn, &t3.plaintext, 30)
     );
-    assert!(matches!(reuse, Err(crate::error::AppError::Unauthorized(_))));
+    assert!(matches!(
+        reuse,
+        Err(crate::error::AppError::Unauthorized(_))
+    ));
     assert!(
         matches!(
             descendant,
@@ -656,8 +681,16 @@ async fn foil_star_consolidation_folds_on_pg() {
         .await
         .expect("fold");
 
-    assert_eq!(owned_counts(conn, uid, base_id).await, Some((0, 2)), "folded to base foil");
-    assert_eq!(owned_counts(conn, uid, star_id).await, None, "star holding removed");
+    assert_eq!(
+        owned_counts(conn, uid, base_id).await,
+        Some((0, 2)),
+        "folded to base foil"
+    );
+    assert_eq!(
+        owned_counts(conn, uid, star_id).await,
+        None,
+        "star holding removed"
+    );
 
     db.teardown().await;
 }
@@ -679,7 +712,10 @@ async fn price_snapshot_upsert_on_pg() {
     let n2 = snapshot_prices(conn, GAME, "2099-01-01")
         .await
         .expect("second snapshot");
-    assert_eq!(n, n2, "re-snapshotting the same day processes the same rows");
+    assert_eq!(
+        n, n2,
+        "re-snapshotting the same day processes the same rows"
+    );
 
     // The upsert on (game, card_id, as_of_date) means the second run must not duplicate:
     // exactly `n` rows exist for that date.
@@ -688,7 +724,10 @@ async fn price_snapshot_upsert_on_pg() {
         .count(conn)
         .await
         .expect("count price rows");
-    assert_eq!(rows_for_date, n, "same-day re-snapshot upserts, never duplicates");
+    assert_eq!(
+        rows_for_date, n,
+        "same-day re-snapshot upserts, never duplicates"
+    );
 
     db.teardown().await;
 }
@@ -747,7 +786,11 @@ async fn search_smoke_battery_on_pg() {
     // Boolean flag `col IS TRUE` — the same seeded card is now the one full-art print.
     let (status, body) = get(&router, &cards("is:fullart")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["total"].as_u64(), Some(1), "IS TRUE matches the seeded card");
+    assert_eq!(
+        body["total"].as_u64(),
+        Some(1),
+        "IS TRUE matches the seeded card"
+    );
 
     // is:spell — STRPOS + type_line case-fold; instants/sorceries match.
     let (status, body) = get(&router, &cards("is:spell")).await;
@@ -757,7 +800,10 @@ async fn search_smoke_battery_on_pg() {
     // is:permanent — type_line case-fold LIKE.
     let (status, body) = get(&router, &cards("is:permanent")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(data_len(&body) > 0, "is:permanent matches creatures/artifacts");
+    assert!(
+        data_len(&body) > 0,
+        "is:permanent matches creatures/artifacts"
+    );
 
     // cmc parity (integer-guard, no FLOOR) — dummy cmc values include 2 and 4.
     let (status, body) = get(&router, &cards("cmc:even")).await;
@@ -777,7 +823,10 @@ async fn search_smoke_battery_on_pg() {
     assert_eq!(status, StatusCode::OK, "-pow>=5 compiles");
     let (all_status, all) = get(&router, "/api/games/mtg/cards?page_size=200").await;
     assert_eq!(all_status, StatusCode::OK);
-    assert!(data_len(&neg) > 0, "-pow>=5 matches the NULL-power dummy cards");
+    assert!(
+        data_len(&neg) > 0,
+        "-pow>=5 matches the NULL-power dummy cards"
+    );
     assert_eq!(
         neg["total"].as_u64(),
         all["total"].as_u64(),
@@ -801,7 +850,11 @@ async fn invalid_posix_regex_is_422_not_500_on_pg() {
     // ARE, so Postgres's `~*` raises SQLSTATE 2201B at execution. The DbErr→AppError
     // mapping must reclassify that as the same 422 a bad pattern gets on SQLite, not a
     // 500 leaking from the public, unauthenticated search box.
-    let (status, body) = get(&router, &format!("/api/games/mtg/cards?q={}", enc("/\\p{L}/"))).await;
+    let (status, body) = get(
+        &router,
+        &format!("/api/games/mtg/cards?q={}", enc("/\\p{L}/")),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -829,11 +882,18 @@ async fn unique_cards_dedupes_on_pg() {
     // The reprinted relic has two printings sharing one oracle_id.
     let (status, body) = get(
         &router,
-        &format!("/api/games/mtg/cards?q={}", enc("!\"Dummy Reprinted Relic\"")),
+        &format!(
+            "/api/games/mtg/cards?q={}",
+            enc("!\"Dummy Reprinted Relic\"")
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["total"].as_u64(), Some(2), "two printings before de-dup");
+    assert_eq!(
+        body["total"].as_u64(),
+        Some(2),
+        "two printings before de-dup"
+    );
 
     // `unique:cards` collapses them to one — the GROUP BY → min-id IN-subquery rewrite
     // Postgres needs (it rejects the SQLite bare-column GROUP BY form).
@@ -879,7 +939,10 @@ async fn order_usd_sorts_on_pg() {
     // unpriced (both null) card sorts after every priced one.
     let effective = |card: &Value| -> Option<f64> {
         for key in ["usd", "usd_foil"] {
-            if let Some(v) = card["prices"][key].as_str().and_then(|s| s.parse::<f64>().ok()) {
+            if let Some(v) = card["prices"][key]
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+            {
                 return Some(v);
             }
         }
@@ -1027,7 +1090,10 @@ async fn products_list_search_and_price_sort_on_pg() {
 
     let effective = |p: &Value| -> Option<f64> {
         for key in ["usd", "usd_foil"] {
-            if let Some(v) = p["prices"][key].as_str().and_then(|s| s.parse::<f64>().ok()) {
+            if let Some(v) = p["prices"][key]
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+            {
                 return Some(v);
             }
         }
@@ -1040,7 +1106,10 @@ async fn products_list_search_and_price_sort_on_pg() {
             Some(v) => {
                 assert!(!seen_null, "a priced product sorted after an unpriced one");
                 if let Some(prev) = prev {
-                    assert!(v >= prev - 1e-9, "price asc not non-decreasing: {prev} then {v}");
+                    assert!(
+                        v >= prev - 1e-9,
+                        "price asc not non-decreasing: {prev} then {v}"
+                    );
                 }
                 prev = Some(v);
             }

@@ -419,7 +419,10 @@ mod tests {
                 issued += 1;
             }
         }
-        assert_eq!(issued, 1, "exactly one token may be issued within the cooldown");
+        assert_eq!(
+            issued, 1,
+            "exactly one token may be issued within the cooldown"
+        );
 
         // And exactly one row landed.
         let rows = EmailToken::find()

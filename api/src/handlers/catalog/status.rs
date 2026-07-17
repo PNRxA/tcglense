@@ -1,10 +1,7 @@
 //! Catalog meta endpoints: the supported-games list and a game's card-data import
 //! status.
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, prelude::DateTimeUtc};
 use serde::Serialize;
 
@@ -41,7 +38,9 @@ pub struct StatusResponse {
     ),
 )]
 pub async fn list_games() -> Json<DataBody<&'static [catalog::Game]>> {
-    Json(DataBody { data: catalog::GAMES })
+    Json(DataBody {
+        data: catalog::GAMES,
+    })
 }
 
 /// Get import status

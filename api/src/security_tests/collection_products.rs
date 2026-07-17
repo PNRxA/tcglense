@@ -283,10 +283,16 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     // ten-day-old carry-forward, anchored at the sealed series' own newest snapshot.
     let week_gainer = &movers["sealed"]["week"]["gainers"][0];
     assert_eq!(week_gainer["product"]["id"], "100");
-    assert_eq!(week_gainer["change_usd"], "30.00", "two boxes gained $15 each since d10");
+    assert_eq!(
+        week_gainer["change_usd"], "30.00",
+        "two boxes gained $15 each since d10"
+    );
     let week_loser = &movers["sealed"]["week"]["losers"][0];
     assert_eq!(week_loser["product"]["id"], "200");
-    assert_eq!(week_loser["change_usd"], "-15.00", "one box lost $15 since d10");
+    assert_eq!(
+        week_loser["change_usd"], "-15.00",
+        "one box lost $15 since d10"
+    );
 }
 
 #[tokio::test]
@@ -381,7 +387,15 @@ async fn sealed_movers_day_falls_back_across_a_missing_capture_day() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "sealed-movers-gap@example.com", "password123").await;
-    insert_product(db, "100", "Gap Box", "mkm", "collector_display", Some("20.00")).await;
+    insert_product(
+        db,
+        "100",
+        "Gap Box",
+        "mkm",
+        "collector_display",
+        Some("20.00"),
+    )
+    .await;
     own_product(&app, &token, "100", 2).await;
 
     // The feed skipped yesterday and three days ago. The newest capture repeats the one before
@@ -414,10 +428,16 @@ async fn sealed_movers_day_falls_back_across_a_missing_capture_day() {
     );
     let gainer = &body["sealed"]["day"]["gainers"][0];
     assert_eq!(gainer["product"]["id"], "100");
-    assert_eq!(gainer["value_prev"], "10.00", "two boxes at the four-day row");
+    assert_eq!(
+        gainer["value_prev"], "10.00",
+        "two boxes at the four-day row"
+    );
     assert_eq!(gainer["value_now"], "16.00");
     assert_eq!(gainer["change_usd"], "6.00");
     assert!(
-        body["sealed"]["day"]["losers"].as_array().unwrap().is_empty()
+        body["sealed"]["day"]["losers"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
 }

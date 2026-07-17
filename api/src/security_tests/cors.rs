@@ -67,7 +67,11 @@ async fn cors_does_not_authorize_foreign_or_near_miss_origins() {
             Some("http://localhost:5173"),
             "ACAO must stay pinned to the one allowed origin for {origin}"
         );
-        assert_ne!(allow_origin, Some(origin), "must never echo the foreign origin");
+        assert_ne!(
+            allow_origin,
+            Some(origin),
+            "must never echo the foreign origin"
+        );
         assert_ne!(allow_origin, Some("*"));
     }
 }

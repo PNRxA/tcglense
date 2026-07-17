@@ -341,12 +341,7 @@ pub async fn register(
         && let Some(token) =
             issue_with_cooldown(&state.db, user.id, EmailTokenPurpose::CompleteRegistration).await?
     {
-        let link = spa_link(
-            &state,
-            "complete-registration",
-            &token,
-            redirect.as_deref(),
-        );
+        let link = spa_link(&state, "complete-registration", &token, redirect.as_deref());
         spawn_send(&state, registration_email(&user.email, &link));
         // No-email posture (dev/e2e): the link above was only logged, so hand
         // the token to the SPA directly — it drives straight to the
@@ -911,12 +906,8 @@ pub async fn reset_password(
 
     // Reject garbage/expired links before admitting memory-heavy Argon2 work,
     // then finish hashing before opening a transaction or holding DB locks.
-    let preflight_row = preflight(
-        &state.db,
-        &payload.token,
-        EmailTokenPurpose::ResetPassword,
-    )
-    .await?;
+    let preflight_row =
+        preflight(&state.db, &payload.token, EmailTokenPurpose::ResetPassword).await?;
     let password_hash = hash_password_bounded(payload.password.clone()).await?;
 
     // The one-time claim, password/session-generation update, sibling-link

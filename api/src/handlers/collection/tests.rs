@@ -1,14 +1,14 @@
-use super::*;
 use super::import::parse_reconcile_mode;
 use super::read::{collection_query, summary};
+use super::*;
 
 use crate::catalog;
 use crate::db::Dialect;
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::{card, card_set};
 use crate::handlers::shared::{
-    BULK_THRESHOLD_CENTS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField, build_collection_sets,
-    dedupe_ids, group_into_drops, search_condition, validate_quantity,
+    BULK_THRESHOLD_CENTS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField,
+    build_collection_sets, dedupe_ids, group_into_drops, search_condition, validate_quantity,
 };
 use sea_orm::{ActiveModelTrait, Condition, Set};
 
@@ -29,7 +29,10 @@ fn params(page: Option<u64>, page_size: Option<u64>) -> ListParams {
 #[test]
 fn page_and_size_defaults_and_clamps() {
     assert_eq!(params(None, None).page_and_size(), (1, DEFAULT_PAGE_SIZE));
-    assert_eq!(params(Some(0), Some(9999)).page_and_size(), (1, MAX_PAGE_SIZE));
+    assert_eq!(
+        params(Some(0), Some(9999)).page_and_size(),
+        (1, MAX_PAGE_SIZE)
+    );
     assert_eq!(params(Some(3), Some(20)).page_and_size(), (3, 20));
 }
 
@@ -250,22 +253,23 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
         seed_card(3, "Goblin King", "Creature — Goblin", Some("2.00")),
         seed_card(4, "Goblin Piker", "Creature — Goblin", Some("1.00")),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     // User 1 owns cards 1..=3 (updated at increasing times so recency order is
     // 3, 2, 1); user 2 owns card 4.
-    let hold = |id: i32, card_id: i32, user_id: i32, updated: &str| {
-        collection_item::ActiveModel {
-            id: Set(id),
-            user_id: Set(user_id),
-            game: Set("mtg".into()),
-            card_id: Set(card_id),
-            quantity: Set(1),
-            foil_quantity: Set(0),
-            created_at: Set(at("2024-01-01T00:00:00Z")),
-            updated_at: Set(at(updated)),
-        }
+    let hold = |id: i32, card_id: i32, user_id: i32, updated: &str| collection_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(user_id),
+        game: Set("mtg".into()),
+        card_id: Set(card_id),
+        quantity: Set(1),
+        foil_quantity: Set(0),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at(updated)),
     };
     for h in [
         hold(1, 1, 1, "2024-01-01T00:00:00Z"),
@@ -302,13 +306,27 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
     // keeps only user 1's two Goblins (Forest dropped; user 2's Goblin out of scope).
     let goblins = search_condition(mtg, "t:goblin", Dialect::Sqlite).unwrap();
     assert_eq!(
-        names(&db, None, Some(goblins), CollectionSort::Recent, SortDir::Desc).await,
+        names(
+            &db,
+            None,
+            Some(goblins),
+            CollectionSort::Recent,
+            SortDir::Desc
+        )
+        .await,
         ["Goblin King", "Goblin Guide"]
     );
 
     // Price sort borrows the catalog card sort verbatim: 5.00, 2.00, 0.10.
     assert_eq!(
-        names(&db, None, None, CollectionSort::Card(SortField::Price), SortDir::Desc).await,
+        names(
+            &db,
+            None,
+            None,
+            CollectionSort::Card(SortField::Price),
+            SortDir::Desc
+        )
+        .await,
         ["Goblin Guide", "Goblin King", "Forest"]
     );
 }
@@ -345,7 +363,10 @@ async fn collection_query_orders_by_total_copies() {
         seed_card(2, "Five Total", "Creature", None),
         seed_card(3, "Three Total", "Creature", None),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     // Total copies = quantity + foil_quantity: card 1 = 2 (2+0), card 2 = 5 (1+4),
@@ -366,13 +387,21 @@ async fn collection_query_orders_by_total_copies() {
     }
 
     async fn ordered(db: &sea_orm::DatabaseConnection, dir: SortDir) -> Vec<String> {
-        collection_query(1, "mtg", None, None, CollectionSort::Quantity, dir, Dialect::Sqlite)
-            .all(db)
-            .await
-            .expect("run collection query")
-            .into_iter()
-            .filter_map(|(_, card)| card.map(|c| c.name))
-            .collect()
+        collection_query(
+            1,
+            "mtg",
+            None,
+            None,
+            CollectionSort::Quantity,
+            dir,
+            Dialect::Sqlite,
+        )
+        .all(db)
+        .await
+        .expect("run collection query")
+        .into_iter()
+        .filter_map(|(_, card)| card.map(|c| c.name))
+        .collect()
     }
 
     // Most copies first: 5, 3, 2.
@@ -420,7 +449,10 @@ async fn summary_skips_holdings_whose_card_row_is_missing() {
         seed_card(1, "Priced Card", "Creature", Some("5.00")),
         seed_card(2, "Cheap Card", "Creature", Some("2.00")),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     let hold = |id: i32, card_id: i32, q: i32, f: i32| collection_item::ActiveModel {
@@ -492,7 +524,10 @@ async fn collection_query_scopes_to_a_set() {
         card(3, "Goblin King", "bbb", "Creature — Goblin"),
         card(4, "Goblin Piker", "ccc", "Creature — Goblin"),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
     let hold = |id: i32, card_id: i32| collection_item::ActiveModel {
         id: Set(id),
@@ -534,10 +569,16 @@ async fn collection_query_scopes_to_a_set() {
 
     let aaa = ["aaa".to_string()];
     // Scoped to set "aaa": only its two cards, not the other sets' Goblins.
-    assert_eq!(names(&db, Some(&aaa), None).await, ["Forest", "Goblin Guide"]);
+    assert_eq!(
+        names(&db, Some(&aaa), None).await,
+        ["Forest", "Goblin Guide"]
+    );
     // Set scope ANDs with the search: goblins in "aaa" only.
     let goblins = search_condition(mtg, "t:goblin", Dialect::Sqlite).unwrap();
-    assert_eq!(names(&db, Some(&aaa), Some(goblins)).await, ["Goblin Guide"]);
+    assert_eq!(
+        names(&db, Some(&aaa), Some(goblins)).await,
+        ["Goblin Guide"]
+    );
     // A multi-code scope (the include-related group view) spans exactly its sets —
     // "aaa" + "bbb", excluding "ccc"'s Goblin Piker.
     let group = ["aaa".to_string(), "bbb".to_string()];
@@ -594,7 +635,10 @@ async fn owned_cards_group_into_drops_with_counts() {
         sld_card(2, "168", Some(168)),
         sld_card(3, "999999", Some(999999)),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
     // Own the first two (2 + 1 foil of #2658; 3 of #168); leave #999999 unowned.
     let hold = |id: i32, card_id: i32, q: i32, f: i32| collection_item::ActiveModel {
@@ -662,13 +706,14 @@ fn build_collection_sets_aggregates_dresses_and_orders() {
         created_at: ts,
         updated_at: ts,
     };
-    let carded = |id: i32, set_code: &str, set_name: &str, usd: Option<&str>, foil: Option<&str>| {
-        let mut c = seed_card(id, "Card", "Creature", usd);
-        c.set_code = set_code.into();
-        c.set_name = set_name.into();
-        c.price_usd_foil = foil.map(str::to_string);
-        c
-    };
+    let carded =
+        |id: i32, set_code: &str, set_name: &str, usd: Option<&str>, foil: Option<&str>| {
+            let mut c = seed_card(id, "Card", "Creature", usd);
+            c.set_code = set_code.into();
+            c.set_name = set_name.into();
+            c.price_usd_foil = foil.map(str::to_string);
+            c
+        };
     let set_meta = |code: &str, name: &str, released: &str| card_set::Model {
         name: name.into(),
         set_type: Some("expansion".into()),
@@ -754,9 +799,15 @@ fn build_collection_sets_splits_bulk_per_finish() {
     let rows = vec![
         // Bulk regular ($0.25 ×4 = $1.00), non-bulk foil ($3.00 ×1): only the regulars
         // are bulk.
-        (hold(1, 1, 4, 1), Some(carded(1, Some("0.25"), Some("3.00")))),
+        (
+            hold(1, 1, 4, 1),
+            Some(carded(1, Some("0.25"), Some("3.00"))),
+        ),
         // Non-bulk regular ($2.00 ×1), bulk foil ($0.50 ×2 = $1.00): only the foils.
-        (hold(2, 2, 1, 2), Some(carded(2, Some("2.00"), Some("0.50")))),
+        (
+            hold(2, 2, 1, 2),
+            Some(carded(2, Some("2.00"), Some("0.50"))),
+        ),
     ];
 
     let out = build_collection_sets("mtg", rows, vec![], BULK_THRESHOLD_CENTS);

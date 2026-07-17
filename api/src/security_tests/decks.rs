@@ -148,9 +148,17 @@ async fn changing_a_printing_merges_counts_and_rejects_an_unrelated_card() {
         get("/api/games/mtg/cards?name=Dummy%20Reprinted%20Relic&page_size=10"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "printing lookup failed: {printings:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "printing lookup failed: {printings:?}"
+    );
     let printings = printings["data"].as_array().expect("printing data");
-    assert_eq!(printings.len(), 2, "dummy catalog must contain a reprint pair");
+    assert_eq!(
+        printings.len(),
+        2,
+        "dummy catalog must contain a reprint pair"
+    );
     let current = printings[0]["id"].as_str().expect("current id");
     let replacement = printings[1]["id"].as_str().expect("replacement id");
     let unrelated = sample_card_ids(&app, 1).await.remove(0);

@@ -269,7 +269,8 @@ export function useSetDeckVisibilityMutation() {
 export function useCreateFolderMutation() {
   const qc = useQueryClient()
   const options = {
-    mutationFn: (token: string, vars: FolderCreateVars) => createFolder(token, vars.game, vars.name),
+    mutationFn: (token: string, vars: FolderCreateVars) =>
+      createFolder(token, vars.game, vars.name),
     onSettled: (_d: DeckFolder | undefined, _e: ApiError | null, vars: FolderCreateVars) =>
       qc.invalidateQueries({ queryKey: ['deck-folders', vars.game] }),
   }

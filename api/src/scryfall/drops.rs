@@ -154,7 +154,11 @@ fn build_tables() -> HashMap<String, DropTable> {
         }
         tables.insert(
             key(&set.game, &set.set),
-            DropTable { drops, by_collector, by_title },
+            DropTable {
+                drops,
+                by_collector,
+                by_title,
+            },
         );
     }
     tables
@@ -220,14 +224,24 @@ mod tests {
         let table = table("mtg", "sld").expect("sld is drop-grouped");
         // The shipped snapshot has hundreds of drops; assert a healthy floor so a
         // truncated/corrupt regeneration is caught.
-        assert!(table.drops.len() > 100, "expected many drops, got {}", table.drops.len());
+        assert!(
+            table.drops.len() > 100,
+            "expected many drops, got {}",
+            table.drops.len()
+        );
         assert!(has_drops("mtg", "sld"));
     }
 
     #[test]
     fn known_collector_numbers_resolve_to_their_drop() {
-        assert_eq!(drop_for("mtg", "sld", "2658").map(|d| d.title.as_str()), Some("Wild in Bloom"));
-        assert_eq!(drop_for("mtg", "sld", "168").map(|d| d.title.as_str()), Some("Inked"));
+        assert_eq!(
+            drop_for("mtg", "sld", "2658").map(|d| d.title.as_str()),
+            Some("Wild in Bloom")
+        );
+        assert_eq!(
+            drop_for("mtg", "sld", "168").map(|d| d.title.as_str()),
+            Some("Inked")
+        );
         // A collector number the snapshot doesn't list -> no drop (folds to "Other").
         assert!(drop_for("mtg", "sld", "this-cn-does-not-exist").is_none());
     }
@@ -262,8 +276,13 @@ mod tests {
     #[test]
     fn drops_carry_their_collector_numbers() {
         let table = table("mtg", "sld").expect("sld is drop-grouped");
-        let drop = table.drop_by_title(&normalize_title("Wild in Bloom")).expect("drop present");
-        assert_eq!(drop.collector_numbers, ["2658", "2659", "2660", "2661", "2662"]);
+        let drop = table
+            .drop_by_title(&normalize_title("Wild in Bloom"))
+            .expect("drop present");
+        assert_eq!(
+            drop.collector_numbers,
+            ["2658", "2659", "2660", "2661", "2662"]
+        );
     }
 
     #[test]
@@ -277,7 +296,11 @@ mod tests {
             Some("garfield-our-only-thought-is-to-entertain-you"),
         );
         // A title that matches no drop resolves to nothing.
-        assert!(table.drop_by_title(&normalize_title("Not A Real Drop")).is_none());
+        assert!(
+            table
+                .drop_by_title(&normalize_title("Not A Real Drop"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -293,7 +316,13 @@ mod tests {
     #[test]
     fn normalize_title_expands_ampersand_and_collapses_separators() {
         assert_eq!(normalize_title("Rock & Roll"), "rock and roll");
-        assert_eq!(normalize_title("  Witch's  Familiar!! "), "witch s familiar");
-        assert_eq!(normalize_title("FINAL FANTASY: Game Over"), "final fantasy game over");
+        assert_eq!(
+            normalize_title("  Witch's  Familiar!! "),
+            "witch s familiar"
+        );
+        assert_eq!(
+            normalize_title("FINAL FANTASY: Game Over"),
+            "final fantasy game over"
+        );
     }
 }

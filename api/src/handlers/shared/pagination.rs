@@ -91,7 +91,10 @@ mod tests {
         // debug panic, release wraparound).
         assert_eq!(resolve_page(None, None, 60, 200), (1, 60));
         assert_eq!(resolve_page(Some(0), Some(0), 60, 200), (1, 1));
-        assert_eq!(resolve_page(Some(u64::MAX), Some(u64::MAX), 60, 200), (MAX_PAGE, 200));
+        assert_eq!(
+            resolve_page(Some(u64::MAX), Some(u64::MAX), 60, 200),
+            (MAX_PAGE, 200)
+        );
     }
 
     #[test]

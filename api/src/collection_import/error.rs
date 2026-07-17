@@ -60,15 +60,13 @@ impl From<ImportError> for AppError {
                     .to_string(),
             ),
             ImportError::NoMatchingDeckCards => AppError::Validation(
-                "none of the deck's cards are in our catalog, so no deck was created"
-                    .to_string(),
+                "none of the deck's cards are in our catalog, so no deck was created".to_string(),
             ),
             ImportError::TooLarge { count, max } => AppError::Validation(format!(
                 "source is too large to import ({count} cards; the limit is {max})"
             )),
             ImportError::RateLimited => AppError::ServiceUnavailable(
-                "the provider is rate-limiting us; please try again in a few minutes"
-                    .to_string(),
+                "the provider is rate-limiting us; please try again in a few minutes".to_string(),
             ),
             ImportError::ProviderDenied(detail) => {
                 tracing::warn!(error = %detail, "import provider denied our request");

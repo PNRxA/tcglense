@@ -128,8 +128,8 @@ async function onResend() {
           <CardTitle class="text-2xl">Check your email</CardTitle>
           <CardDescription>
             If this address can be used to create an account, a link will arrive at
-            <span class="font-medium">{{ registeredEmail }}</span>. Open it to choose a password
-            and sign in.
+            <span class="font-medium">{{ registeredEmail }}</span
+            >. Open it to choose a password and sign in.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -187,7 +187,9 @@ async function onResend() {
                 placeholder="you@example.com"
                 required
                 :aria-invalid="Boolean(error) || undefined"
-                :aria-describedby="error ? 'register-email-help register-error' : 'register-email-help'"
+                :aria-describedby="
+                  error ? 'register-email-help register-error' : 'register-email-help'
+                "
                 :disabled="!signupsEnabled"
               />
               <p id="register-email-help" class="text-muted-foreground text-xs">

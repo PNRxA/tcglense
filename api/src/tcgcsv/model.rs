@@ -276,8 +276,14 @@ mod tests {
         assert_eq!(file.results.len(), 2);
         let sealed = &file.results[0];
         assert_eq!(sealed.product_id, 100);
-        assert_eq!(sealed.clean_name.as_deref(), Some("Murders at Karlov Manor Collector Booster Box"));
-        assert_eq!(sealed.url.as_deref(), Some("https://www.tcgplayer.com/product/100"));
+        assert_eq!(
+            sealed.clean_name.as_deref(),
+            Some("Murders at Karlov Manor Collector Booster Box")
+        );
+        assert_eq!(
+            sealed.url.as_deref(),
+            Some("https://www.tcgplayer.com/product/100")
+        );
         assert_eq!(sealed.extended_data.len(), 1);
         assert_eq!(sealed.extended_data[0].name, "UPC");
         let card = &file.results[1];

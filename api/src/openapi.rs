@@ -227,7 +227,10 @@ mod tests {
         let doc = ApiDoc::openapi();
         // The security scheme modifier ran and the paths are present.
         let json = serde_json::to_value(&doc).expect("spec serializes to JSON");
-        assert_eq!(json["openapi"].as_str().unwrap_or_default().get(0..3), Some("3.1"));
+        assert_eq!(
+            json["openapi"].as_str().unwrap_or_default().get(0..3),
+            Some("3.1")
+        );
         assert!(
             json["paths"]["/api/games/{game}/cards"].is_object(),
             "list_cards path is documented"
@@ -318,44 +321,113 @@ mod coverage_drift {
     const INTENTIONALLY_UNDOCUMENTED: &[(&str, &str)] = &[
         // --- Health probes / SPA runtime config: infra, not part of the public data API. ---
         ("/api/health", "liveness probe; not a data endpoint"),
-        ("/api/ready", "database readiness probe; not a data endpoint"),
-        ("/api/config", "SPA bootstrap config (Turnstile site key); internal to the web app"),
-        ("/api/currencies", "SPA display exchange rates; internal to the web app"),
+        (
+            "/api/ready",
+            "database readiness probe; not a data endpoint",
+        ),
+        (
+            "/api/config",
+            "SPA bootstrap config (Turnstile site key); internal to the web app",
+        ),
+        (
+            "/api/currencies",
+            "SPA display exchange rates; internal to the web app",
+        ),
         // --- Auth & account: the SPA's session/cookie flow. API-key *management*
         //     (`/api/auth/api-keys`) IS documented; everything else is sign-in plumbing. ---
-        ("/api/auth/register", "email-first registration; SPA session flow"),
-        ("/api/auth/complete-registration", "email-first registration; SPA session flow"),
-        ("/api/auth/login", "sign-in; issues session JWT + refresh cookie, SPA session flow"),
-        ("/api/auth/refresh", "refresh-cookie rotation; SPA session flow"),
+        (
+            "/api/auth/register",
+            "email-first registration; SPA session flow",
+        ),
+        (
+            "/api/auth/complete-registration",
+            "email-first registration; SPA session flow",
+        ),
+        (
+            "/api/auth/login",
+            "sign-in; issues session JWT + refresh cookie, SPA session flow",
+        ),
+        (
+            "/api/auth/refresh",
+            "refresh-cookie rotation; SPA session flow",
+        ),
         ("/api/auth/logout", "session teardown; SPA session flow"),
         ("/api/auth/me", "current-session identity; SPA session flow"),
-        ("/api/auth/currency", "account display preference; SPA session flow"),
+        (
+            "/api/auth/currency",
+            "account display preference; SPA session flow",
+        ),
         ("/api/auth/username", "handle claim; SPA session flow"),
-        ("/api/auth/username/available", "handle availability check; SPA session flow"),
-        ("/api/auth/verify-email", "single-use email token; SPA session flow"),
-        ("/api/auth/resend-verification", "single-use email token; SPA session flow"),
-        ("/api/auth/forgot-password", "single-use email token; SPA session flow"),
-        ("/api/auth/reset-password", "single-use email token; SPA session flow"),
+        (
+            "/api/auth/username/available",
+            "handle availability check; SPA session flow",
+        ),
+        (
+            "/api/auth/verify-email",
+            "single-use email token; SPA session flow",
+        ),
+        (
+            "/api/auth/resend-verification",
+            "single-use email token; SPA session flow",
+        ),
+        (
+            "/api/auth/forgot-password",
+            "single-use email token; SPA session flow",
+        ),
+        (
+            "/api/auth/reset-password",
+            "single-use email token; SPA session flow",
+        ),
         // --- Binary image proxies: return image/SVG bytes, not JSON. ---
-        ("/api/games/{game}/sets/{code}/icon", "binary set-icon image, not JSON"),
-        ("/api/games/{game}/cards/{id}/image", "binary card image, not JSON"),
-        ("/api/games/{game}/products/{id}/image", "binary product image, not JSON"),
+        (
+            "/api/games/{game}/sets/{code}/icon",
+            "binary set-icon image, not JSON",
+        ),
+        (
+            "/api/games/{game}/cards/{id}/image",
+            "binary card image, not JSON",
+        ),
+        (
+            "/api/games/{game}/products/{id}/image",
+            "binary product image, not JSON",
+        ),
         // --- The spec document itself. ---
         ("/api/openapi.json", "the OpenAPI document itself"),
         // --- Sitemaps: XML for crawlers — root canonical form plus the `/api/` aliases. ---
         ("/sitemap.xml", "XML sitemap index for crawlers, not JSON"),
-        ("/sitemaps/{name}", "XML child sitemap for crawlers, not JSON"),
+        (
+            "/sitemaps/{name}",
+            "XML child sitemap for crawlers, not JSON",
+        ),
         ("/api/sitemap.xml", "`/api/` alias of the XML sitemap index"),
-        ("/api/sitemaps/{name}", "`/api/` alias of the XML child sitemap"),
+        (
+            "/api/sitemaps/{name}",
+            "`/api/` alias of the XML child sitemap",
+        ),
         // --- Optional dataset mirror (off by default): re-serves raw upstream datasets. ---
-        ("/api/mirror/scryfall/bulk-data", "opt-in dataset mirror; not the public data API"),
+        (
+            "/api/mirror/scryfall/bulk-data",
+            "opt-in dataset mirror; not the public data API",
+        ),
         ("/api/mirror/scryfall/sets", "opt-in dataset mirror"),
         ("/api/mirror/scryfall/file/{kind}", "opt-in dataset mirror"),
-        ("/api/mirror/mtgjson/AllPrintings.json.gz", "opt-in dataset mirror (binary blob)"),
-        ("/api/mirror/tcgcsv/{*path}", "opt-in dataset mirror (proxy passthrough)"),
-        ("/api/mirror/fingerprints/{game}", "opt-in scanner fingerprint index"),
+        (
+            "/api/mirror/mtgjson/AllPrintings.json.gz",
+            "opt-in dataset mirror (binary blob)",
+        ),
+        (
+            "/api/mirror/tcgcsv/{*path}",
+            "opt-in dataset mirror (proxy passthrough)",
+        ),
+        (
+            "/api/mirror/fingerprints/{game}",
+            "opt-in scanner fingerprint index",
+        ),
         // --- The WEB_ROOT catch-all turning an unmatched `/api/*` into a JSON 404. ---
-        ("/api/{*rest}", "combined-image 404 catch-all, not a real endpoint"),
+        (
+            "/api/{*rest}",
+            "combined-image 404 catch-all, not a real endpoint",
+        ),
     ];
 
     /// Every `.route("<path>", …)` literal in `router.rs`, deduped. The regex captures only
@@ -363,7 +435,9 @@ mod coverage_drift {
     /// trailing `.layer(...)` are ignored; `\s*` spans the multi-line `.route(\n  "…",` calls.
     fn router_paths() -> BTreeSet<String> {
         let re = regex::Regex::new(r#"\.route\(\s*"(/[^"]*)""#).expect("valid route regex");
-        re.captures_iter(ROUTER_SRC).map(|c| c[1].to_string()).collect()
+        re.captures_iter(ROUTER_SRC)
+            .map(|c| c[1].to_string())
+            .collect()
     }
 
     /// Every path documented in the built OpenAPI doc. utoipa emits `{param}` braces,

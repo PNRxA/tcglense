@@ -134,7 +134,8 @@ impl FromRequestParts<AppState> for WritableUser {
             && !scope.permits_write()
         {
             return Err(AppError::Forbidden(
-                "this api key is read-only; a read_write key is required to modify data".to_string(),
+                "this api key is read-only; a read_write key is required to modify data"
+                    .to_string(),
             ));
         }
         Ok(WritableUser(principal.user))

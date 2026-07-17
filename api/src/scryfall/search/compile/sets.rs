@@ -3,15 +3,23 @@
 use sea_orm::Condition;
 use sea_orm::Value;
 
-use crate::db::Dialect;
-use super::common::{cmp_sql, raw_vals};
 use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
+use super::common::{cmp_sql, raw_vals};
+use crate::db::Dialect;
 
 pub(super) fn set(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     match op {
-        Op::Colon | Op::Eq => Ok(raw_vals(dialect, "set_code = ?".to_string(), [value.to_lowercase()])),
-        Op::Ne => Ok(raw_vals(dialect, "set_code <> ?".to_string(), [value.to_lowercase()])),
+        Op::Colon | Op::Eq => Ok(raw_vals(
+            dialect,
+            "set_code = ?".to_string(),
+            [value.to_lowercase()],
+        )),
+        Op::Ne => Ok(raw_vals(
+            dialect,
+            "set_code <> ?".to_string(),
+            [value.to_lowercase()],
+        )),
         _ => Err(unsupported_op("set", op)),
     }
 }
@@ -44,13 +52,21 @@ pub(super) fn set_type(dialect: Dialect, op: Op, value: &str) -> Result<Conditio
     };
     match op {
         Op::Colon | Op::Eq => Ok(raw_vals(dialect, format!("set_code IN ({select})"), bind())),
-        Op::Ne => Ok(raw_vals(dialect, format!("set_code NOT IN ({select})"), bind())),
+        Op::Ne => Ok(raw_vals(
+            dialect,
+            format!("set_code NOT IN ({select})"),
+            bind(),
+        )),
         _ => Err(unsupported_op("settype", op)),
     }
 }
 
 /// `prints <op> N` — number of printings of this card (its `oracle_id` siblings).
-pub(super) fn prints_filter(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
+pub(super) fn prints_filter(
+    dialect: Dialect,
+    op: Op,
+    value: &str,
+) -> Result<Condition, SearchError> {
     let n: i64 = value
         .parse()
         .map_err(|_| invalid("prints", value, "expected a number"))?;

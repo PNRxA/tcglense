@@ -38,9 +38,17 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(SealedContents::Game).string().not_null())
-                    .col(ColumnDef::new(SealedContents::ProductId).integer().not_null())
+                    .col(
+                        ColumnDef::new(SealedContents::ProductId)
+                            .integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(SealedContents::CardId).integer().not_null())
-                    .col(ColumnDef::new(SealedContents::Membership).string().not_null())
+                    .col(
+                        ColumnDef::new(SealedContents::Membership)
+                            .string()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(SealedContents::Foil)
                             .boolean()

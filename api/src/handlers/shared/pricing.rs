@@ -131,7 +131,8 @@ pub(crate) fn downsample_rows<T>(
             .map(|d| i64::from(d.num_days_from_ce()) / bucket_days)
             .unwrap_or(i64::MIN);
         if last_key == Some(key) && key != i64::MIN {
-            *out.last_mut().expect("out is non-empty once last_key is set") = row;
+            *out.last_mut()
+                .expect("out is non-empty once last_key is set") = row;
         } else {
             out.push(row);
             last_key = Some(key);
@@ -162,7 +163,10 @@ mod tests {
         ];
         let kept = downsample_rows(rows, 7, |s| s.as_str());
         // Days-since-CE / 7 buckets 01-01..01-06 together (last = 01-06), 01-10 alone.
-        assert_eq!(kept, vec!["2024-01-06".to_string(), "2024-01-10".to_string()]);
+        assert_eq!(
+            kept,
+            vec!["2024-01-06".to_string(), "2024-01-10".to_string()]
+        );
     }
 
     #[test]

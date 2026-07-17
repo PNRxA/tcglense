@@ -2,10 +2,10 @@
 
 use sea_orm::Condition;
 
-use crate::db::Dialect;
-use super::common::{cmp_sql, raw_vals};
 use super::super::error::{SearchError, invalid};
 use super::super::lexer::Op;
+use super::common::{cmp_sql, raw_vals};
+use crate::db::Dialect;
 
 pub(super) fn year(dialect: Dialect, op: Op, value: &str) -> Result<Condition, SearchError> {
     if value.len() != 4 || !value.chars().all(|c| c.is_ascii_digit()) {

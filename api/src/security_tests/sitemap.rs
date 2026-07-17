@@ -218,7 +218,10 @@ async fn sitemap_card_chunks_partition_the_catalog_at_the_boundary() {
     // third chunk.
     let (_s, _h, index) = send_text(&app, get("/sitemap.xml")).await;
     assert!(index.contains("<loc>https://sitemap.test/sitemaps/cards-2.xml</loc>"));
-    assert!(!index.contains("cards-3.xml"), "phantom third chunk: {index}");
+    assert!(
+        !index.contains("cards-3.xml"),
+        "phantom third chunk: {index}"
+    );
 
     // Chunk 1: exactly the first `max` cards (c00001…c{max}); it must not reach into
     // the overflow card that belongs to chunk 2.
@@ -227,7 +230,10 @@ async fn sitemap_card_chunks_partition_the_catalog_at_the_boundary() {
     let (status, _h, chunk1) = send_text(&app, get("/sitemaps/cards-1.xml")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(loc_count(&chunk1), max, "chunk 1 must be a full window");
-    assert!(chunk1.contains("/cards/mtg/cards/c00001</loc>"), "missing first card");
+    assert!(
+        chunk1.contains("/cards/mtg/cards/c00001</loc>"),
+        "missing first card"
+    );
     assert!(chunk1.contains(&boundary), "missing boundary card");
     assert!(!chunk1.contains(&overflow), "chunk 1 spilled into chunk 2");
 
@@ -252,14 +258,20 @@ async fn sitemap_product_chunks_partition_the_catalog_at_the_boundary() {
 
     let (_s, _h, index) = send_text(&app, get("/sitemap.xml")).await;
     assert!(index.contains("<loc>https://sitemap.test/sitemaps/products-2.xml</loc>"));
-    assert!(!index.contains("products-3.xml"), "phantom third chunk: {index}");
+    assert!(
+        !index.contains("products-3.xml"),
+        "phantom third chunk: {index}"
+    );
 
     let boundary = format!("/sealed/mtg/p{max:05}</loc>");
     let overflow = format!("/sealed/mtg/p{:05}</loc>", max + 1);
     let (status, _h, chunk1) = send_text(&app, get("/sitemaps/products-1.xml")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(loc_count(&chunk1), max, "chunk 1 must be a full window");
-    assert!(chunk1.contains("/sealed/mtg/p00001</loc>"), "missing first product");
+    assert!(
+        chunk1.contains("/sealed/mtg/p00001</loc>"),
+        "missing first product"
+    );
     assert!(chunk1.contains(&boundary), "missing boundary product");
     assert!(!chunk1.contains(&overflow), "chunk 1 spilled into chunk 2");
 

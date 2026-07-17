@@ -1,14 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import {
-  Check,
-  Copy,
-  KeyRound,
-  LoaderCircle,
-  Plus,
-  Trash2,
-  TriangleAlert,
-} from '@lucide/vue'
+import { Check, Copy, KeyRound, LoaderCircle, Plus, Trash2, TriangleAlert } from '@lucide/vue'
 import {
   Dialog,
   DialogClose,
@@ -177,10 +169,7 @@ const selectClass =
           </CardTitle>
           <CardDescription class="mt-1">
             Access the public API from your own scripts. See the
-            <RouterLink
-              to="/docs"
-              class="text-primary underline underline-offset-2"
-            >
+            <RouterLink to="/docs" class="text-primary underline underline-offset-2">
               API reference
             </RouterLink>
             for endpoints and examples.

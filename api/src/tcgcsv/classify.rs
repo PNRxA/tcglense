@@ -11,9 +11,9 @@ use super::model::ExtendedData;
 /// entry in its `extendedData` is a card; sealed products have neither. (A `UPC`
 /// entry corroborates "sealed" but isn't required, so it isn't relied on here.)
 pub fn is_sealed(extended_data: &[ExtendedData]) -> bool {
-    !extended_data.iter().any(|e| {
-        e.name.eq_ignore_ascii_case("Rarity") || e.name.eq_ignore_ascii_case("Number")
-    })
+    !extended_data
+        .iter()
+        .any(|e| e.name.eq_ignore_ascii_case("Rarity") || e.name.eq_ignore_ascii_case("Number"))
 }
 
 /// Derive a coarse product type from the product name via ordered keyword matching
@@ -30,16 +30,32 @@ pub fn classify_product_type(name: &str) -> &'static str {
     // specific prefixes first so "Collector Booster Pack" never matches plain
     // "Booster Pack" below.
     if has("collector booster") {
-        return if is_display(&n) { "collector_display" } else { "collector_pack" };
+        return if is_display(&n) {
+            "collector_display"
+        } else {
+            "collector_pack"
+        };
     }
     if has("play booster") {
-        return if is_display(&n) { "play_display" } else { "play_pack" };
+        return if is_display(&n) {
+            "play_display"
+        } else {
+            "play_pack"
+        };
     }
     if has("set booster") {
-        return if is_display(&n) { "set_display" } else { "set_pack" };
+        return if is_display(&n) {
+            "set_display"
+        } else {
+            "set_pack"
+        };
     }
     if has("draft booster") {
-        return if is_display(&n) { "draft_display" } else { "draft_pack" };
+        return if is_display(&n) {
+            "draft_display"
+        } else {
+            "draft_pack"
+        };
     }
 
     if has("prerelease") {

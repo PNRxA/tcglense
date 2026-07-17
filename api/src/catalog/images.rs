@@ -450,7 +450,10 @@ mod tests {
             1,
             "the second request must be served from the negative cache, not re-fetched"
         );
-        assert!(!dir.exists(), "a failed fetch must not create the cache dir");
+        assert!(
+            !dir.exists(),
+            "a failed fetch must not create the cache dir"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -564,8 +567,12 @@ mod tests {
         // TTL so the test doesn't wait the production six hours.
         let (addr, hits) = spawn_counting_server(403, 1, b"NOW-OK".to_vec()).await;
         let dir = unique_tmp_dir("neg-ttl");
-        let cache =
-            ImageCache::with_negative_ttl(dir.clone(), Client::new(), false, Duration::from_millis(30));
+        let cache = ImageCache::with_negative_ttl(
+            dir.clone(),
+            Client::new(),
+            false,
+            Duration::from_millis(30),
+        );
         let url = format!("http://{addr}/appears-later.jpg");
 
         let first = cache.get("products", "normal", "later", &url).await;
@@ -580,7 +587,11 @@ mod tests {
             .await
             .expect("a stale negative entry must be re-probed after the TTL");
         assert_eq!(served.bytes, b"NOW-OK");
-        assert_eq!(hits.load(Ordering::SeqCst), 2, "re-probe must reach upstream again");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            2,
+            "re-probe must reach upstream again"
+        );
 
         // The now-successful fetch was persisted like any other (served from disk, upstream
         // gone), confirming the re-probe path joins the normal cache flow.

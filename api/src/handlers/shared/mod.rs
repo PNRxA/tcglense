@@ -26,15 +26,12 @@ pub(crate) use grouping::{
 };
 pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
-    CollectionSort, CollectionSubtypeGroup, CollectionSummary, ListParams, MAX_OWNED_IDS,
-    OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams, SummaryParams,
-    HoldingSummaryRow, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
+    CollectionSort, CollectionSubtypeGroup, CollectionSummary, HoldingSummaryRow, ListParams,
+    MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams,
+    SummaryParams, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
     holding_subtype_page, narrow_summary_rows, resolve_set_scope, summarize_holdings,
     validate_quantity,
 };
-pub(crate) use valuation::{cheapest_single_cents, format_cents};
-#[cfg(test)]
-pub(crate) use valuation::BULK_THRESHOLD_CENTS;
 pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};
 pub(crate) use pagination::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
@@ -44,3 +41,6 @@ pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
 pub(crate) use product_holdings::{ProductResponse, load_product, product_response, set_name_map};
 pub(crate) use search::search_condition;
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
+#[cfg(test)]
+pub(crate) use valuation::BULK_THRESHOLD_CENTS;
+pub(crate) use valuation::{cheapest_single_cents, format_cents};

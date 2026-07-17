@@ -257,4 +257,3 @@ fn read_quoted(chars: &[char], start: usize) -> Result<(String, usize), SearchEr
 // ---------------------------------------------------------------------------
 // Parser (recursive descent: OR < AND < NOT < primary)
 // ---------------------------------------------------------------------------
-

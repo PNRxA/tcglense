@@ -272,7 +272,9 @@ pub(super) async fn reconcile_smart(
     // must be preserved from the current holding rather than overwritten to zero.
     let mut observed: HashMap<String, (bool, bool)> = HashMap::new();
     for h in &holdings {
-        let seen = observed.entry(h.external_card_id.clone()).or_insert((false, false));
+        let seen = observed
+            .entry(h.external_card_id.clone())
+            .or_insert((false, false));
         if h.foil {
             seen.1 = true;
         } else {
@@ -506,7 +508,11 @@ mod tests {
         let mut upserts = plan.upserts.clone();
         upserts.sort();
         assert_eq!(upserts, vec![(1, 1, 0), (2, 4, 0)]);
-        assert_eq!(plan.deletes, vec![9], "card 9 wasn't imported, so it's removed");
+        assert_eq!(
+            plan.deletes,
+            vec![9],
+            "card 9 wasn't imported, so it's removed"
+        );
     }
 
     #[test]
@@ -531,13 +537,32 @@ mod tests {
         insert_holding(&db, user_id, a, 5, 0).await;
         insert_holding(&db, user_id, c, 2, 0).await;
 
-        let holdings = vec![holding("ext-a", false, 1), holding("ext-b", true, 3), holding("ext-x", false, 9)];
-        let summary = reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Replace, holdings)
-            .await
-            .expect("reconcile");
+        let holdings = vec![
+            holding("ext-a", false, 1),
+            holding("ext-b", true, 3),
+            holding("ext-x", false, 9),
+        ];
+        let summary = reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Replace,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
 
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((1, 0)), "a overwritten to import");
-        assert_eq!(owned_counts(&db, user_id, b).await, Some((0, 3)), "b inserted as foil");
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((1, 0)),
+            "a overwritten to import"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, b).await,
+            Some((0, 3)),
+            "b inserted as foil"
+        );
         assert_eq!(owned_counts(&db, user_id, c).await, None, "c mirrored away");
         assert_eq!(summary.matched_cards, 2);
         assert_eq!(summary.unmatched_cards, 1, "ext-x isn't in the catalog");
@@ -557,12 +582,23 @@ mod tests {
         insert_holding(&db, user_id, c, 2, 1).await;
 
         let holdings = vec![holding("ext-a", false, 1)];
-        let summary = reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Overwrite, holdings)
-            .await
-            .expect("reconcile");
+        let summary = reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Overwrite,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
 
         assert_eq!(owned_counts(&db, user_id, a).await, Some((1, 0)));
-        assert_eq!(owned_counts(&db, user_id, c).await, Some((2, 1)), "untouched by overwrite");
+        assert_eq!(
+            owned_counts(&db, user_id, c).await,
+            Some((2, 1)),
+            "untouched by overwrite"
+        );
         assert_eq!(summary.removed_cards, 0);
     }
 
@@ -599,11 +635,22 @@ mod tests {
         insert_holding(&db, user_id, a, 2, 1).await;
 
         let holdings = vec![holding("ext-a", false, 3), holding("ext-a", true, 1)];
-        reconcile_holdings(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, ReconcileMode::Merge, holdings)
-            .await
-            .expect("reconcile");
+        reconcile_holdings(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            ReconcileMode::Merge,
+            holdings,
+        )
+        .await
+        .expect("reconcile");
 
-        assert_eq!(owned_counts(&db, user_id, a).await, Some((5, 2)), "2+3 regular, 1+1 foil");
+        assert_eq!(
+            owned_counts(&db, user_id, a).await,
+            Some((5, 2)),
+            "2+3 regular, 1+1 foil"
+        );
     }
 
     // ---- Smart sync ----
@@ -677,9 +724,16 @@ mod tests {
         insert_holding(&db, user_id, a, 2, 5).await; // the post-edit live state
 
         let holdings = vec![holding("ext-a", true, 6)]; // foil observed, regular not
-        reconcile_smart(&db, user_id, crate::scryfall::GAME, Provider::Archidekt, holdings, true)
-            .await
-            .expect("reconcile smart");
+        reconcile_smart(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            Provider::Archidekt,
+            holdings,
+            true,
+        )
+        .await
+        .expect("reconcile smart");
 
         assert_eq!(
             owned_counts(&db, user_id, a).await,
@@ -739,8 +793,16 @@ mod tests {
         .await
         .expect("reconcile");
 
-        assert_eq!(owned_counts(&db, user_id, base).await, Some((0, 3)), "base owns 3 foil");
-        assert_eq!(owned_counts(&db, user_id, star).await, None, "no separate star holding");
+        assert_eq!(
+            owned_counts(&db, user_id, base).await,
+            Some((0, 3)),
+            "base owns 3 foil"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, star).await,
+            None,
+            "no separate star holding"
+        );
         assert_eq!(summary.matched_cards, 1);
         assert_eq!(summary.foil_copies, 3);
         assert_eq!(summary.regular_copies, 0);
@@ -772,7 +834,11 @@ mod tests {
         .await
         .expect("reconcile");
 
-        assert_eq!(owned_counts(&db, user_id, base).await, Some((2, 2)), "2 regular + 2 foil");
+        assert_eq!(
+            owned_counts(&db, user_id, base).await,
+            Some((2, 2)),
+            "2 regular + 2 foil"
+        );
         assert_eq!(summary.distinct_cards, 1, "star + base count as one card");
         assert_eq!(summary.matched_cards, 1);
     }
@@ -830,8 +896,16 @@ mod tests {
         .await
         .expect("reconcile");
 
-        assert_eq!(owned_counts(&db, user_id, base).await, Some((0, 1)), "one foil on the base");
-        assert_eq!(owned_counts(&db, user_id, star).await, None, "no leftover star holding");
+        assert_eq!(
+            owned_counts(&db, user_id, base).await,
+            Some((0, 1)),
+            "one foil on the base"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, star).await,
+            None,
+            "no leftover star holding"
+        );
     }
 
     #[tokio::test]

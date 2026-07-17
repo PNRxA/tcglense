@@ -64,22 +64,23 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
         seed_card(3, "Goblin King", "Creature — Goblin", Some("2.00")),
         seed_card(4, "Goblin Piker", "Creature — Goblin", Some("1.00")),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     // User 1 wants cards 1..=3 (updated at increasing times so recency order is
     // 3, 2, 1); user 2 wants card 4.
-    let want = |id: i32, card_id: i32, user_id: i32, updated: &str| {
-        wishlist_item::ActiveModel {
-            id: Set(id),
-            user_id: Set(user_id),
-            game: Set("mtg".into()),
-            card_id: Set(card_id),
-            quantity: Set(1),
-            foil_quantity: Set(0),
-            created_at: Set(at("2024-01-01T00:00:00Z")),
-            updated_at: Set(at(updated)),
-        }
+    let want = |id: i32, card_id: i32, user_id: i32, updated: &str| wishlist_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(user_id),
+        game: Set("mtg".into()),
+        card_id: Set(card_id),
+        quantity: Set(1),
+        foil_quantity: Set(0),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at(updated)),
     };
     for w in [
         want(1, 1, 1, "2024-01-01T00:00:00Z"),
@@ -116,13 +117,27 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
     // keeps only user 1's two Goblins (Forest dropped; user 2's Goblin out of scope).
     let goblins = search_condition(mtg, "t:goblin", Dialect::Sqlite).unwrap();
     assert_eq!(
-        names(&db, None, Some(goblins), CollectionSort::Recent, SortDir::Desc).await,
+        names(
+            &db,
+            None,
+            Some(goblins),
+            CollectionSort::Recent,
+            SortDir::Desc
+        )
+        .await,
         ["Goblin King", "Goblin Guide"]
     );
 
     // Price sort borrows the catalog card sort verbatim: 5.00, 2.00, 0.10.
     assert_eq!(
-        names(&db, None, None, CollectionSort::Card(SortField::Price), SortDir::Desc).await,
+        names(
+            &db,
+            None,
+            None,
+            CollectionSort::Card(SortField::Price),
+            SortDir::Desc
+        )
+        .await,
         ["Goblin Guide", "Goblin King", "Forest"]
     );
 }
@@ -159,7 +174,10 @@ async fn wishlist_query_orders_by_total_copies() {
         seed_card(2, "Five Total", "Creature", None),
         seed_card(3, "Three Total", "Creature", None),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     // Total copies = quantity + foil_quantity: card 1 = 2 (2+0), card 2 = 5 (1+4),
@@ -180,13 +198,21 @@ async fn wishlist_query_orders_by_total_copies() {
     }
 
     async fn ordered(db: &sea_orm::DatabaseConnection, dir: SortDir) -> Vec<String> {
-        wishlist_query(1, "mtg", None, None, CollectionSort::Quantity, dir, Dialect::Sqlite)
-            .all(db)
-            .await
-            .expect("run wishlist query")
-            .into_iter()
-            .filter_map(|(_, card)| card.map(|c| c.name))
-            .collect()
+        wishlist_query(
+            1,
+            "mtg",
+            None,
+            None,
+            CollectionSort::Quantity,
+            dir,
+            Dialect::Sqlite,
+        )
+        .all(db)
+        .await
+        .expect("run wishlist query")
+        .into_iter()
+        .filter_map(|(_, card)| card.map(|c| c.name))
+        .collect()
     }
 
     // Most copies first: 5, 3, 2.
@@ -233,7 +259,10 @@ async fn summary_skips_rows_whose_card_row_is_missing() {
         seed_card(1, "Priced Card", "Creature", Some("5.00")),
         seed_card(2, "Cheap Card", "Creature", Some("2.00")),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     let want = |id: i32, card_id: i32, q: i32, f: i32| wishlist_item::ActiveModel {
@@ -305,7 +334,10 @@ async fn wishlist_query_scopes_to_a_set() {
         card(3, "Goblin King", "bbb", "Creature — Goblin"),
         card(4, "Goblin Piker", "ccc", "Creature — Goblin"),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
     let want = |id: i32, card_id: i32| wishlist_item::ActiveModel {
         id: Set(id),
@@ -347,10 +379,16 @@ async fn wishlist_query_scopes_to_a_set() {
 
     let aaa = ["aaa".to_string()];
     // Scoped to set "aaa": only its two cards, not the other sets' Goblins.
-    assert_eq!(names(&db, Some(&aaa), None).await, ["Forest", "Goblin Guide"]);
+    assert_eq!(
+        names(&db, Some(&aaa), None).await,
+        ["Forest", "Goblin Guide"]
+    );
     // Set scope ANDs with the search: goblins in "aaa" only.
     let goblins = search_condition(mtg, "t:goblin", Dialect::Sqlite).unwrap();
-    assert_eq!(names(&db, Some(&aaa), Some(goblins)).await, ["Goblin Guide"]);
+    assert_eq!(
+        names(&db, Some(&aaa), Some(goblins)).await,
+        ["Goblin Guide"]
+    );
     // A multi-code scope (the include-related group view) spans exactly its sets —
     // "aaa" + "bbb", excluding "ccc"'s Goblin Piker.
     let group = ["aaa".to_string(), "bbb".to_string()];
@@ -407,7 +445,10 @@ async fn wanted_cards_group_into_drops_with_counts() {
         sld_card(2, "168", Some(168)),
         sld_card(3, "999999", Some(999999)),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
     // Want the first two (2 + 1 foil of #2658; 3 of #168); leave #999999 unwanted.
     let want = |id: i32, card_id: i32, q: i32, f: i32| wishlist_item::ActiveModel {
@@ -689,11 +730,18 @@ async fn product_summary_counts_values_and_skips_orphans() {
     };
     // a: 2 regular; b: 1 regular + 2 foil; c: 1 regular (unpriced); plus an orphan
     // (product_id 9999, 5 copies) with no product row.
-    for w in [want(1, a, 2, 0), want(2, b, 1, 2), want(3, c, 1, 0), want(4, 9999, 5, 0)] {
+    for w in [
+        want(1, a, 2, 0),
+        want(2, b, 1, 2),
+        want(3, c, 1, 0),
+        want(4, 9999, 5, 0),
+    ] {
         w.insert(&db).await.expect("insert wishlist product row");
     }
 
-    let s = product_summary(&db, 1, "mtg").await.expect("product summary");
+    let s = product_summary(&db, 1, "mtg")
+        .await
+        .expect("product summary");
     // The orphan is skipped for all three stats: 3 distinct products, 6 copies
     // (2 + 3 + 1; the orphan's 5 excluded), value = 2×$120 + 1×$40 + 2×$50 = $380.00
     // (the unpriced deck contributes nothing).
@@ -747,7 +795,9 @@ async fn product_summary_value_is_null_when_nothing_priced_and_ignores_msrp() {
     .await
     .expect("insert wishlist product row");
 
-    let s = product_summary(&db, 1, "mtg").await.expect("product summary");
+    let s = product_summary(&db, 1, "mtg")
+        .await
+        .expect("product summary");
     assert_eq!(s.unique_products, 1);
     assert_eq!(s.total_products, 3);
     assert_eq!(s.total_value_usd, None);

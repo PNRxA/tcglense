@@ -216,7 +216,10 @@ fn custom_section_header(line: &str) -> Option<String> {
     // A bracket-wrapped line is our own export's escape for names the bare grammar would
     // misread (see [`render_text_section_header`]): strip exactly the one wrapping pair so
     // bracket/trim characters belonging to the name survive verbatim.
-    let header = match line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+    let header = match line
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
         Some(inner) => inner.trim(),
         None => line.trim_matches(['~', '/', ':', '[', ']']).trim(),
     };
@@ -237,9 +240,7 @@ pub fn render_text_section_header(name: &str) -> String {
     let name = name.replace(['\r', '\n'], " ");
     let leading_quantity = name
         .split_once(char::is_whitespace)
-        .and_then(|(quantity_token, _)| {
-            parse_quantity(quantity_token.trim_end_matches(['x', 'X']))
-        })
+        .and_then(|(quantity_token, _)| parse_quantity(quantity_token.trim_end_matches(['x', 'X'])))
         .is_some_and(|quantity| quantity > 0);
     let ambiguous = leading_quantity
         || name.starts_with(['#', '~', '/', ':', '[', ']'])
@@ -353,8 +354,15 @@ mod tests {
                 render_text_section_header(name)
             );
             let rows = parse_text(text.as_bytes()).expect("text");
-            assert_eq!(rows.len(), 1, "header for {name:?} must not parse as a card row");
-            assert_eq!(rows[0].section, name, "{name:?} must survive the round trip");
+            assert_eq!(
+                rows.len(),
+                1,
+                "header for {name:?} must not parse as a card row"
+            );
+            assert_eq!(
+                rows[0].section, name,
+                "{name:?} must survive the round trip"
+            );
             assert_eq!(rows[0].card_name, "Cathar Commando");
             assert_eq!(rows[0].quantity, 4);
         }

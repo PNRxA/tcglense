@@ -331,17 +331,14 @@ export function useScanSession(game: Ref<string>) {
     const printingBlocked = () => printsError.value && !selectedCard.value
     if (!currentSettled.value && !ownedError.value && !printingBlocked()) {
       await new Promise<void>((resolve) => {
-        const stop = watch(
-          [currentSettled, ownedError, printsError, selectedCard, match],
-          () => {
-            // A printing error blocks auto-resolution only while no loaded printing has been
-            // chosen manually. After a choice, keep waiting for that printing's owned count.
-            if (currentSettled.value || ownedError.value || printingBlocked() || !match.value) {
-              stop()
-              resolve()
-            }
-          },
-        )
+        const stop = watch([currentSettled, ownedError, printsError, selectedCard, match], () => {
+          // A printing error blocks auto-resolution only while no loaded printing has been
+          // chosen manually. After a choice, keep waiting for that printing's owned count.
+          if (currentSettled.value || ownedError.value || printingBlocked() || !match.value) {
+            stop()
+            resolve()
+          }
+        })
       })
     }
     if (!match.value) return true

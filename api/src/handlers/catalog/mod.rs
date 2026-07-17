@@ -24,8 +24,8 @@ use crate::entities::card;
 use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::handlers::shared::{
-    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField,
-    resolve_page, search_condition, trim_query,
+    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, SortDir,
+    SortField, resolve_page, search_condition, trim_query,
 };
 use crate::scryfall::search::{cust_vals, escape_like};
 
@@ -43,11 +43,11 @@ mod tests;
 pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use image::card_image;
 pub use prices::card_prices;
-pub use scan::scan_cards;
 pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
     product_containers, product_contents, product_facets, product_image, product_prices,
 };
+pub use scan::scan_cards;
 pub use sets::{get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon};
 pub use status::{ingest_status, list_games};
 
@@ -179,7 +179,12 @@ impl ListParams {
         q_order: Option<SortField>,
         q_dir: Option<SortDir>,
     ) -> Result<(SortField, SortDir), AppError> {
-        let field = match self.sort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let field = match self
+            .sort
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(value) => SortField::parse(value)?,
             None => q_order.unwrap_or(default),
         };
@@ -229,7 +234,11 @@ fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::En
         .filter(card::Column::Id.ne(exclude_id))
         .order_by_with_nulls(card::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
         .order_by_asc(card::Column::SetCode)
-        .order_by_with_nulls(card::Column::CollectorNumberInt, Order::Asc, NullOrdering::Last)
+        .order_by_with_nulls(
+            card::Column::CollectorNumberInt,
+            Order::Asc,
+            NullOrdering::Last,
+        )
         .order_by_asc(card::Column::CollectorNumber)
         .order_by_asc(card::Column::Id)
         .limit(MAX_PAGE_SIZE)
@@ -333,7 +342,10 @@ fn parse_search(
                 },
             ))
         }
-        _ => Ok((search_condition(game, search, dialect)?, SearchShape::default())),
+        _ => Ok((
+            search_condition(game, search, dialect)?,
+            SearchShape::default(),
+        )),
     }
 }
 
@@ -365,12 +377,13 @@ fn apply_unique(
     match dialect {
         // Unchanged from the pre-Postgres compiler — SQLite picks an arbitrary row
         // per group.
-        Dialect::Sqlite => {
-            query.group_by(Expr::cust(format!("COALESCE(cards.{key_col}, '#' || cards.id)")))
-        }
+        Dialect::Sqlite => query.group_by(Expr::cust(format!(
+            "COALESCE(cards.{key_col}, '#' || cards.id)"
+        ))),
         Dialect::Postgres => {
-            let group_key =
-                Expr::cust(format!("COALESCE(cards.{key_col}, '#' || CAST(cards.id AS TEXT))"));
+            let group_key = Expr::cust(format!(
+                "COALESCE(cards.{key_col}, '#' || CAST(cards.id AS TEXT))"
+            ));
             let min_ids = query
                 .clone()
                 .select_only()

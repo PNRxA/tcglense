@@ -46,8 +46,8 @@ use compile::compile;
 use lexer::{Token, lex};
 use parser::Parser;
 
-pub use error::SearchError;
 pub(crate) use compile::{cust_vals, escape_like};
+pub use error::SearchError;
 
 /// A sort field a query can request via `order:`. Mapped to the catalog's own
 /// `SortField` in the handler layer.
@@ -215,6 +215,12 @@ fn parse_unique(value: &str) -> Result<UniqueMode, SearchError> {
         "cards" | "card" => UniqueMode::Cards,
         "art" | "arts" => UniqueMode::Art,
         "prints" | "printings" => UniqueMode::Prints,
-        other => return Err(error::invalid("unique", other, "expected cards, art or prints")),
+        other => {
+            return Err(error::invalid(
+                "unique",
+                other,
+                "expected cards, art or prints",
+            ));
+        }
     })
 }

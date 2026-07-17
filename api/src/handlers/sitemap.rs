@@ -228,8 +228,7 @@ async fn cards_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response,
 /// twin over the `products` table (issue #294). Same stable keyset window and
 /// 404-past-the-end behavior; the SPA's product route is `/sealed/{game}/{external_id}`.
 async fn products_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response, AppError> {
-    let Some(start_id) =
-        chunk_start_id(&state.db, Product::find(), product::Column::Id, n).await?
+    let Some(start_id) = chunk_start_id(&state.db, Product::find(), product::Column::Id, n).await?
     else {
         return Err(AppError::NotFound(format!(
             "sitemap product chunk {n} is out of range"

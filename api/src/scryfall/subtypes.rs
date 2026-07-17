@@ -40,19 +40,48 @@ pub struct Subtype {
 // `static` (not `const`) so each sub-type has a single stable address — [`classify`]
 // returns a `&'static Subtype` and callers compare identity by pointer (see
 // [`is_special_attrs`]).
-pub static NORMAL: Subtype = Subtype { slug: "normal", title: "Normal", order: 0 };
-static BORDERLESS: Subtype = Subtype { slug: "borderless", title: "Borderless", order: 1 };
-static SHOWCASE: Subtype = Subtype { slug: "showcase", title: "Showcase", order: 2 };
-static EXTENDED_ART: Subtype = Subtype { slug: "extended-art", title: "Extended Art", order: 3 };
-static FULL_ART: Subtype = Subtype { slug: "full-art", title: "Full Art", order: 4 };
+pub static NORMAL: Subtype = Subtype {
+    slug: "normal",
+    title: "Normal",
+    order: 0,
+};
+static BORDERLESS: Subtype = Subtype {
+    slug: "borderless",
+    title: "Borderless",
+    order: 1,
+};
+static SHOWCASE: Subtype = Subtype {
+    slug: "showcase",
+    title: "Showcase",
+    order: 2,
+};
+static EXTENDED_ART: Subtype = Subtype {
+    slug: "extended-art",
+    title: "Extended Art",
+    order: 3,
+};
+static FULL_ART: Subtype = Subtype {
+    slug: "full-art",
+    title: "Full Art",
+    order: 4,
+};
 /// Curated-only: no card *derives* to this (Scryfall doesn't mark scene cards), but the
 /// override snapshot can assign it. See the module docs.
-static BORDERLESS_SCENE: Subtype =
-    Subtype { slug: "borderless-scene", title: "Borderless Scene", order: 5 };
+static BORDERLESS_SCENE: Subtype = Subtype {
+    slug: "borderless-scene",
+    title: "Borderless Scene",
+    order: 5,
+};
 
 /// Every sub-type an override may name, resolved by slug when the snapshot is loaded.
-static CURATED: &[&Subtype] =
-    &[&NORMAL, &BORDERLESS, &SHOWCASE, &EXTENDED_ART, &FULL_ART, &BORDERLESS_SCENE];
+static CURATED: &[&Subtype] = &[
+    &NORMAL,
+    &BORDERLESS,
+    &SHOWCASE,
+    &EXTENDED_ART,
+    &FULL_ART,
+    &BORDERLESS_SCENE,
+];
 
 /// The print attributes classification reads, decoupled from the full `card::Model`
 /// so narrow row fetches (the collection/wishlist set tiles select only the fold's
@@ -201,7 +230,11 @@ fn override_for(game: &str, set_code: &str, collector_number: &str) -> Option<&'
         return None;
     }
     table
-        .get(&(game.to_string(), set_code.to_string(), collector_number.to_string()))
+        .get(&(
+            game.to_string(),
+            set_code.to_string(),
+            collector_number.to_string(),
+        ))
         .copied()
 }
 
@@ -323,21 +356,42 @@ mod tests {
     #[test]
     fn derives_each_treatment() {
         assert_eq!(classify(&treated(1, None, None, None)).slug, "normal");
-        assert_eq!(classify(&treated(2, None, Some("showcase"), None)).slug, "showcase");
-        assert_eq!(classify(&treated(3, None, Some("extendedart"), None)).slug, "extended-art");
-        assert_eq!(classify(&treated(4, Some("borderless"), None, None)).slug, "borderless");
-        assert_eq!(classify(&treated(5, None, None, Some(true))).slug, "full-art");
+        assert_eq!(
+            classify(&treated(2, None, Some("showcase"), None)).slug,
+            "showcase"
+        );
+        assert_eq!(
+            classify(&treated(3, None, Some("extendedart"), None)).slug,
+            "extended-art"
+        );
+        assert_eq!(
+            classify(&treated(4, Some("borderless"), None, None)).slug,
+            "borderless"
+        );
+        assert_eq!(
+            classify(&treated(5, None, None, Some(true))).slug,
+            "full-art"
+        );
     }
 
     #[test]
     fn priority_resolves_overlaps() {
         // Showcase wins over a borderless border and full art.
         assert_eq!(
-            classify(&treated(1, Some("borderless"), Some("legendary,showcase"), Some(true))).slug,
+            classify(&treated(
+                1,
+                Some("borderless"),
+                Some("legendary,showcase"),
+                Some(true)
+            ))
+            .slug,
             "showcase",
         );
         // Borderless wins over full art (most borderless printings are also full-art).
-        assert_eq!(classify(&treated(2, Some("borderless"), None, Some(true))).slug, "borderless");
+        assert_eq!(
+            classify(&treated(2, Some("borderless"), None, Some(true))).slug,
+            "borderless"
+        );
     }
 
     #[test]
@@ -345,8 +399,14 @@ mod tests {
         // `derive` folds case (eq_ci / eq_ignore_ascii_case), and `has_subtype_condition`
         // mirrors it with LOWER — so a non-lowercase token can't desync the flag from the
         // grouped view. Guard the classifier half here.
-        assert_eq!(classify(&treated(1, Some("Borderless"), None, None)).slug, "borderless");
-        assert_eq!(classify(&treated(2, None, Some("Showcase"), None)).slug, "showcase");
+        assert_eq!(
+            classify(&treated(1, Some("Borderless"), None, None)).slug,
+            "borderless"
+        );
+        assert_eq!(
+            classify(&treated(2, None, Some("Showcase"), None)).slug,
+            "showcase"
+        );
     }
 
     #[test]
@@ -364,7 +424,10 @@ mod tests {
         let normal = treated(1, None, None, None);
         assert!(!is_special_attrs(&normal.game, PrintAttrs::from(&normal)));
         let borderless = treated(2, Some("borderless"), None, None);
-        assert!(is_special_attrs(&borderless.game, PrintAttrs::from(&borderless)));
+        assert!(is_special_attrs(
+            &borderless.game,
+            PrintAttrs::from(&borderless)
+        ));
     }
 
     #[test]
@@ -388,13 +451,22 @@ mod tests {
         // Postgres's predicate-implication prover — which normalizes before matching — accepts
         // either, and both derive from `HAS_SUBTYPE_SQL_ARMS` so they cannot textually diverge.
         for arm in HAS_SUBTYPE_SQL_ARMS {
-            assert!(sql.contains(arm), "arm missing from query filter\n  arm: {arm}\n  sql: {sql}");
+            assert!(
+                sql.contains(arm),
+                "arm missing from query filter\n  arm: {arm}\n  sql: {sql}"
+            );
         }
         // The `full_art` arm must render as a literal, never the parameterized `full_art = $N`
         // that `Column::FullArt.eq(true)` would emit — Postgres can't prove a parameter implies
         // the index predicate, so the parameterized form would forfeit the partial index.
-        assert!(sql.contains("full_art = true"), "full_art arm must be a literal: {sql}");
-        assert!(!sql.contains("full_art\" = $"), "full_art must not be parameterized: {sql}");
+        assert!(
+            sql.contains("full_art = true"),
+            "full_art arm must be a literal: {sql}"
+        );
+        assert!(
+            !sql.contains("full_art\" = $"),
+            "full_art must not be parameterized: {sql}"
+        );
     }
 
     #[test]
@@ -412,7 +484,9 @@ mod tests {
             {"subtype":"borderless-scene","collector_numbers":["100","101"]}]}]}"#;
         let table = build_overrides(json);
         assert_eq!(
-            table.get(&("mtg".into(), "tst".into(), "100".into())).map(|s| s.slug),
+            table
+                .get(&("mtg".into(), "tst".into(), "100".into()))
+                .map(|s| s.slug),
             Some("borderless-scene"),
         );
         // An unknown slug is skipped, not fatal.

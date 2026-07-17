@@ -4,10 +4,7 @@
 
 use std::collections::HashMap;
 
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     RelationTrait, SelectModel, SelectTwo, Selector, sea_query::JoinType,
@@ -97,9 +94,16 @@ pub(crate) async fn owned_list_page(
     // does. `None` means the whole collection.
     let set_codes = resolve_set_scope(state, game, params.set(), params.include_related()).await?;
 
-    let paginator =
-        collection_query(user_id, game, set_codes.as_deref(), search, sort, dir, dialect)
-            .paginate(&state.db, page_size);
+    let paginator = collection_query(
+        user_id,
+        game,
+        set_codes.as_deref(),
+        search,
+        sort,
+        dir,
+        dialect,
+    )
+    .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
 
@@ -241,7 +245,11 @@ pub async fn collection_summary(
     // Resolve the optional scope: one set, or its whole group under include-related, or
     // `None` for the whole collection — the same resolution the collection list uses, so
     // the value spans identical sets. Then aggregate over exactly those holdings.
-    let set = params.set.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let set = params
+        .set
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let set_codes =
         resolve_set_scope(&state, &game, set, params.include_related.unwrap_or(false)).await?;
     Ok(Json(
@@ -353,7 +361,9 @@ pub async fn owned_counts(
         )));
     }
 
-    Ok(Json(owned_counts_map(&state, user.id, &game, external_ids).await?))
+    Ok(Json(
+        owned_counts_map(&state, user.id, &game, external_ids).await?,
+    ))
 }
 
 /// The owned-counts core, parameterised by `user_id` so both the authed handler above

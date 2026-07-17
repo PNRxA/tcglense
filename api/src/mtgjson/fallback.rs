@@ -303,9 +303,9 @@ mod tests {
             let num = num.to_string();
             for foil in [false, true] {
                 assert!(
-                    lands.iter().any(|c| c.number == num
-                        && c.foil == foil
-                        && c.membership == "contains"),
+                    lands
+                        .iter()
+                        .any(|c| c.number == num && c.foil == foil && c.membership == "contains"),
                     "land tla #{num} (foil: {foil}) is a guaranteed inclusion"
                 );
             }
@@ -402,7 +402,10 @@ mod tests {
             .filter_map(|c| c.child_tcgplayer_product_id.as_deref())
             .collect();
         children.sort();
-        assert_eq!(children, vec!["648719", "648720", "648721", "648722", "648723"]);
+        assert_eq!(
+            children,
+            vec!["648719", "648720", "648721", "648722", "648723"]
+        );
         assert!(set5.components.iter().all(|c| c.quantity == 1));
 
         // The Scene Box Case is 2 of each Scene Box (a 4-box case).

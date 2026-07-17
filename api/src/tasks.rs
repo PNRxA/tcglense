@@ -245,9 +245,12 @@ fn spawn_card_sync(
             // crashed mid-import, its session lock died with it and this replica
             // takes over instead of nobody ever syncing.
             tracing::info!("startup card sync: waiting for the sync leader lock");
-            let lease =
-                crate::db_lock::AdvisoryLock::acquire(&db, &database_url, crate::db_lock::CARD_SYNC)
-                    .await;
+            let lease = crate::db_lock::AdvisoryLock::acquire(
+                &db,
+                &database_url,
+                crate::db_lock::CARD_SYNC,
+            )
+            .await;
             catalog::refresh_all(&db, &http, &tcgcsv_user_agent, &source).await;
             // Capture today's snapshot from the freshly-imported cards + products.
             catalog::snapshot_all(&db).await;

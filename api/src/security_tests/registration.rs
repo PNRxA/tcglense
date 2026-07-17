@@ -21,7 +21,12 @@ async fn latest_registration_link(app: &TestApp, to: &str) -> url::Url {
         .text
         .lines()
         .find(|line| line.starts_with(&app.state.config.public_site_url))
-        .unwrap_or_else(|| panic!("registration email contains no completion link: {}", email.text));
+        .unwrap_or_else(|| {
+            panic!(
+                "registration email contains no completion link: {}",
+                email.text
+            )
+        });
     url::Url::parse(link).expect("registration email carries a valid absolute URL")
 }
 
@@ -49,9 +54,8 @@ async fn safe_registration_redirect_is_encoded_and_preserved_in_the_completion_l
         Some(redirect.to_string())
     );
     assert!(
-        link.as_str().contains(
-            "redirect=%2Fcollection%2Fmagic%3Fsort%3Dname%26dir%3Dasc%23owned"
-        ),
+        link.as_str()
+            .contains("redirect=%2Fcollection%2Fmagic%3Fsort%3Dname%26dir%3Dasc%23owned"),
         "redirect must be encoded as one query value: {link}"
     );
 }
@@ -143,12 +147,18 @@ async fn registering_an_existing_email_is_indistinguishable_and_sends_nothing() 
 
     let taken = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "Taken@Example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "Taken@Example.com" }),
+        ),
     )
     .await;
     let fresh = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "fresh@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "fresh@example.com" }),
+        ),
     )
     .await;
 
@@ -162,12 +172,18 @@ async fn registering_an_existing_email_is_indistinguishable_and_sends_nothing() 
     // The activated account got no new mail; the fresh address got its link.
     let emails = delivered_emails(&app).await;
     assert_eq!(
-        emails.iter().filter(|e| e.to == "taken@example.com").count(),
+        emails
+            .iter()
+            .filter(|e| e.to == "taken@example.com")
+            .count(),
         1,
         "an already-registered address must not be mailed again by register"
     );
     assert_eq!(
-        emails.iter().filter(|e| e.to == "fresh@example.com").count(),
+        emails
+            .iter()
+            .filter(|e| e.to == "fresh@example.com")
+            .count(),
         1,
         "a new address gets exactly one completion link"
     );
@@ -183,7 +199,10 @@ async fn a_pending_registration_gets_the_link_resent_with_cooldown() {
     // Start a registration but never complete it.
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "pending@example.com" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -192,7 +211,10 @@ async fn a_pending_registration_gets_the_link_resent_with_cooldown() {
     // nothing (the cooldown is unobservable from outside).
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "pending@example.com" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -210,7 +232,10 @@ async fn a_pending_registration_gets_the_link_resent_with_cooldown() {
         .expect("age tokens");
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "pending@example.com" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -223,7 +248,10 @@ async fn a_pending_registration_cannot_sign_in() {
     let app = test_app().await;
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "limbo@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "limbo@example.com" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -256,7 +284,10 @@ async fn completion_enforces_password_rules_before_spending_the_token() {
     let app = test_app().await;
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "rules@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "rules@example.com" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -312,7 +343,10 @@ async fn username_at_signup_is_optional_and_validated() {
     let app = test_app().await;
     let (s, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "signup-name@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "signup-name@example.com" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -366,9 +400,13 @@ async fn a_completed_account_refuses_further_completion_tokens() {
         .await
         .expect("query")
         .expect("user exists");
-    let planted = issue(&app.state.db, user.id, EmailTokenPurpose::CompleteRegistration)
-        .await
-        .expect("issue");
+    let planted = issue(
+        &app.state.db,
+        user.id,
+        EmailTokenPurpose::CompleteRegistration,
+    )
+    .await
+    .expect("issue");
 
     let (s, _, body) = send(
         &app,

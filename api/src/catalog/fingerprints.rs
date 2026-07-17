@@ -464,7 +464,12 @@ mod tests {
         assert_eq!(hits[2].external_id, "c");
         assert_eq!(hits[2].distance, 4);
         // The other-game entry never appears.
-        assert!(index.nearest("mtg", &[query], 10).iter().all(|h| h.external_id != "z"));
+        assert!(
+            index
+                .nearest("mtg", &[query], 10)
+                .iter()
+                .all(|h| h.external_id != "z")
+        );
     }
 
     #[test]
@@ -493,8 +498,18 @@ mod tests {
         far[0] = 0b1111_1111;
         let index = FingerprintIndex {
             entries: vec![
-                IndexEntry { game: "mtg".into(), external_id: "dfc".into(), face_index: 0, hash: far },
-                IndexEntry { game: "mtg".into(), external_id: "dfc".into(), face_index: 1, hash: near },
+                IndexEntry {
+                    game: "mtg".into(),
+                    external_id: "dfc".into(),
+                    face_index: 0,
+                    hash: far,
+                },
+                IndexEntry {
+                    game: "mtg".into(),
+                    external_id: "dfc".into(),
+                    face_index: 1,
+                    hash: near,
+                },
             ],
         };
         let hits = index.nearest("mtg", &[[0u8; PHASH_BYTES]], 5);
@@ -519,7 +534,8 @@ mod tests {
             Some("https://img/top.jpg".into())
         );
         // Blank top-level falls through to the first face.
-        let faces = r#"[{"image_small":"https://img/face0.jpg"},{"image_small":"https://img/face1.jpg"}]"#;
+        let faces =
+            r#"[{"image_small":"https://img/face0.jpg"},{"image_small":"https://img/face1.jpg"}]"#;
         assert_eq!(
             front_small_url(Some("  ".into()), Some(faces.into())),
             Some("https://img/face0.jpg".into())

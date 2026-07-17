@@ -81,7 +81,11 @@ async fn a_deep_spa_route_falls_back_to_index_with_200() {
     // index.html with a real 200 (not a 404) so deep links are valid, crawlable pages.
     let app = app_with_web_root(Some(make_web_root("spa-deep-link"))).await;
     let (status, headers, body) = send_text(&app, get("/collection/mtg/sets/abc")).await;
-    assert_eq!(status, StatusCode::OK, "an SPA deep link must be 200, not 404");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an SPA deep link must be 200, not 404"
+    );
     assert_eq!(
         headers.get("cache-control").and_then(|v| v.to_str().ok()),
         Some("public, no-cache")

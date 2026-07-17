@@ -225,7 +225,11 @@ async fn existing_users_can_still_log_in_when_signups_are_disabled() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "login must work when signups are off: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "login must work when signups are off: {body:?}"
+    );
     assert!(body["access_token"].as_str().is_some());
     assert!(refresh_token_from(&headers).is_some());
 }

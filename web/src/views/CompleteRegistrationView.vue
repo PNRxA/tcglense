@@ -104,7 +104,9 @@ async function onSubmit() {
                 autocapitalize="off"
                 spellcheck="false"
                 :aria-invalid="Boolean(error) || undefined"
-                :aria-describedby="error ? 'complete-username-help complete-error' : 'complete-username-help'"
+                :aria-describedby="
+                  error ? 'complete-username-help complete-error' : 'complete-username-help'
+                "
               />
               <p id="complete-username-help" class="text-muted-foreground text-xs">
                 3–20 letters, numbers, or underscores. Used for public links; you can set it later.
@@ -122,7 +124,9 @@ async function onSubmit() {
                 maxlength="1024"
                 required
                 :aria-invalid="Boolean(error) || undefined"
-                :aria-describedby="error ? 'complete-password-help complete-error' : 'complete-password-help'"
+                :aria-describedby="
+                  error ? 'complete-password-help complete-error' : 'complete-password-help'
+                "
               />
               <p id="complete-password-help" class="text-muted-foreground text-xs">
                 Must be at least 8 characters.

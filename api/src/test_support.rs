@@ -233,7 +233,9 @@ pub(crate) async fn insert_product(
         clean_name: Set(Some(name.to_string())),
         set_code: Set(set_code.to_string()),
         product_type: Set(product_type.to_string()),
-        url: Set(Some(format!("https://www.tcgplayer.com/product/{external_id}"))),
+        url: Set(Some(format!(
+            "https://www.tcgplayer.com/product/{external_id}"
+        ))),
         image_url: Set(Some(format!(
             "https://tcgplayer-cdn.tcgplayer.com/product/{external_id}_200w.jpg"
         ))),

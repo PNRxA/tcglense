@@ -58,7 +58,9 @@ pub async fn fetch_products(
     group_id: i64,
 ) -> Result<ProductsFile, BackfillError> {
     Ok(client
-        .get(format!("{base_url}/tcgplayer/{category_id}/{group_id}/products"))
+        .get(format!(
+            "{base_url}/tcgplayer/{category_id}/{group_id}/products"
+        ))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await?
@@ -77,7 +79,9 @@ pub async fn fetch_prices(
     group_id: i64,
 ) -> Result<PriceFile, BackfillError> {
     Ok(client
-        .get(format!("{base_url}/tcgplayer/{category_id}/{group_id}/prices"))
+        .get(format!(
+            "{base_url}/tcgplayer/{category_id}/{group_id}/prices"
+        ))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await?

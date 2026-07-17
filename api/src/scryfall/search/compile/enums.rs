@@ -2,10 +2,10 @@
 
 use sea_orm::Condition;
 
-use crate::db::Dialect;
-use super::common::{raw, raw_vals, text_eq, text_ne};
 use super::super::error::{SearchError, unsupported_op};
 use super::super::lexer::Op;
+use super::common::{raw, raw_vals, text_eq, text_ne};
+use crate::db::Dialect;
 
 fn lang_code(lower: &str) -> String {
     match lower {
@@ -32,7 +32,11 @@ pub(super) fn lang(dialect: Dialect, op: Op, value: &str) -> Result<Condition, S
             if lower == "any" || lower == "*" {
                 return Ok(Condition::all());
             }
-            Ok(raw_vals(dialect, "lang = ?".to_string(), [lang_code(&lower)]))
+            Ok(raw_vals(
+                dialect,
+                "lang = ?".to_string(),
+                [lang_code(&lower)],
+            ))
         }
         _ => Err(unsupported_op("lang", op)),
     }

@@ -55,7 +55,9 @@ async fn wishlist_products_require_authentication() {
             .method("PUT")
             .uri(product_path("100"))
             .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({ "quantity": 1, "foil_quantity": 0 }).to_string()))
+            .body(Body::from(
+                json!({ "quantity": 1, "foil_quantity": 0 }).to_string(),
+            ))
             .unwrap(),
     )
     .await;
@@ -80,7 +82,15 @@ async fn set_get_list_and_remove_round_trip() {
 
     // Two products: one we'll want, one only seeded (to prove a known-but-unwanted read
     // is zeros, not a 404).
-    insert_product(db, "100", "Karlov Collector Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Karlov Collector Booster Box",
+        "mkm",
+        "collector_display",
+        Some("249.99"),
+    )
+    .await;
     insert_product(db, "200", "Karlov Bundle", "mkm", "bundle", Some("39.99")).await;
 
     // A fresh wish list is empty (and no-store).
@@ -93,14 +103,23 @@ async fn set_get_list_and_remove_round_trip() {
 
     // A seeded-but-never-wanted product reads back zeros, not a 404.
     let (status, _, body) = send(&app, get_with_bearer(&product_path("200"), &token)).await;
-    assert_eq!(status, StatusCode::OK, "known product, no row -> zeros: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "known product, no row -> zeros: {body:?}"
+    );
     assert_eq!(body["quantity"], 0);
     assert_eq!(body["foil_quantity"], 0);
 
     // Want 3.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", &product_path("100"), &token, json!({ "quantity": 3, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &product_path("100"),
+            &token,
+            json!({ "quantity": 3, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "set failed: {body:?}");
@@ -120,14 +139,25 @@ async fn set_get_list_and_remove_round_trip() {
     assert_eq!(entry["quantity"], 3);
     assert_eq!(entry["foil_quantity"], 0);
     assert_eq!(entry["product"]["id"], "100");
-    assert!(entry["product"]["name"].as_str().is_some(), "entry embeds the product name");
+    assert!(
+        entry["product"]["name"].as_str().is_some(),
+        "entry embeds the product name"
+    );
     assert_eq!(entry["product"]["set_code"], "mkm");
-    assert!(entry["product"]["prices"].is_object(), "entry embeds the product prices");
+    assert!(
+        entry["product"]["prices"].is_object(),
+        "entry embeds the product prices"
+    );
 
     // Updating the same product upserts (no duplicate row).
     let (_, _, body) = send(
         &app,
-        json_with_bearer("PUT", &product_path("100"), &token, json!({ "quantity": 5, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &product_path("100"),
+            &token,
+            json!({ "quantity": 5, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(body["quantity"], 5);
@@ -138,7 +168,12 @@ async fn set_get_list_and_remove_round_trip() {
     // Zeroing both counts removes the product from the wish list.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", &product_path("100"), &token, json!({ "quantity": 0, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &product_path("100"),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "remove failed: {body:?}");
@@ -160,12 +195,25 @@ async fn foil_quantity_round_trip() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "foil-sealed@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("99.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("99.99"),
+    )
+    .await;
 
     // Want 0 regular + 3 foil.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", &product_path("100"), &token, json!({ "quantity": 0, "foil_quantity": 3 })),
+        json_with_bearer(
+            "PUT",
+            &product_path("100"),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 3 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "set failed: {body:?}");
@@ -186,7 +234,12 @@ async fn foil_quantity_round_trip() {
     // Zeroing both counts removes the row — a foil-only want deletes just like a regular one.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", &product_path("100"), &token, json!({ "quantity": 0, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &product_path("100"),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "remove failed: {body:?}");
@@ -201,22 +254,41 @@ async fn unknown_game_and_product_are_404() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "nf-sealed@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("99.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("99.99"),
+    )
+    .await;
 
     // An unknown game 404s on the list and both entry verbs.
     let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/nope/products", &token)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown game list");
-    let (status, _, _) =
-        send(&app, get_with_bearer("/api/wishlist/nope/products/100", &token)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/wishlist/nope/products/100", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown game entry GET");
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", "/api/wishlist/nope/products/100", &token, json!({ "quantity": 1, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            "/api/wishlist/nope/products/100",
+            &token,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown game entry PUT");
-    let (status, _, _) =
-        send(&app, get_with_bearer("/api/wishlist/nope/products/summary", &token)).await;
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/wishlist/nope/products/summary", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown game summary");
     let (status, _, _) = send(
         &app,
@@ -235,7 +307,12 @@ async fn unknown_game_and_product_are_404() {
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown product entry GET");
     let (status, _, _) = send(
         &app,
-        json_with_bearer("PUT", &product_path("999999"), &token, json!({ "quantity": 1, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            &product_path("999999"),
+            &token,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown product entry PUT");
@@ -246,7 +323,15 @@ async fn quantity_bounds_are_422() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "neg-sealed@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("99.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("99.99"),
+    )
+    .await;
 
     // Negative and oversized counts are both a 422 (the shared per-holding bounds), rejected
     // before the product is resolved — on either count independently.
@@ -277,7 +362,11 @@ async fn quantity_bounds_are_422() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "422 before 404: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "422 before 404: {body:?}"
+    );
 }
 
 #[tokio::test]
@@ -286,7 +375,15 @@ async fn per_user_isolation() {
     let db = &app.state.db;
     let (alice, _) = register(&app, "alice-sealed@example.com", "password123").await;
     let (bob, _) = register(&app, "bob-sealed@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("99.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("99.99"),
+    )
+    .await;
 
     // Alice wants 2.
     want_product(&app, &alice, "100", 2).await;
@@ -301,7 +398,10 @@ async fn per_user_isolation() {
     // Bob wanting the same product creates his own distinct row — no clobber of Alice's.
     want_product(&app, &bob, "100", 7).await;
     let (_, _, body) = send(&app, get_with_bearer(&product_path("100"), &alice)).await;
-    assert_eq!(body["quantity"], 2, "alice's count is unchanged by bob's write");
+    assert_eq!(
+        body["quantity"], 2,
+        "alice's count is unchanged by bob's write"
+    );
     let (_, _, body) = send(&app, get_with_bearer(&product_path("100"), &bob)).await;
     assert_eq!(body["quantity"], 7);
 }
@@ -316,22 +416,41 @@ async fn independent_of_card_wishlist_and_collection() {
     let (token, _) = register(&app, "both-sealed@example.com", "password123").await;
     // Seed one card + one product directly (no dummy catalog needed for either want).
     insert_card(db, "sf-364").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("99.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("99.99"),
+    )
+    .await;
 
     // Wanting a card leaves the sealed-products list empty — a card want is not a product.
     let (status, _, body) = send(
         &app,
-        json_with_bearer("PUT", "/api/wishlist/mtg/cards/sf-364", &token, json!({ "quantity": 2, "foil_quantity": 0 })),
+        json_with_bearer(
+            "PUT",
+            "/api/wishlist/mtg/cards/sf-364",
+            &token,
+            json!({ "quantity": 2, "foil_quantity": 0 }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "want card failed: {body:?}");
     let (_, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg/products", &token)).await;
-    assert_eq!(body["total"], 0, "a card want must not populate the sealed-products wish list");
+    assert_eq!(
+        body["total"], 0,
+        "a card want must not populate the sealed-products wish list"
+    );
 
     // Wanting a product leaves the card wish list and the collection untouched.
     want_product(&app, &token, "100", 3).await;
     let (_, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg", &token)).await;
-    assert_eq!(body["total"], 1, "the card wish list still holds only the one card");
+    assert_eq!(
+        body["total"], 1,
+        "the card wish list still holds only the one card"
+    );
     let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
     assert_eq!(body["total"], 0, "the card collection remains untouched");
     let (_, _, body) = send(
@@ -352,9 +471,25 @@ async fn list_paginates() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "pager-sealed@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("99.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("99.99"),
+    )
+    .await;
     insert_product(db, "200", "Bundle", "mkm", "bundle", Some("39.99")).await;
-    insert_product(db, "300", "Commander Deck", "blb", "commander_deck", Some("44.99")).await;
+    insert_product(
+        db,
+        "300",
+        "Commander Deck",
+        "blb",
+        "commander_deck",
+        Some("44.99"),
+    )
+    .await;
 
     // Want all three in order, so the most-recently-wanted (300) leads the recency sort.
     want_product(&app, &token, "100", 1).await;
@@ -362,15 +497,21 @@ async fn list_paginates() {
     want_product(&app, &token, "300", 1).await;
 
     // Page 1 of size 2: the two newest wants, with more to come.
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/wishlist/mtg/products?page_size=2", &token)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products?page_size=2", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 3);
     assert_eq!(body["has_more"], true);
     let page1 = body["data"].as_array().unwrap();
     assert_eq!(page1.len(), 2);
     // Recency-desc: 300 (most recent) then 200.
-    assert_eq!(page1[0]["product"]["id"], "300", "the most recently wanted product leads");
+    assert_eq!(
+        page1[0]["product"]["id"], "300",
+        "the most recently wanted product leads"
+    );
     assert_eq!(page1[1]["product"]["id"], "200");
 
     // Page 2: the remaining one, no more.
@@ -389,12 +530,18 @@ async fn list_paginates() {
     // ahead of 300 — pinning both the recency sort itself and that an upsert (not just an
     // insert) bumps `updated_at`.
     want_product(&app, &token, "100", 2).await;
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/wishlist/mtg/products?page_size=2", &token)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products?page_size=2", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let page1 = body["data"].as_array().unwrap();
     assert_eq!(page1.len(), 2);
-    assert_eq!(page1[0]["product"]["id"], "100", "re-wanting bumps recency to the front");
+    assert_eq!(
+        page1[0]["product"]["id"], "100",
+        "re-wanting bumps recency to the front"
+    );
     assert_eq!(page1[1]["product"]["id"], "300");
 }
 
@@ -408,15 +555,26 @@ async fn product_summary_aggregates_and_is_isolated_per_user() {
     let db = &app.state.db;
     let (alice, _) = register(&app, "alice-summary@example.com", "password123").await;
     let (bob, _) = register(&app, "bob-summary@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("249.99"),
+    )
+    .await;
     insert_product(db, "200", "Bundle", "mkm", "bundle", Some("39.99")).await;
 
     // Alice wants two booster boxes and one bundle.
     want_product(&app, &alice, "100", 2).await;
     want_product(&app, &alice, "200", 1).await;
 
-    let (status, headers, body) =
-        send(&app, get_with_bearer("/api/wishlist/mtg/products/summary", &alice)).await;
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products/summary", &alice),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "summary failed: {body:?}");
     assert_eq!(cache_control(&headers), Some("no-store"));
     assert_eq!(body["unique_products"], 2);
@@ -425,12 +583,18 @@ async fn product_summary_aggregates_and_is_isolated_per_user() {
     assert_eq!(body["total_value_usd"], "539.97");
 
     // Bob wants nothing: zeros, and a null value (nothing wanted is priced).
-    let (status, _, body) =
-        send(&app, get_with_bearer("/api/wishlist/mtg/products/summary", &bob)).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products/summary", &bob),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["unique_products"], 0);
     assert_eq!(body["total_products"], 0);
-    assert!(body["total_value_usd"].is_null(), "unpriced -> null: {body:?}");
+    assert!(
+        body["total_value_usd"].is_null(),
+        "unpriced -> null: {body:?}"
+    );
 }
 
 /// `POST .../products/counts` returns only the wish-listed subset of the requested product
@@ -441,7 +605,15 @@ async fn product_counts_batch_returns_wanted_products_only_and_caps_the_id_list(
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "counts-sealed@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("249.99"),
+    )
+    .await;
     insert_product(db, "200", "Bundle", "mkm", "bundle", Some("39.99")).await;
 
     want_product(&app, &token, "100", 2).await;
@@ -461,8 +633,14 @@ async fn product_counts_batch_returns_wanted_products_only_and_caps_the_id_list(
     assert_eq!(cache_control(&headers), Some("no-store"));
     assert_eq!(body["data"]["100"]["quantity"], 2);
     assert_eq!(body["data"]["100"]["foil_quantity"], 0);
-    assert!(body["data"].get("200").is_none(), "unwanted product must be absent");
-    assert!(body["data"].get("999999").is_none(), "unknown product must be absent");
+    assert!(
+        body["data"].get("200").is_none(),
+        "unwanted product must be absent"
+    );
+    assert!(
+        body["data"].get("999999").is_none(),
+        "unknown product must be absent"
+    );
 
     // An empty id list is an empty map, not an error.
     let (status, _, body) = send(
@@ -502,7 +680,15 @@ async fn product_counts_batch_is_isolated_per_user() {
     let db = &app.state.db;
     let (alice, _) = register(&app, "alice-pcounts@example.com", "password123").await;
     let (bob, _) = register(&app, "bob-pcounts@example.com", "password123").await;
-    insert_product(db, "100", "Booster Box", "mkm", "collector_display", Some("249.99")).await;
+    insert_product(
+        db,
+        "100",
+        "Booster Box",
+        "mkm",
+        "collector_display",
+        Some("249.99"),
+    )
+    .await;
 
     want_product(&app, &alice, "100", 2).await;
 

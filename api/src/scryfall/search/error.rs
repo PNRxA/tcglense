@@ -1,7 +1,7 @@
 //! Search error type and its constructors, plus the mapping to the HTTP layer.
 
-use crate::error::AppError;
 use super::lexer::Op;
+use crate::error::AppError;
 
 /// A query that could not be parsed or that uses an unsupported filter. The
 /// `Display` text is user-facing (surfaced verbatim as the 422 body).

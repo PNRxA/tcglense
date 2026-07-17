@@ -1,9 +1,9 @@
-use super::*;
 use super::image::{is_allowed_image_url, normalize_size};
 use super::prices::PricePoint;
-use crate::handlers::shared::pricing::{PriceRange, cutoff_date, downsample_rows};
+use super::*;
 use crate::db::Dialect;
 use crate::entities::card_price_history;
+use crate::handlers::shared::pricing::{PriceRange, cutoff_date, downsample_rows};
 use crate::scryfall::search::escape_like;
 use chrono::NaiveDate;
 use sea_orm::prelude::DateTimeUtc;
@@ -63,9 +63,18 @@ fn price_range_parse_accepts_known_and_rejects_unknown() {
     assert_eq!(PriceRange::parse("3y").unwrap(), PriceRange::Y3);
     assert_eq!(PriceRange::parse("all").unwrap(), PriceRange::All);
     // Unknown / mis-cased / empty values are a 422, not a silent fallback.
-    assert!(matches!(PriceRange::parse("7D"), Err(AppError::Validation(_))));
-    assert!(matches!(PriceRange::parse("week"), Err(AppError::Validation(_))));
-    assert!(matches!(PriceRange::parse(""), Err(AppError::Validation(_))));
+    assert!(matches!(
+        PriceRange::parse("7D"),
+        Err(AppError::Validation(_))
+    ));
+    assert!(matches!(
+        PriceRange::parse("week"),
+        Err(AppError::Validation(_))
+    ));
+    assert!(matches!(
+        PriceRange::parse(""),
+        Err(AppError::Validation(_))
+    ));
 }
 
 #[test]
@@ -73,11 +82,26 @@ fn cutoff_date_windows_relative_to_today() {
     let today = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
     // Inclusive cutoff = today - window days (so `>= cutoff` keeps window+1 days).
     // Multi-year cutoffs account for the 2024 leap day (hence the -07-02 edges).
-    assert_eq!(cutoff_date(today, PriceRange::D7).as_deref(), Some("2026-06-24"));
-    assert_eq!(cutoff_date(today, PriceRange::D30).as_deref(), Some("2026-06-01"));
-    assert_eq!(cutoff_date(today, PriceRange::Y1).as_deref(), Some("2025-07-01"));
-    assert_eq!(cutoff_date(today, PriceRange::Y2).as_deref(), Some("2024-07-01"));
-    assert_eq!(cutoff_date(today, PriceRange::Y3).as_deref(), Some("2023-07-02"));
+    assert_eq!(
+        cutoff_date(today, PriceRange::D7).as_deref(),
+        Some("2026-06-24")
+    );
+    assert_eq!(
+        cutoff_date(today, PriceRange::D30).as_deref(),
+        Some("2026-06-01")
+    );
+    assert_eq!(
+        cutoff_date(today, PriceRange::Y1).as_deref(),
+        Some("2025-07-01")
+    );
+    assert_eq!(
+        cutoff_date(today, PriceRange::Y2).as_deref(),
+        Some("2024-07-01")
+    );
+    assert_eq!(
+        cutoff_date(today, PriceRange::Y3).as_deref(),
+        Some("2023-07-02")
+    );
     // "all" has no lower bound.
     assert_eq!(cutoff_date(today, PriceRange::All), None);
 }
@@ -92,7 +116,11 @@ fn downsample(rows: Vec<card_price_history::Model>, bucket_days: i64) -> Vec<Pri
 
 #[test]
 fn downsample_daily_is_passthrough() {
-    let rows = vec![hist("2026-06-01", "1"), hist("2026-06-02", "2"), hist("2026-06-03", "3")];
+    let rows = vec![
+        hist("2026-06-01", "1"),
+        hist("2026-06-02", "2"),
+        hist("2026-06-03", "3"),
+    ];
     let out = downsample(rows, 1);
     let dates: Vec<_> = out.iter().map(|p| p.date.clone()).collect();
     assert_eq!(dates, vec!["2026-06-01", "2026-06-02", "2026-06-03"]);
@@ -106,8 +134,9 @@ fn downsample_empty_input_is_empty() {
 #[test]
 fn downsample_keeps_last_real_row_per_bucket() {
     // 15 consecutive days, weekly (7-day) buckets.
-    let rows: Vec<_> =
-        (1..=15).map(|d| hist(&format!("2026-06-{d:02}"), &d.to_string())).collect();
+    let rows: Vec<_> = (1..=15)
+        .map(|d| hist(&format!("2026-06-{d:02}"), &d.to_string()))
+        .collect();
     let out = downsample(rows, 7);
     let dates: Vec<_> = out.iter().map(|p| p.date.clone()).collect();
 
@@ -121,7 +150,10 @@ fn downsample_keeps_last_real_row_per_bucket() {
         assert!(w[0] < w[1], "dates must be strictly increasing: {dates:?}");
     }
     let inputs: Vec<String> = (1..=15).map(|d| format!("2026-06-{d:02}")).collect();
-    assert!(dates.iter().all(|d| inputs.contains(d)), "no synthesized dates");
+    assert!(
+        dates.iter().all(|d| inputs.contains(d)),
+        "no synthesized dates"
+    );
 }
 
 #[test]
@@ -215,16 +247,22 @@ fn list_params_clamps_page_size() {
 #[test]
 fn sort_spec_uses_endpoint_default_when_absent() {
     assert_eq!(
-        params(None, None).sort_spec_with(SortField::Number, None, None).unwrap(),
+        params(None, None)
+            .sort_spec_with(SortField::Number, None, None)
+            .unwrap(),
         (SortField::Number, SortDir::Asc),
     );
     assert_eq!(
-        params(None, None).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(None, None)
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Name, SortDir::Asc),
     );
     // Blank values are treated as absent (fall back to the default).
     assert_eq!(
-        params(Some("  "), Some("")).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(Some("  "), Some(""))
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Name, SortDir::Asc),
     );
 }
@@ -233,24 +271,34 @@ fn sort_spec_uses_endpoint_default_when_absent() {
 fn sort_spec_field_picks_natural_direction() {
     // A field with no explicit dir defaults to its natural direction.
     assert_eq!(
-        params(Some("price"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(Some("price"), None)
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Price, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("released"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(Some("released"), None)
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Released, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("cmc"), None).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(Some("cmc"), None)
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Cmc, SortDir::Asc),
     );
     // An explicit dir overrides the natural one; aliases resolve.
     assert_eq!(
-        params(Some("collector"), Some("desc")).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(Some("collector"), Some("desc"))
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Number, SortDir::Desc),
     );
     assert_eq!(
-        params(Some("mv"), Some("asc")).sort_spec_with(SortField::Name, None, None).unwrap(),
+        params(Some("mv"), Some("asc"))
+            .sort_spec_with(SortField::Name, None, None)
+            .unwrap(),
         (SortField::Cmc, SortDir::Asc),
     );
 }
@@ -273,7 +321,11 @@ fn sort_spec_precedence_url_over_directive_over_default() {
     // are absent.
     assert_eq!(
         params(None, None)
-            .sort_spec_with(SortField::Name, Some(SortField::Edhrec), Some(SortDir::Desc))
+            .sort_spec_with(
+                SortField::Name,
+                Some(SortField::Edhrec),
+                Some(SortDir::Desc)
+            )
             .unwrap(),
         (SortField::Edhrec, SortDir::Desc),
     );
@@ -329,11 +381,25 @@ async fn unique_cards_groups_by_oracle_id() {
     assert_eq!(base().all(&db).await.unwrap().len(), 4, "4 printings total");
     // unique:cards collapses the two o1 printings; the null-oracle card stays
     // distinct (grouped on '#'||id). So o1 + o2 + C = 3.
-    let grouped = apply_unique(base(), Some(crate::scryfall::search::UniqueMode::Cards), Dialect::Sqlite);
-    let paginator =
-        apply_card_sort(grouped, SortField::Name, SortDir::Asc, false, Dialect::Sqlite).paginate(&db, 60);
+    let grouped = apply_unique(
+        base(),
+        Some(crate::scryfall::search::UniqueMode::Cards),
+        Dialect::Sqlite,
+    );
+    let paginator = apply_card_sort(
+        grouped,
+        SortField::Name,
+        SortDir::Asc,
+        false,
+        Dialect::Sqlite,
+    )
+    .paginate(&db, 60);
     assert_eq!(paginator.num_items().await.unwrap(), 3, "distinct cards");
-    assert_eq!(paginator.fetch_page(0).await.unwrap().len(), 3, "one row per group");
+    assert_eq!(
+        paginator.fetch_page(0).await.unwrap().len(),
+        3,
+        "one row per group"
+    );
 }
 
 /// A minimal, insertable card row whose only meaningful fields for these tests
@@ -349,7 +415,12 @@ fn test_card(id: i32, usd: Option<&str>, usd_foil: Option<&str>) -> card::Model 
 /// A card row whose printing-identity fields (oracle id, set, release date)
 /// are what `prints_query` filters and orders on; everything else reuses the
 /// minimal `test_card` shape.
-fn print_card(id: i32, oracle_id: Option<&str>, set_code: &str, released: Option<&str>) -> card::Model {
+fn print_card(
+    id: i32,
+    oracle_id: Option<&str>,
+    set_code: &str,
+    released: Option<&str>,
+) -> card::Model {
     card::Model {
         oracle_id: oracle_id.map(str::to_string),
         set_code: set_code.into(),
@@ -377,7 +448,10 @@ async fn prints_query_returns_other_printings_newest_first() {
         print_card(4, Some("o-2"), "ddd", Some("2024-06-01")),
         print_card(5, None, "eee", Some("2024-06-01")),
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     let ids = |rows: Vec<card::Model>| rows.iter().map(|r| r.id).collect::<Vec<_>>();
@@ -433,7 +507,10 @@ async fn name_suggestions_are_distinct_prefix_first_and_capped() {
         named_card(4, "Bolt Catcher", "aaa"),
         named_card(5, "Sol Ring", "aaa"), // no "bolt" -> never suggested
     ] {
-        c.into_active_model().insert(&db).await.expect("insert card");
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
     }
 
     // Substring match, deduplicated ("Lightning Bolt" once despite two printings),

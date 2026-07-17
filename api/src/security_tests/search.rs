@@ -9,8 +9,11 @@ async fn search_is_injection_safe_and_maps_bad_queries_to_422() {
     let app = test_app_with_catalog().await;
 
     // A baseline listing has data (the seed populated the catalog).
-    let (base_status, _, base_body) =
-        send(&app, get(&format!("/api/games/{game}/cards?page=1&page_size=5"))).await;
+    let (base_status, _, base_body) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards?page=1&page_size=5")),
+    )
+    .await;
     assert_eq!(base_status, StatusCode::OK);
     let seeded_total = base_body["total"].as_u64().expect("total");
     assert!(seeded_total > 0, "dummy catalog should have seeded cards");
@@ -25,12 +28,14 @@ async fn search_is_injection_safe_and_maps_bad_queries_to_422() {
     // returns 200 and, crucially, the cards table is still intact afterwards.
     let injection = "'; DROP TABLE cards;--";
     let encoded: String = url_encode(injection);
-    let (inj_status, _, _) =
-        send(&app, get(&format!("/api/games/{game}/cards?q={encoded}"))).await;
+    let (inj_status, _, _) = send(&app, get(&format!("/api/games/{game}/cards?q={encoded}"))).await;
     assert_eq!(inj_status, StatusCode::OK);
 
-    let (after_status, _, after_body) =
-        send(&app, get(&format!("/api/games/{game}/cards?page=1&page_size=5"))).await;
+    let (after_status, _, after_body) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards?page=1&page_size=5")),
+    )
+    .await;
     assert_eq!(after_status, StatusCode::OK);
     assert_eq!(
         after_body["total"].as_u64(),
@@ -46,8 +51,11 @@ async fn card_name_autocomplete_returns_distinct_names() {
 
     // The dummy catalog reprints "Dummy Reprinted Relic" across two sets; the
     // autocomplete lists each unique name once (no per-printing duplicates).
-    let (status, _, body) =
-        send(&app, get(&format!("/api/games/{game}/card-names?q=Reprinted"))).await;
+    let (status, _, body) = send(
+        &app,
+        get(&format!("/api/games/{game}/card-names?q=Reprinted")),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let names = body["data"].as_array().expect("data array");
     assert_eq!(names.len(), 1, "distinct names only: {names:?}");
@@ -127,9 +135,16 @@ async fn set_drops_color_search_succeeds() {
     }
     let app = crate::build_router(state);
 
-    let (status, _, body) =
-        send(&app, get("/api/games/mtg/sets/sld/drops?page=1&page_size=20&q=c%3Arg")).await;
-    assert_eq!(status, StatusCode::OK, "drops search must succeed: {body:?}");
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/sets/sld/drops?page=1&page_size=20&q=c%3Arg"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "drops search must succeed: {body:?}"
+    );
     // Only the R,G card matches c:rg (colour ⊇ {R,G}); its drop is the one group.
     let groups = body["data"].as_array().expect("drop groups");
     assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
@@ -174,10 +189,15 @@ async fn set_drops_title_filter_narrows_by_drop_name() {
     let groups = body["data"].as_array().expect("drop groups");
     assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
     assert_eq!(groups[0]["title"].as_str(), Some("Wild in Bloom"));
-    assert_eq!(body["total"].as_u64(), Some(1), "total reflects the filtered drops");
+    assert_eq!(
+        body["total"].as_u64(),
+        Some(1),
+        "total reflects the filtered drops"
+    );
 
     // A filter matching no drop title is an empty (still 200) page.
-    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/drops?drop=no-such-drop")).await;
+    let (status, _, body) =
+        send(&app, get("/api/games/mtg/sets/sld/drops?drop=no-such-drop")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"].as_array().map(Vec::len), Some(0));
     assert_eq!(body["total"].as_u64(), Some(0));
@@ -252,7 +272,11 @@ async fn set_drops_report_cheapest_prints_total() {
 
     let app = crate::build_router(state);
 
-    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/drops?page=1&page_size=20")).await;
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/sets/sld/drops?page=1&page_size=20"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "drops must succeed: {body:?}");
     let groups = body["data"].as_array().expect("drop groups");
     let total = |title: &str| {
@@ -269,5 +293,8 @@ async fn set_drops_report_cheapest_prints_total() {
     // Foil-only, no reprint -> its foil price.
     assert_eq!(total("Inked").as_str(), Some("14.00"));
     // A drop with no priced printing reports null, not "0.00".
-    assert!(total("Cats of Chaos").is_null(), "unpriced drop -> null: {body:?}");
+    assert!(
+        total("Cats of Chaos").is_null(),
+        "unpriced drop -> null: {body:?}"
+    );
 }

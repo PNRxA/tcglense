@@ -8,9 +8,9 @@ use sea_orm::Condition;
 use sea_orm::Value;
 use sea_orm::sea_query::{Expr, SimpleExpr};
 
-use crate::db::Dialect;
 use super::super::error::{SearchError, invalid, unsupported_op};
 use super::super::lexer::Op;
+use crate::db::Dialect;
 
 pub(super) fn cond_one(expr: SimpleExpr) -> Condition {
     Condition::all().add(expr)
@@ -61,7 +61,11 @@ where
 
 /// NULL-safe equality on a nullable text column (`COALESCE(col, '') = ?`).
 pub(super) fn text_eq(dialect: Dialect, col: &str, value: &str) -> Condition {
-    raw_vals(dialect, format!("COALESCE({col}, '') = ?"), [value.to_string()])
+    raw_vals(
+        dialect,
+        format!("COALESCE({col}, '') = ?"),
+        [value.to_string()],
+    )
 }
 
 /// NULL-safe inequality on a nullable text column (`col IS NULL OR col <> ?`).
@@ -136,8 +140,16 @@ pub(super) fn str_eq(
 ) -> Result<Condition, SearchError> {
     let v = value.to_lowercase();
     match op {
-        Op::Colon | Op::Eq => Ok(raw_vals(dialect, format!("LOWER(COALESCE({col}, '')) = ?"), [v])),
-        Op::Ne => Ok(raw_vals(dialect, format!("LOWER(COALESCE({col}, '')) <> ?"), [v])),
+        Op::Colon | Op::Eq => Ok(raw_vals(
+            dialect,
+            format!("LOWER(COALESCE({col}, '')) = ?"),
+            [v],
+        )),
+        Op::Ne => Ok(raw_vals(
+            dialect,
+            format!("LOWER(COALESCE({col}, '')) <> ?"),
+            [v],
+        )),
         _ => Err(unsupported_op(key, op)),
     }
 }

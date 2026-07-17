@@ -59,7 +59,10 @@ async fn with_no_email_provider_registration_bypass_completes_and_signs_in() {
         .expect("dev-bypass completion token")
         .to_string();
     assert!(!completion.is_empty());
-    assert!(refresh_token_from(&headers).is_none(), "register mints no session");
+    assert!(
+        refresh_token_from(&headers).is_none(),
+        "register mints no session"
+    );
 
     // Nothing beyond that deliberate dev-only token leaks: no hash, no field name.
     let raw = body.to_string();
@@ -76,7 +79,9 @@ async fn with_no_email_provider_registration_bypass_completes_and_signs_in() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let access = body["access_token"].as_str().expect("session on completion");
+    let access = body["access_token"]
+        .as_str()
+        .expect("session on completion");
     assert!(refresh_token_from(&headers).is_some(), "refresh cookie set");
 
     // The returned access token works on a protected route straight away.
@@ -232,7 +237,10 @@ async fn resend_verification_is_generic_and_respects_the_cooldown() {
     // The known address got exactly one link; the unknown got nothing.
     let emails = delivered_emails(&app).await;
     assert_eq!(
-        emails.iter().filter(|e| e.to == "resend@example.com").count(),
+        emails
+            .iter()
+            .filter(|e| e.to == "resend@example.com")
+            .count(),
         1
     );
     assert!(emails.iter().all(|e| e.to != "ghost@example.com"));
@@ -249,7 +257,10 @@ async fn resend_verification_is_generic_and_respects_the_cooldown() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let emails = delivered_emails(&app).await;
     assert_eq!(
-        emails.iter().filter(|e| e.to == "resend@example.com").count(),
+        emails
+            .iter()
+            .filter(|e| e.to == "resend@example.com")
+            .count(),
         1,
         "the cooldown suppresses a back-to-back resend"
     );
@@ -275,7 +286,10 @@ async fn resend_verification_is_generic_and_respects_the_cooldown() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let emails = delivered_emails(&app).await;
     assert_eq!(
-        emails.iter().filter(|e| e.to == "resend@example.com").count(),
+        emails
+            .iter()
+            .filter(|e| e.to == "resend@example.com")
+            .count(),
         2
     );
 
@@ -300,7 +314,10 @@ async fn resend_verification_is_generic_and_respects_the_cooldown() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let emails = delivered_emails(&app).await;
     assert_eq!(
-        emails.iter().filter(|e| e.to == "resend@example.com").count(),
+        emails
+            .iter()
+            .filter(|e| e.to == "resend@example.com")
+            .count(),
         2
     );
 
@@ -309,7 +326,10 @@ async fn resend_verification_is_generic_and_respects_the_cooldown() {
     // password, so a pending sign-up's link is re-sent by POSTing /register.
     let (status, _, _) = send(
         &app,
-        json_post("/api/auth/register", json!({ "email": "pending@example.com" })),
+        json_post(
+            "/api/auth/register",
+            json!({ "email": "pending@example.com" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

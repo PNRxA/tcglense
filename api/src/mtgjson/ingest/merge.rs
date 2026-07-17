@@ -13,10 +13,10 @@ use std::collections::{HashMap, HashSet};
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 
-use super::resolve::{distinct, resolve_cards_by_setnum, resolve_products};
 use super::super::fallback::{FallbackData, FallbackProduct};
 use super::super::sld;
 use super::super::{GAME, MtgjsonError};
+use super::resolve::{distinct, resolve_cards_by_setnum, resolve_products};
 use super::{ComponentRow, IN_CHUNK, Row};
 use crate::entities::prelude::{Card, Product};
 use crate::entities::{card, product, sealed_component, sealed_content};
@@ -154,7 +154,12 @@ pub(super) async fn merge_fallback_components(
     let card_keys: Vec<(String, String)> = authored
         .iter()
         .flat_map(|p| &p.components)
-        .filter_map(|c| Some((c.child_set.as_ref()?.to_lowercase(), c.child_number.clone()?)))
+        .filter_map(|c| {
+            Some((
+                c.child_set.as_ref()?.to_lowercase(),
+                c.child_number.clone()?,
+            ))
+        })
         .collect();
     let cards = resolve_cards_by_setnum(db, &card_keys).await?;
 
@@ -247,8 +252,10 @@ pub(super) async fn merge_sld_derived(
 
     // Resolve just the needed collector numbers (all in the `sld` set) to internal card ids
     // — bounded to the drops in play, not the whole set.
-    let mut numbers: Vec<&str> =
-        resolved.iter().flat_map(|(_, _, cns)| cns.iter().copied()).collect();
+    let mut numbers: Vec<&str> = resolved
+        .iter()
+        .flat_map(|(_, _, cns)| cns.iter().copied())
+        .collect();
     numbers.sort_unstable();
     numbers.dedup();
     let cards = resolve_sld_cards(db, &numbers).await?;
@@ -266,7 +273,10 @@ pub(super) async fn merge_sld_derived(
         }
     }
     if added > 0 {
-        tracing::info!(rows = added, "mtgjson: derived Secret Lair drop card contents");
+        tracing::info!(
+            rows = added,
+            "mtgjson: derived Secret Lair drop card contents"
+        );
     }
     Ok(added)
 }
@@ -322,7 +332,10 @@ pub(super) async fn merge_sld_bonus_cards(
         }
     }
     if added > 0 {
-        tracing::info!(rows = added, "mtgjson: derived Secret Lair random bonus-card pools");
+        tracing::info!(
+            rows = added,
+            "mtgjson: derived Secret Lair random bonus-card pools"
+        );
     }
     Ok(added)
 }
@@ -423,7 +436,10 @@ pub(super) fn merge_contained_booster_pools(
         }
     }
     if added > 0 {
-        tracing::info!(rows = added, "mtgjson: synthesized contained-booster pull pools");
+        tracing::info!(
+            rows = added,
+            "mtgjson: synthesized contained-booster pull pools"
+        );
     }
     added
 }
@@ -471,7 +487,9 @@ pub(super) async fn merge_sibling_booster_pools(
     for members in groups.values() {
         // The canonical sibling = the member with the largest pool. Skip the group when every
         // member is empty (an entirely unmodelled set — nothing to inherit from).
-        let Some(&canonical) = members.iter().max_by_key(|&&id| pools.get(&id).map_or(0, |p| p.len()))
+        let Some(&canonical) = members
+            .iter()
+            .max_by_key(|&&id| pools.get(&id).map_or(0, |p| p.len()))
         else {
             continue;
         };
@@ -491,7 +509,10 @@ pub(super) async fn merge_sibling_booster_pools(
         }
     }
     if added > 0 {
-        tracing::info!(rows = added, "mtgjson: synthesized sibling booster pull pools");
+        tracing::info!(
+            rows = added,
+            "mtgjson: synthesized sibling booster pull pools"
+        );
     }
     Ok(added)
 }

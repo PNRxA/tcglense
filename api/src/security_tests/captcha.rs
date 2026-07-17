@@ -127,7 +127,11 @@ async fn email_endpoints_require_captcha_before_any_account_lookup() {
             json_post(path, json!({ "email": "nobody@example.com" })),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{path} without a captcha token");
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{path} without a captcha token"
+        );
     }
 }
 
