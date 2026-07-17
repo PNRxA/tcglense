@@ -43,10 +43,14 @@ const { el, loaded, failed, onLoad, onError } = useImageLoad(() => [props.id, pr
     </template>
     <div
       v-else
-      class="bg-muted text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center"
+      class="bg-muted text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-2 text-center"
+      :class="size === 'small' ? 'p-1' : 'p-3'"
     >
-      <Package class="size-6 opacity-50" />
-      <span class="text-xs leading-tight">{{ name }}</span>
+      <Package class="opacity-50" :class="size === 'small' ? 'size-5' : 'size-6'" />
+      <!-- The roomy `normal` frame captions itself with the name; the compact `small`
+        thumbnail (~40px dropdown / mover rows) can't fit it legibly and is always paired
+        with a text label beside it, so it stays a bare glyph. -->
+      <span v-if="size !== 'small'" class="text-xs leading-tight">{{ name }}</span>
     </div>
   </div>
 </template>
