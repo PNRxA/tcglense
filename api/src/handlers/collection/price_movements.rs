@@ -19,12 +19,26 @@
 //! both anchors are priced (else the delta would be bogus), and a card counts as a mover
 //! only when its total value actually moved. All money math is integer cents; f64 is used
 //! only for the reported percentage.
+//!
+//! The per-item anchors are gathered by *point-seeking*, not scanning. The query is driven
+//! from the holdings table ([`CollectionItem`] / [`CollectionProductItem`], filtered to the
+//! user + game), and each of the ten window anchors is a correlated `LIMIT 1` scalar
+//! sub-select over the price-history table: `game = ? AND {card,product}_id = <holding>.id`
+//! seeks straight to that one item's contiguous run of the `m…031` covering index, an
+//! optional trailing-`as_of_date` predicate bounds it, and `ORDER BY as_of_date` picks the
+//! wanted end. That is one tiny index descent per held item per anchor — never a scan of
+//! every history row of every held card — and it stays fast on the churned Postgres
+//! visibility map the daily capture leaves behind (the "tiny point-seek" shape
+//! `docs/tradeoffs.md` endorses over a full-scan aggregate).
 
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::State;
 use chrono::{Duration, NaiveDate};
-use sea_orm::sea_query::{BinOper, Expr, Func, IntoColumnRef, SimpleExpr};
+use sea_orm::sea_query::{
+    BinOper, ColumnRef, Expr, Func, IntoColumnRef, IntoTableRef, Order, Query, SelectStatement,
+    SimpleExpr, SubQueryStatement, TableRef,
+};
 use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect};
 use serde::Serialize;
 
@@ -220,26 +234,27 @@ pub async fn collection_movers(
 ) -> Result<axum::response::Response, AppError> {
     require_game(&game)?;
 
-    // Version-keyed response cache (issues #413/#365): between the user's own edits
-    // and the daily price capture this response cannot change, and computing it
-    // scans every held item's whole price-history index range. `None` key = cache
-    // degraded, compute as normal. No query params, so the params segment is empty.
+    // Version-keyed, single-flight response cache (issues #413/#365): between the
+    // user's own edits and the daily price capture this response cannot change,
+    // and computing it scans every held item's whole price-history index range.
+    // `get_or_compute` also coalesces concurrent misses for the same key onto one
+    // computation. `None` key = cache degraded, compute as normal. No query
+    // params, so the params segment is empty.
     let cache_key = state
         .analytics_cache
         .body_key(user.id, &game, "movers", "")
         .await;
-    if let Some(key) = &cache_key
-        && let Some(body) = state.analytics_cache.get_body(key).await
-    {
-        return Ok(json_body_response(body));
-    }
-
-    let payload = movers_payload(state.clone(), user, game).await?;
-    let body = serde_json::to_vec(&payload)
-        .map_err(|err| AppError::Internal(format!("serialize movers: {err}")))?;
-    if let Some(key) = &cache_key {
-        state.analytics_cache.put_body(key, &body).await;
-    }
+    let body = state
+        .analytics_cache
+        .get_or_compute(cache_key, || {
+            let (state, user, game) = (state.clone(), user.clone(), game.clone());
+            async move {
+                let payload = movers_payload(state, user, game).await?;
+                serde_json::to_vec(&payload)
+                    .map_err(|err| AppError::Internal(format!("serialize movers: {err}")))
+            }
+        })
+        .await?;
     Ok(json_body_response(body))
 }
 
@@ -350,225 +365,112 @@ async fn movers_payload(
         .map(WindowTargets::from_latest)
         .transpose()?;
 
-    // Aggregate the exact snapshots needed per item: the latest row, the last row at or
-    // before each fixed baseline (plus `prev_day`, the 1D fallback's own baseline), and the
-    // first non-null row for each finish. Prefixing each encoded snapshot with its ISO date
-    // lets MIN/MAX select the corresponding price row in the same grouped query. The database
-    // scans the covering index once per id chunk, but only these compact anchors cross the
-    // wire — never the complete daily series, and never one round trip per small group of
-    // holdings. That one pass serves every anchor, so an extra baseline column rides along for
-    // nearly nothing where a second query would cost another pass over the same index range.
+    // Gather the exact snapshots needed per item: the latest row, the last row at or before
+    // each fixed baseline (plus `prev_day`, the 1D fallback's own baseline), and the first
+    // non-null row for each finish. Prefixing each encoded snapshot with its ISO date lets a
+    // `LIMIT 1` seek return the corresponding price row as one scalar. The query is driven
+    // from the holdings table — one row per held card — and each anchor is a correlated
+    // sub-select that descends the `m…031` covering index once for that one card
+    // (`game = ? AND card_id = <holding>.card_id`, an optional trailing-date bound, then
+    // `ORDER BY as_of_date {DESC|ASC} LIMIT 1`). Only these compact anchors cross the wire —
+    // never the complete daily series. The date-bounded anchors (`latest`, `at_or_before`)
+    // stop at the first matching row, so they never scan a card's whole history and stay a
+    // handful of tiny index descents per item even on the churned visibility map the daily
+    // capture leaves behind. The two `first_priced` anchors are the exception: their
+    // `price_usd[_foil] IS NOT NULL` predicate is an index *filter* on a non-key column, so a
+    // finish that is never priced (e.g. the foil price of a foil-less card) walks that one
+    // item's run in index order finding nothing — still per-item and free of the old per-row
+    // string aggregates, but not a point seek and not immune to post-capture heap-visibility
+    // fetches. A held card with no captured history at all yields an all-NULL row (skipped
+    // below), matching the old grouped query's silent omission.
     let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
     if let Some(targets) = &card_targets {
-        for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
-            let rows = CardPriceHistory::find()
-                .select_only()
-                .column_as(card_price_history::Column::CardId, "item_id")
-                .column_as(
-                    latest_snapshot(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                    ),
-                    "latest",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.day,
-                    ),
-                    "day",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.prev_day,
-                    ),
-                    "prev_day",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.week,
-                    ),
-                    "week",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.month,
-                    ),
-                    "month",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.year,
-                    ),
-                    "year",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.two_year,
-                    ),
-                    "two_year",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        &targets.three_year,
-                    ),
-                    "three_year",
-                )
-                .column_as(
-                    first_priced_snapshot(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        card_price_history::Column::PriceUsd,
-                    ),
-                    "first_usd",
-                )
-                .column_as(
-                    first_priced_snapshot(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                        card_price_history::Column::PriceUsdFoil,
-                    ),
-                    "first_foil",
-                )
-                .filter(card_price_history::Column::Game.eq(game.as_str()))
-                .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
-                .group_by(card_price_history::Column::CardId)
-                .into_model::<PriceAnchorSnapshots>()
-                .all(&state.db)
-                .await?;
-            for anchors in rows {
-                price_rows.extend(anchors.into_price_rows()?);
+        let seek = SnapshotSeek::new(
+            CardPriceHistory,
+            card_price_history::Column::Game,
+            card_price_history::Column::CardId,
+            card_price_history::Column::AsOfDate,
+            card_price_history::Column::PriceUsd,
+            card_price_history::Column::PriceUsdFoil,
+            (collection_item::Entity, collection_item::Column::CardId),
+            &game,
+        );
+        let rows = CollectionItem::find()
+            .select_only()
+            .column_as(collection_item::Column::CardId, "item_id")
+            .expr_as(seek.latest(), "latest")
+            .expr_as(seek.at_or_before(&targets.day), "day")
+            .expr_as(seek.at_or_before(&targets.prev_day), "prev_day")
+            .expr_as(seek.at_or_before(&targets.week), "week")
+            .expr_as(seek.at_or_before(&targets.month), "month")
+            .expr_as(seek.at_or_before(&targets.year), "year")
+            .expr_as(seek.at_or_before(&targets.two_year), "two_year")
+            .expr_as(seek.at_or_before(&targets.three_year), "three_year")
+            .expr_as(
+                seek.first_priced(card_price_history::Column::PriceUsd),
+                "first_usd",
+            )
+            .expr_as(
+                seek.first_priced(card_price_history::Column::PriceUsdFoil),
+                "first_foil",
+            )
+            .filter(collection_item::Column::UserId.eq(user.id))
+            .filter(collection_item::Column::Game.eq(game.as_str()))
+            .into_model::<PriceAnchorSnapshots>()
+            .all(&state.db)
+            .await?;
+        for anchors in rows {
+            if anchors.latest.is_none() {
+                continue;
             }
+            price_rows.extend(anchors.into_price_rows()?);
         }
     }
 
     let mut product_price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
     if let Some(targets) = &product_targets {
-        for chunk in product_ids.chunks(PRICE_ID_CHUNK) {
-            let rows = ProductPriceHistory::find()
-                .select_only()
-                .column_as(product_price_history::Column::ProductId, "item_id")
-                .column_as(
-                    latest_snapshot(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                    ),
-                    "latest",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.day,
-                    ),
-                    "day",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.prev_day,
-                    ),
-                    "prev_day",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.week,
-                    ),
-                    "week",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.month,
-                    ),
-                    "month",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.year,
-                    ),
-                    "year",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.two_year,
-                    ),
-                    "two_year",
-                )
-                .column_as(
-                    snapshot_at_or_before(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        &targets.three_year,
-                    ),
-                    "three_year",
-                )
-                .column_as(
-                    first_priced_snapshot(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        product_price_history::Column::PriceUsd,
-                    ),
-                    "first_usd",
-                )
-                .column_as(
-                    first_priced_snapshot(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                        product_price_history::Column::PriceUsdFoil,
-                    ),
-                    "first_foil",
-                )
-                .filter(product_price_history::Column::Game.eq(game.as_str()))
-                .filter(product_price_history::Column::ProductId.is_in(chunk.iter().copied()))
-                .group_by(product_price_history::Column::ProductId)
-                .into_model::<PriceAnchorSnapshots>()
-                .all(&state.db)
-                .await?;
-            for anchors in rows {
-                product_price_rows.extend(anchors.into_price_rows()?);
+        let seek = SnapshotSeek::new(
+            ProductPriceHistory,
+            product_price_history::Column::Game,
+            product_price_history::Column::ProductId,
+            product_price_history::Column::AsOfDate,
+            product_price_history::Column::PriceUsd,
+            product_price_history::Column::PriceUsdFoil,
+            (
+                collection_product_item::Entity,
+                collection_product_item::Column::ProductId,
+            ),
+            &game,
+        );
+        let rows = CollectionProductItem::find()
+            .select_only()
+            .column_as(collection_product_item::Column::ProductId, "item_id")
+            .expr_as(seek.latest(), "latest")
+            .expr_as(seek.at_or_before(&targets.day), "day")
+            .expr_as(seek.at_or_before(&targets.prev_day), "prev_day")
+            .expr_as(seek.at_or_before(&targets.week), "week")
+            .expr_as(seek.at_or_before(&targets.month), "month")
+            .expr_as(seek.at_or_before(&targets.year), "year")
+            .expr_as(seek.at_or_before(&targets.two_year), "two_year")
+            .expr_as(seek.at_or_before(&targets.three_year), "three_year")
+            .expr_as(
+                seek.first_priced(product_price_history::Column::PriceUsd),
+                "first_usd",
+            )
+            .expr_as(
+                seek.first_priced(product_price_history::Column::PriceUsdFoil),
+                "first_foil",
+            )
+            .filter(collection_product_item::Column::UserId.eq(user.id))
+            .filter(collection_product_item::Column::Game.eq(game.as_str()))
+            .into_model::<PriceAnchorSnapshots>()
+            .all(&state.db)
+            .await?;
+        for anchors in rows {
+            if anchors.latest.is_none() {
+                continue;
             }
+            product_price_rows.extend(anchors.into_price_rows()?);
         }
     }
 
@@ -630,7 +532,7 @@ async fn movers_payload(
     {
         let fallback_target = previous_day(&fallback_latest)?;
         if fallback_latest != targets.day {
-            append_card_baselines(&state, &game, &card_ids, &fallback_target, &mut card_prices)
+            append_card_baselines(&state, &game, user.id, &fallback_target, &mut card_prices)
                 .await?;
         }
         let retried = window_movers(
@@ -656,7 +558,7 @@ async fn movers_payload(
             append_product_baselines(
                 &state,
                 &game,
-                &product_ids,
+                user.id,
                 &fallback_target,
                 &mut product_prices,
             )
@@ -812,9 +714,10 @@ fn raw_window_empty((gainers, losers): &(Vec<RawMover>, Vec<RawMover>)) -> bool 
     gainers.is_empty() && losers.is_empty()
 }
 
-/// One fallback-baseline snapshot per item, shaped by the same compact aggregate used by
+/// One fallback-baseline snapshot per item, shaped by the same compact point-seek used by
 /// the main all-window query. Only a capture gap needs this — a daily feed's fallback
-/// baseline is the `prev_day` anchor, which the main query already carries.
+/// baseline is the `prev_day` anchor, which the main query already carries. `snapshot` is
+/// `None` for a held item with no captured row at or before the fallback target.
 #[derive(FromQueryResult)]
 struct FallbackSnapshot {
     item_id: i32,
@@ -824,62 +727,63 @@ struct FallbackSnapshot {
 async fn append_card_baselines(
     state: &AppState,
     game: &str,
-    item_ids: &[i32],
+    user_id: i32,
     target: &str,
     prices: &mut HashMap<i32, Vec<PriceCell>>,
 ) -> Result<(), AppError> {
-    for chunk in item_ids.chunks(PRICE_ID_CHUNK) {
-        let rows = CardPriceHistory::find()
-            .select_only()
-            .column_as(card_price_history::Column::CardId, "item_id")
-            .column_as(
-                snapshot_at_or_before(
-                    card_price_history::Column::AsOfDate,
-                    card_price_history::Column::PriceUsd,
-                    card_price_history::Column::PriceUsdFoil,
-                    target,
-                ),
-                "snapshot",
-            )
-            .filter(card_price_history::Column::Game.eq(game))
-            .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
-            .group_by(card_price_history::Column::CardId)
-            .into_model::<FallbackSnapshot>()
-            .all(&state.db)
-            .await?;
-        append_fallback_snapshots(rows, prices)?;
-    }
+    let seek = SnapshotSeek::new(
+        CardPriceHistory,
+        card_price_history::Column::Game,
+        card_price_history::Column::CardId,
+        card_price_history::Column::AsOfDate,
+        card_price_history::Column::PriceUsd,
+        card_price_history::Column::PriceUsdFoil,
+        (collection_item::Entity, collection_item::Column::CardId),
+        game,
+    );
+    let rows = CollectionItem::find()
+        .select_only()
+        .column_as(collection_item::Column::CardId, "item_id")
+        .expr_as(seek.at_or_before(target), "snapshot")
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game))
+        .into_model::<FallbackSnapshot>()
+        .all(&state.db)
+        .await?;
+    append_fallback_snapshots(rows, prices)?;
     Ok(())
 }
 
 async fn append_product_baselines(
     state: &AppState,
     game: &str,
-    item_ids: &[i32],
+    user_id: i32,
     target: &str,
     prices: &mut HashMap<i32, Vec<PriceCell>>,
 ) -> Result<(), AppError> {
-    for chunk in item_ids.chunks(PRICE_ID_CHUNK) {
-        let rows = ProductPriceHistory::find()
-            .select_only()
-            .column_as(product_price_history::Column::ProductId, "item_id")
-            .column_as(
-                snapshot_at_or_before(
-                    product_price_history::Column::AsOfDate,
-                    product_price_history::Column::PriceUsd,
-                    product_price_history::Column::PriceUsdFoil,
-                    target,
-                ),
-                "snapshot",
-            )
-            .filter(product_price_history::Column::Game.eq(game))
-            .filter(product_price_history::Column::ProductId.is_in(chunk.iter().copied()))
-            .group_by(product_price_history::Column::ProductId)
-            .into_model::<FallbackSnapshot>()
-            .all(&state.db)
-            .await?;
-        append_fallback_snapshots(rows, prices)?;
-    }
+    let seek = SnapshotSeek::new(
+        ProductPriceHistory,
+        product_price_history::Column::Game,
+        product_price_history::Column::ProductId,
+        product_price_history::Column::AsOfDate,
+        product_price_history::Column::PriceUsd,
+        product_price_history::Column::PriceUsdFoil,
+        (
+            collection_product_item::Entity,
+            collection_product_item::Column::ProductId,
+        ),
+        game,
+    );
+    let rows = CollectionProductItem::find()
+        .select_only()
+        .column_as(collection_product_item::Column::ProductId, "item_id")
+        .expr_as(seek.at_or_before(target), "snapshot")
+        .filter(collection_product_item::Column::UserId.eq(user_id))
+        .filter(collection_product_item::Column::Game.eq(game))
+        .into_model::<FallbackSnapshot>()
+        .all(&state.db)
+        .await?;
+    append_fallback_snapshots(rows, prices)?;
     Ok(())
 }
 
@@ -965,20 +869,25 @@ impl RawMoverSeries {
 /// The exact history snapshots needed to rank one card across every response window, plus the
 /// `prev_day` row the 1D fallback needs. Fixed baselines use the most recent row on/before
 /// their target; `first_*` can differ because a finish may start receiving prices later than
-/// its sibling. Each snapshot is encoded as `YYYY-MM-DD|regular|foil` by the aggregate helpers
-/// below.
+/// its sibling. Each snapshot is encoded as `YYYY-MM-DD|regular|foil` by the point-seek
+/// builders below (one correlated `LIMIT 1` sub-select per anchor).
 ///
-/// Every carry-forward anchor — `day` through `three_year` — is `max{row : row.date <= target}`
-/// over *all* of the item's rows, so none can hold a date past its own target, and none can be
-/// `Some` while an anchor with a later target is `None`. (`first_usd`/`first_foil` sit outside
-/// that rule: they are the earliest *priced* row for their finish, not a carry-forward.) The
-/// ordering is why the anchors don't interfere with each other: a cell any one of them
-/// contributes is a real row that some other anchor either already selected or deliberately
-/// reached past, never one that displaces another's carry-forward.
+/// Every carry-forward anchor — `day` through `three_year` — is the newest row with
+/// `row.date <= target` over *all* of the item's rows, so none can hold a date past its own
+/// target, and none can be `Some` while an anchor with a later target is `None`.
+/// (`first_usd`/`first_foil` sit outside that rule: they are the earliest *priced* row for
+/// their finish, not a carry-forward.) The ordering is why the anchors don't interfere with
+/// each other: a cell any one of them contributes is a real row that some other anchor either
+/// already selected or deliberately reached past, never one that displaces another's
+/// carry-forward.
+///
+/// `latest` is `Option` because this query is driven from the holdings table: a held card with
+/// no captured history at all produces a row of all-NULL sub-selects (`latest` included), which
+/// the caller skips — reproducing the old grouped query's silent omission of such a card.
 #[derive(FromQueryResult)]
 struct PriceAnchorSnapshots {
     item_id: i32,
-    latest: String,
+    latest: Option<String>,
     day: Option<String>,
     prev_day: Option<String>,
     week: Option<String>,
@@ -991,14 +900,14 @@ struct PriceAnchorSnapshots {
 }
 
 impl PriceAnchorSnapshots {
-    /// Decode the aggregate cells back to the compact row shape consumed by the existing
-    /// ranker. Repeated dates are harmless: grouping below keeps them adjacent, and every
-    /// encoding for a given card/date contains the same source-row prices.
+    /// Decode the anchor cells back to the compact row shape consumed by the existing ranker.
+    /// Repeated dates are harmless: the sort below keeps them adjacent, and every encoding for
+    /// a given card/date contains the same source-row prices.
     fn into_price_rows(
         self,
     ) -> Result<Vec<(i32, String, Option<String>, Option<String>)>, AppError> {
         let snapshots = [
-            Some(self.latest),
+            self.latest,
             self.day,
             self.prev_day,
             self.week,
@@ -1048,9 +957,9 @@ struct RawMover {
 }
 
 /// Encode one history row as `YYYY-MM-DD|regular|foil`. ISO dates sort chronologically, so
-/// applying MIN/MAX to this string selects the whole price row for the chosen date. `||` and
-/// `COALESCE` have identical text semantics on the supported SQLite and Postgres backends;
-/// the query remains entirely parameterized through SeaQuery expressions.
+/// ordering by this string and taking one row selects the whole price row for the chosen date.
+/// `||` and `COALESCE` have identical text semantics on the supported SQLite and Postgres
+/// backends; the query remains entirely parameterized through SeaQuery expressions.
 pub(super) fn encoded_snapshot<D, U, F>(date_column: D, usd_column: U, foil_column: F) -> SimpleExpr
 where
     D: IntoColumnRef,
@@ -1071,53 +980,130 @@ where
         )
 }
 
-/// The item's most recent captured snapshot.
-pub(super) fn latest_snapshot<D, U, F>(date_column: D, usd_column: U, foil_column: F) -> SimpleExpr
-where
-    D: IntoColumnRef,
-    U: IntoColumnRef,
-    F: IntoColumnRef,
-{
-    Func::max(encoded_snapshot(date_column, usd_column, foil_column)).into()
+/// A correlated point-seek builder over one price-history table (`card_price_history` or
+/// `product_price_history`). Each method renders a scalar sub-select that returns a single
+/// [`encoded_snapshot`] string for one held item at one anchor.
+///
+/// Each seek is `game = ? AND <id> = <outer>.<id>` — a straight descent to that item's
+/// contiguous run of history — bounded by an anchor predicate and closed by
+/// `ORDER BY as_of_date {DESC|ASC} LIMIT 1`, returning the row at the wanted end. Card seeks
+/// ride `m…031`, the covering index on `card_price_history` (its price columns are the
+/// `INCLUDE` payload on Postgres, so the read is index-only); product seeks ride `m…020`'s
+/// unique `idx_product_price_history_game_product_date (game, product_id, as_of_date)`, which
+/// is not covering, so each returned `LIMIT 1` row costs one heap fetch. The date-bounded
+/// anchors ([`Self::latest`], [`Self::at_or_before`], [`Self::before`]) stop at the first
+/// matching row — never a scan of the item's whole history, and robust to the churned Postgres
+/// visibility map the daily capture leaves behind. [`Self::first_priced`] is the exception:
+/// its `IS NOT NULL` predicate is an index *filter* on a non-key column, so for a finish that
+/// is never priced it walks that one item's run in index order before returning NULL (and may
+/// pay heap-visibility fetches on a freshly churned map) — still per-item and index-ordered,
+/// but not a true point seek. The subquery is correlated to the *outer* holdings row
+/// (`outer_id`, e.g. `collection_items.card_id`); the inner and outer table names differ, so
+/// the qualified outer column disambiguates the join with no aliasing. `game` and the target
+/// dates ride as bound values, never string-interpolated.
+pub(super) struct SnapshotSeek {
+    from: TableRef,
+    game_col: ColumnRef,
+    id_col: ColumnRef,
+    date_col: ColumnRef,
+    usd_col: ColumnRef,
+    foil_col: ColumnRef,
+    outer_id: ColumnRef,
+    game: String,
 }
 
-/// The item's most recent snapshot at or before a fixed target (carry-forward baseline).
-fn snapshot_at_or_before<D, U, F>(
-    date_column: D,
-    usd_column: U,
-    foil_column: F,
-    target: &str,
-) -> SimpleExpr
-where
-    D: IntoColumnRef + Clone,
-    U: IntoColumnRef,
-    F: IntoColumnRef,
-{
-    Func::max(Expr::case(
-        Expr::col(date_column.clone()).lte(target),
-        encoded_snapshot(date_column, usd_column, foil_column),
-    ))
-    .into()
-}
+impl SnapshotSeek {
+    /// Bind the price-history table's columns and the outer holdings correlation column.
+    /// `id_col` is the inner join column (`card_price_history.card_id`); `outer_id` is the
+    /// qualified outer column (`(CollectionItem, card_id)`) — pass it as an `(Entity, Column)`
+    /// tuple so it renders table-qualified and reaches the enclosing query's row.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new<T, G, I, D, U, F, O>(
+        from: T,
+        game_col: G,
+        id_col: I,
+        date_col: D,
+        usd_col: U,
+        foil_col: F,
+        outer_id: O,
+        game: &str,
+    ) -> Self
+    where
+        T: IntoTableRef,
+        G: IntoColumnRef,
+        I: IntoColumnRef,
+        D: IntoColumnRef,
+        U: IntoColumnRef,
+        F: IntoColumnRef,
+        O: IntoColumnRef,
+    {
+        Self {
+            from: from.into_table_ref(),
+            game_col: game_col.into_column_ref(),
+            id_col: id_col.into_column_ref(),
+            date_col: date_col.into_column_ref(),
+            usd_col: usd_col.into_column_ref(),
+            foil_col: foil_col.into_column_ref(),
+            outer_id: outer_id.into_column_ref(),
+            game: game.to_string(),
+        }
+    }
 
-/// The earliest snapshot on which `price_column` is non-null.
-fn first_priced_snapshot<D, U, F, P>(
-    date_column: D,
-    usd_column: U,
-    foil_column: F,
-    price_column: P,
-) -> SimpleExpr
-where
-    D: IntoColumnRef,
-    U: IntoColumnRef,
-    F: IntoColumnRef,
-    P: IntoColumnRef,
-{
-    Func::min(Expr::case(
-        Expr::col(price_column).is_not_null(),
-        encoded_snapshot(date_column, usd_column, foil_column),
-    ))
-    .into()
+    /// The shared skeleton: `SELECT <encoded snapshot> FROM <history> WHERE game = ? AND
+    /// <id> = <outer>.<id> LIMIT 1`. Callers add the anchor predicate and the `ORDER BY`.
+    fn base(&self) -> SelectStatement {
+        let mut sub = Query::select();
+        sub.expr(encoded_snapshot(
+            self.date_col.clone(),
+            self.usd_col.clone(),
+            self.foil_col.clone(),
+        ))
+        .from(self.from.clone())
+        .and_where(Expr::col(self.game_col.clone()).eq(self.game.as_str()))
+        .and_where(Expr::col(self.id_col.clone()).eq(Expr::col(self.outer_id.clone())))
+        .limit(1);
+        sub
+    }
+
+    /// Wrap a finished `LIMIT 1` select as a scalar sub-expression for `expr_as`.
+    fn scalar(sub: SelectStatement) -> SimpleExpr {
+        SimpleExpr::SubQuery(None, Box::new(SubQueryStatement::SelectStatement(sub)))
+    }
+
+    /// The item's most recent captured snapshot (newest row).
+    fn latest(&self) -> SimpleExpr {
+        let mut sub = self.base();
+        sub.order_by(self.date_col.clone(), Order::Desc);
+        Self::scalar(sub)
+    }
+
+    /// The item's most recent snapshot at or before a fixed target (carry-forward baseline).
+    fn at_or_before(&self, target: &str) -> SimpleExpr {
+        let mut sub = self.base();
+        sub.and_where(Expr::col(self.date_col.clone()).lte(target))
+            .order_by(self.date_col.clone(), Order::Desc);
+        Self::scalar(sub)
+    }
+
+    /// The item's most recent snapshot strictly before `cutoff` — the value-history seed
+    /// anchor (note the strict `<`, distinct from [`Self::at_or_before`]'s `<=`).
+    pub(super) fn before(&self, cutoff: &str) -> SimpleExpr {
+        let mut sub = self.base();
+        sub.and_where(Expr::col(self.date_col.clone()).lt(cutoff))
+            .order_by(self.date_col.clone(), Order::Desc);
+        Self::scalar(sub)
+    }
+
+    /// The item's earliest snapshot on which `price_col` is non-null.
+    fn first_priced<P>(&self, price_col: P) -> SimpleExpr
+    where
+        P: IntoColumnRef,
+    {
+        let mut sub = self.base();
+        sub.and_where(Expr::col(price_col).is_not_null())
+            .order_by(self.date_col.clone(), Order::Asc);
+        Self::scalar(sub)
+    }
 }
 
 /// Decode a compact aggregate snapshot. Stored prices are decimal strings, so `|` cannot
@@ -1415,32 +1401,80 @@ mod tests {
         assert_eq!(previous_day(&targets.day).unwrap(), targets.prev_day);
     }
 
+    fn card_seek() -> SnapshotSeek {
+        SnapshotSeek::new(
+            card_price_history::Entity,
+            card_price_history::Column::Game,
+            card_price_history::Column::CardId,
+            card_price_history::Column::AsOfDate,
+            card_price_history::Column::PriceUsd,
+            card_price_history::Column::PriceUsdFoil,
+            (collection_item::Entity, collection_item::Column::CardId),
+            "mtg",
+        )
+    }
+
     #[test]
-    fn compact_snapshot_aggregate_renders_for_both_databases() {
+    fn point_seek_anchors_render_for_both_databases() {
         use sea_orm::sea_query::{PostgresQueryBuilder, Query, SqliteQueryBuilder};
 
+        let seek = card_seek();
+        // `latest` (newest), `at_or_before` (`<=` carry-forward), and `first_priced` (earliest
+        // priced, ascending) — the three shapes the movers anchors use.
         let query = Query::select()
-            .expr(latest_snapshot(
-                card_price_history::Column::AsOfDate,
-                card_price_history::Column::PriceUsd,
-                card_price_history::Column::PriceUsdFoil,
-            ))
-            .expr(snapshot_at_or_before(
-                card_price_history::Column::AsOfDate,
-                card_price_history::Column::PriceUsd,
-                card_price_history::Column::PriceUsdFoil,
-                "2024-01-02",
-            ))
+            .expr(seek.latest())
+            .expr(seek.at_or_before("2024-01-02"))
+            .expr(seek.first_priced(card_price_history::Column::PriceUsd))
             .to_owned();
         for sql in [
             query.to_string(SqliteQueryBuilder),
             query.to_string(PostgresQueryBuilder),
         ] {
-            assert!(sql.contains("MAX("), "{sql}");
+            // A correlated `LIMIT 1` point-seek, not a grouped aggregate.
+            assert!(sql.contains("LIMIT 1"), "{sql}");
+            assert!(!sql.contains("MAX("), "{sql}");
+            assert!(!sql.contains("GROUP BY"), "{sql}");
+            // The encoded snapshot is still concatenated with COALESCE'd finishes.
             assert!(sql.contains(" || "), "{sql}");
             assert!(sql.contains("COALESCE("), "{sql}");
-            assert!(sql.contains("CASE WHEN"), "{sql}");
+            // Correlated to the outer holdings row (qualified, so it reaches the enclosing
+            // query); the carry-forward `<=` predicate; both order directions.
+            assert!(sql.contains(r#""collection_items"."card_id""#), "{sql}");
+            assert!(sql.contains("<="), "{sql}");
+            assert!(sql.contains("ORDER BY"), "{sql}");
+            assert!(sql.contains("DESC"), "{sql}");
+            assert!(sql.contains("ASC"), "{sql}");
         }
+
+        // The value-history seed uses a **strict** `<` before the cutoff — pinned distinct
+        // from the `<=` carry-forward on both dialects.
+        let before = Query::select().expr(seek.before("2024-01-02")).to_owned();
+        for sql in [
+            before.to_string(SqliteQueryBuilder),
+            before.to_string(PostgresQueryBuilder),
+        ] {
+            assert!(sql.contains("LIMIT 1"), "{sql}");
+            assert!(sql.contains('<'), "{sql}");
+            assert!(!sql.contains("<="), "{sql}");
+        }
+
+        // Placeholders stay bound: the game and target date ride as parameters, never
+        // string-interpolated. SQLite renders `?`, Postgres `$N`.
+        let (sqlite_sql, sqlite_vals) = Query::select()
+            .expr(seek.at_or_before("2024-01-02"))
+            .to_owned()
+            .build(SqliteQueryBuilder);
+        assert!(sqlite_sql.contains("<= ?"), "{sqlite_sql}");
+        assert!(!sqlite_sql.contains("2024-01-02"), "{sqlite_sql}");
+        assert!(!sqlite_vals.0.is_empty(), "bound values expected");
+
+        let (pg_sql, pg_vals) = Query::select()
+            .expr(seek.at_or_before("2024-01-02"))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(pg_sql.contains("<= $"), "{pg_sql}");
+        assert!(!pg_sql.contains("2024-01-02"), "{pg_sql}");
+        assert!(!pg_vals.0.is_empty(), "bound values expected");
     }
 
     #[test]

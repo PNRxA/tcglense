@@ -30,14 +30,40 @@
 //! request and falls through to the database: this is a pure performance layer,
 //! so the source of truth always wins. In particular, a failed *version* read
 //! must never be defaulted — a guessed version could match a stale body.
+//!
+//! **Single-flight contract** ([`AnalyticsCache::get_or_compute`]): the store
+//! above only *records* a finished body — nothing stops two requests that miss
+//! the cache in the same instant from both running the (multi-second) computation,
+//! which is exactly what the prod logs showed (the movers query logged twice,
+//! concurrently). `get_or_compute` coalesces concurrent misses for one body key so
+//! the work runs **once per process**: the first caller to miss becomes the
+//! *leader* and computes; every other caller that misses the same key while the
+//! leader is in flight *follows*, parking on a [`tokio::sync::watch`] channel until
+//! the leader publishes the body, then returns that same bytes. This is
+//! process-local by design — it rides no Redis state, so on a multi-replica deploy
+//! each replica merely computes at most once (acceptable: prod is single-instance,
+//! and the store still dedupes across replicas once anyone finishes). A `None` key
+//! (degraded backend) skips coalescing entirely and just computes, matching the
+//! pre-single-flight behaviour.
+//!
+//! **Cancellation story:** axum drops a request future when its client disconnects,
+//! so a leader can vanish mid-compute at any await point. An `InflightGuard` removes
+//! the in-flight map entry on *every* leader exit — success, error, **and drop** —
+//! so an abandoned leader never strands its followers on a wake that can't come:
+//! dropping the guard also drops the leader's `watch::Sender`, which closes the
+//! channel and wakes every follower with an error; they loop, and one of them
+//! becomes the next leader. The map therefore only ever holds genuinely in-flight
+//! entries and stays naturally bounded (one entry per distinct in-flight key).
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
+use tokio::sync::watch;
 
 /// TTL for cached response bodies. A backstop only — correctness comes from the
 /// version keys — bounding both Redis storage and the staleness of any entry
@@ -71,11 +97,39 @@ enum Backend {
     Memory(Memory),
 }
 
+/// A leader's channel: `None` until it publishes the computed body. Followers
+/// subscribe to it; the leader `send`s `Some(body)` on success. A dropped sender
+/// (leader failed or was cancelled) closes the channel and wakes followers with an
+/// error, which they treat as "retry".
+type InflightMap = Mutex<HashMap<String, watch::Sender<Option<Vec<u8>>>>>;
+
 /// The analytics response cache handle held in [`crate::state::AppState`]. All
 /// methods are infallible at the call site: a degraded backend reads as a miss
 /// and writes as a no-op (logged at debug), never an error.
 pub struct AnalyticsCache {
     backend: Backend,
+    /// Process-local single-flight registry: one entry per body key that some
+    /// leader is currently computing (see the module docs). Kept out of the
+    /// [`Backend`] because coalescing is intentionally *not* shared across replicas.
+    inflight: InflightMap,
+}
+
+/// RAII guard held by a single-flight *leader*. Its `Drop` removes the in-flight
+/// map entry on every exit path — success, error, or a cancellation-drop of the
+/// request future — which is what keeps followers from waiting on a leader that
+/// will never publish (see the module docs' cancellation story).
+struct InflightGuard<'a> {
+    inflight: &'a InflightMap,
+    key: &'a str,
+}
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        self.inflight
+            .lock()
+            .expect("analytics inflight mutex")
+            .remove(self.key);
+    }
 }
 
 impl AnalyticsCache {
@@ -86,7 +140,10 @@ impl AnalyticsCache {
             Some(conn) => Backend::Redis(conn),
             None => Backend::Memory(Memory::default()),
         };
-        Self { backend }
+        Self {
+            backend,
+            inflight: Mutex::new(HashMap::new()),
+        }
     }
 
     fn holdings_key(user_id: i32, game: &str) -> String {
@@ -244,6 +301,106 @@ impl AnalyticsCache {
             }
         }
     }
+
+    /// Return a cached body for `key`, or compute it — coalescing concurrent
+    /// misses so `compute` runs at most once per process for a given key while any
+    /// call is in flight (see the module docs' single-flight and cancellation
+    /// contracts). `compute` is `Fn` (not `FnOnce`) because a leader whose compute
+    /// fails, or whose followers are woken by a cancelled leader, re-runs it.
+    ///
+    /// `key` is `None` when the backend is degraded ([`Self::body_key`] returned
+    /// `None`): there is no stable key to coalesce or cache under, so this just
+    /// runs `compute` every time — exactly the pre-single-flight behaviour.
+    pub async fn get_or_compute<E, F, Fut>(
+        &self,
+        key: Option<String>,
+        compute: F,
+    ) -> Result<Vec<u8>, E>
+    where
+        F: Fn() -> Fut,
+        Fut: Future<Output = Result<Vec<u8>, E>>,
+    {
+        let Some(key) = key else {
+            return compute().await;
+        };
+
+        // Which side of the single-flight this iteration takes. Decided under the
+        // map lock and carried *out* of the locked scope so nothing is held across
+        // an await.
+        enum Role {
+            /// This caller owns the computation; carries the publish channel.
+            Leader(watch::Sender<Option<Vec<u8>>>),
+            /// Another caller is computing; wait on its channel.
+            Follower(watch::Receiver<Option<Vec<u8>>>),
+        }
+
+        loop {
+            // A prior leader may have finished (or a later one published) since the
+            // last time we looked — always re-check the store before deciding a role.
+            if let Some(body) = self.get_body(&key).await {
+                return Ok(body);
+            }
+
+            let role = {
+                let mut inflight = self.inflight.lock().expect("analytics inflight mutex");
+                match inflight.get(&key) {
+                    // Subscribe *before* releasing the lock so we can't miss the
+                    // leader's publish in the gap between lookup and subscribe.
+                    Some(sender) => Role::Follower(sender.subscribe()),
+                    None => {
+                        let (tx, _rx) = watch::channel(None);
+                        inflight.insert(key.clone(), tx.clone());
+                        Role::Leader(tx)
+                    }
+                }
+            };
+
+            match role {
+                Role::Follower(mut rx) => {
+                    // `changed()` Ok + `Some(body)` — the leader published. Ok +
+                    // `None` can't happen (leaders only ever send `Some`). `Err` —
+                    // the sender dropped: the leader failed or was cancelled, so no
+                    // body is coming. In every non-body case, loop and try to become
+                    // the leader ourselves.
+                    if rx.changed().await.is_ok()
+                        && let Some(body) = rx.borrow_and_update().clone()
+                    {
+                        return Ok(body);
+                    }
+                    continue;
+                }
+                Role::Leader(tx) => {
+                    // Removes the map entry on every exit below — and, crucially, on
+                    // a cancellation-drop of this future between here and its scope
+                    // end (dropping the guard also drops `tx`, closing the channel
+                    // and waking followers to retry).
+                    let guard = InflightGuard {
+                        inflight: &self.inflight,
+                        key: &key,
+                    };
+                    return match compute().await {
+                        Ok(body) => {
+                            self.put_body(&key, &body).await;
+                            // Publish to followers even if the `put_body` above
+                            // failed (Redis error) or skipped an oversized body —
+                            // they still get the result without recomputing. `send`
+                            // only errs when no receivers remain; ignore that.
+                            let _ = tx.send(Some(body.clone()));
+                            drop(guard);
+                            Ok(body)
+                        }
+                        Err(err) => {
+                            // Drop the guard (remove the entry) and let `tx` drop at
+                            // scope end: followers wake with a closed channel, loop,
+                            // and one becomes the next leader. Failures aren't cached.
+                            drop(guard);
+                            Err(err)
+                        }
+                    };
+                }
+            }
+        }
+    }
 }
 
 /// Build the `application/json` response for an (already-serialized) analytics
@@ -254,6 +411,11 @@ pub fn json_body_response(body: Vec<u8>) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::sync::Notify;
+
     use super::*;
 
     fn memory_cache() -> AnalyticsCache {
@@ -331,6 +493,279 @@ mod tests {
         let key = "an:body:test:big";
         cache.put_body(key, &vec![0u8; MAX_BODY_BYTES + 1]).await;
         assert!(cache.get_body(key).await.is_none());
+    }
+
+    // ---- single-flight (`get_or_compute`) ----
+    //
+    // All of these run on the default `#[tokio::test]` current-thread runtime, so
+    // scheduling is deterministic: `Notify` handshakes gate the leader in place
+    // while followers subscribe, and a single `yield_now` drains the ready queue —
+    // no sleeps, no wall-clock races.
+
+    #[tokio::test]
+    async fn concurrent_misses_compute_once() {
+        let cache = Arc::new(memory_cache());
+        let key = cache.body_key(1, "mtg", "movers", "").await.expect("key");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        // Holds the leader inside `compute` until every follower has subscribed, so
+        // the coalescing path is actually exercised and not won by a fast leader.
+        let gate = Arc::new(Notify::new());
+        let entered = Arc::new(Notify::new());
+
+        const N: usize = 8;
+
+        // The leader enters `compute`, announces itself, then parks until released.
+        let leader = {
+            let (cache, key, calls, gate, entered) = (
+                cache.clone(),
+                key.clone(),
+                calls.clone(),
+                gate.clone(),
+                entered.clone(),
+            );
+            tokio::spawn(async move {
+                cache
+                    .get_or_compute(Some(key), move || {
+                        let (calls, gate, entered) = (calls.clone(), gate.clone(), entered.clone());
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            entered.notify_one();
+                            gate.notified().await;
+                            Ok::<Vec<u8>, ()>(b"body".to_vec())
+                        }
+                    })
+                    .await
+            })
+        };
+
+        // Once the leader is inside `compute` its map entry exists, so everyone
+        // spawned now can only ever follow it — a second compute is impossible.
+        entered.notified().await;
+
+        let mut followers = Vec::new();
+        for _ in 0..(N - 1) {
+            let (cache, key, calls) = (cache.clone(), key.clone(), calls.clone());
+            followers.push(tokio::spawn(async move {
+                cache
+                    .get_or_compute(Some(key), move || {
+                        // Never expected to run; if it does, `calls` catches it.
+                        let calls = calls.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            Ok::<Vec<u8>, ()>(b"body".to_vec())
+                        }
+                    })
+                    .await
+            }));
+        }
+
+        // Let the followers reach their `changed()` park points, then release.
+        tokio::task::yield_now().await;
+        gate.notify_one();
+
+        assert_eq!(leader.await.unwrap(), Ok(b"body".to_vec()));
+        for f in followers {
+            assert_eq!(f.await.unwrap(), Ok(b"body".to_vec()));
+        }
+        // Exactly one caller computed; the rest coalesced onto its result.
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn leader_error_lets_a_follower_recompute() {
+        let cache = Arc::new(memory_cache());
+        let key = cache.body_key(2, "mtg", "movers", "").await.expect("key");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Notify::new());
+        let entered = Arc::new(Notify::new());
+
+        const N: usize = 6;
+
+        // The first invocation (initial leader) parks then fails; any later
+        // invocation (a follower that took over) succeeds immediately.
+        let mut handles = Vec::new();
+        for _ in 0..N {
+            let (cache, key, calls, gate, entered) = (
+                cache.clone(),
+                key.clone(),
+                calls.clone(),
+                gate.clone(),
+                entered.clone(),
+            );
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get_or_compute(Some(key), move || {
+                        let (calls, gate, entered) = (calls.clone(), gate.clone(), entered.clone());
+                        async move {
+                            let nth = calls.fetch_add(1, Ordering::SeqCst);
+                            if nth == 0 {
+                                entered.notify_one();
+                                gate.notified().await;
+                                Err::<Vec<u8>, ()>(())
+                            } else {
+                                Ok::<Vec<u8>, ()>(b"recovered".to_vec())
+                            }
+                        }
+                    })
+                    .await
+            }));
+        }
+
+        // Leader is in-flight and followers have subscribed; release it to fail.
+        entered.notified().await;
+        gate.notify_one();
+
+        let mut errors = 0;
+        let mut recovered = 0;
+        for h in handles {
+            match h.await.unwrap() {
+                Err(()) => errors += 1,
+                Ok(body) => {
+                    assert_eq!(body, b"recovered".to_vec());
+                    recovered += 1;
+                }
+            }
+        }
+        // Exactly the initial leader failed; everyone else got the recomputed body,
+        // and no caller deadlocked. Two computes: the failure plus one recovery.
+        assert_eq!(errors, 1);
+        assert_eq!(recovered, N - 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn cancelled_leader_hands_off_to_a_follower() {
+        let cache = Arc::new(memory_cache());
+        let key = cache.body_key(3, "mtg", "movers", "").await.expect("key");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Notify::new());
+        let entered = Arc::new(Notify::new());
+
+        const N: usize = 5;
+
+        // The leader parks forever inside `compute` (its gate is never released) and
+        // is aborted mid-flight.
+        let leader = {
+            let (cache, key, calls, gate, entered) = (
+                cache.clone(),
+                key.clone(),
+                calls.clone(),
+                gate.clone(),
+                entered.clone(),
+            );
+            tokio::spawn(async move {
+                cache
+                    .get_or_compute(Some(key), move || {
+                        let (calls, gate, entered) = (calls.clone(), gate.clone(), entered.clone());
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            entered.notify_one();
+                            gate.notified().await; // never released; aborted here
+                            Ok::<Vec<u8>, ()>(b"unreachable".to_vec())
+                        }
+                    })
+                    .await
+            })
+        };
+
+        entered.notified().await; // leader is in-flight, parked in compute
+
+        let mut followers = Vec::new();
+        for _ in 0..(N - 1) {
+            let (cache, key, calls) = (cache.clone(), key.clone(), calls.clone());
+            followers.push(tokio::spawn(async move {
+                cache
+                    .get_or_compute(Some(key), move || {
+                        let calls = calls.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            Ok::<Vec<u8>, ()>(b"took-over".to_vec())
+                        }
+                    })
+                    .await
+            }));
+        }
+
+        // Let followers subscribe and park on `changed`, then cancel the leader.
+        tokio::task::yield_now().await;
+        leader.abort();
+
+        // Aborting drops the leader's future: the `InflightGuard` removes the map
+        // entry and the leader's `Sender` drops, waking followers to retry. One of
+        // them takes over and completes — no follower is stranded.
+        for f in followers {
+            assert_eq!(f.await.unwrap(), Ok(b"took-over".to_vec()));
+        }
+        assert!(leader.await.unwrap_err().is_cancelled());
+        // The aborted leader incremented once before parking; one follower recomputed.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn none_key_always_computes_and_never_caches() {
+        let cache = memory_cache();
+        let calls = AtomicUsize::new(0);
+
+        for _ in 0..3 {
+            let body = cache
+                .get_or_compute::<(), _, _>(None, || async {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(b"x".to_vec())
+                })
+                .await
+                .unwrap();
+            assert_eq!(body, b"x".to_vec());
+        }
+        // No coalescing and no caching under a `None` key: every call computed...
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        // ...and the single-flight map was never touched.
+        assert!(cache.inflight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn distinct_keys_do_not_serialize() {
+        let cache = Arc::new(memory_cache());
+        let key_a = cache.body_key(4, "mtg", "movers", "").await.expect("key");
+        let key_b = cache.body_key(5, "mtg", "movers", "").await.expect("key");
+        assert_ne!(key_a, key_b);
+
+        // A single shared gate holds both leaders; both must reach it before either
+        // is released, proving neither key's computation blocks the other's.
+        let gate = Arc::new(Notify::new());
+        let entered_a = Arc::new(Notify::new());
+        let entered_b = Arc::new(Notify::new());
+
+        let spawn_leader = |key: String, entered: Arc<Notify>, marker: &'static [u8]| {
+            let (cache, gate) = (cache.clone(), gate.clone());
+            tokio::spawn(async move {
+                cache
+                    .get_or_compute(Some(key), move || {
+                        let (gate, entered) = (gate.clone(), entered.clone());
+                        async move {
+                            entered.notify_one();
+                            gate.notified().await;
+                            Ok::<Vec<u8>, ()>(marker.to_vec())
+                        }
+                    })
+                    .await
+            })
+        };
+
+        let task_a = spawn_leader(key_a, entered_a.clone(), b"a");
+        let task_b = spawn_leader(key_b, entered_b.clone(), b"b");
+
+        // If distinct keys serialized, only one could be in-flight and the other
+        // `entered` would never fire — this would hang.
+        entered_a.notified().await;
+        entered_b.notified().await;
+
+        gate.notify_waiters(); // both leaders are parked; wake them together
+
+        assert_eq!(task_a.await.unwrap(), Ok(b"a".to_vec()));
+        assert_eq!(task_b.await.unwrap(), Ok(b"b".to_vec()));
     }
 
     // The Redis arm mirrors the memory arm through the same public API. `#[ignore]`d

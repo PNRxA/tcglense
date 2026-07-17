@@ -128,8 +128,10 @@ catalog) is planned but not implemented.
   auth limits above. Three classes (`ratelimit/per_user.rs`'s `UserRoute`): a generous
   `general` bucket (reads/edits/batch lookups, ~300/min); a middle `analytics` bucket
   (~30/min) for the whole-collection × full-price-history reads and the CSV export —
-  `GET …/collection/{game}/value-history`, `…/movers`, `…/export` — which each scan
-  O(cards × captured days) and are `no-store` (no CDN shields them), so one account
+  `GET …/collection/{game}/value-history`, `…/movers`, `…/export` — which read
+  whole-collection price data (up to O(cards × captured days) for a wide value-history
+  window; the movers/cutoff anchors are per-item point seeks since the 2026-07 rewrite —
+  §Price history) and are `no-store` (no CDN shields them), so one account
   can't sustain full-history revaluation scans against the weak prod Postgres, while a
   human flipping chart ranges in a burst still fits; and a tight `import` bucket (the
   expensive import/sync/CSV-upload endpoints, ~10/min). Over-limit is `429` +
@@ -878,11 +880,39 @@ catalog) is planned but not implemented.
   176k — so it is the *tiny-point-seek* shape the covering-index audit endorsed, **not** the
   full-table index-only scan it rejected below. It rides the same accepted trade-off as `m…031`
   (another never-pruned index) with negligible write cost: `as_of_date` increases monotonically, so
-  each day's rows append at the B-tree's right edge. The other three logged statements
-  (value-history's windowed fetch + cutoff anchor, and movers' per-item anchor aggregate) are
-  already heap-free index-only scans on `m…031`'s covering index; their cold cost is inherent
-  `O(cards × captured days)` volume, which is why those routes sit behind the analytics
-  response-cache and the `analytics` per-user rate-limit bucket rather than a further index.
+  each day's rows append at the B-tree's right edge. Of the other three logged statements, the
+  windowed value-history fetch is a heap-free index-only scan on `m…031`'s covering index whose
+  cold cost is inherent `O(cards × days-in-range)` volume — which is why these routes sit behind
+  the analytics response-cache and the `analytics` per-user rate-limit bucket rather than a
+  further index. The remaining two (movers' per-item anchor read and value-history's pre-cutoff
+  seed) stopped being whole-history scans entirely — next bullet.
+- **The per-item anchor reads are correlated `LIMIT 1` point seeks, not grouped aggregates
+  (2026-07 slow-log follow-up to `m…050`).** The movers anchor read and value-history's
+  pre-cutoff seed used to be grouped aggregates: ten
+  `MAX/MIN(CASE WHEN … THEN date||'|'||price… END) … GROUP BY id` string-concat aggregates
+  evaluated over *every* captured row of *every* held item (~846k rows × 10 expressions for the
+  951-card prod collection). That shape is index-only on `m…031`, but its cost is the volume
+  itself — it logged 14.7–19 s cold (~1.2 s warm, CPU-bound in the per-row concat aggregates)
+  on prod. `SnapshotSeek` (`handlers::collection::price_movements`) replaces it: the query
+  drives from the holdings table (`collection_items` / `collection_product_items` filtered by
+  user + game, so the giant `IN (…)` id lists are gone too) and each anchor is a correlated
+  scalar sub-select — `game = ? AND id = <holding>.id [AND as_of_date <= target] ORDER BY
+  as_of_date DESC LIMIT 1` — one tiny descent of `m…031` per item per anchor, the same
+  endorsed tiny-point-seek shape as `m…050`, robust to the churned post-capture visibility
+  map. Measured on a faithful 2.7M-row repro (951 held cards × ~900 days), Postgres 16: movers
+  anchors 1268 ms → 130 ms warm, ~6.3 s → 0.13 s cold; value-history's cutoff seed
+  363 ms → 13 ms; SQLite 1243 ms → 39 ms — byte-identical results, zero heap fetches, no new
+  index. Honest caveats: the two `first_priced` anchors filter on a non-key column, so a
+  never-priced finish walks that one item's run finding nothing (per-item and aggregate-free,
+  but not a true point seek); and product seeks ride `m…020`'s non-covering unique index (one
+  heap fetch per returned row — fine at sealed-product counts). The windowed raw fetch is
+  deliberately unchanged. The analytics response-cache is also **single-flight** now
+  (`AnalyticsCache::get_or_compute`): concurrent misses for one body key compute once — prod
+  logged the same movers computation running twice concurrently after a capture orphaned every
+  key. The in-flight map is process-local and cancellation-safe (an RAII guard removes the
+  entry when a disconnected leader's request future is dropped, waking followers to retry
+  leadership), and the leader publishes the body to followers over the watch channel so they
+  get it even when the Redis write fails.
 - **The daily snapshot's cards read is left as a sequential scan — a covering index was measured
   and rejected.** Each tick, `scryfall::price_history::load_price_columns` reads *every* card's
   five price columns (`SELECT id, price_usd, price_usd_foil, price_eur, price_tix FROM cards WHERE

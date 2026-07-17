@@ -41,7 +41,7 @@ use crate::handlers::shared::{
 };
 use crate::state::AppState;
 
-use super::price_movements::{decode_snapshot, latest_snapshot};
+use super::price_movements::{SnapshotSeek, decode_snapshot};
 
 /// How many card ids to bind per `IN (...)` chunk. Kept well under SQLite's 32766
 /// bound-parameter cap (each chunk also binds `game` + the optional cutoff), so an
@@ -49,11 +49,13 @@ use super::price_movements::{decode_snapshot, latest_snapshot};
 const PRICE_ID_CHUNK: usize = 10_000;
 
 /// One held item's last captured snapshot before an explicit range cutoff. It seeds the
-/// carry-forward cursor without exposing an out-of-range day in the response.
+/// carry-forward cursor without exposing an out-of-range day in the response. `snapshot` is
+/// `None` for a held item with no captured row before the cutoff (the query is driven from the
+/// holdings table, so every held item yields a row).
 #[derive(FromQueryResult)]
 struct CutoffAnchor {
     item_id: i32,
-    snapshot: String,
+    snapshot: Option<String>,
 }
 
 /// One day in the collection's value-over-time series. Card and sealed values are separate
@@ -117,9 +119,11 @@ pub async fn collection_value_history(
         Some(value) => Some(PriceRange::parse(value)?),
     };
 
-    // Version-keyed response cache (issues #413/#365): between the user's own edits
-    // and the daily price capture this response cannot change, and it is the app's
-    // most expensive per-user read. `None` key = cache degraded, compute as normal.
+    // Version-keyed, single-flight response cache (issues #413/#365): between the
+    // user's own edits and the daily price capture this response cannot change,
+    // and it is the app's most expensive per-user read. `get_or_compute` also
+    // coalesces concurrent misses for the same key onto one computation. `None`
+    // key = cache degraded, compute as normal.
     let cache_key = state
         .analytics_cache
         .body_key(
@@ -129,18 +133,17 @@ pub async fn collection_value_history(
             range.map_or("full", PriceRange::token),
         )
         .await;
-    if let Some(key) = &cache_key
-        && let Some(body) = state.analytics_cache.get_body(key).await
-    {
-        return Ok(json_body_response(body));
-    }
-
-    let payload = value_history_payload(state.clone(), user, game, range).await?;
-    let body = serde_json::to_vec(&payload)
-        .map_err(|err| AppError::Internal(format!("serialize value history: {err}")))?;
-    if let Some(key) = &cache_key {
-        state.analytics_cache.put_body(key, &body).await;
-    }
+    let body = state
+        .analytics_cache
+        .get_or_compute(cache_key, || {
+            let (state, user, game) = (state.clone(), user.clone(), game.clone());
+            async move {
+                let payload = value_history_payload(state, user, game, range).await?;
+                serde_json::to_vec(&payload)
+                    .map_err(|err| AppError::Internal(format!("serialize value history: {err}")))
+            }
+        })
+        .await?;
     Ok(json_body_response(body))
 }
 
@@ -193,36 +196,49 @@ async fn value_history_payload(
     let product_ids: Vec<i32> = product_holdings.iter().map(|h| h.item_id).collect();
     let cutoff = range.and_then(|r| cutoff_date(Utc::now().date_naive(), r));
 
+    let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
+
+    // For a windowed request, seed each held card's carry-forward cursor with its latest
+    // snapshot **strictly before** the cutoff (so the window's first day carries a real price
+    // instead of blanking). This is one correlated `LIMIT 1` point-seek per held card, driven
+    // from the holdings table and riding the `m…031` covering index — no id chunking needed
+    // (it binds only `game` + the cutoff, not the id list). A held card with no pre-cutoff row
+    // yields a NULL snapshot, skipped. Each seeded anchor predates every windowed row below, so
+    // pushing them all first keeps each card's cells ascending by date for the fold.
+    if let Some(cutoff) = &cutoff {
+        let seek = SnapshotSeek::new(
+            CardPriceHistory,
+            card_price_history::Column::Game,
+            card_price_history::Column::CardId,
+            card_price_history::Column::AsOfDate,
+            card_price_history::Column::PriceUsd,
+            card_price_history::Column::PriceUsdFoil,
+            (collection_item::Entity, collection_item::Column::CardId),
+            &game,
+        );
+        let anchors = CollectionItem::find()
+            .select_only()
+            .column_as(collection_item::Column::CardId, "item_id")
+            .expr_as(seek.before(cutoff.as_str()), "snapshot")
+            .filter(collection_item::Column::UserId.eq(user.id))
+            .filter(collection_item::Column::Game.eq(game.as_str()))
+            .into_model::<CutoffAnchor>()
+            .all(&state.db)
+            .await?;
+        for anchor in anchors {
+            let Some(snapshot) = anchor.snapshot else {
+                continue;
+            };
+            let (date, usd, foil) = decode_snapshot(&snapshot)?;
+            price_rows.push((anchor.item_id, date, usd, foil));
+        }
+    }
+
     // Historic prices for exactly those cards, windowed to the range. Chunk the id list so
     // the `IN (...)` never exceeds the bound-parameter cap; the (game, card_id, as_of_date)
     // unique index serves each chunk (equality on game + card_id, range on as_of_date). Only
     // the four columns the fold reads are fetched — so the query stays cheap on a cold DB.
-    let mut price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
     for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
-        if let Some(cutoff) = &cutoff {
-            let anchors = CardPriceHistory::find()
-                .select_only()
-                .column_as(card_price_history::Column::CardId, "item_id")
-                .column_as(
-                    latest_snapshot(
-                        card_price_history::Column::AsOfDate,
-                        card_price_history::Column::PriceUsd,
-                        card_price_history::Column::PriceUsdFoil,
-                    ),
-                    "snapshot",
-                )
-                .filter(card_price_history::Column::Game.eq(game.as_str()))
-                .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
-                .filter(card_price_history::Column::AsOfDate.lt(cutoff.as_str()))
-                .group_by(card_price_history::Column::CardId)
-                .into_model::<CutoffAnchor>()
-                .all(&state.db)
-                .await?;
-            for anchor in anchors {
-                let (date, usd, foil) = decode_snapshot(&anchor.snapshot)?;
-                price_rows.push((anchor.item_id, date, usd, foil));
-            }
-        }
         let mut query = CardPriceHistory::find()
             .select_only()
             .column(card_price_history::Column::CardId)
@@ -255,31 +271,43 @@ async fn value_history_payload(
     }
 
     let mut product_price_rows: Vec<(i32, String, Option<String>, Option<String>)> = Vec::new();
-    for chunk in product_ids.chunks(PRICE_ID_CHUNK) {
-        if let Some(cutoff) = &cutoff {
-            let anchors = ProductPriceHistory::find()
-                .select_only()
-                .column_as(product_price_history::Column::ProductId, "item_id")
-                .column_as(
-                    latest_snapshot(
-                        product_price_history::Column::AsOfDate,
-                        product_price_history::Column::PriceUsd,
-                        product_price_history::Column::PriceUsdFoil,
-                    ),
-                    "snapshot",
-                )
-                .filter(product_price_history::Column::Game.eq(game.as_str()))
-                .filter(product_price_history::Column::ProductId.is_in(chunk.iter().copied()))
-                .filter(product_price_history::Column::AsOfDate.lt(cutoff.as_str()))
-                .group_by(product_price_history::Column::ProductId)
-                .into_model::<CutoffAnchor>()
-                .all(&state.db)
-                .await?;
-            for anchor in anchors {
-                let (date, usd, foil) = decode_snapshot(&anchor.snapshot)?;
-                product_price_rows.push((anchor.item_id, date, usd, foil));
-            }
+
+    // Sealed products get the same pre-cutoff point-seek seed as cards above, riding `m…020`'s
+    // non-covering `idx_product_price_history_game_product_date` (one heap fetch per seed row)
+    // rather than the card-side `m…031` covering index.
+    if let Some(cutoff) = &cutoff {
+        let seek = SnapshotSeek::new(
+            ProductPriceHistory,
+            product_price_history::Column::Game,
+            product_price_history::Column::ProductId,
+            product_price_history::Column::AsOfDate,
+            product_price_history::Column::PriceUsd,
+            product_price_history::Column::PriceUsdFoil,
+            (
+                collection_product_item::Entity,
+                collection_product_item::Column::ProductId,
+            ),
+            &game,
+        );
+        let anchors = CollectionProductItem::find()
+            .select_only()
+            .column_as(collection_product_item::Column::ProductId, "item_id")
+            .expr_as(seek.before(cutoff.as_str()), "snapshot")
+            .filter(collection_product_item::Column::UserId.eq(user.id))
+            .filter(collection_product_item::Column::Game.eq(game.as_str()))
+            .into_model::<CutoffAnchor>()
+            .all(&state.db)
+            .await?;
+        for anchor in anchors {
+            let Some(snapshot) = anchor.snapshot else {
+                continue;
+            };
+            let (date, usd, foil) = decode_snapshot(&snapshot)?;
+            product_price_rows.push((anchor.item_id, date, usd, foil));
         }
+    }
+
+    for chunk in product_ids.chunks(PRICE_ID_CHUNK) {
         let mut query = ProductPriceHistory::find()
             .select_only()
             .column(product_price_history::Column::ProductId)
