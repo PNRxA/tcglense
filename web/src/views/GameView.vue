@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef, watch } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
-import { LayoutGrid, Loader2 } from '@lucide/vue'
+import { computed, toRef } from 'vue'
+import { LayoutGrid } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
@@ -11,7 +10,6 @@ import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
-import { gameStatus } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 import { groupByYear, partitionPinned } from '@/lib/setGroups'
 
@@ -27,32 +25,8 @@ usePageMeta({
   canonicalPath: () => `/cards/${game.value}`,
 })
 
-const statusQuery = useQuery({
-  queryKey: ['status', game],
-  queryFn: () => gameStatus(game.value),
-  // Poll while an import is in progress; stop once it finishes or fails.
-  refetchInterval: (query) => {
-    const status = query.state.data?.status
-    return status === 'complete' || status === 'error' ? false : 4000
-  },
-})
-
 const setsQuery = useSetsQuery(game)
 
-// When the import finishes, pull the freshly-populated sets.
-watch(
-  () => statusQuery.data.value?.status,
-  (status, previous) => {
-    if (status === 'complete' && previous && previous !== 'complete') {
-      setsQuery.refetch()
-    }
-  },
-)
-
-const importing = computed(() => {
-  const status = statusQuery.data.value?.status
-  return status !== undefined && status !== 'complete' && status !== 'error'
-})
 const sets = computed(() => setsQuery.data.value?.data ?? [])
 
 // Client-side filter box + nested sub-set grouping (tokens, promos, Commander decks,
@@ -119,28 +93,11 @@ const sections = computed(() => {
       </RouterLink>
     </StickySearchBar>
 
-    <!-- First-boot import progress. -->
-    <div
-      v-if="importing"
-      class="bg-muted/50 text-muted-foreground mb-6 flex items-center gap-3 rounded-lg border p-4 text-sm"
-    >
-      <Loader2 class="size-4 shrink-0 animate-spin" />
-      <span>
-        Importing card data…
-        <template v-if="statusQuery.data.value?.cards_imported">
-          {{ statusQuery.data.value.cards_imported.toLocaleString() }} cards so far.
-        </template>
-        This page will update automatically.
-      </span>
-    </div>
-
     <SetGridSkeleton v-if="setsQuery.isPending.value" />
     <p v-else-if="setsQuery.isError.value" class="text-destructive py-12">
       Couldn't load sets. Please retry.
     </p>
-    <p v-else-if="!sets.length && !importing" class="text-muted-foreground py-12">
-      No sets available yet.
-    </p>
+    <p v-else-if="!sets.length" class="text-muted-foreground py-12">No sets available yet.</p>
     <p v-else-if="filtering && !groups.length" class="text-muted-foreground py-12">
       No sets match “{{ trimmedFilter }}”.
     </p>
