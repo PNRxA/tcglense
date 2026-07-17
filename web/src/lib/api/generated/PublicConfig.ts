@@ -10,9 +10,11 @@
  */
 export type PublicConfig = { 
 /**
- * Whether the API is accepting application traffic. The config route remains
- * available and non-cacheable during maintenance so an already-cached SPA can
- * replace its normal shell with the maintenance screen.
+ * Whether the API is accepting application traffic. `true` when
+ * `MAINTENANCE_MODE` is set **and** while the boot-time schema migrations are
+ * still running (the startup window presents as maintenance). The config route
+ * remains available and non-cacheable then, so an already-cached SPA can replace
+ * its normal shell with the maintenance screen.
  */
 maintenance_mode: boolean, 
 /**

@@ -78,12 +78,13 @@ async fn maintenance_mode_keeps_liveness_up_and_rejects_everything_else() {
 }
 
 #[tokio::test]
-async fn startup_gate_keeps_liveness_up_and_drains_until_migrations_complete() {
+async fn startup_presents_as_maintenance_until_migrations_complete() {
     use std::sync::atomic::Ordering;
 
     // `main.rs` binds the listener before running the boot migrations and closes this
     // gate for that window, so `/api/health` answers the platform health check while a
-    // long migration runs. Reproduce that pre-migration window over the real router.
+    // long migration runs and the site presents as under maintenance meanwhile.
+    // Reproduce that pre-migration window over the real router.
     let state = test_state().await;
     state.migrations_complete.store(false, Ordering::SeqCst);
     let app = crate::build_router(state.clone());
@@ -95,32 +96,38 @@ async fn startup_gate_keeps_liveness_up_and_drains_until_migrations_complete() {
     assert_eq!(body, json!({ "status": "ok" }));
     assert_eq!(cache_control(&headers), Some("no-store"));
 
-    // The cached SPA's boot-time config probe stays reachable so it can show a screen.
-    let (status, _, _) = send(&app, get("/api/config")).await;
+    // Config reports maintenance so a freshly-loaded (even CDN-cached) SPA switches to
+    // its maintenance screen while migrations run.
+    let (status, headers, body) = send(&app, get("/api/config")).await;
     assert_eq!(status, StatusCode::OK);
-
-    // Readiness drains explicitly so a load balancer waits for the schema.
-    let (status, headers, body) = send(&app, get("/api/ready")).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body, json!({ "status": "starting" }));
+    assert_eq!(body["maintenance_mode"], true);
     assert_eq!(cache_control(&headers), Some("no-store"));
 
-    // Every other request — real routes and unknown paths alike — is a non-cacheable
-    // 503 so no handler runs a query against a half-migrated schema.
+    // Readiness drains as maintenance so a load balancer waits for the schema.
+    let (status, headers, body) = send(&app, get("/api/ready")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body, json!({ "status": "maintenance" }));
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // Every other request — real routes and unknown paths alike — is the maintenance-
+    // coded 503 (so an already-open tab switches via the client's maintenance signal)
+    // and no handler runs a query against a half-migrated schema.
     for uri in ["/api/games", "/api/not-a-real-route"] {
         let (status, headers, body) = send(&app, get(uri)).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
         assert_eq!(
             body,
-            json!({ "error": "service is starting", "code": "starting" }),
+            json!({ "error": "service is under maintenance", "code": "maintenance" }),
             "{uri}"
         );
         assert_eq!(cache_control(&headers), Some("no-store"), "{uri}");
     }
 
-    // Once migrations complete the gate opens and normal routing resumes (shared Arc,
-    // so the flip is visible to the router built above).
+    // Once migrations complete the gate opens, config leaves maintenance, and normal
+    // routing resumes (shared Arc, so the flip is visible to the router built above).
     state.migrations_complete.store(true, Ordering::SeqCst);
+    let (_, _, config) = send(&app, get("/api/config")).await;
+    assert_eq!(config["maintenance_mode"], false);
     let (status, _, _) = send(&app, get("/api/games")).await;
     assert_eq!(status, StatusCode::OK);
 }
