@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import type { Card } from '@/lib/api'
+import type { SortOption } from '@/lib/cardSort'
+import { PRINTING_DEFAULT_SORT, PRINTING_SORT_OPTIONS, sortPrintings } from '@/lib/printingSort'
 
 // Shared result-state shell for every visual printing picker. It renders the loading,
-// error, empty, filter, accumulated-page count, load-more control, and responsive grid;
-// callers provide only the tile/action adapter through the named slot.
+// error, empty, filter, sort, accumulated-page count, load-more control, and responsive
+// grid; callers provide only the tile/action adapter through the named slot.
 const props = withDefaults(
   defineProps<{
     printings: Card[]
@@ -21,10 +24,12 @@ const props = withDefaults(
     loadingMore: boolean
     errorMessage?: string
     emptyMessage?: string
+    sortOptions?: SortOption[]
   }>(),
   {
     errorMessage: 'Could not load printings. Please try again.',
     emptyMessage: 'No printings found.',
+    sortOptions: () => PRINTING_SORT_OPTIONS,
   },
 )
 
@@ -32,6 +37,12 @@ const emit = defineEmits<{
   'update:filter': [string]
   loadMore: []
 }>()
+
+// Sort is a purely presentational reordering of the already-loaded printings, so it lives
+// here (grid-local) rather than being threaded through every caller like the filter: it
+// changes neither the loaded-page count nor which pages are fetched.
+const sort = ref(PRINTING_DEFAULT_SORT)
+const sortedPrintings = computed(() => sortPrintings(props.filteredPrintings, sort.value))
 
 const filterActive = computed(() => props.filter.trim().length > 0)
 const countLabel = computed(() => {
@@ -56,14 +67,16 @@ const countLabel = computed(() => {
   </p>
   <div v-else>
     <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
-      <CardSearchBox
-        v-if="total > 1"
-        :model-value="filter"
-        class="w-full sm:w-72"
-        placeholder="Filter by set, number, or rarity…"
-        aria-label="Filter loaded printings by set, number, or rarity"
-        @update:model-value="emit('update:filter', $event)"
-      />
+      <div v-if="total > 1" class="flex flex-wrap items-center gap-2">
+        <CardSearchBox
+          :model-value="filter"
+          class="w-full sm:w-72"
+          placeholder="Filter by set, number, or rarity…"
+          aria-label="Filter loaded printings by set, number, or rarity"
+          @update:model-value="emit('update:filter', $event)"
+        />
+        <CardSortMenu v-model="sort" :options="sortOptions" />
+      </div>
       <div class="ml-auto text-right">
         <p class="text-muted-foreground text-xs">{{ countLabel }}</p>
         <p v-if="hasMore" class="text-muted-foreground mt-0.5 text-xs">
@@ -77,7 +90,7 @@ const countLabel = computed(() => {
     </p>
     <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-4">
       <slot
-        v-for="printing in filteredPrintings"
+        v-for="printing in sortedPrintings"
         :key="printing.id"
         name="tile"
         :printing="printing"

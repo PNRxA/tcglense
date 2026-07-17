@@ -5,8 +5,12 @@ import { useQuery } from '@tanstack/vue-query'
 import { getCardPrints } from '@/lib/api'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
+import { filterPrintings } from '@/lib/quickAddFilter'
+import { PRINTING_DEFAULT_SORT, PRINTING_SORT_OPTIONS, sortPrintings } from '@/lib/printingSort'
 
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
@@ -28,13 +32,25 @@ const { ownership } = useOwnedCounts(game, prints)
 // Wish-list wanted counts for the same prints — a Heart chip flags wishlisted cards (#364).
 const { ownership: wishlistOwnership } = useWishlistCounts(game, prints)
 
+// Filter + sort over the other printings (issue #472). The `/prints` endpoint returns the
+// full list in one response, so both operate client-side over every printing — no
+// loaded-only caveat like the paginated picker has. The filter mirrors the shared picker's
+// (`filterPrintings`); the sort is the same shared client-side reordering.
+const filter = ref('')
+const sort = ref(PRINTING_DEFAULT_SORT)
+const visiblePrints = computed(() =>
+  sortPrintings(filterPrintings(prints.value, filter.value), sort.value),
+)
+
 // Collapsed by default (issue #332), matching the sealed product page's card sections:
 // the heading is a disclosure toggle showing the printing count, so a card with many
 // reprints doesn't push a long grid onto the page until asked. Section-local — the
-// component is reused across card-to-card navigation, so re-collapse when the id changes.
+// component is reused across card-to-card navigation, so re-collapse and clear the filter
+// (the sort is a harmless preference to keep) when the id changes.
 const expanded = ref(false)
 watch(id, () => {
   expanded.value = false
+  filter.value = ''
 })
 </script>
 
@@ -57,12 +73,26 @@ watch(id, () => {
         <span class="text-muted-foreground font-normal">({{ prints.length }})</span>
       </h2>
     </button>
-    <CardGrid
-      v-if="expanded"
-      :game="game"
-      :cards="prints"
-      :ownership="ownership"
-      :wishlist="wishlistOwnership"
-    />
+    <template v-if="expanded">
+      <div v-if="prints.length > 1" class="mb-4 flex flex-wrap items-center gap-2">
+        <CardSearchBox
+          v-model="filter"
+          class="w-full sm:w-72"
+          placeholder="Filter by set, number, or rarity…"
+          aria-label="Filter printings by set, number, or rarity"
+        />
+        <CardSortMenu v-model="sort" :options="PRINTING_SORT_OPTIONS" />
+      </div>
+      <p v-if="visiblePrints.length === 0" class="text-muted-foreground py-8 text-center text-sm">
+        No printings match “{{ filter.trim() }}”.
+      </p>
+      <CardGrid
+        v-else
+        :game="game"
+        :cards="visiblePrints"
+        :ownership="ownership"
+        :wishlist="wishlistOwnership"
+      />
+    </template>
   </section>
 </template>

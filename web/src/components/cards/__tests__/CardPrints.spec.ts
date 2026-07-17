@@ -72,6 +72,30 @@ describe('CardPrints', () => {
     expect(wrapper.find('a[href="/cards/mtg/cards/dummy-dmb-0080"]').exists()).toBe(true)
   })
 
+  it('filters the other printings by set/number/rarity when expanded (#472)', async () => {
+    const wrapper = await mountPrints('dummy-aaa-0001', [
+      makeCard('dummy-aaa-0001', 'aaa'),
+      makeCard('dummy-bbb-0002', 'bbb'),
+    ])
+    await wrapper.get('button[aria-expanded]').trigger('click')
+    // Both printings are visible before filtering.
+    expect(wrapper.find('a[href="/cards/mtg/cards/dummy-aaa-0001"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/cards/mtg/cards/dummy-bbb-0002"]').exists()).toBe(true)
+
+    // Narrowing to the "bbb" set drops the "aaa" printing.
+    await wrapper
+      .get('input[aria-label="Filter printings by set, number, or rarity"]')
+      .setValue('bbb')
+    expect(wrapper.find('a[href="/cards/mtg/cards/dummy-aaa-0001"]').exists()).toBe(false)
+    expect(wrapper.find('a[href="/cards/mtg/cards/dummy-bbb-0002"]').exists()).toBe(true)
+
+    // A filter matching nothing shows the empty note instead of the grid.
+    await wrapper
+      .get('input[aria-label="Filter printings by set, number, or rarity"]')
+      .setValue('zzz')
+    expect(wrapper.text()).toContain('No printings match')
+  })
+
   it('renders nothing when the card has no other printings', async () => {
     const wrapper = await mountPrints('dummy-dmb-0001', [])
     expect(wrapper.find('section').exists()).toBe(false)
