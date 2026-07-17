@@ -13,11 +13,12 @@ export type DropGroup = {
  */
 slug: string | null, title: string, card_count: number, 
 /**
- * The drop's "cheapest singles" total: the sum, over the cards below, of each card's
- * cheapest finish (the lower of its regular and foil USD price). A canonical USD
+ * The drop's "cheapest prints" total: for each distinct card in the drop, the price of
+ * its cheapest available printing *anywhere in the catalog* (the lower of that printing's
+ * regular and foil price) — so a card is floored at its cheap reprint, not its pricier
+ * Secret Lair printing. Distinct by gameplay identity (`oracle_id`), so a foil-variant
+ * printing listed under its own collector number isn't double-counted. A canonical USD
  * decimal string (`"42.50"`); the SPA renders it in the viewer's display currency.
- * `None` when no card in the drop is priced. Its scope is exactly `card_count` — every
- * card shown is counted, so a foil-variant printing listed under its own collector
- * number contributes its own cheapest price too.
+ * `None` when no card in the drop has a priced printing.
  */
-cheapest_singles_usd: string | null, cards: Array<Card>, };
+cheapest_prints_usd: string | null, cards: Array<Card>, };

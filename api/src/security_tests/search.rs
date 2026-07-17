@@ -183,11 +183,12 @@ async fn set_drops_title_filter_narrows_by_drop_name() {
     assert_eq!(body["total"].as_u64(), Some(0));
 }
 
-/// Each drop header carries a `cheapest_singles_usd` total: the sum, over the drop's cards,
-/// of each card's cheaper finish (regular vs foil). A drop with no priced card reports
-/// `null` rather than `"0.00"` (issue #456).
+/// Each drop header carries a `cheapest_prints_usd` total: for each distinct card in the drop,
+/// the price of its cheapest printing *anywhere* (not the Secret Lair printing), summed. This
+/// exercises the cross-set floor (a cheap reprint wins), de-dup by gameplay identity, the
+/// no-`oracle_id`/foil-only fallbacks, and the all-unpriced `null` (issue #456).
 #[tokio::test]
-async fn set_drops_report_cheapest_singles_total() {
+async fn set_drops_report_cheapest_prints_total() {
     use sea_orm::{ActiveModelTrait, IntoActiveModel};
 
     let state = test_state().await;
@@ -198,21 +199,31 @@ async fn set_drops_report_cheapest_singles_total() {
         .await
         .expect("insert sld set");
 
-    // "Wild in Bloom" (2658..2662): a card whose regular price beats its foil, a foil-only
-    // printing, and an unpriced card that must not drag the total to $0. "Inked" (168): a
-    // lone unpriced card, so its drop reports a null total.
-    let priced: [(i32, &str, Option<&str>, Option<&str>); 4] = [
-        (1, "2658", Some("2.00"), Some("10.00")), // cheapest = 2.00 (regular)
-        (2, "2659", None, Some("3.50")),          // cheapest = 3.50 (foil-only)
-        (3, "2660", None, None),                  // unpriced -> contributes nothing
-        (4, "168", None, None),                   // "Inked" -> whole drop unpriced
+    // sld printings across three drops (id, collector#, oracle_id, usd, usd_foil):
+    // "Wild in Bloom" (2658..2662):
+    //   2658 + 2659 are two printings of ONE card (or-vivien) — de-duped to a single card;
+    //         both are pricey Secret Lair printings, but a cheap reprint below floors it at 2.00.
+    //   2660 (or-sands) is foil-only -> 3.50.
+    //   2661 has no oracle_id (no siblings) -> priced by its own finishes -> 4.00.
+    //   2662 (or-unpriced) has no priced printing -> contributes nothing (and can't null the drop).
+    // "Cats of Chaos" (2690): a lone unpriced card -> that drop totals null.
+    // "Inked" (168): foil-only, no reprint -> 14.00.
+    let sld: [(i32, &str, Option<&str>, Option<&str>, Option<&str>); 7] = [
+        (1, "2658", Some("or-vivien"), Some("20.00"), Some("30.00")),
+        (2, "2659", Some("or-vivien"), Some("25.00"), None),
+        (3, "2660", Some("or-sands"), None, Some("3.50")),
+        (4, "2661", None, Some("4.00"), Some("8.00")),
+        (5, "2662", Some("or-unpriced"), None, None),
+        (6, "2690", Some("or-cat"), None, None),
+        (7, "168", Some("or-inked"), None, Some("14.00")),
     ];
-    for (id, cn, usd, foil) in priced {
+    for (id, cn, oracle, usd, foil) in sld {
         crate::entities::card::Model {
             set_code: "sld".into(),
             set_name: "Secret Lair Drop".into(),
             collector_number: cn.into(),
             collector_number_int: cn.parse().ok(),
+            oracle_id: oracle.map(str::to_string),
             price_usd: usd.map(str::to_string),
             price_usd_foil: foil.map(str::to_string),
             ..crate::test_support::card_model(id)
@@ -222,23 +233,41 @@ async fn set_drops_report_cheapest_singles_total() {
         .await
         .expect("insert sld card");
     }
+    // A cheap reprint of Vivien in another set (same oracle_id) — the catalog-wide floor the
+    // drop total must find instead of the $20+ Secret Lair printings above.
+    crate::entities::card::Model {
+        set_code: "m21".into(),
+        set_name: "Core 2021".into(),
+        collector_number: "100".into(),
+        collector_number_int: Some(100),
+        oracle_id: Some("or-vivien".into()),
+        price_usd: Some("2.00".into()),
+        price_usd_foil: Some("9.00".into()),
+        ..crate::test_support::card_model(8)
+    }
+    .into_active_model()
+    .insert(&state.db)
+    .await
+    .expect("insert reprint");
+
     let app = crate::build_router(state);
 
     let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/drops?page=1&page_size=20")).await;
     assert_eq!(status, StatusCode::OK, "drops must succeed: {body:?}");
     let groups = body["data"].as_array().expect("drop groups");
+    let total = |title: &str| {
+        groups
+            .iter()
+            .find(|g| g["title"] == title)
+            .unwrap_or_else(|| panic!("{title} present: {body:?}"))["cheapest_prints_usd"]
+            .clone()
+    };
 
-    let bloom = groups
-        .iter()
-        .find(|g| g["title"] == "Wild in Bloom")
-        .expect("Wild in Bloom present");
-    // 2.00 (2658, regular) + 3.50 (2659, foil) + nothing (2660, unpriced) = 5.50.
-    assert_eq!(bloom["cheapest_singles_usd"].as_str(), Some("5.50"));
-
-    let inked = groups
-        .iter()
-        .find(|g| g["title"] == "Inked")
-        .expect("Inked present");
-    // Its only card is unpriced, so the total is null (not "0.00").
-    assert!(inked["cheapest_singles_usd"].is_null(), "unpriced drop -> null: {inked:?}");
+    // or-vivien floored at the 2.00 reprint (counted once, not per printing) + or-sands 3.50
+    // + the no-oracle 2661 at 4.00 + nothing for the unpriced 2662 = 9.50.
+    assert_eq!(total("Wild in Bloom").as_str(), Some("9.50"));
+    // Foil-only, no reprint -> its foil price.
+    assert_eq!(total("Inked").as_str(), Some("14.00"));
+    // A drop with no priced printing reports null, not "0.00".
+    assert!(total("Cats of Chaos").is_null(), "unpriced drop -> null: {body:?}");
 }
