@@ -864,6 +864,25 @@ catalog) is planned but not implemented.
     ever did grow huge, the move is Postgres-only *physical* tuning behind that same seam
     (a native `DATE` column + BRIN, or partitioning), never an extension the SQLite default
     can't load.
+- **The movers reference-date lookup gets its own descending-latest index (`m…050`).** Both
+  price-history twins carry a *second* purpose-built index — `(game, as_of_date, {card,product}_id)`,
+  the mirror of `m…031`'s covering index with the key columns reordered. The collection *movers*
+  endpoint (`handlers::collection::price_movements`) anchors every window to `SELECT MAX(as_of_date)
+  WHERE game = ? AND {card,product}_id IN (…owned…)`; against the `(game, id, as_of_date)` key that
+  `MAX` cannot stop early — it reads *every* owned item's whole history (on a 17.8M-row Postgres 16
+  repro: ~846k entries, planned as a ~176k-cold-heap-read bitmap scan — the shape that logged ~5 s on
+  prod — or, VM-warm, a full index-only scan). Leading with `as_of_date` turns it into a **backward
+  index-only scan that stops at the first owned row** (measured: 30 entries, 6 buffers, ~2 ms), with
+  the trailing id making the `IN (…)` test index-only. Crucially it stays robust to the churned
+  visibility map the snapshot leaves behind — the tail seek pays ~30 heap-visibility fetches, not
+  176k — so it is the *tiny-point-seek* shape the covering-index audit endorsed, **not** the
+  full-table index-only scan it rejected below. It rides the same accepted trade-off as `m…031`
+  (another never-pruned index) with negligible write cost: `as_of_date` increases monotonically, so
+  each day's rows append at the B-tree's right edge. The other three logged statements
+  (value-history's windowed fetch + cutoff anchor, and movers' per-item anchor aggregate) are
+  already heap-free index-only scans on `m…031`'s covering index; their cold cost is inherent
+  `O(cards × captured days)` volume, which is why those routes sit behind the analytics
+  response-cache and the `analytics` per-user rate-limit bucket rather than a further index.
 - **The daily snapshot's cards read is left as a sequential scan — a covering index was measured
   and rejected.** Each tick, `scryfall::price_history::load_price_columns` reads *every* card's
   five price columns (`SELECT id, price_usd, price_usd_foil, price_eur, price_tix FROM cards WHERE
