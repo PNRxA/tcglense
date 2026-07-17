@@ -8,6 +8,7 @@ let dialogWarmed = false
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Layers, Sparkles } from '@lucide/vue'
 import type { CollectionMover, CollectionSealedMover } from '@/lib/api'
 import CardImage from '@/components/cards/CardImage.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
@@ -28,6 +29,27 @@ const card = computed(() => ('card' in props.mover ? props.mover.card : null))
 const product = computed(() => ('product' in props.mover ? props.mover.product : null))
 const isProduct = computed(() => product.value != null)
 const itemName = computed(() => product.value?.name ?? card.value?.name ?? 'Unknown item')
+
+// The set/type sub-line, unified so the owned-count indicator can sit beside it for either
+// item kind: cards read "SET · #123", sealed products read "Set name · Bundle".
+const metaText = computed(() => {
+  if (product.value) {
+    const set = product.value.set_name ?? product.value.set_code.toUpperCase()
+    return `${set} · ${productTypeLabel(product.value.product_type)}`
+  }
+  if (card.value) {
+    return `${card.value.set_code.toUpperCase()} · #${card.value.collector_number}`
+  }
+  return ''
+})
+
+// How many of this item the user holds. Each mover's value is quantity-weighted (owning two
+// doubles it), so surfacing the count explains the figure the row already shows. Mirrors
+// OwnedCountBadge's semantics — a total (regular + foil) with a stacked-cards icon, plus a
+// foil count with a sparkles icon only when some copies are foil — but rendered in the row's
+// muted inline style rather than the solid overlay pill that badge uses over card art.
+const ownedTotal = computed(() => props.mover.quantity + props.mover.foil_quantity)
+const foilCount = computed(() => props.mover.foil_quantity)
 const to = computed(() =>
   isProduct.value && product.value
     ? `/sealed/${props.game}/${product.value.id}`
@@ -117,13 +139,27 @@ const chipClass = computed(() =>
       <p class="truncate text-sm font-medium group-hover:underline" :title="itemName">
         {{ itemName }}
       </p>
-      <p v-if="card" class="text-muted-foreground truncate text-xs">
-        {{ card.set_code.toUpperCase() }} · #{{ card.collector_number }}
-      </p>
-      <p v-else-if="product" class="text-muted-foreground truncate text-xs">
-        {{ product.set_name ?? product.set_code.toUpperCase() }} ·
-        {{ productTypeLabel(product.product_type) }}
-      </p>
+      <div class="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <span class="min-w-0 truncate">{{ metaText }}</span>
+        <!-- Owned counts: total (regular + foil), plus a foil count only when some are foil. -->
+        <span v-if="ownedTotal > 0" class="flex shrink-0 items-center gap-1.5 tabular-nums">
+          <span
+            class="inline-flex items-center gap-0.5"
+            :aria-label="`${ownedTotal} owned`"
+            :title="`${ownedTotal} owned`"
+          >
+            <Layers class="size-3" aria-hidden="true" />{{ ownedTotal }}
+          </span>
+          <span
+            v-if="foilCount > 0"
+            class="inline-flex items-center gap-0.5"
+            :aria-label="`${foilCount} foil`"
+            :title="`${foilCount} foil`"
+          >
+            <Sparkles class="size-3" aria-hidden="true" />{{ foilCount }}
+          </span>
+        </span>
+      </div>
     </div>
     <div class="shrink-0 text-right">
       <p class="text-sm font-semibold tabular-nums" :class="deltaClass">{{ changeText }}</p>
