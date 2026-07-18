@@ -39,6 +39,17 @@ function byLabel(label: string): HTMLButtonElement | null {
   return document.body.querySelector(`[aria-label="${label}"]`)
 }
 
+// The "← Back to <origin>" crumb has no aria-label — its accessible name is its text. With no
+// query layer mounted here it falls back to the generic noun ("Back to card"), which is enough to
+// locate and click it. Returns null when no crumb is rendered.
+function crumbButton(): HTMLButtonElement | null {
+  return (
+    Array.from(document.body.querySelectorAll('button')).find((b) =>
+      (b.textContent ?? '').includes('Back to'),
+    ) ?? null
+  )
+}
+
 function dialogEl(): HTMLElement {
   const el = document.body.querySelector('[role="dialog"]')
   if (!el) throw new Error('dialog is not open')
@@ -154,6 +165,60 @@ describe('ProductDetailDialog', () => {
     await open('z')
     expect(byLabel('Previous sealed product')).toBeNull()
     expect(byLabel('Next sealed product')).toBeNull()
+  })
+})
+
+describe('ProductDetailDialog origin crumb', () => {
+  afterEach(() => {
+    wrapper?.unmount()
+    document.body.innerHTML = ''
+  })
+
+  it('offers a back crumb when opened from a card, returning to that card', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=card:card-7')
+    expect(crumbButton()).not.toBeNull()
+
+    crumbButton()!.click()
+    await flushPromises()
+
+    // The product closes and the remembered card reopens; list state (sort) stays untouched.
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name', card: 'card-7' })
+  })
+
+  it('drops its namespaced card search and the marker on the return trip', async () => {
+    const router = await open(
+      'b',
+      ['a', 'b', 'c'],
+      '&openedFrom=card:card-7&pq=t:goblin&psort=name:desc',
+    )
+    crumbButton()!.click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name', card: 'card-7' })
+  })
+
+  it('shows no crumb without a from marker', async () => {
+    await open('b')
+    expect(crumbButton()).toBeNull()
+  })
+
+  it('ignores a same-surface marker (never points back at the open product)', async () => {
+    await open('b', ['a', 'b', 'c'], '&openedFrom=product:other')
+    expect(crumbButton()).toBeNull()
+  })
+
+  it('drops the marker on close', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=card:card-7')
+    byLabel('Close')!.click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name' })
+  })
+
+  it('drops the marker when stepping to a neighbour', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=card:card-7')
+    byLabel('Next sealed product')!.click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name', product: 'c' })
   })
 })
 

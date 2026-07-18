@@ -11,7 +11,7 @@ let wrapper: VueWrapper
 // Mount the dialog over a page whose registered grid holds `ids`, opened on `card`. The card
 // body is stubbed — this suite is about the header's prev/next + the arrow keys, which live in
 // the dialog itself, not in CardDetailContent.
-async function open(card: string, ids: string[] = ['a', 'b', 'c']) {
+async function open(card: string, ids: string[] = ['a', 'b', 'c'], extraQuery = '') {
   const router: Router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -23,7 +23,7 @@ async function open(card: string, ids: string[] = ['a', 'b', 'c']) {
   setActivePinia(pinia)
   useCardNavStore().register({ game: 'mtg', ids })
 
-  await router.push(`/cards/mtg?card=${card}`)
+  await router.push(`/cards/mtg?card=${card}${extraQuery}`)
   await router.isReady()
 
   wrapper = mount(CardDetailDialog, {
@@ -46,6 +46,17 @@ function dialogEl(): HTMLElement {
   const el = document.body.querySelector('[role="dialog"]')
   if (!el) throw new Error('dialog is not open')
   return el as HTMLElement
+}
+
+// The "← Back to <origin>" crumb has no aria-label — its accessible name is its text. With no
+// query layer mounted here it falls back to the generic noun ("Back to sealed product"), which is
+// enough to locate and click it. Returns null when no crumb is rendered.
+function crumbButton(): HTMLButtonElement | null {
+  return (
+    Array.from(document.body.querySelectorAll('button')).find((b) =>
+      (b.textContent ?? '').includes('Back to'),
+    ) ?? null
+  )
 }
 
 // The key handler lives on the dialog's own content (not window), so a keydown must originate
@@ -167,6 +178,48 @@ describe('CardDetailDialog card navigation (issue #275)', () => {
     pressArrow('ArrowRight')
     await flushPromises()
     expect(router.currentRoute.value.query.card).toBe('c')
+  })
+})
+
+describe('CardDetailDialog origin crumb', () => {
+  afterEach(() => {
+    wrapper?.unmount()
+    document.body.innerHTML = ''
+  })
+
+  it('offers a back crumb when opened from a sealed product, returning to that product', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=product:product-7')
+    expect(crumbButton()).not.toBeNull()
+
+    crumbButton()!.click()
+    await flushPromises()
+
+    // The card closes and the remembered product reopens; the marker is consumed.
+    expect(router.currentRoute.value.query).toEqual({ product: 'product-7' })
+  })
+
+  it('shows no crumb without a from marker', async () => {
+    await open('b')
+    expect(crumbButton()).toBeNull()
+  })
+
+  it('ignores a same-surface marker (never points back at the open card)', async () => {
+    await open('b', ['a', 'b', 'c'], '&openedFrom=card:other')
+    expect(crumbButton()).toBeNull()
+  })
+
+  it('drops the marker on close', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=product:product-7')
+    byLabel('Close')!.click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({})
+  })
+
+  it('drops the marker when stepping to a neighbour', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=product:product-7')
+    byLabel('Next card')!.click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ card: 'c' })
   })
 })
 
