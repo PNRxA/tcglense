@@ -46,7 +46,7 @@ mod write;
 mod tests;
 
 pub use products::{
-    get_wishlist_product_entry, list_wishlist_products, list_wishlist_products_by_set,
+    get_wishlist_product_entry, list_wishlist_product_sets, list_wishlist_products,
     set_wishlist_product_entry, wishlist_product_counts, wishlist_product_summary,
 };
 pub use read::{get_wishlist_entry, list_wishlist, wishlist_counts, wishlist_summary};
@@ -57,8 +57,8 @@ pub use write::set_wishlist_entry;
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::wishlist::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
 pub use products::{
-    __path_get_wishlist_product_entry, __path_list_wishlist_products,
-    __path_list_wishlist_products_by_set, __path_set_wishlist_product_entry,
+    __path_get_wishlist_product_entry, __path_list_wishlist_product_sets,
+    __path_list_wishlist_products, __path_set_wishlist_product_entry,
     __path_wishlist_product_counts, __path_wishlist_product_summary,
 };
 pub use read::{

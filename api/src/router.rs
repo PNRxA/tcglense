@@ -42,9 +42,9 @@ use crate::{
             collection_sets, collection_summary, collection_value_history,
             delete_collection_source, export_collection, get_collection_entry,
             get_collection_product_entry, get_collection_source, get_import_job, import_collection,
-            import_collection_csv, list_collection, list_collection_products,
-            list_collection_products_by_set, owned_counts, save_collection_source,
-            set_collection_entry, set_collection_product_entry, sync_collection_source,
+            import_collection_csv, list_collection, list_collection_product_sets,
+            list_collection_products, owned_counts, save_collection_source, set_collection_entry,
+            set_collection_product_entry, sync_collection_source,
         },
         config::public_config,
         currency::currency_rates,
@@ -68,10 +68,11 @@ use crate::{
         },
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
-            get_wishlist_entry, get_wishlist_product_entry, list_wishlist, list_wishlist_products,
-            list_wishlist_products_by_set, set_wishlist_entry, set_wishlist_product_entry,
-            wishlist_counts, wishlist_product_counts, wishlist_product_summary, wishlist_set_drops,
-            wishlist_set_subtypes, wishlist_sets, wishlist_summary,
+            get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
+            list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
+            set_wishlist_product_entry, wishlist_counts, wishlist_product_counts,
+            wishlist_product_summary, wishlist_set_drops, wishlist_set_subtypes, wishlist_sets,
+            wishlist_summary,
         },
     },
     state::AppState,
@@ -251,12 +252,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/products/summary",
             get(collection_product_summary),
         )
-        // The owned sealed products grouped by set (newest first), paginated by set. A
-        // static sibling of `/products/{id}` — static segments win in axum (same guarantee
-        // as the catalog's `/products/facets`), so `by-set` is never swallowed by a product id.
+        // Every set the user owns sealed products in (newest first), each an aggregate tile
+        // the SPA drills into via `?set=` on the flat list. A static sibling of
+        // `/products/{id}` — static segments win in axum (same guarantee as the catalog's
+        // `/products/facets`), so `sets` is never swallowed by a product id.
         .route(
-            "/api/collection/{game}/products/by-set",
-            get(list_collection_products_by_set),
+            "/api/collection/{game}/products/sets",
+            get(list_collection_product_sets),
         )
         .route(
             "/api/collection/{game}/products/owned",
@@ -304,11 +306,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/wishlist/{game}/products/summary",
             get(wishlist_product_summary),
         )
-        // The wanted sealed products grouped by set (newest first), paginated by set —
-        // another static sibling of `/products/{id}`, never swallowed by a product id.
+        // Every set the user wants sealed products in (newest first), each an aggregate tile
+        // the SPA drills into via `?set=` on the flat list — another static sibling of
+        // `/products/{id}`, never swallowed by a product id.
         .route(
-            "/api/wishlist/{game}/products/by-set",
-            get(list_wishlist_products_by_set),
+            "/api/wishlist/{game}/products/sets",
+            get(list_wishlist_product_sets),
         )
         .route(
             "/api/wishlist/{game}/products/counts",

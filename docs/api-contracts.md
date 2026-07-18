@@ -519,19 +519,19 @@ rows:
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/collection/{game}/products?page&page_size` | — | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), default page size 60 / max 200 |
-| `GET /api/collection/{game}/products/by-set?page&page_size` | — | `Page<ProductHoldingSetGroup>` — the same owned products grouped by set, **paginated by set** (`total` counts sets, not products), default page size 60 / max 200. Groups: newest set first (the catalog set's `released_at`, or the newest `released_at` among the group's held products when the set has no `card_sets` row; date-less last; ties by code asc). Products within a group sort by name (case-insensitive) then external id |
+| `GET /api/collection/{game}/products?page&page_size&set` | — | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), default page size 60 / max 200. Optional `set` restricts to one set code (an unknown/unheld code → empty page, `total` 0) — the set-scoped drill-in for the tiles below |
+| `GET /api/collection/{game}/products/sets` | — | `{ data: ProductHoldingSet[] }` — every set the user owns sealed products in, **unpaginated**, newest set first (the catalog set's `released_at`, or the newest `released_at` among the set's held products when it has no `card_sets` row; date-less last; ties by code asc). Each is an aggregate tile; drill into one via `?set=<code>` on the flat list above |
 | `GET /api/collection/{game}/products/summary` | — | `ProductHoldingSummary { unique_products, total_products, total_value_usd }`; value = regular×`usd` + foil×`usd_foil`, `null` when nothing owned is priced |
 | `POST /api/collection/{game}/products/owned` | `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }`; unowned ids absent, > 500 ids `422` |
 | `GET /api/collection/{game}/products/{id}` | — | `{ quantity, foil_quantity }`, zeros if not owned; unknown game/product `404` |
 | `PUT /api/collection/{game}/products/{id}` | `{ quantity, foil_quantity }` | absolute-count upsert; both-zero deletes, negative/oversized `422`, read-only key `403` |
 
 `ProductHoldingEntry = { product: Product, quantity, foil_quantity }`;
-`ProductHoldingSetGroup = { code, name: string | null, unique_products, total_products,
-total_value_usd: string | null, products: ProductHoldingEntry[] }` (the by-set page unit,
-its aggregates scoped to the one set, `name` null for a set with no `card_sets` row).
-Collection import/sync/export and public sharing remain card-only; value history and movers
-include both card and sealed-product holdings.
+`ProductHoldingSet = { code, name: string | null, unique_products, total_products,
+total_value_usd: string | null }` (a held-product-set tile, its aggregates scoped to the one
+set, `name` null for a set with no `card_sets` row; drill into a set with `?set=<code>` on the
+flat products list). Collection import/sync/export and public sharing remain card-only; value
+history and movers include both card and sealed-product holdings.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
@@ -768,12 +768,12 @@ counts zero deletes the row. The wire keeps the shared two-count
 but the UI exposes a single **Quantity** and preserves an existing foil count. Both
 surfaces use `ProductHoldingEntry` (`{ product: Product, quantity, foil_quantity }`),
 `ProductHoldingSummary` (`{ unique_products, total_products, total_value_usd }`), and
-`ProductHoldingSetGroup` (the by-set page unit) from `handlers/shared/product_holdings.rs`:
+`ProductHoldingSet` (the held-product-set tile) from `handlers/shared/product_holdings.rs`:
 
 | Method & path | Returns |
 |---------------|---------|
-| `GET /api/wishlist/{game}/products?page&page_size` | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200 |
-| `GET /api/wishlist/{game}/products/by-set?page&page_size` | `Page<ProductHoldingSetGroup>` — the wanted products grouped by set, **paginated by set** (`total` counts sets), same grouping/order as the collection `products/by-set` above (newest set first; date-less last; products name-sorted within a group), default page size 60 max 200 |
+| `GET /api/wishlist/{game}/products?page&page_size&set` | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200. Optional `set` restricts to one set code (unknown/unheld code → empty page, `total` 0), the drill-in for the tiles below |
+| `GET /api/wishlist/{game}/products/sets` | `{ data: ProductHoldingSet[] }` — every set the user wants sealed products in, **unpaginated**, same grouping/order as the collection `products/sets` above (newest set first; date-less last; ties by code asc); each an aggregate tile drilled into via `?set=<code>` on the flat list |
 | `GET /api/wishlist/{game}/products/summary` | `ProductHoldingSummary { unique_products, total_products, total_value_usd }`; value = regular×`usd` + foil×`usd_foil` (market prices; msrp never used); `total_value_usd` null when nothing wanted is priced; no set scope, no bulk split |
 | `POST /api/wishlist/{game}/products/counts` `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }` — batch wanted counts for the product-tile badges; un-wanted ids absent (never zero); > 500 ids = `422` |
 | `GET /api/wishlist/{game}/products/{id}` | the single-product wanted counts (`CollectionQuantities`; zeros if absent, `404` unknown game/product) |

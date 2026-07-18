@@ -41,7 +41,7 @@ async fn wishlist_products_require_authentication() {
     for uri in [
         "/api/wishlist/mtg/products",
         "/api/wishlist/mtg/products/summary",
-        "/api/wishlist/mtg/products/by-set",
+        "/api/wishlist/mtg/products/sets",
         "/api/wishlist/mtg/products/100",
     ] {
         let (status, headers, _) = send(&app, get(uri)).await;
@@ -546,15 +546,15 @@ async fn list_paginates() {
     assert_eq!(page1[1]["product"]["id"], "300");
 }
 
-/// The by-set grouping works on the wish-list surface too: wanted products fold into one
-/// group per set (newest set first, with per-group aggregates), and it never reads the
-/// collection's product table — the sealed-product mirror of the collection by-set test,
-/// proving the shared engine is wired to the wish-list repository independently.
+/// The product-sets tiles work on the wish-list surface too: wanted products fold into one
+/// tile per set (newest set first, with per-set aggregates), and it never reads the
+/// collection's product table — the sealed-product mirror of the collection product-sets
+/// test, proving the shared engine is wired to the wish-list repository independently.
 #[tokio::test]
-async fn by_set_groups_wanted_products_and_is_independent_of_collection() {
+async fn product_sets_aggregate_and_are_independent_of_collection() {
     let app = test_app().await;
     let db = &app.state.db;
-    let (token, _) = register(&app, "by-set-wisher@example.com", "password123").await;
+    let (token, _) = register(&app, "product-sets-wisher@example.com", "password123").await;
 
     insert_card_set(db, "new", "Newest Set", Some("2024-06-01")).await;
     insert_card_set(db, "old", "Oldest Set", Some("2024-01-01")).await;
@@ -569,7 +569,7 @@ async fn by_set_groups_wanted_products_and_is_independent_of_collection() {
     .await;
     insert_product(db, "20", "Old Box", "old", "bundle", Some("3.00")).await;
 
-    // Want both products, but own one in the *collection* — the wish-list by-set must show
+    // Want both products, but own one in the *collection* — the wish-list tiles must show
     // only the wanted ones, never the owned collection row.
     want_product(&app, &token, "10", 2).await;
     want_product(&app, &token, "20", 4).await;
@@ -586,28 +586,115 @@ async fn by_set_groups_wanted_products_and_is_independent_of_collection() {
 
     let (status, headers, body) = send(
         &app,
-        get_with_bearer("/api/wishlist/mtg/products/by-set", &token),
+        get_with_bearer("/api/wishlist/mtg/products/sets", &token),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "by-set failed: {body:?}");
+    assert_eq!(status, StatusCode::OK, "sets failed: {body:?}");
     assert_eq!(cache_control(&headers), Some("no-store"));
-    assert_eq!(body["total"], 2, "two wanted sets => two groups");
-    let groups = body["data"].as_array().unwrap();
+    let sets = body["data"].as_array().unwrap();
+    assert_eq!(sets.len(), 2, "two wanted sets => two tiles");
 
     // Newest set first, with the wanted (not owned) counts.
-    assert_eq!(groups[0]["code"], "new");
-    assert_eq!(groups[0]["name"], "Newest Set");
-    assert_eq!(groups[0]["unique_products"], 1);
+    assert_eq!(sets[0]["code"], "new");
+    assert_eq!(sets[0]["name"], "Newest Set");
+    assert_eq!(sets[0]["unique_products"], 1);
     assert_eq!(
-        groups[0]["total_products"], 2,
+        sets[0]["total_products"], 2,
         "the wanted count, not the owned 9"
     );
-    assert_eq!(groups[0]["total_value_usd"], "20.00");
-    assert_eq!(groups[0]["products"][0]["product"]["id"], "10");
+    assert_eq!(sets[0]["total_value_usd"], "20.00");
+    assert!(
+        sets[0].get("products").is_none(),
+        "a tile embeds no products"
+    );
     // Older set second.
-    assert_eq!(groups[1]["code"], "old");
-    assert_eq!(groups[1]["total_products"], 4);
-    assert_eq!(groups[1]["total_value_usd"], "12.00");
+    assert_eq!(sets[1]["code"], "old");
+    assert_eq!(sets[1]["total_products"], 4);
+    assert_eq!(sets[1]["total_value_usd"], "12.00");
+}
+
+/// The flat wanted-products list narrows to one set via `?set=`, excluding other-set wants;
+/// an unknown set is an empty page (`total` 0), and the filter paginates within the set.
+#[tokio::test]
+async fn products_filter_by_set() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "product-filter-wisher@example.com", "password123").await;
+
+    insert_card_set(db, "new", "Newest Set", Some("2024-06-01")).await;
+    insert_card_set(db, "old", "Oldest Set", Some("2024-01-01")).await;
+    insert_product(
+        db,
+        "10",
+        "New Box",
+        "new",
+        "collector_display",
+        Some("10.00"),
+    )
+    .await;
+    insert_product(db, "11", "New Bundle", "new", "bundle", Some("5.00")).await;
+    insert_product(db, "20", "Old Box", "old", "bundle", Some("3.00")).await;
+    // Want in order so 11 is the newer, recency-leading "new" row.
+    want_product(&app, &token, "10", 1).await;
+    want_product(&app, &token, "11", 1).await;
+    want_product(&app, &token, "20", 1).await;
+
+    // `?set=new` returns only that set's two wanted products, excluding the "old" want.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products?set=new", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "filtered list failed: {body:?}");
+    assert_eq!(body["total"], 2, "only the two 'new' products");
+    let ids: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["product"]["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        ["11", "10"],
+        "recency order within the set; 'old' excluded"
+    );
+
+    // An unknown/unheld set code is an empty page, not an error.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products?set=ghost", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0);
+    assert!(body["data"].as_array().unwrap().is_empty());
+
+    // The filter paginates: page 1 of size 1 within "new" is the newest of the two, more to come.
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products?set=new&page_size=1", &token),
+    )
+    .await;
+    assert_eq!(body["total"], 2, "total is the filtered count");
+    assert_eq!(body["has_more"], true);
+    let page1 = body["data"].as_array().unwrap();
+    assert_eq!(page1.len(), 1);
+    assert_eq!(page1[0]["product"]["id"], "11");
+
+    // Page 2: the remaining "new" product, no more.
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(
+            "/api/wishlist/mtg/products?set=new&page=2&page_size=1",
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["has_more"], false);
+    let page2 = body["data"].as_array().unwrap();
+    assert_eq!(page2.len(), 1);
+    assert_eq!(page2[0]["product"]["id"], "10");
 }
 
 /// The sealed-product summary aggregates only the caller's own wanted products (distinct

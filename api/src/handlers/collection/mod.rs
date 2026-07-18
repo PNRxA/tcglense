@@ -50,7 +50,7 @@ pub use import::{
 pub use price_movements::collection_movers;
 pub use products::{
     collection_product_counts, collection_product_summary, get_collection_product_entry,
-    list_collection_products, list_collection_products_by_set, set_collection_product_entry,
+    list_collection_product_sets, list_collection_products, set_collection_product_entry,
 };
 pub use read::{collection_summary, get_collection_entry, list_collection, owned_counts};
 pub use sets::{collection_set_drops, collection_set_subtypes, collection_sets};
@@ -75,8 +75,8 @@ pub use import::{
 pub use price_movements::__path_collection_movers;
 pub use products::{
     __path_collection_product_counts, __path_collection_product_summary,
-    __path_get_collection_product_entry, __path_list_collection_products,
-    __path_list_collection_products_by_set, __path_set_collection_product_entry,
+    __path_get_collection_product_entry, __path_list_collection_product_sets,
+    __path_list_collection_products, __path_set_collection_product_entry,
 };
 pub use read::{
     __path_collection_summary, __path_get_collection_entry, __path_list_collection,
