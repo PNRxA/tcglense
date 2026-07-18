@@ -160,7 +160,7 @@ pub(crate) async fn owned_drop_page(
     .await?;
 
     let (page, page_size) = params.drop_page_and_size();
-    Ok(holding_drop_page(table, rows, page, page_size))
+    Ok(holding_drop_page(&table, rows, page, page_size))
 }
 
 /// List collection set sub-types

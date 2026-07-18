@@ -1,10 +1,13 @@
-// Regenerates `api/src/scryfall/sld_drops.json` — the committed snapshot of
-// Scryfall's curated Secret Lair Drop titles. Those titles are NOT in Scryfall's
-// bulk card API; they exist only on the set's gallery page, which groups the set's
-// cards into named "drops" (e.g. "Wild in Bloom") by collector-number. We parse
-// that page once and commit the result, so the API has no runtime dependency on
-// scraping (see the "checked-in snapshot" note in CLAUDE.md). Re-run after new
-// drops release:
+// Regenerates `api/src/scryfall/sld_drops.json` — the committed **seed / offline
+// fallback** for the Secret Lair drop store. Scryfall's curated drop titles are NOT in
+// its bulk card API; they exist only on the set's gallery page, which groups the set's
+// cards into named "drops" (e.g. "Wild in Bloom") by collector-number.
+//
+// This scrape is now ALSO ported to Rust (`scryfall::sld_scrape`) and run at runtime by
+// the mirror origin, which re-scrapes daily and re-serves the fresh snapshot at
+// `/api/mirror/scryfall/sld-drops` for other instances to import — so the API no longer
+// depends on a human re-running this script. This script stays the way to regenerate the
+// committed fallback (kept in step with the Rust parser). Re-run after new drops release:
 //
 //   node api/scripts/gen-sld-drops.mjs
 //

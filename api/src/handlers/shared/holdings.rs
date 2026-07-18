@@ -683,7 +683,7 @@ pub(crate) fn build_collection_sets<R: SummaryRow>(
 /// collection and wish list share the identical post-fetch shaping; only the SeaORM query
 /// stays with each caller.
 pub(crate) fn holding_drop_page<H: HoldingCounts>(
-    table: &'static DropTable,
+    table: &DropTable,
     rows: Vec<(H, Option<card::Model>)>,
     page: u64,
     page_size: u64,

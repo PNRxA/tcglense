@@ -912,6 +912,7 @@ unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
 | `GET /api/mirror/scryfall/bulk-data` | Scryfall's bulk-data catalog JSON |
 | `GET /api/mirror/scryfall/sets` | Scryfall's sets listing |
 | `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated) |
+| `GET /api/mirror/scryfall/sld-drops` | the current Secret Lair drop snapshot (curated titles + collector numbers) as JSON, served from this origin's in-memory drop store (a strong content `ETag`, so an unchanged snapshot is a `304`) |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
@@ -926,3 +927,13 @@ a consumer with the current index gets a bodyless `304`. A self-host with
 it against its own `FINGERPRINT_ALGO_VERSION`, and replaces its local `card_fingerprint`
 rows in one transaction — the ~3–4 MB MTG index is fetched **once per change**, so every
 ordinary self-host runs the scanner while fetching **zero** card images.
+
+The **sld-drops** route is likewise not an upstream proxy: it re-serves this origin's own
+in-memory Secret Lair drop snapshot as JSON (the shape of `scryfall/sld_drops.json`). Those
+curated drop titles aren't in the bulk card API, so the **mirror origin** (`MIRROR_ENABLED`)
+scrapes Scryfall's gallery daily (`scryfall::sld_scrape`) and installs the fresh snapshot into
+its drop store; every **other** instance imports it from this route daily
+(`scryfall::sld_sync`, on by default via `SLD_DROPS_IMPORT_ENABLED`) rather than scraping
+Scryfall itself. Both fall back to the committed `sld_drops.json` until their first fetch. A
+scrape that yields no drops (a markup change) is rejected, so a broken scrape never wipes the
+good table. Version-gated by a strong content `ETag` (a bodyless `304` when unchanged).

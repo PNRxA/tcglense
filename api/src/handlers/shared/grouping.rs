@@ -6,6 +6,7 @@
 //! [`crate::scryfall::subtypes`]).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::pagination::Page;
 use crate::error::AppError;
@@ -16,10 +17,7 @@ use crate::scryfall::subtypes::{self, Subtype};
 /// drop-grouped. This is the single definition of "drop-grouped" the by-drop endpoints
 /// gate on, so it must agree with [`crate::scryfall::drops::has_drops`] — the same
 /// non-empty-table predicate the SPA uses to decide whether to offer the by-drop view.
-pub(crate) fn require_drop_table(
-    game: &str,
-    set_code: &str,
-) -> Result<&'static DropTable, AppError> {
+pub(crate) fn require_drop_table(game: &str, set_code: &str) -> Result<Arc<DropTable>, AppError> {
     crate::scryfall::drops::table(game, set_code)
         .filter(|t| !t.is_empty())
         .ok_or_else(|| AppError::NotFound(format!("set '{set_code}' has no drops")))
@@ -167,7 +165,7 @@ mod tests {
             sld_test_card("sld", "no-such-number", None),
             sld_test_card("sld", "2658", Some(2658)),
         ];
-        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        let buckets = group_into_drops(&table, rows, |c| c.collector_number.as_str());
         let titles: Vec<&str> = buckets.iter().map(|b| b.title.as_str()).collect();
         assert_eq!(titles, vec!["Wild in Bloom", "Inked", "Other"]);
         assert_eq!(buckets[0].slug.as_deref(), Some("wild-in-bloom"));
@@ -183,7 +181,7 @@ mod tests {
             sld_test_card("sld", "2658", Some(2658)),
             sld_test_card("sld", "168", Some(168)),
         ];
-        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        let buckets = group_into_drops(&table, rows, |c| c.collector_number.as_str());
 
         // A case-insensitive substring keeps only the matching drop.
         let matched = filter_drops_by_title(buckets, "BLOOM");
@@ -192,10 +190,10 @@ mod tests {
 
         // A non-matching filter drops every bucket; a blank one keeps them all.
         let rows = vec![sld_test_card("sld", "2658", Some(2658))];
-        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        let buckets = group_into_drops(&table, rows, |c| c.collector_number.as_str());
         assert!(filter_drops_by_title(buckets, "no-such-drop").is_empty());
         let rows = vec![sld_test_card("sld", "2658", Some(2658))];
-        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        let buckets = group_into_drops(&table, rows, |c| c.collector_number.as_str());
         assert_eq!(filter_drops_by_title(buckets, "").len(), 1);
     }
 
@@ -208,7 +206,7 @@ mod tests {
             sld_test_card("sld", "2659", Some(2659)),
             sld_test_card("sld", "2658", Some(2658)),
         ];
-        let buckets = group_into_drops(table, rows, |c| c.collector_number.as_str());
+        let buckets = group_into_drops(&table, rows, |c| c.collector_number.as_str());
         assert_eq!(buckets.len(), 1);
         let cns: Vec<&str> = buckets[0]
             .cards

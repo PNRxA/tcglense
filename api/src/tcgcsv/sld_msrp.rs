@@ -93,7 +93,7 @@ pub fn derive(set_code: &str, external_id: &str, name: &str) -> Option<String> {
         return None;
     }
     let table = sld::table()?;
-    let pd = sld::resolve_product_drop(table, external_id, name)?;
+    let pd = sld::resolve_product_drop(&table, external_id, name)?;
     Some(price_for(&OVERRIDES, &pd.drop.slug, pd.foil).to_string())
 }
 
@@ -117,18 +117,19 @@ fn price_for<'a>(overrides: &'a HashMap<String, OverrideEntry>, slug: &str, foil
 /// ([`sld::derivation_version`]). The products ingest folds it into its version gate so an
 /// edit to a standard price, an override, or the drop snapshot re-applies MSRP on the next
 /// sync even when TCGCSV is byte-identical.
-pub fn version() -> &'static str {
-    static VERSION: LazyLock<String> = LazyLock::new(|| {
-        let mut hasher = Sha256::new();
-        hasher.update(STANDARD_NON_FOIL.as_bytes());
-        hasher.update(b";");
-        hasher.update(STANDARD_FOIL.as_bytes());
-        hasher.update(b";");
-        hasher.update(OVERRIDES_JSON.as_bytes());
-        hasher.update(sld::derivation_version().as_bytes());
-        hex::encode(&hasher.finalize()[..8])
-    });
-    &VERSION
+///
+/// Computed live (not memoised) because [`sld::derivation_version`] now tracks the *runtime*
+/// drop snapshot (the mirror's daily scrape / a consumer's daily import); a cached value would
+/// freeze at the first snapshot seen. Evaluated once per sync tick's version check — negligible.
+pub fn version() -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(STANDARD_NON_FOIL.as_bytes());
+    hasher.update(b";");
+    hasher.update(STANDARD_FOIL.as_bytes());
+    hasher.update(b";");
+    hasher.update(OVERRIDES_JSON.as_bytes());
+    hasher.update(sld::derivation_version().as_bytes());
+    hex::encode(&hasher.finalize()[..8])
 }
 
 #[cfg(test)]
@@ -200,7 +201,7 @@ mod tests {
                 "override slug {slug:?} exists in the drop snapshot"
             );
             assert!(
-                sld::slug_is_reachable(table, slug),
+                sld::slug_is_reachable(&table, slug),
                 "override slug {slug:?} is reachable by product resolution (else the price is \
                  dead data — pin the product id in PRODUCT_DROP_OVERRIDES, as the Confetti \
                  Foil drops require)"

@@ -191,6 +191,16 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   image path** — the one sanctioned exception is the opt-in fingerprint build
   (`FINGERPRINT_BUILD_ENABLED`, default off); read `docs/tradeoffs.md` §Visual card
   scanner before touching it.
+- **Secret Lair drop titles are a runtime overlay, not just a static file.** They aren't in
+  the bulk card API, so `scryfall::drops` is a swappable `RwLock<Arc<Tables>>` **seeded** by the
+  committed `scryfall/sld_drops.json` (still the offline fallback; `gen-sld-drops.mjs` regenerates
+  it) and **swapped** daily: the mirror origin (`MIRROR_ENABLED`) scrapes Scryfall's gallery
+  (`scryfall::sld_scrape`) and serves it at `/api/mirror/scryfall/sld-drops`; every other instance
+  imports it from the mirror (`scryfall::sld_sync`, `SLD_DROPS_IMPORT_ENABLED`, default on) — a
+  self-host **never scrapes Scryfall itself**. `install_snapshot` **rejects a snapshot missing the
+  `mtg/sld` set**, so a broken scrape can't wipe the good table. `drops::table()` returns an owned
+  `Arc<DropTable>`, and `sld::derivation_version` reads the **live** snapshot (computed, not
+  memoised) so a refresh propagates to the sealed-contents gate — keep both dynamic.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling

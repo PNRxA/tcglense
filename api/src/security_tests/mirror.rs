@@ -52,6 +52,7 @@ async fn mirror_routes_are_absent_by_default() {
         "/api/mirror/scryfall/bulk-data",
         "/api/mirror/scryfall/sets",
         "/api/mirror/scryfall/file/default_cards",
+        "/api/mirror/scryfall/sld-drops",
         "/api/mirror/mtgjson/AllPrintings.json.gz",
         "/api/mirror/tcgcsv/last-updated.txt",
         "/api/mirror/fingerprints/mtg",
@@ -97,6 +98,56 @@ async fn enabled_mirror_rejects_tcgcsv_path_traversal_without_fetching() {
             "expected a JSON error for {path}"
         );
     }
+}
+
+#[tokio::test]
+async fn enabled_mirror_serves_the_sld_drop_snapshot() {
+    // Served straight from this origin's in-memory drop store (no upstream) — the committed
+    // fallback snapshot, since no scrape has run — as JSON carrying a strong content ETag, so
+    // other instances import it instead of each scraping Scryfall's gallery.
+    let app = app_with_mirror(true).await;
+    let (status, headers, body) = send(&app, get("/api/mirror/scryfall/sld-drops")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type(&headers), Some("application/json"));
+    assert!(
+        headers.get(ETAG).is_some(),
+        "the snapshot must carry an ETag"
+    );
+    // The body is a drop snapshot: an object with a non-empty `sets` array (the shipped fallback
+    // covers the Secret Lair set).
+    let sets = body
+        .get("sets")
+        .and_then(|v| v.as_array())
+        .expect("snapshot has a sets array");
+    assert!(!sets.is_empty(), "the fallback snapshot lists the sld set");
+}
+
+#[tokio::test]
+async fn sld_drop_snapshot_honours_a_conditional_request() {
+    // A consumer that already has the current snapshot sends its stored ETag and gets a bodyless
+    // 304 — the mechanism that keeps an unchanged snapshot off the wire.
+    let app = app_with_mirror(true).await;
+    let (status, headers, _) = send(&app, get("/api/mirror/scryfall/sld-drops")).await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = headers
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag")
+        .to_string();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/mirror/scryfall/sld-drops")
+        .header(IF_NONE_MATCH, &etag)
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, body) = send(&app, req).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(body.is_null(), "a 304 carries no body");
+    assert_eq!(
+        headers.get(ETAG).and_then(|v| v.to_str().ok()),
+        Some(etag.as_str())
+    );
 }
 
 /// Build the real router with the mirror enabled and one fingerprint seeded into the

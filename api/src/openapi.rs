@@ -412,6 +412,10 @@ mod coverage_drift {
         ("/api/mirror/scryfall/sets", "opt-in dataset mirror"),
         ("/api/mirror/scryfall/file/{kind}", "opt-in dataset mirror"),
         (
+            "/api/mirror/scryfall/sld-drops",
+            "opt-in dataset mirror (Secret Lair drop snapshot)",
+        ),
+        (
             "/api/mirror/mtgjson/AllPrintings.json.gz",
             "opt-in dataset mirror (binary blob)",
         ),

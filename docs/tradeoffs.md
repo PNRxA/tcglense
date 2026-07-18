@@ -753,8 +753,11 @@ catalog) is planned but not implemented.
   *does* describe — an unmatched product simply shows nothing, never a *wrong* drop) at the cost
   of recall; a tiny curated `PRODUCT_DROP_OVERRIDES` (TCGplayer id → drop slug) covers the few
   localised drops named differently on the storefront vs Scryfall's gallery. (3) The derivation's
-  inputs (the drop snapshot + overrides) are hashed into the ingest **version gate** alongside
-  the ETag + fallback hash, so regenerating `sld_drops.json` re-runs it on the next sync. (4)
+  inputs (the *live* drop snapshot + overrides) are hashed into the ingest **version gate**
+  alongside the ETag + fallback hash — computed live, not memoised — so a refreshed drop snapshot
+  (the mirror's daily scrape / a consumer's daily import, or regenerating `sld_drops.json`) re-runs
+  it on the next sync. See the **Secret Lair drop snapshot** trade-off below for how that snapshot
+  is now refreshed at runtime. (4)
   Secret Lair **superdrop bundles** (a bundle *of drops*) are the inverse case: their composition
   isn't derivable from the drop snapshot and MTGJSON leaves it `null`, so it's hand-authored in
   `fallback_sealed.json` as linked `sealed` components (the drops the bundle contains) — the
@@ -786,6 +789,40 @@ catalog) is planned but not implemented.
   is excluded so it can't be shadowed, and a drop absent from the table simply shows no bonus pool —
   never a wrong one. The table is hashed into the derivation version alongside the drop snapshot, so
   editing it re-runs the pass on the next sync.
+- **Secret Lair drop snapshot — a runtime overlay, seeded by a committed file (`scryfall::drops`).**
+  The curated drop titles aren't in the bulk card API; they live only on Scryfall's `/sets/sld`
+  gallery page. Originally we scraped that page **offline** (`api/scripts/gen-sld-drops.mjs`) and
+  committed the result (`scryfall/sld_drops.json`), so the API had no runtime scrape dependency —
+  but new drops then needed a human to re-run the script and redeploy. Now the committed file only
+  **seeds** the drop store at boot (and is the offline / first-boot fallback), and the store is
+  *swapped at runtime*: the **mirror origin** (`MIRROR_ENABLED`) re-scrapes the gallery daily
+  (`scryfall::sld_scrape`, the JS scraper ported to Rust) and installs the fresh snapshot, serving
+  it at `GET /api/mirror/scryfall/sld-drops`; **every other instance** imports that snapshot from
+  the mirror daily (`scryfall::sld_sync`, `SLD_DROPS_IMPORT_ENABLED` on by default) — the same
+  "contact one origin, not the upstream" posture as the dataset mirror and the fingerprint index,
+  and it honours the self-host-never-scrapes rule (only the origin talks to Scryfall). Choices:
+  (1) The store is a **process-global `RwLock<Arc<Tables>>`** (not per-`AppState`), because the read
+  path reaches it from a bare `From<card::Model>` conversion with no state in hand; the swap is the
+  same brief-lock/clone-an-`Arc` pattern the fingerprint index uses, and `drops::table()` now hands
+  out an owned `Arc<DropTable>` so a reader is stable across a concurrent swap. (2) `install_snapshot`
+  **validates before swapping** — a snapshot missing the `mtg/sld` set (a markup change that yields
+  zero drops) is *rejected*, so a broken scrape/import never wipes the good table; the origin keeps
+  serving its last-good (ultimately the committed) snapshot. (3) **The snapshot blob itself isn't
+  persisted** — it's re-seeded from the committed file each boot (~tens of KB, re-fetched cheaply),
+  so it isn't worth a table. But a tiny `ingest_state` row (`(mtg, sld_drops)`) *does* record the
+  last-run time + the import `ETag`, so a restart within the interval **defers** the first
+  scrape/import (rather than re-running on every boot), a consumer's first post-restart import can
+  still `304`, and a restart after a long downtime runs immediately (`sld_tasks::initial_delay`).
+  (4) The content version hashes
+  the drop **data** (each set's ordered drops), *not* the JSON bytes — so the pretty-printed
+  committed seed and the mirror's compact scrape of the *same* drops share a version. It feeds both
+  the mirror `ETag` (a `304` when unchanged) and the sealed-contents derivation version
+  (`sld::derivation_version`, computed live). Hashing the raw bytes instead would make every reboot
+  (which reseeds from the committed file) look like a change versus the last-imported compact
+  snapshot and trip a needless full `AllPrintings` rebuild; hashing the data means only a *real* drop
+  change re-derives SLD product contents (even when `AllPrintings.json` is byte-identical). The
+  mirror endpoint also reads the body + version from a single store snapshot, so a concurrent daily
+  swap can't pair a stale `ETag` with a fresh body.
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that

@@ -129,7 +129,7 @@ pub async fn wishlist_set_drops(
     .await?;
 
     let (page, page_size) = params.drop_page_and_size();
-    Ok(Json(holding_drop_page(table, rows, page, page_size)))
+    Ok(Json(holding_drop_page(&table, rows, page, page_size)))
 }
 
 /// List wish-list set sub-types

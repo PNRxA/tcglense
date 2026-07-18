@@ -180,6 +180,15 @@ pub struct Config {
     /// locally); set `false` to opt a self-host out of the scanner / any outbound pull.
     /// **Not** a secret.
     pub fingerprint_import_enabled: bool,
+    /// Whether this instance **imports** the Secret Lair drop snapshot from the dataset mirror
+    /// ([`Self::dataset_mirror_url`]) daily. Those curated drop titles aren't in the bulk card
+    /// API, so the mirror origin scrapes Scryfall's gallery and re-serves them and every other
+    /// instance pulls them from there (see [`crate::scryfall::sld_sync`]). Default `true` — the
+    /// hassle-free posture that keeps a self-host's drop titles current. Ignored on the mirror
+    /// origin ([`Self::mirror_enabled`] takes precedence: it scrapes the source itself). Set
+    /// `false` to keep only the committed fallback snapshot / opt out of the outbound pull.
+    /// **Not** a secret.
+    pub sld_drops_import_enabled: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -246,6 +255,7 @@ impl std::fmt::Debug for Config {
                 "fingerprint_import_enabled",
                 &self.fingerprint_import_enabled,
             )
+            .field("sld_drops_import_enabled", &self.sld_drops_import_enabled)
             .finish()
     }
 }
@@ -678,6 +688,9 @@ impl Config {
         // On by default so an ordinary self-host's scanner just works (it pulls the tiny
         // prebuilt index from the mirror); the build instance ignores it (it has its own).
         let fingerprint_import_enabled = env_bool("FINGERPRINT_IMPORT_ENABLED", true);
+        // On by default so a self-host's Secret Lair drop titles stay fresh (pulled from the
+        // mirror daily); the mirror origin ignores it (it scrapes the source itself).
+        let sld_drops_import_enabled = env_bool("SLD_DROPS_IMPORT_ENABLED", true);
 
         if let Err(message) = validate_public_auth_posture(
             &host,
@@ -731,6 +744,7 @@ impl Config {
             fingerprint_top_k,
             fingerprint_max_distance,
             fingerprint_import_enabled,
+            sld_drops_import_enabled,
         }
     }
 
