@@ -30,17 +30,30 @@
 //! every history row of every held card — and it stays fast on the churned Postgres
 //! visibility map the daily capture leaves behind (the "tiny point-seek" shape
 //! `docs/tradeoffs.md` endorses over a full-scan aggregate).
+//!
+//! By default every window is computed and returned together, so the UI's window selector and
+//! Singles / Sealed switch are pure client-side toggles. The SPA instead passes
+//! `?window=<day|week|month|year|two_year|three_year|all_time>` to compute **only the active
+//! date range on demand**: [`AnchorNeeds`] selects the unrequested windows' anchors as SQL
+//! `NULL` (so those sub-selects are never evaluated) and [`RawMoverSeries::rank`] ranks only
+//! the requested window. A landing that only ever shows its default window then seeks ~2
+//! anchors per held item instead of ten and skips the all-time `first_priced` index walk
+//! entirely. Both holding kinds are still returned for the requested window (so the Singles /
+//! Sealed switch stays client-side and a sealed-only owner still sees the panel), and the
+//! reference dates are computed regardless of window. Omitting the param preserves the
+//! original all-windows response for API-key consumers. Each window caches independently under
+//! the same version keys (the window token is the analytics-cache params segment).
 
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::State;
 use chrono::{Duration, NaiveDate};
 use sea_orm::sea_query::{
-    BinOper, ColumnRef, Expr, Func, IntoColumnRef, IntoTableRef, Order, Query, SelectStatement,
-    SimpleExpr, SubQueryStatement, TableRef,
+    BinOper, ColumnRef, Expr, Func, IntoColumnRef, IntoTableRef, Keyword, Order, Query,
+    SelectStatement, SimpleExpr, SubQueryStatement, TableRef,
 };
 use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::analytics_cache::json_body_response;
 use crate::auth::extractor::AuthUser;
@@ -67,6 +80,97 @@ const PRICE_ID_CHUNK: usize = 10_000;
 
 /// How many movers to return per direction, per window.
 const TOP_N: usize = 5;
+
+/// Query params for [`collection_movers`]: an optional `window` that scopes the whole
+/// computation + response to one date range (see the module docs). Parsed as an optional
+/// string, not a typed enum, so an unknown value becomes our JSON `422` via
+/// [`MoverWindowSel::parse`] rather than axum's default query rejection.
+#[derive(Debug, Deserialize)]
+pub struct MoversParams {
+    pub window: Option<String>,
+}
+
+/// One requested movers window. `None` at the call sites below means "every window" — the
+/// original all-windows response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MoverWindowSel {
+    Day,
+    Week,
+    Month,
+    Year,
+    TwoYear,
+    ThreeYear,
+    AllTime,
+}
+
+impl MoverWindowSel {
+    /// Parse a wire token into a window, or a `422` for anything else (mirrors
+    /// `PriceRange::parse`). The tokens match the response field names, so the SPA passes the
+    /// window it already keys on with no mapping.
+    fn parse(value: &str) -> Result<Self, AppError> {
+        Ok(match value {
+            "day" => Self::Day,
+            "week" => Self::Week,
+            "month" => Self::Month,
+            "year" => Self::Year,
+            "two_year" => Self::TwoYear,
+            "three_year" => Self::ThreeYear,
+            "all_time" => Self::AllTime,
+            other => {
+                return Err(AppError::Validation(format!(
+                    "unknown movers window {other:?}; expected one of \
+                     day/week/month/year/two_year/three_year/all_time"
+                )));
+            }
+        })
+    }
+
+    /// The wire token, reused as the analytics-cache params segment (an absent window keeps the
+    /// empty segment the pre-windowing cache used).
+    fn token(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::Year => "year",
+            Self::TwoYear => "two_year",
+            Self::ThreeYear => "three_year",
+            Self::AllTime => "all_time",
+        }
+    }
+}
+
+/// Which per-item anchors a `window` request needs fetched. Unneeded anchors are selected as
+/// SQL `NULL` (no sub-select), so a single-window request skips the other windows' point-seeks
+/// — and, for anything but all-time, the two `first_priced` index walks.
+struct AnchorNeeds {
+    day: bool,
+    prev_day: bool,
+    week: bool,
+    month: bool,
+    year: bool,
+    two_year: bool,
+    three_year: bool,
+    first: bool,
+}
+
+impl AnchorNeeds {
+    fn for_window(window: Option<MoverWindowSel>) -> Self {
+        let all = window.is_none();
+        let want = |w: MoverWindowSel| all || window == Some(w);
+        Self {
+            // The 1D fallback baseline (`prev_day`) rides with the day anchor.
+            day: want(MoverWindowSel::Day),
+            prev_day: want(MoverWindowSel::Day),
+            week: want(MoverWindowSel::Week),
+            month: want(MoverWindowSel::Month),
+            year: want(MoverWindowSel::Year),
+            two_year: want(MoverWindowSel::TwoYear),
+            three_year: want(MoverWindowSel::ThreeYear),
+            first: want(MoverWindowSel::AllTime),
+        }
+    }
+}
 
 /// The biggest gain/loss movements across a user's collection, for each supported window.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -220,36 +324,57 @@ impl CollectionMoverList {
     security(("api_key" = [])),
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("window" = Option<String>, Query, description = "Restrict to one window (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) and compute only that date range on demand; absent = every window (the original response). Both the Singles and Sealed series for the requested window are returned; unrequested windows come back empty."),
     ),
     responses(
-        (status = 200, description = "The user's biggest card/sealed-product gain/loss movements over the 1d / 7d / 30d / 1y / 2y / 3y / all-time windows; an empty latest-day comparison retries the previous available snapshot (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
+        (status = 200, description = "The user's biggest card/sealed-product gain/loss movements. Absent `window` returns every window (1d / 7d / 30d / 1y / 2y / 3y / all-time); a `window` value populates only that one. An empty latest-day comparison retries the previous available snapshot (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
+        (status = 422, description = "Unknown `window` value."),
     ),
 )]
 pub async fn collection_movers(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Path(game): Path<String>,
+    crate::extract::Query(params): crate::extract::Query<MoversParams>,
 ) -> Result<axum::response::Response, AppError> {
     require_game(&game)?;
 
+    // Blank/absent `window` -> every window (the original all-windows response, kept for
+    // API-key consumers); a value scopes the computation + response to that one date range.
+    // Unknown values are a 422, mirroring value-history's `range`.
+    let window = match params
+        .window
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some(value) => Some(MoverWindowSel::parse(value)?),
+    };
+
     // Version-keyed, single-flight response cache (issues #413/#365): between the
-    // user's own edits and the daily price capture this response cannot change,
-    // and computing it scans every held item's whole price-history index range.
-    // `get_or_compute` also coalesces concurrent misses for the same key onto one
-    // computation. `None` key = cache degraded, compute as normal. No query
-    // params, so the params segment is empty.
+    // user's own edits and the daily price capture this response cannot change, and
+    // computing a full response point-seeks every held item's anchors. `get_or_compute`
+    // also coalesces concurrent misses for the same key onto one computation. `None`
+    // key = cache degraded, compute as normal. The window token is the params segment,
+    // so each date range caches independently.
     let cache_key = state
         .analytics_cache
-        .body_key(user.id, &game, "movers", "")
+        .body_key(
+            user.id,
+            &game,
+            "movers",
+            window.map_or("", MoverWindowSel::token),
+        )
         .await;
     let body = state
         .analytics_cache
         .get_or_compute(cache_key, || {
             let (state, user, game) = (state.clone(), user.clone(), game.clone());
             async move {
-                let payload = movers_payload(state, user, game).await?;
+                let payload = movers_payload(state, user, game, window).await?;
                 serde_json::to_vec(&payload)
                     .map_err(|err| AppError::Internal(format!("serialize movers: {err}")))
             }
@@ -264,7 +389,14 @@ async fn movers_payload(
     state: AppState,
     user: crate::entities::user::Model,
     game: String,
+    window: Option<MoverWindowSel>,
 ) -> Result<CollectionMovers, AppError> {
+    // Which anchors to fetch for this request: every one for a full response, else just the
+    // requested window's (the rest are selected as NULL below), and whether the 1D fallback
+    // path runs at all.
+    let needs = AnchorNeeds::for_window(window);
+    let day_requested = window.is_none() || window == Some(MoverWindowSel::Day);
+
     // The user's current card + sealed holdings, reduced to ids/counts. Movements value
     // today's counts at both anchors because there is no per-holding quantity history.
     let card_holdings: Vec<(i32, i32, i32)> = CollectionItem::find()
@@ -399,19 +531,28 @@ async fn movers_payload(
             .select_only()
             .column_as(collection_item::Column::CardId, "item_id")
             .expr_as(seek.latest(), "latest")
-            .expr_as(seek.at_or_before(&targets.day), "day")
-            .expr_as(seek.at_or_before(&targets.prev_day), "prev_day")
-            .expr_as(seek.at_or_before(&targets.week), "week")
-            .expr_as(seek.at_or_before(&targets.month), "month")
-            .expr_as(seek.at_or_before(&targets.year), "year")
-            .expr_as(seek.at_or_before(&targets.two_year), "two_year")
-            .expr_as(seek.at_or_before(&targets.three_year), "three_year")
+            .expr_as(seek.at_or_before_opt(&targets.day, needs.day), "day")
             .expr_as(
-                seek.first_priced(card_price_history::Column::PriceUsd),
+                seek.at_or_before_opt(&targets.prev_day, needs.prev_day),
+                "prev_day",
+            )
+            .expr_as(seek.at_or_before_opt(&targets.week, needs.week), "week")
+            .expr_as(seek.at_or_before_opt(&targets.month, needs.month), "month")
+            .expr_as(seek.at_or_before_opt(&targets.year, needs.year), "year")
+            .expr_as(
+                seek.at_or_before_opt(&targets.two_year, needs.two_year),
+                "two_year",
+            )
+            .expr_as(
+                seek.at_or_before_opt(&targets.three_year, needs.three_year),
+                "three_year",
+            )
+            .expr_as(
+                seek.first_priced_opt(card_price_history::Column::PriceUsd, needs.first),
                 "first_usd",
             )
             .expr_as(
-                seek.first_priced(card_price_history::Column::PriceUsdFoil),
+                seek.first_priced_opt(card_price_history::Column::PriceUsdFoil, needs.first),
                 "first_foil",
             )
             .filter(collection_item::Column::UserId.eq(user.id))
@@ -446,19 +587,28 @@ async fn movers_payload(
             .select_only()
             .column_as(collection_product_item::Column::ProductId, "item_id")
             .expr_as(seek.latest(), "latest")
-            .expr_as(seek.at_or_before(&targets.day), "day")
-            .expr_as(seek.at_or_before(&targets.prev_day), "prev_day")
-            .expr_as(seek.at_or_before(&targets.week), "week")
-            .expr_as(seek.at_or_before(&targets.month), "month")
-            .expr_as(seek.at_or_before(&targets.year), "year")
-            .expr_as(seek.at_or_before(&targets.two_year), "two_year")
-            .expr_as(seek.at_or_before(&targets.three_year), "three_year")
+            .expr_as(seek.at_or_before_opt(&targets.day, needs.day), "day")
             .expr_as(
-                seek.first_priced(product_price_history::Column::PriceUsd),
+                seek.at_or_before_opt(&targets.prev_day, needs.prev_day),
+                "prev_day",
+            )
+            .expr_as(seek.at_or_before_opt(&targets.week, needs.week), "week")
+            .expr_as(seek.at_or_before_opt(&targets.month, needs.month), "month")
+            .expr_as(seek.at_or_before_opt(&targets.year, needs.year), "year")
+            .expr_as(
+                seek.at_or_before_opt(&targets.two_year, needs.two_year),
+                "two_year",
+            )
+            .expr_as(
+                seek.at_or_before_opt(&targets.three_year, needs.three_year),
+                "three_year",
+            )
+            .expr_as(
+                seek.first_priced_opt(product_price_history::Column::PriceUsd, needs.first),
                 "first_usd",
             )
             .expr_as(
-                seek.first_priced(product_price_history::Column::PriceUsdFoil),
+                seek.first_priced_opt(product_price_history::Column::PriceUsdFoil, needs.first),
                 "first_foil",
             )
             .filter(collection_product_item::Column::UserId.eq(user.id))
@@ -502,6 +652,7 @@ async fn movers_payload(
         card_latest.as_deref(),
         card_targets.as_ref(),
         TOP_N,
+        window,
     );
     let mut product_windows = RawMoverSeries::rank(
         &product_holdings,
@@ -509,6 +660,7 @@ async fn movers_payload(
         product_latest.as_deref(),
         product_targets.as_ref(),
         TOP_N,
+        window,
     );
 
     // A daily capture can legitimately repeat every owned price (for example when the
@@ -526,7 +678,8 @@ async fn movers_payload(
     // already fetched above, so the retry adds no I/O. Only a genuine hole in the capture
     // history lands the retry on a baseline no anchor selected, and pays for a second scan.
     let mut card_day_as_of = card_latest.clone();
-    if raw_window_empty(&card_windows.day)
+    if day_requested
+        && raw_window_empty(&card_windows.day)
         && let Some(targets) = card_targets.as_ref()
         && let Some(fallback_latest) = previous_available_date(&card_prices, &targets.day)
     {
@@ -549,7 +702,8 @@ async fn movers_payload(
     }
 
     let mut product_day_as_of = product_latest.clone();
-    if raw_window_empty(&product_windows.day)
+    if day_requested
+        && raw_window_empty(&product_windows.day)
         && let Some(targets) = product_targets.as_ref()
         && let Some(fallback_latest) = previous_available_date(&product_prices, &targets.day)
     {
@@ -826,19 +980,39 @@ impl RawMoverSeries {
         latest: Option<&str>,
         targets: Option<&WindowTargets>,
         top_n: usize,
+        window: Option<MoverWindowSel>,
     ) -> Self {
+        let mut series = Self::empty();
         let (Some(latest), Some(targets)) = (latest, targets) else {
-            return Self::empty();
+            return series;
         };
-        Self {
-            day: window_movers(holdings, prices, latest, &targets.day, top_n),
-            week: window_movers(holdings, prices, latest, &targets.week, top_n),
-            month: window_movers(holdings, prices, latest, &targets.month, top_n),
-            year: window_movers(holdings, prices, latest, &targets.year, top_n),
-            two_year: window_movers(holdings, prices, latest, &targets.two_year, top_n),
-            three_year: window_movers(holdings, prices, latest, &targets.three_year, top_n),
-            all_time: all_time_movers(holdings, prices, latest, top_n),
+        // `None` ranks every window; a specific window ranks only its own list, leaving the
+        // rest empty — their anchors were selected as NULL, so they'd rank empty anyway, and
+        // this also skips the all-time scan whenever it wasn't asked for.
+        let all = window.is_none();
+        let want = |w: MoverWindowSel| all || window == Some(w);
+        if want(MoverWindowSel::Day) {
+            series.day = window_movers(holdings, prices, latest, &targets.day, top_n);
         }
+        if want(MoverWindowSel::Week) {
+            series.week = window_movers(holdings, prices, latest, &targets.week, top_n);
+        }
+        if want(MoverWindowSel::Month) {
+            series.month = window_movers(holdings, prices, latest, &targets.month, top_n);
+        }
+        if want(MoverWindowSel::Year) {
+            series.year = window_movers(holdings, prices, latest, &targets.year, top_n);
+        }
+        if want(MoverWindowSel::TwoYear) {
+            series.two_year = window_movers(holdings, prices, latest, &targets.two_year, top_n);
+        }
+        if want(MoverWindowSel::ThreeYear) {
+            series.three_year = window_movers(holdings, prices, latest, &targets.three_year, top_n);
+        }
+        if want(MoverWindowSel::AllTime) {
+            series.all_time = all_time_movers(holdings, prices, latest, top_n);
+        }
+        series
     }
 
     fn empty() -> Self {
@@ -980,6 +1154,14 @@ where
         )
 }
 
+/// A literal SQL `NULL` in a snapshot column position — the placeholder a windowed request
+/// selects for the anchors it doesn't need, so those sub-selects are never evaluated. It reads
+/// back as `None` into [`PriceAnchorSnapshots`], indistinguishable from a held item that has no
+/// such row, and both the ranker and the fallback then skip it.
+fn null_snapshot() -> SimpleExpr {
+    SimpleExpr::Keyword(Keyword::Null)
+}
+
 /// A correlated point-seek builder over one price-history table (`card_price_history` or
 /// `product_price_history`). Each method renders a scalar sub-select that returns a single
 /// [`encoded_snapshot`] string for one held item at one anchor.
@@ -1103,6 +1285,30 @@ impl SnapshotSeek {
         sub.and_where(Expr::col(price_col).is_not_null())
             .order_by(self.date_col.clone(), Order::Asc);
         Self::scalar(sub)
+    }
+
+    /// [`Self::at_or_before`] when `needed`, else a NULL placeholder — the anchor is skipped, so
+    /// a windowed request never evaluates the sub-selects for windows it didn't ask for.
+    fn at_or_before_opt(&self, target: &str, needed: bool) -> SimpleExpr {
+        if needed {
+            self.at_or_before(target)
+        } else {
+            null_snapshot()
+        }
+    }
+
+    /// [`Self::first_priced`] when `needed`, else a NULL placeholder — so anything but an
+    /// all-time request never pays the `first_priced` index walk (the honest non-point-seek
+    /// anchor).
+    fn first_priced_opt<P>(&self, price_col: P, needed: bool) -> SimpleExpr
+    where
+        P: IntoColumnRef,
+    {
+        if needed {
+            self.first_priced(price_col)
+        } else {
+            null_snapshot()
+        }
     }
 }
 
@@ -1742,5 +1948,119 @@ mod tests {
         // The case bare `format_cents` gets wrong: a sub-dollar loss keeps its sign.
         assert_eq!(format_signed_cents(-50), "-0.50");
         assert_eq!(format_signed_cents(-5), "-0.05");
+    }
+
+    #[test]
+    fn mover_window_parse_accepts_tokens_and_422s_unknown() {
+        for (token, expected) in [
+            ("day", MoverWindowSel::Day),
+            ("week", MoverWindowSel::Week),
+            ("month", MoverWindowSel::Month),
+            ("year", MoverWindowSel::Year),
+            ("two_year", MoverWindowSel::TwoYear),
+            ("three_year", MoverWindowSel::ThreeYear),
+            ("all_time", MoverWindowSel::AllTime),
+        ] {
+            let parsed = MoverWindowSel::parse(token).expect("known token parses");
+            assert_eq!(parsed, expected);
+            // The token round-trips, so the SPA's response-field name is also the cache segment.
+            assert_eq!(parsed.token(), token);
+        }
+        assert!(matches!(
+            MoverWindowSel::parse("bogus"),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn anchor_needs_scopes_to_the_requested_window() {
+        // A full response needs every anchor.
+        let full = AnchorNeeds::for_window(None);
+        assert!(
+            full.day
+                && full.prev_day
+                && full.week
+                && full.month
+                && full.year
+                && full.two_year
+                && full.three_year
+                && full.first
+        );
+
+        // A 1D request carries its fallback baseline (`prev_day`) but nothing else.
+        let day = AnchorNeeds::for_window(Some(MoverWindowSel::Day));
+        assert!(day.day && day.prev_day);
+        assert!(!day.week && !day.month && !day.first);
+
+        // A 7D request needs only the week anchor.
+        let week = AnchorNeeds::for_window(Some(MoverWindowSel::Week));
+        assert!(week.week);
+        assert!(!week.day && !week.prev_day && !week.month && !week.first);
+
+        // Only all-time pays the `first_priced` walk.
+        let all_time = AnchorNeeds::for_window(Some(MoverWindowSel::AllTime));
+        assert!(all_time.first);
+        assert!(!all_time.day && !all_time.week && !all_time.three_year);
+    }
+
+    #[test]
+    fn null_snapshot_renders_as_sql_null_on_both_databases() {
+        use sea_orm::sea_query::{PostgresQueryBuilder, Query, SqliteQueryBuilder};
+
+        let query = Query::select().expr(null_snapshot()).to_owned();
+        for sql in [
+            query.to_string(SqliteQueryBuilder),
+            query.to_string(PostgresQueryBuilder),
+        ] {
+            // A skipped anchor is a bare NULL literal — no correlated sub-select is emitted.
+            assert!(sql.contains("NULL"), "{sql}");
+            assert!(!sql.contains("(SELECT"), "{sql}"); // no nested point-seek for a skipped anchor
+        }
+    }
+
+    #[test]
+    fn rank_computes_only_the_requested_window() {
+        // One card whose cells cover every window's baseline. A full rank fills them all; a
+        // single-window rank fills only that window, leaving the rest empty even though the
+        // baseline cells are present (mirroring the NULL-anchor query, which wouldn't have
+        // fetched them, and — for all-time — never paying the scan).
+        let holdings = vec![holding(1, 1, 0)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("2.00"), None), // earliest / month+ baseline
+                cell("2024-01-25", Some("5.00"), None), // day baseline
+                cell("2024-01-31", Some("9.00"), None), // latest
+            ],
+        );
+        let targets = WindowTargets::from_latest("2024-01-31").unwrap();
+
+        let full = RawMoverSeries::rank(
+            &holdings,
+            &prices,
+            Some("2024-01-31"),
+            Some(&targets),
+            TOP_N,
+            None,
+        );
+        assert!(!raw_window_empty(&full.day));
+        assert!(!raw_window_empty(&full.week));
+        assert!(!raw_window_empty(&full.month));
+        assert!(!raw_window_empty(&full.all_time));
+
+        let week_only = RawMoverSeries::rank(
+            &holdings,
+            &prices,
+            Some("2024-01-31"),
+            Some(&targets),
+            TOP_N,
+            Some(MoverWindowSel::Week),
+        );
+        assert!(!raw_window_empty(&week_only.week));
+        assert!(raw_window_empty(&week_only.day));
+        assert!(raw_window_empty(&week_only.month));
+        assert!(raw_window_empty(&week_only.year));
+        assert!(raw_window_empty(&week_only.all_time));
     }
 }

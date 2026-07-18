@@ -959,6 +959,110 @@ async fn movers_requires_auth_and_handles_empty_and_unknown_game() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// `?window=<one>` computes only that date range on demand (the "only fetch what you need"
+/// path): the requested window is populated, every other window comes back empty, and the
+/// reference date is still returned so the panel renders. An unknown window is a `422`, never a
+/// silent full response.
+#[tokio::test]
+async fn movers_window_param_scopes_the_response_and_422s_unknown() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-window@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 1).await;
+
+    // A +$5 gain in *every* window: 10.00 across all historic baselines, 15.00 today.
+    let (d0, d1, d7, d30, d365, d730, d1095) = (
+        day_offset(0),
+        day_offset(1),
+        day_offset(7),
+        day_offset(30),
+        day_offset(365),
+        day_offset(730),
+        day_offset(1095),
+    );
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d1095, Some("10.00"), None),
+            (d730, Some("10.00"), None),
+            (d365, Some("10.00"), None),
+            (d30, Some("10.00"), None),
+            (d7, Some("10.00"), None),
+            (d1, Some("10.00"), None),
+            (d0.clone(), Some("15.00"), None),
+        ],
+    )
+    .await;
+
+    const WINDOWS: [&str; 7] = [
+        "day",
+        "week",
+        "month",
+        "year",
+        "two_year",
+        "three_year",
+        "all_time",
+    ];
+
+    // No param -> every window is a +$5 gainer for this card (the original response).
+    let (status, _, full) = send(&app, get_with_bearer("/api/collection/mtg/movers", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(full["as_of"], d0);
+    for window in WINDOWS {
+        assert_eq!(
+            mover_ids(&full[window]["gainers"]),
+            vec![id.clone()],
+            "full response window {window}"
+        );
+    }
+
+    // ?window=week -> only the week list is populated; the reference date is still computed so
+    // the panel renders, but no other window (including the all-time scan) was computed.
+    let (status, _, wk) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/movers?window=week", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        wk["as_of"], d0,
+        "reference date is computed regardless of window"
+    );
+    assert_eq!(mover_ids(&wk["week"]["gainers"]), vec![id.clone()]);
+    for other in WINDOWS.iter().filter(|w| **w != "week") {
+        assert!(
+            wk[other]["gainers"].as_array().unwrap().is_empty(),
+            "window {other} should not be computed for ?window=week"
+        );
+        assert!(
+            wk[other]["losers"].as_array().unwrap().is_empty(),
+            "window {other} should not be computed for ?window=week"
+        );
+    }
+
+    // ?window=all_time scopes to the one window that pays the `first_priced` walk, proving the
+    // special-cased window is covered too.
+    let (status, _, at) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/movers?window=all_time", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mover_ids(&at["all_time"]["gainers"]), vec![id.clone()]);
+    assert!(at["week"]["gainers"].as_array().unwrap().is_empty());
+
+    // An unknown window is a 422 (mirrors value-history's `range`), never a silent full response.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/movers?window=bogus", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 /// The endpoint ranks each window from the newest owned snapshot, and a card can be a gainer
 /// in a short window while being a loser over the month — it must then appear in *both* lists
 /// (the cross-window de-dup fetches its card row once). This is the handler glue the pure
