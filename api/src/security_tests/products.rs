@@ -258,6 +258,16 @@ async fn facets_expose_the_types_and_sets_in_use() {
         .collect();
     assert!(set_codes.contains(&"mkm"));
     assert!(set_codes.contains(&"blb"));
+
+    // Each seeded set has exactly two products (mkm: 100/200, blb: 300/400), so the
+    // grouped count on each `ProductSetRef` should agree.
+    for set in body["data"]["sets"].as_array().unwrap() {
+        assert_eq!(
+            set["product_count"], 2,
+            "set {} should report its product count: {set}",
+            set["code"]
+        );
+    }
 }
 
 /// Insert one `sealed_components` composition row for a product.

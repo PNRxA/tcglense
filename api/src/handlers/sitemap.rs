@@ -1,9 +1,11 @@
 //! DB-backed XML sitemaps advertising the public catalog to crawlers.
 //!
 //! A sitemap **index** (`GET /sitemap.xml`) points at child sitemaps for the
-//! static/landing pages, every set, the cards, and the sealed products (both
-//! chunked — see [`MAX_URLS_PER_SITEMAP`]). The `<loc>`s are the SPA's own routes
-//! (e.g. `/cards/mtg/sets/blb`), built against the configured public site origin
+//! static/landing pages (including each game's flat sealed-product browse), every
+//! card set (plus every sealed-catalog set that actually holds products), the
+//! cards, and the sealed products (both chunked — see [`MAX_URLS_PER_SITEMAP`]).
+//! The `<loc>`s are the SPA's own routes (e.g. `/cards/mtg/sets/blb`,
+//! `/sealed/mtg/sets/blb`), built against the configured public site origin
 //! ([`crate::config::Config::public_site_url`]) — not the API's `/api/...` URLs.
 //! See issues #75 and #294.
 //!
@@ -14,6 +16,8 @@
 //! already submitted to search consoles keep working. A shared cache may store them
 //! (they change at most daily, with the sync), so each carries a long
 //! [`SITEMAP_CACHE_CONTROL`].
+
+use std::collections::HashMap;
 
 use axum::{
     extract::State,
@@ -138,8 +142,8 @@ pub async fn sitemap_child(
 // ---------- Child sitemap bodies ----------
 
 /// The evergreen landing pages (home, legal), the cards + sealed hubs, and each
-/// game's card hub/browse and sealed browse views. Games are a static registry, so
-/// this needs no database.
+/// game's card hub/browse, sealed set-tile landing, and flat sealed-product browse
+/// views. Games are a static registry, so this needs no database.
 fn pages_body(base: &str) -> String {
     let mut body = String::new();
     push_url(&mut body, &format!("{base}/"), None);
@@ -149,6 +153,13 @@ fn pages_body(base: &str) -> String {
         push_url(&mut body, &format!("{base}/cards/{}", game.id), None);
         push_url(&mut body, &format!("{base}/cards/{}/cards", game.id), None);
         push_url(&mut body, &format!("{base}/sealed/{}", game.id), None);
+        // The flat all-products browse's new home (the sealed hub's `{game}` route
+        // now fronts the set-tile landing instead).
+        push_url(
+            &mut body,
+            &format!("{base}/sealed/{}/products", game.id),
+            None,
+        );
     }
     push_url(&mut body, &format!("{base}/docs"), None);
     push_url(&mut body, &format!("{base}/terms"), None);
@@ -156,10 +167,15 @@ fn pages_body(base: &str) -> String {
     body
 }
 
-/// Every set's detail page, across all games. Sets are bounded (hundreds to low
-/// thousands per game), comfortably under [`MAX_URLS_PER_SITEMAP`], so they fit in
-/// one file. `<lastmod>` is the set's release date. Only the three columns the URL
-/// needs are selected so the whole `card_sets` table isn't materialised.
+/// Every card set's detail page, across all games, plus every sealed-catalog set that
+/// actually holds products. Sets are bounded (hundreds to low thousands per game) and
+/// the distinct sealed set codes are a small fraction of that, so both kinds
+/// comfortably fit in one file, under [`MAX_URLS_PER_SITEMAP`]. `<lastmod>` is the
+/// set's release date for the card-set URLs; for the sealed-catalog URLs it's the
+/// *matching* card-set's release date when one resolves (a product's `set_code` may
+/// have no `card_sets` row), else omitted. Only the three columns the URL needs are
+/// selected from `card_sets`, and only the two (distinct) from `products`, so neither
+/// table's full rows are materialised.
 async fn sets_sitemap(state: &AppState, base: &str) -> Result<Response, AppError> {
     let rows: Vec<(String, String, Option<String>)> = CardSet::find()
         .select_only()
@@ -171,14 +187,48 @@ async fn sets_sitemap(state: &AppState, base: &str) -> Result<Response, AppError
         .all(&state.db)
         .await?;
 
+    // A (game, code) -> release-date lookup built from the rows just fetched, so the
+    // sealed-catalog set loop below can label its `<lastmod>` without a second
+    // `card_sets` query.
+    let released_by_set: HashMap<(String, String), Option<String>> = rows
+        .iter()
+        .map(|(game, code, released_at)| ((game.clone(), code.clone()), released_at.clone()))
+        .collect();
+
     let mut body = String::new();
-    for (game, code, released_at) in rows {
+    for (game, code, released_at) in &rows {
         push_url(
             &mut body,
             &format!("{base}/cards/{game}/sets/{code}"),
             released_at.as_deref(),
         );
     }
+
+    // Every distinct (game, set_code) that actually has sealed products — a bounded
+    // extra query (a few hundred rows at most, even across every game). A blank
+    // `set_code` (a TCGCSV group with no abbreviation) isn't a usable set page.
+    let product_sets: Vec<(String, String)> = Product::find()
+        .select_only()
+        .column(product::Column::Game)
+        .column(product::Column::SetCode)
+        .distinct()
+        .filter(product::Column::SetCode.ne(""))
+        .order_by_asc(product::Column::Game)
+        .order_by_asc(product::Column::SetCode)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    for (game, code) in product_sets {
+        let lastmod = released_by_set
+            .get(&(game.clone(), code.clone()))
+            .and_then(|v| v.as_deref());
+        push_url(
+            &mut body,
+            &format!("{base}/sealed/{game}/sets/{code}"),
+            lastmod,
+        );
+    }
+
     Ok(xml_response(urlset(body)))
 }
 
@@ -467,8 +517,8 @@ mod tests {
         assert!(body.contains("<loc>https://x.test/docs</loc>"));
         assert!(body.contains("<loc>https://x.test/terms</loc>"));
         assert!(body.contains("<loc>https://x.test/privacy</loc>"));
-        // Every registered game contributes a card hub + browse URL and a sealed
-        // browse URL.
+        // Every registered game contributes a card hub + browse URL, a sealed
+        // set-tile landing URL, and the flat sealed-product browse URL.
         for game in catalog::GAMES {
             assert!(body.contains(&format!("<loc>https://x.test/cards/{}</loc>", game.id)));
             assert!(body.contains(&format!(
@@ -476,6 +526,10 @@ mod tests {
                 game.id
             )));
             assert!(body.contains(&format!("<loc>https://x.test/sealed/{}</loc>", game.id)));
+            assert!(body.contains(&format!(
+                "<loc>https://x.test/sealed/{}/products</loc>",
+                game.id
+            )));
         }
     }
 }

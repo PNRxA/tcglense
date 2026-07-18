@@ -352,14 +352,17 @@ un-`ETag`ged).
 
 A DB-backed XML sitemap advertises the public catalog (`handlers::sitemap`).
 `GET /sitemap.xml` is a **sitemap index** pointing at child sitemaps:
-`/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, and the legal pages),
-`/sitemaps/sets.xml` (every set), `/sitemaps/cards-{n}.xml` (cards), and
-`/sitemaps/products-{n}.xml` (sealed products). Cards and products are chunked at
-5 000 URLs/file — well under the protocol's 50 000 cap, because Google timed out
-fetching the full-size chunks (issues #294, #318). The `<loc>`s are the SPA's own routes
-(e.g. `/cards/mtg/sets/blb`, `/sealed/mtg/{id}`), built against `PUBLIC_SITE_URL` —
-not the API's `/api/...` URLs — with a `<lastmod>` from the set/card/product
-`released_at` or the latest sync. Served at the **site root** so the sitemap-protocol
+`/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, each game's flat
+sealed-product browse, and the legal pages), `/sitemaps/sets.xml` (every card set,
+plus every sealed-catalog set that actually holds products), `/sitemaps/cards-{n}.xml`
+(cards), and `/sitemaps/products-{n}.xml` (sealed products). Cards and products are
+chunked at 5 000 URLs/file — well under the protocol's 50 000 cap, because Google
+timed out fetching the full-size chunks (issues #294, #318). The `<loc>`s are the
+SPA's own routes (e.g. `/cards/mtg/sets/blb`, `/sealed/mtg/sets/blb`,
+`/sealed/mtg/{id}`), built against `PUBLIC_SITE_URL` — not the API's `/api/...` URLs —
+with a `<lastmod>` from the set/card/product `released_at` (a sealed-catalog set page
+uses its matching card-set's release date, when one resolves) or the latest sync.
+Served at the **site root** so the sitemap-protocol
 scope rule covers the whole site (dev Vite and the split-deploy Caddyfiles proxy
 `/sitemap.xml` + `/sitemaps/*` to the API; the combined image routes them natively);
 `/api/sitemap.xml` and `/api/sitemaps/{name}` still answer as aliases for
@@ -408,7 +411,7 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | Method & path | Returns |
 |---------------|---------|
 | `GET /api/games/{game}/products?q&set&type&sort&dir&page&page_size` | page of `Product` (`{ data, page, page_size, total, has_more }`). `q` = case-insensitive name substring; `set` = one set code (matched case-insensitively); `type` = one `product_type`; `sort` ∈ `name` / `price`(=`usd`) / `released`(=`date`), `dir` ∈ `asc`/`desc`. Unknown `sort`/`dir` = `422` |
-| `GET /api/games/{game}/products/facets` | `{ data: ProductFacets }` — the distinct filter values that actually occur among the game's products, so the SPA builds dropdowns without hardcoding. `ProductFacets = { types: string[], sets: ProductSetRef[] }`; `ProductSetRef = { code, name: string | null }`. `types` alphabetical; `sets` are the sets that have products, in resolved-name-then-code order (a blank set code is excluded) |
+| `GET /api/games/{game}/products/facets` | `{ data: ProductFacets }` — the distinct filter values that actually occur among the game's products, so the SPA builds dropdowns without hardcoding. `ProductFacets = { types: string[], sets: ProductSetRef[] }`; `ProductSetRef = { code, name: string | null, product_count: number }`. `types` alphabetical; `sets` are the sets that have products, in resolved-name-then-code order (a blank set code is excluded), each carrying how many products it has (grouped count, for the sealed-catalog set-landing tiles) |
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
