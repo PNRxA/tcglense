@@ -138,6 +138,25 @@ pub(super) fn collector_number(
     value: &str,
 ) -> Result<Condition, SearchError> {
     match op {
+        // A bare integer with the `:` operator (`cn:234`) matches that collector
+        // number *and* any of its single-letter "#XXXz" variants (`234a`, `234b`, …) —
+        // the lettered printings that share a base number (issue #479). A value that
+        // already carries a suffix (`cn:234a`) or the explicit `=` operator stays a
+        // strictly exact match (Scryfall parity for the deliberate spelling).
+        Op::Colon if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
+            let base = value.to_lowercase();
+            let like = format!("{base}_");
+            // The letter sits one char past the digits; `value` is ASCII digits, so its
+            // byte length is the char length. Interpolated (a trusted derived integer,
+            // never user text); `base`/`like` bind as parameters like every user value.
+            let letter_pos = value.len() + 1;
+            let sql = format!(
+                "(lower(collector_number) = ? \
+                 OR (lower(collector_number) LIKE ? \
+                 AND lower(substr(collector_number, {letter_pos}, 1)) BETWEEN 'a' AND 'z'))"
+            );
+            Ok(raw_vals(dialect, sql, [base, like]))
+        }
         Op::Colon | Op::Eq => Ok(raw_vals(
             dialect,
             "lower(collector_number) = ?".to_string(),

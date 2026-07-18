@@ -100,6 +100,7 @@ const SET_KEYS = ['s', 'set', 'e', 'edition'] as const
 const ARTIST_KEYS = ['a', 'artist'] as const
 const POW_KEYS = ['pow', 'power'] as const
 const TOU_KEYS = ['tou', 'toughness'] as const
+const CN_KEYS = ['cn', 'number'] as const
 const IS_KEYS = ['is'] as const
 
 const WUBRG = ['w', 'u', 'b', 'r', 'g']
@@ -280,6 +281,35 @@ export function setArtist(query: string, value: string): string {
   return upsertFilter(query, ARTIST_KEYS, 'a', ':', quoteTextValue(value))
 }
 
+// --- Collector number ----------------------------------------------------------------
+
+/**
+ * Normalise a typed collector number into a single search token: drop a leading `#`
+ * (numbers are often written `#234`), plus any whitespace and quote characters that
+ * would sever the token. Letters are kept — `234a` is a valid collector number.
+ */
+function normalizeCn(value: string): string {
+  return value.replace(/[#\s"]/g, '')
+}
+
+/**
+ * The collector-number filter value, reflected only from a `cn:`/`number:` token (the
+ * operator the field writes). A hand-typed range (`cn>=250`) can't be shown as one
+ * number, so it's left as raw text — still counted and cleared as builder-owned.
+ */
+export function getCollectorNumber(query: string): string {
+  return unquote(readFilter(query, CN_KEYS, [':'])?.value ?? '')
+}
+
+/**
+ * Write the collector-number filter with the `:` operator so a bare number (`234`)
+ * also matches its single-letter `#XXXz` variants (`234a`, …) server-side, while a
+ * number carrying a suffix (`234a`) stays an exact match. An empty value clears it.
+ */
+export function setCollectorNumber(query: string, value: string): string {
+  return upsertFilter(query, CN_KEYS, 'cn', ':', normalizeCn(value))
+}
+
 // --- Card flags (`is:` toggles) --------------------------------------------------------
 
 /** Which of the offered `is:` flags are present in the query. */
@@ -308,6 +338,7 @@ const BUILDER_KEY_GROUPS = [
   ARTIST_KEYS,
   POW_KEYS,
   TOU_KEYS,
+  CN_KEYS,
   IS_KEYS,
 ] as const
 

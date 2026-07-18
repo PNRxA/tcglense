@@ -282,7 +282,10 @@ still 422), `c`/`color` and `id`/`identity`/`commander` (set comparison, `:` mea
 `>=`, colour names + guild/shard nicknames), `produces`, `cmc`/`mv` (incl.
 `:even`/`:odd`), `pow`/`tou`/`loy`/`pt`/`def` (numeric, incl. cross-column like
 `pow>tou`), `usd`/`usdfoil`/`eur`/`tix`, `year`, `date`, `r`/`rarity` (ordered),
-`s`/`set`/`e`, `st`/`settype` (game-scoped subquery on `card_sets`), `cn`/`number`,
+`s`/`set`/`e`, `st`/`settype` (game-scoped subquery on `card_sets`), `cn`/`number`
+(a bare integer with `:` — `cn:234` — matches that collector number **and** its
+single-letter variants `234a`/`234b`/…, issue #479; `cn=234` and an already-suffixed
+`cn:234a` stay exact, and `cn>`/`cn>=`/… compare the leading integer),
 `lang`, `layout`, `game`, `oracleid`, `f`/`legal`/`banned`/`restricted` (per-format
 legality via `json_extract` over the stored `legalities` JSON), `kw`/`keyword`,
 `a`/`artist` (+ `artists>N`), `ft`/`flavor`, `wm`/`watermark`, `border`, `frame`,

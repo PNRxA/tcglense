@@ -267,8 +267,34 @@ fn rarity_eq_and_ordered() {
 #[test]
 fn set_and_collector_number() {
     assert!(sql("e:DOM").contains("set_code = 'dom'"));
+    // An explicit suffix stays an exact match (Scryfall parity).
     assert!(sql("cn:12a").contains("lower(collector_number) = '12a'"));
+    assert!(!sql("cn:12a").contains("LIKE"));
     assert!(sql("cn>=250").contains("collector_number_int >= 250"));
+}
+
+#[test]
+fn bare_collector_number_matches_single_letter_variants() {
+    // `cn:12` matches the number itself *and* its `12a`/`12b`/… lettered variants
+    // (issue #479), while the `=` operator stays strictly exact.
+    let s = sql("cn:12");
+    assert!(s.contains("lower(collector_number) = '12'"), "{s}");
+    assert!(s.contains("LIKE '12_'"), "{s}");
+    assert!(s.contains("substr(collector_number, 3, 1)"), "{s}");
+    assert!(s.contains("BETWEEN 'a' AND 'z'"), "{s}");
+
+    let exact = sql("cn=12");
+    assert!(exact.contains("lower(collector_number) = '12'"), "{exact}");
+    assert!(!exact.contains("LIKE"), "{exact}");
+
+    // Both values bind (renumbered to `$N`), never a bare `?` that would drop them on PG.
+    let pg = pg_sql("cn:12");
+    assert!(pg.contains("lower(collector_number) = '12'"), "{pg}");
+    assert!(pg.contains("LIKE '12_'"), "{pg}");
+    assert!(
+        !pg.contains('?'),
+        "placeholders must be renumbered on PG: {pg}"
+    );
 }
 
 #[test]
