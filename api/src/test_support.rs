@@ -252,6 +252,33 @@ pub(crate) async fn insert_product(
     .id
 }
 
+/// Insert a card set row and return its id. Mirrors [`insert_product`] for the catalog:
+/// fixed defaults, the fields tests vary passed as arguments. `released_at` is the ISO
+/// `YYYY-MM-DD` string the by-set product grouping resolves names and sort order from.
+pub(crate) async fn insert_card_set(
+    db: &DatabaseConnection,
+    code: &str,
+    name: &str,
+    released_at: Option<&str>,
+) -> i32 {
+    let now = Utc::now();
+    card_set::ActiveModel {
+        game: Set(crate::scryfall::GAME.to_string()),
+        code: Set(code.to_string()),
+        name: Set(name.to_string()),
+        released_at: Set(released_at.map(str::to_string)),
+        card_count: Set(0),
+        digital: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert card set")
+    .id
+}
+
 /// Set an existing product's curated MSRP (retail price) by external (TCGplayer) id. The
 /// ingest normally sources this from the committed `msrp.json`; tests set it directly to
 /// exercise the wire field without threading it through every [`insert_product`] call.

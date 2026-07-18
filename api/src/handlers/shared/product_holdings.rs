@@ -5,6 +5,7 @@
 //! SeaORM queries stay in each handler module through [`ProductHoldingRepository`]; all
 //! validation, external-id resolution, wire shaping, pagination, and valuation live here.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
@@ -73,6 +74,23 @@ pub(crate) struct ProductHoldingSummary {
     pub unique_products: i64,
     pub total_products: i64,
     pub total_value_usd: Option<String>,
+}
+
+/// One set's slice of a user's sealed-product holding: the set identity, its
+/// aggregate stats, and every held product in it. The enclosing Page paginates
+/// over these groups (`total` counts sets, not products).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub(crate) struct ProductHoldingSetGroup {
+    pub code: String,
+    /// The set's display name, or None when the product's group has no matching catalog set.
+    pub name: Option<String>,
+    pub unique_products: i64,
+    /// `quantity + foil_quantity` summed over the group.
+    pub total_products: i64,
+    /// The group's total market value (regular + foil), or None when nothing held is priced.
+    pub total_value_usd: Option<String>,
+    pub products: Vec<ProductHoldingEntry>,
 }
 
 /// Page and page-size query parameters for a fixed recency-sorted product holding list.
@@ -151,20 +169,42 @@ pub(crate) async fn load_product(
         .ok_or_else(|| AppError::NotFound(format!("product '{id}' not found")))
 }
 
-/// The game's set-code to display-name map used to dress product payloads.
-pub(crate) async fn set_name_map(
+/// The game's set-code to `(display-name, release-date)` map. The by-set grouping needs
+/// both halves (the name to label a group, the date to order the groups), so they're
+/// fetched together; [`set_name_map`] projects out the name half for the many callers that
+/// only dress product payloads. `released_at` is the catalog set's ISO `YYYY-MM-DD` string
+/// (sortable as text), `None` when the provider reported no date.
+pub(crate) async fn set_meta_map(
     state: &AppState,
     game: &str,
-) -> Result<HashMap<String, String>, AppError> {
-    let rows: Vec<(String, String)> = CardSet::find()
+) -> Result<HashMap<String, (String, Option<String>)>, AppError> {
+    let rows: Vec<(String, String, Option<String>)> = CardSet::find()
         .select_only()
         .column(card_set::Column::Code)
         .column(card_set::Column::Name)
+        .column(card_set::Column::ReleasedAt)
         .filter(card_set::Column::Game.eq(game))
         .into_tuple()
         .all(&state.db)
         .await?;
-    Ok(rows.into_iter().collect())
+    Ok(rows
+        .into_iter()
+        .map(|(code, name, released_at)| (code, (name, released_at)))
+        .collect())
+}
+
+/// The game's set-code to display-name map used to dress product payloads — the name-only
+/// projection of [`set_meta_map`], so payload dressing and by-set ordering share one query
+/// definition.
+pub(crate) async fn set_name_map(
+    state: &AppState,
+    game: &str,
+) -> Result<HashMap<String, String>, AppError> {
+    Ok(set_meta_map(state, game)
+        .await?
+        .into_iter()
+        .map(|(code, (name, _))| (code, name))
+        .collect())
 }
 
 /// Build the public product DTO, resolving its set name when one exists.
@@ -251,6 +291,131 @@ pub(crate) async fn list_product_holdings<R: ProductHoldingRepository>(
                 foil_quantity: item.foil_quantity,
             })
         })
+        .collect();
+    Ok(build_page(data, page, page_size, total))
+}
+
+/// Group a surface's sealed-product holdings by set, newest set first.
+///
+/// The by-set companion to [`list_product_holdings`]: it pulls *every* holding via
+/// `R::all` (they're few — the same all-rows fetch [`summarize_product_holdings`] does),
+/// buckets them by `set_code`, and paginates over the **groups**, so `Page::total` counts
+/// sets rather than products. Each group carries the same aggregate stats
+/// [`summarize_product_rows`] computes, scoped to that set, plus its held products.
+///
+/// Group order is newest set first: a set's own catalog `released_at` when it has a
+/// `card_sets` row, else the newest `released_at` among the products held in it (so a set
+/// with no catalog row still sorts by real dates rather than sinking on identity alone);
+/// date-less groups sort last, ties broken by set code ascending. Within a group products
+/// sort by name case-insensitively, then external id — a stable order independent of how
+/// `R::all` fetched the rows.
+pub(crate) async fn list_product_holdings_by_set<R: ProductHoldingRepository>(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    params: ProductHoldingListParams,
+) -> Result<Page<ProductHoldingSetGroup>, AppError> {
+    require_game(game)?;
+    let meta = set_meta_map(state, game).await?;
+    // The name-only view `product_response` expects, projected from the same fetch (no
+    // second query) — every product in a group resolves to that group's set name.
+    let names: HashMap<String, String> = meta
+        .iter()
+        .map(|(code, (name, _))| (code.clone(), name.clone()))
+        .collect();
+
+    // Bucket every held product by set code; holdings whose product row is gone are
+    // skipped, exactly as the flat list does.
+    let mut buckets: HashMap<String, Vec<(ProductHoldingRow, product::Model)>> = HashMap::new();
+    for (item, product) in R::all(&state.db, user_id, game).await? {
+        let Some(product) = product else { continue };
+        buckets
+            .entry(product.set_code.clone())
+            .or_default()
+            .push((item, product));
+    }
+
+    // Shape each bucket into its group DTO plus the date the group orders on. The
+    // `order_date` rides alongside only for the sort below; it never reaches the wire.
+    let mut groups: Vec<(Option<String>, ProductHoldingSetGroup)> = buckets
+        .into_iter()
+        .map(|(code, mut rows)| {
+            rows.sort_by(|(_, a), (_, b)| {
+                a.name
+                    .to_lowercase()
+                    .cmp(&b.name.to_lowercase())
+                    .then_with(|| a.external_id.cmp(&b.external_id))
+            });
+
+            let (name, order_date) = match meta.get(&code) {
+                // A known set labels the group and orders by its own release date (which
+                // may itself be absent — then the group is date-less).
+                Some((name, released_at)) => (Some(name.clone()), released_at.clone()),
+                // An unknown set (no `card_sets` row) has no name; fall back to the newest
+                // release date among the products held in it.
+                None => (
+                    None,
+                    rows.iter().filter_map(|(_, p)| p.released_at.clone()).max(),
+                ),
+            };
+
+            let unique_products = rows.len() as i64;
+            let mut total_products = 0i64;
+            let mut valuation = Valuation::default();
+            for (item, product) in &rows {
+                total_products += i64::from(item.quantity) + i64::from(item.foil_quantity);
+                valuation.add(
+                    product.price_usd.as_deref(),
+                    item.quantity,
+                    product.price_usd_foil.as_deref(),
+                    item.foil_quantity,
+                );
+            }
+            let products = rows
+                .into_iter()
+                .map(|(item, product)| ProductHoldingEntry {
+                    product: product_response(product, &names),
+                    quantity: item.quantity,
+                    foil_quantity: item.foil_quantity,
+                })
+                .collect();
+
+            let group = ProductHoldingSetGroup {
+                code,
+                name,
+                unique_products,
+                total_products,
+                total_value_usd: valuation.total_usd(),
+                products,
+            };
+            (order_date, group)
+        })
+        .collect();
+
+    // Newest set first; date-less groups sink last; ties (or two date-less groups) break by
+    // code ascending, so the order is fully deterministic.
+    groups.sort_by(|(a_date, a), (b_date, b)| match (a_date, b_date) {
+        (Some(a_date), Some(b_date)) => b_date.cmp(a_date).then_with(|| a.code.cmp(&b.code)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => a.code.cmp(&b.code),
+    });
+
+    // Paginate over the groups in memory (bounded set count), mirroring the flat list's
+    // clamp/`has_more` semantics via the shared helpers.
+    let (page, page_size) = resolve_page(
+        params.page,
+        params.page_size,
+        DEFAULT_PAGE_SIZE,
+        MAX_PAGE_SIZE,
+    );
+    let total = groups.len() as u64;
+    let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
+    let data = groups
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .map(|(_, group)| group)
         .collect();
     Ok(build_page(data, page, page_size, total))
 }

@@ -9,7 +9,7 @@
 //! (TCGplayer) id and read back in the full public `Product` wire shape.
 
 use super::harness::*;
-use crate::test_support::{insert_card, insert_product};
+use crate::test_support::{insert_card, insert_card_set, insert_product};
 
 /// The wish-list entry path for one sealed product (external id) under `mtg`.
 fn product_path(id: &str) -> String {
@@ -41,6 +41,7 @@ async fn wishlist_products_require_authentication() {
     for uri in [
         "/api/wishlist/mtg/products",
         "/api/wishlist/mtg/products/summary",
+        "/api/wishlist/mtg/products/by-set",
         "/api/wishlist/mtg/products/100",
     ] {
         let (status, headers, _) = send(&app, get(uri)).await;
@@ -543,6 +544,70 @@ async fn list_paginates() {
         "re-wanting bumps recency to the front"
     );
     assert_eq!(page1[1]["product"]["id"], "300");
+}
+
+/// The by-set grouping works on the wish-list surface too: wanted products fold into one
+/// group per set (newest set first, with per-group aggregates), and it never reads the
+/// collection's product table — the sealed-product mirror of the collection by-set test,
+/// proving the shared engine is wired to the wish-list repository independently.
+#[tokio::test]
+async fn by_set_groups_wanted_products_and_is_independent_of_collection() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "by-set-wisher@example.com", "password123").await;
+
+    insert_card_set(db, "new", "Newest Set", Some("2024-06-01")).await;
+    insert_card_set(db, "old", "Oldest Set", Some("2024-01-01")).await;
+    insert_product(
+        db,
+        "10",
+        "New Box",
+        "new",
+        "collector_display",
+        Some("10.00"),
+    )
+    .await;
+    insert_product(db, "20", "Old Box", "old", "bundle", Some("3.00")).await;
+
+    // Want both products, but own one in the *collection* — the wish-list by-set must show
+    // only the wanted ones, never the owned collection row.
+    want_product(&app, &token, "10", 2).await;
+    want_product(&app, &token, "20", 4).await;
+    let (_, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/products/10",
+            &token,
+            json!({ "quantity": 9, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/products/by-set", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "by-set failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["total"], 2, "two wanted sets => two groups");
+    let groups = body["data"].as_array().unwrap();
+
+    // Newest set first, with the wanted (not owned) counts.
+    assert_eq!(groups[0]["code"], "new");
+    assert_eq!(groups[0]["name"], "Newest Set");
+    assert_eq!(groups[0]["unique_products"], 1);
+    assert_eq!(
+        groups[0]["total_products"], 2,
+        "the wanted count, not the owned 9"
+    );
+    assert_eq!(groups[0]["total_value_usd"], "20.00");
+    assert_eq!(groups[0]["products"][0]["product"]["id"], "10");
+    // Older set second.
+    assert_eq!(groups[1]["code"], "old");
+    assert_eq!(groups[1]["total_products"], 4);
+    assert_eq!(groups[1]["total_value_usd"], "12.00");
 }
 
 /// The sealed-product summary aggregates only the caller's own wanted products (distinct

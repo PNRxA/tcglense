@@ -46,8 +46,8 @@ mod write;
 mod tests;
 
 pub use products::{
-    get_wishlist_product_entry, list_wishlist_products, set_wishlist_product_entry,
-    wishlist_product_counts, wishlist_product_summary,
+    get_wishlist_product_entry, list_wishlist_products, list_wishlist_products_by_set,
+    set_wishlist_product_entry, wishlist_product_counts, wishlist_product_summary,
 };
 pub use read::{get_wishlist_entry, list_wishlist, wishlist_counts, wishlist_summary};
 pub use sets::{wishlist_set_drops, wishlist_set_subtypes, wishlist_sets};
@@ -58,8 +58,8 @@ pub use write::set_wishlist_entry;
 // (see the note in `crate::handlers::catalog`).
 pub use products::{
     __path_get_wishlist_product_entry, __path_list_wishlist_products,
-    __path_set_wishlist_product_entry, __path_wishlist_product_counts,
-    __path_wishlist_product_summary,
+    __path_list_wishlist_products_by_set, __path_set_wishlist_product_entry,
+    __path_wishlist_product_counts, __path_wishlist_product_summary,
 };
 pub use read::{
     __path_get_wishlist_entry, __path_list_wishlist, __path_wishlist_counts,

@@ -15,8 +15,9 @@ use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::product_holdings::{
     ProductHoldingEntry, ProductHoldingListParams, ProductHoldingRepository, ProductHoldingRow,
-    ProductHoldingSummary, get_product_holding, list_product_holdings, product_holding_counts,
-    set_product_holding, summarize_product_holdings,
+    ProductHoldingSetGroup, ProductHoldingSummary, get_product_holding, list_product_holdings,
+    list_product_holdings_by_set, product_holding_counts, set_product_holding,
+    summarize_product_holdings,
 };
 use crate::handlers::shared::{
     CollectionQuantities, OwnedCountsRequest, OwnedCountsResponse, Page, SetQuantitiesRequest,
@@ -187,6 +188,35 @@ pub async fn list_collection_products(
 ) -> Result<Json<Page<ProductHoldingEntry>>, AppError> {
     Ok(Json(
         list_product_holdings::<CollectionProductRepository>(&state, user.id, &game, params)
+            .await?,
+    ))
+}
+
+/// List owned sealed products by set
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/products/by-set",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number (paginated by set)"),
+        ("page_size" = Option<u64>, Query, description = "Sets per page (clamped)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the user's owned sealed products grouped by set, newest set first.", body = Page<ProductHoldingSetGroup>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
+pub async fn list_collection_products_by_set(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<ProductHoldingListParams>,
+) -> Result<Json<Page<ProductHoldingSetGroup>>, AppError> {
+    Ok(Json(
+        list_product_holdings_by_set::<CollectionProductRepository>(&state, user.id, &game, params)
             .await?,
     ))
 }
