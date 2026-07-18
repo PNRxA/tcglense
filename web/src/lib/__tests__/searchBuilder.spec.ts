@@ -307,6 +307,10 @@ describe('collector number', () => {
     expect(getCollectorNumber('cn>=250')).toBe('')
     expect(setCollectorNumber('cn>=250', '12')).toBe('cn:12')
   })
+
+  it('reflects a hand-typed quoted value unquoted, like the other text controls', () => {
+    expect(getCollectorNumber('cn:"234"')).toBe('234')
+  })
 })
 
 describe('card flags (is: toggles)', () => {

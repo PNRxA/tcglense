@@ -298,7 +298,7 @@ function normalizeCn(value: string): string {
  * number, so it's left as raw text — still counted and cleared as builder-owned.
  */
 export function getCollectorNumber(query: string): string {
-  return readFilter(query, CN_KEYS, [':'])?.value ?? ''
+  return unquote(readFilter(query, CN_KEYS, [':'])?.value ?? '')
 }
 
 /**
