@@ -103,6 +103,21 @@ const router = createRouter({
       component: () => import('@/views/CollectionBrowseView.vue'),
       props: true,
     },
+    // The owned sealed products in a game, or scoped to one set — the sealed mirror of the
+    // collection's card browse grids, clicked into from the landing's set tiles. Same public
+    // route pattern (no requiresAuth; the view prompts a signed-out visitor to sign in).
+    {
+      path: '/collection/:game/products',
+      name: 'game-collection-products',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, list: 'collection' }),
+    },
+    {
+      path: '/collection/:game/products/sets/:code',
+      name: 'game-collection-product-set',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, code: route.params.code, list: 'collection' }),
+    },
     // Camera/webcam card scanner — OCRs a physical card and rapid-adds it to the
     // collection. Auth-gated (it writes holdings) and lazy-loaded: the on-device OCR
     // engine (tesseract.js) is a heavy payload that must not weigh down the app bundle,
@@ -140,6 +155,21 @@ const router = createRouter({
       name: 'wishlist-set',
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
+    },
+    // The wanted sealed products in a game, or scoped to one set — the wish-list twin of the
+    // collection product browse grids, clicked into from the landing's set tiles. Same public
+    // route pattern (no requiresAuth; the view prompts a signed-out visitor to sign in).
+    {
+      path: '/wishlist/:game/products',
+      name: 'wishlist-products',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, list: 'wishlist' }),
+    },
+    {
+      path: '/wishlist/:game/products/sets/:code',
+      name: 'wishlist-product-set',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, code: route.params.code, list: 'wishlist' }),
     },
     // Per-user decks (issue #363): build and organise decks of cards into user-orderable
     // sections (Archidekt-style categories) and folders, with per-deck public sharing. Same

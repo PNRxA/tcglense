@@ -5,16 +5,13 @@ import type {
   CollectionQuantities,
   OwnedCountsMap,
   ProductHoldingPage,
-  ProductHoldingSetPage,
+  ProductHoldingSet,
   ProductHoldingSummary,
 } from '@/lib/api'
 import { useBatchCounts, type SetHoldingVars } from '@/composables/holdingQueries'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
 export const PRODUCT_HOLDING_PAGE_SIZE = 60
-/** Sets per page in the by-set holdings view — the page unit there is a set group, not a
- * product, so it's far smaller than the flat product page size above. */
-export const PRODUCT_HOLDING_SET_PAGE_SIZE = 10
 
 interface ProductHoldingQueriesConfig {
   prefix: 'collection' | 'wishlist'
@@ -23,13 +20,9 @@ interface ProductHoldingQueriesConfig {
   getList: (
     token: string,
     game: string,
-    params?: { page?: number; pageSize?: number },
+    params?: { page?: number; pageSize?: number; set?: string },
   ) => Promise<ProductHoldingPage>
-  getListBySet: (
-    token: string,
-    game: string,
-    params?: { page?: number; pageSize?: number },
-  ) => Promise<ProductHoldingSetPage>
+  getListSets: (token: string, game: string) => Promise<{ data: ProductHoldingSet[] }>
   getEntry: (token: string, game: string, id: string) => Promise<CollectionQuantities>
   getSummary: (token: string, game: string) => Promise<ProductHoldingSummary>
   getCounts: (token: string, game: string, ids: string[]) => Promise<OwnedCountsMap>
@@ -47,33 +40,33 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
   const entryKey = `${cfg.prefix}-product-entry`
   const countsKey = `${cfg.prefix}-product-counts`
 
-  function useProductsQuery(game: Ref<string>, page: Ref<number>) {
+  /** A page of the user's held sealed products, optionally scoped to one set (`set`, the
+   * set-scoped browse view) — when passed it rides the query key so a set change refetches,
+   * and unscoped callers keep the plain `[listKey, game, page]` key. */
+  function useProductsQuery(game: Ref<string>, page: Ref<number>, set?: Ref<string | undefined>) {
     const options = {
-      queryKey: [listKey, game, page],
+      queryKey: set ? [listKey, game, page, set] : [listKey, game, page],
       queryFn: (token: string) =>
         cfg.getList(token, game.value, {
           page: page.value,
           pageSize: PRODUCT_HOLDING_PAGE_SIZE,
+          set: set?.value,
         }),
       placeholderData: keepPreviousData,
     }
     return useAuthedQuery<ProductHoldingPage>(options)
   }
 
-  /** A page of the user's held sealed products grouped by set (`total` counts sets). The
-   * key sits under the same `[listKey, game]` prefix as the flat list, so `invalidate`'s
-   * prefix invalidation of `[listKey, game]` already refreshes it after any product write. */
-  function useProductsBySetQuery(game: Ref<string>, page: Ref<number>) {
+  /** Every set the user holds sealed products in (newest first), unpaginated — the set tiles
+   * the holding landing clicks through. The key sits under the same `[listKey, game]` prefix as
+   * the flat list, so `invalidate`'s prefix invalidation of `[listKey, game]` already refreshes
+   * it after any product write. */
+  function useProductSetsQuery(game: Ref<string>) {
     const options = {
-      queryKey: [listKey, game, 'by-set', page],
-      queryFn: (token: string) =>
-        cfg.getListBySet(token, game.value, {
-          page: page.value,
-          pageSize: PRODUCT_HOLDING_SET_PAGE_SIZE,
-        }),
-      placeholderData: keepPreviousData,
+      queryKey: [listKey, game, 'sets'],
+      queryFn: (token: string) => cfg.getListSets(token, game.value),
     }
-    return useAuthedQuery<ProductHoldingSetPage>(options)
+    return useAuthedQuery<{ data: ProductHoldingSet[] }>(options)
   }
 
   function useEntryQuery(
@@ -138,7 +131,7 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
 
   return {
     useProductsQuery,
-    useProductsBySetQuery,
+    useProductSetsQuery,
     useEntryQuery,
     useSummaryQuery,
     useCounts,

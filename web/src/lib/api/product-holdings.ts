@@ -5,16 +5,12 @@ import type {
   CollectionQuantities,
   Page,
   ProductHoldingEntry,
-  ProductHoldingSetGroup,
+  ProductHoldingSet,
   ProductHoldingSummary,
 } from './generated'
 
 export type ProductHoldingTarget = 'collection' | 'wishlist'
 export type ProductHoldingPage = Page<ProductHoldingEntry>
-/** A page of set-grouped sealed-product holdings: the page unit is a set group, so `total`
- * counts sets (not products); groups arrive newest-set-first and each group's products are
- * name-sorted. */
-export type ProductHoldingSetPage = Page<ProductHoldingSetGroup>
 
 /**
  * Build the sealed-product holding client shared by collection and wish list. The two
@@ -22,11 +18,15 @@ export type ProductHoldingSetPage = Page<ProductHoldingSetGroup>
  * batch-count leaf differ (`collection/.../owned`, `wishlist/.../counts`).
  */
 export function makeProductHoldingApi(base: ProductHoldingTarget, countsLeaf: 'owned' | 'counts') {
-  const productsPath = (game: string, params: { page?: number; pageSize?: number } = {}): string =>
-    `/api/${base}/${encodeURIComponent(game)}/products${listQuery(params)}`
+  // The flat list optionally scopes to one set (`?set=<code>`, recency order kept), which the
+  // set-scoped browse view passes through; without it the whole holding is listed.
+  const productsPath = (
+    game: string,
+    params: { page?: number; pageSize?: number; set?: string } = {},
+  ): string => `/api/${base}/${encodeURIComponent(game)}/products${listQuery(params)}`
 
-  const bySetPath = (game: string, params: { page?: number; pageSize?: number } = {}): string =>
-    `/api/${base}/${encodeURIComponent(game)}/products/by-set${listQuery(params)}`
+  const setsPath = (game: string): string =>
+    `/api/${base}/${encodeURIComponent(game)}/products/sets`
 
   const entryPath = (game: string, id: string): string =>
     `/api/${base}/${encodeURIComponent(game)}/products/${encodeURIComponent(id)}`
@@ -39,23 +39,19 @@ export function makeProductHoldingApi(base: ProductHoldingTarget, countsLeaf: 'o
 
   return {
     productsPath,
-    bySetPath,
+    setsPath,
     entryPath,
     summaryPath,
     countsPath,
     list(
       token: string,
       game: string,
-      params?: { page?: number; pageSize?: number },
+      params?: { page?: number; pageSize?: number; set?: string },
     ): Promise<ProductHoldingPage> {
       return request<ProductHoldingPage>(productsPath(game, params), { token })
     },
-    listBySet(
-      token: string,
-      game: string,
-      params?: { page?: number; pageSize?: number },
-    ): Promise<ProductHoldingSetPage> {
-      return request<ProductHoldingSetPage>(bySetPath(game, params), { token })
+    listSets(token: string, game: string): Promise<{ data: ProductHoldingSet[] }> {
+      return request<{ data: ProductHoldingSet[] }>(setsPath(game), { token })
     },
     getEntry(token: string, game: string, id: string): Promise<CollectionQuantities> {
       return request<CollectionQuantities>(entryPath(game, id), { token })
