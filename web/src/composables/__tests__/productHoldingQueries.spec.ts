@@ -10,6 +10,7 @@ function queries(invalidateAnalytics: boolean) {
     prefix: invalidateAnalytics ? 'collection' : 'wishlist',
     invalidateAnalytics,
     getList: vi.fn<() => never>(),
+    getListBySet: vi.fn<() => never>(),
     getEntry: vi.fn<() => Promise<CollectionQuantities>>(async () => counts),
     getSummary: vi.fn<() => never>(),
     getCounts: vi.fn<() => never>(),
