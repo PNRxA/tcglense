@@ -216,19 +216,29 @@ export async function getCollectionValueHistory(
   }
 }
 
-/** Relative `/api/collection/{game}/movers` path. */
-export function collectionMoversPath(game: string): string {
-  return `/api/collection/${encodeURIComponent(game)}/movers`
+/** One movers window key — matches the API's response fields and its `?window=` tokens. */
+export type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
+
+/** Relative `/api/collection/{game}/movers` path, optionally scoped to one window. */
+export function collectionMoversPath(game: string, window?: MoverWindow): string {
+  const base = `/api/collection/${encodeURIComponent(game)}/movers`
+  return window ? `${base}?window=${window}` : base
 }
 
 /**
- * The signed-in user's biggest gain/loss movements (1d / 7d / 30d / 1y / 2y / 3y /
- * all-time) across the cards and sealed products they own. The response preserves the
- * card lists and carries sealed products in an independent parallel series.
+ * The signed-in user's biggest gain/loss movements across the cards and sealed products they
+ * own. With no `window` the response carries every window (1d / 7d / 30d / 1y / 2y / 3y /
+ * all-time); passing one fetches only that date range on demand — the other windows come back
+ * empty — so a landing that only shows its default window doesn't pay to compute the rest. Both
+ * the card lists and the parallel sealed series are returned for the requested window.
  * Per-user + authenticated.
  */
-export async function getCollectionMovers(token: string, game: string): Promise<CollectionMovers> {
-  return request<CollectionMovers>(collectionMoversPath(game), { token })
+export async function getCollectionMovers(
+  token: string,
+  game: string,
+  window?: MoverWindow,
+): Promise<CollectionMovers> {
+  return request<CollectionMovers>(collectionMoversPath(game, window), { token })
 }
 
 /** Which provider-shaped CSV a collection export produces. */

@@ -7,21 +7,23 @@ import { Skeleton } from '@/components/ui/skeleton'
 import MoverRow from '@/components/collection/MoverRow.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import { useCollectionMoversQuery } from '@/composables/useCollection'
-import type { CollectionMover, CollectionSealedMover } from '@/lib/api'
+import type { CollectionMover, CollectionSealedMover, MoverWindow } from '@/lib/api'
 
 // The collection landing's "Biggest movers" panel (issues #360/#392/#435): the largest gain
 // and loss movements across the cards and sealed products the user owns, from one day through
 // all captured history.
-// One response carries every window, so the segmented toggle is purely client-side —
-// switching is instant, no refetch. Week is the default: daily moves are often tiny or empty
-// on a young collection, while longer windows hide the news.
+// The active window is fetched on demand — only the visible date range is computed server-side
+// — so most visitors, who never leave the default, never pay for the other six windows or the
+// all-time scan. Switching windows refetches once then caches (switching back is instant), and
+// the Singles/Sealed switch stays a pure client-side toggle since both kinds ship in each
+// window response. Week is the default: daily moves are often tiny or empty on a young
+// collection, while longer windows hide the news.
 const props = defineProps<{ game: string }>()
 const gameId = toRef(() => props.game)
-const query = useCollectionMoversQuery(gameId)
 
-type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
 const activeWindow = ref<MoverWindow>('week')
 const showSealed = ref(false)
+const query = useCollectionMoversQuery(gameId, activeWindow)
 const WINDOW_OPTIONS: { value: MoverWindow; label: string }[] = [
   { value: 'day', label: '1D' },
   { value: 'week', label: '7D' },

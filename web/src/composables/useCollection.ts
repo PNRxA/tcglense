@@ -15,7 +15,7 @@ import {
   setCollectionEntry,
   setCollectionProductEntry,
 } from '@/lib/api'
-import type { CollectionMovers } from '@/lib/api'
+import type { CollectionMovers, MoverWindow } from '@/lib/api'
 import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
 import {
   makeProductHoldingQueries,
@@ -103,12 +103,17 @@ export const invalidateCollectionProducts = productQueries.invalidate
 export type SetCollectionProductVars = SetHoldingVars
 export const useSetCollectionProductEntryMutation = productQueries.useSetEntryMutation
 
-/** The signed-in user's separate singles/sealed gain/loss movements (1d through all-time),
- * for the collection landing's movers panel. */
-export function useCollectionMoversQuery(game: Ref<string>) {
+/** The signed-in user's separate singles/sealed gain/loss movements for the collection
+ * landing's movers panel, scoped to the active `window`. Only that date range is fetched (and
+ * cached, keyed by window), so switching to a new window pays one request while switching back
+ * to an already-viewed one is instant off the client cache; the Singles/Sealed switch stays a
+ * pure client-side toggle since both kinds are returned for each window. */
+export function useCollectionMoversQuery(game: Ref<string>, window: Ref<MoverWindow>) {
   const options = {
-    queryKey: ['collection-movers', game],
-    queryFn: (token: string) => getCollectionMovers(token, game.value),
+    // `window` is a ref inside the key (not `.value`) so a change refetches — see the footgun
+    // note in `lib/queries.ts`.
+    queryKey: ['collection-movers', game, window],
+    queryFn: (token: string) => getCollectionMovers(token, game.value, window.value),
   }
   return useAuthedQuery<CollectionMovers>(options)
 }

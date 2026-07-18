@@ -905,8 +905,16 @@ catalog) is planned but not implemented.
   index. Honest caveats: the two `first_priced` anchors filter on a non-key column, so a
   never-priced finish walks that one item's run finding nothing (per-item and aggregate-free,
   but not a true point seek); and product seeks ride `m…020`'s non-covering unique index (one
-  heap fetch per returned row — fine at sealed-product counts). The windowed raw fetch is
-  deliberately unchanged. The analytics response-cache is also **single-flight** now
+  heap fetch per returned row — fine at sealed-product counts). Movers additionally accepts an
+  optional `?window=<day|week|month|year|two_year|three_year|all_time>` (the biggest-movers
+  query-efficiency follow-up): the SPA passes the active window so a visitor who never leaves
+  the default computes ~two anchors per held item instead of ten and never pays the all-time
+  `first_priced` walk unless "All" is opened — the unrequested anchors are selected as SQL
+  `NULL` (`AnchorNeeds`, so their sub-selects are never evaluated) and the ranker skips those
+  windows. Both holding kinds still ship for the requested window (so the Singles/Sealed switch
+  stays a client-side toggle), the reference dates are computed regardless, and omitting the
+  param preserves the original all-windows response for API-key consumers; each window caches
+  independently under the same version keys. The windowed raw fetch is deliberately unchanged. The analytics response-cache is also **single-flight** now
   (`AnalyticsCache::get_or_compute`): concurrent misses for one body key compute once — prod
   logged the same movers computation running twice concurrently after a capture orphaned every
   key. The in-flight map is process-local and cancellation-safe (an RAII guard removes the
