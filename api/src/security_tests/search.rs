@@ -103,6 +103,64 @@ async fn cards_by_exact_name_returns_every_printing() {
     assert_eq!(miss_body["total"].as_u64(), Some(0));
 }
 
+/// End-to-end (issue #479): a bare `cn:` number matches the number itself *and* its
+/// single-letter `#XXXz` variants, but never a digit-suffixed or longer number; `cn=`
+/// and an already-suffixed `cn:` stay exact. Runs the compiled SQL against real SQLite.
+#[tokio::test]
+async fn collector_number_bare_matches_letter_variants() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+    crate::test_support::card_set_model("tst")
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert set");
+
+    // 123 + two letter variants match; the digit-suffixed 1230/1234 and the star
+    // variant 123★ must not (only ASCII letters count as the trailing "z").
+    for (id, cn) in [
+        (1, "123"),
+        (2, "123a"),
+        (3, "123b"),
+        (4, "1230"),
+        (5, "1234"),
+        (6, "123★"),
+    ] {
+        crate::entities::card::Model {
+            collector_number: cn.into(),
+            collector_number_int: cn.parse().ok(),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert card");
+    }
+    let app = crate::build_router(state);
+
+    for (q, expected) in [
+        ("cn:123", vec!["123", "123a", "123b"]),
+        ("cn=123", vec!["123"]),
+        ("cn:123a", vec!["123a"]),
+    ] {
+        let (status, _, body) = send(
+            &app,
+            get(&format!("/api/games/mtg/cards?q={}", url_encode(q))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "q={q}: {body:?}");
+        let mut got: Vec<&str> = body["data"]
+            .as_array()
+            .expect("data")
+            .iter()
+            .map(|c| c["collector_number"].as_str().expect("collector_number"))
+            .collect();
+        got.sort();
+        assert_eq!(got, expected, "q={q}: {body:?}");
+    }
+}
+
 /// Regression: a colour search on the by-drop set view
 /// (`GET /sets/sld/drops?q=c:rg`) took the dev server down (2026-07-01 report).
 /// The by-drop endpoint must answer a searched request like any other list route.

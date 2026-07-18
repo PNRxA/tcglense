@@ -30,6 +30,7 @@ import {
   FORMAT_OPTIONS,
   getArtist,
   getCardFlags,
+  getCollectorNumber,
   getColors,
   getFormat,
   getManaValue,
@@ -43,6 +44,7 @@ import {
   RARITY_OPTIONS,
   setArtist,
   setCardFlag,
+  setCollectorNumber,
   setColors,
   setFormat,
   setManaValue,
@@ -200,6 +202,10 @@ const artist = computed({
   get: () => getArtist(query.value),
   set: (value: string) => (query.value = setArtist(query.value, value)),
 })
+const collectorNumber = computed({
+  get: () => getCollectorNumber(query.value),
+  set: (value: string) => (query.value = setCollectorNumber(query.value, value)),
+})
 
 // --- Card flags (`is:` toggles) ---
 const cardFlags = computed(() => getCardFlags(query.value))
@@ -230,6 +236,7 @@ const formatId = useId()
 const oracleId = useId()
 const setId = useId()
 const artistId = useId()
+const cnId = useId()
 const colorsLabelId = useId()
 const mvLabelId = useId()
 const usdLabelId = useId()
@@ -536,6 +543,19 @@ const pipClass =
             autocomplete="off"
           />
         </div>
+      </div>
+
+      <!-- Collector number -->
+      <div class="space-y-2">
+        <Label :for="cnId">Collector number</Label>
+        <Input
+          :id="cnId"
+          v-model="collectorNumber"
+          type="text"
+          class="h-8"
+          placeholder="e.g. 234 or 234a"
+          autocomplete="off"
+        />
       </div>
 
       <!-- Price -->

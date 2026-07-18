@@ -9,6 +9,7 @@ import {
   FORMAT_OPTIONS,
   getArtist,
   getCardFlags,
+  getCollectorNumber,
   getColors,
   getFormat,
   getManaValue,
@@ -22,6 +23,7 @@ import {
   RARITY_OPTIONS,
   setArtist,
   setCardFlag,
+  setCollectorNumber,
   setColors,
   setFormat,
   setManaValue,
@@ -278,6 +280,35 @@ describe('free-text filters (oracle text, set, artist)', () => {
   })
 })
 
+describe('collector number', () => {
+  it('reads the cn value and its number alias', () => {
+    expect(getCollectorNumber('cn:234')).toBe('234')
+    expect(getCollectorNumber('number:234a')).toBe('234a')
+    expect(getCollectorNumber('')).toBe('')
+  })
+
+  it('writes with the colon operator so a bare number reaches its letter variants', () => {
+    expect(setCollectorNumber('', '234')).toBe('cn:234')
+    expect(setCollectorNumber('bolt', '234a')).toBe('bolt cn:234a')
+  })
+
+  it('strips a leading # and stray whitespace/quotes', () => {
+    expect(setCollectorNumber('', '#234')).toBe('cn:234')
+    expect(setCollectorNumber('', ' 234a ')).toBe('cn:234a')
+    expect(setCollectorNumber('', '"12"')).toBe('cn:12')
+  })
+
+  it('clears the filter on an empty (or #-only) value', () => {
+    expect(setCollectorNumber('cn:234', '')).toBe('')
+    expect(setCollectorNumber('cn:234', '#')).toBe('')
+  })
+
+  it('does not reflect a hand-typed range, but replaces it on write', () => {
+    expect(getCollectorNumber('cn>=250')).toBe('')
+    expect(setCollectorNumber('cn>=250', '12')).toBe('cn:12')
+  })
+})
+
 describe('card flags (is: toggles)', () => {
   it('offers each flag once', () => {
     const values = CARD_FLAG_OPTIONS.map((o) => o.value)
@@ -310,6 +341,7 @@ describe('activeFilterCount', () => {
   it('counts each active control once', () => {
     expect(activeFilterCount('c:r t:creature r:rare mv>=2 f:modern usd<=5')).toBe(6)
     expect(activeFilterCount('o:draw s:mh3 a:guay pow>=2 tou<=4 is:foil')).toBe(6)
+    expect(activeFilterCount('cn:234 c:r')).toBe(2)
   })
 
   it('counts a range control once even with both bounds set', () => {
@@ -343,6 +375,7 @@ describe('clearBuilderFilters', () => {
   it('clears every control key group', () => {
     expect(clearBuilderFilters('c:r t:creature r:rare mv>=2 f:modern usd<=5')).toBe('')
     expect(clearBuilderFilters('o:draw s:mh3 a:guay pow>=2 tou<=4 is:foil')).toBe('')
+    expect(clearBuilderFilters('bolt cn:234 number:5')).toBe('bolt')
   })
 
   it('clears a builder-owned is: value the toggles cannot show', () => {
