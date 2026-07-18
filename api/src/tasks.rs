@@ -421,6 +421,7 @@ pub async fn start(state: &AppState, http: &Client) {
         if state.config.mirror_enabled {
             // The origin is the source of truth: scrape Scryfall's gallery directly.
             spawn_sld_scrape(
+                state.db.clone(),
                 http.clone(),
                 state.config.scryfall_user_agent.clone(),
                 state.config.sync_interval_hours,
@@ -428,6 +429,7 @@ pub async fn start(state: &AppState, http: &Client) {
         } else if state.config.sld_drops_import_enabled {
             // Everyone else pulls the origin's snapshot from the mirror.
             spawn_sld_import(
+                state.db.clone(),
                 http.clone(),
                 state.config.dataset_mirror_url.clone(),
                 state.config.sync_interval_hours,

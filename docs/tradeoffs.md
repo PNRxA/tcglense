@@ -807,9 +807,13 @@ catalog) is planned but not implemented.
   out an owned `Arc<DropTable>` so a reader is stable across a concurrent swap. (2) `install_snapshot`
   **validates before swapping** — a snapshot missing the `mtg/sld` set (a markup change that yields
   zero drops) is *rejected*, so a broken scrape/import never wipes the good table; the origin keeps
-  serving its last-good (ultimately the committed) snapshot. (3) **No DB persistence** — the snapshot
-  is ~tens of KB and re-fetched cheaply on boot, so it isn't worth a table; the compiled file is the
-  cold-start baseline and the daily fetch refreshes it within a tick. (4) The content version hashes
+  serving its last-good (ultimately the committed) snapshot. (3) **The snapshot blob itself isn't
+  persisted** — it's re-seeded from the committed file each boot (~tens of KB, re-fetched cheaply),
+  so it isn't worth a table. But a tiny `ingest_state` row (`(mtg, sld_drops)`) *does* record the
+  last-run time + the import `ETag`, so a restart within the interval **defers** the first
+  scrape/import (rather than re-running on every boot), a consumer's first post-restart import can
+  still `304`, and a restart after a long downtime runs immediately (`sld_tasks::initial_delay`).
+  (4) The content version hashes
   the drop **data** (each set's ordered drops), *not* the JSON bytes — so the pretty-printed
   committed seed and the mirror's compact scrape of the *same* drops share a version. It feeds both
   the mirror `ETag` (a `304` when unchanged) and the sealed-contents derivation version
