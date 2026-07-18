@@ -18,7 +18,7 @@
 //! mirroring the fallback gate — so upstream stays authoritative and a derived entry
 //! self-retires the moment MTGJSON authors the product.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -199,8 +199,10 @@ pub fn resolve_product_drop<'a>(
     Some(ProductDrop { drop, foil })
 }
 
-/// The drop-table for the Secret Lair set, or `None` if the snapshot doesn't cover it.
-pub fn table() -> Option<&'static DropTable> {
+/// The drop-table for the Secret Lair set, or `None` if the current snapshot doesn't cover
+/// it. An owned `Arc`, so a caller holds a stable table across `await`s (the daily refresh
+/// may swap the store underneath).
+pub fn table() -> Option<Arc<DropTable>> {
     drops::table(super::GAME, SET_CODE)
 }
 
@@ -335,36 +337,37 @@ fn strip_prefixes(base: &str) -> String {
         .to_string()
 }
 
-/// A stable content hash of everything this derivation reads — the embedded drop snapshot
-/// plus the curated overrides — 64 bits of SHA-256. The ingest folds it into its version
-/// gate alongside MTGJSON's ETag and the fallback hash, so regenerating `sld_drops.json`
-/// (or editing an override) re-runs the derivation on the next sync even when
-/// `AllPrintings.json` is byte-identical.
-pub fn derivation_version() -> &'static str {
-    static VERSION: LazyLock<String> = LazyLock::new(|| {
-        let mut hasher = Sha256::new();
-        hasher.update(drops::snapshot_json().as_bytes());
-        for (id, slug) in PRODUCT_DROP_OVERRIDES {
-            hasher.update(id.as_bytes());
-            hasher.update(b"=");
+/// A stable content hash of everything this derivation reads — the *currently loaded* drop
+/// snapshot plus the curated overrides and bonus pools — 64 bits of SHA-256. The ingest folds
+/// it into its version gate alongside MTGJSON's ETag and the fallback hash, so a fresher drop
+/// snapshot (the mirror's daily scrape / a consumer's daily import) — or editing an override —
+/// re-runs the derivation on the next sync even when `AllPrintings.json` is byte-identical.
+///
+/// Computed live rather than memoised: the drop snapshot changes at runtime (unlike the
+/// compiled overrides), so a cached value would freeze the version at the first table seen and
+/// never pick up a refresh. Evaluated once per sync tick's version-gate check — negligible.
+pub fn derivation_version() -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(drops::content_version().as_bytes());
+    for (id, slug) in PRODUCT_DROP_OVERRIDES {
+        hasher.update(id.as_bytes());
+        hasher.update(b"=");
+        hasher.update(slug.as_bytes());
+        hasher.update(b";");
+    }
+    for pool in RANDOM_BONUS_POOLS {
+        for slug in pool.drop_slugs {
             hasher.update(slug.as_bytes());
-            hasher.update(b";");
+            hasher.update(b",");
         }
-        for pool in RANDOM_BONUS_POOLS {
-            for slug in pool.drop_slugs {
-                hasher.update(slug.as_bytes());
-                hasher.update(b",");
-            }
-            hasher.update(b"<-");
-            for cn in pool.pool {
-                hasher.update(cn.as_bytes());
-                hasher.update(b",");
-            }
-            hasher.update(b";");
+        hasher.update(b"<-");
+        for cn in pool.pool {
+            hasher.update(cn.as_bytes());
+            hasher.update(b",");
         }
-        hex::encode(&hasher.finalize()[..8])
-    });
-    &VERSION
+        hasher.update(b";");
+    }
+    hex::encode(&hasher.finalize()[..8])
 }
 
 #[cfg(test)]
@@ -450,7 +453,7 @@ mod tests {
     fn resolves_product_to_drop_by_name() {
         let table = table().expect("sld drop table present");
         let resolved = resolve_product_drop(
-            table,
+            &table,
             "700795",
             "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
         )
@@ -463,7 +466,7 @@ mod tests {
         );
 
         let foil = resolve_product_drop(
-            table,
+            &table,
             "700796",
             "Secret Lair Drop: Cats of Chaos - Traditional Foil Edition",
         )
@@ -477,7 +480,7 @@ mod tests {
         // A finish outside any fixed list ("Halo Foil") still strips, so the product matches
         // its gallery drop (whose title lacks the finish).
         let halo = resolve_product_drop(
-            table,
+            &table,
             "493799",
             "Secret Lair Drop: Showcase: March of the Machine Vol. 1 - Halo Foil Edition",
         )
@@ -486,7 +489,7 @@ mod tests {
         assert!(halo.foil);
         // A drop whose gallery title genuinely ends in "Edition" is not over-stripped.
         let pool = resolve_product_drop(
-            table,
+            &table,
             "686670",
             "Secret Lair Drop: Marvel's Deadpool: I Fixed It (You're Welcome) Pool Party Edition - Non-Foil Edition",
         )
@@ -504,7 +507,7 @@ mod tests {
         // The storefront name "… x NALAC Drop: Nuestra Magia" matches no gallery title, but
         // the override maps the TCGplayer id straight to the drop.
         let resolved = resolve_product_drop(
-            table,
+            &table,
             "638088",
             "Secret Lair x NALAC Drop: Nuestra Magia (SP Non-Foil)",
         )
@@ -519,7 +522,7 @@ mod tests {
         // A resolved product contains exactly its drop's own cards — the shared random bonus pool
         // is a separate axis (see `random_bonus_pool`), never folded into `collector_numbers`.
         let pd = resolve_product_drop(
-            table,
+            &table,
             "700795",
             "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
         )
@@ -529,7 +532,7 @@ mod tests {
         // Even an Avatar drop resolves to just its own cards; its bonus (7062/7063) lives in the
         // random pool, not its contents.
         let avatar = resolve_product_drop(
-            table,
+            &table,
             "0",
             "Secret Lair Drop: Avatar: The Last Airbender: My Cabbages! - Traditional Foil Edition",
         )
@@ -562,7 +565,7 @@ mod tests {
         // A single-card promo that has no gallery drop -> no match (shows nothing, safely).
         assert!(
             resolve_product_drop(
-                table,
+                &table,
                 "554987",
                 "Secret Lair Drop: Secret Lair Promo: Seedborn Muse - Rainbow Foil Edition"
             )

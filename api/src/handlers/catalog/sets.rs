@@ -339,7 +339,7 @@ pub async fn list_set_drops(
         .all(&state.db)
         .await?;
 
-    let mut buckets = group_into_drops(table, rows, |card| card.collector_number.as_str());
+    let mut buckets = group_into_drops(&table, rows, |card| card.collector_number.as_str());
     // Narrow to the drops whose title matches the "filter drops by name" box, before
     // paginating so the filter spans every drop, not just the page on screen.
     if let Some(needle) = params.drop_title_filter() {

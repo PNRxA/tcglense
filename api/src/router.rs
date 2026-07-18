@@ -58,7 +58,7 @@ use crate::{
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
             fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
-            scryfall_sets, tcgcsv_proxy,
+            scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
         },
         openapi::openapi_json,
         sharing::{
@@ -538,6 +538,10 @@ pub fn build_router(state: AppState) -> Router {
             .route("/api/mirror/scryfall/bulk-data", get(scryfall_bulk_data))
             .route("/api/mirror/scryfall/sets", get(scryfall_sets))
             .route("/api/mirror/scryfall/file/{kind}", get(scryfall_file))
+            // The Secret Lair drop snapshot — served from this origin's in-memory drop store (its
+            // daily Scryfall gallery scrape), so other instances import the fresh titles daily
+            // instead of each scraping Scryfall (those titles aren't in the bulk card API).
+            .route("/api/mirror/scryfall/sld-drops", get(scryfall_sld_drops))
             .route(
                 "/api/mirror/mtgjson/AllPrintings.json.gz",
                 get(mtgjson_all_printings),

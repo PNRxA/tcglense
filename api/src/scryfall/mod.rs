@@ -14,6 +14,13 @@ pub mod model;
 mod price_history;
 mod progress;
 pub mod search;
+/// Secret Lair drop gallery scrape (the mirror origin's daily "fetch from source").
+pub mod sld_scrape;
+/// Secret Lair drop snapshot import from the mirror (a consumer's daily pull).
+pub mod sld_sync;
+/// Background tasks refreshing the Secret Lair drop snapshot (scrape on the origin, import on
+/// every other instance).
+pub mod sld_tasks;
 pub mod subtypes;
 
 pub use dummy::seed;

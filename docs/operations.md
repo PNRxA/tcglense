@@ -399,6 +399,11 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   scanner works with **zero** image fetches. On by default; ignored when
   `FINGERPRINT_BUILD_ENABLED` is set (the builder produces the index itself); set `false`
   to opt out of the scanner / any outbound index pull),
+  `SLD_DROPS_IMPORT_ENABLED` (`true`; import the Secret Lair drop snapshot from the mirror
+  at `DATASET_MIRROR_URL` daily so the app's drop titles stay current — those titles aren't
+  in the bulk card API, so the mirror origin scrapes Scryfall's gallery and re-serves them.
+  On by default; ignored on the mirror origin (`MIRROR_ENABLED` scrapes the source itself);
+  set `false` to keep only the committed fallback snapshot / opt out of the outbound pull),
   `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
   match index — bump to invalidate every fingerprint and force a rebuild + client
   cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`8`; how many

@@ -484,7 +484,7 @@ async fn wanted_cards_group_into_drops_with_counts() {
         .filter_map(|(item, card)| card.map(|c| (item, c)))
         .collect();
     let table = crate::scryfall::drops::table("mtg", "sld").expect("sld drop table");
-    let buckets = group_into_drops(table, pairs, |(_, card)| card.collector_number.as_str());
+    let buckets = group_into_drops(&table, pairs, |(_, card)| card.collector_number.as_str());
 
     // Only the two wanted drops appear (the unwanted #999999 yields no "Other" group),
     // in Scryfall's drop order (Wild in Bloom before Inked), each carrying its wanted

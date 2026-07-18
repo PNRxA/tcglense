@@ -120,10 +120,11 @@ async fn refresh_inner(
         .unwrap_or((None, None, None, None));
     let fallback_version = fallback::version();
     let fallback_changed = prior_fallback != Some(fallback_version);
-    // The Secret Lair drop→cards derivation reads `sld_drops.json` + curated overrides;
-    // hash them into the gate so regenerating that data rebuilds even if MTGJSON didn't.
+    // The Secret Lair drop→cards derivation reads the current drop snapshot + curated
+    // overrides; hash them into the gate so a refreshed snapshot (the mirror's daily scrape /
+    // a consumer's daily import) rebuilds even if MTGJSON didn't.
     let sld_version = sld::derivation_version();
-    let sld_changed = prior_sld != Some(sld_version);
+    let sld_changed = prior_sld != Some(sld_version.as_str());
     // The derived booster-pool synthesis is pure code (no data file), so its version is a
     // bumped constant; a change forces one rebuild the same way a fallback/SLD edit does.
     let derivation_changed = prior_derivation != Some(DERIVATION_VERSION);
@@ -348,7 +349,7 @@ async fn refresh_inner(
     let version = compose_version(
         etag.as_deref(),
         fallback_version,
-        sld_version,
+        &sld_version,
         DERIVATION_VERSION,
     );
     let detail = format!(

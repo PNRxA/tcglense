@@ -235,14 +235,14 @@ pub(super) async fn merge_sld_derived(
     let products = load_sld_products(db).await?;
 
     // Resolve each still-empty SLD product to its drop, keeping the collector numbers it
-    // contains — the drop's cards plus any shared superdrop bonus cards (a `'static` drop
-    // table, so the strs are `'static`) — and the product's foilness.
-    let mut resolved: Vec<(i32, bool, Vec<&'static str>)> = Vec::new();
+    // contains — the drop's cards — and the product's foilness. The strs borrow `table` (an
+    // `Arc<DropTable>` held for this whole function), so they stay valid across the awaits below.
+    let mut resolved: Vec<(i32, bool, Vec<&str>)> = Vec::new();
     for (product_id, external_id, name) in &products {
         if covered.contains(product_id) {
             continue;
         }
-        if let Some(pd) = sld::resolve_product_drop(table, external_id, name) {
+        if let Some(pd) = sld::resolve_product_drop(&table, external_id, name) {
             resolved.push((*product_id, pd.foil, pd.collector_numbers().collect()));
         }
     }
@@ -303,9 +303,11 @@ pub(super) async fn merge_sld_bonus_cards(
     let products = load_sld_products(db).await?;
 
     // (product_id, foil, collector number) for every random bonus card a product may carry.
+    // The bonus-card numbers come from the `'static` curated pool, not the drop table, so they
+    // stay `'static` even though the drop `pd` borrows the (`Arc`) table.
     let mut resolved: Vec<(i32, bool, &'static str)> = Vec::new();
     for (product_id, external_id, name) in &products {
-        let Some(pd) = sld::resolve_product_drop(table, external_id, name) else {
+        let Some(pd) = sld::resolve_product_drop(&table, external_id, name) else {
             continue;
         };
         for cn in sld::random_bonus_pool(&pd.drop.slug) {

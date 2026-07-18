@@ -287,6 +287,47 @@ pub async fn scryfall_file(
     .await
 }
 
+/// `GET /api/mirror/scryfall/sld-drops` — the current Secret Lair drop snapshot (curated titles +
+/// collector numbers) as JSON. Served from this origin's in-memory drop store — the daily Scryfall
+/// gallery scrape ([`crate::scryfall::sld_scrape`]), or the committed fallback before the first
+/// scrape — so other TCGLense instances import it daily ([`crate::scryfall::sld_sync`]) instead of
+/// each scraping Scryfall. Those titles aren't in the bulk card API, so this is the only
+/// machine-readable source other instances have.
+///
+/// Unlike the dataset proxies above this touches **no upstream**: it re-serves this origin's own
+/// snapshot. Version-gated by a strong content `ETag`, so a consumer whose snapshot is current gets
+/// a bodyless `304`; the snapshot changes at most daily, so it's shared-cacheable like the other
+/// mirror metadata.
+pub async fn scryfall_sld_drops(headers: HeaderMap) -> Result<Response, AppError> {
+    use crate::scryfall::drops;
+    // Read the JSON body and its version from ONE store snapshot, so the ETag and the body always
+    // describe the same snapshot even if a concurrent daily install swaps the store between reads.
+    let (json, version) = drops::current_snapshot();
+    let etag = format!("\"sld-{version}\"");
+    // Provably ASCII (`"sld-<hex>"`); map the impossible failure to a 500 rather than panic.
+    let etag_value = HeaderValue::from_str(&etag)
+        .map_err(|_| AppError::Internal("sld-drops etag not header-safe".to_string()))?;
+
+    // Conditional request: an unchanged snapshot is a cheap bodyless 304 carrying the ETag.
+    if let Some(inm) = headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+        if inm == etag {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::NOT_MODIFIED;
+            let out = response.headers_mut();
+            out.insert(ETAG, etag_value);
+            out.insert(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE));
+            return Ok(response);
+        }
+    }
+
+    let mut response = Response::new(Body::from(json));
+    let out = response.headers_mut();
+    out.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    out.insert(ETAG, etag_value);
+    out.insert(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE));
+    Ok(response)
+}
+
 /// `GET /api/mirror/mtgjson/AllPrintings.json.gz` — MTGJSON's sealed-contents dump,
 /// forwarding `If-None-Match`/`ETag` so the consumer's ETag version-gate (its cheap
 /// unchanged-file `304`) still works through the mirror.

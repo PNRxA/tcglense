@@ -19,6 +19,7 @@ use crate::{
     datasets::SyncSource,
     entities::{prelude::User, user},
     ratelimit::{AuthRateLimiter, UserRateLimiter},
+    scryfall::sld_tasks::{spawn_sld_import, spawn_sld_scrape},
     state::AppState,
 };
 
@@ -409,5 +410,28 @@ pub async fn start(state: &AppState, http: &Client) {
         && !state.config.fingerprint_build_enabled
     {
         spawn_fingerprint_import(state.db.clone(), fingerprint_import(state, http));
+    }
+
+    // Secret Lair drop titles aren't in the bulk card API — they're scraped from Scryfall's
+    // gallery. The mirror origin re-scrapes daily and serves the fresh snapshot; every other
+    // instance imports it from the mirror daily. Both fall back to the committed `sld_drops.json`
+    // until the first fetch. Independent of the card sync (the snapshot is tiny and needs no
+    // cards). Skipped in dummy mode (offline).
+    if !state.config.seed_dummy_data {
+        if state.config.mirror_enabled {
+            // The origin is the source of truth: scrape Scryfall's gallery directly.
+            spawn_sld_scrape(
+                http.clone(),
+                state.config.scryfall_user_agent.clone(),
+                state.config.sync_interval_hours,
+            );
+        } else if state.config.sld_drops_import_enabled {
+            // Everyone else pulls the origin's snapshot from the mirror.
+            spawn_sld_import(
+                http.clone(),
+                state.config.dataset_mirror_url.clone(),
+                state.config.sync_interval_hours,
+            );
+        }
     }
 }

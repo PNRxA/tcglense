@@ -83,9 +83,12 @@ pub(crate) struct CardResponse {
 
 impl From<card::Model> for CardResponse {
     fn from(m: card::Model) -> Self {
-        let drop = crate::scryfall::drops::drop_for(&m.game, &m.set_code, &m.collector_number);
-        let drop_name = drop.map(|d| d.title.clone());
-        let drop_slug = drop.map(|d| d.slug.clone());
+        // `drop_for` returns an owned `Drop` (the store is swapped by the daily refresh, so
+        // there's no `'static` table to borrow from); move its title/slug out — no clone.
+        let (drop_name, drop_slug) =
+            crate::scryfall::drops::drop_for(&m.game, &m.set_code, &m.collector_number)
+                .map(|d| (d.title, d.slug))
+                .unzip();
         let secret_lair_bonus = is_secret_lair_bonus(m.promo_types.as_deref());
         let secret_lair_spend_incentive =
             crate::scryfall::drops::is_spend_incentive(&m.game, &m.set_code, &m.collector_number);
