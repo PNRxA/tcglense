@@ -233,6 +233,15 @@ config comes from the repo **variable** `VITE_SITE_URL`
 longer baked in — it's the API's runtime `TURNSTILE_SITE_KEY`, served via
 `GET /api/config`.
 
+The same workflow's **`cli-binaries`** job builds the standalone `tcglense` CLI
+(`cli/`) for five OS/arch targets — Linux (x86_64 + aarch64), macOS (x86_64 + Apple
+Silicon), and Windows (x86_64) — each on its **native** runner (no cross-compilation;
+`ubuntu-24.04-arm`, `macos-13`, `macos-latest`, `windows-latest`) and uploads a
+`.tar.gz`/`.zip` per target as a Release asset via `gh release upload`. It runs only for
+a real published Release (a manual `:edge` dispatch has no Release to attach to) and needs
+job-level `contents: write`; `ring` ships pregenerated assembly (incl. Windows objects),
+so no nasm/perl is installed on any runner.
+
 Two compose files run the published images: `deploy/docker-compose.homelab.yml` (the
 combined image + SQLite, one container) and `deploy/docker-compose.prod.yml` (the full
 split: edge Caddy [`deploy/edge.Caddyfile`] + web + api + Postgres + Redis).
