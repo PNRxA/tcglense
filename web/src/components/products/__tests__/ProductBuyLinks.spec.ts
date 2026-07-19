@@ -36,8 +36,8 @@ describe('ProductBuyLinks', () => {
   it('renders an outbound store link per store, each opening safely in a new tab', () => {
     const wrapper = mount(ProductBuyLinks, { props: { game: 'mtg', product: makeProduct() } })
     const links = anchors(wrapper)
-    // 6 US + 9 Australia stores.
-    expect(links).toHaveLength(15)
+    // 6 US + 17 Australia stores.
+    expect(links).toHaveLength(23)
     for (const a of links) {
       expect(a.attributes('href')).toMatch(/^https:\/\//)
       expect(a.attributes('target')).toBe('_blank')
