@@ -42,6 +42,26 @@ async fn resolve_or_not_here(
         })
 }
 
+/// Resolve a public deck by its owner's handle + id, or a uniform [`not_here`] 404. Shared by
+/// the public read ([`public_deck`]) and the authenticated copy
+/// ([`copy_public_deck`](crate::handlers::decks::copy_public_deck)) so both collapse "unknown
+/// handle" and "private/absent deck" into the identical 404 body — no existence oracle over
+/// handles or deck ids. Returns the owner (for `handle_of`) alongside the deck.
+pub(crate) async fn load_public_deck(
+    state: &AppState,
+    handle: &str,
+    deck_id: i32,
+) -> Result<(crate::entities::user::Model, deck::Model), AppError> {
+    let user = resolve_or_not_here(state, handle).await?;
+    let deck = Deck::find_by_id(deck_id)
+        .filter(deck::Column::UserId.eq(user.id))
+        .filter(deck::Column::IsPublic.eq(true))
+        .one(&state.db)
+        .await?
+        .ok_or_else(not_here)?;
+    Ok((user, deck))
+}
+
 /// Whether the user has at least one publicly-shared deck. Lets the public profile
 /// (`public_profile`) still resolve for someone who has shared **only** decks and no
 /// collection — without inventing a new oracle (their decks are already listable at
@@ -123,13 +143,7 @@ pub async fn public_deck(
     State(state): State<AppState>,
     Path((handle, deck_id)): Path<(String, i32)>,
 ) -> Result<Json<DeckDetail>, AppError> {
-    let user = resolve_or_not_here(&state, &handle).await?;
-    let deck = Deck::find_by_id(deck_id)
-        .filter(deck::Column::UserId.eq(user.id))
-        .filter(deck::Column::IsPublic.eq(true))
-        .one(&state.db)
-        .await?
-        .ok_or_else(not_here)?;
+    let (user, deck) = load_public_deck(&state, &handle, deck_id).await?;
     let handle = crate::auth::username::handle_of(&user);
     Ok(Json(deck_detail(&state, &deck, handle).await?))
 }

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import type { Ref } from 'vue'
 import {
   changeDeckCardPrinting,
+  copyPublicDeck,
   createDeck,
   createFolder,
   createSection,
@@ -144,6 +145,10 @@ export interface ImportDeckVars {
   game: string
   body: DeckImportRequest
 }
+export interface CopyPublicDeckVars {
+  handle: string
+  deckId: number
+}
 export interface UpdateDeckVars {
   game: string
   deckId: number
@@ -241,6 +246,21 @@ export function useImportDeckMutation() {
       invalidateDeck(qc, vars.game, _d?.deck.id),
   }
   return useAuthedMutation<DeckImportResponse, ImportDeckVars>(options)
+}
+
+/** Copy a public deck into the caller's own decks (issue #502). The source is handle-addressed
+ * (cross-game), so the copy's game is only known from the response — refresh that game's deck
+ * list off the returned detail. */
+export function useCopyPublicDeckMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: CopyPublicDeckVars) =>
+      copyPublicDeck(token, vars.handle, vars.deckId),
+    onSettled: (d: DeckDetail | undefined, _e: ApiError | null, _vars: CopyPublicDeckVars) => {
+      if (d) invalidateDeck(qc, d.game)
+    },
+  }
+  return useAuthedMutation<DeckDetail, CopyPublicDeckVars>(options)
 }
 
 export function useUpdateDeckMutation() {

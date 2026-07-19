@@ -36,6 +36,7 @@ use crate::state::AppState;
 use sea_orm::prelude::DateTimeUtc;
 
 mod cards;
+mod copy;
 mod export;
 mod folders;
 mod import;
@@ -45,6 +46,7 @@ mod sections;
 mod write;
 
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
+pub use copy::copy_public_deck;
 pub use export::export_deck;
 pub use folders::{create_folder, delete_folder, list_folders, update_folder};
 pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
@@ -56,6 +58,7 @@ pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibili
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
+pub use copy::__path_copy_public_deck;
 pub use export::__path_export_deck;
 pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,

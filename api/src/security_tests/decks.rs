@@ -1356,3 +1356,182 @@ async fn needed_cards_require_authentication_and_a_read_only_key_may_read() {
     let (status, _, _) = send(&app, get_with_bearer("/api/decks/nope/needed", &access)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// Give the token's user a username and make `deck_id` public; returns the owner's handle.
+async fn publish_deck(app: &TestApp, access: &str, username: &str, deck_id: i64) -> String {
+    let (status, _, u) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/username",
+            access,
+            json!({ "username": username }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "set username failed: {u:?}");
+    let handle = u["handle"].as_str().expect("handle").to_string();
+    let (status, _, _) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/visibility"),
+            access,
+            json!({ "public": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "enabling public sharing failed");
+    handle
+}
+
+#[tokio::test]
+async fn a_public_deck_can_be_copied_into_your_own_decks() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "copysource@example.com", PW).await;
+    let cards = sample_card_ids(&app, 2).await;
+
+    // Alice builds a deck: card A (3 regular + 1 foil), card B (2 regular), in one section.
+    let deck = create_deck(&app, &alice, "Alice's Brew").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    for (card, qty, foil) in [(&cards[0], 3, 1), (&cards[1], 2, 0)] {
+        let (status, _, _) = send(
+            &app,
+            json_with_bearer(
+                "PUT",
+                &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+                &alice,
+                json!({ "quantity": qty, "foil_quantity": foil, "section_id": section_id }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let handle = publish_deck(&app, &alice, "alice", deck_id).await;
+
+    // Bob copies Alice's public deck into his own decks.
+    let (bob, _) = register(&app, "copytarget@example.com", PW).await;
+    let (status, headers, copy) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/u/{handle}/decks/{deck_id}/copy"),
+            &bob,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "copy failed: {copy:?}");
+    // Per-user write: never shared-cached.
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // The copy is a brand-new, private deck (a different id), named "(copy)", same 6 copies.
+    let copy_id = copy["id"].as_i64().expect("copy id");
+    assert_ne!(copy_id, deck_id, "the copy must be a new deck");
+    assert_eq!(copy["is_public"], false, "a copy starts private");
+    assert!(
+        copy["name"].as_str().expect("name").ends_with("(copy)"),
+        "the copy name should be suffixed: {:?}",
+        copy["name"]
+    );
+    assert_eq!(copy["cards"].as_array().expect("cards").len(), 2);
+    assert_eq!(copy["summary"]["total_cards"], 6);
+
+    // The counts (regular + foil) carried across verbatim.
+    let entry = copy["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["card"]["id"] == cards[0].as_str())
+        .expect("copied card A");
+    assert_eq!(entry["quantity"], 3);
+    assert_eq!(entry["foil_quantity"], 1);
+
+    // The copy is really Bob's: he can read it back through the authenticated route, and it
+    // shows up in his deck list.
+    let (status, _, mine) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{copy_id}"), &bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bob cannot read his copy: {mine:?}");
+    let (status, _, list) = send(&app, get_with_bearer("/api/decks/mtg", &bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["data"].as_array().expect("decks").len(), 1);
+
+    // Alice's original is untouched: still exactly one deck, still public.
+    let (status, _, alice_list) = send(&app, get_with_bearer("/api/decks/mtg", &alice)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(alice_list["data"].as_array().expect("decks").len(), 1);
+    assert_eq!(alice_list["data"][0]["id"], deck_id);
+}
+
+#[tokio::test]
+async fn copying_a_deck_requires_a_writable_credential_and_a_public_source() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "copyauth-src@example.com", PW).await;
+    let card = sample_card_ids(&app, 1).await.remove(0);
+    let deck = create_deck(&app, &alice, "Guarded Brew").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+            &alice,
+            json!({ "quantity": 1, "foil_quantity": 0, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (bob, _) = register(&app, "copyauth-dst@example.com", PW).await;
+
+    // While Alice's deck is still private, nobody can copy it: a uniform 404 (no existence
+    // oracle), the same body whether the handle is unknown or the deck is merely private.
+    let (status, headers, private_miss) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/u/nobody-0001/decks/{deck_id}/copy"),
+            &bob,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // Now publish it, so it's a valid, copyable source for the credential checks below.
+    let handle = publish_deck(&app, &alice, "guardian", deck_id).await;
+    let uri = format!("/api/u/{handle}/decks/{deck_id}/copy");
+
+    // Unauthenticated -> 401, no-store (a write, never shared-cached).
+    let (status, headers, _) = send(&app, json_post(&uri, json!({}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // A read-only API key is a valid credential but the wrong scope -> 403.
+    let ro = create_key(&app, &bob, "read").await;
+    let (status, _, _) = send(&app, json_with_bearer("POST", &uri, &ro, json!({}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // A private source (Alice disables sharing) 404s again, matching the unknown-handle body.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/visibility"),
+            &alice,
+            json!({ "public": false }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, now_private) =
+        send(&app, json_with_bearer("POST", &uri, &bob, json!({}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(now_private["error"], private_miss["error"]);
+}
