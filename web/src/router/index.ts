@@ -55,9 +55,10 @@ const router = createRouter({
       props: true,
     },
     // Sealed products (booster boxes, bundles, decks): a top-level section of its own
-    // (sibling to /cards, /collection, /wishlist) — an all-games landing, a per-game
-    // browse/filter grid, and a per-product detail page with a price-history chart,
-    // mirroring the card views. Public, like the catalog.
+    // (sibling to /cards, /collection, /wishlist) — an all-games landing, a per-game set-tile
+    // landing, a flat browse/filter grid (every product, or scoped to one set), and a
+    // per-product detail page with a price-history chart, mirroring the card views. Public,
+    // like the catalog.
     {
       path: '/sealed',
       name: 'sealed',
@@ -66,6 +67,24 @@ const router = createRouter({
     {
       path: '/sealed/:game',
       name: 'game-sealed',
+      component: () => import('@/views/SealedGameView.vue'),
+      props: true,
+    },
+    // The flat filterable grid of a game's sealed products, or scoped to one set — the
+    // click-through target of the landing's set tiles, mirroring the catalog's
+    // /cards/:game/cards and /cards/:game/sets/:code split. Both static-lead paths outrank the
+    // `/sealed/:game/:id` product-detail route below in vue-router's specificity ranking (a
+    // static segment scores above a param at the same depth, regardless of declaration order),
+    // so a `products` or `sets` slug is never captured as a product id.
+    {
+      path: '/sealed/:game/products',
+      name: 'game-sealed-products',
+      component: () => import('@/views/SealedBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/sealed/:game/sets/:code',
+      name: 'game-sealed-set',
       component: () => import('@/views/SealedBrowseView.vue'),
       props: true,
     },

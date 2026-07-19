@@ -4,8 +4,9 @@ import { onBeforeRouteUpdate, useRouter } from 'vue-router'
 /**
  * The sealed-product "back" link, mirroring the in-app location the user arrived from
  * rather than always pointing at the sealed browse (issue #203). A product page is
- * reached from the per-game sealed browse (a product tile), collection/wish-list sealed
- * section, a card's "Sealed products" section (the card's full detail page, or the
+ * reached from the sealed catalog (a product tile on the flat browse or a set-scoped
+ * list), collection/wish-list sealed section, a card's "Sealed products" section (the
+ * card's full detail page, or the
  * browse-grid card modal `?card=<id>` which can sit over any list route), or another
  * sealed product's "What's in the box" section (a linked sub-product it contains).
  * vue-router records the previous entry's path in history state (null on a direct load
@@ -48,8 +49,14 @@ export function useProductBackLink(game: Ref<string>) {
       return { to: from.fullPath, label: 'Sealed product' }
     }
 
-    // Opened from the sealed browse — return to it with its search/filter/page intact.
-    if (from.name === 'game-sealed') {
+    // Opened from any of the sealed catalog list surfaces — the per-game set-tile landing, the
+    // flat all-products browse, or a set-scoped browse — return to it with its search/filter/page
+    // state intact.
+    if (
+      from.name === 'game-sealed' ||
+      from.name === 'game-sealed-products' ||
+      from.name === 'game-sealed-set'
+    ) {
       return { to: from.fullPath, label: 'Sealed products' }
     }
 

@@ -4,11 +4,14 @@ import { mount } from '@vue/test-utils'
 import { createRouter, createWebHistory, useRoute } from 'vue-router'
 import { useProductBackLink } from '../useProductBackLink'
 
-// The real named routes a sealed product can be opened from: the per-game sealed browse
-// (a product tile), the wish list's sealed section, and a card's "Sealed products"
-// section — the card's full page, or the browse-grid card modal (`?card=<id>`) that can
-// sit over any list route. Each renders a placeholder except the product route, which
-// hosts the composable.
+// The real named routes a sealed product can be opened from: the sealed catalog surfaces (the
+// per-game set-tile landing, the flat all-products browse, or a set-scoped browse — a product
+// tile on either), the wish list's sealed section, and a card's "Sealed products" section — the
+// card's full page, or the browse-grid card modal (`?card=<id>`) that can sit over any list
+// route. Each renders a placeholder except the product route, which hosts the composable. The
+// `products`/`sets` static-lead routes are declared alongside the bare `:id` product route so
+// this also pins vue-router's specificity ranking — a `products` slug resolves to
+// `game-sealed-products`, never as a product id.
 const routes = [
   { path: '/', name: 'home', component: { template: '<div />' } },
   { path: '/cards/:game', name: 'game', component: { template: '<div />' } },
@@ -17,6 +20,12 @@ const routes = [
   { path: '/cards/:game/cards/:id', name: 'card', component: { template: '<div />' } },
   { path: '/sealed', name: 'sealed', component: { template: '<div />' } },
   { path: '/sealed/:game', name: 'game-sealed', component: { template: '<div />' } },
+  {
+    path: '/sealed/:game/products',
+    name: 'game-sealed-products',
+    component: { template: '<div />' },
+  },
+  { path: '/sealed/:game/sets/:code', name: 'game-sealed-set', component: { template: '<div />' } },
   { path: '/sealed/:game/:id', name: 'sealed-product', component: Host() },
   { path: '/wishlist/:game', name: 'game-wishlist', component: { template: '<div />' } },
   { path: '/collection/:game', name: 'game-collection', component: { template: '<div />' } },
@@ -62,9 +71,23 @@ describe('useProductBackLink', () => {
     expect(await backLink('/sealed/mtg')).toEqual({ to: '/sealed/mtg', label: 'Sealed products' })
   })
 
-  it("preserves the sealed browse's search/filter/page state", async () => {
-    expect(await backLink('/sealed/mtg?set=blb')).toEqual({
-      to: '/sealed/mtg?set=blb',
+  it("preserves the sealed landing's filter state", async () => {
+    expect(await backLink('/sealed/mtg?q=box')).toEqual({
+      to: '/sealed/mtg?q=box',
+      label: 'Sealed products',
+    })
+  })
+
+  it('returns to the flat all-products browse it was opened from', async () => {
+    expect(await backLink('/sealed/mtg/products?page=2')).toEqual({
+      to: '/sealed/mtg/products?page=2',
+      label: 'Sealed products',
+    })
+  })
+
+  it('returns to the set-scoped browse it was opened from', async () => {
+    expect(await backLink('/sealed/mtg/sets/blb?type=booster_box')).toEqual({
+      to: '/sealed/mtg/sets/blb?type=booster_box',
       label: 'Sealed products',
     })
   })

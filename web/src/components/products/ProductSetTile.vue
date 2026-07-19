@@ -2,31 +2,42 @@
 import { computed } from 'vue'
 import { Package } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { setIconUrl, type CardSet, type ProductHoldingSet } from '@/lib/api'
+import { setIconUrl, type CardSet } from '@/lib/api'
 import { formatCopies } from '@/lib/ownership'
 import { useImageLoad } from '@/composables/useImageLoad'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 
-// A standalone bordered tile for one set the user holds sealed products in — the sealed-
-// product mirror of the cards landing's SetTile (default variant). It clicks through to a
-// set-scoped products list rather than rendering the products inline. The catalog set (icon +
-// release date) is optional: a held set with no catalog row falls back to a Package icon and
-// drops the release date. No completion count (sealed products aren't a fixed-size set) and no
-// height-reserving spacer (these tiles never nest sub-sets, so rows can't get out of step).
+// A standalone bordered tile for one product set — the sealed-product mirror of the cards
+// landing's SetTile (default variant). Shared by the two sealed set-tile landings: the public
+// catalog landing (SealedGameView, a plain product count) and the collection/wish-list holdings
+// section (ProductHoldingSection, which also passes the held copies + total value). It clicks
+// through to a set-scoped products list rather than rendering the products inline. The catalog
+// set (icon + release date) is optional: a set with no catalog row falls back to a Package icon
+// and drops the release date. No completion count (sealed products aren't a fixed-size set) and
+// no height-reserving spacer (these tiles never nest sub-sets, so rows can't get out of step).
 const props = defineProps<{
   game: string
-  set: ProductHoldingSet
-  // The matching catalog set — the icon and release-date source. Undefined when the held
-  // set's code has no catalog row.
+  // Set identity — the tile shows `name`, falling back to the upper-cased `code`.
+  code: string
+  name: string | null
+  // The distinct-product count shown on the stats line (the catalog set's product count, or the
+  // holdings section's unique held products).
+  products: number
+  // The matching catalog set — the icon and release-date source. Undefined when the set's code
+  // has no catalog row.
   catalogSet?: CardSet
   // Where the tile links (the set-scoped products list).
   to: string
+  // Total copies including duplicates (the holdings section's `total_products`). Shown as
+  // "N copies" only when it exceeds `products`; omitted by the catalog landing, where each set
+  // has a single count.
+  copies?: number
   // Preformatted total value (e.g. "$123.45"), shown as "TOTAL $X" on the identity line. The
   // parent formats it via useCurrency, matching SetTile's `ownedValue`. Null hides the stat.
   value?: string | null
 }>()
 
-const displayName = computed(() => props.set.name ?? props.set.code.toUpperCase())
+const displayName = computed(() => props.name ?? props.code.toUpperCase())
 
 // Warm the destination's JS chunk on hover/focus so the click opens a loaded view
 // (see lib/prefetch.ts — chunks only, never data/images).
@@ -41,7 +52,7 @@ const {
   failed: iconFailed,
   onLoad,
   onError,
-} = useImageLoad(() => [props.game, props.set.code])
+} = useImageLoad(() => [props.game, props.code])
 const showIcon = computed(() => !!props.catalogSet?.icon_svg_uri && !iconFailed.value)
 
 // The catalog set's release month/year, formatted exactly like SetTile's — null when there's
@@ -55,12 +66,10 @@ const released = computed(() => {
 })
 
 // The total copies (with duplicates) as "N copies", shown next to the product count only when
-// you hold more copies than distinct products — otherwise it just restates the count (SetTile's
-// copies rule).
+// there are more copies than distinct products — otherwise it just restates the count (SetTile's
+// copies rule). The catalog landing omits `copies` entirely, so it never shows.
 const copiesLabel = computed(() =>
-  props.set.total_products > props.set.unique_products
-    ? formatCopies(props.set.total_products)
-    : null,
+  props.copies != null && props.copies > props.products ? formatCopies(props.copies) : null,
 )
 </script>
 
@@ -76,7 +85,7 @@ const copiesLabel = computed(() =>
         <img
           v-if="showIcon"
           ref="iconEl"
-          :src="setIconUrl(game, set.code)"
+          :src="setIconUrl(game, code)"
           alt=""
           class="size-8 object-contain transition-opacity duration-500 ease-out motion-reduce:transition-none dark:invert"
           :class="iconLoaded ? 'opacity-100' : 'opacity-0'"
@@ -92,7 +101,7 @@ const copiesLabel = computed(() =>
              SetTile's "TOTAL $X" idiom so the identity truncates first and the worth stays. -->
         <div class="text-muted-foreground flex items-baseline justify-between gap-2 text-xs">
           <span class="min-w-0 truncate">
-            {{ set.code.toUpperCase() }}
+            {{ code.toUpperCase() }}
             <template v-if="released"> · {{ released }}</template>
           </span>
           <span
@@ -107,8 +116,8 @@ const copiesLabel = computed(() =>
         <!-- The held-product stats: distinct products, plus total copies when there are
              duplicates. -->
         <div class="text-muted-foreground mt-0.5 truncate text-xs tabular-nums">
-          {{ set.unique_products.toLocaleString() }}
-          {{ set.unique_products === 1 ? 'product' : 'products'
+          {{ products.toLocaleString() }}
+          {{ products === 1 ? 'product' : 'products'
           }}<template v-if="copiesLabel"> · {{ copiesLabel }}</template>
         </div>
       </div>
