@@ -20,3 +20,29 @@ export function safeInternalPath(target: unknown): string | null {
   }
   return target
 }
+
+/**
+ * Return `raw` only if it is an `http://` **loopback** URL (127.0.0.1 / localhost /
+ * [::1]), else null. Gates the CLI sign-in redirect (`/cli-login`): the one-time
+ * authorization code is only ever handed to a local loopback listener, never an
+ * off-origin URL, so a crafted `?redirect_uri=` can't exfiltrate it. `URL.hostname`
+ * normalizes the tricky forms (`user@evil`, `127.0.0.1.evil.com`, uppercase, IDN)
+ * to a host the exact allow-list rejects.
+ */
+export function loopbackRedirectUri(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw) return null
+  try {
+    const url = new URL(raw)
+    // `new URL('http://[::1]:x').hostname` is the bracketed `[::1]`.
+    const host = url.hostname
+    if (
+      url.protocol === 'http:' &&
+      (host === '127.0.0.1' || host === 'localhost' || host === '[::1]')
+    ) {
+      return raw
+    }
+  } catch {
+    // Not a parseable URL — treated as invalid.
+  }
+  return null
+}

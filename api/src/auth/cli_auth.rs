@@ -12,7 +12,7 @@
 
 use chrono::{Duration, Utc};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
     prelude::ActiveModelTrait, sea_query::Expr,
 };
 
@@ -121,11 +121,18 @@ where
     })
 }
 
-/// Delete codes past their expiry. Expired codes are rejected on use regardless,
-/// so removing them only bounds table growth. Returns the number of rows pruned.
-pub async fn prune_expired(db: &DatabaseConnection) -> Result<u64, AppError> {
+/// Delete dead codes — those past their expiry **or** already consumed. Both are
+/// rejected on use regardless, so removing them only bounds table growth (mirrors
+/// `api_key::prune_dead`). Pruning consumed rows immediately keeps a burst of
+/// sign-ins from lingering in the table until each row's separate expiry. Returns
+/// the number of rows pruned.
+pub async fn prune_dead(db: &DatabaseConnection) -> Result<u64, AppError> {
     let result = CliAuthCode::delete_many()
-        .filter(cli_auth_code::Column::ExpiresAt.lte(Utc::now()))
+        .filter(
+            Condition::any()
+                .add(cli_auth_code::Column::ExpiresAt.lte(Utc::now()))
+                .add(cli_auth_code::Column::ConsumedAt.is_not_null()),
+        )
         .exec(db)
         .await?;
     Ok(result.rows_affected)
@@ -239,33 +246,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prune_expired_removes_only_expired_codes() {
+    async fn prune_dead_removes_expired_and_consumed_codes_but_keeps_live_ones() {
         let db = setup_db().await;
         let user_id = insert_user(&db, "prune@example.com").await;
         let (_, challenge) = pkce();
+        let now = Utc::now();
 
+        // A live code (unconsumed, unexpired) — must survive.
         let live = issue_code(&db, user_id, 0, &challenge, None)
             .await
             .expect("live");
-        let expired_plain = super::super::secret::generate_secret();
-        let now = Utc::now();
-        cli_auth_code::ActiveModel {
-            user_id: Set(user_id),
-            code_hash: Set(sha256_hex(&expired_plain)),
-            code_challenge: Set(challenge),
-            session_version: Set(0),
-            client_name: Set(None),
-            expires_at: Set(now - Duration::minutes(1)),
-            consumed_at: Set(None),
-            created_at: Set(now - Duration::minutes(6)),
-            ..Default::default()
-        }
-        .insert(&db)
-        .await
-        .expect("plant expired");
 
-        assert_eq!(prune_expired(&db).await.expect("prune"), 1);
-        // The live code survives and is still in the table (unconsumed).
+        // Plant one already-expired code and one already-consumed (but unexpired)
+        // code — both are dead and must be pruned.
+        let plant = |consumed_at, expires_at| {
+            let plaintext = super::super::secret::generate_secret();
+            cli_auth_code::ActiveModel {
+                user_id: Set(user_id),
+                code_hash: Set(sha256_hex(&plaintext)),
+                code_challenge: Set(challenge.clone()),
+                session_version: Set(0),
+                client_name: Set(None),
+                expires_at: Set(expires_at),
+                consumed_at: Set(consumed_at),
+                created_at: Set(now - Duration::minutes(6)),
+                ..Default::default()
+            }
+        };
+        plant(None, now - Duration::minutes(1))
+            .insert(&db)
+            .await
+            .expect("plant expired");
+        plant(Some(now), now + Duration::minutes(4))
+            .insert(&db)
+            .await
+            .expect("plant consumed");
+
+        assert_eq!(prune_dead(&db).await.expect("prune"), 2);
+        // The live code survives and is still in the table (unconsumed, unexpired).
         let remaining = CliAuthCode::find()
             .filter(cli_auth_code::Column::CodeHash.eq(sha256_hex(&live)))
             .one(&db)

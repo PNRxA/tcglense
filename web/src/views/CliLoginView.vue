@@ -11,10 +11,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { useCliAuthorizeMutation } from '@/composables/useCliAuth'
 import { ApiError } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { loopbackRedirectUri } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
-import { useCliAuthorizeMutation } from '@/composables/useCliAuth'
 
 usePageMeta({ title: 'Authorize the CLI', canonicalPath: '/cli-login', noindex: true })
 
@@ -31,23 +32,13 @@ function queryString(key: string): string {
   return typeof v === 'string' ? v : ''
 }
 
-// The CLI's loopback redirect target. Only ever an http loopback address — never
-// route this through the app router or the `redirect` guard param (those reject
-// off-origin URLs); we hand it straight to `window.location` after validating it.
-const loopbackRedirect = computed<string | null>(() => {
-  const raw = queryString('redirect_uri')
-  if (!raw) return null
-  try {
-    const url = new URL(raw)
-    const host = url.hostname
-    const isLoopback =
-      host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]'
-    if (url.protocol === 'http:' && isLoopback) return raw
-  } catch {
-    // Not a URL — treated as missing below.
-  }
-  return null
-})
+// The CLI's loopback redirect target — validated to an http loopback address
+// (see `loopbackRedirectUri`). We hand it straight to `window.location`, so it is
+// deliberately NOT the app router's `redirect` guard param (which is for internal
+// paths); validating it to loopback is what keeps the one-time code local.
+const loopbackRedirect = computed<string | null>(() =>
+  loopbackRedirectUri(route.query.redirect_uri),
+)
 
 const codeChallenge = computed(() => queryString('code_challenge'))
 const state = computed(() => queryString('state'))
@@ -73,7 +64,7 @@ function returnUrl(params: Record<string, string>): string {
 }
 
 async function onAuthorize() {
-  if (paramError.value) return
+  if (paramError.value || authorize.isPending.value) return
   error.value = null
   try {
     const res = await authorize.mutateAsync({
@@ -104,7 +95,7 @@ function onCancel() {
     <Card class="w-full max-w-sm">
       <template v-if="redirecting">
         <CardHeader>
-          <CardTitle class="text-2xl">Returning to the CLI…</CardTitle>
+          <CardTitle class="text-2xl">Returning to the CLI...</CardTitle>
           <CardDescription> You can close this tab and return to your terminal. </CardDescription>
         </CardHeader>
         <CardContent class="flex justify-center py-4">
@@ -156,7 +147,7 @@ function onCancel() {
           </Button>
           <Button class="flex-1" :disabled="authorize.isPending.value" @click="onAuthorize">
             <Loader2 v-if="authorize.isPending.value" class="animate-spin" />
-            {{ authorize.isPending.value ? 'Authorizing…' : 'Authorize' }}
+            {{ authorize.isPending.value ? 'Authorizing...' : 'Authorize' }}
           </Button>
         </CardFooter>
       </template>
