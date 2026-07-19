@@ -576,16 +576,16 @@ const rowLinkClass =
                 <p><span class="text-primary">$</span> tcglense login</p>
                 <p class="text-muted-foreground">→ browser authorized “workstation”</p>
                 <p class="mt-2">
-                  <span class="text-primary">$</span> tcglense search 't:dragon usd&lt;5'
+                  <span class="text-primary">$</span> tcglense cards mtg -q 't:dragon usd&lt;5'
                 </p>
                 <p class="text-muted-foreground">
                   &nbsp;&nbsp;42 cards · Ancient Brass Dragon $3.80 …
                 </p>
                 <p class="mt-2">
-                  <span class="text-primary">$</span> tcglense collection add "Sol Ring" --foil
+                  <span class="text-primary">$</span> tcglense collection mtg summary --json
                 </p>
                 <p class="text-muted-foreground">
-                  <span class="text-primary">✓</span> +1 foil · 1,205 unique
+                  &nbsp;&nbsp;{ "unique": 1204, "copies": 3418, "value_usd": 2148.32 }
                 </p>
               </div>
             </div>
