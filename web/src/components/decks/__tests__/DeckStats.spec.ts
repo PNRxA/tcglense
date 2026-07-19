@@ -40,4 +40,36 @@ describe('DeckStats draw sections', () => {
     await checkboxes[1]!.setValue(true)
     expect(wrapper.text()).toContain('75 cards from 2 selected sections')
   })
+
+  it('selects and deselects every section via the controls', async () => {
+    const sections: DeckSection[] = [
+      { id: 1, name: 'Mainboard', position: 0 },
+      { id: 2, name: 'Sideboard', position: 1 },
+    ]
+    const wrapper = mount(DeckStats, {
+      props: {
+        sections,
+        cards: [entry(1, 'bolt', 'Lightning Bolt', 60), entry(2, 'blast', 'Pyroblast', 15)],
+      },
+    })
+
+    const buttons = wrapper.findAll<HTMLButtonElement>('fieldset button')
+    const selectAll = buttons.find((button) => button.text() === 'Select all')!
+    const deselectAll = buttons.find((button) => button.text() === 'Deselect all')!
+
+    // Only Mainboard starts selected (Sideboard excluded), so both controls are actionable.
+    expect(selectAll.element.disabled).toBe(false)
+    expect(deselectAll.element.disabled).toBe(false)
+
+    await selectAll.trigger('click')
+    const checkboxes = wrapper.findAll<HTMLInputElement>('input[type="checkbox"]')
+    expect(checkboxes.every((checkbox) => checkbox.element.checked)).toBe(true)
+    expect(wrapper.text()).toContain('75 cards from 2 selected sections')
+    expect(selectAll.element.disabled).toBe(true)
+
+    await deselectAll.trigger('click')
+    expect(checkboxes.some((checkbox) => checkbox.element.checked)).toBe(false)
+    expect(wrapper.text()).toContain('Select at least one section containing cards')
+    expect(deselectAll.element.disabled).toBe(true)
+  })
 })

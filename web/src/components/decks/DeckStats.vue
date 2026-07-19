@@ -23,6 +23,14 @@ watch(
   { immediate: true },
 )
 const drawSectionSet = computed(() => new Set(drawSectionIds.value))
+const allSectionsSelected = computed(() => drawSectionIds.value.length === props.sections.length)
+const noSectionsSelected = computed(() => drawSectionIds.value.length === 0)
+function selectAllSections() {
+  drawSectionIds.value = props.sections.map((section) => section.id)
+}
+function deselectAllSections() {
+  drawSectionIds.value = []
+}
 const drawCards = computed(() =>
   props.cards.filter((entry) => drawSectionSet.value.has(entry.section_id)),
 )
@@ -89,7 +97,28 @@ const probabilityLabel = computed(
           Chance of seeing at least one copy without replacement.
         </p>
         <fieldset v-if="sections.length" class="mt-3">
-          <legend class="text-xs font-medium">Library sections</legend>
+          <legend class="flex w-full items-center justify-between gap-2 text-xs font-medium">
+            <span>Library sections</span>
+            <span class="flex items-center gap-2">
+              <button
+                type="button"
+                class="text-primary font-medium hover:underline disabled:opacity-50"
+                :disabled="allSectionsSelected"
+                @click="selectAllSections"
+              >
+                Select all
+              </button>
+              <span class="text-muted-foreground" aria-hidden="true">·</span>
+              <button
+                type="button"
+                class="text-primary font-medium hover:underline disabled:opacity-50"
+                :disabled="noSectionsSelected"
+                @click="deselectAllSections"
+              >
+                Deselect all
+              </button>
+            </span>
+          </legend>
           <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1.5">
             <label
               v-for="section in sections"
