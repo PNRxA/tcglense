@@ -180,6 +180,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::move_deck_card,
         crate::handlers::decks::change_deck_card_printing,
         crate::handlers::decks::export_deck,
+        crate::handlers::decks::copy_public_deck,
         // --- Public sharing (issues #361/#362/#363): handle-keyed public collection + decks ---
         crate::handlers::sharing::public_profile,
         crate::handlers::sharing::public_list,

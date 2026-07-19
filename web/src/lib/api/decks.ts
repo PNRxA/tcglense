@@ -312,3 +312,10 @@ export function getPublicDecks(handle: string): Promise<{ data: Deck[] }> {
 export function getPublicDeck(handle: string, deckId: number): Promise<DeckDetail> {
   return request<DeckDetail>(`${publicBase(handle)}/${deckId}`)
 }
+
+/** Copy a public deck (by handle + deck id) into the caller's own decks and return the new
+ * deck's full detail (issue #502). Authed — the copy is owned by the token's user; the source
+ * is read as its public view, so this is the one authenticated call the public deck page makes. */
+export function copyPublicDeck(token: string, handle: string, deckId: number): Promise<DeckDetail> {
+  return request<DeckDetail>(`${publicBase(handle)}/${deckId}/copy`, { method: 'POST', token })
+}

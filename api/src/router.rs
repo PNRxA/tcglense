@@ -50,9 +50,9 @@ use crate::{
         config::public_config,
         currency::currency_rates,
         decks::{
-            MAX_DECK_UPLOAD_BYTES, change_deck_card_printing, create_deck, create_folder,
-            create_section, delete_deck, delete_folder, delete_section, export_deck, get_deck,
-            import_deck, list_decks, list_folders, move_deck_card, move_deck_to_folder,
+            MAX_DECK_UPLOAD_BYTES, change_deck_card_printing, copy_public_deck, create_deck,
+            create_folder, create_section, delete_deck, delete_folder, delete_section, export_deck,
+            get_deck, import_deck, list_decks, list_folders, move_deck_card, move_deck_to_folder,
             needed_cards, reorder_sections, set_deck_card, set_deck_visibility, update_deck,
             update_folder, update_section,
         },
@@ -397,6 +397,15 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/decks/{game}/{deck_id}/cards/{id}/printing",
             put(change_deck_card_printing),
+        )
+        // Copy someone's public deck into the caller's own decks (issue #502). The source is
+        // addressed by the owner's handle + deck id (like the public read), but this is an
+        // authenticated write — so it lives in this `private`, no-store group, not the
+        // CDN-cached `public_holdings` group where the `GET /api/u/{handle}/decks/{deck_id}`
+        // read is. The trailing `/copy` is a deeper path than that read, so they never collide.
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/copy",
+            post(copy_public_deck),
         )
         // Rate limiting, two complementary middlewares (each picks a quota by path
         // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,

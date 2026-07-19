@@ -1,25 +1,49 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
-import { Layers } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
+import { Copy, Layers } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
-import { usePublicDeckQuery } from '@/composables/useDecks'
+import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
-import type { DeckCardEntry } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth'
+import { ApiError, type DeckCardEntry } from '@/lib/api'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { usePageMeta } from '@/lib/seo'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
-// view; no edit controls. Indexable so shared links preview and rank.
+// view; the only control is "Copy to my decks" for a signed-in visitor (issue #502).
+// Indexable so shared links preview and rank.
 const props = defineProps<{ handle: string; id: string }>()
 const money = useCurrency()
+const auth = useAuthStore()
+const router = useRouter()
 const handle = computed(() => props.handle)
 const deckId = computed(() => Number(props.id))
 const deckQuery = usePublicDeckQuery(handle, deckId)
 const deck = computed(() => deckQuery.data.value)
+
+// Copy-to-my-decks (issue #502): offered to any signed-in visitor except the deck's own
+// owner (they already have it). Gate on `sessionResolved` so the button doesn't flash in and
+// out while the session restores on first paint.
+const copyMutation = useCopyPublicDeckMutation()
+const copyError = ref('')
+const isOwnDeck = computed(() => !!deck.value?.handle && auth.user?.handle === deck.value.handle)
+const canCopy = computed(() => auth.sessionResolved && auth.isAuthenticated && !isOwnDeck.value)
+
+async function copyDeck() {
+  copyError.value = ''
+  try {
+    const created = await copyMutation.mutateAsync({ handle: handle.value, deckId: deckId.value })
+    void router.push(`/decks/${created.game}/${created.id}`)
+  } catch (error) {
+    copyError.value =
+      error instanceof ApiError ? error.message : 'The deck could not be copied. Please retry.'
+  }
+}
 
 // The public game slug is carried in the URL as a handle only; the deck's game is on each
 // card. Author display name strips the discriminator (`alice-0001` -> `alice`).
@@ -67,22 +91,38 @@ function copies(entry: DeckCardEntry): number {
     </div>
 
     <template v-else-if="deck">
-      <header class="mb-6">
-        <h1 class="text-2xl font-semibold tracking-tight">{{ deck.name }}</h1>
-        <p class="text-muted-foreground mt-1 text-sm">
-          by
-          <RouterLink :to="`/u/${handle}`" class="hover:text-foreground underline">{{
-            author
-          }}</RouterLink>
-          · {{ deck.summary.total_cards }} card{{ deck.summary.total_cards === 1 ? '' : 's' }}
-          <span v-if="deck.format"> · {{ deck.format }}</span>
-          <span v-if="money.formatUsd(deck.summary.total_value_usd)">
-            · {{ money.formatUsd(deck.summary.total_value_usd) }}</span
+      <header class="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <h1 class="text-2xl font-semibold tracking-tight">{{ deck.name }}</h1>
+          <p class="text-muted-foreground mt-1 text-sm">
+            by
+            <RouterLink :to="`/u/${handle}`" class="hover:text-foreground underline">{{
+              author
+            }}</RouterLink>
+            · {{ deck.summary.total_cards }} card{{ deck.summary.total_cards === 1 ? '' : 's' }}
+            <span v-if="deck.format"> · {{ deck.format }}</span>
+            <span v-if="money.formatUsd(deck.summary.total_value_usd)">
+              · {{ money.formatUsd(deck.summary.total_value_usd) }}</span
+            >
+          </p>
+          <p v-if="deck.description" class="text-muted-foreground mt-2 text-sm">
+            {{ deck.description }}
+          </p>
+        </div>
+        <div v-if="canCopy" class="flex shrink-0 flex-col items-end gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="copyMutation.isPending.value"
+            @click="copyDeck"
           >
-        </p>
-        <p v-if="deck.description" class="text-muted-foreground mt-2 text-sm">
-          {{ deck.description }}
-        </p>
+            <Copy class="size-4" aria-hidden="true" />
+            {{ copyMutation.isPending.value ? 'Copying…' : 'Copy to my decks' }}
+          </Button>
+          <p v-if="copyError" class="text-destructive max-w-xs text-right text-xs">
+            {{ copyError }}
+          </p>
+        </div>
       </header>
 
       <DeckStats :cards="deck.cards" :sections="deck.sections" />
