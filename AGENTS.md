@@ -208,8 +208,13 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`scryfall::sld_scrape`) and serves it at `/api/mirror/scryfall/sld-drops`; every other instance
   imports it from the mirror (`scryfall::sld_sync`, `SLD_DROPS_IMPORT_ENABLED`, default on) — a
   self-host **never scrapes Scryfall itself**. `install_snapshot` **rejects a snapshot missing the
-  `mtg/sld` set**, so a broken scrape can't wipe the good table. `drops::table()` returns an owned
-  `Arc<DropTable>`, and `sld::derivation_version` reads the **live** snapshot (computed, not
+  `mtg/sld` set**, so a broken scrape can't wipe the good table. Each successful scrape/import is
+  **persisted** to the DB (`scryfall::sld_persist`, the `sld_drop_snapshot` singleton table) and the
+  store is **reseeded from that persisted snapshot at boot** (in `scryfall::sld_tasks`, before the
+  `initial_delay` deferral) — so a restart serves the last-good drops, not the committed seed, and
+  the deferral/`304` stay correct; the committed file is only the first-boot/offline fallback. Don't
+  drop the reseed-before-defer ordering or persist on a `304`/`Unchanged`. `drops::table()` returns an
+  owned `Arc<DropTable>`, and `sld::derivation_version` reads the **live** snapshot (computed, not
   memoised) so a refresh propagates to the sealed-contents gate — keep both dynamic.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto

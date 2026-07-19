@@ -17,6 +17,11 @@
 //! * every **other instance** pulls that snapshot from the mirror daily ([`super::sld_sync`])
 //!   and installs it — so a self-host's drops stay fresh without ever scraping Scryfall itself.
 //!
+//! Each successful scrape/import is persisted to the DB ([`super::sld_persist`]) and the store is
+//! **reseeded from that persisted snapshot at boot** ([`super::sld_tasks`]), so a restart serves the
+//! last-good drops rather than falling back to the committed seed until the next refresh. The
+//! committed file stays the offline / first-boot fallback (no persisted row yet).
+//!
 //! The store is a process-global `RwLock<Arc<Tables>>` (not per-`AppState`) because the read
 //! path reaches it from a bare `From<card::Model>` conversion with no state in hand; the swap
 //! is the same brief-lock, clone-an-`Arc` pattern the fingerprint index uses. An install that

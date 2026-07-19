@@ -20,6 +20,7 @@ pub mod product_price_history;
 pub mod refresh_token;
 pub mod sealed_component;
 pub mod sealed_content;
+pub mod sld_drop_snapshot;
 pub mod user;
 pub mod wishlist_item;
 pub mod wishlist_product_item;

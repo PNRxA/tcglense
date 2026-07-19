@@ -39,9 +39,9 @@ use tower::ServiceExt;
 
 use crate::auth::email_token::{self, EmailTokenPurpose};
 use crate::auth::refresh;
-use crate::entities::prelude::{CardPriceHistory, CollectionItem, RefreshToken};
+use crate::entities::prelude::{CardPriceHistory, CollectionItem, RefreshToken, SldDropSnapshot};
 use crate::entities::{card_price_history, card_set, collection_item, refresh_token, user};
-use crate::scryfall::{GAME, snapshot_prices};
+use crate::scryfall::{GAME, sld_persist, snapshot_prices};
 use crate::test_support::{insert_card, insert_user, owned_counts, url_encode as enc};
 use crate::{build_router, catalog, config::Config, migrator::Migrator, state::AppState};
 
@@ -728,6 +728,45 @@ async fn price_snapshot_upsert_on_pg() {
         rows_for_date, n,
         "same-day re-snapshot upserts, never duplicates"
     );
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn sld_drop_snapshot_upsert_on_pg() {
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    // PgTestDb::create runs every migration, so this also gates the new m000054 table's DDL on
+    // Postgres (a PG-incompatible column/index would panic here).
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    let snap = |slug: &str| {
+        format!(
+            r#"{{"sets":[{{"game":"mtg","set":"sld","drops":[{{"slug":"{slug}","title":"{slug}","collector_numbers":["1"]}}]}}]}}"#
+        )
+    };
+
+    // Nothing persisted yet.
+    assert_eq!(sld_persist::load(conn).await.expect("load empty"), None);
+
+    // Save, then a second save with different content upserts the singleton row in place — this
+    // exercises the ON CONFLICT against the snapshot_key unique index on live Postgres.
+    sld_persist::save(conn, &snap("a"), "v1")
+        .await
+        .expect("save 1");
+    sld_persist::save(conn, &snap("b"), "v2")
+        .await
+        .expect("save 2");
+
+    assert_eq!(
+        sld_persist::load(conn).await.expect("load"),
+        Some(snap("b"))
+    );
+    let rows = SldDropSnapshot::find().count(conn).await.expect("count");
+    assert_eq!(rows, 1, "singleton key upserts, never duplicates");
 
     db.teardown().await;
 }

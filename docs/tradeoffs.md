@@ -807,18 +807,29 @@ catalog) is planned but not implemented.
   out an owned `Arc<DropTable>` so a reader is stable across a concurrent swap. (2) `install_snapshot`
   **validates before swapping** — a snapshot missing the `mtg/sld` set (a markup change that yields
   zero drops) is *rejected*, so a broken scrape/import never wipes the good table; the origin keeps
-  serving its last-good (ultimately the committed) snapshot. (3) **The snapshot blob itself isn't
-  persisted** — it's re-seeded from the committed file each boot (~tens of KB, re-fetched cheaply),
-  so it isn't worth a table. But a tiny `ingest_state` row (`(mtg, sld_drops)`) *does* record the
-  last-run time + the import `ETag`, so a restart within the interval **defers** the first
-  scrape/import (rather than re-running on every boot), a consumer's first post-restart import can
-  still `304`, and a restart after a long downtime runs immediately (`sld_tasks::initial_delay`).
+  serving its last-good (ultimately the committed) snapshot. (3) **The snapshot blob IS persisted** —
+  in a dedicated single-row `sld_drop_snapshot` table (`scryfall::sld_persist`; migration m000054),
+  and the store is **reseeded from it at boot** before the first-refresh deferral. Without
+  persistence the in-memory store reseeds from the committed file each boot, so a restart soon after
+  a refresh would serve that stale seed for up to a full interval — the `initial_delay` deferral
+  honours the last-run *timestamp*, but the in-memory data was thrown away on restart. Reseeding from
+  the last-good persisted snapshot makes that deferral correct: it serves fresh drops, the mirror
+  origin serves the same `ETag` it served before the restart, and a consumer's conditional import
+  `304`s onto the persisted snapshot rather than the seed. It's its **own** table, not a column on
+  `ingest_state`, because the ~58KB blob would otherwise be dragged into every unfiltered
+  `ingest_state` read (e.g. the sitemap's global last-modified query), and `StateFields` (no
+  `Default`, built at ~9 unrelated call sites) would carry an SLD-only field everywhere. The
+  `(mtg, sld_drops)` `ingest_state` row still records the last-run time + import `ETag`, so a restart
+  within the interval **defers** the first scrape/import and after a long downtime runs immediately
+  (`sld_tasks::initial_delay`); the committed file remains the offline / first-boot fallback (no
+  persisted row yet). The stored `content_version` + `updated_at` also make "which drop snapshot is
+  loaded, and when did it last refresh" queryable.
   (4) The content version hashes
   the drop **data** (each set's ordered drops), *not* the JSON bytes — so the pretty-printed
   committed seed and the mirror's compact scrape of the *same* drops share a version. It feeds both
   the mirror `ETag` (a `304` when unchanged) and the sealed-contents derivation version
   (`sld::derivation_version`, computed live). Hashing the raw bytes instead would make every reboot
-  (which reseeds from the committed file) look like a change versus the last-imported compact
+  (which reseeds from the persisted snapshot, or the committed file on first boot) look like a change versus the last-imported compact
   snapshot and trip a needless full `AllPrintings` rebuild; hashing the data means only a *real* drop
   change re-derives SLD product contents (even when `AllPrintings.json` is byte-identical). The
   mirror endpoint also reads the body + version from a single store snapshot, so a concurrent daily
