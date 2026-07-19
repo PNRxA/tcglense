@@ -919,10 +919,13 @@ catalog) is planned but not implemented.
   (another never-pruned index) with negligible write cost: `as_of_date` increases monotonically, so
   each day's rows append at the B-tree's right edge. Of the other three logged statements, the
   windowed value-history fetch is a heap-free index-only scan on `m…031`'s covering index whose
-  cold cost is inherent `O(cards × days-in-range)` volume — which is why these routes sit behind
-  the analytics response-cache and the `analytics` per-user rate-limit bucket rather than a
-  further index. The remaining two (movers' per-item anchor read and value-history's pre-cutoff
-  seed) stopped being whole-history scans entirely — next bullet.
+  cold cost is inherent `O(cards × days-in-range)` volume — **but only while the visibility map is
+  warm and the planner's stats are fresh**; on the *un-vacuumed, never-`ANALYZE`d* prod table it
+  degrades badly (a plan flip and heap-fetch cliff, both fixed by the per-tick maintenance two
+  bullets down — read that before trusting "index-only" here). These routes also sit behind the
+  analytics response-cache and the `analytics` per-user rate-limit bucket. The remaining two
+  (movers' per-item anchor read and value-history's pre-cutoff seed) stopped being whole-history
+  scans entirely — next bullet.
 - **The per-item anchor reads are correlated `LIMIT 1` point seeks, not grouped aggregates
   (2026-07 slow-log follow-up to `m…050`).** The movers anchor read and value-history's
   pre-cutoff seed used to be grouped aggregates: ten
@@ -981,6 +984,49 @@ catalog) is planned but not implemented.
   visibility-map-robust index beats it here. (Contrast the foil-enrichment fix in the same audit —
   `m…044`, §Collection import & sync — which *is* shipped because it leans on a tiny partial index
   + point seeks, not a full-table index-only scan, so it is robust to the churned VM.)
+- **The value-history read's real cold cost was the un-maintained table, not a missing index — the
+  fix is per-tick `VACUUM (ANALYZE)`, plus a wide-range skip-seek (2026-07 slow-log follow-up).**
+  The bullets above call the windowed value-history fetch a "heap-free index-only scan whose cost
+  is inherent volume." Re-profiling on a faithful 18M-row Postgres 16 repro (20k cards × ~900 days,
+  a 956-card collection, cold cache) showed that is true *only when the table is well-maintained* —
+  and prod's price-history tables are neither `VACUUM`ed nor `ANALYZE`d, because the daily capture
+  inserts one row per entity into a multi-million-row table and Postgres's default *scale-factor*
+  autovacuum triggers (`analyze_scale_factor` 0.1, `vacuum_insert_scale_factor` 0.2) only fire after
+  ~0.1–0.2·N changes — **months** on a table that large. Two degradations follow, both matching the
+  logged ~6 s:
+  - **Stale stats flip the plan.** With stats frozen from when the table was far smaller, the
+    planner mis-costs `card_id IN (…owned…)` and demotes it from a per-card index seek to an
+    in-memory **Filter**, scanning the *whole game's* date window: the 30-day read scanned 620k
+    index entries (`Rows Removed by Filter: 590364`, 137,979 buffers) to return 30k rows — **6.7 s**,
+    versus **0.16 s** the moment `ANALYZE` ran.
+  - **A stale visibility map** turns the covering index's index-only scan into per-row
+    heap-visibility fetches: the same read paid ~30k–59k heap fetches (~15× the buffer touches) on a
+    churned tail until a `VACUUM` reset the all-visible bits.
+  Both are fixed at the source by `catalog::maintain_price_history` — a `VACUUM (ANALYZE)` of both
+  price-history tables **right after each capture** (`snapshot_all`), Postgres-only, under the sync
+  leader lock, `SHARE UPDATE EXCLUSIVE` so it never blocks traffic, and scanning only the freshly
+  appended tail (`as_of_date` is monotonic). `m…053` is the standing backstop: it switches the two
+  tables to *absolute* autovacuum thresholds (scale-factor 0) so stats/VM stay fresh even if the
+  explicit pass is disabled (`SYNC_INTERVAL_HOURS=0`) or fails. This is deliberately **not** another
+  index — the read was already index-only; the table was just never maintained. (`cards` stays the
+  documented exception — the bullet above measured a covering index there as a net loss, and `cards`
+  is not on this per-capture `VACUUM` path.)
+- **Wide ranges (`1y`/`2y`/`3y`/`all`) fetch one row per bucket, not every daily row
+  (`value_history`).** The daily fetch pulls `O(cards × days-in-range)` rows and thins them in Rust
+  (`downsample_rows`); for the wide, downsampled ranges that is up to ~1M rows fetched to plot a few
+  dozen points. Naively pushing the thinning into the DB (`DISTINCT ON`/`GROUP BY`) is a **trap** —
+  it still scans every daily entry *and* adds a full-set disk sort (measured **slower**: 2.76 s vs
+  1.50 s on the all-history read). Instead, for `bucket_days > 1` the fetch runs one correlated
+  `LIMIT 1` seek per `(item, downsample bucket)` on the covering index — the [`SnapshotSeek`] shape,
+  but a *range* per bucket — so it returns the already-thinned set (all-history: **15k rows vs 861k**,
+  at *fewer* cold reads: 8.3k vs 8.6k), which the existing fold + final `downsample_rows` reduce to a
+  byte-identical series (a SQLite equivalence test pins this across every wide range). The buckets
+  align to `downsample_rows`' `days-since-CE / bucket_days` grid; the pre-cutoff seed still carries a
+  real value into the window's first day; `all` reads its start from a cheap `MIN(as_of_date)` on
+  `m…050`. The daily ranges (`7d`/`30d`/full) keep the chunked bulk fetch — at daily resolution
+  there is nothing to thin, and the covering index already serves them index-only once the table is
+  maintained (previous bullet). Cross-backend raw SQL through the `db::Dialect` placeholder seam
+  (portable `SELECT … UNION ALL` bucket table; `||`/`COALESCE` like `encoded_snapshot`).
 
 ## Images & assets
 

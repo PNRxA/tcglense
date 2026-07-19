@@ -13,7 +13,7 @@ pub mod images;
 pub mod ingest_state;
 
 use reqwest::Client;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection};
 use serde::Serialize;
 
 /// Static metadata describing a supported game (serialised to the SPA).
@@ -139,6 +139,52 @@ pub async fn snapshot_all(db: &DatabaseConnection) {
             }
             other => {
                 tracing::warn!(game = other, "no price snapshot wired for game; skipping");
+            }
+        }
+    }
+
+    // Refresh the price-history tables' planner stats + visibility map now that the
+    // capture has appended today's rows, so the collection analytics reads stay fast.
+    maintain_price_history(db).await;
+}
+
+/// Refresh the price-history tables' planner statistics and visibility map after a
+/// capture (**Postgres only**), so the collection analytics reads — value-history,
+/// movers, and the per-card price chart — keep the per-entity index-seek plan and stay
+/// index-only.
+///
+/// Why this is needed and not left to autovacuum: the daily capture inserts one row per
+/// priced entity into a multi-million-row, never-pruned table, and Postgres's default
+/// autovacuum triggers are *scale-factor* based, so on a table that large they only fire
+/// after ~0.1–0.2·N changes — months of daily captures (`m…053` lowers those thresholds as
+/// a backstop). Until an autovacuum runs, two things degrade the analytics reads:
+/// stale stats make the planner demote `{card,product}_id IN (…owned…)` from a per-entity
+/// index seek to an in-memory filter that scans the whole game's date window (measured on
+/// an 18M-row Postgres 16 repro: a 30-day, 956-card value-history read went 6.7 s → 0.16 s
+/// after `ANALYZE`), and a stale visibility map turns the covering index's index-only scan
+/// into per-row heap-visibility fetches (the churned-VM cliff `m…031` warns about). A
+/// `VACUUM (ANALYZE)` right here fixes both.
+///
+/// It rides the sync tick's leader lock (so only one replica runs it), takes only a
+/// `SHARE UPDATE EXCLUSIVE` lock (never blocks readers/writers), and — because `as_of_date`
+/// grows monotonically so each day's rows append at the heap's tail — normally scans just
+/// that fresh tail. `VACUUM` cannot run inside a transaction; `execute_unprepared` runs it
+/// autocommit. A failure is logged and never aborts the tick. A no-op on SQLite (single
+/// writer, no MVCC visibility map; its planner stats are a deliberate non-goal).
+pub async fn maintain_price_history(db: &DatabaseConnection) {
+    if db.get_database_backend() != DatabaseBackend::Postgres {
+        return;
+    }
+    // Both never-pruned history tables the capture just wrote to. Names are fixed
+    // literals, so the format! carries no untrusted input.
+    for table in ["card_price_history", "product_price_history"] {
+        match db
+            .execute_unprepared(&format!("VACUUM (ANALYZE) \"{table}\""))
+            .await
+        {
+            Ok(_) => tracing::info!(table, "refreshed price-history stats + visibility map"),
+            Err(err) => {
+                tracing::warn!(table, error = %err, "post-capture VACUUM (ANALYZE) failed")
             }
         }
     }
