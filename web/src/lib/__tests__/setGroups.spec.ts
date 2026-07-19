@@ -8,6 +8,7 @@ import {
   groupSets,
   originSetCode,
   partitionPinned,
+  partitionPinnedBy,
   PINNED_SET_CODES,
   queryMatchesRelated,
   subSetLabel,
@@ -370,5 +371,32 @@ describe('partitionPinned', () => {
     const codes = [...PINNED_SET_CODES]
     const { pinned } = partitionPinned(groupSets(codes.map((c) => set(c)).reverse()))
     expect(pinned.map((g) => g.main.code)).toEqual(codes)
+  })
+})
+
+// The generic seam behind partitionPinned, also used by the sealed landing over its
+// flat product-set refs (keyed by `code`, no group nesting).
+describe('partitionPinnedBy', () => {
+  const ref = (code: string) => ({ code })
+
+  it('pulls pinned items to the front (PINNED_SET_CODES order) and keeps the rest in order', () => {
+    const { pinned, rest } = partitionPinnedBy(
+      [ref('a'), ref('sld'), ref('b')],
+      (item) => item.code,
+    )
+    expect(pinned.map((i) => i.code)).toEqual(['sld'])
+    expect(rest.map((i) => i.code)).toEqual(['a', 'b'])
+  })
+
+  it('is a no-op when no pinned code is present', () => {
+    const { pinned, rest } = partitionPinnedBy([ref('a'), ref('b')], (item) => item.code)
+    expect(pinned).toEqual([])
+    expect(rest.map((i) => i.code)).toEqual(['a', 'b'])
+  })
+
+  it('follows PINNED_SET_CODES order regardless of input order', () => {
+    const codes = [...PINNED_SET_CODES]
+    const { pinned } = partitionPinnedBy(codes.map(ref).reverse(), (item) => item.code)
+    expect(pinned.map((i) => i.code)).toEqual(codes)
   })
 })
