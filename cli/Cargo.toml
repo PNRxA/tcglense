@@ -19,6 +19,11 @@ ratatui = "0.30.2"
 reqwest = { version = "0.13", default-features = false, features = ["json", "gzip", "query", "rustls-no-provider", "webpki-roots", "http2", "charset"] }
 rpassword = "7.5.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging"] }
+# Self-update (`tcglense update`) downloads the matching release asset from GitHub
+# and replaces the running binary. `ureq` + `rustls` gives a small blocking HTTP
+# backend on rustls (no OpenSSL, no second reqwest); the archive/compression
+# features unpack the `.tar.gz` (Unix) and `.zip` (Windows) release assets.
+self_update = { version = "0.44.0", default-features = false, features = ["ureq", "rustls", "archive-tar", "archive-zip", "compression-flate2", "compression-zip-deflate"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.150"
 tokio = { version = "1.53.0", default-features = false, features = ["rt-multi-thread", "macros", "io-std", "time", "sync", "net"] }

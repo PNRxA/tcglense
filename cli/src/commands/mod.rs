@@ -115,6 +115,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::ServerConfig => misc::server_config(&ctx).await,
         Command::Currencies => misc::currencies(&ctx).await,
         Command::Openapi(a) => misc::openapi(&ctx, a).await,
+        Command::Update(a) => misc::update(&ctx, a).await,
 
         Command::Tui => crate::tui::run(ctx).await,
     }

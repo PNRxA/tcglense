@@ -19,6 +19,22 @@ cargo build --release          # binary at target/release/tcglense
 cargo install --path .         # installs `tcglense` onto your PATH
 ```
 
+## Updating
+
+`tcglense` updates itself from the latest GitHub release:
+
+```sh
+tcglense update            # download + install the latest release (prompts first)
+tcglense update --check    # only report whether a newer version is available
+tcglense update -y         # update without the confirmation prompt
+tcglense --version         # show the installed version
+```
+
+After an ordinary command it also runs a throttled (once/day), best-effort check for a
+newer release and prints a one-line notice to stderr when one exists — only to an
+interactive terminal (never when output is piped or redirected). Silence it with
+`TCGLENSE_NO_UPDATE_CHECK=1`.
+
 ## Authentication
 
 The CLI supports **both** auth models the API offers:

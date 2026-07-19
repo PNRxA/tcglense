@@ -34,6 +34,57 @@ pub struct OpenapiArgs {
     pub output: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+pub struct UpdateArgs {
+    /// Only report whether a newer release exists; don't download or install.
+    #[arg(long)]
+    pub check: bool,
+    /// Update without prompting for confirmation.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+}
+
+pub async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<()> {
+    use crate::update::Outcome;
+    // Suppress the download progress bar in JSON mode.
+    let outcome = crate::update::run(args.check, args.yes, ctx.printer.json).await?;
+    match outcome {
+        Outcome::UpToDate { current } => {
+            if ctx.printer.json {
+                ctx.printer
+                    .json(&serde_json::json!({ "status": "up_to_date", "current": current }))?;
+            } else {
+                println!("Already up to date (tcglense {current}).");
+            }
+        }
+        Outcome::Available { current, latest } => {
+            if ctx.printer.json {
+                ctx.printer.json(
+                    &serde_json::json!({ "status": "available", "current": current, "latest": latest }),
+                )?;
+            } else {
+                println!("A newer version is available: {current} → {latest}.");
+                println!("Run `tcglense update` to install it.");
+            }
+        }
+        Outcome::Updated { version } => {
+            if ctx.printer.json {
+                ctx.printer
+                    .json(&serde_json::json!({ "status": "updated", "version": version }))?;
+            } else {
+                println!("Updated to tcglense {version}.");
+            }
+        }
+        Outcome::Cancelled => ctx.printer.note("Update cancelled."),
+        Outcome::NoAssetForPlatform { target, latest } => {
+            anyhow::bail!(
+                "release {latest} has no prebuilt binary for this platform ({target}); build from source with `cargo install`"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn config(ctx: &Ctx, args: ConfigArgs) -> Result<()> {
     match args.command {
         ConfigCommand::Show => {

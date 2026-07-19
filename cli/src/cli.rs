@@ -123,6 +123,9 @@ pub enum Command {
     /// Fetch the OpenAPI document (`GET /api/openapi.json`).
     Openapi(misc::OpenapiArgs),
 
+    /// Update tcglense to the latest GitHub release (`--check` to only look).
+    Update(misc::UpdateArgs),
+
     /// Launch the interactive TUI (default when no subcommand is given).
     Tui,
 }
