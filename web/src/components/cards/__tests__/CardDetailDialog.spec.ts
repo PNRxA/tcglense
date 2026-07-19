@@ -203,8 +203,21 @@ describe('CardDetailDialog origin crumb', () => {
     expect(crumbButton()).toBeNull()
   })
 
-  it('ignores a same-surface marker (never points back at the open card)', async () => {
-    await open('b', ['a', 'b', 'c'], '&openedFrom=card:other')
+  it('offers a back crumb for a same-surface origin, returning to that card', async () => {
+    // A card opened from another card's "Other printings" remembers it, so the crumb points back
+    // to that card (issue #485) — the same one-tap return a card<->product swap gives.
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=card:other')
+    expect(crumbButton()).not.toBeNull()
+
+    crumbButton()!.click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ card: 'other' })
+  })
+
+  it('ignores a self-referential marker (never points back at the open card)', async () => {
+    // A stray marker whose id IS the open card would point the crumb at itself — suppress it.
+    await open('b', ['a', 'b', 'c'], '&openedFrom=card:b')
     expect(crumbButton()).toBeNull()
   })
 

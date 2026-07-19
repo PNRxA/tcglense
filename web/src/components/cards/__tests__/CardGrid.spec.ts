@@ -134,13 +134,27 @@ describe('CardGrid detail modal links', () => {
     expect(router.currentRoute.value.query).toEqual({ card: 'a', openedFrom: 'product:product-1' })
   })
 
-  it('clears a stale origin marker when opening from a normal grid', async () => {
-    // Opening a card from a plain browse/prints grid (no product open) is not a cross-surface
-    // swap; any leftover `?openedFrom=` from an earlier trip must go, not point the card modal
-    // back at an unrelated product.
+  it('remembers the card it was opened from on a card->card hop (another printing)', async () => {
+    // Clicking another printing from inside a card modal ("Other printings") now remembers the
+    // card you were on so the modal can offer "← Back to <card>" (issue #485) — the same one-tap
+    // return a card<->product swap gives. Any stale cross-surface marker is replaced.
     const wrapper = mountGrid([makeCard('a')], undefined, false)
     const router = wrapper.vm.$router
     await router.push('/cards/mtg/cards/a?card=old&openedFrom=product:product-9')
+
+    await cardLink(wrapper, 'a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ card: 'a', openedFrom: 'card:old' })
+  })
+
+  it('clears a stale origin marker when opening from a plain browse grid', async () => {
+    // A plain browse grid has no modal open (no `?card=`), so opening a card there is a fresh
+    // start: any leftover `?openedFrom=` from an earlier trip must go, not point the card modal
+    // back at an unrelated item.
+    const wrapper = mountGrid([makeCard('a')], undefined, false)
+    const router = wrapper.vm.$router
+    await router.push('/cards/mtg/cards/a?openedFrom=product:product-9')
 
     await cardLink(wrapper, 'a').trigger('click')
     await flushPromises()

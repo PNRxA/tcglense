@@ -81,6 +81,19 @@ describe('ProductContainers', () => {
     expect(router.currentRoute.value.query.product).toBe('box')
   })
 
+  it('remembers the current product for the "back" crumb when opened inside the product modal', async () => {
+    // Rendered inside the browse-grid product modal (?product=child), clicking a parent swaps to it
+    // and stashes the product you were on so the modal shows "← Back to <it>" (issue #485).
+    const { wrapper, router } = await mountContainers(
+      [{ product: product('box', 'Play Booster Box'), quantity: 36 }],
+      '/sealed/mtg?product=child',
+    )
+    await wrapper.get('a').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.product).toBe('box')
+    expect(router.currentRoute.value.query.openedFrom).toBe('product:child')
+  })
+
   it('leaves modifier-click navigation to the browser', async () => {
     const { wrapper, router } = await mountContainers([
       { product: product('box', 'Play Booster Box'), quantity: 36 },
