@@ -45,6 +45,25 @@ It auto-creates `api/.env` (from `api/.env.example`) and installs web deps on fi
 then serves the app at http://localhost:5173. The contributor guide — conventions, the
 pre-commit checks, and how to add a feature — is [`CLAUDE.md`](./CLAUDE.md).
 
+## Command-line client
+
+`tcglense` is a Rust CLI **and** interactive TUI over the same public API — browse the
+catalog, manage your collection, wish list and decks, and mint API keys, from the
+terminal. It authenticates with either a web session (email + password) or a `tcgl_` API
+key, and can update itself with `tcglense update`. It lives in its own repository,
+**[PNRxA/tcglense-cli](https://github.com/PNRxA/tcglense-cli)**, with prebuilt binaries for
+Linux, macOS, and Windows attached to each
+[release](https://github.com/PNRxA/tcglense-cli/releases).
+
+```sh
+cargo install --git https://github.com/PNRxA/tcglense-cli   # or download a release binary
+tcglense games                                              # one-shot command
+tcglense                                                    # launch the interactive TUI
+```
+
+Full usage, auth, and the command reference are in the
+[tcglense-cli README](https://github.com/PNRxA/tcglense-cli#readme).
+
 ## Documentation
 
 | Doc | What's in it |
@@ -52,6 +71,7 @@ pre-commit checks, and how to add a feature — is [`CLAUDE.md`](./CLAUDE.md).
 | [`docs/self-hosting.md`](./docs/self-hosting.md) | Every deploy topology: homelab, managed cloud, production split, bare metal, CDN |
 | [`docs/operations.md`](./docs/operations.md) | Running, commands, CI, releases, Docker images, and the full environment-variable reference |
 | [`docs/api-contracts.md`](./docs/api-contracts.md) | Every HTTP endpoint, wire shapes, the search syntax, caching/ETags/sitemaps, import/sync |
+| [PNRxA/tcglense-cli](https://github.com/PNRxA/tcglense-cli) | The `tcglense` command-line client + TUI (separate repo): install, auth, commands, and keybindings |
 | [`docs/architecture.md`](./docs/architecture.md) | Annotated file map of `api/src` and `web/src`, plus test organization |
 | [`docs/tradeoffs.md`](./docs/tradeoffs.md) | Design rationale and known trade-offs — read before "fixing" something that looks odd |
 | [`docs/production-signup-checklist.md`](./docs/production-signup-checklist.md) | Fail-closed production signup rollout, backup, readiness, email, CAPTCHA, and canary checks |

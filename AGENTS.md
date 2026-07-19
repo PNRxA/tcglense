@@ -20,6 +20,10 @@ limiting), and a public API with scoped `tcgl_` API keys (OpenAPI at
 | `api/` | Backend (HTTP JSON API) | Rust 2024 · axum 0.8 · SeaORM 1.1 · SQLite by default, Postgres picked at runtime by the `DATABASE_URL` scheme · JWT (HS256) · Argon2 |
 | `web/` | Frontend (SPA)          | Vue 3.5 · Vite 8 · Pinia · TanStack Query (vue-query) · vue-router · Tailwind 4 · shadcn-vue · TypeScript |
 
+A `tcglense` **CLI + TUI** client (Rust · clap · reqwest · ratatui) for this API lives in
+its own repository — [PNRxA/tcglense-cli](https://github.com/PNRxA/tcglense-cli) — and is
+**not** in this tree.
+
 **Search trap:** `.claude/` is gitignored but holds nested full-repo worktrees. Scope
 repo-wide greps/finds to `api/` and `web/`, and never edit a file through a
 `.claude/worktrees/…` path — that silently changes a different branch's checkout.
