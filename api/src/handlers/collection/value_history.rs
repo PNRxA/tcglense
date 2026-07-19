@@ -251,36 +251,40 @@ async fn value_history_payload(
         // `downsample_rows`' grid, and the pre-cutoff seed pushed above still carries a real
         // value into the window's first day. On a faithful 18M-row Postgres 16 repro the
         // full-history read dropped from 861k rows fetched to ~15k at similar cold I/O.
-        // Window start: the cutoff for a bounded range, else (all) the earliest captured
-        // card snapshot — a cheap forward first-row read on m…050's (game, as_of_date, …).
-        let earliest = match cutoff {
-            Some(_) => None,
-            None => CardPriceHistory::find()
-                .select_only()
-                .column_as(card_price_history::Column::AsOfDate.min(), "m")
-                .filter(card_price_history::Column::Game.eq(game.as_str()))
-                .into_tuple::<Option<String>>()
-                .one(&state.db)
-                .await?
-                .flatten(),
-        };
-        if let Some(start) = window_start(cutoff.as_deref(), earliest.as_deref())? {
-            let buckets = bucketed_window(start, today, bucket_days, cutoff.as_deref());
-            let rows = fetch_bucketed_snapshots(
-                &state.db,
-                "card_price_history",
-                "card_id",
-                "collection_items",
-                &game,
-                user.id,
-                &buckets,
-            )
-            .await?;
-            price_rows.extend(rows);
+        // Nothing owned means nothing to seek — skip the start lookup + fetch entirely (the
+        // daily branch's empty `chunks(...)` is a no-op for the same reason).
+        if !card_ids.is_empty() {
+            // Window start: the cutoff for a bounded range, else (all) the earliest captured
+            // card snapshot — a cheap forward first-row read on m…050's (game, as_of_date, …).
+            let earliest = match cutoff {
+                Some(_) => None,
+                None => CardPriceHistory::find()
+                    .select_only()
+                    .column_as(card_price_history::Column::AsOfDate.min(), "m")
+                    .filter(card_price_history::Column::Game.eq(game.as_str()))
+                    .into_tuple::<Option<String>>()
+                    .one(&state.db)
+                    .await?
+                    .flatten(),
+            };
+            if let Some(start) = window_start(cutoff.as_deref(), earliest.as_deref())? {
+                let buckets = bucketed_window(start, today, bucket_days, cutoff.as_deref());
+                let rows = fetch_bucketed_snapshots(
+                    &state.db,
+                    "card_price_history",
+                    "card_id",
+                    "collection_items",
+                    &game,
+                    user.id,
+                    &buckets,
+                )
+                .await?;
+                price_rows.extend(rows);
+            }
+            // The (card, bucket) rows arrive unordered; the fold needs each card's cells
+            // ascending by date (the pre-cutoff seeds already sort before the window's rows).
+            price_rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         }
-        // The (card, bucket) rows arrive unordered; the fold needs each card's cells
-        // ascending by date (the pre-cutoff seeds already sort before the window's rows).
-        price_rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     } else {
         // Daily ranges (7d/30d/full): chunk the id list so the `IN (...)` never exceeds the
         // bound-parameter cap; the (game, card_id, as_of_date) covering index serves each
@@ -359,33 +363,36 @@ async fn value_history_payload(
     if bucket_days > 1 {
         // Sealed products get the same per-(product, bucket) skip-seek as cards for the wide
         // ranges (product seeks ride `m…020`'s non-covering unique index, so each returned
-        // `LIMIT 1` row costs one heap fetch — fine at sealed-product counts).
-        let earliest = match cutoff {
-            Some(_) => None,
-            None => ProductPriceHistory::find()
-                .select_only()
-                .column_as(product_price_history::Column::AsOfDate.min(), "m")
-                .filter(product_price_history::Column::Game.eq(game.as_str()))
-                .into_tuple::<Option<String>>()
-                .one(&state.db)
-                .await?
-                .flatten(),
-        };
-        if let Some(start) = window_start(cutoff.as_deref(), earliest.as_deref())? {
-            let buckets = bucketed_window(start, today, bucket_days, cutoff.as_deref());
-            let rows = fetch_bucketed_snapshots(
-                &state.db,
-                "product_price_history",
-                "product_id",
-                "collection_product_items",
-                &game,
-                user.id,
-                &buckets,
-            )
-            .await?;
-            product_price_rows.extend(rows);
+        // `LIMIT 1` row costs one heap fetch — fine at sealed-product counts). Skip the DB work
+        // entirely when nothing is owned (as the daily branch's empty `chunks(...)` does).
+        if !product_ids.is_empty() {
+            let earliest = match cutoff {
+                Some(_) => None,
+                None => ProductPriceHistory::find()
+                    .select_only()
+                    .column_as(product_price_history::Column::AsOfDate.min(), "m")
+                    .filter(product_price_history::Column::Game.eq(game.as_str()))
+                    .into_tuple::<Option<String>>()
+                    .one(&state.db)
+                    .await?
+                    .flatten(),
+            };
+            if let Some(start) = window_start(cutoff.as_deref(), earliest.as_deref())? {
+                let buckets = bucketed_window(start, today, bucket_days, cutoff.as_deref());
+                let rows = fetch_bucketed_snapshots(
+                    &state.db,
+                    "product_price_history",
+                    "product_id",
+                    "collection_product_items",
+                    &game,
+                    user.id,
+                    &buckets,
+                )
+                .await?;
+                product_price_rows.extend(rows);
+            }
+            product_price_rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         }
-        product_price_rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     } else {
         for chunk in product_ids.chunks(PRICE_ID_CHUNK) {
             let mut query = ProductPriceHistory::find()
@@ -892,9 +899,7 @@ mod tests {
     #[tokio::test]
     async fn bucketed_wide_range_fetch_folds_identically_to_daily_fetch() {
         use chrono::Duration;
-        use sea_orm::{
-            ActiveModelTrait, ActiveValue::Set, ColumnTrait, QueryFilter, QueryOrder, QuerySelect,
-        };
+        use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
         let db = crate::test_support::migrated_memory_db().await;
         // This test seeds only the price-history + holdings rows the fetch reads, not the
@@ -980,15 +985,82 @@ mod tests {
             .expect("insert holding");
         }
 
-        let holdings = vec![holding(1, 2, 1), holding(2, 3, 0), holding(3, 1, 0)];
-        let comparable = |pts: &[CollectionValuePoint]| -> Vec<(String, Option<String>)> {
-            pts.iter()
-                .map(|p| (p.date.clone(), p.value_usd.clone()))
-                .collect()
-        };
-        let fold_rows = |rows: Vec<(i32, String, Option<String>, Option<String>)>,
-                         bucket_days: i64,
-                         floor: Option<&str>| {
+        // Sealed products exercise the independent product-side skip-seek (different table +
+        // holdings). product_price_history carries no eur/tix columns.
+        async fn put_product(
+            db: &DatabaseConnection,
+            game: &str,
+            product_id: i32,
+            date: &str,
+            usd: Option<String>,
+            now: chrono::DateTime<Utc>,
+        ) {
+            product_price_history::ActiveModel {
+                game: Set(game.to_string()),
+                product_id: Set(product_id),
+                as_of_date: Set(date.to_string()),
+                price_usd: Set(usd),
+                price_usd_foil: Set(None),
+                created_at: Set(now),
+                ..Default::default()
+            }
+            .insert(db)
+            .await
+            .expect("insert product price row");
+        }
+        for d in 0..120i64 {
+            let date = format_date(today - Duration::days(119 - d));
+            // Product 10: priced every day.
+            put_product(
+                &db,
+                game,
+                10,
+                &date,
+                Some(format!("{}.00", 200 + d % 13)),
+                now,
+            )
+            .await;
+            // Product 11: starts on day 45, with one unpriced day.
+            if d >= 45 {
+                let usd = (d != 90).then(|| format!("{}.00", 500 + d % 7));
+                put_product(&db, game, 11, &date, usd, now).await;
+            }
+        }
+        for (product_id, qty) in [(10, 1), (11, 2)] {
+            collection_product_item::ActiveModel {
+                user_id: Set(user_id),
+                game: Set(game.to_string()),
+                product_id: Set(product_id),
+                quantity: Set(qty),
+                foil_quantity: Set(0),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("insert product holding");
+        }
+
+        let card_holdings = vec![holding(1, 2, 1), holding(2, 3, 0), holding(3, 1, 0)];
+        let product_holdings = vec![holding(10, 1, 0), holding(11, 2, 0)];
+
+        // Compare the full card + sealed series (both `value_usd` and `sealed_value_usd`).
+        let comparable =
+            |pts: &[CollectionValuePoint]| -> Vec<(String, Option<String>, Option<String>)> {
+                pts.iter()
+                    .map(|p| {
+                        (
+                            p.date.clone(),
+                            p.value_usd.clone(),
+                            p.sealed_value_usd.clone(),
+                        )
+                    })
+                    .collect()
+            };
+        fn to_prices(
+            rows: Vec<(i32, String, Option<String>, Option<String>)>,
+        ) -> HashMap<i32, Vec<PriceCell>> {
             let mut prices: HashMap<i32, Vec<PriceCell>> = HashMap::new();
             for (id, date, usd, foil) in rows {
                 prices.entry(id).or_default().push(PriceCell {
@@ -1000,15 +1072,91 @@ mod tests {
             for cells in prices.values_mut() {
                 cells.sort_by(|a, b| a.date.cmp(&b.date));
             }
+            prices
+        }
+        let fold_both = |card_rows, product_rows, bucket_days: i64, floor: Option<&str>| {
             fold_collection_value_history(
-                &holdings,
-                &prices,
-                &[],
-                &HashMap::new(),
+                &card_holdings,
+                &to_prices(card_rows),
+                &product_holdings,
+                &to_prices(product_rows),
                 bucket_days,
                 floor,
             )
         };
+
+        // The whole daily windowed fetch for one history table (the pre-skip-seek path).
+        async fn daily_rows(
+            db: &DatabaseConnection,
+            hist: &str,
+            id_col: &str,
+            game: &str,
+            cutoff: Option<&str>,
+        ) -> Vec<(i32, String, Option<String>, Option<String>)> {
+            let mut sql = format!(
+                "SELECT \"{id_col}\", \"as_of_date\", \"price_usd\", \"price_usd_foil\" \
+                 FROM \"{hist}\" WHERE \"game\" = ?"
+            );
+            let mut vals: Vec<Value> = vec![game.into()];
+            if let Some(c) = cutoff {
+                sql.push_str(" AND \"as_of_date\" >= ?");
+                vals.push(c.into());
+            }
+            sql.push_str(&format!(" ORDER BY \"{id_col}\", \"as_of_date\""));
+            let backend = db.get_database_backend();
+            let stmt = Statement::from_sql_and_values(backend, sql, vals);
+            db.query_all(stmt)
+                .await
+                .unwrap()
+                .iter()
+                .map(|row| {
+                    (
+                        row.try_get_by_index::<i32>(0).unwrap(),
+                        row.try_get_by_index::<String>(1).unwrap(),
+                        row.try_get_by_index::<Option<String>>(2).unwrap(),
+                        row.try_get_by_index::<Option<String>>(3).unwrap(),
+                    )
+                })
+                .collect()
+        }
+
+        // The bucketed skip-seek fetch for one history table (start via a raw MIN for `all`).
+        async fn bucketed_rows(
+            db: &DatabaseConnection,
+            hist: &str,
+            id_col: &str,
+            holdings: &str,
+            game: &str,
+            user_id: i32,
+            today: NaiveDate,
+            bucket_days: i64,
+            cutoff: Option<&str>,
+        ) -> Vec<(i32, String, Option<String>, Option<String>)> {
+            let earliest = match cutoff {
+                Some(_) => None,
+                None => {
+                    let backend = db.get_database_backend();
+                    let stmt = Statement::from_sql_and_values(
+                        backend,
+                        format!("SELECT MIN(\"as_of_date\") FROM \"{hist}\" WHERE \"game\" = ?"),
+                        vec![game.into()],
+                    );
+                    db.query_one(stmt)
+                        .await
+                        .unwrap()
+                        .and_then(|r| r.try_get_by_index::<Option<String>>(0).unwrap())
+                }
+            };
+            match window_start(cutoff, earliest.as_deref()).unwrap() {
+                Some(start) => {
+                    let buckets = bucketed_window(start, today, bucket_days, cutoff);
+                    fetch_bucketed_snapshots(db, hist, id_col, holdings, game, user_id, &buckets)
+                        .await
+                        .unwrap()
+                }
+                None => Vec::new(),
+            }
+        }
 
         for range in [
             PriceRange::Y1,
@@ -1018,60 +1166,44 @@ mod tests {
         ] {
             let bucket_days = range.bucket_days();
             let cutoff = cutoff_date(today, range);
+            let floor = cutoff.as_deref();
 
-            // Daily reference: every windowed daily row (the pre-skip-seek fetch).
-            let mut q = CardPriceHistory::find()
-                .select_only()
-                .column(card_price_history::Column::CardId)
-                .column(card_price_history::Column::AsOfDate)
-                .column(card_price_history::Column::PriceUsd)
-                .column(card_price_history::Column::PriceUsdFoil)
-                .filter(card_price_history::Column::Game.eq(game));
-            if let Some(c) = &cutoff {
-                q = q.filter(card_price_history::Column::AsOfDate.gte(c.as_str()));
-            }
-            let daily = q
-                .order_by_asc(card_price_history::Column::CardId)
-                .order_by_asc(card_price_history::Column::AsOfDate)
-                .into_tuple::<(i32, String, Option<String>, Option<String>)>()
-                .all(&db)
-                .await
-                .unwrap();
-
-            // Bucketed: the new per-(card, bucket) skip-seek path.
-            let earliest = match cutoff {
-                Some(_) => None,
-                None => CardPriceHistory::find()
-                    .select_only()
-                    .column_as(card_price_history::Column::AsOfDate.min(), "m")
-                    .filter(card_price_history::Column::Game.eq(game))
-                    .into_tuple::<Option<String>>()
-                    .one(&db)
-                    .await
-                    .unwrap()
-                    .flatten(),
-            };
-            let bucketed = match window_start(cutoff.as_deref(), earliest.as_deref()).unwrap() {
-                Some(start) => {
-                    let buckets = bucketed_window(start, today, bucket_days, cutoff.as_deref());
-                    fetch_bucketed_snapshots(
-                        &db,
-                        "card_price_history",
-                        "card_id",
-                        "collection_items",
-                        game,
-                        user_id,
-                        &buckets,
-                    )
-                    .await
-                    .unwrap()
-                }
-                None => Vec::new(),
-            };
+            let card_daily = daily_rows(&db, "card_price_history", "card_id", game, floor).await;
+            let card_bucketed = bucketed_rows(
+                &db,
+                "card_price_history",
+                "card_id",
+                "collection_items",
+                game,
+                user_id,
+                today,
+                bucket_days,
+                floor,
+            )
+            .await;
+            let product_daily =
+                daily_rows(&db, "product_price_history", "product_id", game, floor).await;
+            let product_bucketed = bucketed_rows(
+                &db,
+                "product_price_history",
+                "product_id",
+                "collection_product_items",
+                game,
+                user_id,
+                today,
+                bucket_days,
+                floor,
+            )
+            .await;
 
             assert_eq!(
-                comparable(&fold_rows(daily, bucket_days, cutoff.as_deref())),
-                comparable(&fold_rows(bucketed, bucket_days, cutoff.as_deref())),
+                comparable(&fold_both(card_daily, product_daily, bucket_days, floor)),
+                comparable(&fold_both(
+                    card_bucketed,
+                    product_bucketed,
+                    bucket_days,
+                    floor
+                )),
                 "range {range:?}: bucketed fetch must fold identically to the daily fetch",
             );
         }
