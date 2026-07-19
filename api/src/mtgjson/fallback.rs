@@ -373,6 +373,69 @@ mod tests {
         assert_eq!(pool.quantity, 2, "2 random cards drawn from the pool of 10");
     }
 
+    /// Pin the Commander's Bundle **Case** (issue #507): a 6-bundle case whose cards cascade
+    /// from the Commander's Bundle via MTGJSON's sealed recursion — carrying the same wrong
+    /// certainty (the random pool arriving as guaranteed), so it needs the identical override.
+    /// Its curated `contents` must mirror the bundle exactly, it must be a `supplement` that
+    /// `override_memberships`, and its composition links six of the bundle (tcg 648686).
+    #[test]
+    fn covers_avatar_commander_bundle_case() {
+        let find = |tcg: &str| {
+            data()
+                .products
+                .iter()
+                .find(|p| p.tcgplayer_product_id == tcg)
+                .unwrap_or_else(|| panic!("product {tcg} present"))
+        };
+        let bundle = find("648686");
+        let case = find("648694");
+
+        assert!(
+            case.supplement && case.override_memberships,
+            "the case merges despite upstream coverage and overrides the pool's certainty"
+        );
+
+        // The case's cards are exactly the bundle's cards, membership + finish for membership —
+        // a card found in the bundle is found in the case, with the same pool demoted to
+        // `variable`. Comparing the full sets keeps the two entries in lock-step: a future
+        // edit to the bundle that isn't mirrored onto the case fails here.
+        let key = |c: &FallbackCard| {
+            (
+                c.set.clone(),
+                c.number.clone(),
+                c.membership.clone(),
+                c.foil,
+            )
+        };
+        let bundle_cards: std::collections::HashSet<_> = bundle.contents.iter().map(key).collect();
+        let case_cards: std::collections::HashSet<_> = case.contents.iter().map(key).collect();
+        assert_eq!(
+            case_cards, bundle_cards,
+            "the case mirrors the bundle's contents exactly"
+        );
+
+        // The random pool is `variable` ('may be in'), the guaranteed three stay `contains`.
+        let find_card = |num: &str| case.contents.iter().find(|c| c.number == num);
+        assert_eq!(
+            find_card("316").map(|c| c.membership.as_str()),
+            Some("contains"),
+            "Sol Ring (tle #316) is a guaranteed inclusion"
+        );
+        assert_eq!(
+            find_card("311").map(|c| c.membership.as_str()),
+            Some("variable"),
+            "Deflecting Swat (tle #311) is a may-be-in inclusion"
+        );
+
+        // The composition is a safety net: six of the Commander's Bundle sub-product.
+        assert_eq!(case.components.len(), 1);
+        assert_eq!(case.components[0].quantity, 6);
+        assert_eq!(
+            case.components[0].child_tcgplayer_product_id.as_deref(),
+            Some("648686")
+        );
+    }
+
     /// Pin the newly-authored Avatar `contents:null` products — the case/multipack link
     /// counts and children their composition renders (so a bad tcgid/count fails CI).
     #[test]

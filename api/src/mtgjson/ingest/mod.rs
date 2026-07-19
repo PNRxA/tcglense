@@ -1060,6 +1060,50 @@ mod tests {
         assert!(bundle_components.iter().any(|r| r.kind == "deck"));
     }
 
+    /// Issue #507: the Commander's Bundle **Case** (tcg 648694, 6× the bundle) inherits the
+    /// bundle's cards through MTGJSON's sealed recursion — including the deck that resolves the
+    /// ten-card pool as guaranteed. The shipped fallback applies the same override to the case:
+    /// its curated pool wins as `variable`, the guaranteed staples + lands stay `contains`, and
+    /// upstream's booster row is left untouched. Resolving against a real catalog also guards
+    /// the shipped case tcgid / card keys — a typo would silently drop the override at runtime.
+    #[tokio::test]
+    async fn shipped_avatar_bundle_case_overrides_recursed_rows() {
+        let db = migrated_memory_db().await;
+        let case = insert_product(&db, "648694").await;
+        let signet = insert_card_at(&db, "sf-signet", "tle", "315").await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let swat = insert_card_at(&db, "sf-swat", "tle", "311").await;
+        let plains = insert_card_at(&db, "sf-plains", "tla", "282").await;
+        let pull = insert_card_at(&db, "sf-pull", "tla", "1").await;
+
+        // What upstream cascades onto the case: booster membership from the contained boosters,
+        // plus the thirteen Commander cards as `contains` through the recursed deck reference —
+        // including the ten-card pool (represented here by Deflecting Swat).
+        let mut rows = HashSet::from([
+            (case, pull, "booster", false),
+            (case, signet, "contains", false),
+            (case, sol, "contains", false),
+            (case, swat, "contains", false),
+        ]);
+
+        merge_fallback(&db, fallback::data(), &HashSet::from([case]), &mut rows)
+            .await
+            .unwrap();
+
+        // Guaranteed staples + land printings stay `contains`; the pool is reclassified
+        // `variable`; upstream's booster row survives (an independent axis).
+        assert!(rows.contains(&(case, signet, "contains", false)));
+        assert!(rows.contains(&(case, sol, "contains", false)));
+        assert!(!rows.contains(&(case, swat, "contains", false)));
+        assert!(rows.contains(&(case, swat, "variable", false)));
+        assert!(rows.contains(&(case, plains, "contains", false)));
+        assert!(rows.contains(&(case, plains, "contains", true)));
+        assert!(
+            rows.contains(&(case, pull, "booster", false)),
+            "upstream booster row untouched"
+        );
+    }
+
     /// The component write path: delete-then-insert replaces (not duplicates) the game's
     /// rows, and round-trips every column in `position` order.
     #[tokio::test]
