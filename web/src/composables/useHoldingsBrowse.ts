@@ -363,10 +363,15 @@ export function useHoldingsBrowse(
   // on the wishlist surface it IS the heart's source (threaded to the grids as `:wishlist`),
   // replacing the reordering list so a want edit repaints the heart in place. This write's
   // `['wishlist-counts', …]` invalidation refetches it even while the list refetch is deferred.
+  // `wishlistReady` reports whether that overlay has settled for the current cards; the wishlist
+  // grid uses it to tell "not covered yet" (fall back to the entry's want) from "settled and
+  // absent" (a just-removed want → clear the heart) instead of pinning the stale frozen entry.
   let wishlistCounts: ComputedRef<OwnedCountsMap | undefined> = computed(() => undefined)
+  let wishlistReady: ComputedRef<boolean> = computed(() => false)
   if (surface.enableWishlistHearts) {
     const wc = useWishlistCounts(game, renderedCards)
     wishlistCounts = computed(() => wc.ownership.value)
+    wishlistReady = computed(() => wc.ready.value)
   }
 
   // The held stats for the current scope (all cards / a set / a set + its related group,
@@ -542,6 +547,7 @@ export function useHoldingsBrowse(
     ownedMarks,
     collectionCounts,
     wishlistCounts,
+    wishlistReady,
     heldUnique,
     scopeTotal,
     scopeTotalValue,

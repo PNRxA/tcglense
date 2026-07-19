@@ -14,8 +14,9 @@ const props = defineProps<{
   products: Product[]
   // Wanted counts keyed by external product id (from `useWishlistProductCounts`, or the
   // page data on the wish-list landing): a positive count appends a Heart chip to the
-  // collection-primary quick-add badge, matching CardGrid. Omitted on signed-out grids —
-  // the control only renders while signed in.
+  // collection-primary quick-add badge, matching CardGrid, and seeds the popover's wish-list
+  // row so its want shows at once on open (no flash of 0). Omitted on signed-out grids — the
+  // control only renders while signed in.
   wanted?: OwnedCountsMap
   // Owned counts for the collection twin (#435). The unified control fetches authoritative
   // collection and wish-list seeds only when its popover opens.
@@ -62,9 +63,7 @@ useProductNavList(
           :name="product.name"
           :quantity="owned?.[product.id]?.quantity ?? 0"
           :foil-quantity="owned?.[product.id]?.foil_quantity ?? 0"
-          :wishlist-quantity="
-            (wanted?.[product.id]?.quantity ?? 0) + (wanted?.[product.id]?.foil_quantity ?? 0)
-          "
+          :wishlist-seed="wanted?.[product.id]"
         />
       </template>
     </ProductTile>

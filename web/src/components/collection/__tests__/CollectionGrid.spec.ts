@@ -56,6 +56,7 @@ function mountGrid(
     collectionCounts?: OwnedCountsMap
     ownedMarks?: OwnedCountsMap
     wishlist?: OwnedCountsMap
+    wishlistReady?: boolean
     readonly?: boolean
   } = {},
 ) {
@@ -74,6 +75,7 @@ function mountGrid(
       collectionCounts: opts.collectionCounts,
       ownedMarks: opts.ownedMarks,
       wishlist: opts.wishlist,
+      wishlistReady: opts.wishlistReady,
       readonly: opts.readonly,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
@@ -161,6 +163,23 @@ describe('CollectionGrid quick-add controls on the wishlist surface', () => {
     })
     expect(wrapper.find('[aria-label="2 wanted"]').exists()).toBe(true)
     expect(wrapper.find('[aria-label="5 wanted"]').exists()).toBe(false)
+  })
+
+  it('clears the heart once the SETTLED overlay drops a removed want (no stale-entry fallback)', () => {
+    // The reported bug: a quick-remove (want → 0) drops the card from the `['wishlist-counts', …]`
+    // overlay, but the list refetch is deferred so the frozen entry still carries the old want.
+    // With the overlay marked SETTLED (`wishlistReady`), an absent card is trusted as genuinely
+    // unwanted, so no heart renders — the fix that stops the stale entry from pinning "5 wanted".
+    const settled = mountGrid([entry('a', 5, 0)], 'wishlist', {
+      wishlist: {},
+      wishlistReady: true,
+    })
+    expect(wantedBadges(settled)).toHaveLength(0)
+
+    // Contrast: the SAME empty overlay while it's still loading (`wishlistReady` false, the
+    // default) keeps the entry fallback so a wanted tile never blanks on a cold load / pagination.
+    const loading = mountGrid([entry('a', 5, 0)], 'wishlist', { wishlist: {} })
+    expect(loading.find('[aria-label="5 wanted"]').exists()).toBe(true)
   })
 })
 

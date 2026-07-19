@@ -74,7 +74,7 @@ vi.mock('@/composables/useCollection', async () => {
 import ProductCountControl from '../ProductCountControl.vue'
 
 function mountControl(
-  props: { quantity?: number; foilQuantity?: number; wishlistQuantity?: number } = {},
+  props: { quantity?: number; foilQuantity?: number; wishlistSeed?: Counts } = {},
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -87,10 +87,15 @@ function mountControl(
       name: 'Booster Box',
       quantity: props.quantity ?? 0,
       foilQuantity: props.foilQuantity ?? 0,
-      wishlistQuantity: props.wishlistQuantity ?? 0,
+      wishlistSeed: props.wishlistSeed,
     },
     global: { plugins: [pinia, [VueQueryPlugin, { queryClient }]] },
   })
+}
+
+// A resting wanted seed of N regular copies (products edit only regular; foil is preserved).
+function want(quantity: number): Counts {
+  return { quantity, foil_quantity: 0 }
 }
 
 // reka teleports the popover content to <body>, so reach its controls through the document.
@@ -134,7 +139,7 @@ describe('ProductCountControl unified sealed quick add', () => {
   })
 
   it('rests as one bottom-left badge containing collection and wanted counts', () => {
-    const heldAndWanted = mountControl({ quantity: 2, foilQuantity: 1, wishlistQuantity: 4 })
+    const heldAndWanted = mountControl({ quantity: 2, foilQuantity: 1, wishlistSeed: want(4) })
     const trigger = heldAndWanted.get(
       '[aria-label="Edit copies of Booster Box in your collection"]',
     )
@@ -146,7 +151,7 @@ describe('ProductCountControl unified sealed quick add', () => {
     heldAndWanted.unmount()
 
     // A wish-listed but unowned product rests as the Heart, not a second corner button.
-    const wantedOnly = mountControl({ wishlistQuantity: 2 })
+    const wantedOnly = mountControl({ wishlistSeed: want(2) })
     expect(wantedOnly.find('[aria-label="2 wanted"]').exists()).toBe(true)
     expect(wantedOnly.find('[aria-label="Add Booster Box to your collection"]').exists()).toBe(true)
     wantedOnly.unmount()
@@ -158,7 +163,7 @@ describe('ProductCountControl unified sealed quick add', () => {
   })
 
   it('opens both list editors and keeps each disabled until its own query settles', async () => {
-    const wrapper = mountControl({ quantity: 2, wishlistQuantity: 3 })
+    const wrapper = mountControl({ quantity: 2, wishlistSeed: want(3) })
     expect(h.collectionOpts.enabled!.value).toBe(false)
     expect(h.wishlistOpts.enabled!.value).toBe(false)
 
@@ -188,7 +193,7 @@ describe('ProductCountControl unified sealed quick add', () => {
   })
 
   it('saves each list independently and preserves both hidden foil counts', async () => {
-    const wrapper = mountControl({ quantity: 1, foilQuantity: 9, wishlistQuantity: 2 })
+    const wrapper = mountControl({ quantity: 1, foilQuantity: 9, wishlistSeed: want(2) })
     await openPopover(wrapper, 'Edit copies of Booster Box in your collection')
 
     h.collectionEntry.data.value = { quantity: 5, foil_quantity: 2 }
@@ -215,6 +220,23 @@ describe('ProductCountControl unified sealed quick add', () => {
       quantity: 8,
       foil_quantity: 1,
     })
+
+    wrapper.unmount()
+  })
+
+  it('seeds the wish-list row display from wishlistSeed so the want shows at once on open', async () => {
+    // Bug parity with OwnedCountControl: the row used to flash "0" until the authoritative
+    // single-product want (staleTime 0) landed. With `wishlistSeed` it shows the resting want
+    // the instant the popover opens; the stepper stays disabled until the fetch settles, so the
+    // seed can never drive an absolute-count save.
+    const wrapper = mountControl({ wishlistSeed: want(3) })
+    // Both entry queries are unresolved (beforeEach).
+    await openPopover(wrapper, 'Add Booster Box to your collection')
+
+    // The wish row already reads the seeded want, not 0...
+    expect(byLabel('Wish list: 3')).not.toBeNull()
+    // ...while its stepper stays disabled until the authoritative want lands.
+    expect(byLabel(ADD_WISHLIST)!.disabled).toBe(true)
 
     wrapper.unmount()
   })

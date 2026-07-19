@@ -5,7 +5,7 @@ import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
 import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
 import ReadonlyOwnedBadge from '@/components/cards/ReadonlyOwnedBadge.vue'
-import type { CardListTarget } from '@/composables/useOwnedCountEditor'
+import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 import { useCardNavList } from '@/composables/useCardNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
@@ -39,6 +39,15 @@ const props = withDefaults(
     // heart in place instead of resorting the recency-sorted tiles. Absent (undefined) when no
     // overlay is threaded, so no heart renders.
     wishlist?: OwnedCountsMap
+    // Whether the `wishlist` overlay has SETTLED for the currently rendered cards (issue #364
+    // follow-up). Only meaningful on the wishlist surface, where a card absent from the overlay
+    // is ambiguous: it may just not be covered yet (cold load / pagination), or it may have been
+    // genuinely removed (want → 0). While the overlay is still loading (`false`) an absent card
+    // falls back to the entry's own want so the heart shows at once; once it has settled (`true`)
+    // an absent card is trusted as unwanted, so a quick-remove clears the heart in place instead
+    // of the stale frozen-list entry pinning the old count. Defaults false; the collection
+    // surface never sets it (its hearts come from the overlay alone, with no entry fallback).
+    wishlistReady?: boolean
     // Read-only grid (the public collection browse, issues #361/#362): render a static owned
     // badge (the owner's counts) instead of the quick-add editor. This grid otherwise renders
     // OwnedCountControl unconditionally, so without this flag a signed-in viewer of someone
@@ -51,6 +60,7 @@ const props = withDefaults(
     collectionCounts: undefined,
     ownedMarks: undefined,
     wishlist: undefined,
+    wishlistReady: false,
     readonly: false,
   },
 )
@@ -73,25 +83,30 @@ function primaryCounts(entry: CollectionEntry): { quantity: number; foil_quantit
   return { quantity: entry.quantity, foil_quantity: entry.foil_quantity }
 }
 
-// The card's total wanted count feeding the control's appended Heart chip (regular + foil).
-// The order-independent `wishlist` overlay (`['wishlist-counts', …]`) is the authoritative
-// source on BOTH surfaces: on a collection grid it flags a wish-listed card; on the wishlist
-// surface it stands in for the entry's own want (not `entry.quantity`) so a quick-add edit
-// repaints the heart in place rather than resorting the recency-sorted tiles under the open
-// popover (the list refetch is deferred there) — issue #364 follow-up.
+// The card's resting wish-list want (regular + foil split) feeding the control's appended Heart
+// chip AND its wish-list row display seed. The order-independent `wishlist` overlay
+// (`['wishlist-counts', …]`) is the authoritative source on BOTH surfaces: on a collection grid
+// it flags a wish-listed card; on the wishlist surface it stands in for the entry's own want
+// (not `entry.quantity`) so a quick-add edit repaints the heart in place rather than resorting
+// the recency-sorted tiles under the open popover (the list refetch is deferred there) — issue
+// #364 follow-up.
 //
 // Per-card fallback (issue #364 follow-up): the overlay is a sequential second fetch keyed off
 // the just-painted list, so on a cold load and every pagination it lands a round-trip after the
-// tiles. On the wishlist surface a card absent from the overlay (not yet covered) falls back to
-// the entry's own wanted counts — immediate from the just-painted list — so the heart shows at
-// once instead of blanking (and a wanted-but-unowned tile doesn't flash a bare "+"); the overlay
-// then takes over per-card as it arrives, so an in-place edit still wins. On a collection grid an
-// absent overlay means the card simply isn't wish-listed, so it stays 0 (no fallback).
-function wantedTotal(entry: CollectionEntry): number {
+// tiles. On the wishlist surface, while the overlay is still loading (`!wishlistReady`) a card it
+// hasn't covered falls back to the entry's own wanted counts — immediate from the just-painted
+// list — so the heart shows at once instead of blanking (and a wanted-but-unowned tile doesn't
+// flash a bare "+"). Once the overlay has SETTLED (`wishlistReady`), an absent card is trusted as
+// genuinely unwanted (e.g. a quick-remove took the want to 0): returning undefined clears the
+// heart in place rather than the stale frozen-list entry pinning the old count. On a collection
+// grid an absent overlay means the card simply isn't wish-listed, so it stays undefined.
+function wishlistSeed(entry: CollectionEntry): OwnedCountSeed | undefined {
   const overlay = props.wishlist?.[entry.card.id]
-  if (overlay) return overlay.quantity + overlay.foil_quantity
-  if (props.list === 'wishlist') return entry.quantity + entry.foil_quantity
-  return 0
+  if (overlay) return overlay
+  if (props.list === 'wishlist' && !props.wishlistReady) {
+    return { quantity: entry.quantity, foil_quantity: entry.foil_quantity }
+  }
+  return undefined
 }
 
 // Publish these entries' cards (in display order) so the card-detail modal can step prev/next
@@ -120,7 +135,7 @@ useCardNavList(
           :name="entry.card.name"
           :quantity="primaryCounts(entry).quantity"
           :foil-quantity="primaryCounts(entry).foil_quantity"
-          :wishlist-quantity="wantedTotal(entry)"
+          :wishlist-seed="wishlistSeed(entry)"
         />
       </template>
     </CardTile>

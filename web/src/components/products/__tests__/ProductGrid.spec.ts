@@ -27,9 +27,16 @@ function makeProduct(id: string): Product {
 // without deep-rendering the real popover/editor (covered by ProductCountControl.spec).
 const ProductControlStub = {
   name: 'ProductCountControl',
-  props: ['game', 'productId', 'name', 'quantity', 'foilQuantity', 'wishlistQuantity'],
+  props: ['game', 'productId', 'name', 'quantity', 'foilQuantity', 'wishlistSeed'],
+  // Echo the seed's combined total as `data-wanted` so the existing wanted-total assertions hold
+  // against the split-seed prop.
+  computed: {
+    wantedTotal(this: { wishlistSeed?: { quantity: number; foil_quantity: number } }) {
+      return this.wishlistSeed ? this.wishlistSeed.quantity + this.wishlistSeed.foil_quantity : 0
+    },
+  },
   template:
-    '<div class="wanted-stub" :data-id="productId" :data-qty="quantity" :data-foil="foilQuantity" :data-wanted="wishlistQuantity" />',
+    '<div class="wanted-stub" :data-id="productId" :data-qty="quantity" :data-foil="foilQuantity" :data-wanted="wantedTotal" />',
 }
 
 // Signed in unless `authenticated: false` — the quick-add controls only render for a
