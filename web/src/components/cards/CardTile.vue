@@ -14,6 +14,7 @@ import { useCurrency } from '@/composables/useCurrency'
 import CardImage from '@/components/cards/CardImage.vue'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { PRODUCT_CARDS_MODAL_SEARCH_KEYS } from '@/composables/useProductCardsSearch'
+import { applyDetailOrigin } from '@/lib/detailOrigin'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 const props = defineProps<{
@@ -58,8 +59,12 @@ function onClick(event: MouseEvent) {
   // A card inside the sealed-product modal swaps detail surfaces instead of stacking dialogs —
   // and the product modal's namespaced card search leaves with it (it's that product's state,
   // same as DetailDialogShell dropping its ownedKeys on close/step; issue #448).
+  const fromProduct = typeof route.query.product === 'string' ? route.query.product : null
   delete query.product
   for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
+  // Remember that product so the card modal can offer a "← Back to <product>" crumb; opening a
+  // card from a normal grid (no product open) clears any stale marker instead.
+  applyDetailOrigin(query, 'product', fromProduct)
   if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
   void router.push({ query })
 }

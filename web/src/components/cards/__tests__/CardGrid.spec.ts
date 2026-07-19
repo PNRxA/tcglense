@@ -107,7 +107,7 @@ function wantedBadges(wrapper: ReturnType<typeof mountGrid>) {
 }
 
 describe('CardGrid detail modal links', () => {
-  it('swaps an open sealed-product modal for the card modal', async () => {
+  it('swaps an open sealed-product modal for the card modal, remembering the product', async () => {
     const wrapper = mountGrid([makeCard('a')], undefined, false)
     const router = wrapper.vm.$router
     await router.push('/cards/mtg/cards/a?product=product-1')
@@ -117,6 +117,8 @@ describe('CardGrid detail modal links', () => {
 
     expect(router.currentRoute.value.query.product).toBeUndefined()
     expect(router.currentRoute.value.query.card).toBe('a')
+    // The product the card was opened from is stashed so the modal can offer "← Back to <product>".
+    expect(router.currentRoute.value.query.openedFrom).toBe('product:product-1')
   })
 
   it('takes the product modal’s namespaced card search with it on the swap (#448)', async () => {
@@ -129,7 +131,34 @@ describe('CardGrid detail modal links', () => {
     await cardLink(wrapper, 'a').trigger('click')
     await flushPromises()
 
+    expect(router.currentRoute.value.query).toEqual({ card: 'a', openedFrom: 'product:product-1' })
+  })
+
+  it('clears a stale origin marker when opening from a normal grid', async () => {
+    // Opening a card from a plain browse/prints grid (no product open) is not a cross-surface
+    // swap; any leftover `?openedFrom=` from an earlier trip must go, not point the card modal
+    // back at an unrelated product.
+    const wrapper = mountGrid([makeCard('a')], undefined, false)
+    const router = wrapper.vm.$router
+    await router.push('/cards/mtg/cards/a?card=old&openedFrom=product:product-9')
+
+    await cardLink(wrapper, 'a').trigger('click')
+    await flushPromises()
+
     expect(router.currentRoute.value.query).toEqual({ card: 'a' })
+  })
+
+  it('leaves the set-grouping ?from= set code untouched (distinct key)', async () => {
+    // The related-sets grouped view carries `?from=<setCode>` on these same card pages; the modal
+    // uses `?openedFrom=` so opening a card there must not clobber the grouping's `from`.
+    const wrapper = mountGrid([makeCard('a')], undefined, false)
+    const router = wrapper.vm.$router
+    await router.push('/cards/mtg/cards/a?related=1&from=blc')
+
+    await cardLink(wrapper, 'a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ related: '1', from: 'blc', card: 'a' })
   })
 })
 

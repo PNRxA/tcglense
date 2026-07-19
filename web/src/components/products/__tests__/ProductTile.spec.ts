@@ -69,13 +69,15 @@ describe('ProductTile detail modal', () => {
     expect(router.currentRoute.value.query).toEqual({ sort: 'name' })
   })
 
-  it('swaps an open card modal for the product modal', async () => {
+  it('swaps an open card modal for the product modal, remembering the card', async () => {
     const { wrapper, router } = await mountTile('/sealed/mtg?card=card-1')
     await wrapper.get('a').trigger('click')
     await flushPromises()
 
     expect(router.currentRoute.value.query.card).toBeUndefined()
     expect(router.currentRoute.value.query.product).toBe('product-1')
+    // The card the product was opened from is stashed so the modal can offer "← Back to <card>".
+    expect(router.currentRoute.value.query.openedFrom).toBe('card:card-1')
   })
 
   it('drops a leftover namespaced card search — it was another product’s (#448)', async () => {
@@ -84,6 +86,20 @@ describe('ProductTile detail modal', () => {
     const { wrapper, router } = await mountTile(
       '/sealed/mtg?card=card-1&pq=t:goblin&psort=name:desc',
     )
+    await wrapper.get('a').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({
+      product: 'product-1',
+      openedFrom: 'card:card-1',
+    })
+  })
+
+  it('clears a stale origin marker when opening from another product', async () => {
+    // Reaching one product from another (a linked box/pack in "What's in the box") is not a
+    // cross-surface swap: there's no card to go back to, so any leftover `?openedFrom=` must be
+    // dropped rather than pointing the new modal at an unrelated item.
+    const { wrapper, router } = await mountTile('/sealed/mtg?product=old&openedFrom=card:card-9')
     await wrapper.get('a').trigger('click')
     await flushPromises()
 

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ChevronLeft, ChevronRight, Expand, X } from '@lucide/vue'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import DetailOriginCrumb from '@/components/shared/DetailOriginCrumb.vue'
+import { DETAIL_ORIGIN_KEY, parseDetailOrigin } from '@/lib/detailOrigin'
 import type { NavStoreApi } from '@/stores/nav'
 
 // The frame both detail modals share (issues #275, #438). Clicking an item in any browse grid
@@ -72,6 +74,26 @@ const position = computed(() =>
 )
 const hasNav = computed(() => position.value.index >= 0 && position.value.total > 1)
 
+// The surface this modal was opened FROM on a product<->card swap: a card opened from inside a
+// sealed product remembers the product, and a product opened from inside a card
+// remembers the card, via `?from=<kind>:<id>` (see `lib/detailOrigin.ts`, set by CardTile /
+// ProductTile). It backs the "← Back to <origin>" crumb, giving a one-tap return to the other
+// surface instead of leaning on the browser's Back button. The kind is always the OTHER surface
+// (only cross-surface swaps write the marker); the guard is defensive so a stray same-kind value
+// never shows a crumb that points at the item you're already on.
+const origin = computed(() => {
+  const parsed = parseDetailOrigin(route.query[DETAIL_ORIGIN_KEY])
+  return parsed && parsed.kind !== props.queryKey ? parsed : null
+})
+
+// The per-item ownedKeys (a product modal's namespaced card search) and the per-trip origin
+// marker are both scoped to the single open item, so every transition that leaves it — closing,
+// stepping to a neighbour, and returning to the origin — drops the same pair. Mutates `next`.
+function dropPerItemState(next: LocationQuery) {
+  for (const key of props.ownedKeys ?? []) delete next[key]
+  delete next[DETAIL_ORIGIN_KEY]
+}
+
 // Stepping to another item is just rewriting the id param — but with `replace`, not `push`, so
 // holding an arrow key (or clicking prev/next) to flip through a page doesn't bury the list
 // underneath dozens of history entries: Back still exits the modal in one press. The list keeps
@@ -82,8 +104,25 @@ const hasNav = computed(() => position.value.index >= 0 && position.value.total 
 function goTo(id: string | null) {
   if (!id) return
   const next = { ...route.query, [props.queryKey]: id }
-  for (const key of props.ownedKeys ?? []) delete next[key]
+  // Stepping to a neighbour is a new item, so its per-item state (the card search, the "came from"
+  // marker) resets — the same fresh start a full-page product-to-product link gives.
+  dropPerItemState(next)
   void router.replace({ query: next })
+}
+
+// Return to the surface this modal was opened from (the "← Back to <origin>" crumb). Swaps this
+// item out for the origin — set its id key, drop ours (queryKey + our per-item ownedKeys), and
+// consume the marker. `push`, like a tile click, so the trip is a normal forward step Back can
+// undo; the origin's own state (a product's card search) reopens fresh, matching the #448 reset a
+// full-page product-to-product link gives.
+function goToOrigin() {
+  const target = origin.value
+  if (!target) return
+  const next = { ...route.query }
+  delete next[props.queryKey]
+  dropPerItemState(next)
+  next[target.kind] = target.id
+  void router.push({ query: next })
 }
 
 // Left/right arrow keys mirror the buttons. The listener sits on the dialog's OWN content (see
@@ -119,7 +158,7 @@ function onKeydown(event: KeyboardEvent) {
 function close() {
   const next = { ...route.query }
   delete next[props.queryKey]
-  for (const key of props.ownedKeys ?? []) delete next[key]
+  dropPerItemState(next)
   // Drop the game a `:game`-less route (the public deck page) carried alongside the id. This is
   // unconditional because `?game=` is never anyone else's: CardTile and ProductTile are its only
   // writers and both set it only when the route has no `:game` param, so wherever it exists it
@@ -141,6 +180,19 @@ function onOpenChange(value: boolean) {
       @keydown="onKeydown"
     >
       <DialogTitle class="sr-only">{{ capitalizedNoun }} details</DialogTitle>
+
+      <!-- "← Back to <origin>" crumb, its own row above the header when you crossed here from the
+           other detail surface (a card opened from inside a sealed product, or the reverse). It
+           returns you to that exact item in one tap; full width so a long product name truncates
+           cleanly rather than crowding the controls below. -->
+      <DetailOriginCrumb
+        v-if="origin"
+        :game="game"
+        :kind="origin.kind"
+        :id="origin.id"
+        class="mb-2"
+        @navigate="goToOrigin"
+      />
 
       <!-- Header row, pinned above the scrolling body: prev/next through the page's items on
            the left (issue #275), the canonical detail page + a plain close on the right. The
