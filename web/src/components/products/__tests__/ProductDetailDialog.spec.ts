@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import ProductDetailDialog from '../ProductDetailDialog.vue'
@@ -220,6 +221,48 @@ describe('ProductDetailDialog origin crumb', () => {
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({ sort: 'name', product: 'c' })
   })
+
+  it('returns with push, not replace, so Back can undo the trip', async () => {
+    // Mirrors the prev/next replace assertion: the return is a forward step Back should undo, not
+    // an in-place rewrite.
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=card:card-7')
+    const pushSpy = vi.spyOn(router, 'push')
+    const replaceSpy = vi.spyOn(router, 'replace')
+    crumbButton()!.click()
+    await flushPromises()
+    expect(pushSpy).toHaveBeenCalledTimes(1)
+    expect(replaceSpy).not.toHaveBeenCalled()
+  })
+
+  it('names the origin from a warm query cache (shell forwards the origin id/kind/game)', async () => {
+    // With the query layer present, the crumb resolves the real name — proving the shell hands the
+    // crumb the ORIGIN's kind/id/game, not the open product's (a mis-binding would fail to resolve).
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/sealed/:game', component: { template: '<div />' } },
+        { path: '/sealed/:game/:id', component: { template: '<div />' } },
+      ],
+    })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useProductNavStore().register({ game: 'mtg', ids: ['a', 'b', 'c'] })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(['card', 'mtg', 'card-7'], { id: 'card-7', name: 'Lightning Bolt' })
+    await router.push('/sealed/mtg?sort=name&product=b&openedFrom=card:card-7')
+    await router.isReady()
+
+    wrapper = mount(ProductDetailDialog, {
+      attachTo: document.body,
+      global: {
+        plugins: [router, pinia, [VueQueryPlugin, { queryClient }]],
+        stubs: { ProductDetailContent: true },
+      },
+    })
+    await flushPromises()
+
+    expect(crumbButton()?.textContent).toContain('Back to Lightning Bolt')
+  })
 })
 
 describe('ProductDetailDialog game resolution', () => {
@@ -280,6 +323,16 @@ describe('ProductDetailDialog game resolution', () => {
     byLabel('Close')!.click()
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({})
+    expect(router.currentRoute.value.path).toBe('/u/alice/decks/5')
+  })
+
+  it('preserves the carried game on the crumb return trip (unlike close, which drops it)', async () => {
+    // A product opened from a card on the deck page returns to that card; `?game=` must survive so
+    // the reopened card modal can still resolve its game (close drops it — goToOrigin must not).
+    const router = await mountAt('/u/alice/decks/5?product=y&game=mtg&openedFrom=card:x')
+    crumbButton()!.click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ card: 'x', game: 'mtg' })
     expect(router.currentRoute.value.path).toBe('/u/alice/decks/5')
   })
 })

@@ -247,6 +247,7 @@ describe('CardDetailDialog game resolution (issue #394)', () => {
       global: { plugins: [router, pinia], stubs: { CardDetailContent: true } },
     })
     await flushPromises()
+    return router
   }
 
   afterEach(() => {
@@ -268,5 +269,16 @@ describe('CardDetailDialog game resolution (issue #394)', () => {
     // A normal grid route carries :game in the path; the query fallback must not shadow it.
     await mountAt('/cards/mtg?card=x')
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
+  it('preserves the carried game on the crumb return trip (unlike close, which drops it)', async () => {
+    // A card opened from a sealed product on the deck page returns to that product; `?game=` must
+    // survive so the reopened product modal can still resolve its game (close drops it — goToOrigin
+    // must not).
+    const router = await mountAt('/u/alice/decks/5?card=y&game=mtg&openedFrom=product:x')
+    crumbButton()!.click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ product: 'x', game: 'mtg' })
+    expect(router.currentRoute.value.path).toBe('/u/alice/decks/5')
   })
 })

@@ -45,6 +45,11 @@ const name = computed(() => {
     findCardInCache(qc, props.game, props.id)
   return found?.name ?? null
 })
+
+// The full label, reused as the `title` so a long product name the button truncates is still
+// readable on hover — mirroring the `:title` the sibling CardTile / ProductTile set on their own
+// truncating names.
+const label = computed(() => `Back to ${name.value ?? NOUNS[props.kind]}`)
 </script>
 
 <template>
@@ -54,6 +59,6 @@ const name = computed(() => {
     @click="$emit('navigate')"
   >
     <ArrowLeft class="size-3.5 shrink-0" aria-hidden="true" />
-    <span class="truncate">Back to {{ name ?? NOUNS[kind] }}</span>
+    <span class="truncate" :title="label">{{ label }}</span>
   </button>
 </template>

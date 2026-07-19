@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ChevronLeft, ChevronRight, Expand, X } from '@lucide/vue'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import DetailOriginCrumb from '@/components/shared/DetailOriginCrumb.vue'
@@ -86,6 +86,14 @@ const origin = computed(() => {
   return parsed && parsed.kind !== props.queryKey ? parsed : null
 })
 
+// The per-item ownedKeys (a product modal's namespaced card search) and the per-trip origin
+// marker are both scoped to the single open item, so every transition that leaves it — closing,
+// stepping to a neighbour, and returning to the origin — drops the same pair. Mutates `next`.
+function dropPerItemState(next: LocationQuery) {
+  for (const key of props.ownedKeys ?? []) delete next[key]
+  delete next[DETAIL_ORIGIN_KEY]
+}
+
 // Stepping to another item is just rewriting the id param — but with `replace`, not `push`, so
 // holding an arrow key (or clicking prev/next) to flip through a page doesn't bury the list
 // underneath dozens of history entries: Back still exits the modal in one press. The list keeps
@@ -96,10 +104,9 @@ const origin = computed(() => {
 function goTo(id: string | null) {
   if (!id) return
   const next = { ...route.query, [props.queryKey]: id }
-  for (const key of props.ownedKeys ?? []) delete next[key]
-  // Stepping to a neighbour is a new item, so the "came from" marker goes too — it described the
-  // trip into THIS item, not into its neighbour (the same per-item reset the ownedKeys get).
-  delete next[DETAIL_ORIGIN_KEY]
+  // Stepping to a neighbour is a new item, so its per-item state (the card search, the "came from"
+  // marker) resets — the same fresh start a full-page product-to-product link gives.
+  dropPerItemState(next)
   void router.replace({ query: next })
 }
 
@@ -113,8 +120,7 @@ function goToOrigin() {
   if (!target) return
   const next = { ...route.query }
   delete next[props.queryKey]
-  for (const key of props.ownedKeys ?? []) delete next[key]
-  delete next[DETAIL_ORIGIN_KEY]
+  dropPerItemState(next)
   next[target.kind] = target.id
   void router.push({ query: next })
 }
@@ -152,9 +158,7 @@ function onKeydown(event: KeyboardEvent) {
 function close() {
   const next = { ...route.query }
   delete next[props.queryKey]
-  for (const key of props.ownedKeys ?? []) delete next[key]
-  // The "came from" marker is this modal's too — drop it so a closed modal leaves no trace.
-  delete next[DETAIL_ORIGIN_KEY]
+  dropPerItemState(next)
   // Drop the game a `:game`-less route (the public deck page) carried alongside the id. This is
   // unconditional because `?game=` is never anyone else's: CardTile and ProductTile are its only
   // writers and both set it only when the route has no `:game` param, so wherever it exists it
