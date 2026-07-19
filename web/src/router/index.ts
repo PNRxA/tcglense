@@ -205,6 +205,14 @@ const router = createRouter({
       component: () => import('@/views/GameDecksView.vue'),
       props: true,
     },
+    // Static `needed` outranks the dynamic `:id` below in vue-router, so a deck id can't
+    // shadow the cards-needed list (issue #499). Declared first for clarity too.
+    {
+      path: '/decks/:game/needed',
+      name: 'deck-needed',
+      component: () => import('@/views/DeckNeededView.vue'),
+      props: true,
+    },
     {
       path: '/decks/:game/:id',
       name: 'deck',

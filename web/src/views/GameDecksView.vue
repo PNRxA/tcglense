@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { FolderPlus, Layers, Plus } from '@lucide/vue'
+import { FolderPlus, Layers, Plus, ShoppingCart } from '@lucide/vue'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -207,6 +207,14 @@ function removeFolder(folderId: number, name: string) {
           <p class="text-muted-foreground text-sm">{{ decks.length }} deck(s)</p>
         </div>
         <div class="flex gap-2">
+          <!-- Cards needed across all decks vs the collection (issue #499). -->
+          <RouterLink
+            v-if="decks.length"
+            :class="buttonVariants({ variant: 'outline' })"
+            :to="`/decks/${game}/needed`"
+          >
+            <ShoppingCart class="size-4" /> Cards needed
+          </RouterLink>
           <DeckImportDialog :game="game" />
           <Dialog v-model:open="folderOpen">
             <DialogTrigger as-child>
