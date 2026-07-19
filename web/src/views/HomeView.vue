@@ -2,6 +2,7 @@
 import { computed, type Component } from 'vue'
 import {
   ArrowRight,
+  Bot,
   ChevronRight,
   CircleCheck,
   Code,
@@ -17,6 +18,7 @@ import {
   Package,
   PackageOpen,
   Search,
+  Terminal,
   TrendingUp,
 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
@@ -524,6 +526,68 @@ const rowLinkClass =
             <div class="mt-4 flex items-center justify-between border-t pt-3">
               <span class="text-sm font-medium">List total</span>
               <span class="text-sm font-semibold tabular-nums">$86.20</span>
+            </div>
+          </template>
+        </FeatureDemoRow>
+
+        <!-- Row F — CLI & agents (demo left at md+). -->
+        <FeatureDemoRow
+          :icon="Terminal"
+          eyebrow="CLI & agents"
+          heading="Drive it from your terminal — or an agent"
+          :body="
+            'tcglense is a standalone, open-source command-line client and TUI for this API. Sign ' +
+            'in from the terminal with a quick browser handshake — no password typed at the prompt ' +
+            '— then search the catalog, check prices, and update your collection and wish list ' +
+            'without leaving the shell. Scriptable output and scoped tcgl_ API keys make it a clean ' +
+            'surface for automation and AI agents to work your collection on your behalf.'
+          "
+          demo-side="left"
+        >
+          <a
+            href="https://github.com/PNRxA/tcglense-cli"
+            target="_blank"
+            rel="noopener noreferrer"
+            :class="rowLinkClass"
+          >
+            Get the CLI
+            <ExternalLink class="size-4" aria-hidden="true" />
+          </a>
+          <RouterLink to="/docs" :class="rowLinkClass">
+            Explore the API
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
+            <!-- Decorative mock terminal — illustrative commands, not live output. -->
+            <div class="overflow-hidden rounded-xl border">
+              <div class="bg-muted/60 flex items-center gap-1.5 border-b px-3 py-2">
+                <span class="bg-foreground/20 size-2.5 rounded-full"></span>
+                <span class="bg-foreground/20 size-2.5 rounded-full"></span>
+                <span class="bg-foreground/20 size-2.5 rounded-full"></span>
+                <span class="text-muted-foreground ml-2 text-xs font-medium">tcglense</span>
+                <span
+                  class="border-primary/30 bg-primary/10 text-primary ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                >
+                  <Bot class="size-3" aria-hidden="true" />
+                  Agent-ready
+                </span>
+              </div>
+              <div class="bg-card p-4 font-mono text-xs leading-relaxed">
+                <p><span class="text-primary">$</span> tcglense login</p>
+                <p class="text-muted-foreground">→ browser authorized “workstation”</p>
+                <p class="mt-2">
+                  <span class="text-primary">$</span> tcglense search 't:dragon usd&lt;5'
+                </p>
+                <p class="text-muted-foreground">
+                  &nbsp;&nbsp;42 cards · Ancient Brass Dragon $3.80 …
+                </p>
+                <p class="mt-2">
+                  <span class="text-primary">$</span> tcglense collection add "Sol Ring" --foil
+                </p>
+                <p class="text-muted-foreground">
+                  <span class="text-primary">✓</span> +1 foil · 1,205 unique
+                </p>
+              </div>
             </div>
           </template>
         </FeatureDemoRow>
