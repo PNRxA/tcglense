@@ -17,6 +17,7 @@ mod harness;
 mod api_keys;
 mod caching;
 mod captcha;
+mod cli_auth;
 mod collection;
 mod collection_import;
 mod collection_products;

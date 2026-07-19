@@ -68,7 +68,8 @@ impl IpRoute {
             }
             "/api/auth/verify-email"
             | "/api/auth/reset-password"
-            | "/api/auth/complete-registration" => return Some(Self::Token),
+            | "/api/auth/complete-registration"
+            | "/api/auth/cli/token" => return Some(Self::Token),
             _ => {}
         }
 
@@ -298,6 +299,12 @@ mod tests {
         );
         assert_eq!(
             IpRoute::from_path("/api/auth/reset-password"),
+            Some(IpRoute::Token)
+        );
+        // The CLI's code-for-session exchange is an unauthenticated token
+        // consumption, so it rides the same Token class.
+        assert_eq!(
+            IpRoute::from_path("/api/auth/cli/token"),
             Some(IpRoute::Token)
         );
 

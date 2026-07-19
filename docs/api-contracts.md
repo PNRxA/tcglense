@@ -71,6 +71,8 @@ email bypass is active.
 | `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |
 | `POST /api/auth/reset-password` | `{ token, password }` | `204` (re-hashes the password, invalidates **every access and refresh session, plus every programmatic `tcgl_` API key,** plus sibling reset links, verifies a still-unverified email — so forgot/reset also activates a pending password-less account) | `401` bad token · `422` weak password (checked **before** the token is spent) · `403` when `SIGNUPS_ENABLED=false` **and** the account is still pending (password-less) — this reset-activation is the same new-account creation the signup gate refuses; a genuine reset for an already-active account still works |
+| `POST /api/auth/cli/authorize` | `{ code_challenge, client_name? }` (`Authorization: Bearer <access_token>`) | `201 { code, expires_in }` — mints a one-time authorization code for the CLI browser sign-in, bound to the caller's session generation and the PKCE `code_challenge` (`SHA-256(verifier)` hex). The SPA's `/cli-login` consent page calls this and relays `code` to the CLI over the loopback redirect | **session-only** (a `tcgl_` API key = `403`, like key management — a key can't bootstrap a new session) · `422` if `code_challenge` isn't 64 hex chars · `code` expires in 5 min, single-use |
+| `POST /api/auth/cli/token` | `{ code, code_verifier }` | `200 { access_token, user }` + refresh cookie — exchanges the one-time code + its PKCE verifier for a session, identical to `login` (so the CLI holds a refreshable session) | unauthenticated (the code + verifier **are** the credential) · `401 "invalid or expired code"` for an unknown/expired/already-spent code or a verifier that doesn't match the challenge (generic — no oracle); a wrong verifier does **not** burn the code · a password reset landing after the code was minted invalidates it (session-generation check) |
 | `GET /api/health` | — | `200 { status: "ok" }` (including maintenance mode) | — |
 | `GET /api/ready` | — | `200 { status: "ready" }` after a database round-trip | `503 { status: "unavailable" }` without internal details when storage is unavailable · `503 { status: "maintenance" }` when `MAINTENANCE_MODE=true` **or** while the boot migrations are still running (the listener binds first so `/api/health` stays 200; the site presents as maintenance until the schema is ready) |
 | `GET /api/config` | — | `200 { maintenance_mode: bool, turnstile_site_key: string \| null, signups_enabled: bool, signups_disabled_message: string \| null }` — public runtime config the SPA reads on boot and before rendering the auth forms; remains available during maintenance so a cached SPA can switch to its maintenance screen (`maintenance_mode` is `true` when `MAINTENANCE_MODE=true` **or** while the boot migrations are still running); `signups_disabled_message` is non-null only when `signups_enabled` is `false`; `no-store` | — |
@@ -139,6 +141,20 @@ link — is logged instead, so offline dev and the test suites work with zero
 network (the security-test harness swaps in a capturing mailbox). The SPA captures
 each query token into memory and immediately replaces the visible URL without it;
 production responses also set `Referrer-Policy: no-referrer`.
+
+**CLI browser sign-in** lets the `tcglense` CLI authenticate without taking a
+password in the terminal — the OAuth 2.0 native-app loopback flow (RFC 8252) with
+PKCE. The CLI binds a `127.0.0.1:<port>` listener and opens
+`{PUBLIC_SITE_URL}/cli-login?redirect_uri=…&state=…&code_challenge=…&name=…`; the
+SPA's consent page (signed-in only) POSTs `/api/auth/cli/authorize` and redirects
+the browser back to the loopback `redirect_uri` with a one-time `code`, which the
+CLI exchanges at `/api/auth/cli/token` (presenting the private PKCE `code_verifier`)
+for a normal session. The codes reuse the token-store idioms above: 32 CSPRNG bytes
+hex-encoded, only the SHA-256 hex persisted (`cli_auth_codes`), single-use via an
+atomic conditional `UPDATE`, a tight 5-minute expiry, bound to a PKCE challenge and
+the account's session generation, and pruned by the same 6h background task.
+Authorizing is session-only (an API key can't bootstrap a session), so a leaked key
+can't start the flow.
 
 ## Public API & API keys (issue #284)
 

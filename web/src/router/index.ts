@@ -336,6 +336,16 @@ const router = createRouter({
       component: () => import('@/views/LoginView.vue'),
       meta: { requiresGuest: true },
     },
+    // CLI browser (loopback) sign-in consent page (RFC 8252 + PKCE). `tcglense
+    // login` opens this with the loopback redirect + PKCE challenge in the query;
+    // the user approves here and the browser relays a one-time code back to the
+    // CLI. requiresAuth so a signed-out user is bounced to /login and returned.
+    {
+      path: '/cli-login',
+      name: 'cli-login',
+      component: () => import('@/views/CliLoginView.vue'),
+      meta: { requiresAuth: true },
+    },
     {
       path: '/register',
       name: 'register',
