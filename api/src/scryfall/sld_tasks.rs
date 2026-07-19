@@ -83,6 +83,15 @@ fn startup_delay(
     }
 }
 
+/// The `ETag` to condition a consumer's **first** import on. `None` when the store is still the
+/// committed seed: a conditional fetch could then `304` (or match the served tag) and leave that
+/// stale seed installed, so the first import must be unconditional to actually pull the mirror's
+/// current snapshot. Otherwise the persisted tag stands — a fresher snapshot is already loaded, so an
+/// unchanged mirror is a cheap `304`. Kept pure so both branches are unit-testable without the loop.
+fn startup_etag(store_is_seed: bool, persisted: Option<String>) -> Option<String> {
+    if store_is_seed { None } else { persisted }
+}
+
 /// Load the persisted drop-sync state: `(last import ETag, last run time)`. A read error is
 /// treated as "never ran" (the loop just runs now), never fatal.
 async fn load_state(db: &DatabaseConnection) -> (Option<String>, Option<DateTimeUtc>) {
@@ -187,15 +196,13 @@ pub(crate) fn spawn_sld_import(
     use crate::scryfall::sld_sync::ImportOutcome;
     tokio::spawn(async move {
         // Restore the last import ETag (to condition later fetches) and last-run time.
-        let (mut prev_etag, last_run) = load_state(&db).await;
+        let (persisted_etag, last_run) = load_state(&db).await;
         let on_seed = drops::store_is_seed();
         let delay = startup_delay(on_seed, last_run, interval_hours, Utc::now());
-        if on_seed {
-            // The store booted on the committed seed, so a conditional first import could `304` and
-            // leave that stale seed in place. Force the first fetch unconditional to actually install
-            // the mirror's current snapshot; the loop re-conditions on the served ETag afterwards.
-            prev_etag = None;
-        }
+        // Force the first import unconditional when the store is still the committed seed, so it
+        // installs the mirror's current snapshot instead of `304`-ing back onto that stale seed
+        // (`startup_etag`); the loop re-conditions on the served ETag afterwards.
+        let mut prev_etag = startup_etag(on_seed, persisted_etag);
         if !delay.is_zero() {
             tracing::info!(
                 defer_secs = delay.as_secs(),
@@ -221,7 +228,10 @@ pub(crate) fn spawn_sld_import(
                 }
                 Ok(ImportOutcome::Unchanged) => {
                     tracing::debug!("Secret Lair drop snapshot unchanged on the mirror");
-                    // Touch the run time (keeping the ETag) so a soon restart defers correctly.
+                    // Touch the run time (keeping the ETag) so the persisted state stays current. A
+                    // soon restart still re-imports immediately off the reseeded committed seed
+                    // (`startup_delay`/`startup_etag`); the run time only gates the insurance
+                    // deferral, for the case a fresher snapshot is already loaded at startup.
                     record_run(&db, prev_etag.as_deref(), "complete", "unchanged on mirror").await;
                 }
                 Err(err) => tracing::warn!(
@@ -318,5 +328,17 @@ mod tests {
             startup_delay(false, Some(at(24 * 3600, now)), 24, now),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn startup_etag_is_dropped_on_seed_and_kept_otherwise() {
+        let tag = || Some("W/\"abc\"".to_string());
+        // On the seed: drop the persisted tag so the first import is unconditional and cannot `304`
+        // back onto the stale seed — this is the load-bearing line of the restart-refresh fix.
+        assert_eq!(startup_etag(true, tag()), None);
+        assert_eq!(startup_etag(true, None), None);
+        // A fresher snapshot already loaded: keep the persisted tag for a cheap conditional `304`.
+        assert_eq!(startup_etag(false, tag()), tag());
+        assert_eq!(startup_etag(false, None), None);
     }
 }

@@ -809,10 +809,15 @@ catalog) is planned but not implemented.
   zero drops) is *rejected*, so a broken scrape/import never wipes the good table; the origin keeps
   serving its last-good (ultimately the committed) snapshot. (3) **The snapshot blob itself isn't
   persisted** — it's re-seeded from the committed file each boot (~tens of KB, re-fetched cheaply),
-  so it isn't worth a table. But a tiny `ingest_state` row (`(mtg, sld_drops)`) *does* record the
-  last-run time + the import `ETag`, so a restart within the interval **defers** the first
-  scrape/import (rather than re-running on every boot), a consumer's first post-restart import can
-  still `304`, and a restart after a long downtime runs immediately (`sld_tasks::initial_delay`).
+  so it isn't worth a table. A tiny `ingest_state` row (`(mtg, sld_drops)`) records the last-run time
+  + the import `ETag`, but because the store reseeds from the committed snapshot each boot, honouring
+  that timestamp would serve the stale seed after a restart. So the loops refresh **immediately** at
+  startup whenever the store is still the seed (`sld_tasks::startup_delay` / `drops::store_is_seed`) —
+  the consumer forcing that first import **unconditional** (`startup_etag`) so it can't `304` back
+  onto the seed. The persisted last-run only rate-limits the insurance path where a *fresher* snapshot
+  is already loaded at startup (`sld_tasks::initial_delay`). Trade-off: a crash-looping instance
+  re-scrapes/re-imports once per boot rather than being rate-limited across restarts — accepted, since
+  serving the stale seed is the worse failure.
   (4) The content version hashes
   the drop **data** (each set's ordered drops), *not* the JSON bytes — so the pretty-printed
   committed seed and the mirror's compact scrape of the *same* drops share a version. It feeds both
