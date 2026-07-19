@@ -1,6 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useInfiniteQuery } from '@tanstack/vue-query'
-import { getCardPrintingsByName, type Card, type CardPage } from '@/lib/api'
+import { getCardPrintingsByName, type Card, type CardPage, type OwnedCountsMap } from '@/lib/api'
+import { useOwnedCounts } from '@/composables/useCollection'
 import { filterPrintings } from '@/lib/quickAddFilter'
 
 /**
@@ -12,11 +13,17 @@ import { filterPrintings } from '@/lib/quickAddFilter'
  * Filtering is deliberately client-side over the pages already loaded. The shared grid
  * labels that scope whenever more pages remain, so a zero-match result never implies it
  * searched printings the user has not loaded yet.
+ *
+ * `opts.collectionFilter` opts a caller (the deck add box and the change-printing dialog)
+ * into a "limit to cards in my collection" toggle: when on, the loaded printings are also
+ * narrowed to the ones the signed-in user owns. It shares the same loaded-page scope as the
+ * text filter, and its owned-count lookup is fetched lazily (only while the toggle is on) and
+ * cached, so flipping it back on is instant.
  */
 export function usePrintingPicker(
   game: Ref<string>,
   name: Ref<string>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; collectionFilter?: boolean } = {},
 ) {
   const enabled = computed(() => name.value.length > 0 && (opts.enabled?.value ?? true))
   const filter = ref('')
@@ -36,7 +43,33 @@ export function usePrintingPicker(
   const printings = computed<Card[]>(
     () => query.data.value?.pages.flatMap((page) => page.data) ?? [],
   )
-  const filteredPrintings = computed<Card[]>(() => filterPrintings(printings.value, filter.value))
+
+  // --- Optional "limit to cards in my collection" filter (opt-in) ---
+  // The owned-count lookup is fetched only while the toggle is on (and the picker is
+  // enabled), keyed on the loaded printings so a newly-loaded page refetches for the wider
+  // set. It's the browse-badge counts hook, so held cards are present and unheld ones absent.
+  const collectionFilterEnabled = opts.collectionFilter ?? false
+  const collectionOnly = ref(false)
+  const collectionQueryEnabled = computed(() => enabled.value && collectionOnly.value)
+  const counts = collectionFilterEnabled
+    ? useOwnedCounts(game, printings, { enabled: collectionQueryEnabled })
+    : null
+  const ownership = computed<OwnedCountsMap>(() => counts?.ownership.value ?? {})
+  const collectionActive = computed(() => collectionFilterEnabled && collectionOnly.value)
+  // Ownership still resolving after the toggle flips on — a caller shows a "checking your
+  // collection" state instead of briefly reading the empty pre-fetch map as "none owned".
+  const collectionFilterLoading = computed(
+    () => collectionActive.value && !(counts?.ready.value ?? true),
+  )
+
+  const filteredPrintings = computed<Card[]>(() => {
+    const byText = filterPrintings(printings.value, filter.value)
+    if (!collectionActive.value) return byText
+    return byText.filter((card) => {
+      const held = ownership.value[card.id]
+      return held !== undefined && held.quantity + held.foil_quantity > 0
+    })
+  })
   const total = computed(() => query.data.value?.pages[0]?.total ?? 0)
   const loadedCount = computed(() => printings.value.length)
   const failed = computed(() => query.isError.value || query.isFetchNextPageError.value)
@@ -58,6 +91,12 @@ export function usePrintingPicker(
       if (isEnabled) resetFilter()
     })
   }
+  // The collection toggle clears back to its default-off only when the game changes (the
+  // loaded printings and the meaning of "owned" both change). It deliberately survives a
+  // name change so the deck add box keeps the toggle set across successive card picks.
+  watch(game, () => {
+    collectionOnly.value = false
+  })
 
   return {
     ...query,
@@ -69,5 +108,7 @@ export function usePrintingPicker(
     failed,
     loadMore,
     resetFilter,
+    collectionOnly,
+    collectionFilterLoading,
   }
 }

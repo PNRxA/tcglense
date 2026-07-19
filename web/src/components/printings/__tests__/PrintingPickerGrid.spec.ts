@@ -50,6 +50,9 @@ const defaults = {
   error: false,
   hasMore: false,
   loadingMore: false,
+  collectionFilter: false,
+  collectionOnly: false,
+  collectionLoading: false,
 }
 
 function mountGrid(props: Partial<typeof defaults> = {}) {
@@ -94,6 +97,63 @@ describe('PrintingPickerGrid', () => {
 
     await wrapper.get('button').trigger('click')
     expect(wrapper.emitted('loadMore')).toHaveLength(1)
+  })
+
+  it('offers an opt-in collection filter that emits its toggle', async () => {
+    const cards = [makeCard('one'), makeCard('two')]
+    // Off by default and absent unless opted in.
+    expect(
+      mountGrid({ printings: cards, filteredPrintings: cards, total: 2 }).text(),
+    ).not.toContain('In my collection')
+
+    const wrapper = mountGrid({
+      printings: cards,
+      filteredPrintings: cards,
+      total: 2,
+      collectionFilter: true,
+    })
+    const checkbox = wrapper.get('input[type="checkbox"]')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+
+    await checkbox.setValue(true)
+    expect(wrapper.emitted('update:collectionOnly')).toEqual([[true]])
+  })
+
+  it('shows a checking state while owned counts load and collection-aware empty copy', () => {
+    const cards = [makeCard('one'), makeCard('two')]
+    expect(
+      mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 2,
+        collectionFilter: true,
+        collectionOnly: true,
+        collectionLoading: true,
+      }).text(),
+    ).toContain('Checking your collection…')
+
+    // Toggle on, no text filter, nothing owned in the loaded pages.
+    expect(
+      mountGrid({
+        printings: cards,
+        filteredPrintings: [],
+        total: 2,
+        collectionFilter: true,
+        collectionOnly: true,
+      }).text(),
+    ).toContain('None of the loaded printings are in your collection.')
+
+    // Toggle on plus a text filter that matches nothing owned.
+    expect(
+      mountGrid({
+        printings: cards,
+        filteredPrintings: [],
+        total: 2,
+        filter: 'zne',
+        collectionFilter: true,
+        collectionOnly: true,
+      }).text(),
+    ).toContain('No loaded printings in your collection match “zne”.')
   })
 
   it('reorders the rendered printings by the chosen sort (default newest-first)', async () => {

@@ -26,7 +26,7 @@ const open = defineModel<boolean>('open', { default: false })
 const game = toRef(props, 'game')
 const cardName = computed(() => props.card.name)
 const enabled = computed(() => open.value)
-const picker = usePrintingPicker(game, cardName, { enabled })
+const picker = usePrintingPicker(game, cardName, { enabled, collectionFilter: true })
 const changePrinting = useChangeDeckCardPrintingMutation()
 const changingTo = ref('')
 const errorMessage = ref('')
@@ -70,6 +70,7 @@ async function choose(printing: Card) {
       </p>
       <PrintingPickerGrid
         v-model:filter="picker.filter.value"
+        v-model:collection-only="picker.collectionOnly.value"
         class="mt-4"
         :printings="picker.printings.value"
         :filtered-printings="picker.filteredPrintings.value"
@@ -78,6 +79,8 @@ async function choose(printing: Card) {
         :error="picker.failed.value"
         :has-more="picker.hasNextPage.value"
         :loading-more="picker.isFetchingNextPage.value"
+        collection-filter
+        :collection-loading="picker.collectionFilterLoading.value"
         error-message="Could not load this card's printings."
         empty-message="No printings found for this card."
         @load-more="picker.loadMore"
