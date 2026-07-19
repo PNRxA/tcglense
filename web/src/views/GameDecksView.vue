@@ -201,12 +201,15 @@ function removeFolder(folderId: number, name: string) {
     </div>
 
     <template v-else>
-      <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <header
+        class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+      >
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">{{ gameName }} decks</h1>
           <p class="text-muted-foreground text-sm">{{ decks.length }} deck(s)</p>
         </div>
-        <div class="flex gap-2">
+        <!-- Wrap on narrow screens so the action buttons never run off-screen. -->
+        <div class="flex flex-wrap gap-2">
           <!-- Cards needed across all decks vs the collection (issue #499). -->
           <RouterLink
             v-if="decks.length"
