@@ -14,18 +14,22 @@ import {
   usePublicCollectionProductSummaryQuery,
   usePublicCollectionProductsQuery,
 } from '@/composables/usePublicCollection'
+import {
+  usePublicWishlistProductSetsQuery,
+  usePublicWishlistProductSummaryQuery,
+  usePublicWishlistProductsQuery,
+} from '@/composables/usePublicWishlist'
 import { PRODUCT_HOLDING_PAGE_SIZE } from '@/composables/productHoldingQueries'
 import { usePageMeta } from '@/lib/seo'
 import type { OwnedCountsMap } from '@/lib/api'
 
-// The read-only sealed-product list of a user's public collection: every owned product
-// (`/u/:handle/:game/products`) or scoped to one set (`.../products/sets/:code`) — the click
-// target of the public landing's sealed set tiles. The read-only public mirror of
-// `ProductHoldingsBrowseView`: it drives the token-less public product queries and renders the
-// grid READ-ONLY (a static owned badge showing the OWNER's counts, never the quick-add editor).
-// A 404 (private/unknown handle or game) renders the not-found state, matching the public card
-// browse.
-const props = defineProps<{ handle: string; game: string; code?: string }>()
+// The read-only sealed-product list of a user's public collection OR wish list: every held
+// product (`/u/:handle[/wishlist]/:game/products`) or scoped to one set
+// (`.../products/sets/:code`) — the click target of the public landing's sealed set tiles. It
+// drives the token-less public product queries (collection by default; the wish-list variant
+// when `list='wishlist'`) and renders the grid READ-ONLY (a static badge showing the OWNER's
+// counts, never the editor). A 404 (private/unknown handle or game) renders the not-found state.
+const props = defineProps<{ handle: string; game: string; code?: string; list?: string }>()
 const handle = toRef(props, 'handle')
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
@@ -34,6 +38,14 @@ const route = useRoute()
 const router = useRouter()
 // The owner's display handle is the username part of the URL handle (`alice-0001` → `alice`).
 const username = computed(() => props.handle.replace(/-\d{1,4}$/, ''))
+
+const isWishlist = props.list === 'wishlist'
+// The wish-list variant nests under a `wishlist` segment; the collection variant is flat. Every
+// link/canonical/breadcrumb hangs off this game-scoped base so the two surfaces stay symmetric.
+const gameBase = computed(() =>
+  isWishlist ? `/u/${props.handle}/wishlist/${game.value}` : `/u/${props.handle}/${game.value}`,
+)
+const noun = isWishlist ? 'wish list' : 'collection'
 
 const scoped = computed(() => !!props.code)
 const setCode = computed(() => props.code || undefined)
@@ -55,7 +67,9 @@ const page = computed({
 
 // The held-product sets resolve the scoped set's display name + header stats; the landing already
 // mounts this query, so vue-query dedupes.
-const setsQuery = usePublicCollectionProductSetsQuery(handle, game)
+const setsQuery = isWishlist
+  ? usePublicWishlistProductSetsQuery(handle, game)
+  : usePublicCollectionProductSetsQuery(handle, game)
 const scopedSet = computed(() =>
   scoped.value ? setsQuery.data.value?.data.find((s) => s.code === props.code) : undefined,
 )
@@ -66,7 +80,9 @@ const heading = computed(() =>
 // Header count line: the scoped set's tally + value when set-scoped, else the whole surface's
 // product summary. The summary also gates the not-found state (it 404s for a private/unknown
 // handle or game regardless of the set scope), same key so it dedupes.
-const summaryQuery = usePublicCollectionProductSummaryQuery(handle, game)
+const summaryQuery = isWishlist
+  ? usePublicWishlistProductSummaryQuery(handle, game)
+  : usePublicCollectionProductSummaryQuery(handle, game)
 const countProducts = computed(() =>
   scoped.value ? scopedSet.value?.unique_products : summaryQuery.data.value?.unique_products,
 )
@@ -79,7 +95,9 @@ const notFound = computed(() => summaryQuery.isError.value)
 
 // The flat (optionally set-scoped) product page. `setCode` rides the query key so a set change
 // refetches, and threads through to the `?set=` param.
-const productsQuery = usePublicCollectionProductsQuery(handle, game, page, setCode)
+const productsQuery = isWishlist
+  ? usePublicWishlistProductsQuery(handle, game, page, setCode)
+  : usePublicCollectionProductsQuery(handle, game, page, setCode)
 const entries = computed(() => productsQuery.data.value?.data ?? [])
 const products = computed(() => entries.value.map((entry) => entry.product))
 const total = computed(() => productsQuery.data.value?.total ?? 0)
@@ -106,19 +124,20 @@ usePageMeta({
     scoped.value
       ? `${heading.value} — ${username.value}'s ${gameName.value} sealed products`
       : `${username.value}'s ${gameName.value} sealed products`,
-  description: () => `${username.value}'s public ${gameName.value} sealed products on TCGLense.`,
+  description: () =>
+    `${username.value}'s public ${gameName.value} sealed products (${noun}) on TCGLense.`,
   canonicalPath: () =>
-    scoped.value
-      ? `/u/${handle.value}/${game.value}/products/sets/${props.code}`
-      : `/u/${handle.value}/${game.value}/products`,
+    scoped.value ? `${gameBase.value}/products/sets/${props.code}` : `${gameBase.value}/products`,
 })
 </script>
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
     <div v-if="notFound" class="py-20 text-center">
-      <h1 class="text-2xl font-semibold tracking-tight">Collection not found</h1>
-      <p class="text-muted-foreground mt-2">This collection is private or doesn't exist.</p>
+      <h1 class="text-2xl font-semibold tracking-tight">
+        {{ isWishlist ? 'Wish list' : 'Collection' }} not found
+      </h1>
+      <p class="text-muted-foreground mt-2">This {{ noun }} is private or doesn't exist.</p>
       <RouterLink to="/" class="text-primary mt-4 inline-block underline underline-offset-2">
         Go home
       </RouterLink>
@@ -128,7 +147,7 @@ usePageMeta({
       <PageBreadcrumbs
         :items="[
           { label: `@${username}`, to: `/u/${handle}` },
-          { label: gameName, to: `/u/${handle}/${game}` },
+          { label: isWishlist ? `${gameName} wish list` : gameName, to: gameBase },
           { label: scoped ? heading : 'Sealed products' },
         ]"
       />
@@ -149,7 +168,7 @@ usePageMeta({
         Couldn't load sealed products. Please retry.
       </p>
       <p v-else-if="!products.length" class="text-muted-foreground py-12">
-        {{ username }} owns no sealed products here.
+        {{ username }} {{ isWishlist ? 'wants' : 'owns' }} no sealed products here.
       </p>
 
       <template v-else>

@@ -17,6 +17,12 @@ use sea_orm::entity::prelude::*;
 /// biggest-movers panel per game. Both default `true`, so no row (or a legacy row) means
 /// both sections show. They are the owner's own view only — the public read surface never
 /// reads them.
+///
+/// `wishlist_is_public` (issue #493) is the independent sharing flag for that same
+/// `(user, game)` wish list — the collection's `is_public` twin. `true` exposes a read-only
+/// view of the user's wanted cards + products for `game` at `/api/u/{handle}/wishlist/{game}`;
+/// `false` (the default, and every legacy row) keeps it private. Collection and wish-list
+/// sharing are toggled independently.
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "collection_visibility")]
 pub struct Model {
@@ -32,6 +38,8 @@ pub struct Model {
     pub show_value_chart: bool,
     /// Whether the biggest-movers (gainers/losers) panel shows on the owner's landing.
     pub show_movers: bool,
+    /// Whether this user's `game` wish list is publicly shareable (issue #493).
+    pub wishlist_is_public: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

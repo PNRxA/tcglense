@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { RouterLink } from 'vue-router'
-import { Layers, Library, UserCircle } from '@lucide/vue'
+import { Heart, Layers, Library, UserCircle } from '@lucide/vue'
 import { usePublicProfileQuery } from '@/composables/usePublicCollection'
 import { usePublicDecksQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
@@ -43,9 +43,7 @@ usePageMeta({
     <!-- Unknown handle / no public games. -->
     <div v-if="notFound" class="py-20 text-center">
       <h1 class="text-2xl font-semibold tracking-tight">Collection not found</h1>
-      <p class="text-muted-foreground mt-2">
-        This profile doesn't exist or has no public collections.
-      </p>
+      <p class="text-muted-foreground mt-2">This profile doesn't exist or has nothing public.</p>
       <RouterLink to="/" class="text-primary mt-4 inline-block underline underline-offset-2">
         Go home
       </RouterLink>
@@ -82,6 +80,47 @@ usePageMeta({
             >
               <div class="flex items-center gap-2">
                 <Library class="text-muted-foreground size-4" />
+                <span class="font-medium uppercase">{{ entry.game }}</span>
+              </div>
+              <dl class="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                <div>
+                  <dt class="text-muted-foreground text-xs">Unique cards</dt>
+                  <dd class="font-semibold tabular-nums">
+                    {{ entry.summary.unique_cards.toLocaleString() }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground text-xs">Total copies</dt>
+                  <dd class="font-semibold tabular-nums">
+                    {{ entry.summary.total_cards.toLocaleString() }}
+                  </dd>
+                </div>
+                <div v-if="money.formatUsd(entry.summary.total_value_usd)">
+                  <dt class="text-muted-foreground text-xs">Value</dt>
+                  <dd class="font-semibold tabular-nums">
+                    {{ money.formatUsd(entry.summary.total_value_usd) }}
+                  </dd>
+                </div>
+              </dl>
+            </RouterLink>
+          </li>
+        </ul>
+      </template>
+
+      <!-- Public wish lists (issue #493): each links to the read-only public wish-list view.
+        Only shown when there are any; a wish-list-less profile omits it. -->
+      <template v-if="profile.wishlists.length">
+        <h2 class="text-muted-foreground mt-8 mb-3 text-xs font-medium tracking-wide uppercase">
+          Public wish lists
+        </h2>
+        <ul class="grid gap-4 sm:grid-cols-2">
+          <li v-for="entry in profile.wishlists" :key="entry.game">
+            <RouterLink
+              :to="`/u/${handle}/wishlist/${entry.game}`"
+              class="hover:border-primary/60 hover:bg-muted/40 block rounded-xl border p-4 transition-colors"
+            >
+              <div class="flex items-center gap-2">
+                <Heart class="text-muted-foreground size-4" />
                 <span class="font-medium uppercase">{{ entry.game }}</span>
               </div>
               <dl class="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">

@@ -1,6 +1,9 @@
+import { request } from './client'
 import { makeHoldingApi } from './holdings'
 import { makeProductHoldingApi } from './product-holdings'
-import type { CollectionSet, CollectionSummary } from './generated'
+import type { CollectionSet, CollectionSummary, WishlistVisibility } from './generated'
+
+export type { WishlistVisibility } from './generated'
 
 // ---------- Wish list (per-user, authenticated) ----------
 //
@@ -94,3 +97,33 @@ export const getWishlistProductEntry = productApi.getEntry
 export const setWishlistProductEntry = productApi.setEntry
 export const getWishlistProductSummary = productApi.summary
 export const getWishlistProductCounts = productApi.counts
+
+// ---------- Wish-list public sharing (issue #493) ----------
+
+/** Whether the signed-in user's wish list for a game is public, plus their handle. The
+ * wish-list twin of `getCollectionVisibility` (no landing display prefs — a wish list is a
+ * shopping list). */
+export function getWishlistVisibility(token: string, game: string): Promise<WishlistVisibility> {
+  return request<WishlistVisibility>(`/api/wishlist/${encodeURIComponent(game)}/visibility`, {
+    token,
+  })
+}
+
+/** A partial update to a game's wish-list visibility. The only knob is public/private. */
+export interface WishlistVisibilityPatch {
+  public?: boolean
+}
+
+/** Patch a game's wish-list visibility. Enabling public requires a username first — the
+ * server 409s otherwise, which the SPA branches on to prompt the username step. */
+export function setWishlistVisibility(
+  token: string,
+  game: string,
+  patch: WishlistVisibilityPatch,
+): Promise<WishlistVisibility> {
+  return request<WishlistVisibility>(`/api/wishlist/${encodeURIComponent(game)}/visibility`, {
+    method: 'PUT',
+    body: patch,
+    token,
+  })
+}

@@ -62,10 +62,14 @@ use crate::{
         },
         openapi::openapi_json,
         sharing::{
-            get_collection_visibility, public_deck, public_decks, public_list, public_owned_counts,
-            public_product_sets, public_product_summary, public_products, public_profile,
-            public_set_drops, public_set_subtypes, public_sets, public_summary,
-            set_collection_visibility,
+            get_collection_visibility, get_wishlist_visibility, public_deck, public_decks,
+            public_list, public_owned_counts, public_product_sets, public_product_summary,
+            public_products, public_profile, public_set_drops, public_set_subtypes, public_sets,
+            public_summary, public_wishlist_list, public_wishlist_owned_counts,
+            public_wishlist_product_sets, public_wishlist_product_summary,
+            public_wishlist_products, public_wishlist_set_drops, public_wishlist_set_subtypes,
+            public_wishlist_sets, public_wishlist_summary, set_collection_visibility,
+            set_wishlist_visibility,
         },
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
@@ -274,6 +278,13 @@ pub fn build_router(state: AppState) -> Router {
         // (via AuthUser) and no-store. Registered before the rate-limit layers below so
         // the per-user limiter wraps these routes too.
         .route("/api/wishlist/{game}", get(list_wishlist))
+        // Per-game wish-list public-sharing toggle (issue #493): read the current state and
+        // enable/disable. `visibility` is a static sibling of `/cards/{id}` etc. (static wins
+        // in axum), mirroring the collection's `/api/collection/{game}/visibility`.
+        .route(
+            "/api/wishlist/{game}/visibility",
+            get(get_wishlist_visibility).put(set_wishlist_visibility),
+        )
         .route("/api/wishlist/{game}/summary", get(wishlist_summary))
         .route("/api/wishlist/{game}/sets", get(wishlist_sets))
         .route(
@@ -516,6 +527,40 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/{game}/products/sets",
             get(public_product_sets),
         )
+        // Public wish lists (issue #493): the read-only mirror of the public collection reads
+        // above, gated on the independent `wishlist_is_public` flag. `wishlist` is a static
+        // sibling of `{game}` (static wins in axum, like `decks`), so it never collides with a
+        // game slug — the wanted cards, summary, sets, by-drop/sub-type, and sealed products,
+        // all under `/api/u/{handle}/wishlist/{game}...`.
+        .route("/api/u/{handle}/wishlist/{game}", get(public_wishlist_list))
+        .route(
+            "/api/u/{handle}/wishlist/{game}/summary",
+            get(public_wishlist_summary),
+        )
+        .route(
+            "/api/u/{handle}/wishlist/{game}/sets",
+            get(public_wishlist_sets),
+        )
+        .route(
+            "/api/u/{handle}/wishlist/{game}/sets/{code}/drops",
+            get(public_wishlist_set_drops),
+        )
+        .route(
+            "/api/u/{handle}/wishlist/{game}/sets/{code}/subtypes",
+            get(public_wishlist_set_subtypes),
+        )
+        .route(
+            "/api/u/{handle}/wishlist/{game}/products",
+            get(public_wishlist_products),
+        )
+        .route(
+            "/api/u/{handle}/wishlist/{game}/products/summary",
+            get(public_wishlist_product_summary),
+        )
+        .route(
+            "/api/u/{handle}/wishlist/{game}/products/sets",
+            get(public_wishlist_product_sets),
+        )
         // Per-deck public sharing (issue #363): a user's public decks and one public deck's
         // full detail, addressed by handle. `decks` is a static sibling of `{game}` (static
         // wins in axum), so it never collides with a game slug. Deck ids are globally unique,
@@ -541,6 +586,13 @@ pub fn build_router(state: AppState) -> Router {
     // shared-cached (mirrors why the authed `/api/collection/{game}/owned` twin is no-store).
     let public_holdings_owned = Router::new()
         .route("/api/u/{handle}/{game}/owned", post(public_owned_counts))
+        // The public wish-list show-ghosts overlay (issue #493): the wish-list twin of the
+        // collection `/owned` above — a body-keyed, uncacheable POST, so it lives in this
+        // no-store group rather than the CDN-cached `public_holdings`.
+        .route(
+            "/api/u/{handle}/wishlist/{game}/owned",
+            post(public_wishlist_owned_counts),
+        )
         // Per-IP rate limiting (issue #413): as a body-keyed, unauthenticated POST
         // this was the one wholly-unthrottled, uncacheable DB endpoint in the app.
         .layer(from_fn_with_state(

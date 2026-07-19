@@ -155,6 +155,9 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::wishlist::wishlist_set_subtypes,
         crate::handlers::wishlist::wishlist_counts,
         crate::handlers::wishlist::wishlist_product_counts,
+        // Wish-list public-sharing toggle (issue #493).
+        crate::handlers::sharing::get_wishlist_visibility,
+        crate::handlers::sharing::set_wishlist_visibility,
         // --- Decks (issues #363/#389): decks, import/export, folders, sections, cards ---
         crate::handlers::decks::list_decks,
         crate::handlers::decks::create_deck,
@@ -189,6 +192,16 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::public_owned_counts,
         crate::handlers::sharing::public_decks,
         crate::handlers::sharing::public_deck,
+        // --- Public wish lists (issue #493): handle-keyed read-only mirror of the above ---
+        crate::handlers::sharing::public_wishlist_list,
+        crate::handlers::sharing::public_wishlist_summary,
+        crate::handlers::sharing::public_wishlist_sets,
+        crate::handlers::sharing::public_wishlist_set_drops,
+        crate::handlers::sharing::public_wishlist_set_subtypes,
+        crate::handlers::sharing::public_wishlist_products,
+        crate::handlers::sharing::public_wishlist_product_summary,
+        crate::handlers::sharing::public_wishlist_product_sets,
+        crate::handlers::sharing::public_wishlist_owned_counts,
     ),
     components(schemas(
         // Leaf DTOs reachable from this module; the generic `Page<T>` / `DataBody<T>`

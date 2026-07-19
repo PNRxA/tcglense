@@ -803,6 +803,37 @@ The wish list and collection never read or write each other's card or product ro
 (pinned by security tests); browse-grid badges on each surface come from its own batch
 counts route.
 
+**Public wish-list sharing (issue #493).** A wish list can be made public independently of
+the collection, through a separate per-`(user, game)` flag (`wishlist_is_public`, a new column
+on the same `collection_visibility` row — the collection's `is_public` twin). The authed toggle
+mirrors the collection's:
+
+| Method & path | Body | Returns |
+|---------------|------|---------|
+| `GET /api/wishlist/{game}/visibility` | — | `WishlistVisibility { public, handle }` — whether this game's wish list is public + the caller's handle (null until a username is set). Defaults `public: false` when no row exists. `AuthUser` |
+| `PUT /api/wishlist/{game}/visibility` | `{ public? }` | `WishlistVisibility` — flip the flag. Enabling public **requires a username first** (a public wish list is addressed by handle) — else **409** (the SPA prompts the username step). `WritableUser`, so a read-only key is 403. Touches only the wish-list flag, never the collection's sharing or landing display prefs on the same row |
+
+When public, a read-only view of the owner's wanted cards **and** sealed products is served,
+handle-resolved under a static `wishlist` segment (`/api/u/{handle}/wishlist/{game}...`, which
+outranks the `{game}` capture in axum, like `decks`), gated on `wishlist_is_public` — a
+private/unknown handle is a uniform **404** (no oracle). These mirror the authed reads above
+(and the public collection reads' cache policy: CDN-cacheable + ETag'd `public_holdings`, except
+the body-keyed `/owned` POST which is `no-store`):
+
+| Method & path | Mirrors the authed |
+|---------------|--------------------|
+| `GET /api/u/{handle}/wishlist/{game}` | `GET /api/wishlist/{game}` |
+| `GET /api/u/{handle}/wishlist/{game}/summary` | `.../summary` |
+| `GET /api/u/{handle}/wishlist/{game}/sets` | `.../sets` |
+| `GET /api/u/{handle}/wishlist/{game}/sets/{code}/{drops,subtypes}` | `.../sets/{code}/{drops,subtypes}` |
+| `GET /api/u/{handle}/wishlist/{game}/products{,/summary,/sets}` | `.../products{,/summary,/sets}` |
+| `POST /api/u/{handle}/wishlist/{game}/owned` `{ ids }` | `.../counts` (show-ghosts overlay; `no-store`) |
+
+The public **profile** (`GET /api/u/{handle}`) gains a `wishlists: PublicGameSummary[]` array
+alongside its `games` (public collections); a user who has shared **only** a wish list still
+resolves (200), and the profile 404s only when nothing — no public collection, wish list, or
+deck — is shared.
+
 ## Decks API contract
 
 Per-user **decks** (issue #363) — build and organise decks of cards for a game.
