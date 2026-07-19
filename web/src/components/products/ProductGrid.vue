@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { OwnedCountsMap, Product } from '@/lib/api'
 import ProductTile from '@/components/products/ProductTile.vue'
 import ProductCountControl from '@/components/products/ProductCountControl.vue'
+import ReadonlyOwnedBadge from '@/components/cards/ReadonlyOwnedBadge.vue'
 import { useProductNavList } from '@/composables/useProductNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
@@ -19,6 +20,11 @@ const props = defineProps<{
   // Owned counts for the collection twin (#435). The unified control fetches authoritative
   // collection and wish-list seeds only when its popover opens.
   owned?: OwnedCountsMap
+  // Read-only public grid (a public collection's sealed products): show the OWNER's owned
+  // counts as a static badge, never the quick-add editor. Without this a signed-in viewer of
+  // someone else's public products would get an editor seeded with the owner's counts that
+  // writes into their OWN collection (the same hazard CardGrid's `readonly` guards).
+  readonly?: boolean
 }>()
 
 // The grid density follows the shared card-size preference (set via CardSizeMenu) so
@@ -40,9 +46,16 @@ useProductNavList(
 <template>
   <div class="grid gap-x-4 gap-y-6" :class="gridClass">
     <ProductTile v-for="product in products" :key="product.id" :game="game" :product="product">
+      <!-- Read-only public grid: the owner's owned counts as a static badge (no editor). -->
+      <template v-if="readonly" #badge>
+        <ReadonlyOwnedBadge
+          :quantity="owned?.[product.id]?.quantity ?? 0"
+          :foil-quantity="owned?.[product.id]?.foil_quantity ?? 0"
+        />
+      </template>
       <!-- One collection-primary quick-add control, matching CardGrid: collection counts
         and the wanted Heart share one bottom-left badge, and the popover edits both lists. -->
-      <template v-if="auth.isAuthenticated" #badge>
+      <template v-else-if="auth.isAuthenticated" #badge>
         <ProductCountControl
           :game="game"
           :product-id="product.id"

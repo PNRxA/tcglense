@@ -168,6 +168,39 @@ impl ProductHoldingRepository for CollectionProductRepository {
     }
 }
 
+// ---- Public-sharing read cores ----
+//
+// The `user_id`-parameterised sealed-product reads reused by the public collection mirror
+// (`crate::handlers::sharing::public`), so a public read shares the exact query/valuation
+// logic with the authed handlers — only how `user_id` is resolved differs (a resolved handle
+// vs. the caller's token). Kept here (not in the shared engine) so `CollectionProductRepository`
+// stays private to this module, mirroring how `read`/`sets` expose card cores to public.rs.
+
+pub(crate) async fn owned_products_page(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    params: ProductHoldingListParams,
+) -> Result<Page<ProductHoldingEntry>, AppError> {
+    list_product_holdings::<CollectionProductRepository>(state, user_id, game, params).await
+}
+
+pub(crate) async fn owned_product_sets(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+) -> Result<Vec<ProductHoldingSet>, AppError> {
+    list_product_holding_sets::<CollectionProductRepository>(state, user_id, game).await
+}
+
+pub(crate) async fn owned_product_summary(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+) -> Result<ProductHoldingSummary, AppError> {
+    summarize_product_holdings::<CollectionProductRepository>(state, user_id, game).await
+}
+
 /// List owned sealed products
 #[utoipa::path(
     get,

@@ -3,6 +3,9 @@ import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import {
   getPublicCollection,
   getPublicCollectionDrops,
+  getPublicCollectionProducts,
+  getPublicCollectionProductSets,
+  getPublicCollectionProductSummary,
   getPublicCollectionSets,
   getPublicCollectionSubtypes,
   getPublicCollectionSummary,
@@ -18,9 +21,13 @@ import type {
   CollectionSubtypeGroupPage,
   CollectionSummary,
   OwnedCountsMap,
+  ProductHoldingPage,
+  ProductHoldingSet,
+  ProductHoldingSummary,
   PublicProfile,
 } from '@/lib/api'
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
+import { PRODUCT_HOLDING_PAGE_SIZE } from '@/composables/productHoldingQueries'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 
@@ -80,6 +87,47 @@ export function usePublicCollectionSetsQuery(handle: Ref<string>, game: Ref<stri
   return useQuery<{ data: CollectionSet[] }, ApiError>({
     queryKey: ['public-sets', handle, game],
     queryFn: () => getPublicCollectionSets(handle.value, game.value),
+    retry: false,
+  })
+}
+
+/** Aggregate stats for a user's public sealed products in a game — the public mirror of
+ * `useCollectionProductSummaryQuery`. Same 404-terminal `retry: false` as the card summary. */
+export function usePublicCollectionProductSummaryQuery(handle: Ref<string>, game: Ref<string>) {
+  return useQuery<ProductHoldingSummary, ApiError>({
+    queryKey: ['public-product-summary', handle, game],
+    queryFn: () => getPublicCollectionProductSummary(handle.value, game.value),
+    retry: false,
+  })
+}
+
+/** The sets a user owns sealed products in for a public game — the per-set landing tiles. */
+export function usePublicCollectionProductSetsQuery(handle: Ref<string>, game: Ref<string>) {
+  return useQuery<{ data: ProductHoldingSet[] }, ApiError>({
+    queryKey: ['public-product-sets', handle, game],
+    queryFn: () => getPublicCollectionProductSets(handle.value, game.value),
+    retry: false,
+  })
+}
+
+/** A page of a user's public sealed products, optionally scoped to one set (`set`, carried in
+ * the key so a set change refetches) — the read-only mirror of `useCollectionProductsQuery`. */
+export function usePublicCollectionProductsQuery(
+  handle: Ref<string>,
+  game: Ref<string>,
+  page: Ref<number>,
+  set?: Ref<string | undefined>,
+) {
+  const setCode = set ?? ref<string | undefined>(undefined)
+  return useQuery<ProductHoldingPage, ApiError>({
+    queryKey: ['public-products', handle, game, setCode, page],
+    queryFn: () =>
+      getPublicCollectionProducts(handle.value, game.value, {
+        page: page.value,
+        pageSize: PRODUCT_HOLDING_PAGE_SIZE,
+        set: setCode.value || undefined,
+      }),
+    placeholderData: keepPreviousData,
     retry: false,
   })
 }

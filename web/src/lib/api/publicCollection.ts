@@ -8,7 +8,14 @@ import type {
   CollectionSubtypeGroupPage,
   OwnedCountsMap,
 } from './collection'
-import type { CollectionSet, CollectionSummary, PublicProfile } from './generated'
+import type { ProductHoldingPage } from './product-holdings'
+import type {
+  CollectionSet,
+  CollectionSummary,
+  ProductHoldingSet,
+  ProductHoldingSummary,
+  PublicProfile,
+} from './generated'
 
 // ---------- Public collections (read-only, unauthenticated) ----------
 //
@@ -65,6 +72,40 @@ export function getPublicCollectionSets(
   game: string,
 ): Promise<{ data: CollectionSet[] }> {
   return request<{ data: CollectionSet[] }>(`${base(handle)}/${encodeURIComponent(game)}/sets`)
+}
+
+/** A page of a user's public sealed products for a game, optionally scoped to one set
+ * (`set`) — the read-only mirror of the authed `productApi.list`. */
+export function getPublicCollectionProducts(
+  handle: string,
+  game: string,
+  params?: { page?: number; pageSize?: number; set?: string },
+): Promise<ProductHoldingPage> {
+  return request<ProductHoldingPage>(
+    `${base(handle)}/${encodeURIComponent(game)}/products${listQuery(params ?? {})}`,
+  )
+}
+
+/** Aggregate stats (unique / total / value) for a user's public sealed products in a game —
+ * mirrors the authed `productApi.summary`. */
+export function getPublicCollectionProductSummary(
+  handle: string,
+  game: string,
+): Promise<ProductHoldingSummary> {
+  return request<ProductHoldingSummary>(
+    `${base(handle)}/${encodeURIComponent(game)}/products/summary`,
+  )
+}
+
+/** The sets a user owns sealed products in for a public game — the per-set landing tiles
+ * (mirrors the authed `productApi.listSets`). */
+export function getPublicCollectionProductSets(
+  handle: string,
+  game: string,
+): Promise<{ data: ProductHoldingSet[] }> {
+  return request<{ data: ProductHoldingSet[] }>(
+    `${base(handle)}/${encodeURIComponent(game)}/products/sets`,
+  )
 }
 
 /** A page (by Secret Lair drop) of a user's public collection in a drop-grouped set —

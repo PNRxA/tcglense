@@ -241,6 +241,22 @@ const router = createRouter({
       component: () => import('@/views/PublicCollectionBrowseView.vue'),
       props: true,
     },
+    // The read-only sealed-product grids for a public collection — every owned product, or
+    // scoped to one set — clicked into from the public landing's sealed set tiles (the public
+    // mirror of the authed /collection/:game/products split). `products` is a static 3rd
+    // segment, distinct from the `cards`/`sets` siblings above.
+    {
+      path: '/u/:handle/:game/products',
+      name: 'public-collection-products',
+      component: () => import('@/views/PublicProductBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/u/:handle/:game/products/sets/:code',
+      name: 'public-collection-product-set',
+      component: () => import('@/views/PublicProductBrowseView.vue'),
+      props: true,
+    },
     // A shared public deck (issue #363), addressed by handle + deck id. The static `decks`
     // segment outranks the `/u/:handle/:game` public-collection routes, so no game slug can
     // ever be mistaken for it. Public + indexable, like the shared collections.
