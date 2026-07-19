@@ -140,11 +140,11 @@ fn spawn_maintenance(
                     tracing::warn!(error = %err, "failed to prune dead api keys")
                 }
             }
-            match crate::auth::cli_auth::prune_expired(&db).await {
-                Ok(n) if n > 0 => tracing::info!("pruned {n} expired cli auth codes"),
+            match crate::auth::cli_auth::prune_dead(&db).await {
+                Ok(n) if n > 0 => tracing::info!("pruned {n} dead cli auth codes"),
                 Ok(_) => {}
                 Err(err) => {
-                    tracing::warn!(error = %err, "failed to prune expired cli auth codes")
+                    tracing::warn!(error = %err, "failed to prune dead cli auth codes")
                 }
             }
             match prune_stale_pending_users(&db).await {
