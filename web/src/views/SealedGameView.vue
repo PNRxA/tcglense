@@ -11,13 +11,16 @@ import ProductSetTile from '@/components/products/ProductSetTile.vue'
 import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { useProductFacetsQuery } from '@/composables/useProducts'
 import { usePageMeta } from '@/lib/seo'
+import { partitionPinnedBy } from '@/lib/setGroups'
 import type { CardSet, ProductSetRef } from '@/lib/api'
 
 // The per-game sealed-product landing — the sealed mirror of the card catalog's GameView. It
 // lists the sets that have sealed products as set tiles (grouped into release-year sections)
 // that click through to the set-scoped flat browse, with an "All products" shortcut to the
-// unscoped browse. Product sets are flat (no related-set nesting), so there's no Featured/pinned
-// section and no group folding — just year sections. Public, like the catalog.
+// unscoped browse. Product sets are flat (no related-set nesting), so there's no group folding.
+// Like the card landing, pinned sets (Secret Lair Drop — a continuously-restocked line its 2019
+// release date would otherwise bury) lead in a "Featured" section; the rest are year sections.
+// Public, like the catalog.
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
@@ -86,12 +89,18 @@ const catalogSetByCode = computed(() => {
 })
 const releasedAtOf = (set: ProductSetRef) => catalogSetByCode.value[set.code]?.released_at ?? ''
 
-// Bucket the (filtered) product sets into release-year sections — newest year first, undated
+// Pull pinned sets (Secret Lair) out of the (filtered) list so they lead the listing in a
+// "Featured" section regardless of release date; the rest stay year-sectioned. Runs over the
+// filtered sets, so filtering that excludes the pinned set drops it from Featured too (mirroring
+// the card landing). A no-op for a game with no pinned set.
+const partitioned = computed(() => partitionPinnedBy(filteredSets.value, (set) => set.code))
+
+// Bucket the non-pinned product sets into release-year sections — newest year first, undated
 // sets in a trailing "Unknown year" section — resolving each set's year from the catalog row.
 // Within a year the newest release leads (then code), matching the card landing's year sections.
-const sections = computed(() => {
+const yearSections = computed(() => {
   const byYear = new Map<number | null, ProductSetRef[]>()
-  for (const set of filteredSets.value) {
+  for (const set of partitioned.value.rest) {
     const releasedAt = releasedAtOf(set)
     // Slice the leading four digits rather than parsing to a Date — avoids a timezone shift
     // across New Year (matching lib/setGroups.ts's releaseYear).
@@ -122,6 +131,15 @@ const sections = computed(() => {
       if (yb === null) return -1
       return yb - ya
     })
+})
+
+// One flat list of sections to render: the pinned "Featured" section first (when present),
+// then the year sections. Every section is `{ key, label, sets }`, so the template renders
+// featured and year sections through the same tile grid.
+const sections = computed(() => {
+  const featured = partitioned.value.pinned
+  if (!featured.length) return yearSections.value
+  return [{ key: 'featured', label: 'Featured', sets: featured }, ...yearSections.value]
 })
 </script>
 

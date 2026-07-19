@@ -194,19 +194,35 @@ export function originSetCode(group: SetGroup, from: string | null | undefined):
 export const PINNED_SET_CODES = ['sld']
 
 /**
+ * Split any set-keyed items into the pinned ones (in {@link PINNED_SET_CODES}
+ * order) and the rest (incoming order preserved), keying each item by
+ * `codeOf`. A pinned code with no matching item is omitted, so this is a no-op
+ * for a listing that has none of the pinned sets. The generic seam behind both
+ * the card landing's {@link partitionPinned} (over {@link SetGroup}s) and the
+ * sealed landing's per-set-tile pinning (over product-set refs) — one source of
+ * truth for which sets lead the listing.
+ */
+export function partitionPinnedBy<T>(
+  items: T[],
+  codeOf: (item: T) => string,
+): { pinned: T[]; rest: T[] } {
+  const pinnedCodes = new Set(PINNED_SET_CODES)
+  const byCode = new Map(items.map((item) => [codeOf(item), item]))
+  const pinned = PINNED_SET_CODES.map((code) => byCode.get(code)).filter(
+    (item): item is T => item !== undefined,
+  )
+  const rest = items.filter((item) => !pinnedCodes.has(codeOf(item)))
+  return { pinned, rest }
+}
+
+/**
  * Split pre-built {@link SetGroup}s into the pinned groups (in
  * {@link PINNED_SET_CODES} order) and the rest (incoming order preserved). A
  * pinned code with no matching group is omitted, so this is a no-op for a game
  * that has none of the pinned sets.
  */
 export function partitionPinned(groups: SetGroup[]): { pinned: SetGroup[]; rest: SetGroup[] } {
-  const pinnedCodes = new Set(PINNED_SET_CODES)
-  const byCode = new Map(groups.map((group) => [group.main.code, group]))
-  const pinned = PINNED_SET_CODES.map((code) => byCode.get(code)).filter(
-    (group): group is SetGroup => group !== undefined,
-  )
-  const rest = groups.filter((group) => !pinnedCodes.has(group.main.code))
-  return { pinned, rest }
+  return partitionPinnedBy(groups, (group) => group.main.code)
 }
 
 /** A run of top-level set groups that share a release year. */

@@ -102,6 +102,27 @@ pub(super) fn dummy_products() -> Vec<product::ActiveModel> {
             price_usd: None,
             price_usd_foil: None,
         },
+        // Secret Lair Drop products: sealed products whose `sld` set is pinned to the
+        // sealed landing's "Featured" section regardless of its early release date, so the
+        // offline catalog exercises that pinning (mirrors the card landing's featured set).
+        SeedProduct {
+            external_id: "900006",
+            name: "Dummy Secret Lair Drop: Foil Edition",
+            set_code: "sld",
+            product_type: "secret_lair",
+            released_at: "2019-12-02",
+            price_usd: Some("39.99"),
+            price_usd_foil: Some("49.99"),
+        },
+        SeedProduct {
+            external_id: "900007",
+            name: "Dummy Secret Lair Drop: Non-Foil Edition",
+            set_code: "sld",
+            product_type: "secret_lair",
+            released_at: "2019-12-02",
+            price_usd: Some("29.99"),
+            price_usd_foil: None,
+        },
     ]
     .into_iter()
     .map(|p| p.into_active_model(now))
