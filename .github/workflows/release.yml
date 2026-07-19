@@ -8,9 +8,6 @@ name: Release images
 #   tcglense-web   the SPA served by Caddy       (--target web)
 #   tcglense       the API + SPA in one image    (--target combined)
 #
-# It also builds the `tcglense` CLI for Linux/macOS/Windows on native runners and
-# attaches the binaries to the GitHub Release (see the `cli-binaries` job).
-#
 # Cut a release with `scripts/release.sh` (bumps the version, tags, and publishes
 # the GitHub Release that triggers this workflow).
 #
@@ -189,74 +186,3 @@ jobs:
       - name: Redeploy latest combined image
         if: steps.cfg.outputs.enabled == 'true'
         run: doctl apps create-deployment "$DIGITALOCEAN_APP_ID" --force-rebuild --wait
-
-  # Build the standalone `tcglense` CLI for each OS/arch on its NATIVE runner (no
-  # cross-compilation) and upload the archive as a Release asset. Runs only for a real
-  # published Release — a manual :edge dispatch has no Release to attach assets to.
-  # ring (the CLI's rustls crypto backend) ships pregenerated assembly incl. Windows
-  # objects, so no nasm/perl toolchain is needed on any runner.
-  cli-binaries:
-    name: CLI ${{ matrix.target }}
-    if: github.event_name == 'release'
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-13
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: cli
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.release.tag_name }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: cli
-
-      - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Package & upload (Unix)
-        if: runner.os != 'Windows'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          asset="tcglense-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "$asset" -C "target/${{ matrix.target }}/release" tcglense
-          gh release upload "$TAG" "$asset" --clobber
-
-      - name: Package & upload (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          $asset = "tcglense-$env:TAG-${{ matrix.target }}.zip"
-          Compress-Archive -Path "target/${{ matrix.target }}/release/tcglense.exe" -DestinationPath $asset
-          gh release upload $env:TAG $asset --clobber

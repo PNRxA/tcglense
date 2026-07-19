@@ -19,7 +19,10 @@ limiting), and a public API with scoped `tcgl_` API keys (OpenAPI at
 |--------|-------------------------|-------|
 | `api/` | Backend (HTTP JSON API) | Rust 2024 · axum 0.8 · SeaORM 1.1 · SQLite by default, Postgres picked at runtime by the `DATABASE_URL` scheme · JWT (HS256) · Argon2 |
 | `web/` | Frontend (SPA)          | Vue 3.5 · Vite 8 · Pinia · TanStack Query (vue-query) · vue-router · Tailwind 4 · shadcn-vue · TypeScript |
-| `cli/` | CLI + TUI client        | Rust 2024 · clap · reqwest (rustls/ring) · ratatui · tokio — one-shot commands and an interactive TUI over the public API. Standalone crate (not part of the `api/` build); details in [`cli/README.md`](./cli/README.md) |
+
+A `tcglense` **CLI + TUI** client (Rust · clap · reqwest · ratatui) for this API lives in
+its own repository — [PNRxA/tcglense-cli](https://github.com/PNRxA/tcglense-cli) — and is
+**not** in this tree.
 
 **Search trap:** `.claude/` is gitignored but holds nested full-repo worktrees. Scope
 repo-wide greps/finds to `api/` and `web/`, and never edit a file through a
@@ -45,10 +48,7 @@ the port). Default DB: `api/tcglense.db` (SQLite; WAL sidecars are normal).
 Everything else (Postgres, command matrix, CI, releases): `docs/operations.md`.
 
 **Before calling a change done:** `cargo check` + `cargo test` for `api/` work;
-`npm run type-check && npm run lint && npm run test:unit -- --run` for `web/` work;
-`cargo fmt --all && cargo clippy --all-targets && cargo build && cargo test` (in
-`cli/`) for CLI work — CI runs a `cargo fmt --all -- --check` gate plus a `cli-build`
-job (`cargo build --locked` + `cargo test --locked`).
+`npm run type-check && npm run lint && npm run test:unit -- --run` for `web/` work.
 Also format: `cargo fmt --all` (in `api/`) and `npm run format` (in `web/`) — CI's
 `format` job gates both with `cargo fmt --all -- --check` and `npm run format:check`
 (oxfmt), so unformatted code fails the build. CI runs the test suites **plus a ts-rs

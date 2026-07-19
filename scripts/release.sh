@@ -2,9 +2,8 @@
 #
 # Cut a TCGLense release.
 #
-# Prompts for a version number, bumps it in api/Cargo.toml (+ Cargo.lock),
-# cli/Cargo.toml (+ Cargo.lock) and web/package.json (+ package-lock.json), then
-# lands the bump on `main` through a
+# Prompts for a version number, bumps it in api/Cargo.toml (+ Cargo.lock) and
+# web/package.json (+ package-lock.json), then lands the bump on `main` through a
 # pull request — `main` is protected, so a direct push is rejected. It commits on a
 # short-lived `chore/release-vX.Y.Z` branch, opens a PR, merges it with a merge
 # commit, then tags `vX.Y.Z` on that merge commit (so GitHub's PR-based release notes
@@ -121,7 +120,7 @@ fi
 # --- Confirm ---------------------------------------------------------------------
 echo
 bold "About to:"
-echo "  1. Bump api/Cargo.toml + cli/Cargo.toml + web/package.json to $VERSION (and lockfiles)"
+echo "  1. Bump api/Cargo.toml + web/package.json to $VERSION (and lockfiles)"
 echo "  2. Commit the bump on '$RELEASE_BRANCH' and tag it $TAG"
 echo "  3. Open a PR into $BASE_BRANCH and merge it (merge commit)"
 echo "  4. Push $TAG and publish GitHub Release $TAG$( $PRERELEASE && printf ' (pre-release)' ) — this builds + pushes the Docker images"
@@ -162,59 +161,25 @@ recover() {
     red "    git switch $BASE_BRANCH ; git branch -D $RELEASE_BRANCH"
   elif $branch_created; then
     red "  On '$RELEASE_BRANCH' with the bump only in the working tree. Discard it:"
-    red "    git checkout -- api/Cargo.toml api/Cargo.lock cli/Cargo.toml cli/Cargo.lock web/package.json web/package-lock.json"
+    red "    git checkout -- api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json"
     red "    git switch $BASE_BRANCH ; git branch -D $RELEASE_BRANCH"
   else
     red "  The version bump is only in your working tree; discard it:"
-    red "    git checkout -- api/Cargo.toml api/Cargo.lock cli/Cargo.toml cli/Cargo.lock web/package.json web/package-lock.json"
+    red "    git checkout -- api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json"
   fi
 }
 trap recover EXIT
 
-# The locked version of just the named package in the given lockfile — NOT any
-# dependency that happens to share the version string (an unscoped grep would
-# false-positive, e.g. a dep at 0.1.0). Args: <package-name> <lockfile>.
+# The locked version of just the tcglense-api package — NOT any dependency that happens
+# to share the version string (an unscoped grep would false-positive, e.g. a dep at 0.1.0).
 lock_pkg_version() {
-  awk -v want="name = \"$1\"" '
+  awk '
     /^\[\[package\]\]/ { name = "" }
     /^name = / { name = $0 }
-    name == want && /^version = / {
+    name == "name = \"tcglense-api\"" && /^version = / {
       match($0, /"[^"]*"/); print substr($0, RSTART + 1, RLENGTH - 2); exit
     }
-  ' "$2"
-}
-
-# Bump the [package] version of a Cargo.toml in place. Args: <Cargo.toml> <version>.
-bump_cargo_toml() {
-  local file="$1" ver="$2" tmp
-  tmp="$(mktemp)"
-  awk -v ver="$ver" '
-    /^\[/ { in_pkg = ($0 == "[package]") }
-    in_pkg && /^version[[:space:]]*=/ && !done {
-      print "version = \"" ver "\""; done = 1; next
-    }
-    { print }
-  ' "$file" > "$tmp" && mv "$tmp" "$file"
-}
-
-# Ensure a Cargo.lock's own entry for <package> reads <version>, so a later
-# `cargo build --locked` (CI / the Docker build) won't fail on a stale lock. Falls
-# back to a targeted edit if `cargo update` didn't sync it, then verifies.
-# Args: <package-name> <version> <lockfile>.
-ensure_lock_version() {
-  local pkg="$1" ver="$2" lockfile="$3" tmp
-  if [ "$(lock_pkg_version "$pkg" "$lockfile")" != "$ver" ]; then
-    tmp="$(mktemp)"
-    awk -v ver="$ver" -v want="name = \"$pkg\"" '
-      /^\[\[package\]\]/ { pkg = 1; name = "" }
-      pkg && /^name = / { name = $0 }
-      pkg && /^version = / && name == want {
-        print "version = \"" ver "\""; pkg = 0; next
-      }
-      { print }
-    ' "$lockfile" > "$tmp" && mv "$tmp" "$lockfile"
-  fi
-  [ "$(lock_pkg_version "$pkg" "$lockfile")" = "$ver" ] || die "failed to update $lockfile to $ver."
+  ' api/Cargo.lock
 }
 
 # --- Create the release branch (main is protected; the bump merges in via PR) ----
@@ -223,26 +188,41 @@ git switch --quiet -c "$RELEASE_BRANCH"
 branch_created=true
 
 # --- Bump versions ---------------------------------------------------------------
-# The Rust crates (api/ and cli/) are independent packages, each with its own
-# Cargo.toml + Cargo.lock; the SPA (web/) tracks the same version via package.json.
 echo "-> Bumping api/Cargo.toml..."
-bump_cargo_toml api/Cargo.toml "$VERSION"
+tmp="$(mktemp)"
+awk -v ver="$VERSION" '
+  /^\[/ { in_pkg = ($0 == "[package]") }
+  in_pkg && /^version[[:space:]]*=/ && !done {
+    print "version = \"" ver "\""; done = 1; next
+  }
+  { print }
+' api/Cargo.toml > "$tmp" && mv "$tmp" api/Cargo.toml
+
 echo "-> Updating api/Cargo.lock..."
 ( cd api && cargo update --quiet --package tcglense-api )
-ensure_lock_version tcglense-api "$VERSION" api/Cargo.lock
-
-echo "-> Bumping cli/Cargo.toml..."
-bump_cargo_toml cli/Cargo.toml "$VERSION"
-echo "-> Updating cli/Cargo.lock..."
-( cd cli && cargo update --quiet --package tcglense-cli )
-ensure_lock_version tcglense-cli "$VERSION" cli/Cargo.lock
 
 echo "-> Bumping web/package.json..."
 ( cd web && npm version --no-git-tag-version --allow-same-version "$VERSION" >/dev/null )
 
+# Make sure Cargo.lock's tcglense-api entry reflects the new version, so a later
+# `cargo build --locked` (CI / the Docker build) won't fail on a stale lock.
+if [ "$(lock_pkg_version)" != "$VERSION" ]; then
+  # Fall back to a targeted edit of the tcglense-api entry if `cargo update` didn't.
+  tmp="$(mktemp)"
+  awk -v ver="$VERSION" '
+    /^\[\[package\]\]/ { pkg = 1; name = "" }
+    pkg && /^name = / { name = $0 }
+    pkg && /^version = / && name == "name = \"tcglense-api\"" {
+      print "version = \"" ver "\""; pkg = 0; next
+    }
+    { print }
+  ' api/Cargo.lock > "$tmp" && mv "$tmp" api/Cargo.lock
+fi
+[ "$(lock_pkg_version)" = "$VERSION" ] || die "failed to update api/Cargo.lock to $VERSION."
+
 # --- Commit ----------------------------------------------------------------------
 echo "-> Committing..."
-git add api/Cargo.toml api/Cargo.lock cli/Cargo.toml cli/Cargo.lock web/package.json web/package-lock.json
+git add api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json
 git commit --quiet -m "chore(release): $TAG"
 committed=true
 
