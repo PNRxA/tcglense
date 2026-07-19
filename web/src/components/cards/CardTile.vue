@@ -1,20 +1,10 @@
-<script lang="ts">
-// Warm the shared card-detail dialog chunk on the first hover/focus of ANY tile (module
-// flag → once per session), so the click that opens ?card= finds the chunk already
-// fetched. import() itself dedupes, but the flag skips even the repeat call.
-let dialogWarmed = false
-</script>
-
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import type { Card } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import { useCurrency } from '@/composables/useCurrency'
 import CardImage from '@/components/cards/CardImage.vue'
-import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
-import { PRODUCT_CARDS_MODAL_SEARCH_KEYS } from '@/composables/useProductCardsSearch'
-import { applyDetailOrigin } from '@/lib/detailOrigin'
+import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 
 const props = defineProps<{
@@ -33,47 +23,20 @@ const price = computed(() => {
   const picked = displayUsdPrice(props.card.prices)
   return picked ? { ...picked, text: money.formatUsd(picked.amount) } : null
 })
-const to = computed(() => `/cards/${props.game}/cards/${props.card.id}`)
-
-// A plain left-click opens the card in the detail modal over the current page — the
-// URL gains `?card=<id>` (see CardDetailDialog in App.vue), so the list underneath
-// keeps its scroll/search/page state and the browser's Back closes the modal. The
-// tile is a hand-rendered <a> (not a RouterLink, whose own click handler would race
-// this one) whose href stays the real card page, so modifier/middle clicks, "open in
-// new tab", and crawlers still get the full page.
-const route = useRoute()
-const router = useRouter()
-const href = computed(() => router.resolve(to.value).href)
+// A plain left-click opens the card in the detail modal over the current page — the URL gains
+// `?card=<id>` (see CardDetailDialog in App.vue), so the list underneath keeps its
+// scroll/search/page state and the browser's Back closes the modal. The tile is a hand-rendered
+// <a> (not a RouterLink, whose own click handler would race this one) whose href stays the real
+// card page, so modifier/middle clicks, "open in new tab", and crawlers still get the full page.
+// The open/swap/warm mechanics (including the card↔product surface swap and the #448 search
+// reset) live in the shared seam so tiles and the sealed-product link lists behave identically.
+const { hrefFor, onActivate, warm } = useDetailModalLink()
+const href = computed(() => hrefFor('card', props.game, props.card.id))
 function onClick(event: MouseEvent) {
-  if (event.defaultPrevented) return
-  // Let the browser handle anything that isn't a plain left-click.
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-    return
-  }
-  event.preventDefault()
-  // A grid under a route without a `:game` path param (the public deck page,
-  // `/u/:handle/decks/:id`) can't feed the shared CardDetailDialog its game from the URL
-  // path, so carry it in the query there. Pages that already have `:game` in the path are
-  // left untouched (the dialog reads the param and this stays absent).
-  const query: LocationQueryRaw = { ...route.query, card: props.card.id }
-  // A card inside the sealed-product modal swaps detail surfaces instead of stacking dialogs —
-  // and the product modal's namespaced card search leaves with it (it's that product's state,
-  // same as DetailDialogShell dropping its ownedKeys on close/step; issue #448).
-  const fromProduct = typeof route.query.product === 'string' ? route.query.product : null
-  delete query.product
-  for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
-  // Remember that product so the card modal can offer a "← Back to <product>" crumb; opening a
-  // card from a normal grid (no product open) clears any stale marker instead.
-  applyDetailOrigin(query, 'product', fromProduct)
-  if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
-  void router.push({ query })
+  onActivate(event, 'card', props.game, props.card.id)
 }
-
-// Fire-and-forget prefetch of the detail-dialog chunk on first hover/focus.
 function warmCardDetailDialog() {
-  if (dialogWarmed) return
-  dialogWarmed = true
-  void loadCardDetailDialog()
+  warm('card')
 }
 
 // The image dims + (optionally) desaturates; the text block dims with opacity only.

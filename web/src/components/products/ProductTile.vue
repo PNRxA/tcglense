@@ -1,19 +1,11 @@
-<script lang="ts">
-// Warm the shared product-detail dialog chunk on the first hover/focus of any tile.
-let dialogWarmed = false
-</script>
-
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import type { Product } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import { useCurrency } from '@/composables/useCurrency'
 import { productTypeLabel } from '@/lib/productType'
 import ProductImage from '@/components/products/ProductImage.vue'
-import { loadProductDetailDialog } from '@/components/products/detailDialogLoader'
-import { PRODUCT_CARDS_MODAL_SEARCH_KEYS } from '@/composables/useProductCardsSearch'
-import { applyDetailOrigin } from '@/lib/detailOrigin'
+import { useDetailModalLink } from '@/composables/useDetailModalLink'
 
 const props = defineProps<{
   game: string
@@ -29,39 +21,20 @@ const price = computed(() => {
   return pick ? { text: money.formatUsd(pick.amount), foil: pick.foil } : null
 })
 const typeLabel = computed(() => productTypeLabel(props.product.product_type))
-const to = computed(() => `/sealed/${props.game}/${props.product.id}`)
 
-// Plain left-clicks open the shared modal over the current browse route. The anchor keeps
-// the real product page as its href so modifiers, middle-click, new-tab, and crawlers retain
-// normal navigation. Opening from a card modal swaps the query key rather than stacking two
-// dialogs; CardTile performs the inverse transition for cards inside a product modal.
-const route = useRoute()
-const router = useRouter()
-const href = computed(() => router.resolve(to.value).href)
+// Plain left-clicks open the shared modal over the current browse route. The anchor keeps the
+// real product page as its href so modifiers, middle-click, new-tab, and crawlers retain normal
+// navigation. Opening from a card modal swaps the query key rather than stacking two dialogs;
+// CardTile performs the inverse transition for cards inside a product modal. The open/swap/warm
+// mechanics live in the shared seam so tiles and the "What's in the box"/"Included in" link
+// lists behave identically.
+const { hrefFor, onActivate, warm } = useDetailModalLink()
+const href = computed(() => hrefFor('product', props.game, props.product.id))
 function onClick(event: MouseEvent) {
-  if (event.defaultPrevented) return
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-    return
-  }
-  event.preventDefault()
-  const query: LocationQueryRaw = { ...route.query, product: props.product.id }
-  const fromCard = typeof route.query.card === 'string' ? route.query.card : null
-  delete query.card
-  // Any namespaced card search still in the URL was typed for a *different* product (its modal
-  // dropped these on close/step/swap — issue #448); this product's list starts fresh.
-  for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
-  // Remember the card this product was opened from (its "Sealed products" section) so the product
-  // modal can offer a "← Back to <card>" crumb; opening from a browse grid or another product (no
-  // card open) clears any stale marker instead.
-  applyDetailOrigin(query, 'card', fromCard)
-  if (typeof route.params.game !== 'string' || !route.params.game) query.game = props.game
-  void router.push({ query })
+  onActivate(event, 'product', props.game, props.product.id)
 }
-
 function warmProductDetailDialog() {
-  if (dialogWarmed) return
-  dialogWarmed = true
-  void loadProductDetailDialog()
+  warm('product')
 }
 </script>
 

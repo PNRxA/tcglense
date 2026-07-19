@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { ChevronRight, Package } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
 import { productImageUrl } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
 import { useProductContainersQuery } from '@/composables/useProducts'
+import { useDetailModalLink } from '@/composables/useDetailModalLink'
 
 // The reverse of "What's in the box": parent sealed products whose direct composition
 // includes the viewed product. This primarily gives an individual booster page useful
@@ -16,6 +16,12 @@ const id = toRef(props, 'id')
 const containersQuery = useProductContainersQuery(game, id)
 const rows = computed(() => containersQuery.data.value?.data ?? [])
 const show = computed(() => rows.value.length > 0)
+
+// Each parent opens in the shared sealed-product modal over the current route — the same
+// in-place open the browse-grid tiles and the "collector booster exclusives" card links use
+// (issue #485) — while the anchor keeps the canonical product page as its href for
+// modifier/middle clicks, new tabs, and crawlers.
+const { hrefFor, onActivate, warm } = useDetailModalLink()
 </script>
 
 <template>
@@ -29,9 +35,12 @@ const show = computed(() => rows.value.length > 0)
     <p class="text-muted-foreground mb-4 text-xs">Other sealed products that contain this item.</p>
     <ul class="grid gap-2 sm:grid-cols-2">
       <li v-for="row in rows" :key="row.product.id">
-        <RouterLink
-          :to="{ name: 'sealed-product', params: { game, id: row.product.id } }"
+        <a
+          :href="hrefFor('product', game, row.product.id)"
           class="group hover:bg-muted/50 flex items-center gap-3 rounded-lg border p-2 transition-colors"
+          @click="onActivate($event, 'product', game, row.product.id)"
+          @pointerenter="warm('product')"
+          @focusin="warm('product')"
         >
           <div
             class="bg-muted/30 flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-md border"
@@ -56,7 +65,7 @@ const show = computed(() => rows.value.length > 0)
             class="text-muted-foreground size-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
             aria-hidden="true"
           />
-        </RouterLink>
+        </a>
       </li>
     </ul>
   </section>
