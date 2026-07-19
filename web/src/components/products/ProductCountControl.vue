@@ -25,9 +25,15 @@ const props = withDefaults(
     name: string
     quantity: number
     foilQuantity: number
-    wishlistQuantity?: number
+    // The product's resting wish-list want (regular + foil split), or undefined when it isn't
+    // wanted / the grid's wanted overlay hasn't landed. Its total lights the appended Heart chip,
+    // and it seeds the wish-list row's DISPLAY so the known want shows the moment the popover
+    // opens instead of flashing 0 while the authoritative single-product fetch is in flight — the
+    // stepper still waits for that fetch before it goes live, so the seed can't drive an
+    // absolute-count save (mirrors how quantity/foilQuantity seed the collection row).
+    wishlistSeed?: OwnedCountSeed
   }>(),
-  { wishlistQuantity: 0 },
+  { wishlistSeed: undefined },
 )
 
 const open = ref(false)
@@ -55,14 +61,17 @@ const { regular, adjust, saving, saveError } = useOwnedCountEditor(game, product
   list: 'collection',
 })
 
-// The wish-list row has its own lazy authoritative seed and save status. There is no display
-// fallback because the row remains disabled until the query resolves; the resting Heart
-// comes from the batched grid overlay instead.
+// The wish-list row has its own lazy authoritative seed and save status. Its display seeds from
+// that authoritative want once it resolves, falling back to the resting `wishlistSeed` (the
+// grid's wanted overlay) meanwhile so the want shows at once instead of flashing 0; the stepper
+// stays disabled until `wishReady`, so the fallback can never drive an absolute-count save.
 const wishEntryQuery = useWishlistProductEntryQuery(game, productId, {
   enabled: open,
   staleTime: 0,
 })
-const wishSeed = computed<OwnedCountSeed | undefined>(() => wishEntryQuery.data.value)
+const wishSeed = computed<OwnedCountSeed | undefined>(
+  () => wishEntryQuery.data.value ?? props.wishlistSeed,
+)
 const wishReady = computed(() => wishEntryQuery.isSuccess.value && !wishEntryQuery.isFetching.value)
 const wishEditor = useOwnedCountEditor(game, productId, wishSeed, {
   kind: 'product',
@@ -76,7 +85,11 @@ const wishSaveError = wishEditor.saveError
 // The resting trigger reflects the grid overlays; live edited counts stay inside the panel.
 const displayTotal = computed(() => props.quantity + props.foilQuantity)
 const owned = computed(() => displayTotal.value > 0)
-const wanted = computed(() => props.wishlistQuantity > 0)
+// The resting wanted total (regular + foil) behind the Heart chip, derived from the seed.
+const wishlistTotal = computed(() =>
+  props.wishlistSeed ? props.wishlistSeed.quantity + props.wishlistSeed.foil_quantity : 0,
+)
+const wanted = computed(() => wishlistTotal.value > 0)
 const showBadge = computed(() => owned.value || wanted.value)
 </script>
 
@@ -108,7 +121,7 @@ const showBadge = computed(() => owned.value || wanted.value)
           :quantity="quantity"
           :foil-quantity="foilQuantity"
           kind="owned"
-          :wanted-quantity="wishlistQuantity"
+          :wanted-quantity="wishlistTotal"
           :tooltip="false"
           hover-as-add
         />
