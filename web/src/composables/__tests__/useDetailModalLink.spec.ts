@@ -46,11 +46,19 @@ describe('useDetailModalLink', () => {
     expect(router.currentRoute.value.query).toEqual({ q: 'box', sort: 'name', card: 'c1' })
   })
 
-  it('opens a product modal in place', async () => {
+  it('opens a product modal in place via router.push, so Back closes the modal', async () => {
     const router = await at('/sealed/mtg')
+    // Spy after at()'s own setup push so only the open() call is counted.
+    const push = vi.spyOn(router, 'push')
+    const replace = vi.spyOn(router, 'replace')
     link.open('product', 'mtg', 'p1')
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({ product: 'p1' })
+    // A tile/link click is a forward history entry the browser's Back can undo — never `replace`,
+    // which would strand the user with no way to close the modal (DetailDialogShell reserves
+    // `replace` for arrow-stepping). Pin it here at the one shared seam the four surfaces share.
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('swaps an open card modal for a product, remembering the card as the origin', async () => {
