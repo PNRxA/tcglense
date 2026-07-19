@@ -8,11 +8,15 @@ use axum::{Json, extract::State};
 use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::collection;
+use crate::handlers::shared::product_holdings::{
+    ProductHoldingEntry, ProductHoldingListParams, ProductHoldingSet, ProductHoldingSummary,
+};
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
     CollectionDropGroup, CollectionEntry, CollectionSetsResponse, CollectionSubtypeGroup,
-    CollectionSummary, ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page,
-    SetsParams, SummaryParams, dedupe_ids, require_game, resolve_set_scope,
+    CollectionSummary, DataBody, ListParams, MAX_OWNED_IDS, OwnedCountsRequest,
+    OwnedCountsResponse, Page, SetsParams, SummaryParams, dedupe_ids, require_game,
+    resolve_set_scope,
 };
 use crate::state::AppState;
 
@@ -177,6 +181,92 @@ pub async fn public_sets(
     Ok(Json(
         collection::owned_sets(&state, user_id, &game, params.bulk_threshold_cents()).await?,
     ))
+}
+
+/// List public sealed products
+///
+/// `GET /api/u/{handle}/{game}/products` -> a page of the owner's owned sealed products
+/// (mirrors `list_collection_products`; same `?page/page_size/set`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/products",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("set" = Option<String>, Query, description = "Restrict to one set code; an unknown/unheld code yields an empty page"),
+    ),
+    responses(
+        (status = 200, description = "A page of the owner's owned sealed products.", body = Page<ProductHoldingEntry>),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+    ),
+)]
+pub async fn public_products(
+    State(state): State<AppState>,
+    Path((handle, game)): Path<(String, String)>,
+    Query(params): Query<ProductHoldingListParams>,
+) -> Result<Json<Page<ProductHoldingEntry>>, AppError> {
+    require_game(&game)?;
+    let user_id = require_public_handle(&state, &handle, &game).await?;
+    Ok(Json(
+        collection::owned_products_page(&state, user_id, &game, params).await?,
+    ))
+}
+
+/// Get public sealed summary
+///
+/// `GET /api/u/{handle}/{game}/products/summary` (mirrors `collection_product_summary`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/products/summary",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "Aggregate stats for the owner's public sealed products.", body = ProductHoldingSummary),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+    ),
+)]
+pub async fn public_product_summary(
+    State(state): State<AppState>,
+    Path((handle, game)): Path<(String, String)>,
+) -> Result<Json<ProductHoldingSummary>, AppError> {
+    require_game(&game)?;
+    let user_id = require_public_handle(&state, &handle, &game).await?;
+    Ok(Json(
+        collection::owned_product_summary(&state, user_id, &game).await?,
+    ))
+}
+
+/// List public sealed-product sets
+///
+/// `GET /api/u/{handle}/{game}/products/sets` (mirrors `list_collection_product_sets`).
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/{game}/products/sets",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+    ),
+    responses(
+        (status = 200, description = "Every set the owner owns sealed products in, newest set first, each an aggregate tile.", body = DataBody<Vec<ProductHoldingSet>>),
+        (status = 404, description = "Unknown/private handle, non-public game, or unknown game."),
+    ),
+)]
+pub async fn public_product_sets(
+    State(state): State<AppState>,
+    Path((handle, game)): Path<(String, String)>,
+) -> Result<Json<DataBody<Vec<ProductHoldingSet>>>, AppError> {
+    require_game(&game)?;
+    let user_id = require_public_handle(&state, &handle, &game).await?;
+    Ok(Json(DataBody {
+        data: collection::owned_product_sets(&state, user_id, &game).await?,
+    }))
 }
 
 /// List public collection set drops

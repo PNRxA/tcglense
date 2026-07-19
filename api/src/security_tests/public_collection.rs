@@ -4,6 +4,7 @@
 //! and no PII (email / password hash) ever leaks into a public response.
 
 use super::harness::*;
+use crate::test_support::{insert_card_set, insert_product};
 
 async fn sample_card_ids(app: &Router, n: usize) -> Vec<String> {
     let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=25")).await;
@@ -33,6 +34,20 @@ async fn own_card(app: &Router, token: &str, id: &str, quantity: i64) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+}
+
+async fn own_product(app: &Router, token: &str, id: &str, quantity: i64) {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/collection/mtg/products/{id}"),
+            token,
+            json!({ "quantity": quantity, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own product failed: {body:?}");
 }
 
 async fn set_username(app: &Router, token: &str, name: &str) -> String {
@@ -85,6 +100,10 @@ async fn private_game_is_404_no_store() {
         format!("/api/u/{handle}/mtg"),
         format!("/api/u/{handle}/mtg/summary"),
         format!("/api/u/{handle}/mtg/sets"),
+        // The sealed-product reads share the same visibility gate as the card reads.
+        format!("/api/u/{handle}/mtg/products"),
+        format!("/api/u/{handle}/mtg/products/summary"),
+        format!("/api/u/{handle}/mtg/products/sets"),
     ] {
         let (status, headers, _) = send(&app, get(&path)).await;
         assert_eq!(
@@ -94,6 +113,101 @@ async fn private_game_is_404_no_store() {
         );
         assert_eq!(cache_control(&headers), Some("no-store"), "{path} cache");
     }
+}
+
+/// The public sealed-product reads (list / summary / per-set tiles) mirror the card reads:
+/// 404 `no-store` while private, then the owner's exact sealed holdings with the shared-cache
+/// policy once public. Isolated per owner via the same visibility gate.
+#[tokio::test]
+async fn public_sealed_products_are_readable_when_public() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    insert_card_set(db, "sealedset", "Sealed Set", Some("2024-05-01")).await;
+    insert_product(
+        db,
+        "700",
+        "Booster Box",
+        "sealedset",
+        "collector_display",
+        Some("100.00"),
+    )
+    .await;
+    insert_product(db, "701", "Bundle", "sealedset", "bundle", Some("40.00")).await;
+
+    let (access, _) = register(&app, "sealedpub@example.test", "password one two").await;
+    // Own 2 boxes and 1 bundle (700 owned last → recency-leading row).
+    own_product(&app, &access, "700", 2).await;
+    own_product(&app, &access, "701", 1).await;
+    let handle = set_username(&app, &access, "sealedpub").await;
+    set_public(&app, &access, true).await;
+
+    // Summary: 2 unique products, 3 total copies, value 2×$100 + 1×$40.
+    let (status, headers, body) =
+        send(&app, get(&format!("/api/u/{handle}/mtg/products/summary"))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public product summary failed: {body:?}"
+    );
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE)
+    );
+    assert_eq!(body["unique_products"], 2);
+    assert_eq!(body["total_products"], 3);
+    assert_eq!(body["total_value_usd"], "240.00");
+
+    // Per-set tiles: the one set, shared-cacheable, scoped to the owner's holdings.
+    let (status, headers, body) =
+        send(&app, get(&format!("/api/u/{handle}/mtg/products/sets"))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public product sets failed: {body:?}"
+    );
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE)
+    );
+    let sets = body["data"].as_array().expect("sets data array");
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0]["code"], "sealedset");
+    assert_eq!(sets[0]["unique_products"], 2);
+
+    // Flat list: exactly the owner's owned products (recency order), shared-cacheable, and the
+    // `?set=` filter narrows to that set.
+    let (status, headers, body) = send(&app, get(&format!("/api/u/{handle}/mtg/products"))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public product list failed: {body:?}"
+    );
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_HOLDINGS_CACHE)
+    );
+    assert_eq!(body["total"], 2);
+    let ids: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["product"]["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["701", "700"]);
+
+    let (status, _, body) = send(
+        &app,
+        get(&format!("/api/u/{handle}/mtg/products?set=sealedset")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "set-scoped list failed: {body:?}");
+    assert_eq!(body["total"], 2);
+    let (_, _, body) = send(
+        &app,
+        get(&format!("/api/u/{handle}/mtg/products?set=ghost")),
+    )
+    .await;
+    assert_eq!(body["total"], 0, "an unheld set is an empty page");
 }
 
 #[tokio::test]

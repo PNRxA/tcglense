@@ -536,8 +536,13 @@ rows:
 `ProductHoldingSet = { code, name: string | null, unique_products, total_products,
 total_value_usd: string | null }` (a held-product-set tile, its aggregates scoped to the one
 set, `name` null for a set with no `card_sets` row; drill into a set with `?set=<code>` on the
-flat products list). Collection import/sync/export and public sharing remain card-only; value
-history and movers include both card and sealed-product holdings.
+flat products list). Collection import/sync/export remain card-only; value
+history and movers include both card and sealed-product holdings. **Public sharing exposes these
+sealed products** through read-only `/api/u/{handle}/{game}/products{,/summary,/sets}` mirrors of
+the three authed reads above — handle-resolved + gated by the same per-game visibility flag as the
+public card reads (a private/unknown handle → uniform 404), served from the CDN-cacheable
+`public_holdings` group (ETag'd, `PUBLIC_HOLDINGS_CACHE`); the wish-list twin has no public
+surface.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|

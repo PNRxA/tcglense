@@ -27,6 +27,12 @@ vi.mock('@/composables/useWishlist', () => ({
   useWishlistProductSummaryQuery: () => ({ data: ref(state.summary) }),
 }))
 
+// Public (handle-keyed) mode reads the same controlled state as the authed surfaces.
+vi.mock('@/composables/usePublicCollection', () => ({
+  usePublicCollectionProductSetsQuery: () => ({ data: ref(state.sets) }),
+  usePublicCollectionProductSummaryQuery: () => ({ data: ref(state.summary) }),
+}))
+
 vi.mock('@/composables/useCatalog', () => ({
   useSetsQuery: () => ({ data: ref(state.catalog) }),
 }))
@@ -50,13 +56,17 @@ function summary(uniqueProducts: number): ProductHoldingSummary {
   return { unique_products: uniqueProducts, total_products: uniqueProducts, total_value_usd: null }
 }
 
-function mountSection(list: 'collection' | 'wishlist' = 'wishlist') {
+function mountSection(list: 'collection' | 'wishlist' = 'wishlist', handle?: string) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
   })
+  // Public mode is selected by passing `handle` (no `list`); authed by `list`.
+  const props: { game: string; list?: 'collection' | 'wishlist'; handle?: string } = handle
+    ? { game: 'mtg', handle }
+    : { game: 'mtg', list }
   return mount(ProductHoldingSection, {
-    props: { game: 'mtg', list },
+    props,
     global: { plugins: [router], stubs: { RouterLink: RouterLinkStub } },
   })
 }
@@ -120,6 +130,14 @@ describe('ProductHoldingSection', () => {
     state.sets = { data: [makeProductSet('aaa', 'Alpha')] }
     const wrapper = mountSection('wishlist')
     expect(tileLinks(wrapper)[0]!.props('to')).toBe('/wishlist/mtg/products/sets/aaa')
+  })
+
+  it('links tiles + View all under the public handle in public mode', () => {
+    state.sets = { data: [makeProductSet('aaa', 'Alpha')] }
+    state.summary = summary(1)
+    const wrapper = mountSection('collection', 'alice-0001')
+    expect(tileLinks(wrapper)[0]!.props('to')).toBe('/u/alice-0001/mtg/products/sets/aaa')
+    expect(findLinkByText(wrapper, 'View all')?.props('to')).toBe('/u/alice-0001/mtg/products')
   })
 
   it("shows each tile's name, product count, and value", () => {

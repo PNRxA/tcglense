@@ -21,8 +21,8 @@ pub mod visibility;
 
 pub use decks::{public_deck, public_decks};
 pub use public::{
-    public_list, public_owned_counts, public_profile, public_set_drops, public_set_subtypes,
-    public_sets, public_summary,
+    public_list, public_owned_counts, public_product_sets, public_product_summary, public_products,
+    public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
 };
 pub use visibility::{get_collection_visibility, set_collection_visibility};
 
@@ -30,8 +30,9 @@ pub use visibility::{get_collection_visibility, set_collection_visibility};
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::sharing::__path_<fn>`.
 pub use decks::{__path_public_deck, __path_public_decks};
 pub use public::{
-    __path_public_list, __path_public_owned_counts, __path_public_profile, __path_public_set_drops,
-    __path_public_set_subtypes, __path_public_sets, __path_public_summary,
+    __path_public_list, __path_public_owned_counts, __path_public_product_sets,
+    __path_public_product_summary, __path_public_products, __path_public_profile,
+    __path_public_set_drops, __path_public_set_subtypes, __path_public_sets, __path_public_summary,
 };
 pub use visibility::{__path_get_collection_visibility, __path_set_collection_visibility};
 
