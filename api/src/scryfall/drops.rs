@@ -331,6 +331,32 @@ pub fn content_version() -> String {
     store().content_version.clone()
 }
 
+/// The content version the store boots on: the committed seed's ([`SNAPSHOT_JSON`]) version, computed
+/// once. Built the same way [`STORE`] is seeded — the parsed committed snapshot, or the empty table
+/// if it somehow fails to parse — so [`store_is_seed`] compares like with like.
+fn seed_content_version() -> &'static str {
+    static SEED: LazyLock<String> = LazyLock::new(|| {
+        Tables::from_json(SNAPSHOT_JSON)
+            .unwrap_or_else(|_| Tables::empty())
+            .content_version
+    });
+    SEED.as_str()
+}
+
+/// Whether the drop store still holds the committed seed — i.e. no fresher snapshot has been
+/// installed in this process. **True right after every restart**, because the in-memory store
+/// reseeds from the committed snapshot on boot (there is no persisted snapshot to restore). The sync
+/// loops ([`super::sld_tasks`]) use this to refresh at startup rather than deferring onto a stale
+/// seed: a scrape/import that succeeded before the restart left only a persisted *timestamp*, not the
+/// data, so honouring that timestamp would keep serving the committed fallback for up to an interval.
+///
+/// A freshly-installed snapshot whose drops are byte-for-byte the seed's hashes to the same version
+/// and so also reads as "the seed" — harmless: the data served is identical, and the only effect is
+/// one redundant refresh on the next boot.
+pub fn store_is_seed() -> bool {
+    content_version().as_str() == seed_content_version()
+}
+
 /// The drop table for a game's set, or `None` if that set isn't drop-grouped in the current
 /// snapshot. Returns an owned `Arc` so the caller holds a stable table across `await`s even if
 /// the store is swapped underneath.
@@ -572,5 +598,21 @@ mod tests {
             a.content_version, c.content_version,
             "a data change bumps the version"
         );
+    }
+
+    #[test]
+    fn seed_content_version_matches_the_committed_snapshot() {
+        // The cached seed version is exactly the version of the committed snapshot the store boots
+        // on — deterministic, independent of the mutable global store.
+        let seed = Tables::from_json(SNAPSHOT_JSON).expect("committed snapshot parses");
+        assert_eq!(seed_content_version(), seed.content_version);
+    }
+
+    #[test]
+    fn store_is_seed_when_serving_the_committed_snapshot() {
+        // The global store boots on the committed seed and nothing in the suite installs a runtime
+        // snapshot over it, so the live version matches the seed's and `store_is_seed` reports true.
+        assert_eq!(content_version().as_str(), seed_content_version());
+        assert!(store_is_seed());
     }
 }

@@ -7,12 +7,20 @@
 //! ([`super::sld_sync`]) rather than scraping Scryfall itself. Both fall back to the committed
 //! `sld_drops.json` until their first successful fetch, and every failure is logged, never fatal.
 //!
-//! Both loops run the refresh immediately at startup **unless it already ran within the interval**:
-//! the last-run time and the import `ETag` are persisted in one `ingest_state` row
-//! (`(mtg, sld_drops)`), so a restart soon after a refresh defers its first run to when the
-//! interval elapses (rather than re-scraping/re-importing on every boot), while a restart after a
-//! long downtime runs immediately. The persisted `ETag` also lets a consumer's first post-restart
-//! import be a cheap conditional `304`.
+//! **Both loops refresh at startup whenever the drop store is still the committed seed**
+//! ([`drops::store_is_seed`]) — which, because the in-memory store reseeds from that snapshot on
+//! every boot, is the case right after every restart. So a restart never keeps serving the stale
+//! committed fallback for up to an interval: it re-scrapes / re-imports promptly. The consumer forces
+//! that first post-restart import *unconditional* (skipping the persisted `ETag`) so it installs the
+//! mirror's current snapshot rather than `304`-ing back onto the seed.
+//!
+//! Only when a *fresher* snapshot is already loaded at startup (not the seed) does the persisted
+//! last-run defer a too-soon re-run to when the interval elapses ([`startup_delay`] →
+//! [`initial_delay`]); the last-run time lives in one `ingest_state` row (`(mtg, sld_drops)`). With
+//! today's in-memory-only seeding the store always boots on the seed, so that deferral is the
+//! insurance path, not the common one. The trade-off: a crash-looping instance re-scrapes /
+//! re-imports once per boot (a single gallery GET, or a CDN-absorbed mirror GET) instead of being
+//! rate-limited across restarts — accepted, because serving the stale seed is the worse failure.
 //!
 //! Split out of `tasks.rs` so the Secret Lair machinery lives beside its data ops under
 //! `scryfall/`; the generic maintenance/sync orchestration stays in `tasks.rs`.
@@ -52,6 +60,26 @@ fn initial_delay(last_run: Option<DateTimeUtc>, interval_hours: u64, now: DateTi
             let elapsed = (now - last).to_std().unwrap_or(Duration::ZERO);
             interval.saturating_sub(elapsed) // 0 once at least an interval has passed
         }
+    }
+}
+
+/// The delay before a loop's **first** refresh. Runs **now** (`ZERO`) whenever the drop store is
+/// still the committed seed (`store_is_seed`): the in-memory store reseeds from the committed
+/// snapshot on every boot, so a restart that honoured a not-yet-elapsed [`initial_delay`] would serve
+/// that stale seed for up to an interval even though scraping/importing works. Only when a *fresher*
+/// snapshot is already loaded (not the seed) does it defer per the persisted last-run
+/// ([`initial_delay`]) — the rate-limit that stops a too-soon re-run. Kept pure (takes the flag +
+/// `now`) so both branches are unit-testable without the global store or a clock.
+fn startup_delay(
+    store_is_seed: bool,
+    last_run: Option<DateTimeUtc>,
+    interval_hours: u64,
+    now: DateTimeUtc,
+) -> Duration {
+    if store_is_seed {
+        Duration::ZERO
+    } else {
+        initial_delay(last_run, interval_hours, now)
     }
 }
 
@@ -97,8 +125,10 @@ async fn record_run(db: &DatabaseConnection, etag: Option<&str>, status: &str, d
 /// Spawn the mirror origin's daily Secret Lair scrape: fetch Scryfall's gallery and install the
 /// fresh snapshot into the drop store. A broken scrape (markup change → no drops) or an invalid
 /// snapshot is rejected by [`drops::install_snapshot`], so the store keeps its last-good table. The
-/// first scrape runs at startup unless one ran within the interval (persisted last-run defers it),
-/// then every `interval_hours` (a single pass when it's `0`).
+/// first scrape runs at startup whenever the store is still the committed seed (always, right after a
+/// restart — see [`startup_delay`]), so the origin never serves the stale fallback after a boot; only
+/// an already-fresh loaded snapshot defers per the persisted last-run. Then every `interval_hours`
+/// (a single pass when it's `0`).
 pub(crate) fn spawn_sld_scrape(
     db: DatabaseConnection,
     http: Client,
@@ -107,11 +137,11 @@ pub(crate) fn spawn_sld_scrape(
 ) {
     tokio::spawn(async move {
         let (_, last_run) = load_state(&db).await;
-        let delay = initial_delay(last_run, interval_hours, Utc::now());
+        let delay = startup_delay(drops::store_is_seed(), last_run, interval_hours, Utc::now());
         if !delay.is_zero() {
             tracing::info!(
                 defer_secs = delay.as_secs(),
-                "Secret Lair scrape ran recently; deferring the first scrape"
+                "Secret Lair scrape ran recently and a fresh snapshot is loaded; deferring the first scrape"
             );
             tokio::time::sleep(delay).await;
         }
@@ -141,13 +171,13 @@ pub(crate) fn spawn_sld_scrape(
     });
 }
 
-/// Spawn a consumer's daily Secret Lair drop import: pull the snapshot from the mirror (conditional
-/// on the last `ETag`, so an unchanged snapshot is a cheap `304`) and install it. The `ETag` and the
-/// last-run time are persisted in `ingest_state`, so a restart restores the `ETag` (its first
-/// post-restart import can still `304`) and defers the first import if one ran within the interval.
-/// The first import runs at startup (unless deferred), then every `interval_hours` (a single import
-/// when it's `0`). Every failure is logged, never fatal — the instance keeps serving whatever
-/// snapshot it already had loaded.
+/// Spawn a consumer's daily Secret Lair drop import: pull the snapshot from the mirror and install
+/// it. The first import runs at startup whenever the store is still the committed seed (always, right
+/// after a restart — see [`startup_delay`]), and is forced *unconditional* then so it installs the
+/// mirror's current snapshot rather than `304`-ing back onto the stale seed. Later ticks re-condition
+/// on the served `ETag` (an unchanged snapshot is then a cheap `304`), every `interval_hours` (a
+/// single import when it's `0`). Every failure is logged, never fatal — the instance keeps serving
+/// whatever snapshot it already had loaded.
 pub(crate) fn spawn_sld_import(
     db: DatabaseConnection,
     http: Client,
@@ -156,13 +186,20 @@ pub(crate) fn spawn_sld_import(
 ) {
     use crate::scryfall::sld_sync::ImportOutcome;
     tokio::spawn(async move {
-        // Restore the last import ETag (so the first fetch can be conditional) and last-run time.
+        // Restore the last import ETag (to condition later fetches) and last-run time.
         let (mut prev_etag, last_run) = load_state(&db).await;
-        let delay = initial_delay(last_run, interval_hours, Utc::now());
+        let on_seed = drops::store_is_seed();
+        let delay = startup_delay(on_seed, last_run, interval_hours, Utc::now());
+        if on_seed {
+            // The store booted on the committed seed, so a conditional first import could `304` and
+            // leave that stale seed in place. Force the first fetch unconditional to actually install
+            // the mirror's current snapshot; the loop re-conditions on the served ETag afterwards.
+            prev_etag = None;
+        }
         if !delay.is_zero() {
             tracing::info!(
                 defer_secs = delay.as_secs(),
-                "Secret Lair drop import ran recently; deferring the first import"
+                "Secret Lair drop import ran recently and a fresh snapshot is loaded; deferring the first import"
             );
             tokio::time::sleep(delay).await;
         }
@@ -253,6 +290,33 @@ mod tests {
         assert_eq!(
             initial_delay(Some(future), 24, now),
             Duration::from_secs(24 * 3600)
+        );
+    }
+
+    #[test]
+    fn startup_delay_runs_now_when_store_is_seed_regardless_of_last_run() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        // On the seed: refresh immediately even though a run finished a moment ago (which would
+        // otherwise defer ~a full interval) — a restart must not keep serving the stale seed.
+        assert_eq!(
+            startup_delay(true, Some(at(1, now)), 24, now),
+            Duration::ZERO
+        );
+        assert_eq!(startup_delay(true, None, 24, now), Duration::ZERO);
+    }
+
+    #[test]
+    fn startup_delay_defers_per_last_run_when_a_fresher_snapshot_is_loaded() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        // Not the seed (a fresher snapshot already loaded): fall back to the last-run deferral...
+        assert_eq!(
+            startup_delay(false, Some(at(3600, now)), 24, now),
+            Duration::from_secs(23 * 3600)
+        );
+        // ...and still run now once that deferral has elapsed.
+        assert_eq!(
+            startup_delay(false, Some(at(24 * 3600, now)), 24, now),
+            Duration::ZERO
         );
     }
 }
