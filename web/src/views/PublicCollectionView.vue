@@ -8,12 +8,17 @@ import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
+import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
+import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
+import { useCurrency } from '@/composables/useCurrency'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import {
+  usePublicCollectionProductSummaryQuery,
   usePublicCollectionSetsQuery,
   usePublicCollectionSummaryQuery,
 } from '@/composables/usePublicCollection'
+import { sumUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 
 // A user's public collection landing for a game (issues #361/#362): the sets they own
@@ -24,6 +29,7 @@ import { usePageMeta } from '@/lib/seo'
 const props = defineProps<{ handle: string; game: string }>()
 const handle = toRef(props, 'handle')
 const gameName = useGameName(toRef(props, 'game'))
+const money = useCurrency()
 // The owner's display handle is the username part of the URL handle (`alice-0001` → `alice`).
 const username = computed(() => props.handle.replace(/-\d{1,4}$/, ''))
 
@@ -46,6 +52,47 @@ const {
   basePath: `/u/${props.handle}`,
   withBulk: true,
 })
+
+// The owner's public sealed products (issue: public collections were card-only). This query is
+// also mounted by the sealed `ProductHoldingSection` below, so vue-query dedupes to one request.
+const productSummaryQuery = usePublicCollectionProductSummaryQuery(handle, game)
+const productSummary = computed(() => productSummaryQuery.data.value)
+const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
+
+// Top-of-page combined overview (cards + sealed rolled together), the headline above the
+// per-section breakdowns; empty (so it self-hides) until at least one holding exists —
+// matching the authed collection landing's reorganized stats.
+const combinedStats = computed(() => {
+  if (!hasStats.value && !hasProductStats.value) return []
+  const cards = summary.value
+  const products = productSummary.value
+  return [
+    {
+      label: 'Unique items',
+      value: ((cards?.unique_cards ?? 0) + (products?.unique_products ?? 0)).toLocaleString(),
+    },
+    {
+      label: 'Total items',
+      value: ((cards?.total_cards ?? 0) + (products?.total_products ?? 0)).toLocaleString(),
+    },
+    {
+      label: 'Total value',
+      value: money.formatUsd(sumUsd(cards?.total_value_usd, products?.total_value_usd)),
+    },
+  ]
+})
+
+// The cards section's own unique / total / value (+ bulk) stats, under its heading below.
+const cardStats = computed(() =>
+  hasStats.value
+    ? [
+        { label: 'Unique cards', value: summary.value?.unique_cards.toLocaleString() ?? null },
+        { label: 'Total copies', value: summary.value?.total_cards.toLocaleString() ?? null },
+        { label: 'Total value', value: totalValue.value },
+        { label: 'Bulk value', value: bulkValue.value },
+      ]
+    : [],
+)
 
 // The landing's `activeError` flips with the inherited `?sets=all` scope toggle (it then
 // reads the always-200 public catalog list), so gate not-found on the handle-scoped summary
@@ -80,29 +127,19 @@ usePageMeta({
         <h1 class="text-3xl font-semibold tracking-tight">
           {{ username }}'s {{ gameName }} collection
         </h1>
-        <dl v-if="hasStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ summary?.unique_cards.toLocaleString() }}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ summary?.total_cards.toLocaleString() }}
-            </dd>
-          </div>
-          <div v-if="totalValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
-          </div>
-          <div v-if="bulkValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Bulk value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ bulkValue }}</dd>
-          </div>
-        </dl>
+        <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under
+             the sealed and cards headings below (matching the authed collection landing). -->
+        <HoldingStatList :items="combinedStats" size="lg" class="mt-4" />
       </header>
+
+      <!-- The owner's sealed products (read-only public mirror); renders nothing when the owner
+           holds none, so a card-only collection looks exactly as before. -->
+      <ProductHoldingSection :game="game" :handle="handle" class="mb-8" />
+
+      <!-- Cards section heading + its own unique / total / value (+ bulk) stats, matching the
+           sealed section's heading + stats above. -->
+      <h2 class="mb-4 text-lg font-semibold">Cards</h2>
+      <HoldingStatList :items="cardStats" class="mb-6" />
 
       <StickySearchBar class="mb-6 flex flex-wrap items-center gap-3">
         <CardSearchBox
@@ -124,7 +161,7 @@ usePageMeta({
 
       <SetGridSkeleton v-if="activePending" />
       <p v-else-if="!sourceSets.length" class="text-muted-foreground py-12">
-        This collection is empty.
+        No cards in this collection.
       </p>
       <p v-else-if="filtering && !groups.length" class="text-muted-foreground py-12">
         No sets match “{{ trimmedFilter }}”.

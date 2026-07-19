@@ -63,7 +63,8 @@ use crate::{
         openapi::openapi_json,
         sharing::{
             get_collection_visibility, public_deck, public_decks, public_list, public_owned_counts,
-            public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
+            public_product_sets, public_product_summary, public_products, public_profile,
+            public_set_drops, public_set_subtypes, public_sets, public_summary,
             set_collection_visibility,
         },
         sitemap::{sitemap_child, sitemap_index},
@@ -501,6 +502,19 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/u/{handle}/{game}/sets/{code}/subtypes",
             get(public_set_subtypes),
+        )
+        // Public sealed products: the read-only mirror of the authed
+        // `/api/collection/{game}/products*` reads, resolved by handle. `/products/summary`
+        // and `/products/sets` are static siblings of the flat `/products` list (no `{id}`
+        // capture here — public reads never address a single product), so no ordering hazard.
+        .route("/api/u/{handle}/{game}/products", get(public_products))
+        .route(
+            "/api/u/{handle}/{game}/products/summary",
+            get(public_product_summary),
+        )
+        .route(
+            "/api/u/{handle}/{game}/products/sets",
+            get(public_product_sets),
         )
         // Per-deck public sharing (issue #363): a user's public decks and one public deck's
         // full detail, addressed by handle. `decks` is a static sibling of `{game}` (static
