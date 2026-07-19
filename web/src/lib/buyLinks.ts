@@ -103,6 +103,32 @@ const MTG_SECTIONS: BuySection[] = [
       { name: 'The Games Cube', template: 'https://www.thegamescube.com/products/search?q={name}' },
       { name: 'Games Portal', template: 'https://gamesportal.com.au/search?q={name}' },
       { name: 'Ronin Games', template: 'https://roningames.com.au/search?q={name}' },
+      { name: 'Gameology', template: 'https://www.gameology.com.au/search?q={name}' },
+      {
+        name: 'Adventurers Guild',
+        template: 'https://www.theadventurersguild.com.au/search?q={name}',
+      },
+      // Decked Out Gaming runs on Neto/Maropost: keyword search is the store root
+      // with rf=kw + kw=<phrase>, not a /search path (same shape as Dice Arcade in
+      // the product list below).
+      { name: 'Decked Out Gaming', template: 'https://www.deckedoutgaming.com/?rf=kw&kw={name}' },
+      { name: 'Ozzie Collectables', template: 'https://www.ozziecollectables.com/search?q={name}' },
+      {
+        name: 'Cherry Collectables',
+        template: 'https://www.cherrycollectables.com.au/search?q={name}',
+      },
+      { name: 'Plenty of Games', template: 'https://www.plentyofgames.com.au/search?q={name}' },
+      // Untapped Realms is a singles-only shop on Spiffy Stores (an AU-built
+      // platform that mirrors Shopify's /search?q= endpoint).
+      { name: 'Untapped Realms', template: 'https://www.untappedrealms.com/search?q={name}' },
+      { name: 'That Game Store', template: 'https://thatgamestore.com.au/search?q={name}' },
+      // MagicCards.com.au is Drupal Commerce, not Shopify: its singles listing
+      // filters on a `title` query param at /single-cards, and the apex host is
+      // canonical (the www variant 503s).
+      {
+        name: 'MagicCards.com.au',
+        template: 'https://magiccards.com.au/single-cards?title={name}',
+      },
     ],
   },
 ]
@@ -111,14 +137,17 @@ const SECTIONS_BY_GAME: Record<string, BuySection[]> = {
   mtg: MTG_SECTIONS,
 }
 
-// Sealed-product "where to buy" stores, split US / Australia (the singles-only
-// stores in the card registry above — MTG Mate, MTG Singles Australia — are
-// dropped; the rest are general storefronts that stock sealed product). Each
-// template's name-search endpoint was verified to surface sealed products (a
-// booster box / bundle / deck) for a full product name like "Bloomburrow
-// Collector Booster Box". TCGplayer carries `preferProductUrl` so its entry
-// deep-links to the exact product page we already hold (`product.url`) rather
-// than a fuzzy name search, falling back to search only when that URL is absent.
+// Sealed-product "where to buy" stores, split US / Australia. Singles-only
+// stores from the card registry above (MTG Mate, MTG Singles Australia, Untapped
+// Realms, That Game Store, MagicCards.com.au) are dropped here; conversely a few
+// sealed-only stores (The Gamesmen, Games Empire) appear here but not in the card
+// list. Each template's name-search endpoint was verified to surface sealed
+// products (a booster box / bundle / deck) for a full product name like
+// "Bloomburrow Collector Booster Box" — except The Gamesmen, whose Neto search
+// shape is inferred from the platform (a Cloudflare bot wall blocked live
+// verification). TCGplayer carries `preferProductUrl` so its entry deep-links to
+// the exact product page we already hold (`product.url`) rather than a fuzzy name
+// search, falling back to search only when that URL is absent.
 const MTG_PRODUCT_SECTIONS: BuySection[] = [
   {
     title: 'US',
@@ -167,6 +196,25 @@ const MTG_PRODUCT_SECTIONS: BuySection[] = [
         name: 'Collectible Madness',
         template: 'https://collectiblemadness.com.au/search?q={name}',
       },
+      { name: 'Gameology', template: 'https://www.gameology.com.au/search?q={name}' },
+      {
+        name: 'Adventurers Guild',
+        template: 'https://www.theadventurersguild.com.au/search?q={name}',
+      },
+      // The Gamesmen and Decked Out Gaming are Neto/Maropost like Dice Arcade
+      // above (?rf=kw&kw=). The Gamesmen stocks sealed but not singles, so it's
+      // only in this list.
+      { name: 'The Gamesmen', template: 'https://www.gamesmen.com.au/?rf=kw&kw={name}' },
+      { name: 'Decked Out Gaming', template: 'https://www.deckedoutgaming.com/?rf=kw&kw={name}' },
+      { name: 'Ozzie Collectables', template: 'https://www.ozziecollectables.com/search?q={name}' },
+      {
+        name: 'Cherry Collectables',
+        template: 'https://www.cherrycollectables.com.au/search?q={name}',
+      },
+      // Games Empire stocks sealed but not singles (its MTG collection is
+      // boxes/bundles); the apex host is canonical (no www redirect).
+      { name: 'Games Empire', template: 'https://gamesempire.com.au/search?q={name}' },
+      { name: 'Plenty of Games', template: 'https://www.plentyofgames.com.au/search?q={name}' },
     ],
   },
 ]
