@@ -28,9 +28,12 @@ vi.mock('@/composables/usePrintings', async () => {
     },
   ] as Card[])
   const filter = ref('')
+  const collectionOnly = ref(false)
   return {
     usePrintingPicker: () => ({
       filter,
+      collectionOnly,
+      collectionFilterLoading: ref(false),
       printings,
       filteredPrintings: computed(() => printings.value),
       total: ref(816),
@@ -117,6 +120,17 @@ describe('DeckPrintingDialog action adapter', () => {
     if (!loadMore) throw new Error('missing load-more button')
     await loadMore.trigger('click')
     expect(mocks.loadMore).toHaveBeenCalledOnce()
+  })
+
+  it('offers the collection filter and reflects the picker toggle', async () => {
+    const wrapper = mountDialog()
+    const checkbox = wrapper.get('input[type="checkbox"]')
+    expect(wrapper.text()).toContain('In my collection')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+
+    // Ticking it flips the shared picker's `collectionOnly` (v-model), which repaints the box.
+    await checkbox.setValue(true)
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
   })
 
   it('performs one atomic replacement and closes on success', async () => {

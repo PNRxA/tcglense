@@ -43,7 +43,10 @@ watch(term, () => {
   if (pickedName.value) pickedName.value = ''
 })
 const pickedEnabled = computed(() => pickedName.value.length > 0)
-const picker = usePrintingPicker(gameRef, pickedName, { enabled: pickedEnabled })
+const picker = usePrintingPicker(gameRef, pickedName, {
+  enabled: pickedEnabled,
+  collectionFilter: true,
+})
 
 // Automatic is the default: each printing files into its preset type bucket. A user can
 // still pin the add box to any explicit section for functional/custom categorisation.
@@ -202,6 +205,7 @@ function reset() {
       </p>
       <PrintingPickerGrid
         v-model:filter="picker.filter.value"
+        v-model:collection-only="picker.collectionOnly.value"
         class="max-h-[36rem] overflow-y-auto pr-1"
         :printings="picker.printings.value"
         :filtered-printings="picker.filteredPrintings.value"
@@ -210,6 +214,8 @@ function reset() {
         :error="picker.failed.value"
         :has-more="picker.hasNextPage.value"
         :loading-more="picker.isFetchingNextPage.value"
+        collection-filter
+        :collection-loading="picker.collectionFilterLoading.value"
         @load-more="picker.loadMore"
       >
         <template #tile="{ printing }">
