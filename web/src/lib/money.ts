@@ -18,3 +18,17 @@ export function formatUsd(raw: string | null | undefined): string | null {
   if (!Number.isFinite(n)) return `$${raw}`
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+
+/**
+ * Sum canonical USD decimal strings, skipping any `null`/`undefined`/empty entries (the API
+ * sends those when nothing is priced). Returns a 2-dp canonical string ready for
+ * {@link formatUsd}, or `null` when every input is absent — so the formatted result
+ * self-hides. Used to roll the cards + sealed-product values into the landing's combined
+ * total.
+ */
+export function sumUsd(...values: (string | null | undefined)[]): string | null {
+  const present = values.filter((v): v is string => !!v)
+  if (!present.length) return null
+  const total = present.reduce((acc, v) => acc + Number(v), 0)
+  return Number.isFinite(total) ? total.toFixed(2) : null
+}

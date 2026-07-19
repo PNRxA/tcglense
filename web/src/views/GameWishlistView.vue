@@ -12,9 +12,11 @@ import CollectionSignInPrompt from '@/components/collection/CollectionSignInProm
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
+import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { useCurrency } from '@/composables/useCurrency'
+import { sumUsd } from '@/lib/money'
 import {
   useWishlistProductSummaryQuery,
   useWishlistSetsQuery,
@@ -73,8 +75,41 @@ const {
 const productSummaryQuery = useWishlistProductSummaryQuery(game)
 const productSummary = computed(() => productSummaryQuery.data.value)
 const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
-// formatUsd returns null for a null value (nothing wanted is priced) — the stat hides.
-const productsValue = computed(() => money.formatUsd(productSummary.value?.total_value_usd))
+
+// Top-of-page combined overview (cards + sealed rolled together), the headline above the
+// per-section breakdowns; empty (so it self-hides) until at least one holding is wanted.
+const combinedStats = computed(() => {
+  if (!hasStats.value && !hasProductStats.value) return []
+  const cards = summary.value
+  const products = productSummary.value
+  return [
+    {
+      label: 'Unique items',
+      value: ((cards?.unique_cards ?? 0) + (products?.unique_products ?? 0)).toLocaleString(),
+    },
+    {
+      label: 'Total items',
+      value: ((cards?.total_cards ?? 0) + (products?.total_products ?? 0)).toLocaleString(),
+    },
+    {
+      label: 'Total value',
+      value: money.formatUsd(sumUsd(cards?.total_value_usd, products?.total_value_usd)),
+    },
+  ]
+})
+
+// The cards section's own unique / total / value stats, under its heading below. No bulk
+// slice (unlike the collection landing): a wish list is a shopping list, so only what it
+// costs matters.
+const cardStats = computed(() =>
+  hasStats.value
+    ? [
+        { label: 'Unique cards', value: summary.value?.unique_cards.toLocaleString() ?? null },
+        { label: 'Total copies', value: summary.value?.total_cards.toLocaleString() ?? null },
+        { label: 'Total value', value: totalValue.value },
+      ]
+    : [],
+)
 
 const gameName = useGameName(game)
 const auth = useAuthStore()
@@ -112,50 +147,9 @@ usePageMeta({
           <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
         </p>
 
-        <!-- Summary stats split across two rows: the sealed trio (issue #364 follow-up) on the
-             first line when any products are wanted, then the card trio (distinct cards, total
-             copies, what they'd cost) on the next. Each row is its own flex-wrap list so its
-             stats flow onto one line on desktop and wrap on narrow screens. -->
-        <div v-if="hasStats || hasProductStats" class="mt-4 space-y-3">
-          <dl v-if="hasProductStats" class="flex flex-wrap gap-x-8 gap-y-3">
-            <div>
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique products</dt>
-              <dd class="text-xl font-semibold tabular-nums">
-                {{ productSummary?.unique_products.toLocaleString() }}
-              </dd>
-            </div>
-            <div>
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total products</dt>
-              <dd class="text-xl font-semibold tabular-nums">
-                {{ productSummary?.total_products.toLocaleString() }}
-              </dd>
-            </div>
-            <div v-if="productsValue">
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Products value</dt>
-              <dd class="text-xl font-semibold tabular-nums">{{ productsValue }}</dd>
-            </div>
-          </dl>
-          <dl v-if="hasStats" class="flex flex-wrap gap-x-8 gap-y-3">
-            <div>
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
-              <dd class="text-xl font-semibold tabular-nums">
-                {{ summary?.unique_cards.toLocaleString() }}
-              </dd>
-            </div>
-            <div>
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
-              <dd class="text-xl font-semibold tabular-nums">
-                {{ summary?.total_cards.toLocaleString() }}
-              </dd>
-            </div>
-            <!-- No bulk-value stat (unlike the collection landing): a wish list is a
-                 shopping list, so only what it costs matters. -->
-            <div v-if="totalValue">
-              <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
-              <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
-            </div>
-          </dl>
-        </div>
+        <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under
+             the sealed and cards headings further down. -->
+        <HoldingStatList :items="combinedStats" size="lg" class="mt-4" />
 
         <!-- Quick add: cards (name → printing → counts) and sealed products (name → quantity).
              Both write to the wish list. -->
@@ -179,6 +173,11 @@ usePageMeta({
            tile carries the hover quick-add control, and the sealed quick-add box above
            also writes here. -->
       <ProductHoldingSection :game="game" list="wishlist" class="mb-8" />
+
+      <!-- Cards section heading + its own unique / total / value stats, matching the sealed
+           section's heading + stats above. -->
+      <h2 class="mb-4 text-lg font-semibold">Cards</h2>
+      <HoldingStatList :items="cardStats" class="mb-6" />
 
       <!-- The set list — wishlisted sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

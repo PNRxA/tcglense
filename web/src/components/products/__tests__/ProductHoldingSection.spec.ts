@@ -163,20 +163,34 @@ describe('ProductHoldingSection', () => {
     expect(tile.find('img').exists()).toBe(true)
   })
 
-  it('shows the summary-sourced header count, worded per surface', () => {
+  it('shows the summary-sourced unique / total / value stats under the heading', () => {
     state.sets = { data: [makeProductSet('abc', 'ABC Set')] }
-    state.summary = summary(2)
-    expect(mountSection('wishlist').get('h2').text()).toContain('2 wanted')
-    expect(mountSection('collection').get('h2').text()).toContain('2 owned')
+    state.summary = { unique_products: 2, total_products: 5, total_value_usd: '12.50' }
+    const dl = mountSection('collection').get('dl')
+    expect(dl.text()).toContain('Unique products')
+    expect(dl.text()).toContain('2')
+    expect(dl.text()).toContain('Total products')
+    expect(dl.text()).toContain('5')
+    expect(dl.text()).toContain('Products value')
+    expect(dl.text()).toContain('$12.50')
   })
 
-  it('hides the header count span until the summary has data', () => {
+  it('hides the stats when the summary value is unpriced', () => {
+    state.sets = { data: [makeProductSet('abc', 'ABC Set')] }
+    // total_value_usd null ⇒ the "Products value" stat self-hides; the two counts remain.
+    state.summary = summary(2)
+    const dl = mountSection('wishlist').get('dl')
+    expect(dl.text()).toContain('Unique products')
+    expect(dl.text()).not.toContain('Products value')
+  })
+
+  it('hides the stats list until the summary has data', () => {
     state.sets = { data: [makeProductSet('abc', 'ABC Set')] }
     state.summary = undefined
     const wrapper = mountSection()
-    // The section renders (a set is held) but the count span waits for the summary.
+    // The section renders (a set is held) but the stats list waits for the summary.
     expect(wrapper.find('section').exists()).toBe(true)
-    expect(wrapper.get('h2').text()).not.toContain('wanted')
+    expect(wrapper.find('dl').exists()).toBe(false)
   })
 
   it('renders a View all link to the surface products list', () => {

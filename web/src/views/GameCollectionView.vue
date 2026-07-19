@@ -16,6 +16,7 @@ import CollectionSyncControls from '@/components/collection/CollectionSyncContro
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
+import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
 import {
   useCollectionProductSummaryQuery,
@@ -26,6 +27,7 @@ import { useCollectionVisibilityQuery } from '@/composables/useCollectionVisibil
 import { useCurrency } from '@/composables/useCurrency'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { getCollectionValueHistory } from '@/lib/api'
+import { sumUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 import type { PriceRange } from '@/lib/api'
@@ -75,7 +77,42 @@ const auth = useAuthStore()
 const productSummaryQuery = useCollectionProductSummaryQuery(game)
 const productSummary = computed(() => productSummaryQuery.data.value)
 const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
-const productsValue = computed(() => money.formatUsd(productSummary.value?.total_value_usd))
+
+// Top-of-page combined overview (cards + sealed rolled together), the headline above the
+// per-section breakdowns; empty (so it self-hides) until at least one holding exists.
+const combinedStats = computed(() => {
+  if (!hasStats.value && !hasProductStats.value) return []
+  const cards = summary.value
+  const products = productSummary.value
+  return [
+    {
+      label: 'Unique items',
+      value: ((cards?.unique_cards ?? 0) + (products?.unique_products ?? 0)).toLocaleString(),
+    },
+    {
+      label: 'Total items',
+      value: ((cards?.total_cards ?? 0) + (products?.total_products ?? 0)).toLocaleString(),
+    },
+    {
+      label: 'Total value',
+      value: money.formatUsd(sumUsd(cards?.total_value_usd, products?.total_value_usd)),
+    },
+  ]
+})
+
+// The cards section's own unique / total / value (+ bulk) stats, under its heading below.
+const cardStats = computed(() =>
+  hasStats.value
+    ? [
+        { label: 'Unique cards', value: summary.value?.unique_cards.toLocaleString() ?? null },
+        { label: 'Total copies', value: summary.value?.total_cards.toLocaleString() ?? null },
+        { label: 'Total value', value: totalValue.value },
+        // The bulk (< $1/card) slice of the total, so it's clear how much of the
+        // collection's value is chaff vs. real money.
+        { label: 'Bulk value', value: bulkValue.value },
+      ]
+    : [],
+)
 // The value chart / movers panel show per the server-backed display prefs, toggled from
 // the header's settings menu (issue #381). While the prefs load (or with no row yet) both
 // default to shown — fail-open, so a transient prefs-query miss never hides these core
@@ -132,50 +169,9 @@ function fetchValueHistory(range: PriceRange) {
           <CollectionSettingsMenu :game="game" />
         </div>
 
-        <dl v-if="hasProductStats" class="mt-4 flex flex-wrap gap-x-8 gap-y-3">
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique products</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ productSummary?.unique_products.toLocaleString() }}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total products</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ productSummary?.total_products.toLocaleString() }}
-            </dd>
-          </div>
-          <div v-if="productsValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Products value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ productsValue }}</dd>
-          </div>
-        </dl>
-
-        <!-- Card stats stay separate from the sealed-product summary above. -->
-        <dl v-if="hasStats" class="mt-3 flex flex-wrap gap-x-8 gap-y-3">
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ summary?.unique_cards.toLocaleString() }}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
-            <dd class="text-xl font-semibold tabular-nums">
-              {{ summary?.total_cards.toLocaleString() }}
-            </dd>
-          </div>
-          <div v-if="totalValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ totalValue }}</dd>
-          </div>
-          <!-- The bulk (< $1/card) slice of the total, so it's clear how much of the
-               collection's value is chaff vs. real money. -->
-          <div v-if="bulkValue">
-            <dt class="text-muted-foreground text-xs tracking-wide uppercase">Bulk value</dt>
-            <dd class="text-xl font-semibold tabular-nums">{{ bulkValue }}</dd>
-          </div>
-        </dl>
+        <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under
+             the sealed and cards headings further down. -->
+        <HoldingStatList :items="combinedStats" size="lg" class="mt-4" />
 
         <div class="mt-5 grid max-w-3xl gap-4 sm:grid-cols-2">
           <div>
@@ -221,6 +217,11 @@ function fetchValueHistory(range: PriceRange) {
 
       <!-- Keep the sealed holdings grid directly below the collection analytics. -->
       <ProductHoldingSection :game="game" list="collection" class="mt-8 mb-8" />
+
+      <!-- Cards section heading + its own unique / total / value (+ bulk) stats, matching
+           the sealed section's heading + stats above. -->
+      <h2 class="mb-4 text-lg font-semibold">Cards</h2>
+      <HoldingStatList :items="cardStats" class="mb-6" />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

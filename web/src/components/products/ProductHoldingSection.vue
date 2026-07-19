@@ -2,6 +2,7 @@
 import { computed, toRef } from 'vue'
 import { RouterLink } from 'vue-router'
 import ProductSetTile from '@/components/products/ProductSetTile.vue'
+import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { buttonVariants } from '@/components/ui/button'
 import {
   useCollectionProductSetsQuery,
@@ -24,7 +25,6 @@ const game = toRef(props, 'game')
 const money = useCurrency()
 
 const basePath = computed(() => (props.list === 'wishlist' ? '/wishlist' : '/collection'))
-const countNoun = computed(() => (props.list === 'wishlist' ? 'wanted' : 'owned'))
 
 // Every held-product set (unpaginated, newest set first) — the tiles. The section renders only
 // once this has at least one set, so an empty holding shows nothing.
@@ -51,17 +51,25 @@ const catalogSetByCode = computed(() => {
   for (const set of catalogSetsQuery.data.value?.data ?? []) map[set.code] = set
   return map
 })
+
+// The unique / total / value trio shown directly under the "Sealed products" heading, so
+// this section carries its own stats just like the cards section does — the counts self-hide
+// (empty items) while the summary query is still pending.
+const sealedStats = computed(() => {
+  const s = summary.value
+  if (!s) return []
+  return [
+    { label: 'Unique products', value: s.unique_products.toLocaleString() },
+    { label: 'Total products', value: s.total_products.toLocaleString() },
+    { label: 'Products value', value: money.formatUsd(s.total_value_usd) },
+  ]
+})
 </script>
 
 <template>
   <section v-if="sets.length">
     <div class="mb-4 flex items-center justify-between gap-2">
-      <h2 class="text-lg font-semibold">
-        Sealed products
-        <span v-if="summary" class="text-muted-foreground ml-1 text-sm font-normal">
-          {{ summary.unique_products }} {{ countNoun }}
-        </span>
-      </h2>
+      <h2 class="text-lg font-semibold">Sealed products</h2>
       <div class="flex items-center gap-2">
         <RouterLink
           :to="`/sealed/${game}`"
@@ -74,6 +82,9 @@ const catalogSetByCode = computed(() => {
         </RouterLink>
       </div>
     </div>
+
+    <!-- The section's own unique / total / value stats, under its heading. -->
+    <HoldingStatList :items="sealedStats" class="mb-4" />
 
     <!-- One tile per held-product set (server order = newest set first), each linking to the
          surface's set-scoped products list — matching the card landing's held-sets grid. -->
