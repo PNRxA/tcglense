@@ -94,6 +94,18 @@ const TOKEN_SET: SetDef = SetDef {
     released: "2024-01-15",
     parent: Some("dmb"),
 };
+/// Secret Lair Drop stand-in: pinned to the top of both the card and sealed catalog
+/// landings' "Featured" sections regardless of its (early) release date, so a seeded
+/// catalog exercises that pinning offline. Its sealed products live in
+/// [`super::products::dummy_products`].
+const SECRET_LAIR_SET: SetDef = SetDef {
+    code: "sld",
+    name: "Dummy Secret Lair Drop",
+    // Matches Scryfall's real `sld` set_type; a continuously-restocked line, not a dated set.
+    set_type: "box",
+    released: "2019-12-02",
+    parent: None,
+};
 
 /// Number of plain numbered cards in the base set. Kept above `DEFAULT_PAGE_SIZE`
 /// (60) so the set view exercises pagination / `has_more`.
@@ -418,6 +430,12 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
         cards.push(token_card(&TOKEN_SET, n));
     }
 
+    // A small Secret Lair Drop set so the pinned "Featured" section on both landings has
+    // real cards behind its tile offline (its sealed products are in `dummy_products`).
+    for n in 1..=6 {
+        cards.push(numbered_card(&SECRET_LAIR_SET, n));
+    }
+
     cards
 }
 
@@ -426,7 +444,7 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
 /// the seed path builds it only once.
 pub(super) fn dummy_sets(cards: &[ScryfallCard]) -> Vec<ScryfallSet> {
     let count = |code: &str| cards.iter().filter(|c| c.set == code).count() as i64;
-    [&BASE_SET, &UNIVERSE_SET, &TOKEN_SET]
+    [&BASE_SET, &UNIVERSE_SET, &TOKEN_SET, &SECRET_LAIR_SET]
         .into_iter()
         .map(|def| ScryfallSet {
             id: format!("dummy-set-{}", def.code),
