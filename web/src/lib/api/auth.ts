@@ -1,6 +1,7 @@
 import { request } from './client'
 import type {
   AuthResponse,
+  CliAuthorizeResponse,
   RefreshResponse,
   RegisterResponse,
   User,
@@ -16,6 +17,7 @@ const AUTH_REQUEST_TIMEOUT_MS = 15_000
 // re-exported here; the request payloads stay hand-written client types.
 export type {
   AuthResponse,
+  CliAuthorizeResponse,
   RefreshResponse,
   RegisterResponse,
   User,
@@ -101,6 +103,25 @@ export function login(payload: LoginPayload): Promise<AuthResponse> {
   return request<AuthResponse>('/api/auth/login', {
     method: 'POST',
     body: payload,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
+}
+
+export interface CliAuthorizeArgs {
+  /** The SHA-256 hex of the CLI's PKCE verifier. */
+  code_challenge: string
+  /** Human label for the device/CLI, shown on the consent screen. */
+  client_name?: string | null
+}
+
+/** Authorize a CLI device: mint a one-time code bound to the CLI's PKCE challenge,
+ * which the CLI then exchanges for a session at `/api/auth/cli/token`. Session-only
+ * (a read-only API key is 403); the returned `code` is single-use and short-lived. */
+export function cliAuthorize(token: string, args: CliAuthorizeArgs): Promise<CliAuthorizeResponse> {
+  return request<CliAuthorizeResponse>('/api/auth/cli/authorize', {
+    method: 'POST',
+    token,
+    body: { code_challenge: args.code_challenge, client_name: args.client_name ?? null },
     timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
   })
 }

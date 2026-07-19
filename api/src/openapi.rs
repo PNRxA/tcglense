@@ -396,6 +396,14 @@ mod coverage_drift {
             "/api/auth/reset-password",
             "single-use email token; SPA session flow",
         ),
+        (
+            "/api/auth/cli/authorize",
+            "CLI browser sign-in: mints a one-time code for the SPA to relay; SPA/CLI session flow",
+        ),
+        (
+            "/api/auth/cli/token",
+            "CLI browser sign-in: exchanges the one-time code for a session; SPA/CLI session flow",
+        ),
         // --- Binary image proxies: return image/SVG bytes, not JSON. ---
         (
             "/api/games/{game}/sets/{code}/icon",

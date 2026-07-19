@@ -51,6 +51,7 @@ mod m20240101_000048_add_auth_session_version;
 mod m20240101_000049_create_collection_product_items_table;
 mod m20240101_000050_add_price_history_latest_date_indexes;
 mod m20240101_000051_add_wishlist_visibility;
+mod m20240101_000052_create_cli_auth_codes_table;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -112,6 +113,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000049_create_collection_product_items_table::Migration),
             Box::new(m20240101_000050_add_price_history_latest_date_indexes::Migration),
             Box::new(m20240101_000051_add_wishlist_visibility::Migration),
+            Box::new(m20240101_000052_create_cli_auth_codes_table::Migration),
         ]
     }
 }

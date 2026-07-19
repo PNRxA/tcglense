@@ -36,6 +36,7 @@ use crate::{
             product_containers, product_contents, product_facets, product_image, product_prices,
             scan_cards, set_icon,
         },
+        cli_auth::{cli_authorize, cli_token},
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_movers, collection_product_counts,
             collection_product_summary, collection_set_drops, collection_set_subtypes,
@@ -168,6 +169,14 @@ pub fn build_router(state: AppState) -> Router {
             get(list_api_keys).post(create_api_key),
         )
         .route("/api/auth/api-keys/{id}", delete(revoke_api_key))
+        // CLI browser (loopback) sign-in (RFC 8252 + PKCE): the SPA mints a
+        // one-time code for the signed-in user (`SessionUser`, like key
+        // management — an API key can't bootstrap a new session), and the CLI
+        // exchanges it (with its PKCE verifier) for a normal session at
+        // `/token`. The exchange is unauthenticated (the code + verifier are the
+        // credential) and per-IP rate-limited via the `Token` class below.
+        .route("/api/auth/cli/authorize", post(cli_authorize))
+        .route("/api/auth/cli/token", post(cli_token))
         // Email verification + password reset: single-use emailed tokens. All
         // unauthenticated POSTs; the lookup-by-email ones answer generically.
         .route("/api/auth/verify-email", post(verify_email))

@@ -2,6 +2,7 @@ pub mod api_keys;
 pub mod auth;
 pub mod cache;
 pub mod catalog;
+pub mod cli_auth;
 pub mod collection;
 pub mod config;
 pub mod currency;
