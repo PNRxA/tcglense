@@ -39,6 +39,7 @@ mod cards;
 mod export;
 mod folders;
 mod import;
+mod needed;
 mod read;
 mod sections;
 mod write;
@@ -47,6 +48,7 @@ pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use export::export_deck;
 pub use folders::{create_folder, delete_folder, list_folders, update_folder};
 pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
+pub use needed::needed_cards;
 pub use read::{get_deck, list_decks};
 pub use sections::{create_section, delete_section, reorder_sections, update_section};
 pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibility, update_deck};
@@ -59,6 +61,7 @@ pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,
 };
 pub use import::__path_import_deck;
+pub use needed::__path_needed_cards;
 pub use read::{__path_get_deck, __path_list_decks};
 pub use sections::{
     __path_create_section, __path_delete_section, __path_reorder_sections, __path_update_section,
@@ -365,6 +368,27 @@ const fn default_auto_categorize() -> bool {
     true
 }
 
+/// How [`needed_cards`] matches a wanted card against the collection (issue #499).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum NeedMode {
+    /// Aggregate by gameplay identity: any printing you own satisfies any printing a deck
+    /// wants (the "one Command Tower covers a Command Tower" default).
+    #[default]
+    Card,
+    /// Match a deck's exact printing against that same printing in the collection, so the
+    /// list names the precise printing you're short of.
+    Printing,
+}
+
+/// Query for `GET /api/decks/{game}/needed`: the matching mode (defaults to
+/// [`NeedMode::Card`]).
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct NeededParams {
+    #[serde(default)]
+    pub mode: NeedMode,
+}
+
 /// Result of a deck import: a lightweight header for the newly created deck plus match
 /// feedback for rows skipped because their printing/name was absent from the catalog.
 /// Full sections/cards are loaded separately from the normal deck-detail endpoint.
@@ -377,6 +401,35 @@ pub struct DeckImportResponse {
     pub matched_cards: usize,
     pub unmatched_cards: usize,
     pub unmatched_sample: Vec<String>,
+}
+
+/// One of the caller's decks that wants a [`NeededCard`], for the "which decks does this
+/// affect" breakdown (issue #499).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct NeededCardDeck {
+    pub id: i32,
+    pub name: String,
+}
+
+/// A card the caller's decks collectively want more copies of than their collection holds
+/// — the deck "shopping list" (issue #499). `needed` is the shortfall, always positive
+/// (fully-covered cards are omitted). In [`NeedMode::Card`] the counts aggregate every
+/// printing of the gameplay card and `card` is a representative printing the decks use; in
+/// [`NeedMode::Printing`] they're for one exact printing and `card` is that printing.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct NeededCard {
+    pub card: CardResponse,
+    /// Copies still to acquire: `max(0, required - owned)`, always &gt; 0.
+    pub needed: i64,
+    /// Total copies (regular + foil) the caller's decks want, summed across decks/sections.
+    pub required: i64,
+    /// Copies owned in the caller's collection — any printing of the card in `card` mode,
+    /// this exact printing in `printing` mode.
+    pub owned: i64,
+    /// The caller's decks that want this card, by name.
+    pub decks: Vec<NeededCardDeck>,
 }
 
 // ---------- Shared helpers ----------

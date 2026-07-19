@@ -53,8 +53,8 @@ use crate::{
             MAX_DECK_UPLOAD_BYTES, change_deck_card_printing, create_deck, create_folder,
             create_section, delete_deck, delete_folder, delete_section, export_deck, get_deck,
             import_deck, list_decks, list_folders, move_deck_card, move_deck_to_folder,
-            reorder_sections, set_deck_card, set_deck_visibility, update_deck, update_folder,
-            update_section,
+            needed_cards, reorder_sections, set_deck_card, set_deck_visibility, update_deck,
+            update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -364,6 +364,9 @@ pub fn build_router(state: AppState) -> Router {
             "/api/decks/{game}/folders/{folder_id}",
             put(update_folder).delete(delete_folder),
         )
+        // Cards the caller's decks collectively need beyond their collection (issue #499).
+        // Static `needed` wins over the dynamic `{deck_id}` below, like `folders`/`import`.
+        .route("/api/decks/{game}/needed", get(needed_cards))
         .route(
             "/api/decks/{game}/{deck_id}",
             get(get_deck).put(update_deck).delete(delete_deck),

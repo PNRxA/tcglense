@@ -11,6 +11,7 @@ import {
   getDeck,
   getDecks,
   getFolders,
+  getNeededCards,
   getPublicDeck,
   getPublicDecks,
   importDeck,
@@ -22,6 +23,7 @@ import {
   updateDeck,
   updateFolder,
   updateSection,
+  type NeedMode,
 } from '@/lib/api/decks'
 import type {
   ApiError,
@@ -34,6 +36,7 @@ import type {
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
+  NeededCard,
   UpdateDeckRequest,
 } from '@/lib/api'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
@@ -58,6 +61,25 @@ export function useDecksQuery(game: Ref<string>) {
     queryFn: (token: string) => getDecks(token, game.value),
   }
   return useAuthedQuery<{ data: Deck[] }>(options)
+}
+
+/** Cards the caller's decks collectively need beyond their collection (issue #499). `mode`
+ * is a ref inside the key, so flipping between "any printing" and "exact printing" refetches. */
+export function useNeededCardsQuery(
+  game: Ref<string>,
+  mode: Ref<NeedMode>,
+  enabled?: Ref<boolean>,
+) {
+  const options = {
+    queryKey: ['deck-needed', game, mode],
+    queryFn: (token: string) => getNeededCards(token, game.value, mode.value),
+    enabled,
+    // Derived from both deck contents AND collection supply. Deck edits invalidate it
+    // (via invalidateDeck); collection edits happen on other pages, so revalidate on every
+    // mount rather than couple the shared collection engine to this decks-only view.
+    staleTime: 0,
+  }
+  return useAuthedQuery<{ data: NeededCard[] }>(options)
 }
 
 /** The full detail of one deck. `deckId` is a ref inside the key, so navigating between
@@ -108,6 +130,8 @@ export function usePublicDeckQuery(handle: Ref<string>, deckId: Ref<number>) {
 export function invalidateDeck(qc: QueryClient, game: string, deckId?: number) {
   if (deckId !== undefined) qc.invalidateQueries({ queryKey: ['deck', game, deckId] })
   qc.invalidateQueries({ queryKey: ['decks', game] })
+  // A deck's card list feeds the "cards needed" shopping list, so refresh it too.
+  qc.invalidateQueries({ queryKey: ['deck-needed', game] })
 }
 
 // ----- Mutation variable shapes -----

@@ -1149,3 +1149,210 @@ async fn a_public_deck_is_not_readable_under_another_users_handle() {
         "unknown-handle and valid-handle-miss must be indistinguishable"
     );
 }
+
+/// Set the caller's absolute owned count for a card in the collection (issue #499 setup).
+async fn own_card(app: &TestApp, token: &str, card: &str, quantity: i64) {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/collection/mtg/cards/{card}"),
+            token,
+            json!({ "quantity": quantity, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+}
+
+/// Put `quantity` copies of a card into a deck section.
+async fn add_deck_card(
+    app: &TestApp,
+    token: &str,
+    deck_id: i64,
+    section_id: i64,
+    card: &str,
+    quantity: i64,
+) {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+            token,
+            json!({ "quantity": quantity, "foil_quantity": 0, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "add deck card failed: {body:?}");
+}
+
+/// Find the needed-cards entry for a given card external id, if present.
+fn needed_entry<'a>(body: &'a Value, card_id: &str) -> Option<&'a Value> {
+    body["data"]
+        .as_array()
+        .expect("needed data array")
+        .iter()
+        .find(|entry| entry["card"]["id"] == card_id)
+}
+
+#[tokio::test]
+async fn needed_cards_sums_demand_across_decks_and_subtracts_the_collection() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "needy@example.com", PW).await;
+
+    // Two catalog cards with distinct gameplay identities (distinct names => distinct
+    // oracle groups), so the "any printing" aggregation keeps them separate.
+    let (_, _, catalog) = send(&app, get("/api/games/mtg/cards?page_size=25")).await;
+    let cards = catalog["data"].as_array().expect("catalog cards");
+    let shared = cards[0].clone();
+    let shared_id = shared["id"].as_str().expect("shared id").to_string();
+    let solo = cards
+        .iter()
+        .find(|c| c["name"] != shared["name"])
+        .expect("a second distinctly-named card");
+    let solo_id = solo["id"].as_str().expect("solo id").to_string();
+
+    // Two decks each want one copy of `shared`; deck A also wants two of `solo`.
+    let deck_a = create_deck(&app, &access, "Needy A").await;
+    let deck_b = create_deck(&app, &access, "Needy B").await;
+    let a_id = deck_a["id"].as_i64().expect("a id");
+    let b_id = deck_b["id"].as_i64().expect("b id");
+    let a_section = deck_a["sections"][0]["id"].as_i64().expect("a section");
+    let b_section = deck_b["sections"][0]["id"].as_i64().expect("b section");
+    add_deck_card(&app, &access, a_id, a_section, &shared_id, 1).await;
+    add_deck_card(&app, &access, b_id, b_section, &shared_id, 1).await;
+    add_deck_card(&app, &access, a_id, a_section, &solo_id, 2).await;
+
+    // Own one copy of `shared` and none of `solo`.
+    own_card(&app, &access, &shared_id, 1).await;
+
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/decks/mtg/needed", &access)).await;
+    assert_eq!(status, StatusCode::OK, "needed failed: {body:?}");
+    // Per-user data: never shared-cached.
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // `shared`: wanted twice (once per deck), owned once => need one more, from both decks.
+    let shared_entry = needed_entry(&body, &shared_id).expect("shared card is needed");
+    assert_eq!(shared_entry["required"], 2);
+    assert_eq!(shared_entry["owned"], 1);
+    assert_eq!(shared_entry["needed"], 1);
+    let decks = shared_entry["decks"].as_array().expect("affected decks");
+    assert_eq!(decks.len(), 2, "both decks want the shared card");
+    let names: Vec<&str> = decks.iter().map(|d| d["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        vec!["Needy A", "Needy B"],
+        "decks are listed by name"
+    );
+
+    // `solo`: wanted twice by deck A, owned none => need two, from one deck.
+    let solo_entry = needed_entry(&body, &solo_id).expect("solo card is needed");
+    assert_eq!(solo_entry["required"], 2);
+    assert_eq!(solo_entry["owned"], 0);
+    assert_eq!(solo_entry["needed"], 2);
+    assert_eq!(solo_entry["decks"].as_array().unwrap().len(), 1);
+
+    // Owning enough of `shared` drops it from the list; `solo` remains short.
+    own_card(&app, &access, &shared_id, 2).await;
+    let (_, _, body) = send(&app, get_with_bearer("/api/decks/mtg/needed", &access)).await;
+    assert!(
+        needed_entry(&body, &shared_id).is_none(),
+        "a fully-owned card is not needed"
+    );
+    assert!(
+        needed_entry(&body, &solo_id).is_some(),
+        "the still-short card stays listed"
+    );
+}
+
+#[tokio::test]
+async fn needed_cards_printing_mode_reports_the_exact_missing_printing() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "printing-need@example.com", PW).await;
+
+    // The dummy catalog's reprint pair: two printings of one gameplay card.
+    let (status, _, printings) = send(
+        &app,
+        get("/api/games/mtg/cards?name=Dummy%20Reprinted%20Relic&page_size=10"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let printings = printings["data"].as_array().expect("printings");
+    assert_eq!(printings.len(), 2, "expected a reprint pair");
+    let wanted = printings[0]["id"]
+        .as_str()
+        .expect("wanted printing")
+        .to_string();
+    let owned = printings[1]["id"]
+        .as_str()
+        .expect("owned printing")
+        .to_string();
+
+    // A deck wants two of printing A; the collection holds one of printing B (same card).
+    let deck = create_deck(&app, &access, "Reprint deck").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    add_deck_card(&app, &access, deck_id, section_id, &wanted, 2).await;
+    own_card(&app, &access, &owned, 1).await;
+
+    // `card` mode: any printing counts, so owning one (of B) covers one of the two wanted.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/needed?mode=card", &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let card_entry = needed_entry(&body, &wanted).expect("the card is needed in card mode");
+    assert_eq!(card_entry["required"], 2);
+    assert_eq!(card_entry["owned"], 1, "the other printing counts as owned");
+    assert_eq!(card_entry["needed"], 1);
+    // The owned printing isn't wanted, so it never appears.
+    assert!(needed_entry(&body, &owned).is_none());
+
+    // `printing` mode: only printing B is owned, so all two of printing A are still short.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/needed?mode=printing", &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let printing_entry =
+        needed_entry(&body, &wanted).expect("the exact printing is needed in printing mode");
+    assert_eq!(printing_entry["required"], 2);
+    assert_eq!(
+        printing_entry["owned"], 0,
+        "the other printing does not count"
+    );
+    assert_eq!(printing_entry["needed"], 2);
+    assert!(needed_entry(&body, &owned).is_none());
+}
+
+#[tokio::test]
+async fn needed_cards_require_authentication_and_a_read_only_key_may_read() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "needed-auth@example.com", PW).await;
+
+    // Unauthenticated -> 401, no-store.
+    let (status, headers, _) = send(&app, get("/api/decks/mtg/needed")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // A read-only key may read it (it's a read, taking AuthUser not WritableUser).
+    let ro = create_key(&app, &access, "read").await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/decks/mtg/needed", &ro)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "read-only key read failed: {body:?}"
+    );
+    assert!(
+        body["data"].as_array().expect("data array").is_empty(),
+        "a user with no decks needs nothing"
+    );
+
+    // An unknown game is a 404.
+    let (status, _, _) = send(&app, get_with_bearer("/api/decks/nope/needed", &access)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

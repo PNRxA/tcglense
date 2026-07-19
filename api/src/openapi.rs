@@ -160,6 +160,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::set_wishlist_visibility,
         // --- Decks (issues #363/#389): decks, import/export, folders, sections, cards ---
         crate::handlers::decks::list_decks,
+        crate::handlers::decks::needed_cards,
         crate::handlers::decks::create_deck,
         crate::handlers::decks::import_deck,
         crate::handlers::decks::get_deck,

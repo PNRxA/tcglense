@@ -10,6 +10,7 @@ import type {
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
+  NeededCard,
   SetDeckCardRequest,
   UpdateDeckRequest,
 } from './generated'
@@ -35,9 +36,15 @@ export type {
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
+  NeededCard,
+  NeededCardDeck,
   SetDeckCardRequest,
   UpdateDeckRequest,
 } from './generated'
+
+/** How the deck "cards needed" list matches wanted cards against the collection: by
+ * gameplay card across any printing (`card`, the default) or by exact printing. */
+export type NeedMode = 'card' | 'printing'
 
 const base = (game: string): string => `/api/decks/${encodeURIComponent(game)}`
 const deckBase = (game: string, deckId: number): string => `${base(game)}/${deckId}`
@@ -52,6 +59,16 @@ export function getDecks(token: string, game: string): Promise<{ data: Deck[] }>
 /** The full detail of one deck (metadata, sections, every card, value summary). */
 export function getDeck(token: string, game: string, deckId: number): Promise<DeckDetail> {
   return request<DeckDetail>(deckBase(game, deckId), { token })
+}
+
+/** Cards the caller's decks collectively need beyond their collection (issue #499).
+ * `mode` = `card` (any printing counts) or `printing` (exact missing printing). */
+export function getNeededCards(
+  token: string,
+  game: string,
+  mode: NeedMode = 'card',
+): Promise<{ data: NeededCard[] }> {
+  return request<{ data: NeededCard[] }>(`${base(game)}/needed?mode=${mode}`, { token })
 }
 
 /** Create a deck (seeded with the default sections) and return its full detail. */
