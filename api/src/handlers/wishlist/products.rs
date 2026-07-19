@@ -181,6 +181,36 @@ pub(super) async fn product_summary(
     Ok(summarize_product_rows(rows))
 }
 
+// The `user_id`-parameterised sealed-product cores, reused by the public sharing handlers
+// (`crate::handlers::sharing::public`) so a public wish-list product read shares the exact
+// repository + shaping — only how `user_id` is resolved differs. The wish-list twins of
+// `collection::owned_product_{page,sets,summary}`.
+
+pub(crate) async fn wanted_products_page(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    params: ProductHoldingListParams,
+) -> Result<Page<ProductHoldingEntry>, AppError> {
+    list_product_holdings::<WishlistProductRepository>(state, user_id, game, params).await
+}
+
+pub(crate) async fn wanted_product_sets(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+) -> Result<Vec<ProductHoldingSet>, AppError> {
+    list_product_holding_sets::<WishlistProductRepository>(state, user_id, game).await
+}
+
+pub(crate) async fn wanted_product_summary(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+) -> Result<ProductHoldingSummary, AppError> {
+    summarize_product_holdings::<WishlistProductRepository>(state, user_id, game).await
+}
+
 /// List wanted sealed products
 #[utoipa::path(
     get,

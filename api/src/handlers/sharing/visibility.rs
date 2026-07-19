@@ -91,6 +91,8 @@ pub async fn set_collection_visibility(
         payload.public,
         payload.show_value_chart,
         payload.show_movers,
+        // The collection toggle never touches the wish-list flag.
+        None,
     )
     .await?;
 

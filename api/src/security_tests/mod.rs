@@ -31,6 +31,7 @@ mod pagination;
 mod password_reset;
 mod products;
 mod public_collection;
+mod public_wishlist;
 mod rate_limit;
 mod readiness;
 mod refresh;

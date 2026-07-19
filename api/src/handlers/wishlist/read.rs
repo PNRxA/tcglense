@@ -60,6 +60,22 @@ pub async fn list_wishlist(
     Query(params): Query<ListParams>,
 ) -> Result<Json<Page<CollectionEntry>>, AppError> {
     let game_meta = require_game(&game)?;
+    Ok(Json(
+        wanted_list_page(&state, game_meta, user.id, &game, &params).await?,
+    ))
+}
+
+/// The wanted-card list page for a user + game, shared by the authed [`list_wishlist`]
+/// handler and the public (handle-resolved) read
+/// ([`crate::handlers::sharing::public`]). Parameterised by `user_id` so the two differ only
+/// in how that id is obtained — the wish-list twin of `collection::owned_list_page`.
+pub(crate) async fn wanted_list_page(
+    state: &AppState,
+    game_meta: &'static crate::catalog::Game,
+    user_id: i32,
+    game: &str,
+    params: &ListParams,
+) -> Result<Page<CollectionEntry>, AppError> {
     let (page, page_size) = params.page_and_size();
     let (sort, dir) = params.sort_spec()?;
     let dialect = state.dialect();
@@ -73,12 +89,11 @@ pub async fn list_wishlist(
     // Resolve the (optional) set scope: a single set, or — with `include_related` — the
     // set's whole group (root + related sub-sets), spanning exactly the sets the catalog
     // does. `None` means the whole wish list.
-    let set_codes =
-        resolve_set_scope(&state, &game, params.set(), params.include_related()).await?;
+    let set_codes = resolve_set_scope(state, game, params.set(), params.include_related()).await?;
 
     let paginator = wishlist_query(
-        user.id,
-        &game,
+        user_id,
+        game,
         set_codes.as_deref(),
         search,
         sort,
@@ -103,7 +118,7 @@ pub async fn list_wishlist(
         })
         .collect();
 
-    Ok(Json(build_page(data, page, page_size, total)))
+    Ok(build_page(data, page, page_size, total))
 }
 
 /// The per-user wanted-holdings base query: every `wishlist_items` row for one
@@ -250,7 +265,7 @@ pub async fn wishlist_summary(
 /// whole wish list. The fold itself is the shared [`summarize_holdings`] core: each row
 /// is left-joined to its card, so a row whose card is gone (a catalog re-import) is
 /// skipped for **all three** stats — matching the wish-list list (`list_wishlist`).
-pub(super) async fn summary(
+pub(crate) async fn summary(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
     game: &str,
@@ -336,15 +351,33 @@ pub async fn wishlist_counts(
     require_game(&game)?;
 
     let external_ids = dedupe_ids(payload.ids);
-    if external_ids.is_empty() {
-        return Ok(Json(OwnedCountsResponse {
-            data: HashMap::new(),
-        }));
-    }
     if external_ids.len() > MAX_OWNED_IDS {
         return Err(AppError::Validation(format!(
             "at most {MAX_OWNED_IDS} card ids may be looked up at once"
         )));
+    }
+
+    Ok(Json(
+        wanted_counts_map(&state, user.id, &game, external_ids).await?,
+    ))
+}
+
+/// The wanted-counts core, parameterised by `user_id` so both the authed handler above and
+/// the public sharing handler
+/// (`crate::handlers::sharing::public::public_wishlist_owned_counts`) share the exact resolve
+/// + holdings query — only how `user_id` is resolved differs. The caller validates the id
+/// count against [`MAX_OWNED_IDS`]; this takes an already-deduped id list (an empty one
+/// short-circuits to `{}`). The wish-list twin of `collection::owned_counts_map`.
+pub(crate) async fn wanted_counts_map(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    external_ids: Vec<String>,
+) -> Result<OwnedCountsResponse, AppError> {
+    if external_ids.is_empty() {
+        return Ok(OwnedCountsResponse {
+            data: HashMap::new(),
+        });
     }
 
     // Resolve external -> internal ids for this game, keeping the reverse map so the
@@ -354,7 +387,7 @@ pub async fn wishlist_counts(
         .select_only()
         .column(card::Column::Id)
         .column(card::Column::ExternalId)
-        .filter(card::Column::Game.eq(game.as_str()))
+        .filter(card::Column::Game.eq(game))
         .filter(card::Column::ExternalId.is_in(external_ids))
         .into_tuple::<(i32, String)>()
         .all(&state.db)
@@ -362,17 +395,17 @@ pub async fn wishlist_counts(
         .into_iter()
         .collect();
     if external_by_internal.is_empty() {
-        return Ok(Json(OwnedCountsResponse {
+        return Ok(OwnedCountsResponse {
             data: HashMap::new(),
-        }));
+        });
     }
 
     // One query for the user's wish-list rows among those cards; a card with no row is
     // simply not wanted and contributes nothing to the map.
     let internal_ids: Vec<i32> = external_by_internal.keys().copied().collect();
     let rows = WishlistItem::find()
-        .filter(wishlist_item::Column::UserId.eq(user.id))
-        .filter(wishlist_item::Column::Game.eq(game.as_str()))
+        .filter(wishlist_item::Column::UserId.eq(user_id))
+        .filter(wishlist_item::Column::Game.eq(game))
         .filter(wishlist_item::Column::CardId.is_in(internal_ids))
         .all(&state.db)
         .await?;
@@ -392,5 +425,5 @@ pub async fn wishlist_counts(
         })
         .collect();
 
-    Ok(Json(OwnedCountsResponse { data }))
+    Ok(OwnedCountsResponse { data })
 }

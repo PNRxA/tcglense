@@ -2,8 +2,11 @@
 import type { PublicGameSummary } from "./PublicGameSummary";
 
 /**
- * A user's public profile landing: their handle + every game they've made public.
- * Deliberately carries **no** email or other PII — only the public username/handle, the
- * account age, and the per-game summaries.
+ * A user's public profile landing: their handle + every game whose collection and/or wish
+ * list they've made public. Deliberately carries **no** email or other PII — only the public
+ * username/handle, the account age, and the per-game summaries. `games` lists the public
+ * **collections** (each links to `/u/{handle}/{game}`); `wishlists` the public **wish lists**
+ * (each links to `/u/{handle}/wishlist/{game}`, issue #493) — the two are shared independently,
+ * so a game can appear in one, both, or neither.
  */
-export type PublicProfile = { username: string, discriminator: number, handle: string, member_since: string, games: Array<PublicGameSummary>, };
+export type PublicProfile = { username: string, discriminator: number, handle: string, member_since: string, games: Array<PublicGameSummary>, wishlists: Array<PublicGameSummary>, };

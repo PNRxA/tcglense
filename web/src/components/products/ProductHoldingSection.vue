@@ -16,32 +16,46 @@ import {
   usePublicCollectionProductSetsQuery,
   usePublicCollectionProductSummaryQuery,
 } from '@/composables/usePublicCollection'
+import {
+  usePublicWishlistProductSetsQuery,
+  usePublicWishlistProductSummaryQuery,
+} from '@/composables/usePublicWishlist'
 import { useSetsQuery } from '@/composables/useCatalog'
 import { useCurrency } from '@/composables/useCurrency'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import type { CardSet } from '@/lib/api'
 
-// The sealed-products slice of the collection / wish-list / public-collection landing: like the
-// CARDS side, it shows the set tiles you click into (a set-scoped products list) rather than
+// The sealed-products slice of the collection / wish-list / public landing: like the CARDS
+// side, it shows the set tiles you click into (a set-scoped products list) rather than
 // rendering the products inline. One tile per set the user holds sealed products in, newest set
-// first. Authed surfaces pass `list` (their token'd queries); a public collection passes
-// `handle` (the token-less handle-keyed queries) instead — the read-only mirror, where the
-// tiles and "View all" link under `/u/{handle}` rather than `/collection` | `/wishlist`.
+// first. Authed surfaces pass `list` (their token'd queries); a public surface passes `handle`
+// (the token-less handle-keyed queries) — the read-only mirror. `handle` + `list='wishlist'`
+// selects the public *wish list*, `handle` alone the public collection; the tiles and "View
+// all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`.
 const props = defineProps<{ game: string; list?: CardListTarget; handle?: string }>()
 const game = toRef(props, 'game')
 const money = useCurrency()
 
 // A public handle is fixed per mount (like `list`), so the query hooks below select once.
 const handle = computed(() => props.handle ?? '')
+const isWishlist = props.list === 'wishlist'
 const basePath = computed(() =>
-  props.handle ? `/u/${props.handle}` : props.list === 'wishlist' ? '/wishlist' : '/collection',
+  props.handle
+    ? isWishlist
+      ? `/u/${props.handle}/wishlist`
+      : `/u/${props.handle}`
+    : isWishlist
+      ? '/wishlist'
+      : '/collection',
 )
 
 // Every held-product set (unpaginated, newest set first) — the tiles. The section renders only
 // once this has at least one set, so an empty holding shows nothing.
 const setsQuery = props.handle
-  ? usePublicCollectionProductSetsQuery(handle, game)
-  : props.list === 'wishlist'
+  ? isWishlist
+    ? usePublicWishlistProductSetsQuery(handle, game)
+    : usePublicCollectionProductSetsQuery(handle, game)
+  : isWishlist
     ? useWishlistProductSetsQuery(game)
     : useCollectionProductSetsQuery(game)
 const sets = computed(() => setsQuery.data.value?.data ?? [])
@@ -49,8 +63,10 @@ const sets = computed(() => setsQuery.data.value?.data ?? [])
 // The header count is the unique-product tally from the surface's product summary. The landing
 // already mounts this query, so vue-query dedupes; while it's pending the count span self-hides.
 const summaryQuery = props.handle
-  ? usePublicCollectionProductSummaryQuery(handle, game)
-  : props.list === 'wishlist'
+  ? isWishlist
+    ? usePublicWishlistProductSummaryQuery(handle, game)
+    : usePublicCollectionProductSummaryQuery(handle, game)
+  : isWishlist
     ? useWishlistProductSummaryQuery(game)
     : useCollectionProductSummaryQuery(game)
 const summary = computed(() => summaryQuery.data.value)

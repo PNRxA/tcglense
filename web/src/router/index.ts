@@ -257,6 +257,49 @@ const router = createRouter({
       component: () => import('@/views/PublicProductBrowseView.vue'),
       props: true,
     },
+    // Public, shareable wish lists (issue #493): the read-only mirror of the public collection
+    // views above, under a static `wishlist` segment that outranks `/u/:handle/:game` in
+    // vue-router (like the `decks` segment). Landing + card grids + sealed-product grids, all
+    // read-only and indexable. `PublicProductBrowseView` is reused with `list: 'wishlist'`.
+    {
+      path: '/u/:handle/wishlist/:game',
+      name: 'public-wishlist',
+      component: () => import('@/views/PublicWishlistView.vue'),
+      props: true,
+    },
+    {
+      path: '/u/:handle/wishlist/:game/cards',
+      name: 'public-wishlist-cards',
+      component: () => import('@/views/PublicWishlistBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/u/:handle/wishlist/:game/sets/:code',
+      name: 'public-wishlist-set',
+      component: () => import('@/views/PublicWishlistBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/u/:handle/wishlist/:game/products',
+      name: 'public-wishlist-products',
+      component: () => import('@/views/PublicProductBrowseView.vue'),
+      props: (route) => ({
+        handle: route.params.handle,
+        game: route.params.game,
+        list: 'wishlist',
+      }),
+    },
+    {
+      path: '/u/:handle/wishlist/:game/products/sets/:code',
+      name: 'public-wishlist-product-set',
+      component: () => import('@/views/PublicProductBrowseView.vue'),
+      props: (route) => ({
+        handle: route.params.handle,
+        game: route.params.game,
+        code: route.params.code,
+        list: 'wishlist',
+      }),
+    },
     // A shared public deck (issue #363), addressed by handle + deck id. The static `decks`
     // segment outranks the `/u/:handle/:game` public-collection routes, so no game slug can
     // ever be mistaken for it. Public + indexable, like the shared collections.

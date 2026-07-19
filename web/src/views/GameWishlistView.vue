@@ -11,6 +11,7 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import WishlistSettingsMenu from '@/components/wishlist/WishlistSettingsMenu.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
 import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
@@ -138,14 +139,22 @@ usePageMeta({
 
     <template v-else-if="auth.isAuthenticated">
       <header class="mb-6">
-        <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} wish list</h1>
-        <!-- The active mode's set count — just the wishlisted sets by default, the whole
-             catalog under "All sets" — mirroring the catalog game view's header line. -->
-        <p class="text-muted-foreground mt-1">
-          {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
-          <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
-          <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
-        </p>
+        <!-- Title + the settings menu (issue #493): the sharing (public/private) control lives
+             behind the gear, pinned top-right so the header stays uncluttered — mirroring the
+             collection landing. -->
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-3xl font-semibold tracking-tight">Your {{ gameName }} wish list</h1>
+            <!-- The active mode's set count — just the wishlisted sets by default, the whole
+                 catalog under "All sets" — mirroring the catalog game view's header line. -->
+            <p class="text-muted-foreground mt-1">
+              {{ groups.length }} {{ groups.length === 1 ? 'set' : 'sets' }}
+              <template v-if="relatedCount > 0"> · {{ relatedCount }} related</template>
+              <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
+            </p>
+          </div>
+          <WishlistSettingsMenu :game="game" />
+        </div>
 
         <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under
              the sealed and cards headings further down. -->

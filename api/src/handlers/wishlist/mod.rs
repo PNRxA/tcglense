@@ -53,6 +53,14 @@ pub use read::{get_wishlist_entry, list_wishlist, wishlist_counts, wishlist_summ
 pub use sets::{wishlist_set_drops, wishlist_set_subtypes, wishlist_sets};
 pub use write::set_wishlist_entry;
 
+// The `user_id`-parameterised read cores, reused by the public sharing handlers
+// (`crate::handlers::sharing::public`) so a public wish-list read shares the exact
+// query/shaping logic — only how `user_id` is resolved differs (issue #493). The wish-list
+// twins of the `collection::owned_*` cores.
+pub(crate) use products::{wanted_product_sets, wanted_product_summary, wanted_products_page};
+pub(crate) use read::{summary, wanted_counts_map, wanted_list_page};
+pub(crate) use sets::{wanted_drop_page, wanted_sets, wanted_subtype_page};
+
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::wishlist::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
