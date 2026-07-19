@@ -16,9 +16,10 @@ import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwned
 // The control is COLLECTION-primary everywhere: its steppers and resting count chips are the
 // card's collection holding. The popover also carries a secondary "Wish list" quick-add row
 // (issue #364 follow-up) that reads/writes the card's wish-list holding — a regular-only
-// stepper that seeds lazily when the popover opens (no resting wanted count on catalog
-// tiles). A positive `wishlistQuantity` additionally appends a Heart "wanted" chip to the
-// resting badge, so a wish-listed card is flagged even before the popover opens.
+// stepper. When the grid knows the card's resting want (the wishlist surface, or a wish-listed
+// catalog tile) it passes `wishlistSeed`, which both appends a Heart "wanted" chip to the
+// resting badge (so a wish-listed card is flagged even before the popover opens) and seeds the
+// row's display so the want shows at once on open instead of flashing 0.
 //
 // `quantity`/`foilQuantity` are the *display* counts from the grid's ownership source —
 // good enough for the resting badge, but they can lag (a browse grid loads them async).
@@ -33,12 +34,17 @@ const props = withDefaults(
     name: string
     quantity: number
     foilQuantity: number
-    // The card's wish-list wanted count (regular + foil) (issue #364 follow-up). Positive →
-    // an appended Heart "wanted" chip on the resting badge, and the badge shows even on a
-    // card you don't own but have wish-listed.
-    wishlistQuantity?: number
+    // The card's resting wish-list want (regular + foil split), or undefined when the card
+    // isn't wanted / the source overlay hasn't landed (issue #364 follow-up). Its total lights
+    // an appended Heart "wanted" chip on the resting badge (so a wish-listed card shows even
+    // when unowned), and — crucially — it seeds the wish-list row's DISPLAY the moment the
+    // popover opens, so the known want shows at once instead of flashing 0 while the
+    // authoritative single-card fetch is in flight. The steppers still wait for that fetch
+    // before they go live, so the seed can never drive an absolute-count save — this mirrors
+    // how `quantity`/`foilQuantity` seed the collection row's display above.
+    wishlistSeed?: OwnedCountSeed
   }>(),
-  { wishlistQuantity: 0 },
+  { wishlistSeed: undefined },
 )
 
 const open = ref(false)
@@ -63,15 +69,19 @@ const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, c
 
 // Wish-list quick-add row (always present — the control is collection-primary everywhere).
 // The row's entry hook stays disabled until the popover opens; the editor's mutation pick is
-// setup-time and cheap. No display fallback: there are no resting wanted counts on catalog
-// tiles, so the row's steppers stay disabled until the authoritative want loads (an undefined
-// seed keeps an absolute-count save impossible). Only the regular want is editable here; the
-// seeded foil want is preserved on save.
+// setup-time and cheap. Its display seeds from the authoritative single-card want once that
+// resolves, falling back to the resting `wishlistSeed` (the grid's wanted overlay) meanwhile so
+// a known want shows at once instead of flashing 0 — the steppers stay disabled until
+// `wishReady`, so the fallback can never drive an absolute-count save (mirrors the collection
+// row's props fallback above). Only the regular want is editable here; the seeded foil want is
+// preserved on save.
 const wishEntryQuery = useWishlistEntryQuery(game, cardId, {
   enabled: open,
   staleTime: 0,
 })
-const wishSeed = computed<OwnedCountSeed | undefined>(() => wishEntryQuery.data.value)
+const wishSeed = computed<OwnedCountSeed | undefined>(
+  () => wishEntryQuery.data.value ?? props.wishlistSeed,
+)
 const wishReady = computed(() => wishEntryQuery.isSuccess.value && !wishEntryQuery.isFetching.value)
 const wishEditor = useOwnedCountEditor(game, cardId, wishSeed, { list: 'wishlist' })
 const wishCount = wishEditor.regular
@@ -87,7 +97,11 @@ const wishSaveError = wishEditor.saveError
 // Resting trigger reflects the grid counts; the live edited counts show inside the panel.
 const displayTotal = computed(() => props.quantity + props.foilQuantity)
 const owned = computed(() => displayTotal.value > 0)
-const wanted = computed(() => props.wishlistQuantity > 0)
+// The resting wanted total (regular + foil) behind the Heart chip, derived from the seed.
+const wishlistTotal = computed(() =>
+  props.wishlistSeed ? props.wishlistSeed.quantity + props.wishlistSeed.foil_quantity : 0,
+)
+const wanted = computed(() => wishlistTotal.value > 0)
 // Show the resting badge when the card is owned OR wish-listed (a wish-listed-but-unowned
 // card rests as a heart, not a bare "+"). Only the truly-untouched card keeps the "+".
 const showBadge = computed(() => owned.value || wanted.value)
@@ -128,7 +142,7 @@ const rows = computed(() => [
           :quantity="quantity"
           :foil-quantity="foilQuantity"
           kind="owned"
-          :wanted-quantity="wishlistQuantity"
+          :wanted-quantity="wishlistTotal"
           :tooltip="false"
           hover-as-add
         />

@@ -104,9 +104,10 @@ export interface HoldingQueriesConfig {
    *   - `useListQuery` sets `refetchOnWindowFocus: false` on the list query, so refocusing the
    *     tab won't refetch-and-resort the stale list while the popover is open either (F3).
    * Everything refetches on remount, so navigating away and back settles the true order/counts.
-   * Interplay with the heart's overlay source (`CollectionGrid.wantedTotal`): because the list
+   * Interplay with the heart's overlay source (`CollectionGrid.wishlistSeed`): because the list
    * is frozen, the heart reads the `wishlist-counts` overlay, falling back per-card to the
-   * entry's own wanted counts until the overlay lands so it never blanks on a cold load/page.
+   * entry's own wanted counts only until the overlay settles so it never blanks on a cold
+   * load/page — once settled, an absent card is trusted as unwanted so a quick-remove clears it.
    * The collection twin leaves this off: its grid's count chips read each entry's own list
    * counts, so its list + summary must refetch on a write to update them. */
   deferListRefetch: boolean

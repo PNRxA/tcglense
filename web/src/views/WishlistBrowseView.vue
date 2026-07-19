@@ -79,6 +79,7 @@ const {
   ownedMarks,
   collectionCounts,
   wishlistCounts,
+  wishlistReady,
   scopeTotalValue,
   scopeCopiesLabel,
   total,
@@ -278,6 +279,7 @@ const {
                   list="wishlist"
                   :collection-counts="collectionCounts"
                   :wishlist="wishlistCounts"
+                  :wishlist-ready="wishlistReady"
                   :owned-marks="ownedMarks"
                 />
               </DropSection>
@@ -331,6 +333,7 @@ const {
               list="wishlist"
               :collection-counts="collectionCounts"
               :wishlist="wishlistCounts"
+              :wishlist-ready="wishlistReady"
               :owned-marks="ownedMarks"
             />
             <CardGrid

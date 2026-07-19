@@ -5,7 +5,7 @@ import CardTile from '@/components/cards/CardTile.vue'
 import OwnedCountControl from '@/components/cards/OwnedCountControl.vue'
 import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
 import ReadonlyOwnedBadge from '@/components/cards/ReadonlyOwnedBadge.vue'
-import type { CardListTarget } from '@/composables/useOwnedCountEditor'
+import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 import { useCardNavList } from '@/composables/useCardNavList'
 import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
@@ -90,13 +90,13 @@ function primaryCounts(card: Card): { quantity: number; foil_quantity: number } 
   return source?.[card.id] ?? { quantity: 0, foil_quantity: 0 }
 }
 
-// The card's total wanted count feeding the control's appended Heart chip (regular + foil).
-// On a collection grid that's the `wishlist` overlay; on the wishlist surface it's the grid's
-// own `ownership` map (which there means wish-list membership). 0 when absent.
-function wantedTotal(card: Card): number {
+// The card's resting wish-list want (regular + foil split) feeding the control's appended
+// Heart chip AND its wish-list row display seed. On a collection grid that's the `wishlist`
+// overlay; on the wishlist surface it's the grid's own `ownership` map (which there means
+// wish-list membership). Undefined when absent — no heart, and the row seeds lazily on open.
+function wishlistSeed(card: Card): OwnedCountSeed | undefined {
   const source = props.list === 'wishlist' ? props.ownership : props.wishlist
-  const w = source?.[card.id]
-  return w ? w.quantity + w.foil_quantity : 0
+  return source?.[card.id]
 }
 
 // The grid's column count follows the user's persisted size preference (set via
@@ -134,7 +134,7 @@ useCardNavList(
           :name="card.name"
           :quantity="primaryCounts(card).quantity"
           :foil-quantity="primaryCounts(card).foil_quantity"
-          :wishlist-quantity="wantedTotal(card)"
+          :wishlist-seed="wishlistSeed(card)"
         />
       </template>
     </CardTile>

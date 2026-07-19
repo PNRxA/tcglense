@@ -77,7 +77,7 @@ function mountControl(
   props: {
     quantity?: number
     foilQuantity?: number
-    wishlistQuantity?: number
+    wishlistSeed?: Counts
   } = {},
 ) {
   const router = createRouter({
@@ -95,7 +95,7 @@ function mountControl(
       name: 'Card c1',
       quantity: props.quantity ?? 0,
       foilQuantity: props.foilQuantity ?? 0,
-      wishlistQuantity: props.wishlistQuantity ?? 0,
+      wishlistSeed: props.wishlistSeed,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
@@ -248,7 +248,7 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
     const wrapper = mountControl({
       quantity: 0,
       foilQuantity: 0,
-      wishlistQuantity: 2,
+      wishlistSeed: { quantity: 2, foil_quantity: 0 },
     })
     // The wish-list heart chip shows even though the card is unowned...
     const trigger = wrapper.find('[aria-label="Add Card c1 to your collection"]')
@@ -267,5 +267,24 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
       'sm:opacity-0',
     )
     bare.unmount()
+  })
+
+  it('seeds the wish-list row display from wishlistSeed so the want shows at once on open', async () => {
+    // The bug (issue #364 follow-up): on the wishlist surface the grid knows the resting want,
+    // yet the row used to flash "0" until the authoritative single-card fetch (staleTime 0)
+    // landed — jarring on a page whose every tile IS wish-listed. With `wishlistSeed` the row
+    // shows the want the instant the popover opens, mirroring how the collection row seeds its
+    // display from the grid counts. The steppers stay disabled until the fetch settles, so the
+    // seed can never drive an absolute-count save.
+    const wrapper = mountControl({ wishlistSeed: { quantity: 3, foil_quantity: 0 } })
+    // wishEntry is unresolved (beforeEach: data undefined, isSuccess false).
+    await openPopover(wrapper, 'Add Card c1 to your collection')
+
+    // The row already reads the seeded want, not 0...
+    expect(byLabel('Wish list: 3')).not.toBeNull()
+    // ...while its steppers stay disabled until the authoritative want lands.
+    expect(byLabel('Add one copy of Card c1 to your wish list')!.disabled).toBe(true)
+
+    wrapper.unmount()
   })
 })
