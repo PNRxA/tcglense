@@ -17,11 +17,12 @@ use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::product_holdings::summarize_product_rows;
 use crate::handlers::shared::product_holdings::{
     ProductHoldingEntry, ProductHoldingListParams, ProductHoldingRepository, ProductHoldingRow,
-    ProductHoldingSummary, get_product_holding, list_product_holdings, product_holding_counts,
-    set_product_holding, summarize_product_holdings,
+    ProductHoldingSet, ProductHoldingSummary, get_product_holding, list_product_holding_sets,
+    list_product_holdings, product_holding_counts, set_product_holding, summarize_product_holdings,
 };
 use crate::handlers::shared::{
-    CollectionQuantities, OwnedCountsRequest, OwnedCountsResponse, Page, SetQuantitiesRequest,
+    CollectionQuantities, DataBody, OwnedCountsRequest, OwnedCountsResponse, Page,
+    SetQuantitiesRequest,
 };
 use crate::state::AppState;
 
@@ -52,10 +53,15 @@ impl ProductHoldingRepository for WishlistProductRepository {
         db: &DatabaseConnection,
         user_id: i32,
         game: &str,
+        set: Option<&str>,
         page: u64,
         page_size: u64,
     ) -> Result<(u64, Vec<(ProductHoldingRow, Option<product::Model>)>), AppError> {
-        let paginator = wanted_products_query(user_id, game).paginate(db, page_size);
+        let mut query = wanted_products_query(user_id, game);
+        if let Some(set) = set {
+            query = query.filter(product::Column::SetCode.eq(set));
+        }
+        let paginator = query.paginate(db, page_size);
         let total = paginator.num_items().await?;
         let rows = paginator
             .fetch_page(page - 1)
@@ -185,6 +191,7 @@ pub(super) async fn product_summary(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
         ("page" = Option<u64>, Query, description = "1-based page number"),
         ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
+        ("set" = Option<String>, Query, description = "Restrict to one set code; an unknown/unheld code yields an empty page"),
     ),
     responses(
         (status = 200, description = "A page of the signed-in user's wanted sealed products.", body = Page<ProductHoldingEntry>),
@@ -201,6 +208,30 @@ pub async fn list_wishlist_products(
     Ok(Json(
         list_product_holdings::<WishlistProductRepository>(&state, user.id, &game, params).await?,
     ))
+}
+
+/// List wanted product sets
+#[utoipa::path(
+    get,
+    path = "/api/wishlist/{game}/products/sets",
+    tag = "Wish list",
+    security(("api_key" = [])),
+    params(("game" = String, Path, description = "Game id slug, e.g. `mtg`")),
+    responses(
+        (status = 200, description = "Every set the user wants sealed products in, newest set first, each an aggregate tile.", body = DataBody<Vec<ProductHoldingSet>>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
+pub async fn list_wishlist_product_sets(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+) -> Result<Json<DataBody<Vec<ProductHoldingSet>>>, AppError> {
+    Ok(Json(DataBody {
+        data: list_product_holding_sets::<WishlistProductRepository>(&state, user.id, &game)
+            .await?,
+    }))
 }
 
 /// Get wish list sealed summary

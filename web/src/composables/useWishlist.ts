@@ -5,6 +5,7 @@ import {
   getWishlistProductCounts,
   getWishlistProductEntry,
   getWishlistProducts,
+  getWishlistProductSets,
   getWishlistProductSummary,
   getWishlistSetDrops,
   getWishlistSets,
@@ -81,6 +82,7 @@ export const useSetWishlistEntryMutation = queries.useSetEntryMutation
 const productQueries = makeProductHoldingQueries({
   prefix: 'wishlist',
   getList: getWishlistProducts,
+  getListSets: getWishlistProductSets,
   getEntry: getWishlistProductEntry,
   getSummary: getWishlistProductSummary,
   getCounts: getWishlistProductCounts,
@@ -89,6 +91,7 @@ const productQueries = makeProductHoldingQueries({
 
 export const WISHLIST_PRODUCT_PAGE_SIZE = PRODUCT_HOLDING_PAGE_SIZE
 export const useWishlistProductsQuery = productQueries.useProductsQuery
+export const useWishlistProductSetsQuery = productQueries.useProductSetsQuery
 export const useWishlistProductEntryQuery = productQueries.useEntryQuery
 export const useWishlistProductSummaryQuery = productQueries.useSummaryQuery
 export const useWishlistProductCounts = productQueries.useCounts

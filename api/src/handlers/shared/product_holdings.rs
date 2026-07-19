@@ -5,6 +5,7 @@
 //! SeaORM queries stay in each handler module through [`ProductHoldingRepository`]; all
 //! validation, external-id resolution, wire shaping, pagination, and valuation live here.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
@@ -75,11 +76,30 @@ pub(crate) struct ProductHoldingSummary {
     pub total_value_usd: Option<String>,
 }
 
-/// Page and page-size query parameters for a fixed recency-sorted product holding list.
+/// One set a user holds sealed products in: the set identity and its aggregate stats. The
+/// held-product-sets landing lists these tiles (newest set first); a set-scoped products
+/// list (`?set=<code>` on the flat list) drills into one.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub(crate) struct ProductHoldingSet {
+    pub code: String,
+    /// The set's display name, or None when the set has no matching catalog row.
+    pub name: Option<String>,
+    pub unique_products: i64,
+    /// `quantity + foil_quantity` summed over the set.
+    pub total_products: i64,
+    /// The set's total market value (regular + foil), or None when nothing held is priced.
+    pub total_value_usd: Option<String>,
+}
+
+/// Query parameters for a fixed recency-sorted product holding list: page, page size, and an
+/// optional single set-code filter.
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProductHoldingListParams {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
+    /// Restrict the list to one set code; an unknown/unheld code yields an empty page.
+    pub set: Option<String>,
 }
 
 /// Entity-neutral fields from a collection/wish-list sealed-product row.
@@ -96,6 +116,7 @@ pub(crate) trait ProductHoldingRepository {
         db: &DatabaseConnection,
         user_id: i32,
         game: &str,
+        set: Option<&str>,
         page: u64,
         page_size: u64,
     ) -> Result<(u64, Vec<(ProductHoldingRow, Option<product::Model>)>), AppError>;
@@ -151,20 +172,42 @@ pub(crate) async fn load_product(
         .ok_or_else(|| AppError::NotFound(format!("product '{id}' not found")))
 }
 
-/// The game's set-code to display-name map used to dress product payloads.
-pub(crate) async fn set_name_map(
+/// The game's set-code to `(display-name, release-date)` map. The by-set grouping needs
+/// both halves (the name to label a group, the date to order the groups), so they're
+/// fetched together; [`set_name_map`] projects out the name half for the many callers that
+/// only dress product payloads. `released_at` is the catalog set's ISO `YYYY-MM-DD` string
+/// (sortable as text), `None` when the provider reported no date.
+pub(crate) async fn set_meta_map(
     state: &AppState,
     game: &str,
-) -> Result<HashMap<String, String>, AppError> {
-    let rows: Vec<(String, String)> = CardSet::find()
+) -> Result<HashMap<String, (String, Option<String>)>, AppError> {
+    let rows: Vec<(String, String, Option<String>)> = CardSet::find()
         .select_only()
         .column(card_set::Column::Code)
         .column(card_set::Column::Name)
+        .column(card_set::Column::ReleasedAt)
         .filter(card_set::Column::Game.eq(game))
         .into_tuple()
         .all(&state.db)
         .await?;
-    Ok(rows.into_iter().collect())
+    Ok(rows
+        .into_iter()
+        .map(|(code, name, released_at)| (code, (name, released_at)))
+        .collect())
+}
+
+/// The game's set-code to display-name map used to dress product payloads — the name-only
+/// projection of [`set_meta_map`], so payload dressing and by-set ordering share one query
+/// definition.
+pub(crate) async fn set_name_map(
+    state: &AppState,
+    game: &str,
+) -> Result<HashMap<String, String>, AppError> {
+    Ok(set_meta_map(state, game)
+        .await?
+        .into_iter()
+        .map(|(code, (name, _))| (code, name))
+        .collect())
 }
 
 /// Build the public product DTO, resolving its set name when one exists.
@@ -240,7 +283,15 @@ pub(crate) async fn list_product_holdings<R: ProductHoldingRepository>(
         DEFAULT_PAGE_SIZE,
         MAX_PAGE_SIZE,
     );
-    let (total, rows) = R::page(&state.db, user_id, game, page, page_size).await?;
+    let (total, rows) = R::page(
+        &state.db,
+        user_id,
+        game,
+        params.set.as_deref(),
+        page,
+        page_size,
+    )
+    .await?;
     let names = set_name_map(state, game).await?;
     let data = rows
         .into_iter()
@@ -253,6 +304,91 @@ pub(crate) async fn list_product_holdings<R: ProductHoldingRepository>(
         })
         .collect();
     Ok(build_page(data, page, page_size, total))
+}
+
+/// Every set a surface holds sealed products in, newest set first.
+///
+/// The held-product-sets companion to [`list_product_holdings`]: it pulls *every* holding
+/// via `R::all` (they're few — the same all-rows fetch [`summarize_product_holdings`] does),
+/// buckets them by `set_code`, and returns one aggregate tile per set, **unpaginated** — a
+/// set-scoped products list drills into one via `?set=<code>` on the flat list, so no
+/// products are embedded here. Each tile carries the same aggregate stats
+/// [`summarize_product_rows`] computes, scoped to that set.
+///
+/// Order is newest set first: a set's own catalog `released_at` when it has a `card_sets`
+/// row, else the newest `released_at` among the products held in it (so a set with no
+/// catalog row still sorts by real dates rather than sinking on identity alone); date-less
+/// sets sort last, ties broken by set code ascending.
+pub(crate) async fn list_product_holding_sets<R: ProductHoldingRepository>(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+) -> Result<Vec<ProductHoldingSet>, AppError> {
+    require_game(game)?;
+    let meta = set_meta_map(state, game).await?;
+
+    // Bucket every held product by set code; holdings whose product row is gone are
+    // skipped, exactly as the flat list does.
+    let mut buckets: HashMap<String, Vec<(ProductHoldingRow, product::Model)>> = HashMap::new();
+    for (item, product) in R::all(&state.db, user_id, game).await? {
+        let Some(product) = product else { continue };
+        buckets
+            .entry(product.set_code.clone())
+            .or_default()
+            .push((item, product));
+    }
+
+    // Shape each bucket into its tile DTO plus the date the set orders on. The
+    // `order_date` rides alongside only for the sort below; it never reaches the wire.
+    let mut sets: Vec<(Option<String>, ProductHoldingSet)> = buckets
+        .into_iter()
+        .map(|(code, rows)| {
+            let (name, order_date) = match meta.get(&code) {
+                // A known set labels the tile and orders by its own release date (which
+                // may itself be absent — then the set is date-less).
+                Some((name, released_at)) => (Some(name.clone()), released_at.clone()),
+                // An unknown set (no `card_sets` row) has no name; fall back to the newest
+                // release date among the products held in it.
+                None => (
+                    None,
+                    rows.iter().filter_map(|(_, p)| p.released_at.clone()).max(),
+                ),
+            };
+
+            let unique_products = rows.len() as i64;
+            let mut total_products = 0i64;
+            let mut valuation = Valuation::default();
+            for (item, product) in &rows {
+                total_products += i64::from(item.quantity) + i64::from(item.foil_quantity);
+                valuation.add(
+                    product.price_usd.as_deref(),
+                    item.quantity,
+                    product.price_usd_foil.as_deref(),
+                    item.foil_quantity,
+                );
+            }
+
+            let set = ProductHoldingSet {
+                code,
+                name,
+                unique_products,
+                total_products,
+                total_value_usd: valuation.total_usd(),
+            };
+            (order_date, set)
+        })
+        .collect();
+
+    // Newest set first; date-less sets sink last; ties (or two date-less sets) break by
+    // code ascending, so the order is fully deterministic.
+    sets.sort_by(|(a_date, a), (b_date, b)| match (a_date, b_date) {
+        (Some(a_date), Some(b_date)) => b_date.cmp(a_date).then_with(|| a.code.cmp(&b.code)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => a.code.cmp(&b.code),
+    });
+
+    Ok(sets.into_iter().map(|(_, set)| set).collect())
 }
 
 pub(crate) async fn summarize_product_holdings<R: ProductHoldingRepository>(

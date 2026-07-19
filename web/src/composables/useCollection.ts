@@ -7,6 +7,7 @@ import {
   getCollectionProductCounts,
   getCollectionProductEntry,
   getCollectionProducts,
+  getCollectionProductSets,
   getCollectionProductSummary,
   getCollectionSetDrops,
   getCollectionSets,
@@ -88,6 +89,7 @@ const productQueries = makeProductHoldingQueries({
   prefix: 'collection',
   invalidateAnalytics: true,
   getList: getCollectionProducts,
+  getListSets: getCollectionProductSets,
   getEntry: getCollectionProductEntry,
   getSummary: getCollectionProductSummary,
   getCounts: getCollectionProductCounts,
@@ -96,6 +98,7 @@ const productQueries = makeProductHoldingQueries({
 
 export const COLLECTION_PRODUCT_PAGE_SIZE = PRODUCT_HOLDING_PAGE_SIZE
 export const useCollectionProductsQuery = productQueries.useProductsQuery
+export const useCollectionProductSetsQuery = productQueries.useProductSetsQuery
 export const useCollectionProductEntryQuery = productQueries.useEntryQuery
 export const useCollectionProductSummaryQuery = productQueries.useSummaryQuery
 export const useCollectionProductCounts = productQueries.useCounts

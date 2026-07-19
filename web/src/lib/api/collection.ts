@@ -165,7 +165,7 @@ export const setCollectionEntry = api.setEntry
 // the independent collection_product_items table (#435).
 const productApi = makeProductHoldingApi('collection', 'owned')
 
-export type { ProductHoldingEntry, ProductHoldingSummary } from './generated'
+export type { ProductHoldingEntry, ProductHoldingSet, ProductHoldingSummary } from './generated'
 export type { ProductHoldingPage as CollectionProductPage } from './product-holdings'
 
 export const collectionProductsPath = productApi.productsPath
@@ -173,6 +173,9 @@ export const collectionProductEntryPath = productApi.entryPath
 export const collectionProductSummaryPath = productApi.summaryPath
 export const collectionProductCountsPath = productApi.countsPath
 export const getCollectionProducts = productApi.list
+/** Every set the user owns sealed products in, newest set first — the set tiles the
+ * collection landing clicks through into a set-scoped products list. */
+export const getCollectionProductSets = productApi.listSets
 export const getCollectionProductEntry = productApi.getEntry
 export const setCollectionProductEntry = productApi.setEntry
 export const getCollectionProductSummary = productApi.summary

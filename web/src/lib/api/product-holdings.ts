@@ -5,6 +5,7 @@ import type {
   CollectionQuantities,
   Page,
   ProductHoldingEntry,
+  ProductHoldingSet,
   ProductHoldingSummary,
 } from './generated'
 
@@ -17,8 +18,15 @@ export type ProductHoldingPage = Page<ProductHoldingEntry>
  * batch-count leaf differ (`collection/.../owned`, `wishlist/.../counts`).
  */
 export function makeProductHoldingApi(base: ProductHoldingTarget, countsLeaf: 'owned' | 'counts') {
-  const productsPath = (game: string, params: { page?: number; pageSize?: number } = {}): string =>
-    `/api/${base}/${encodeURIComponent(game)}/products${listQuery(params)}`
+  // The flat list optionally scopes to one set (`?set=<code>`, recency order kept), which the
+  // set-scoped browse view passes through; without it the whole holding is listed.
+  const productsPath = (
+    game: string,
+    params: { page?: number; pageSize?: number; set?: string } = {},
+  ): string => `/api/${base}/${encodeURIComponent(game)}/products${listQuery(params)}`
+
+  const setsPath = (game: string): string =>
+    `/api/${base}/${encodeURIComponent(game)}/products/sets`
 
   const entryPath = (game: string, id: string): string =>
     `/api/${base}/${encodeURIComponent(game)}/products/${encodeURIComponent(id)}`
@@ -31,15 +39,19 @@ export function makeProductHoldingApi(base: ProductHoldingTarget, countsLeaf: 'o
 
   return {
     productsPath,
+    setsPath,
     entryPath,
     summaryPath,
     countsPath,
     list(
       token: string,
       game: string,
-      params?: { page?: number; pageSize?: number },
+      params?: { page?: number; pageSize?: number; set?: string },
     ): Promise<ProductHoldingPage> {
       return request<ProductHoldingPage>(productsPath(game, params), { token })
+    },
+    listSets(token: string, game: string): Promise<{ data: ProductHoldingSet[] }> {
+      return request<{ data: ProductHoldingSet[] }>(setsPath(game), { token })
     },
     getEntry(token: string, game: string, id: string): Promise<CollectionQuantities> {
       return request<CollectionQuantities>(entryPath(game, id), { token })

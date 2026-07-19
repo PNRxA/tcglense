@@ -76,6 +76,9 @@ impl From<product_price_history::Model> for ProductPricePoint {
 pub(crate) struct ProductSetRef {
     pub code: String,
     pub name: Option<String>,
+    /// How many sealed products this set has — the sealed-catalog set-landing tiles
+    /// show it.
+    pub product_count: i64,
 }
 
 /// The distinct filter values that actually occur among a game's products, so the SPA
@@ -602,30 +605,38 @@ pub async fn product_facets(
         .await?;
     types.sort();
 
-    let mut codes: Vec<String> = Product::find()
+    // Grouped count (not `DISTINCT set_code`) so each set's product total rides along
+    // for free — the sealed-catalog set-landing tiles need it and this is the same
+    // scan either way.
+    let mut counted: Vec<(String, i64)> = Product::find()
         .select_only()
         .column(product::Column::SetCode)
-        .distinct()
+        .column_as(product::Column::Id.count(), "product_count")
         .filter(product::Column::Game.eq(game.as_str()))
         // A blank set_code (a group with no abbreviation) isn't a usable filter value.
         .filter(product::Column::SetCode.ne(""))
+        .group_by(product::Column::SetCode)
         .into_tuple()
         .all(&state.db)
         .await?;
 
     let names = set_name_map(&state, &game).await?;
-    codes.sort_by(|a, b| {
+    counted.sort_by(|(a, _), (b, _)| {
         // Sort by resolved name (code as fallback), then code, so the dropdown reads
         // in set-name order.
         let an = names.get(a).map_or(a.as_str(), String::as_str);
         let bn = names.get(b).map_or(b.as_str(), String::as_str);
         an.cmp(bn).then_with(|| a.cmp(b))
     });
-    let sets: Vec<ProductSetRef> = codes
+    let sets: Vec<ProductSetRef> = counted
         .into_iter()
-        .map(|code| {
+        .map(|(code, product_count)| {
             let name = names.get(&code).cloned();
-            ProductSetRef { code, name }
+            ProductSetRef {
+                code,
+                name,
+                product_count,
+            }
         })
         .collect();
 

@@ -133,9 +133,11 @@ async fn sitemap_pages_covers_static_and_game_routes() {
     assert!(body.contains("<loc>https://sitemap.test/cards</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/cards/mtg</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/cards/mtg/cards</loc>"));
-    // The sealed hub + per-game browse and the legal pages (issue #294).
+    // The sealed hub + per-game set-tile landing, the flat sealed-product browse
+    // (its new home), and the legal pages (issue #294).
     assert!(body.contains("<loc>https://sitemap.test/sealed</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/sealed/mtg</loc>"));
+    assert!(body.contains("<loc>https://sitemap.test/sealed/mtg/products</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/docs</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/terms</loc>"));
     assert!(body.contains("<loc>https://sitemap.test/privacy</loc>"));
@@ -157,6 +159,31 @@ async fn sitemap_sets_lists_seeded_sets() {
             "<loc>https://sitemap.test/cards/mtg/sets/{code}</loc>"
         )),
         "set {code} missing from sitemap: {body}"
+    );
+
+    // A seeded sealed product's set also gets its own sealed-catalog set page (prep
+    // for the `/sealed/{game}/sets/{code}` landing), carrying the matching card-set's
+    // release date as its <lastmod> since the dummy catalog's product sets ("dmb" /
+    // "dmu") both resolve against seeded `card_sets` rows.
+    let (_s, _h, products) = send(&app, get("/api/games/mtg/products")).await;
+    let product_set_code = products["data"][0]["set_code"]
+        .as_str()
+        .expect("a seeded product set code");
+    let matching_set = sets["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["code"] == product_set_code)
+        .expect("the product's set is a seeded card set");
+    let released_at = matching_set["released_at"]
+        .as_str()
+        .expect("the seeded set has a release date");
+
+    let expected_loc =
+        format!("<loc>https://sitemap.test/sealed/mtg/sets/{product_set_code}</loc>");
+    assert!(
+        body.contains(&format!("{expected_loc}<lastmod>{released_at}</lastmod>")),
+        "sealed set {product_set_code} missing (with lastmod {released_at}) from sitemap: {body}"
     );
 }
 

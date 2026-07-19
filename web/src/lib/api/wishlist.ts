@@ -74,9 +74,10 @@ export const setWishlistEntry = api.setEntry
 // Sealed products instantiate the same product-holding client as the collection (#435).
 const productApi = makeProductHoldingApi('wishlist', 'counts')
 
-export type { ProductHoldingEntry, ProductHoldingSummary } from './generated'
+export type { ProductHoldingEntry, ProductHoldingSet, ProductHoldingSummary } from './generated'
 export type {
   ProductHoldingEntry as WishlistProductEntry,
+  ProductHoldingSet as WishlistProductSet,
   ProductHoldingSummary as WishlistProductSummary,
 } from './generated'
 export type { ProductHoldingPage as WishlistProductPage } from './product-holdings'
@@ -86,6 +87,9 @@ export const wishlistProductEntryPath = productApi.entryPath
 export const wishlistProductSummaryPath = productApi.summaryPath
 export const wishlistProductCountsPath = productApi.countsPath
 export const getWishlistProducts = productApi.list
+/** Every set the user has wanted sealed products in, newest set first — the set tiles the
+ * wish-list landing clicks through into a set-scoped products list. */
+export const getWishlistProductSets = productApi.listSets
 export const getWishlistProductEntry = productApi.getEntry
 export const setWishlistProductEntry = productApi.setEntry
 export const getWishlistProductSummary = productApi.summary

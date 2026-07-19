@@ -55,9 +55,10 @@ const router = createRouter({
       props: true,
     },
     // Sealed products (booster boxes, bundles, decks): a top-level section of its own
-    // (sibling to /cards, /collection, /wishlist) — an all-games landing, a per-game
-    // browse/filter grid, and a per-product detail page with a price-history chart,
-    // mirroring the card views. Public, like the catalog.
+    // (sibling to /cards, /collection, /wishlist) — an all-games landing, a per-game set-tile
+    // landing, a flat browse/filter grid (every product, or scoped to one set), and a
+    // per-product detail page with a price-history chart, mirroring the card views. Public,
+    // like the catalog.
     {
       path: '/sealed',
       name: 'sealed',
@@ -66,6 +67,24 @@ const router = createRouter({
     {
       path: '/sealed/:game',
       name: 'game-sealed',
+      component: () => import('@/views/SealedGameView.vue'),
+      props: true,
+    },
+    // The flat filterable grid of a game's sealed products, or scoped to one set — the
+    // click-through target of the landing's set tiles, mirroring the catalog's
+    // /cards/:game/cards and /cards/:game/sets/:code split. Both static-lead paths outrank the
+    // `/sealed/:game/:id` product-detail route below in vue-router's specificity ranking (a
+    // static segment scores above a param at the same depth, regardless of declaration order),
+    // so a `products` or `sets` slug is never captured as a product id.
+    {
+      path: '/sealed/:game/products',
+      name: 'game-sealed-products',
+      component: () => import('@/views/SealedBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/sealed/:game/sets/:code',
+      name: 'game-sealed-set',
       component: () => import('@/views/SealedBrowseView.vue'),
       props: true,
     },
@@ -102,6 +121,21 @@ const router = createRouter({
       name: 'game-collection-set',
       component: () => import('@/views/CollectionBrowseView.vue'),
       props: true,
+    },
+    // The owned sealed products in a game, or scoped to one set — the sealed mirror of the
+    // collection's card browse grids, clicked into from the landing's set tiles. Same public
+    // route pattern (no requiresAuth; the view prompts a signed-out visitor to sign in).
+    {
+      path: '/collection/:game/products',
+      name: 'game-collection-products',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, list: 'collection' }),
+    },
+    {
+      path: '/collection/:game/products/sets/:code',
+      name: 'game-collection-product-set',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, code: route.params.code, list: 'collection' }),
     },
     // Camera/webcam card scanner — OCRs a physical card and rapid-adds it to the
     // collection. Auth-gated (it writes holdings) and lazy-loaded: the on-device OCR
@@ -140,6 +174,21 @@ const router = createRouter({
       name: 'wishlist-set',
       component: () => import('@/views/WishlistBrowseView.vue'),
       props: true,
+    },
+    // The wanted sealed products in a game, or scoped to one set — the wish-list twin of the
+    // collection product browse grids, clicked into from the landing's set tiles. Same public
+    // route pattern (no requiresAuth; the view prompts a signed-out visitor to sign in).
+    {
+      path: '/wishlist/:game/products',
+      name: 'wishlist-products',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, list: 'wishlist' }),
+    },
+    {
+      path: '/wishlist/:game/products/sets/:code',
+      name: 'wishlist-product-set',
+      component: () => import('@/views/ProductHoldingsBrowseView.vue'),
+      props: (route) => ({ game: route.params.game, code: route.params.code, list: 'wishlist' }),
     },
     // Per-user decks (issue #363): build and organise decks of cards into user-orderable
     // sections (Archidekt-style categories) and folders, with per-deck public sharing. Same

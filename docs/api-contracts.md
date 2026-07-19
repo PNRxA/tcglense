@@ -355,14 +355,17 @@ un-`ETag`ged).
 
 A DB-backed XML sitemap advertises the public catalog (`handlers::sitemap`).
 `GET /sitemap.xml` is a **sitemap index** pointing at child sitemaps:
-`/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, and the legal pages),
-`/sitemaps/sets.xml` (every set), `/sitemaps/cards-{n}.xml` (cards), and
-`/sitemaps/products-{n}.xml` (sealed products). Cards and products are chunked at
-5 000 URLs/file — well under the protocol's 50 000 cap, because Google timed out
-fetching the full-size chunks (issues #294, #318). The `<loc>`s are the SPA's own routes
-(e.g. `/cards/mtg/sets/blb`, `/sealed/mtg/{id}`), built against `PUBLIC_SITE_URL` —
-not the API's `/api/...` URLs — with a `<lastmod>` from the set/card/product
-`released_at` or the latest sync. Served at the **site root** so the sitemap-protocol
+`/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, each game's flat
+sealed-product browse, and the legal pages), `/sitemaps/sets.xml` (every card set,
+plus every sealed-catalog set that actually holds products), `/sitemaps/cards-{n}.xml`
+(cards), and `/sitemaps/products-{n}.xml` (sealed products). Cards and products are
+chunked at 5 000 URLs/file — well under the protocol's 50 000 cap, because Google
+timed out fetching the full-size chunks (issues #294, #318). The `<loc>`s are the
+SPA's own routes (e.g. `/cards/mtg/sets/blb`, `/sealed/mtg/sets/blb`,
+`/sealed/mtg/{id}`), built against `PUBLIC_SITE_URL` — not the API's `/api/...` URLs —
+with a `<lastmod>` from the set/card/product `released_at` (a sealed-catalog set page
+uses its matching card-set's release date, when one resolves) or the latest sync.
+Served at the **site root** so the sitemap-protocol
 scope rule covers the whole site (dev Vite and the split-deploy Caddyfiles proxy
 `/sitemap.xml` + `/sitemaps/*` to the API; the combined image routes them natively);
 `/api/sitemap.xml` and `/api/sitemaps/{name}` still answer as aliases for
@@ -411,7 +414,7 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | Method & path | Returns |
 |---------------|---------|
 | `GET /api/games/{game}/products?q&set&type&sort&dir&page&page_size` | page of `Product` (`{ data, page, page_size, total, has_more }`). `q` = case-insensitive name substring; `set` = one set code (matched case-insensitively); `type` = one `product_type`; `sort` ∈ `name` / `price`(=`usd`) / `released`(=`date`), `dir` ∈ `asc`/`desc`. Unknown `sort`/`dir` = `422` |
-| `GET /api/games/{game}/products/facets` | `{ data: ProductFacets }` — the distinct filter values that actually occur among the game's products, so the SPA builds dropdowns without hardcoding. `ProductFacets = { types: string[], sets: ProductSetRef[] }`; `ProductSetRef = { code, name: string | null }`. `types` alphabetical; `sets` are the sets that have products, in resolved-name-then-code order (a blank set code is excluded) |
+| `GET /api/games/{game}/products/facets` | `{ data: ProductFacets }` — the distinct filter values that actually occur among the game's products, so the SPA builds dropdowns without hardcoding. `ProductFacets = { types: string[], sets: ProductSetRef[] }`; `ProductSetRef = { code, name: string | null, product_count: number }`. `types` alphabetical; `sets` are the sets that have products, in resolved-name-then-code order (a blank set code is excluded), each carrying how many products it has (grouped count, for the sealed-catalog set-landing tiles) |
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
@@ -522,15 +525,19 @@ rows:
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/collection/{game}/products?page&page_size` | — | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), default page size 60 / max 200 |
+| `GET /api/collection/{game}/products?page&page_size&set` | — | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), default page size 60 / max 200. Optional `set` restricts to one set code (an unknown/unheld code → empty page, `total` 0) — the set-scoped drill-in for the tiles below |
+| `GET /api/collection/{game}/products/sets` | — | `{ data: ProductHoldingSet[] }` — every set the user owns sealed products in, **unpaginated**, newest set first (the catalog set's `released_at`, or the newest `released_at` among the set's held products when it has no `card_sets` row; date-less last; ties by code asc). Each is an aggregate tile; drill into one via `?set=<code>` on the flat list above |
 | `GET /api/collection/{game}/products/summary` | — | `ProductHoldingSummary { unique_products, total_products, total_value_usd }`; value = regular×`usd` + foil×`usd_foil`, `null` when nothing owned is priced |
 | `POST /api/collection/{game}/products/owned` | `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }`; unowned ids absent, > 500 ids `422` |
 | `GET /api/collection/{game}/products/{id}` | — | `{ quantity, foil_quantity }`, zeros if not owned; unknown game/product `404` |
 | `PUT /api/collection/{game}/products/{id}` | `{ quantity, foil_quantity }` | absolute-count upsert; both-zero deletes, negative/oversized `422`, read-only key `403` |
 
-`ProductHoldingEntry = { product: Product, quantity, foil_quantity }`. Collection
-import/sync/export and public sharing remain card-only; value history and movers include
-both card and sealed-product holdings.
+`ProductHoldingEntry = { product: Product, quantity, foil_quantity }`;
+`ProductHoldingSet = { code, name: string | null, unique_products, total_products,
+total_value_usd: string | null }` (a held-product-set tile, its aggregates scoped to the one
+set, `name` null for a set with no `card_sets` row; drill into a set with `?set=<code>` on the
+flat products list). Collection import/sync/export and public sharing remain card-only; value
+history and movers include both card and sealed-product holdings.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
@@ -774,13 +781,14 @@ write so a row survives catalog re-syncs (the daily TCGCSV sweep is upsert-only)
 counts zero deletes the row. The wire keeps the shared two-count
 `{ quantity, foil_quantity }` shape (foil sealed variants are separate TCGplayer SKUs),
 but the UI exposes a single **Quantity** and preserves an existing foil count. Both
-surfaces use `ProductHoldingEntry` (`{ product: Product, quantity, foil_quantity }`) and
-`ProductHoldingSummary` (`{ unique_products, total_products, total_value_usd }`) from
-`handlers/shared/product_holdings.rs`:
+surfaces use `ProductHoldingEntry` (`{ product: Product, quantity, foil_quantity }`),
+`ProductHoldingSummary` (`{ unique_products, total_products, total_value_usd }`), and
+`ProductHoldingSet` (the held-product-set tile) from `handlers/shared/product_holdings.rs`:
 
 | Method & path | Returns |
 |---------------|---------|
-| `GET /api/wishlist/{game}/products?page&page_size` | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200 |
+| `GET /api/wishlist/{game}/products?page&page_size&set` | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), `page`/`page_size` default 60 max 200. Optional `set` restricts to one set code (unknown/unheld code → empty page, `total` 0), the drill-in for the tiles below |
+| `GET /api/wishlist/{game}/products/sets` | `{ data: ProductHoldingSet[] }` — every set the user wants sealed products in, **unpaginated**, same grouping/order as the collection `products/sets` above (newest set first; date-less last; ties by code asc); each an aggregate tile drilled into via `?set=<code>` on the flat list |
 | `GET /api/wishlist/{game}/products/summary` | `ProductHoldingSummary { unique_products, total_products, total_value_usd }`; value = regular×`usd` + foil×`usd_foil` (market prices; msrp never used); `total_value_usd` null when nothing wanted is priced; no set scope, no bulk split |
 | `POST /api/wishlist/{game}/products/counts` `{ ids }` | `{ data: { <external id>: { quantity, foil_quantity } } }` — batch wanted counts for the product-tile badges; un-wanted ids absent (never zero); > 500 ids = `422` |
 | `GET /api/wishlist/{game}/products/{id}` | the single-product wanted counts (`CollectionQuantities`; zeros if absent, `404` unknown game/product) |

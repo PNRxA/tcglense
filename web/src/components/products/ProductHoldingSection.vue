@@ -1,102 +1,95 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
-import ProductGrid from '@/components/products/ProductGrid.vue'
-import CardPagination from '@/components/cards/CardPagination.vue'
+import { RouterLink } from 'vue-router'
+import ProductSetTile from '@/components/products/ProductSetTile.vue'
 import { buttonVariants } from '@/components/ui/button'
 import {
-  COLLECTION_PRODUCT_PAGE_SIZE,
-  useCollectionProductCounts,
-  useCollectionProductsQuery,
+  useCollectionProductSetsQuery,
+  useCollectionProductSummaryQuery,
 } from '@/composables/useCollection'
 import {
-  WISHLIST_PRODUCT_PAGE_SIZE,
-  useWishlistProductCounts,
-  useWishlistProductsQuery,
+  useWishlistProductSetsQuery,
+  useWishlistProductSummaryQuery,
 } from '@/composables/useWishlist'
-import { useClampPage } from '@/composables/useClampPage'
+import { useSetsQuery } from '@/composables/useCatalog'
+import { useCurrency } from '@/composables/useCurrency'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
-import type { OwnedCountsMap } from '@/lib/api'
+import type { CardSet } from '@/lib/api'
 
+// The sealed-products slice of the collection / wish-list landing: like the CARDS side, it
+// shows the set tiles you click into (a set-scoped products list) rather than rendering the
+// products inline. One tile per set the user holds sealed products in, newest set first.
 const props = defineProps<{ game: string; list: CardListTarget }>()
 const game = toRef(props, 'game')
-const route = useRoute()
-const router = useRouter()
+const money = useCurrency()
 
-const page = computed({
-  get: () => {
-    const value = Number(route.query.page)
-    return Number.isInteger(value) && value > 1 ? value : 1
-  },
-  set: (value) => {
-    const query = { ...route.query }
-    if (value > 1) query.page = String(value)
-    else delete query.page
-    void router.replace({ query })
-  },
-})
-
-const query =
-  props.list === 'wishlist'
-    ? useWishlistProductsQuery(game, page)
-    : useCollectionProductsQuery(game, page)
-const entries = computed(() => query.data.value?.data ?? [])
-const total = computed(() => query.data.value?.total ?? 0)
-const products = computed(() => entries.value.map((entry) => entry.product))
-const localCounts = computed<OwnedCountsMap>(() =>
-  Object.fromEntries(
-    entries.value.map((entry) => [
-      entry.product.id,
-      { quantity: entry.quantity, foil_quantity: entry.foil_quantity },
-    ]),
-  ),
-)
-// ProductGrid's unified control exposes both lists. The current surface's counts are already
-// embedded in the page; fetch the other surface in one batch so its combined resting badge
-// is authoritative too (and never shows a misleading zero for a cross-listed product).
-const otherCounts =
-  props.list === 'wishlist'
-    ? useCollectionProductCounts(game, products).ownership
-    : useWishlistProductCounts(game, products).ownership
-const owned = computed(() => (props.list === 'collection' ? localCounts.value : otherCounts.value))
-const wanted = computed(() => (props.list === 'wishlist' ? localCounts.value : otherCounts.value))
-const pageSize =
-  props.list === 'wishlist' ? WISHLIST_PRODUCT_PAGE_SIZE : COLLECTION_PRODUCT_PAGE_SIZE
+const basePath = computed(() => (props.list === 'wishlist' ? '/wishlist' : '/collection'))
 const countNoun = computed(() => (props.list === 'wishlist' ? 'wanted' : 'owned'))
 
-useClampPage(page, () => ({
-  ready: query.isSuccess.value,
-  total: total.value,
-  pageSize,
-}))
+// Every held-product set (unpaginated, newest set first) — the tiles. The section renders only
+// once this has at least one set, so an empty holding shows nothing.
+const setsQuery =
+  props.list === 'wishlist'
+    ? useWishlistProductSetsQuery(game)
+    : useCollectionProductSetsQuery(game)
+const sets = computed(() => setsQuery.data.value?.data ?? [])
+
+// The header count is the unique-product tally from the surface's product summary. The landing
+// already mounts this query, so vue-query dedupes; while it's pending the count span self-hides.
+const summaryQuery =
+  props.list === 'wishlist'
+    ? useWishlistProductSummaryQuery(game)
+    : useCollectionProductSummaryQuery(game)
+const summary = computed(() => summaryQuery.data.value)
+
+// The public (cached) catalog set list — the same source the card landing uses — resolves each
+// held-set code to its catalog row for the tile's icon + release date. A held set with no
+// catalog row is simply absent from the map (the tile falls back gracefully).
+const catalogSetsQuery = useSetsQuery(game)
+const catalogSetByCode = computed(() => {
+  const map: Record<string, CardSet> = {}
+  for (const set of catalogSetsQuery.data.value?.data ?? []) map[set.code] = set
+  return map
+})
 </script>
 
 <template>
-  <section v-if="total > 0">
+  <section v-if="sets.length">
     <div class="mb-4 flex items-center justify-between gap-2">
       <h2 class="text-lg font-semibold">
         Sealed products
-        <span class="text-muted-foreground ml-1 text-sm font-normal">
-          {{ total }} {{ countNoun }}
+        <span v-if="summary" class="text-muted-foreground ml-1 text-sm font-normal">
+          {{ summary.unique_products }} {{ countNoun }}
         </span>
       </h2>
-      <RouterLink
-        :to="`/sealed/${game}`"
-        :class="buttonVariants({ variant: 'outline', size: 'sm' })"
-      >
-        Browse sealed
-      </RouterLink>
+      <div class="flex items-center gap-2">
+        <RouterLink
+          :to="`/sealed/${game}`"
+          :class="buttonVariants({ variant: 'outline', size: 'sm' })"
+        >
+          Browse sealed
+        </RouterLink>
+        <RouterLink :to="`${basePath}/${game}/products`" :class="buttonVariants({ size: 'sm' })">
+          View all
+        </RouterLink>
+      </div>
     </div>
 
-    <ProductGrid :game="game" :products="products" :owned="owned" :wanted="wanted" />
-
-    <CardPagination
-      v-if="total > pageSize"
-      v-model:page="page"
-      :page-size="pageSize"
-      :total="total"
-      :loading="query.isPlaceholderData.value"
-      class="mt-6"
-    />
+    <!-- One tile per held-product set (server order = newest set first), each linking to the
+         surface's set-scoped products list — matching the card landing's held-sets grid. -->
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <ProductSetTile
+        v-for="set in sets"
+        :key="set.code"
+        :game="game"
+        :code="set.code"
+        :name="set.name"
+        :products="set.unique_products"
+        :copies="set.total_products"
+        :catalog-set="catalogSetByCode[set.code]"
+        :to="`${basePath}/${game}/products/sets/${set.code}`"
+        :value="money.formatUsd(set.total_value_usd)"
+      />
+    </div>
   </section>
 </template>

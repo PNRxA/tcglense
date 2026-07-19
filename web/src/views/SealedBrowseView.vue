@@ -32,8 +32,13 @@ import { PRODUCT_DEFAULT_SORT, PRODUCT_SORT_OPTIONS } from '@/lib/cardSort'
 import { productTypeLabel } from '@/lib/productType'
 import { usePageMeta } from '@/lib/seo'
 
-const props = defineProps<{ game: string }>()
+// Serves both the flat all-products browse (`/sealed/:game/products`) and a set-scoped browse
+// (`/sealed/:game/sets/:code`) — the click-through target of the landing's set tiles. `code`
+// (undefined = the all-products view) is the only per-route difference: it pins the set filter
+// and hides the set `<Select>`.
+const props = defineProps<{ game: string; code?: string }>()
 const game = toRef(props, 'game')
+const scoped = computed(() => !!props.code)
 
 // Page, name search and sort live in the URL (shared with useCardSearch, same as the
 // card browse views). Note `q` here matches each word as an order-independent name
@@ -73,22 +78,39 @@ const typeSelect = computed({
 
 const gameName = useGameName(game)
 
-usePageMeta({
-  title: () => `${gameName.value} sealed products`,
-  description: () =>
-    `Browse and filter sealed ${gameName.value} products — booster boxes, bundles and ` +
-    `decks — with current prices and price history on TCGLense.`,
-  canonicalPath: () => `/sealed/${game.value}`,
-})
-
 const facetsQuery = useProductFacetsQuery(game)
 const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
 const setOptions = computed(() => facetsQuery.data.value?.data.sets ?? [])
 
+// Set-scoped mode: resolve the scoped set's display name from the facet list (fallback to the
+// upper-cased code) for the heading + breadcrumb, and pin the products query's `set` param to
+// `code` — any `?set=` in the URL is ignored (the set `<Select>` is hidden). The unscoped view
+// keeps the in-URL set filter.
+const scopedSetRef = computed(() => setOptions.value.find((s) => s.code === props.code))
+const heading = computed(() =>
+  scoped.value ? (scopedSetRef.value?.name ?? props.code?.toUpperCase() ?? '') : 'All products',
+)
+const effectiveSet = computed(() => (scoped.value ? (props.code ?? '') : setFilter.value))
+
+usePageMeta({
+  title: () =>
+    scoped.value
+      ? `${heading.value} sealed products — ${gameName.value}`
+      : `${gameName.value} sealed products`,
+  description: () =>
+    scoped.value
+      ? `Browse sealed ${gameName.value} products from ${heading.value} — booster boxes, ` +
+        `bundles and decks — with current prices and price history on TCGLense.`
+      : `Browse and filter sealed ${gameName.value} products — booster boxes, bundles and ` +
+        `decks — with current prices and price history on TCGLense.`,
+  canonicalPath: () =>
+    scoped.value ? `/sealed/${game.value}/sets/${props.code}` : `/sealed/${game.value}/products`,
+})
+
 const productsQuery = useProductsQuery(game, {
   page,
   query,
-  set: setFilter,
+  set: effectiveSet,
   type: typeFilter,
   sort,
   defaultSort: PRODUCT_DEFAULT_SORT,
@@ -114,9 +136,15 @@ useClampPage(page, () => ({
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-10">
-    <PageBreadcrumbs :items="[{ label: 'Sealed', to: '/sealed' }, { label: gameName }]" />
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Sealed', to: '/sealed' },
+        { label: gameName, to: `/sealed/${game}` },
+        { label: heading },
+      ]"
+    />
 
-    <h1 class="mb-4 text-3xl font-semibold tracking-tight">Sealed products</h1>
+    <h1 class="mb-4 text-3xl font-semibold tracking-tight">{{ heading }}</h1>
 
     <StickySearchBar>
       <div class="flex flex-wrap items-center gap-2">
@@ -126,7 +154,9 @@ useClampPage(page, () => ({
           aria-label="Search sealed products"
           class="min-w-48 flex-1"
         />
-        <Select v-model="setSelect">
+        <!-- The set filter is an in-page filter on the all-products view; the set-scoped view is
+             pinned to its set, so it hides the select entirely. -->
+        <Select v-if="!scoped" v-model="setSelect">
           <SelectTrigger size="sm" class="w-40" aria-label="Filter by set">
             <SelectValue placeholder="All sets" />
           </SelectTrigger>
@@ -174,7 +204,7 @@ useClampPage(page, () => ({
 
     <template v-else>
       <!-- scroll-mt clears the sticky filter bar on a page change (#258). That bar wraps its
-           search + two selects to as many as three rows on a narrow phone (~140px), so the
+           search + up to two selects to as many as three rows on a narrow phone (~140px), so the
            mobile offset is taller; from sm up it's a single ~60px row, hence the tight sm: value. -->
       <div
         ref="resultsTop"

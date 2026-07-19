@@ -3,7 +3,7 @@
 use super::harness::*;
 use crate::entities::prelude::{Product, ProductPriceHistory};
 use crate::entities::{product, product_price_history};
-use crate::test_support::insert_product;
+use crate::test_support::{insert_card_set, insert_product};
 use chrono::{Duration, Utc};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
@@ -77,6 +77,7 @@ async fn collection_products_are_private_and_no_store() {
     for uri in [
         "/api/collection/mtg/products",
         "/api/collection/mtg/products/summary",
+        "/api/collection/mtg/products/sets",
         "/api/collection/mtg/products/100",
     ] {
         let (status, headers, _) = send(&app, get(uri)).await;
@@ -380,6 +381,260 @@ async fn validation_and_unknown_resources_match_card_holdings() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn product_sets_aggregate_newest_first() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "product-sets-owner@example.com", "password123").await;
+
+    // Two catalog sets with distinct release dates so the tile order is deterministic:
+    // "new" (2024-06) must lead "old" (2024-01).
+    insert_card_set(db, "new", "Newest Set", Some("2024-06-01")).await;
+    insert_card_set(db, "old", "Oldest Set", Some("2024-01-01")).await;
+
+    // Two products in the newest set, one in the older set.
+    insert_product(
+        db,
+        "10",
+        "Zebra Box",
+        "new",
+        "collector_display",
+        Some("10.00"),
+    )
+    .await;
+    insert_product(db, "11", "alpha bundle", "new", "bundle", Some("5.00")).await;
+    insert_product(
+        db,
+        "20",
+        "Gamma Deck",
+        "old",
+        "commander_deck",
+        Some("3.00"),
+    )
+    .await;
+
+    // 2 regular + 1 foil of "10" (the foil finish is unpriced, so it lifts total_products but
+    // not value), 1 of "11", 4 of "20".
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &product_path("10"),
+            &token,
+            json!({ "quantity": 2, "foil_quantity": 1 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own 10 failed: {body:?}");
+    own_product(&app, &token, "11", 1).await;
+    own_product(&app, &token, "20", 4).await;
+
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products/sets", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "sets failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    // Unpaginated `{ data: [...] }`: one tile per set, no `total`/`page` envelope.
+    let sets = body["data"].as_array().unwrap();
+    assert_eq!(sets.len(), 2, "two sets => two tiles");
+
+    // Newest set leads, with its catalog name and per-set aggregates.
+    let newest = &sets[0];
+    assert_eq!(newest["code"], "new");
+    assert_eq!(newest["name"], "Newest Set");
+    assert_eq!(newest["unique_products"], 2);
+    assert_eq!(newest["total_products"], 4, "2+1 foil of 10, plus 1 of 11");
+    assert_eq!(
+        newest["total_value_usd"], "25.00",
+        "2×$10 + 1×$5 (foil unpriced)"
+    );
+    // A tile carries no embedded products — only aggregates.
+    assert!(newest.get("products").is_none());
+
+    // The older set follows.
+    let oldest = &sets[1];
+    assert_eq!(oldest["code"], "old");
+    assert_eq!(oldest["name"], "Oldest Set");
+    assert_eq!(oldest["unique_products"], 1);
+    assert_eq!(oldest["total_products"], 4);
+    assert_eq!(oldest["total_value_usd"], "12.00", "4×$3");
+}
+
+#[tokio::test]
+async fn product_sets_unknown_set_has_null_name_and_orders_by_product_date() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "product-sets-unknown@example.com", "password123").await;
+
+    // A known set with an OLD release date, and a product in a set that has no `card_sets`
+    // row at all. The unknown tile falls back to the newest release date among its held
+    // products (insert_product stamps "2024-02-09"), which beats the known set's 2024-01-01.
+    insert_card_set(db, "kn", "Known Set", Some("2024-01-01")).await;
+    insert_product(db, "10", "Known Box", "kn", "bundle", Some("1.00")).await;
+    insert_product(db, "20", "Ghost Box", "ghost", "bundle", Some("2.00")).await;
+    own_product(&app, &token, "10", 1).await;
+    own_product(&app, &token, "20", 1).await;
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products/sets", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "sets failed: {body:?}");
+    let sets = body["data"].as_array().unwrap();
+    assert_eq!(sets.len(), 2);
+
+    // The unknown set sorts FIRST: its product-date fallback (2024-02-09) outranks the known
+    // set's own release date (2024-01-01) — so the fallback is used, not treated as date-less.
+    assert_eq!(sets[0]["code"], "ghost");
+    assert!(
+        sets[0]["name"].is_null(),
+        "a set with no catalog row has a null name: {:?}",
+        sets[0]
+    );
+    assert_eq!(sets[1]["code"], "kn");
+    assert_eq!(sets[1]["name"], "Known Set");
+}
+
+/// The flat products list narrows to one set via `?set=`, excluding other-set holdings; an
+/// unknown set is an empty page (`total` 0), and the filter paginates within the set.
+#[tokio::test]
+async fn products_filter_by_set() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "product-filter-owner@example.com", "password123").await;
+
+    insert_card_set(db, "new", "Newest Set", Some("2024-06-01")).await;
+    insert_card_set(db, "old", "Oldest Set", Some("2024-01-01")).await;
+    // Two products in "new" (owned in order so 11 is the newer, recency-leading row), one in "old".
+    insert_product(
+        db,
+        "10",
+        "New Box",
+        "new",
+        "collector_display",
+        Some("10.00"),
+    )
+    .await;
+    insert_product(db, "11", "New Bundle", "new", "bundle", Some("5.00")).await;
+    insert_product(db, "20", "Old Box", "old", "bundle", Some("3.00")).await;
+    own_product(&app, &token, "10", 1).await;
+    own_product(&app, &token, "11", 1).await;
+    own_product(&app, &token, "20", 1).await;
+
+    // `?set=new` returns only that set's two products, excluding the "old" holding.
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products?set=new", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "filtered list failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["total"], 2, "only the two 'new' products");
+    let ids: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["product"]["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        ["11", "10"],
+        "recency order within the set; 'old' excluded"
+    );
+
+    // An unknown/unheld set code is an empty page, not an error.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products?set=ghost", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0);
+    assert!(body["data"].as_array().unwrap().is_empty());
+
+    // The filter paginates: page 1 of size 1 within "new" is the newest of the two, more to come.
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products?set=new&page_size=1", &token),
+    )
+    .await;
+    assert_eq!(body["total"], 2, "total is the filtered count");
+    assert_eq!(body["has_more"], true);
+    let page1 = body["data"].as_array().unwrap();
+    assert_eq!(page1.len(), 1);
+    assert_eq!(page1[0]["product"]["id"], "11");
+
+    // Page 2: the remaining "new" product, no more.
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(
+            "/api/collection/mtg/products?set=new&page=2&page_size=1",
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["has_more"], false);
+    let page2 = body["data"].as_array().unwrap();
+    assert_eq!(page2.len(), 1);
+    assert_eq!(page2[0]["product"]["id"], "10");
+}
+
+/// The product-sets tiles are scoped to the caller's own collection: they never fold in a
+/// wish-list want or another user's holding.
+#[tokio::test]
+async fn product_sets_are_isolated_from_wishlist_and_other_users() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (alice, _) = register(&app, "product-sets-alice@example.com", "password123").await;
+    let (bob, _) = register(&app, "product-sets-bob@example.com", "password123").await;
+    insert_card_set(db, "new", "Newest Set", Some("2024-06-01")).await;
+    insert_product(db, "10", "Owned Box", "new", "bundle", Some("10.00")).await;
+    insert_product(db, "20", "Wanted Box", "new", "bundle", Some("5.00")).await;
+
+    // Alice owns 10 and wants 20 (wish list). Her collection tiles show only the owned one.
+    own_product(&app, &alice, "10", 2).await;
+    let (_, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/wishlist/mtg/products/20",
+            &alice,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products/sets", &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let sets = body["data"].as_array().unwrap();
+    assert_eq!(
+        sets.len(),
+        1,
+        "the wanted product must not appear in the collection tiles"
+    );
+    assert_eq!(sets[0]["code"], "new");
+    assert_eq!(
+        sets[0]["unique_products"], 1,
+        "only the owned product, not the wanted one"
+    );
+
+    // Bob owns nothing: an empty list, not Alice's tile.
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/products/sets", &bob),
+    )
+    .await;
+    assert!(body["data"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

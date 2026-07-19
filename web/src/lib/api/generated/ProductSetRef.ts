@@ -3,4 +3,9 @@
 /**
  * A set that actually has products, for building filter dropdowns.
  */
-export type ProductSetRef = { code: string, name: string | null, };
+export type ProductSetRef = { code: string, name: string | null, 
+/**
+ * How many sealed products this set has — the sealed-catalog set-landing tiles
+ * show it.
+ */
+product_count: number, };
