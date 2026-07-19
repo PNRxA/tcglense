@@ -74,16 +74,19 @@ const position = computed(() =>
 )
 const hasNav = computed(() => position.value.index >= 0 && position.value.total > 1)
 
-// The surface this modal was opened FROM on a product<->card swap: a card opened from inside a
-// sealed product remembers the product, and a product opened from inside a card
-// remembers the card, via `?from=<kind>:<id>` (see `lib/detailOrigin.ts`, set by CardTile /
-// ProductTile). It backs the "← Back to <origin>" crumb, giving a one-tap return to the other
-// surface instead of leaning on the browser's Back button. The kind is always the OTHER surface
-// (only cross-surface swaps write the marker); the guard is defensive so a stray same-kind value
-// never shows a crumb that points at the item you're already on.
+// The item this modal was opened FROM: a card opened from inside a sealed product remembers the
+// product (and the reverse), and an item opened from a same-surface list — a nested pack in "What's
+// in the box", a parent in "Included in", another printing — remembers the item it swapped out, via
+// `?openedFrom=<kind>:<id>` (see `lib/detailOrigin.ts`, set by useDetailModalLink.open). It backs
+// the "← Back to <origin>" crumb, a one-tap return to that item instead of leaning on the browser's
+// Back button. The crumb shows for any remembered item that isn't the one already on screen; the
+// guard suppresses only a self-referential same-surface marker (same kind AND same id) so a stray
+// value never points the crumb back at the item you're already viewing.
 const origin = computed(() => {
   const parsed = parseDetailOrigin(route.query[DETAIL_ORIGIN_KEY])
-  return parsed && parsed.kind !== props.queryKey ? parsed : null
+  if (!parsed) return null
+  if (parsed.kind === props.queryKey && parsed.id === itemId.value) return null
+  return parsed
 })
 
 // The per-item ownedKeys (a product modal's namespaced card search) and the per-trip origin

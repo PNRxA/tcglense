@@ -1,12 +1,13 @@
 import type { LocationQueryRaw } from 'vue-router'
 
-// The one query key that records which detail surface a modal was opened FROM, so the shared
-// DetailDialogShell can offer a one-tap "← Back to <origin>" crumb when you cross from a sealed
-// product into one of its contained cards — or the reverse, from a card into one of its sealed
-// products. It is per-trip navigation state: set only on a product<->card swap (CardTile /
-// ProductTile), and dropped again on close, on stepping to a neighbour, and on opening any
-// unrelated item — so it never lingers past the single hop it describes. Deeper history is the
-// browser's Back button's job; this only ever points one surface back.
+// The one query key that records which detail item a modal was opened FROM, so the shared
+// DetailDialogShell can offer a one-tap "← Back to <origin>" crumb: when you cross from a sealed
+// product into one of its contained cards (or the reverse), AND when you hop between same-surface
+// items — a nested pack in "What's in the box", a parent in "Included in", another printing. It is
+// per-trip navigation state: set by useDetailModalLink.open whenever a modal already showing an
+// item swaps to a different one, and dropped again on close, on stepping to a neighbour, and on a
+// fresh open from a browse grid — so it never lingers past the single hop it describes. Deeper
+// history is the browser's Back button's job; this only ever points one item back.
 //
 // Card and product both live in the same game (the `:game` route param, or `?game=` on the
 // game-less public deck page), so only the origin's kind + id need to travel — encoded as

@@ -98,6 +98,28 @@ describe('ProductContents', () => {
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/sealed/mtg/parent')
     expect(router.currentRoute.value.query.product).toBe('648640')
+    // On the full page the parent is the page (not a modal), so there's nothing to go "back" to.
+    expect(router.currentRoute.value.query.openedFrom).toBeUndefined()
+  })
+
+  it('remembers the parent product for the "back" crumb when opened inside the product modal', async () => {
+    // When this section renders inside the browse-grid product modal (?product=parent), clicking a
+    // nested pack swaps to it AND stashes the parent so the modal shows "← Back to <parent>" (#485).
+    const { wrapper, router } = await mountContents(
+      [
+        comp({
+          kind: 'sealed',
+          name: 'Play Booster',
+          quantity: 9,
+          product: linkedProduct('648640'),
+        }),
+      ],
+      '/sealed/mtg?product=parent',
+    )
+    await wrapper.get('a').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.product).toBe('648640')
+    expect(router.currentRoute.value.query.openedFrom).toBe('product:parent')
   })
 
   it('opens a promo card in the card modal, remembering the product for the "back" crumb', async () => {

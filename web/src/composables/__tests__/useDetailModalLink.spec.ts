@@ -18,6 +18,7 @@ const Host = defineComponent({
 const routes = [
   { path: '/sealed/:game', component: Host },
   { path: '/sealed/:game/:id', component: Host },
+  { path: '/cards/:game', component: Host },
   { path: '/cards/:game/cards/:id', component: Host },
   // A route with no `:game` path param (the public deck page): the game must ride the query.
   { path: '/u/:handle/decks/:id', component: Host },
@@ -80,14 +81,35 @@ describe('useDetailModalLink', () => {
   })
 
   it("drops a leftover namespaced product-card search — it was another product's (#448)", async () => {
+    // pq/psort belong to the now-closed product modal for 'old'; opening a different product clears
+    // them so its list starts fresh. 'old' also becomes the back-crumb origin (issue #485).
     const router = await at('/sealed/mtg?product=old&pq=t:goblin&psort=name:desc')
     link.open('product', 'mtg', 'p1')
     await flushPromises()
-    expect(router.currentRoute.value.query).toEqual({ product: 'p1' })
+    expect(router.currentRoute.value.query).toEqual({ product: 'p1', openedFrom: 'product:old' })
   })
 
-  it('clears a stale origin marker when there is no cross-surface item to return to', async () => {
+  it('remembers the previous product as the origin on a product->product hop', async () => {
+    // Opening a nested/parent product from inside a product modal (a "What's in the box" /
+    // "Included in" row) remembers the product you were on so the modal can offer
+    // "← Back to <it>" (issue #485); any stale cross-surface marker is replaced.
     const router = await at('/sealed/mtg?product=old&openedFrom=card:c9')
+    link.open('product', 'mtg', 'p1')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ product: 'p1', openedFrom: 'product:old' })
+  })
+
+  it('remembers the previous card as the origin on a card->card hop', async () => {
+    // The mirror of the above for cards — clicking another printing in "Other printings".
+    const router = await at('/cards/mtg?card=old')
+    link.open('card', 'mtg', 'c1')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ card: 'c1', openedFrom: 'card:old' })
+  })
+
+  it('clears the marker when re-opening the item already on screen', async () => {
+    // A no-op re-open of the current item must not stash a self-referential origin.
+    const router = await at('/sealed/mtg?product=p1&openedFrom=card:c9')
     link.open('product', 'mtg', 'p1')
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({ product: 'p1' })

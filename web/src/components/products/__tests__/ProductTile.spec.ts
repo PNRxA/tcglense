@@ -95,15 +95,18 @@ describe('ProductTile detail modal', () => {
     })
   })
 
-  it('clears a stale origin marker when opening from another product', async () => {
-    // Reaching one product from another (a linked box/pack in "What's in the box") is not a
-    // cross-surface swap: there's no card to go back to, so any leftover `?openedFrom=` must be
-    // dropped rather than pointing the new modal at an unrelated item.
+  it('remembers the product it was opened from on a product->product hop', async () => {
+    // Reaching one product from another (a linked box/pack in "What's in the box" / "Included in")
+    // now remembers that product so the modal can offer "← Back to <product>" (issue #485), the
+    // same one-tap return a card<->product swap gives. Any stale cross-surface marker is replaced.
     const { wrapper, router } = await mountTile('/sealed/mtg?product=old&openedFrom=card:card-9')
     await wrapper.get('a').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.query).toEqual({ product: 'product-1' })
+    expect(router.currentRoute.value.query).toEqual({
+      product: 'product-1',
+      openedFrom: 'product:old',
+    })
   })
 
   it('carries the game in the query on a route without a :game path param', async () => {

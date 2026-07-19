@@ -51,14 +51,23 @@ export function useDetailModalLink() {
   function open(kind: DetailModalKind, game: string, id: string): void {
     const other = SURFACES[kind].other
     const query: LocationQueryRaw = { ...route.query, [kind]: id }
-    // The other surface's open item, if any, is the one this swap leaves behind — dropped from
-    // the URL and stashed as the origin so the modal can point one tap back to it.
-    const from = typeof route.query[other] === 'string' ? route.query[other] : null
+    // Whatever item was open before this click is the one to offer a one-tap "← Back to": the
+    // OTHER surface on a card<->product swap, or the PREVIOUS same-surface item on a
+    // product->product / card->card hop (a nested pack in "What's in the box", a parent in
+    // "Included in", another printing). Only one of card/product is ever set at a time, so at
+    // most one of these is non-null.
+    const fromOther = typeof route.query[other] === 'string' ? route.query[other] : null
+    const fromSame = typeof route.query[kind] === 'string' ? route.query[kind] : null
     delete query[other]
     // A namespaced product-card search still in the URL was typed for a now-closed product
     // modal (issue #448); the surface we open starts fresh.
     for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
-    applyDetailOrigin(query, other, from)
+    // Record where we came from so the modal can show the return crumb: the cross-surface item
+    // wins, else the previous same-surface item — but never the item we're opening (a no-op
+    // re-open), and cleared when there's nothing to return to (a fresh open from a browse grid).
+    if (fromOther) applyDetailOrigin(query, other, fromOther)
+    else if (fromSame && fromSame !== id) applyDetailOrigin(query, kind, fromSame)
+    else applyDetailOrigin(query, kind, null)
     // A route without a `:game` path param (the public deck page) can't feed the shared dialog
     // its game from the path, so carry it in the query — CardTile's/ProductTile's idiom.
     if (typeof route.params.game !== 'string' || !route.params.game) query.game = game
