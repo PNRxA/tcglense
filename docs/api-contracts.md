@@ -994,6 +994,8 @@ curated drop titles aren't in the bulk card API, so the **mirror origin** (`MIRR
 scrapes Scryfall's gallery daily (`scryfall::sld_scrape`) and installs the fresh snapshot into
 its drop store; every **other** instance imports it from this route daily
 (`scryfall::sld_sync`, on by default via `SLD_DROPS_IMPORT_ENABLED`) rather than scraping
-Scryfall itself. Both fall back to the committed `sld_drops.json` until their first fetch. A
-scrape that yields no drops (a markup change) is rejected, so a broken scrape never wipes the
-good table. Version-gated by a strong content `ETag` (a bodyless `304` when unchanged).
+Scryfall itself. Both fall back to the committed `sld_drops.json` only on first boot (when no
+snapshot has been persisted yet); a restart reseeds from the DB-persisted snapshot
+(`scryfall::sld_persist`), so it serves the last-good drops, not the committed seed. A scrape
+that yields no drops (a markup change) is rejected, so a broken scrape never wipes the good
+table. Version-gated by a strong content `ETag` (a bodyless `304` when unchanged).

@@ -168,10 +168,14 @@ pub(crate) fn spawn_sld_scrape(
                 Ok(json) => match drops::install_snapshot(&json) {
                     Ok(count) => {
                         tracing::info!(count, "refreshed Secret Lair drop snapshot from Scryfall");
+                        // Persist the freshly-installed snapshot *before* recording the run — the two
+                        // writes hit different tables and aren't transactional, so on a crash between
+                        // them we want the snapshot fresh and the run-time stale (the next boot then
+                        // reseeds the fresh drops and re-scrapes immediately), not the reverse (which
+                        // would defer while serving the old snapshot).
+                        persist_current(&db).await;
                         // No upstream ETag on the gallery scrape — record only the run time.
                         record_run(&db, None, "complete", "scraped from Scryfall").await;
-                        // Persist the freshly-installed snapshot so the next boot reseeds from it.
-                        persist_current(&db).await;
                     }
                     Err(err) => tracing::warn!(
                         error = %err,
@@ -225,6 +229,14 @@ pub(crate) fn spawn_sld_import(
                     if let Some(tag) = etag {
                         prev_etag = Some(tag);
                     }
+                    // Persist the freshly-imported snapshot *before* recording the ETag. The store
+                    // now holds exactly this import, so its canonical JSON is `current_snapshot`.
+                    // Order matters: the two writes aren't transactional, and a crash between them
+                    // must leave the snapshot fresh with the ETag one behind — the next boot reseeds
+                    // the fresh drops and the next conditional import `200`s and repairs the ETag. The
+                    // reverse (ETag new, snapshot old) would strand the store on the old snapshot
+                    // behind a matching ETag (a `304`) until the mirror next advances.
+                    persist_current(&db).await;
                     record_run(
                         &db,
                         prev_etag.as_deref(),
@@ -232,9 +244,6 @@ pub(crate) fn spawn_sld_import(
                         "imported from mirror",
                     )
                     .await;
-                    // Persist the freshly-imported snapshot so the next boot reseeds from it. The
-                    // store now holds exactly this import, so its canonical JSON is `current_snapshot`.
-                    persist_current(&db).await;
                 }
                 Ok(ImportOutcome::Unchanged) => {
                     tracing::debug!("Secret Lair drop snapshot unchanged on the mirror");
