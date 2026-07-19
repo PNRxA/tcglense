@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import { ChevronRight, Package } from '@lucide/vue'
 import type { ProductComponent } from '@/lib/api'
 import { cardImageUrl, productImageUrl } from '@/lib/api'
 import { useProductContentsQuery } from '@/composables/useProducts'
+import { useDetailModalLink, type DetailModalKind } from '@/composables/useDetailModalLink'
 
 // The sealed product's structural composition — "what's in the box". Lists the nested
 // packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo
@@ -18,11 +18,19 @@ const id = toRef(props, 'id')
 
 const contentsQuery = useProductContentsQuery(game, id)
 
-// The in-app link for a component that resolves to a catalog product or card, or null for a
-// textual line item (a deck, a physical extra, or an unresolved link).
-function linkTo(c: ProductComponent): RouteLocationRaw | null {
-  if (c.product) return { name: 'sealed-product', params: { game: game.value, id: c.product.id } }
-  if (c.card) return { name: 'card', params: { game: game.value, id: c.card.id } }
+// Nested packs/boxes and fixed promo cards both open in the shared detail modal over the current
+// route — the same in-place open as the browse-grid tiles and the "collector booster exclusives"
+// card links (issue #485) — while the anchor keeps the canonical page as its href for
+// modifier/middle clicks, new tabs, and crawlers.
+const { hrefFor, onActivate, warm } = useDetailModalLink()
+
+// The in-app detail-modal target for a component that resolves to a catalog product or card, or
+// null for a textual line item (a deck, a physical extra, or an unresolved link).
+function linkFor(c: ProductComponent): { kind: DetailModalKind; id: string; href: string } | null {
+  if (c.product) {
+    return { kind: 'product', id: c.product.id, href: hrefFor('product', game.value, c.product.id) }
+  }
+  if (c.card) return { kind: 'card', id: c.card.id, href: hrefFor('card', game.value, c.card.id) }
   return null
 }
 
@@ -38,7 +46,7 @@ function thumbUrl(c: ProductComponent): string | null {
 const rows = computed(() =>
   (contentsQuery.data.value?.data ?? []).map((component) => ({
     component,
-    to: linkTo(component),
+    link: linkFor(component),
     thumb: thumbUrl(component),
   })),
 )
@@ -59,10 +67,13 @@ const show = computed(() => rows.value.length > 0)
     <ul class="grid gap-2 sm:grid-cols-2">
       <li v-for="(row, i) in rows" :key="i">
         <component
-          :is="row.to ? RouterLink : 'div'"
-          v-bind="row.to ? { to: row.to } : {}"
+          :is="row.link ? 'a' : 'div'"
+          :href="row.link?.href"
           class="flex items-center gap-3 rounded-lg border p-2"
-          :class="row.to ? 'group hover:bg-muted/50 transition-colors' : ''"
+          :class="row.link ? 'group hover:bg-muted/50 transition-colors' : ''"
+          @click="row.link && onActivate($event, row.link.kind, game, row.link.id)"
+          @pointerenter="row.link && warm(row.link.kind)"
+          @focusin="row.link && warm(row.link.kind)"
         >
           <!-- Thumbnail: product/card art when linked + available, else a kind icon. -->
           <div
@@ -84,7 +95,7 @@ const show = computed(() => rows.value.length > 0)
               {{ row.component.name }}
             </p>
             <ChevronRight
-              v-if="row.to"
+              v-if="row.link"
               class="text-muted-foreground size-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
               aria-hidden="true"
             />
