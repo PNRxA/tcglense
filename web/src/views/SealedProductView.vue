@@ -1,14 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
-import { ArrowLeft, Bell } from '@lucide/vue'
+import { computed, toRef } from 'vue'
+import { ArrowLeft } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProductDetailContent from '@/components/products/ProductDetailContent.vue'
-import CreateAlertDialog from '@/components/alerts/CreateAlertDialog.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
-import { Button } from '@/components/ui/button'
 import { useProductQuery, useProductContentsQuery } from '@/composables/useProducts'
 import { useProductBackLink } from '@/composables/useProductBackLink'
-import { useAuthStore } from '@/stores/auth'
 import { productImageUrl } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
@@ -43,10 +40,9 @@ const components = computed(() => contentsQuery.data.value?.data ?? [])
 // The in-app "back" link, mirroring the page the user arrived by — a card's "Sealed
 // products" section or the sealed browse — rather than always the browse (issue #203).
 const backLink = useProductBackLink(game)
-
-// "Set price alert" (issue #525): a signed-in affordance to watch this product's price.
-const auth = useAuthStore()
-const alertOpen = ref(false)
+// The "Set price alert" affordance (issue #525) now lives in the shared ProductDetailContent
+// body (near the prices), so it shows on both this page and the browse-grid modal — see that
+// component and SetPriceAlertButton.
 
 const typeLabel = computed(() =>
   product.value ? productTypeLabel(product.value.product_type) : '',
@@ -102,7 +98,7 @@ usePageMeta({
       sealed browse). The back link below stays — it's history-aware (issue #203). -->
     <PageBreadcrumbs v-if="crumbs.length" :items="crumbs" />
 
-    <div class="mb-6 flex items-center justify-between gap-3">
+    <div class="mb-6">
       <RouterLink
         :to="backLink.to"
         class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
@@ -110,28 +106,7 @@ usePageMeta({
         <ArrowLeft class="size-4" />
         {{ backLink.label }}
       </RouterLink>
-
-      <!-- Signed-in only: watch this product's price (issue #525). -->
-      <Button
-        v-if="auth.isAuthenticated && product"
-        variant="outline"
-        size="sm"
-        type="button"
-        @click="alertOpen = true"
-      >
-        <Bell class="size-4" />
-        Set price alert
-      </Button>
     </div>
-
-    <CreateAlertDialog
-      v-if="product"
-      v-model:open="alertOpen"
-      :game="game"
-      target-kind="product"
-      :external-id="product.id"
-      :name="product.name"
-    />
 
     <ProductDetailContent :game="game" :id="id" />
   </div>
