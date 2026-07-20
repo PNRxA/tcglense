@@ -17,6 +17,7 @@ use crate::{
         spawn_fingerprint_import,
     },
     datasets::SyncSource,
+    email::Emailer,
     entities::{prelude::User, user},
     ratelimit::{AuthRateLimiter, UserRateLimiter},
     scryfall::sld_tasks::{spawn_sld_import, spawn_sld_scrape},
@@ -329,6 +330,39 @@ fn spawn_card_sync(
     });
 }
 
+/// Periodic price-alert evaluation (issue #525): every `interval_minutes` the evaluator
+/// re-prices every armed alert against the live catalog prices and notifies owners on a
+/// below/above threshold crossing (Discord / Telegram / optional email). The first tick
+/// fires immediately (against whatever prices are loaded), then on the interval; a run that
+/// overran is skipped rather than fired back-to-back. Only spawned when `ALERTS_ENABLED`.
+fn spawn_alert_evaluation(
+    db: DatabaseConnection,
+    notify_http: Client,
+    email: Arc<Emailer>,
+    public_site_url: String,
+    email_globally_enabled: bool,
+    interval_minutes: u64,
+) {
+    tokio::spawn(async move {
+        // saturating_mul so an absurd interval can't overflow the seconds; `.max(1)` keeps
+        // the period non-zero (tokio::time::interval panics on a zero period).
+        let period = Duration::from_secs(interval_minutes.max(1).saturating_mul(60));
+        let mut ticker = tokio::time::interval(period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            crate::alerts::evaluate_all(
+                &db,
+                &notify_http,
+                &email,
+                &public_site_url,
+                email_globally_enabled,
+            )
+            .await;
+        }
+    });
+}
+
 /// Spawn all background tasks: the refresh-token pruner (always) plus, depending on
 /// config, either the offline dummy-catalog seed or the periodic card-data sync.
 ///
@@ -344,6 +378,21 @@ pub async fn start(state: &AppState, http: &Client) {
         state.rate_limiters.clone(),
         state.user_rate_limiters.clone(),
     );
+
+    // Price-alert evaluation (issue #525): independent of the catalog sync — it only reads
+    // the current price columns and the alert tables, so it runs in every mode (including
+    // dummy/offline, where it simply no-ops until a user configures a channel). Off entirely
+    // when ALERTS_ENABLED=false.
+    if state.config.alerts_enabled {
+        spawn_alert_evaluation(
+            state.db.clone(),
+            state.notify_http.clone(),
+            state.email.clone(),
+            state.config.public_site_url.clone(),
+            state.config.alerts_email_enabled,
+            state.config.alerts_interval_minutes,
+        );
+    }
 
     // Load any already-built / imported fingerprint index into memory before serving, so
     // the visual scanner works immediately on an instance that imported a prebuilt index

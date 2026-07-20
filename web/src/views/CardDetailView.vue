@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
-import { ArrowLeft } from '@lucide/vue'
+import { computed, ref, toRef } from 'vue'
+import { ArrowLeft, Bell } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import CardDetailContent from '@/components/cards/CardDetailContent.vue'
+import CreateAlertDialog from '@/components/alerts/CreateAlertDialog.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import { Button } from '@/components/ui/button'
 import { useCardBackLink } from '@/composables/useCardBackLink'
 import { useCardQuery } from '@/composables/useCatalog'
+import { useAuthStore } from '@/stores/auth'
 import { cardImageUrl } from '@/lib/api'
 import { absoluteUrl, usePageMeta } from '@/lib/seo'
 import {
@@ -58,6 +61,11 @@ usePageMeta({
 
 // The in-app "back" link, mirroring the path the user arrived by (issue #18/#63).
 const backLink = useCardBackLink(game, card)
+
+// "Set price alert" (issue #525): a signed-in affordance to watch this card's price. The
+// dialog resolves the target by the card's external id (the same `id` the URL uses).
+const auth = useAuthStore()
+const alertOpen = ref(false)
 </script>
 
 <template>
@@ -66,14 +74,36 @@ const backLink = useCardBackLink(game, card)
       back link below stays — it's history-aware (issue #18/#63), a different affordance. -->
     <PageBreadcrumbs v-if="crumbs.length" :items="crumbs" />
 
-    <RouterLink
+    <div v-if="card" class="mb-6 flex items-center justify-between gap-3">
+      <RouterLink
+        :to="backLink.to"
+        class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
+      >
+        <ArrowLeft class="size-4" />
+        {{ backLink.label }}
+      </RouterLink>
+
+      <!-- Signed-in only: watch this card's price (issue #525). -->
+      <Button
+        v-if="auth.isAuthenticated"
+        variant="outline"
+        size="sm"
+        type="button"
+        @click="alertOpen = true"
+      >
+        <Bell class="size-4" />
+        Set price alert
+      </Button>
+    </div>
+
+    <CreateAlertDialog
       v-if="card"
-      :to="backLink.to"
-      class="text-muted-foreground hover:text-foreground mb-6 inline-flex items-center gap-1.5 text-sm"
-    >
-      <ArrowLeft class="size-4" />
-      {{ backLink.label }}
-    </RouterLink>
+      v-model:open="alertOpen"
+      :game="game"
+      target-kind="card"
+      :external-id="card.id"
+      :name="card.name"
+    />
 
     <CardDetailContent :game="game" :id="id" />
   </div>

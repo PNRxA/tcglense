@@ -67,6 +67,7 @@ beforeEach(() => {
     turnstile_site_key: null,
     signups_enabled: true,
     signups_disabled_message: null,
+    alerts_email_enabled: false,
   })
   mocks.register.mockReset()
 })

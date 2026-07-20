@@ -38,6 +38,7 @@ describe('App', () => {
       turnstile_site_key: null,
       signups_enabled: true,
       signups_disabled_message: null,
+      alerts_email_enabled: false,
     })
   })
 
@@ -135,6 +136,7 @@ describe('App', () => {
       turnstile_site_key: null,
       signups_enabled: true,
       signups_disabled_message: null,
+      alerts_email_enabled: false,
     })
     const router = makeRouter()
     await router.push('/')

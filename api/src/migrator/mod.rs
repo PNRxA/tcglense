@@ -55,6 +55,8 @@ mod m20240101_000052_create_cli_auth_codes_table;
 mod m20240101_000053_tune_price_history_autovacuum;
 mod m20240101_000054_create_sld_drop_snapshot_table;
 mod m20240101_000055_create_card_rulings_table;
+mod m20240101_000056_create_price_alerts_table;
+mod m20240101_000057_create_alert_channels_table;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -120,6 +122,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000053_tune_price_history_autovacuum::Migration),
             Box::new(m20240101_000054_create_sld_drop_snapshot_table::Migration),
             Box::new(m20240101_000055_create_card_rulings_table::Migration),
+            Box::new(m20240101_000056_create_price_alerts_table::Migration),
+            Box::new(m20240101_000057_create_alert_channels_table::Migration),
         ]
     }
 }

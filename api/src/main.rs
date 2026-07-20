@@ -1,3 +1,4 @@
+mod alerts;
 mod analytics_cache;
 mod auth;
 mod captcha;
@@ -17,6 +18,7 @@ mod extract;
 mod handlers;
 mod migrator;
 mod mtgjson;
+mod notifications;
 mod openapi;
 mod phash;
 mod ratelimit;

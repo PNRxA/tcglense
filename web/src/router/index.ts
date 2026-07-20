@@ -339,6 +339,14 @@ const router = createRouter({
       component: () => import('@/views/SettingsView.vue'),
       meta: { requiresAuth: true },
     },
+    // Price alerts (issue #525): manage below/above threshold alerts on cards + sealed
+    // products and the notification channels they deliver to. Signed-in only.
+    {
+      path: '/alerts',
+      name: 'alerts',
+      component: () => import('@/views/AlertsView.vue'),
+      meta: { requiresAuth: true },
+    },
     {
       path: '/login',
       name: 'login',

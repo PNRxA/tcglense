@@ -261,6 +261,27 @@ pub fn password_reset_email(to: &str, link: &str) -> OutgoingEmail {
     }
 }
 
+/// A price-alert notification email (issue #525). `subject` is the short alert line and
+/// `body` the human-readable message; `link` points at the card/product detail page. Kept
+/// deliberately plain — an alert is transactional, not marketing.
+pub fn alert_email(to: &str, subject: &str, body: &str, link: &str) -> OutgoingEmail {
+    OutgoingEmail {
+        to: to.to_string(),
+        subject: subject.to_string(),
+        html: format!(
+            "<p>{body}</p>\
+             <p><a href=\"{link}\">View on TCGLense</a></p>\
+             <p>You're receiving this because you set a price alert on TCGLense. \
+             Manage or remove your alerts from the Alerts page.</p>"
+        ),
+        text: format!(
+            "{body}\n\n{link}\n\n\
+             You're receiving this because you set a price alert on TCGLense. \
+             Manage or remove your alerts from the Alerts page.\n"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

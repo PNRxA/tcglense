@@ -36,4 +36,12 @@ signups_enabled: boolean,
  * `SIGNUPS_DISABLED_MESSAGE`, or a generic fallback). `null` while signups are
  * enabled, so the SPA can key purely off a non-null value.
  */
-signups_disabled_message: string | null, };
+signups_disabled_message: string | null, 
+/**
+ * Whether the price-alert **email** channel is offered on this deployment
+ * (`ALERTS_EMAIL_ENABLED` set **and** an email provider configured). The free
+ * Discord/Telegram channels are always available; the SPA uses this only to show or
+ * hide the email-alert toggle. The `/api/alerts/channels` endpoint is the source of
+ * truth (its `email_available` mirrors this).
+ */
+alerts_email_enabled: boolean, };
