@@ -81,6 +81,12 @@ pub struct DropGroupResponse {
     pub slug: Option<String>,
     pub title: String,
     pub card_count: usize,
+    /// The drop's release date (`YYYY-MM-DD`), derived from its cards: a Secret Lair drop's
+    /// cards share one street date, so this is the most common non-null `released_at` among
+    /// them. Lets the SPA show when a drop is due (a future date reads as "Releases …", so a
+    /// freshly-previewed Scryfall drop shows a countdown). `None` for the catch-all "Other"
+    /// group and for a drop whose cards carry no date yet.
+    pub released_at: Option<String>,
     /// The drop's "cheapest prints" total: for each distinct card in the drop, the price of
     /// its cheapest available printing *anywhere in the catalog* (the lower of that printing's
     /// regular and foil price) — so a card is floored at its cheap reprint, not its pricier
@@ -368,12 +374,22 @@ pub async fn list_set_drops(
 
     let data: Vec<DropGroupResponse> = on_page
         .into_iter()
-        .map(|bucket| DropGroupResponse {
-            slug: bucket.slug,
-            title: bucket.title,
-            card_count: bucket.cards.len(),
-            cheapest_prints_usd: drop_cheapest_prints(&bucket.cards, &cheapest_by_oracle),
-            cards: bucket.cards.into_iter().map(CardResponse::from).collect(),
+        .map(|bucket| {
+            // A drop's cards share one street date, so surface it on the group. Skip the
+            // mixed-date "Other" catch-all (`slug` is `None`), which has no single date.
+            let released_at = bucket
+                .slug
+                .is_some()
+                .then(|| drop_released_at(&bucket.cards))
+                .flatten();
+            DropGroupResponse {
+                slug: bucket.slug,
+                title: bucket.title,
+                card_count: bucket.cards.len(),
+                released_at,
+                cheapest_prints_usd: drop_cheapest_prints(&bucket.cards, &cheapest_by_oracle),
+                cards: bucket.cards.into_iter().map(CardResponse::from).collect(),
+            }
         })
         .collect();
     Ok(Json(build_page(data, page, page_size, total)))
@@ -447,6 +463,24 @@ fn drop_cheapest_prints(
         }
     }
     any_priced.then(|| format_cents(total))
+}
+
+/// One drop's release date, derived from its cards: the most common non-null `released_at`
+/// among them. A Secret Lair drop's cards share one street date, so the mode *is* that date
+/// and stays robust to a stray reprint carrying a different one; ties break to the earliest
+/// date (a stable, sensible choice). `None` when no card in the drop carries a date.
+fn drop_released_at(cards: &[card::Model]) -> Option<String> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for card in cards {
+        if let Some(date) = card.released_at.as_deref() {
+            *counts.entry(date).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        // Highest count wins; on a tie prefer the earlier date (smaller ISO-8601 string).
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(date, _)| date.to_string())
 }
 
 /// List set sub-types
@@ -551,5 +585,34 @@ mod tests {
             card(2, None, None, None),         // no identity, no price
         ];
         assert_eq!(drop_cheapest_prints(&cards, &empty), None);
+    }
+
+    fn dated(id: i32, released: Option<&str>) -> card::Model {
+        card::Model {
+            released_at: released.map(str::to_string),
+            ..card_model(id)
+        }
+    }
+
+    #[test]
+    fn drop_released_at_is_the_modal_date_ties_break_earliest() {
+        // A drop's cards share a street date; the mode is that date, and a stray reprint
+        // carrying a different date is outvoted. A dateless card is ignored.
+        let cards = vec![
+            dated(1, Some("2026-07-27")),
+            dated(2, Some("2026-07-27")),
+            dated(3, Some("2026-07-27")),
+            dated(4, Some("2019-01-01")),
+            dated(5, None),
+        ];
+        assert_eq!(drop_released_at(&cards).as_deref(), Some("2026-07-27"));
+
+        // A tie on count resolves to the earlier date, deterministically.
+        let tie = vec![dated(1, Some("2026-08-17")), dated(2, Some("2024-10-04"))];
+        assert_eq!(drop_released_at(&tie).as_deref(), Some("2024-10-04"));
+
+        // No card carries a date -> no drop date.
+        assert_eq!(drop_released_at(&[dated(1, None), dated(2, None)]), None);
+        assert_eq!(drop_released_at(&[]), None);
     }
 }
