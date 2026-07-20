@@ -107,6 +107,13 @@ const SECRET_LAIR_SET: SetDef = SetDef {
     parent: None,
 };
 
+/// Per-drop release dates for the dummy Secret Lair cards. Collector numbers 1-5 group into the
+/// "Eldraine Wonderland" drop (given a future date, so the by-drop view shows a "Releases …" due
+/// date offline) and 6 into "Restless in Peace" (already released). Distinct so the two drops
+/// demonstrate both states; the by-drop response derives each drop's date from its cards.
+const SECRET_LAIR_UPCOMING_RELEASE: &str = "2026-09-25";
+const SECRET_LAIR_PAST_RELEASE: &str = "2024-10-04";
+
 /// Number of plain numbered cards in the base set. Kept above `DEFAULT_PAGE_SIZE`
 /// (60) so the set view exercises pagination / `has_more`.
 const BASE_NUMBERED: i32 = 75;
@@ -432,8 +439,21 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
 
     // A small Secret Lair Drop set so the pinned "Featured" section on both landings has
     // real cards behind its tile offline (its sealed products are in `dummy_products`).
+    // The collector numbers 1-6 map (via the committed `sld_drops.json`) to two real drops —
+    // "Eldraine Wonderland" (1-5) and "Restless in Peace" (6) — so we give those drops
+    // distinct release dates: one still upcoming (a "Releases …" due date) and one already
+    // released, exercising the by-drop view's per-drop release date offline.
     for n in 1..=6 {
-        cards.push(numbered_card(&SECRET_LAIR_SET, n));
+        let mut card = numbered_card(&SECRET_LAIR_SET, n);
+        card.released_at = Some(
+            if n <= 5 {
+                SECRET_LAIR_UPCOMING_RELEASE
+            } else {
+                SECRET_LAIR_PAST_RELEASE
+            }
+            .to_string(),
+        );
+        cards.push(card);
     }
 
     cards

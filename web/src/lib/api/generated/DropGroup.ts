@@ -13,6 +13,14 @@ export type DropGroup = {
  */
 slug: string | null, title: string, card_count: number, 
 /**
+ * The drop's release date (`YYYY-MM-DD`), derived from its cards: a Secret Lair drop's
+ * cards share one street date, so this is the most common non-null `released_at` among
+ * them. Lets the SPA show when a drop is due (a future date reads as "Releases …", so a
+ * freshly-previewed Scryfall drop shows a countdown). `None` for the catch-all "Other"
+ * group and for a drop whose cards carry no date yet.
+ */
+released_at: string | null, 
+/**
  * The drop's "cheapest prints" total: for each distinct card in the drop, the price of
  * its cheapest available printing *anywhere in the catalog* (the lower of that printing's
  * regular and foil price) — so a card is floored at its cheap reprint, not its pricier

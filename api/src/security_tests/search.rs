@@ -356,3 +356,72 @@ async fn set_drops_report_cheapest_prints_total() {
         "unpriced drop -> null: {body:?}"
     );
 }
+
+/// Each drop header carries a `released_at` derived from its cards: a drop's cards share one
+/// street date, so the response reports the most common non-null date (a stray reprint carrying
+/// a different date is outvoted), and a drop whose cards carry no date reports null.
+#[tokio::test]
+async fn set_drops_report_release_date() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+
+    crate::test_support::card_set_model("sld")
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld set");
+
+    // sld printings across three drops (id, collector#, released_at):
+    // "Wild in Bloom" (2658..2660): two cards dated the street date + one stray reprint date
+    //   -> the drop reports the modal (street) date, not the stray.
+    // "Inked" (168): a single dated card -> that date.
+    // "Cats of Chaos" (2690): a card with no date -> the drop reports null.
+    let sld: [(i32, &str, Option<&str>); 5] = [
+        (1, "2658", Some("2026-07-27")),
+        (2, "2659", Some("2026-07-27")),
+        (3, "2660", Some("2019-01-01")),
+        (4, "168", Some("2024-05-01")),
+        (5, "2690", None),
+    ];
+    for (id, cn, released) in sld {
+        crate::entities::card::Model {
+            set_code: "sld".into(),
+            set_name: "Secret Lair Drop".into(),
+            collector_number: cn.into(),
+            collector_number_int: cn.parse().ok(),
+            released_at: released.map(str::to_string),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld card");
+    }
+
+    let app = crate::build_router(state);
+
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/sets/sld/drops?page=1&page_size=20"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "drops must succeed: {body:?}");
+    let groups = body["data"].as_array().expect("drop groups");
+    let released = |title: &str| {
+        groups
+            .iter()
+            .find(|g| g["title"] == title)
+            .unwrap_or_else(|| panic!("{title} present: {body:?}"))["released_at"]
+            .clone()
+    };
+
+    // Two cards vote for the street date, one stray reprint date is outvoted.
+    assert_eq!(released("Wild in Bloom").as_str(), Some("2026-07-27"));
+    assert_eq!(released("Inked").as_str(), Some("2024-05-01"));
+    // A drop whose cards carry no date reports null.
+    assert!(
+        released("Cats of Chaos").is_null(),
+        "dateless drop -> null: {body:?}"
+    );
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import { ArrowLeft } from '@lucide/vue'
+import { ArrowLeft, CalendarClock } from '@lucide/vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import { RouterLink } from 'vue-router'
@@ -147,6 +147,26 @@ const { ownership: wishlistOwnership } = useWishlistCounts(game, visibleCards)
 const money = useCurrency()
 const printsTotals = computed(() =>
   (dropsQuery.data.value?.data ?? []).map((drop) => money.formatUsd(drop.cheapest_prints_usd)),
+)
+
+// Each by-drop header also shows the drop's release date (DropGroup.released_at, derived
+// server-side from the drop's cards — they share one street date). A future date reads as
+// "Releases …" so a freshly-previewed Scryfall drop shows when it's due; a past one as
+// "Released …". Index-aligned to `groups` in the by-drop view, exactly like `printsTotals`.
+function formatDropRelease(raw: string | null): { label: string; upcoming: boolean } | null {
+  if (!raw) return null
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return null
+  const upcoming = date.getTime() > Date.now()
+  const when = date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+  return { label: `${upcoming ? 'Releases' : 'Released'} ${when}`, upcoming }
+}
+const releaseDates = computed(() =>
+  (dropsQuery.data.value?.data ?? []).map((drop) => formatDropRelease(drop.released_at)),
 )
 
 // The list's loading / error / empty state reads from whichever query drives the current
@@ -339,12 +359,25 @@ const searchError = computed(() => searchErrorMessage(listError.value))
               :key="`${code}:${cardGroup.slug ?? cardGroup.title}`"
               :drop="cardGroup"
             >
-              <!-- Drops only: the cheapest-prints total, right-aligned in the header.
-                   Omitted for sub-type groups and for drops with nothing priced. -->
-              <template v-if="byDrop && printsTotals[i]" #meta>
-                <span class="text-muted-foreground text-sm font-normal">cheapest prints</span>
-                <span class="text-foreground ml-1 text-sm font-medium tabular-nums">
-                  {{ printsTotals[i] }}
+              <!-- Drops only: the release date and the cheapest-prints total, right-aligned in
+                   the header. Omitted for sub-type groups; each line omits itself when absent
+                   (a drop with no date, or nothing priced). -->
+              <template v-if="byDrop && (releaseDates[i] || printsTotals[i])" #meta>
+                <span class="flex flex-col items-end gap-0.5 text-right">
+                  <span
+                    v-if="releaseDates[i]"
+                    class="inline-flex items-center gap-1 text-sm font-medium"
+                    :class="releaseDates[i]?.upcoming ? 'text-primary' : 'text-muted-foreground'"
+                  >
+                    <CalendarClock class="size-3.5 shrink-0" />
+                    {{ releaseDates[i]?.label }}
+                  </span>
+                  <span v-if="printsTotals[i]" class="text-sm">
+                    <span class="text-muted-foreground font-normal">cheapest prints</span>
+                    <span class="text-foreground ml-1 font-medium tabular-nums">
+                      {{ printsTotals[i] }}
+                    </span>
+                  </span>
                 </span>
               </template>
               <CardGrid
