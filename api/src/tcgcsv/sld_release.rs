@@ -21,6 +21,8 @@
 
 use std::collections::HashMap;
 
+use sha2::{Digest, Sha256};
+
 use crate::mtgjson::sld;
 
 /// Derive the release date (`YYYY-MM-DD`) for a Secret Lair sealed product from its drop's
@@ -47,6 +49,32 @@ pub fn derive(
         .filter_map(|cn| card_dates.get(cn))
         .min()
         .cloned()
+}
+
+/// A stable content hash (64 bits of SHA-256, hex) of the per-drop date inputs — the
+/// `collector_number -> released_at` map [`derive`] reads. [`super::ingest`] folds it into the
+/// products sync version gate alongside [`super::msrp::version`] and [`super::sld_msrp::version`],
+/// so a change to the `sld` cards' release dates re-runs the sweep on the next tick **even when
+/// TCGCSV and the drop snapshot are byte-identical** — closing, for the release-date derivation,
+/// the same TCGCSV-independence gap `sld_msrp::version` closes for the drop snapshot.
+///
+/// Order-independent: the pairs are sorted before hashing so the map's iteration order can't
+/// change the hash. Delimiters are `=`/`;`, which can't occur in a collector number (alphanumeric)
+/// or an ISO date, so distinct data can't collide.
+pub fn version(card_dates: &HashMap<String, String>) -> String {
+    let mut pairs: Vec<(&str, &str)> = card_dates
+        .iter()
+        .map(|(cn, date)| (cn.as_str(), date.as_str()))
+        .collect();
+    pairs.sort_unstable();
+    let mut hasher = Sha256::new();
+    for (cn, date) in pairs {
+        hasher.update(cn.as_bytes());
+        hasher.update(b"=");
+        hasher.update(date.as_bytes());
+        hasher.update(b";");
+    }
+    hex::encode(&hasher.finalize()[..8])
 }
 
 #[cfg(test)]
@@ -105,6 +133,27 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn version_is_stable_order_independent_and_tracks_changes() {
+        let a = dates(&[("2690", "2024-05-06"), ("2691", "2024-05-03")]);
+        // Same pairs inserted in the other order hash identically (order-independent).
+        let b = dates(&[("2691", "2024-05-03"), ("2690", "2024-05-06")]);
+        assert_eq!(version(&a), version(&b));
+        assert_eq!(version(&a).len(), 16); // 8 bytes hex-encoded
+        // A changed date bumps the hash; so does an added/removed entry.
+        let changed = dates(&[("2690", "2024-05-07"), ("2691", "2024-05-03")]);
+        assert_ne!(version(&a), version(&changed));
+        let added = dates(&[
+            ("2690", "2024-05-06"),
+            ("2691", "2024-05-03"),
+            ("2692", "2024-05-03"),
+        ]);
+        assert_ne!(version(&a), version(&added));
+        // The empty map is stable and distinct from any populated one.
+        assert_eq!(version(&HashMap::new()), version(&HashMap::new()));
+        assert_ne!(version(&HashMap::new()), version(&a));
     }
 
     #[test]

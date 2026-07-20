@@ -80,16 +80,31 @@ async fn refresh_inner(
     source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
     let base_url = source.tcgcsv_base_url();
+    // Per-drop Secret Lair release dates: TCGCSV files every drop under one `SLD` group with a
+    // single `publishedOn`, so without this every SLD product would share that one date. Map
+    // each `sld` collector number to its card's `released_at` so each SLD product's drop can
+    // take the earliest date among its cards (see `super::sld_release`). Cards sync before
+    // products in `catalog::refresh_all`, so this is populated on the first sweep; an empty map
+    // (fresh DB) just falls back to the group date. Built once **before the gate** so its hash
+    // can join the version below (a change to the `sld` cards' dates re-runs the sweep even when
+    // TCGCSV is unchanged), then reused for every group in the sweep.
+    let sld_card_dates = sld_card_release_dates(db).await?;
     // Version gate: one cheap request. Skip the whole sweep if TCGCSV hasn't refreshed
     // since our last complete sync. The stored version couples TCGCSV's `last-updated`
-    // value with the curated MSRP hashes (see `compose_version`), so editing `msrp.json`
-    // or the Secret Lair Drop MSRP defaults re-applies MSRP on the next sync even when
-    // TCGCSV itself is unchanged.
+    // value with the curated hashes (see `compose_version`), so editing `msrp.json` or the
+    // Secret Lair Drop MSRP defaults — or a change to the `sld` cards' release dates —
+    // re-applies on the next sync even when TCGCSV itself is unchanged.
     let remote_version = super::client::last_updated(http, &base_url, user_agent).await?;
-    // Both curated MSRP hashes gate the sweep: the hand-curated `msrp.json` and the derived
-    // Secret Lair Drop defaults (`sld_msrp`, which also covers the drop snapshot). Editing
-    // either re-applies MSRP on the next tick even when TCGCSV itself is unchanged.
-    let curated = format!("{}{}", super::msrp::version(), super::sld_msrp::version());
+    // The curated hashes gate the sweep independently of TCGCSV: the hand-curated `msrp.json`,
+    // the derived Secret Lair Drop MSRP defaults (`sld_msrp`, which also covers the drop
+    // snapshot), and the per-drop release-date inputs (`sld_release`, the `sld` cards' dates).
+    // A change to any re-runs the sweep on the next tick even when TCGCSV itself is unchanged.
+    let curated = format!(
+        "{}{}{}",
+        super::msrp::version(),
+        super::sld_msrp::version(),
+        super::sld_release::version(&sld_card_dates),
+    );
     let version = compose_version(&remote_version, &curated);
     let existing = ingest_state::load(db, GAME, PRODUCTS_DATASET).await?;
     if let Some(state) = &existing
@@ -129,13 +144,6 @@ async fn refresh_inner(
     // Curated MSRP map (TCGplayer product id -> retail price), applied to every sweep so a
     // product's `msrp` stays set (or NULL) idempotently on each re-upsert.
     let msrp = super::msrp::price_map();
-    // Per-drop Secret Lair release dates: TCGCSV files every drop under one `SLD` group with a
-    // single `publishedOn`, so without this every SLD product would share that one date. Map
-    // each `sld` collector number to its card's `released_at` so each SLD product's drop can
-    // take the earliest date among its cards (see `super::sld_release`). Cards sync before
-    // products in `catalog::refresh_all`, so this is populated on the first sweep; an empty map
-    // (fresh DB) just falls back to the group date. Built once and reused for every group.
-    let sld_card_dates = sld_card_release_dates(db).await?;
     let mut total_products: i32 = 0;
     let groups_total = groups.len() as i32;
     // Live terminal progress: a determinate bar over the groups being swept, with a
