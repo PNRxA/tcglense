@@ -351,6 +351,11 @@ fn spawn_alert_evaluation(
         let period = Duration::from_secs(interval_minutes.max(1).saturating_mul(60));
         let mut ticker = tokio::time::interval(period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // The change-narrowing cursor: only re-evaluate alerts whose own row or whose target
+        // price changed since the last completed pass. `None` on start (and after a restart /
+        // leadership change) forces one full pass to establish the baseline — safe because
+        // starting from an *older* cursor only ever over-evaluates (idempotent), never misses.
+        let mut since: Option<chrono::DateTime<Utc>> = None;
         loop {
             ticker.tick().await;
             // Leader-gate the tick like the card sync: exactly one replica evaluates +
@@ -367,14 +372,19 @@ fn spawn_alert_evaluation(
                 tracing::debug!("alert evaluation tick skipped: another replica is evaluating");
                 continue;
             };
+            // Stamp the pass start *before* evaluating, so a change that lands mid-pass is
+            // caught next pass (its updated_at >= this start) rather than being skipped.
+            let pass_start = Utc::now();
             crate::alerts::evaluate_all(
                 &db,
                 &notify_http,
                 &email,
                 &public_site_url,
                 email_globally_enabled,
+                since,
             )
             .await;
+            since = Some(pass_start);
             lease.release().await;
         }
     });

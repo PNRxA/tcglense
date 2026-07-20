@@ -962,8 +962,19 @@ The evaluator is **edge-triggered** (hysteresis): an alert fires **once** when i
 first becomes true (`met && !triggered`) and re-arms silently when the price crosses back
 (`!met && triggered`), so a persistently-crossed alert doesn't re-notify every tick. Prices
 are decimal strings compared in integer USD cents (`valuation::price_cents`); an unpriced or
-orphaned target is skipped. `ALERTS_ENABLED` / `ALERTS_INTERVAL_MINUTES` / `ALERTS_EMAIL_ENABLED`
-tune it (see `docs/operations.md`).
+orphaned target is skipped. A fired alert **latches only once delivery reaches ≥1 channel**,
+so an alert created before any channel exists (or a transient all-channel failure) is retried
+next pass rather than swallowed. `ALERTS_ENABLED` / `ALERTS_INTERVAL_MINUTES` /
+`ALERTS_EMAIL_ENABLED` tune it (see `docs/operations.md`).
+
+**Scaling.** The evaluation pass is built for a very large alert population: it
+**keyset-paginates** the armed alerts in batches (memory stays O(batch), not "every alert +
+target at once"), and **narrows** each pass with a `since` cursor to only the alerts whose own
+row or whose target's price changed since the last pass — the catalog upsert bumps
+`cards`/`products.updated_at` only on a real change, so an unchanged alert on an unchanged
+target can't have flipped and is skipped. A restart / leadership change does one full pass to
+re-establish the baseline (safe: an older cursor only ever over-evaluates, and evaluation is
+idempotent). The tick is leader-gated so only one replica evaluates.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|

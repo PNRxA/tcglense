@@ -14,13 +14,22 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::prelude::DateTimeUtc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, JoinType,
+    QueryFilter, QueryOrder, QuerySelect, RelationTrait, Set,
+};
 
 use crate::email::{self, Emailer};
 use crate::entities::prelude::{AlertChannel, Card, PriceAlert, Product, User};
 use crate::entities::{alert_channel, card, price_alert, product};
 use crate::handlers::shared::valuation::price_cents;
 use crate::notifications::{self, AlertNotification, ChannelOutcome};
+
+/// How many alerts one evaluation batch loads at a time. The scan is keyset-paginated by id
+/// so **memory stays O(batch)** no matter how many total alerts exist — the difference
+/// between "works at millions of alerts" and loading every row (and every target) at once.
+const EVAL_BATCH: u64 = 2_000;
 
 /// Whether an alert's condition is currently met, given both sides already in integer
 /// cents. Pure so the threshold semantics are unit-testable in isolation. An unknown
@@ -64,88 +73,162 @@ struct Resolved<'a> {
     is_card: bool,
 }
 
-/// Evaluate every armed alert once and deliver any that fire.
+/// Evaluate armed alerts once and deliver any that fire.
 ///
-/// `email_globally_enabled` is `ALERTS_EMAIL_ENABLED` — even a user who opted in gets no
-/// email while the deployment keeps it off. Errors on any single alert / channel are logged
-/// and swallowed so one bad row never stalls the batch.
+/// **Scales to millions of alerts** on two axes:
+/// - *Memory*: the armed alerts are keyset-paginated by id in [`EVAL_BATCH`]-sized chunks,
+///   and each chunk's card/product targets are loaded per-chunk — so nothing loads the whole
+///   table (or every target row) into memory at once.
+/// - *Work*: `since` narrows the scan to alerts that **could** have changed verdict since the
+///   last pass — those whose own row changed (created/edited) **or** whose target's price
+///   changed. Because the catalog upsert only bumps `cards`/`products.updated_at` when a datum
+///   actually changed (the ingest "changed guard"), an alert whose target price is unchanged
+///   *and* whose own row is unchanged cannot have flipped, so it's skipped. `None` = a full
+///   pass (first run after start / restart), which then establishes the baseline.
+///
+/// `email_globally_enabled` is `ALERTS_EMAIL_ENABLED` — even a user who opted in gets no email
+/// while the deployment keeps it off. Errors on any single alert / channel are logged and
+/// swallowed so one bad row never stalls the batch.
 pub async fn evaluate_all(
     db: &DatabaseConnection,
     notify_http: &reqwest::Client,
     emailer: &Emailer,
     public_site_url: &str,
     email_globally_enabled: bool,
+    since: Option<DateTimeUtc>,
 ) {
-    let alerts = match PriceAlert::find()
-        .filter(price_alert::Column::IsActive.eq(true))
-        .all(db)
-        .await
-    {
-        Ok(alerts) => alerts,
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to load active price alerts");
-            return;
-        }
-    };
-    if alerts.is_empty() {
-        return;
-    }
-
-    // Batch-load the referenced cards + products once (orphan-tolerant: a target the
-    // catalog no longer has is simply absent from these maps and skipped below).
-    let card_ids = dedup(alerts.iter().filter_map(|a| a.card_id));
-    let product_ids = dedup(alerts.iter().filter_map(|a| a.product_id));
-    let cards = load_cards(db, &card_ids).await;
-    let products = load_products(db, &product_ids).await;
-
+    let mut after: i32 = 0;
     let mut fired = 0usize;
-    for alert in alerts {
-        // Resolve the alert to its live price + display fields via the loaded target.
-        let resolved = resolve(&alert, &cards, &products);
-        let Some(resolved) = resolved else { continue };
-
-        let (Some(price_cents), Some(threshold_cents)) = (
-            price_cents(Some(resolved.price)),
-            price_cents(Some(&alert.threshold)),
-        ) else {
-            // Unpriced target or (defensively) an unparseable threshold: can't decide,
-            // leave the latch untouched.
-            continue;
+    loop {
+        let batch = match load_candidate_batch(db, since, after).await {
+            Ok(batch) => batch,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load a price-alert batch");
+                return;
+            }
         };
+        let Some(last) = batch.last() else { break };
+        after = last.id;
+        let batch_len = batch.len();
 
-        let met = is_met(&alert.direction, threshold_cents, price_cents);
-        match (met, alert.triggered) {
-            (true, false) => {
-                // Rising edge: fire, and latch **only if** delivery reached at least one
-                // channel. Latching on a failed/absent delivery would permanently swallow
-                // the trigger — most concretely for an alert created before any channel is
-                // configured (nothing to deliver to yet). Leaving it un-latched means the
-                // next tick retries, so it delivers once the channel works / is added.
-                let notification = build_notification(&alert, &resolved, public_site_url);
-                let delivered = deliver(
-                    db,
-                    notify_http,
-                    emailer,
-                    email_globally_enabled,
-                    alert.user_id,
-                    &notification,
-                )
-                .await;
-                if delivered {
-                    latch(db, alert, resolved.price.to_string()).await;
-                    fired += 1;
-                }
-            }
-            (false, true) => {
-                // Price crossed back: re-arm silently so a later crossing notifies again.
-                rearm(db, alert).await;
-            }
-            _ => {}
+        // Load only THIS chunk's targets (bounded by the batch size), orphan-tolerant: a
+        // target the catalog no longer has is simply absent and its alert is skipped.
+        let cards = load_cards(db, &dedup(batch.iter().filter_map(|a| a.card_id))).await;
+        let products = load_products(db, &dedup(batch.iter().filter_map(|a| a.product_id))).await;
+
+        for alert in batch {
+            fired += evaluate_one(
+                db,
+                notify_http,
+                emailer,
+                email_globally_enabled,
+                public_site_url,
+                alert,
+                &cards,
+                &products,
+            )
+            .await;
+        }
+
+        // A short page is the last page; skip one extra empty round-trip.
+        if (batch_len as u64) < EVAL_BATCH {
+            break;
         }
     }
 
     if fired > 0 {
         tracing::info!(fired, "price alerts fired this evaluation");
+    }
+}
+
+/// Load the next keyset page of armed candidate alerts (`id > after`, ascending), optionally
+/// narrowed by `since`. The narrowing LEFT-JOINs the target so a change to **either** the
+/// alert row or its card/product `updated_at` (which the ingest bumps only on a real change)
+/// re-includes it; an alert on an unchanged target whose own row is unchanged is filtered out.
+async fn load_candidate_batch(
+    db: &DatabaseConnection,
+    since: Option<DateTimeUtc>,
+    after: i32,
+) -> Result<Vec<price_alert::Model>, DbErr> {
+    let mut query = PriceAlert::find()
+        .join(JoinType::LeftJoin, price_alert::Relation::Card.def())
+        .join(JoinType::LeftJoin, price_alert::Relation::Product.def())
+        .filter(price_alert::Column::IsActive.eq(true))
+        .filter(price_alert::Column::Id.gt(after));
+    if let Some(since) = since {
+        // NULL (the unmatched side of a card-only / product-only alert) fails `>= since`, so
+        // it never spuriously includes a row — the alert's own `updated_at` still gates it.
+        query = query.filter(
+            Condition::any()
+                .add(price_alert::Column::UpdatedAt.gte(since))
+                .add(card::Column::UpdatedAt.gte(since))
+                .add(product::Column::UpdatedAt.gte(since)),
+        );
+    }
+    query
+        .order_by_asc(price_alert::Column::Id)
+        .limit(EVAL_BATCH)
+        .all(db)
+        .await
+}
+
+/// Evaluate a single alert against its (already-loaded) target and act on the edge:
+/// deliver + latch on the rising edge (only if delivery reached a channel), re-arm on the
+/// falling edge. Returns `1` if the alert fired (delivered + latched), else `0`.
+async fn evaluate_one(
+    db: &DatabaseConnection,
+    notify_http: &reqwest::Client,
+    emailer: &Emailer,
+    email_globally_enabled: bool,
+    public_site_url: &str,
+    alert: price_alert::Model,
+    cards: &HashMap<i32, card::Model>,
+    products: &HashMap<i32, product::Model>,
+) -> usize {
+    // Resolve the alert to its live price + display fields via the loaded target.
+    let Some(resolved) = resolve(&alert, cards, products) else {
+        return 0;
+    };
+    let (Some(price_cents), Some(threshold_cents)) = (
+        price_cents(Some(resolved.price)),
+        price_cents(Some(&alert.threshold)),
+    ) else {
+        // Unpriced target or (defensively) an unparseable threshold: can't decide, leave the
+        // latch untouched.
+        return 0;
+    };
+
+    match (
+        is_met(&alert.direction, threshold_cents, price_cents),
+        alert.triggered,
+    ) {
+        (true, false) => {
+            // Rising edge: fire, and latch **only if** delivery reached at least one channel.
+            // Latching on a failed/absent delivery would permanently swallow the trigger —
+            // most concretely for an alert created before any channel is configured. Leaving
+            // it un-latched means the next pass retries, so it delivers once a channel works.
+            let notification = build_notification(&alert, &resolved, public_site_url);
+            let delivered = deliver(
+                db,
+                notify_http,
+                emailer,
+                email_globally_enabled,
+                alert.user_id,
+                &notification,
+            )
+            .await;
+            if delivered {
+                latch(db, alert, resolved.price.to_string()).await;
+                return 1;
+            }
+            0
+        }
+        (false, true) => {
+            // Price crossed back: re-arm silently so a later crossing notifies again.
+            rearm(db, alert).await;
+            0
+        }
+        _ => 0,
     }
 }
 
@@ -453,6 +536,7 @@ mod tests {
             &Emailer::Disabled { log_body: true },
             "https://x.test",
             true,
+            None,
         )
         .await;
         let after = PriceAlert::find_by_id(alert.id)
@@ -481,6 +565,7 @@ mod tests {
             &Emailer::Capture(mailbox.clone()),
             "https://x.test",
             true,
+            None,
         )
         .await;
 
@@ -500,6 +585,7 @@ mod tests {
             &Emailer::Capture(mailbox.clone()),
             "https://x.test",
             true,
+            None,
         )
         .await;
         assert_eq!(
@@ -507,5 +593,107 @@ mod tests {
             1,
             "a latched alert does not re-notify"
         );
+    }
+
+    /// The change-narrowing (#2) guard: with a `since` after both the alert and its target
+    /// last changed, the alert is out of the candidate set and does NOT fire — but a full pass
+    /// (`since = None`) does. This is what lets the evaluator skip the bulk of unchanged alerts
+    /// each tick instead of re-pricing every one.
+    #[tokio::test]
+    async fn since_narrows_out_unchanged_alerts() {
+        use crate::email::{Emailer, Mailbox};
+        use crate::entities::prelude::{Card, PriceAlert};
+        use crate::entities::{alert_channel, card, price_alert};
+        use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = crate::test_support::insert_user(&db, "narrow@example.com").await;
+        let card_id = crate::test_support::insert_card(&db, "ext-narrow-1").await;
+
+        // Timestamps: the alert + target are stamped in the past; `since` is "now" (after them).
+        let past: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        let mut priced: card::ActiveModel = Card::find_by_id(card_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .into();
+        priced.price_usd = Set(Some("8.25".to_string()));
+        priced.updated_at = Set(past);
+        priced.update(&db).await.unwrap();
+
+        let alert = price_alert::ActiveModel {
+            user_id: Set(user_id),
+            game: Set(crate::scryfall::GAME.to_string()),
+            target_kind: Set("card".to_string()),
+            card_id: Set(Some(card_id)),
+            finish: Set("nonfoil".to_string()),
+            direction: Set("below".to_string()),
+            threshold: Set("50.00".to_string()),
+            is_active: Set(true),
+            triggered: Set(false),
+            created_at: Set(past),
+            updated_at: Set(past),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        alert_channel::ActiveModel {
+            user_id: Set(user_id),
+            email_enabled: Set(true),
+            created_at: Set(past),
+            updated_at: Set(past),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let http = reqwest::Client::new();
+        let mailbox = Mailbox::default();
+        let since: DateTimeUtc = "2024-06-01T00:00:00Z".parse().unwrap();
+
+        // Narrowed: nothing changed since June, so the (past-stamped) alert is skipped.
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            "https://x.test",
+            true,
+            Some(since),
+        )
+        .await;
+        assert!(
+            !PriceAlert::find_by_id(alert.id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .triggered,
+            "an unchanged alert must be narrowed out of the scan"
+        );
+        assert_eq!(mailbox.emails().len(), 0);
+
+        // Full pass: it evaluates and fires.
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            "https://x.test",
+            true,
+            None,
+        )
+        .await;
+        assert!(
+            PriceAlert::find_by_id(alert.id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .triggered,
+            "a full pass evaluates the alert"
+        );
+        assert_eq!(mailbox.emails().len(), 1);
     }
 }

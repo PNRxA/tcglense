@@ -204,7 +204,12 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   timeout) — an SSRF guard; don't route it through the redirect-following shared `http`.
   The webhook URL + Telegram bot token are **credentials**: keep them redacted in `Debug`
   (`alert_channel::Model` hand-writes it). Email is **off by default** (`ALERTS_EMAIL_ENABLED`,
-  costs money at scale) and additionally needs `RESEND_API_KEY`.
+  costs money at scale) and additionally needs `RESEND_API_KEY`. The evaluator scales to
+  millions of alerts by **keyset-paginating** the armed set (memory is O(batch), never "load
+  every alert + target") and **narrowing** each pass by a `since` cursor to alerts whose own
+  row or whose target's `updated_at` changed — correct only because the catalog upsert's
+  "changed guard" bumps `cards`/`products.updated_at` **only on a real datum change**; don't
+  break that guard or narrowing silently misses fires.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

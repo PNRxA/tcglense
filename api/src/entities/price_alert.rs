@@ -57,7 +57,24 @@ pub struct Model {
     pub updated_at: DateTimeUtc,
 }
 
+/// Optional links to the alert's target row, used by the evaluator to LEFT-JOIN the
+/// card/product `updated_at` for change-narrowing (issue #525). Exactly one side is set per
+/// alert; the join is nullable on the other. No `impl Related` — these are used only via
+/// `Relation::Card.def()` / `Relation::Product.def()` in a `.join(...)`.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::card::Entity",
+        from = "Column::CardId",
+        to = "super::card::Column::Id"
+    )]
+    Card,
+    #[sea_orm(
+        belongs_to = "super::product::Entity",
+        from = "Column::ProductId",
+        to = "super::product::Column::Id"
+    )]
+    Product,
+}
 
 impl ActiveModelBehavior for ActiveModel {}

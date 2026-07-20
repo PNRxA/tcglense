@@ -58,6 +58,7 @@ mod m20240101_000055_create_card_rulings_table;
 mod m20240101_000056_create_price_alerts_table;
 mod m20240101_000057_create_alert_channels_table;
 mod m20240101_000058_add_alert_channel_enabled_flags;
+mod m20240101_000059_add_price_alert_scan_indexes;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -126,6 +127,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000056_create_price_alerts_table::Migration),
             Box::new(m20240101_000057_create_alert_channels_table::Migration),
             Box::new(m20240101_000058_add_alert_channel_enabled_flags::Migration),
+            Box::new(m20240101_000059_add_price_alert_scan_indexes::Migration),
         ]
     }
 }
