@@ -38,6 +38,8 @@ pub(crate) fn test_config() -> Config {
         moxfield_user_agent: None,
         resend_api_key: None,
         email_from: "TCGLense <test@tcglense.example>".to_string(),
+        cloudflare_email_api_token: None,
+        cloudflare_account_id: None,
         turnstile_secret_key: None,
         turnstile_site_key: None,
         trust_proxy_headers: false,

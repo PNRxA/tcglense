@@ -122,15 +122,18 @@ The spec declares the secret env vars but not their values. In **App → Setting
 |---|---|
 | `JWT_SECRET` | `openssl rand -hex 32` |
 | `DATABASE_URL` | the Managed Postgres **private** URL with `?sslmode=require` |
-| `RESEND_API_KEY` | your [Resend](https://resend.com) key (required before public signups) |
+| `RESEND_API_KEY` | your [Resend](https://resend.com) key — an email provider is required before public signups (or use the Cloudflare pair below) |
+| `CLOUDFLARE_EMAIL_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` | alternative to Resend: [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) — set both, or neither; configure only one provider |
 | `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | both; required before public signups can be enabled |
 
 Saving triggers a redeploy. The app runs migrations against Postgres on first boot, then
 pulls the catalog from the TCGLense mirror in the background (Postgres fills to ~2 GB
 over a few minutes).
 
-> **`RESEND_API_KEY` is mandatory for public signups.** The server refuses to enable
-> public registration without it. In local development, leaving it unset returns the
+> **An email provider is mandatory for public signups.** The server refuses to enable
+> public registration without one — either `RESEND_API_KEY` or the Cloudflare Email
+> Service pair (`CLOUDFLARE_EMAIL_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`); configure only
+> one. In local development, leaving email unset returns the
 > completion token in the response and skips the verified-email login gate. Use a
 > verified sending domain and point `EMAIL_FROM` at it (the default
 > `onboarding@resend.dev` only delivers to the Resend account owner).

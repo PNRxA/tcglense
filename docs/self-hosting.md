@@ -37,7 +37,8 @@ Registration starts closed. On a trusted private LAN, you can explicitly set
 `SIGNUPS_ENABLED=true` and `ALLOW_INSECURE_DEV_AUTH=true` to use the no-email setup
 flow. That flow returns the completion credential to the browser instead of proving
 mailbox ownership, so never expose it to the internet. For a public host, configure
-HTTPS, Resend, and Turnstile as described in the launch checklist.
+HTTPS, an email provider (Resend or Cloudflare Email Service), and Turnstile as
+described in the launch checklist.
 
 The compose file also reads `COOKIE_SECURE`, `PUBLIC_SITE_URL`, `MAINTENANCE_MODE`, and
 `IMAGE_TAG` from the environment — `export` them before `up -d` (see the HTTPS note below and
@@ -90,7 +91,8 @@ internet ──443──▶ caddy (TLS) ─┬─▶ web (SPA)
 export SITE_ADDRESS=tcglense.example.com          # your domain — Caddy auto-provisions HTTPS
 export JWT_SECRET=$(openssl rand -hex 32)
 export POSTGRES_PASSWORD=$(openssl rand -hex 24)
-# Also set RESEND_API_KEY, EMAIL_FROM, and both TURNSTILE keys.
+# Also set an email provider (RESEND_API_KEY, or CLOUDFLARE_EMAIL_API_TOKEN +
+# CLOUDFLARE_ACCOUNT_ID), EMAIL_FROM, and both TURNSTILE keys.
 # Keep SIGNUPS_ENABLED=false until the linked launch checklist passes.
 docker compose -f deploy/docker-compose.prod.yml up -d
 ```
@@ -310,7 +312,9 @@ Run the binary + static SPA directly, no containers.
    DATABASE_URL=sqlite:///var/lib/tcglense/tcglense.db?mode=rwc   # dir must exist + be writable
    DATA_DIR=/var/lib/tcglense/data       # persistent + writable; holds cached card images
    ```
-   Before changing `SIGNUPS_ENABLED=true`, add `RESEND_API_KEY`, an `EMAIL_FROM`
+   Before changing `SIGNUPS_ENABLED=true`, configure an email provider —
+   `RESEND_API_KEY`, or the Cloudflare Email Service pair `CLOUDFLARE_EMAIL_API_TOKEN`
+   + `CLOUDFLARE_ACCOUNT_ID` — an `EMAIL_FROM`
    address on your verified domain, and both `TURNSTILE_SECRET_KEY` and
    `TURNSTILE_SITE_KEY`. The API refuses to boot with public signups if any of
    those protections is missing. Follow the

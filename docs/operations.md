@@ -351,9 +351,14 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —
   email support@moxfield.com to get one approved, and treat it as a secret),
   `RESEND_API_KEY` (unset; the Resend API key for registration-completion/verification/reset email — a
-  secret; unset = email sending disabled, messages logged instead), `EMAIL_FROM`
-  (`TCGLense <onboarding@resend.dev>`; the outbound From address — Resend's shared
-  onboarding sender only delivers to the account owner, so set a verified-domain
+  secret; unset = email sending disabled unless Cloudflare is configured, messages logged instead),
+  `CLOUDFLARE_EMAIL_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (both unset; the alternative
+  [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) provider — the
+  token is a secret, the account id rides in the send URL. Set BOTH together or NEITHER, or the
+  server refuses to boot. Configure only one provider; if Resend is also set it wins and these are
+  ignored with a startup warning), `EMAIL_FROM`
+  (`TCGLense <onboarding@resend.dev>`; the outbound From address, shared by both providers — Resend's
+  shared onboarding sender only delivers to the account owner, so set a verified-domain
   sender in prod), `ALLOW_INSECURE_DEV_AUTH` (`false`; local-only opt-in required to
   enable signups without email, returning the completion token without mailbox proof;
   always rejected for an internet-facing origin),

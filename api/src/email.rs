@@ -1,15 +1,17 @@
 //! Outbound transactional email (account verification, password resets).
 //!
-//! One provider today — [Resend](https://resend.com), an HTTPS JSON API —
-//! dispatched by the [`Emailer`] enum, mirroring how `collection_import`
-//! dispatches providers with an enum rather than a trait object. Requests go
-//! out on the shared app HTTP client with a per-request timeout (the shared
-//! client deliberately has no overall timeout).
+//! Two interchangeable providers, both HTTPS JSON APIs, dispatched by the
+//! [`Emailer`] enum (an enum rather than a trait object, mirroring how
+//! `collection_import` dispatches providers): [Resend](https://resend.com) and
+//! [Cloudflare Email Service](https://developers.cloudflare.com/email-service/).
+//! Configure exactly one; Resend wins if both are set (see [`Emailer::from_config`]).
+//! Requests go out on the shared app HTTP client with a per-request timeout (the
+//! shared client deliberately has no overall timeout).
 //!
-//! When `RESEND_API_KEY` is unset the emailer is [`Emailer::Disabled`]: sends
-//! are skipped and the would-be message is logged loudly instead — offline dev
-//! and the test suites keep working with zero network, and a misconfigured
-//! deploy (where nobody can receive verification mail) is visible in the logs.
+//! With no provider configured the emailer is [`Emailer::Disabled`]: sends are
+//! skipped and the would-be message is logged loudly instead — offline dev and the
+//! test suites keep working with zero network, and a misconfigured deploy (where
+//! nobody can receive verification mail) is visible in the logs.
 
 use std::time::Duration;
 
@@ -18,6 +20,10 @@ use serde_json::json;
 use crate::{config::Config, error::AppError};
 
 const RESEND_API_URL: &str = "https://api.resend.com/emails";
+
+/// Base of Cloudflare's `client/v4` REST API. The Email Service send endpoint is
+/// `/accounts/{account_id}/email/sending/send` under it.
+const CLOUDFLARE_API_BASE: &str = "https://api.cloudflare.com/client/v4";
 
 /// Whole-request deadline for one send. The shared client has no overall
 /// timeout (the card-data bulk download streams for a while), so a hung email
@@ -50,10 +56,18 @@ impl Mailbox {
     }
 }
 
+/// The slice of Cloudflare's `client/v4` response envelope we check: a send is only
+/// accepted when the HTTP status is success **and** `success` is true — the v4 API can
+/// return a 200 whose envelope reports `success: false`.
+#[derive(serde::Deserialize)]
+struct CloudflareEnvelope {
+    success: bool,
+}
+
 /// The configured email sender, built once in `AppState::new`.
 #[derive(Clone)]
 pub enum Emailer {
-    /// No `RESEND_API_KEY` configured: skip the send and log the message. On a local
+    /// No email provider configured: skip the send and log the message. On a local
     /// dev host `log_body` is true so the otherwise-unrecoverable emailed link is
     /// logged; on an internet-facing host it is false, so the body (which carries a
     /// live single-use reset/verification token) is kept out of the logs.
@@ -64,13 +78,21 @@ pub enum Emailer {
         api_key: String,
         from: String,
     },
+    /// Send through Cloudflare Email Service's REST API. The `account_id` rides in the
+    /// send URL; the `api_token` is the bearer credential; `from` is the From address.
+    Cloudflare {
+        http: reqwest::Client,
+        api_token: String,
+        account_id: String,
+        from: String,
+    },
     /// Test-only: capture the message instead of sending anything.
     #[cfg(test)]
     Capture(Mailbox),
 }
 
-// Manual `Debug` so the Resend API key can never leak via `{:?}`/logs — mirrors
-// the redaction the same key gets in `Config`'s Debug impl.
+// Manual `Debug` so the provider credentials can never leak via `{:?}`/logs — mirrors
+// the redaction the same secrets get in `Config`'s Debug impl.
 impl std::fmt::Debug for Emailer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -80,6 +102,14 @@ impl std::fmt::Debug for Emailer {
                 .field("api_key", &"[redacted]")
                 .field("from", from)
                 .finish(),
+            Emailer::Cloudflare {
+                account_id, from, ..
+            } => f
+                .debug_struct("Emailer::Cloudflare")
+                .field("api_token", &"[redacted]")
+                .field("account_id", account_id)
+                .field("from", from)
+                .finish(),
             #[cfg(test)]
             Emailer::Capture(_) => f.write_str("Emailer::Capture"),
         }
@@ -87,25 +117,46 @@ impl std::fmt::Debug for Emailer {
 }
 
 impl Emailer {
-    /// Assemble the emailer from config: Resend when a key is configured,
-    /// otherwise disabled (dev/test mode).
+    /// Assemble the emailer from config. Resend takes precedence so an existing
+    /// Resend deployment is unaffected by the mere presence of Cloudflare variables;
+    /// then Cloudflare Email Service when its pair is configured; otherwise disabled
+    /// (dev/test mode). Configure exactly one provider.
     pub fn from_config(config: &Config, http: reqwest::Client) -> Self {
-        match config.resend_api_key.clone() {
-            Some(api_key) => Emailer::Resend {
+        if let Some(api_key) = config.resend_api_key.clone() {
+            if config.cloudflare_email_api_token.is_some() {
+                tracing::warn!(
+                    "both RESEND_API_KEY and CLOUDFLARE_EMAIL_API_TOKEN are set; using Resend and \
+                     ignoring the Cloudflare Email Service configuration"
+                );
+            }
+            return Emailer::Resend {
                 http,
                 api_key,
                 from: config.email_from.clone(),
-            },
-            // Log the full body only on a local dev host — on a public one the body
-            // carries a live token that must never reach aggregated logs.
-            None => Emailer::Disabled {
-                log_body: !config.looks_like_production(),
-            },
+            };
+        }
+        // The pair is validated both-or-neither at boot; matching both here is defensive
+        // (a stray half-set pair falls through to Disabled rather than half-sending).
+        if let (Some(api_token), Some(account_id)) = (
+            config.cloudflare_email_api_token.clone(),
+            config.cloudflare_account_id.clone(),
+        ) {
+            return Emailer::Cloudflare {
+                http,
+                api_token,
+                account_id,
+                from: config.email_from.clone(),
+            };
+        }
+        // No provider configured. Log the full body only on a local dev host — on a
+        // public one the body carries a live token that must never reach aggregated logs.
+        Emailer::Disabled {
+            log_body: !config.looks_like_production(),
         }
     }
 
-    /// Whether a real email provider is configured. When `false` (no
-    /// `RESEND_API_KEY` — dev), the emailed registration-completion link can't
+    /// Whether a real email provider is configured. When `false` (no provider — dev),
+    /// the emailed registration-completion link can't
     /// be delivered, so register **returns the completion token in the response
     /// body instead** (the SPA drives straight to the set-password step; no
     /// session until `POST /api/auth/complete-registration`), and login doesn't
@@ -125,12 +176,12 @@ impl Emailer {
                 // Local dev: the emailed link is otherwise unrecoverable (only the
                 // token's hash is stored), so log the whole body deliberately loudly —
                 // it's how the offline registration/reset journeys get their link, and
-                // a dev deploy missing its key should be impossible to miss.
+                // a dev deploy missing its provider config should be impossible to miss.
                 tracing::warn!(
                     to = %email.to,
                     subject = %email.subject,
                     body = %email.text,
-                    "email sending is disabled (RESEND_API_KEY unset); logging the message instead"
+                    "email sending is disabled (no email provider configured); logging the message instead"
                 );
                 Ok(())
             }
@@ -143,9 +194,9 @@ impl Emailer {
                 tracing::warn!(
                     to = %email.to,
                     subject = %email.subject,
-                    "email sending is disabled (RESEND_API_KEY unset) on an internet-facing \
+                    "email sending is disabled (no email provider configured) on an internet-facing \
                      deployment; the message body is withheld from logs because it contains a \
-                     live token. Configure RESEND_API_KEY so account mail is delivered."
+                     live token. Configure an email provider so account mail is delivered."
                 );
                 Ok(())
             }
@@ -180,6 +231,56 @@ impl Emailer {
                     let body = response.text().await.unwrap_or_default();
                     let snippet: String = body.chars().take(300).collect();
                     tracing::warn!(%status, body = %snippet, "Resend rejected the email");
+                    return Err(AppError::BadGateway("failed to send email".to_string()));
+                }
+                Ok(())
+            }
+            Emailer::Cloudflare {
+                http,
+                api_token,
+                account_id,
+                from,
+            } => {
+                let url = format!("{CLOUDFLARE_API_BASE}/accounts/{account_id}/email/sending/send");
+                let response = http
+                    .post(&url)
+                    .bearer_auth(api_token)
+                    .json(&json!({
+                        "from": from,
+                        // Cloudflare's REST API takes a single `to` string (not an array).
+                        "to": email.to,
+                        "subject": email.subject,
+                        "html": email.html,
+                        "text": email.text,
+                    }))
+                    // Whole-request deadline (connect + headers + body).
+                    .timeout(SEND_TIMEOUT)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, "request to Cloudflare Email Service failed");
+                        AppError::BadGateway("failed to send email".to_string())
+                    })?;
+
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                // Reject on a non-2xx status, or a 2xx whose envelope reports
+                // `success: false`. A 2xx body that doesn't parse to the envelope is
+                // trusted (treated as sent) so a benign response-shape change can't
+                // silently drop every mail.
+                let accepted = status.is_success()
+                    && serde_json::from_str::<CloudflareEnvelope>(&body)
+                        .map(|env| env.success)
+                        .unwrap_or(true);
+                if !accepted {
+                    // Log a bounded snippet of the provider's error server-side;
+                    // the client only ever sees the generic message.
+                    let snippet: String = body.chars().take(300).collect();
+                    tracing::warn!(
+                        %status,
+                        body = %snippet,
+                        "Cloudflare Email Service rejected the email"
+                    );
                     return Err(AppError::BadGateway("failed to send email".to_string()));
                 }
                 Ok(())
@@ -362,5 +463,66 @@ mod tests {
         let sent = mailbox.emails();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].to, "b@example.com");
+    }
+
+    #[test]
+    fn from_config_selects_the_configured_provider() {
+        use crate::test_support::test_config;
+        let http = reqwest::Client::new();
+
+        // No provider → Disabled.
+        let disabled = Emailer::from_config(&test_config(), http.clone());
+        assert!(matches!(disabled, Emailer::Disabled { .. }));
+        assert!(!disabled.is_enabled());
+
+        // Resend key alone → Resend.
+        let resend = Emailer::from_config(
+            &Config {
+                resend_api_key: Some("re_live_key".to_string()),
+                ..test_config()
+            },
+            http.clone(),
+        );
+        assert!(matches!(resend, Emailer::Resend { .. }));
+
+        // A complete Cloudflare pair alone → Cloudflare.
+        let cloudflare = Emailer::from_config(
+            &Config {
+                cloudflare_email_api_token: Some("cf_token".to_string()),
+                cloudflare_account_id: Some("acct123".to_string()),
+                ..test_config()
+            },
+            http.clone(),
+        );
+        assert!(matches!(cloudflare, Emailer::Cloudflare { .. }));
+
+        // Both configured → Resend wins (documented precedence).
+        let both = Emailer::from_config(
+            &Config {
+                resend_api_key: Some("re_live_key".to_string()),
+                cloudflare_email_api_token: Some("cf_token".to_string()),
+                cloudflare_account_id: Some("acct123".to_string()),
+                ..test_config()
+            },
+            http,
+        );
+        assert!(matches!(both, Emailer::Resend { .. }));
+    }
+
+    #[test]
+    fn cloudflare_emailer_is_enabled_and_redacts_its_token_in_debug() {
+        let cloudflare = Emailer::Cloudflare {
+            http: reqwest::Client::new(),
+            api_token: "cf_super_secret".to_string(),
+            account_id: "acct123".to_string(),
+            from: "TCGLense <no-reply@tcglense.app>".to_string(),
+        };
+        assert!(cloudflare.is_enabled());
+        let debug = format!("{cloudflare:?}");
+        assert!(!debug.contains("cf_super_secret"), "token must be redacted: {debug}");
+        assert!(debug.contains("[redacted]"));
+        // The account id (a non-secret identifier) and the From address are printed.
+        assert!(debug.contains("acct123"));
+        assert!(debug.contains("no-reply@tcglense.app"));
     }
 }

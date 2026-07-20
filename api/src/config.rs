@@ -60,6 +60,18 @@ pub struct Config {
     /// Resend's shared onboarding sender, which only delivers to the Resend
     /// account owner's own address (fine for dev, set a real one in production).
     pub email_from: String,
+    /// API token for [Cloudflare Email Service](https://developers.cloudflare.com/email-service/),
+    /// the alternative transactional-email provider (same three messages as Resend).
+    /// A credential — redacted in `Debug`. Paired with [`Self::cloudflare_account_id`]
+    /// (both set or both unset — enforced at boot by [`validate_cloudflare_email_pair`]);
+    /// unset = Cloudflare sending is not used. Resend takes precedence when both
+    /// providers are configured (see [`crate::email::Emailer::from_config`]).
+    pub cloudflare_email_api_token: Option<String>,
+    /// Cloudflare account id — it rides in the Email Service send URL
+    /// (`/accounts/{id}/email/sending/send`). Not a credential on its own (it appears
+    /// in dashboard URLs), so printed in `Debug`. Pairs with
+    /// [`Self::cloudflare_email_api_token`].
+    pub cloudflare_account_id: Option<String>,
     /// Cloudflare Turnstile secret key, used to verify the CAPTCHA token the
     /// browser widget produces on the auth forms. A credential — redacted in
     /// `Debug`. Unset = CAPTCHA verification is disabled (checks pass; no widget
@@ -248,6 +260,14 @@ impl std::fmt::Debug for Config {
                 &self.resend_api_key.as_ref().map(|_| "[redacted]"),
             )
             .field("email_from", &self.email_from)
+            // The Cloudflare Email Service token is a credential; print only whether set.
+            .field(
+                "cloudflare_email_api_token",
+                &self.cloudflare_email_api_token.as_ref().map(|_| "[redacted]"),
+            )
+            // The account id is an identifier (it shows in dashboard URLs), not a
+            // secret, and is useless without the token — print it plainly.
+            .field("cloudflare_account_id", &self.cloudflare_account_id)
             // The Turnstile secret is a credential; print only whether one is set.
             .field(
                 "turnstile_secret_key",
@@ -405,6 +425,44 @@ fn validate_turnstile_pair(secret_key: Option<&str>, site_key: Option<&str>) -> 
     }
 }
 
+/// Cloudflare Email Service needs both an API token and the account id (the id rides
+/// in the send URL `/accounts/{id}/email/sending/send`). A half-set pair can't send,
+/// so fail the boot closed with a precise message rather than silently degrading to
+/// "email disabled" — mirrors [`validate_turnstile_pair`]. Kept pure (no env access,
+/// no panic); [`Config::from_env`] turns `Err` into a startup panic.
+fn validate_cloudflare_email_pair(
+    api_token: Option<&str>,
+    account_id: Option<&str>,
+) -> Result<(), String> {
+    match (api_token.is_some(), account_id.is_some()) {
+        (true, false) => Err(
+            "CLOUDFLARE_EMAIL_API_TOKEN is set but CLOUDFLARE_ACCOUNT_ID is not. Both must be \
+             set together: the account id rides in the Email Service send URL. Set \
+             CLOUDFLARE_ACCOUNT_ID too, or unset both to disable Cloudflare sending."
+                .to_string(),
+        ),
+        (false, true) => Err(
+            "CLOUDFLARE_ACCOUNT_ID is set but CLOUDFLARE_EMAIL_API_TOKEN is not. Both must be \
+             set together: the token authenticates the Email Service send call. Set \
+             CLOUDFLARE_EMAIL_API_TOKEN too, or unset both to disable Cloudflare sending."
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// True when some transactional-email provider is fully configured: a Resend API key,
+/// or a complete Cloudflare Email Service pair. Drives the public-deployment
+/// mailbox-proof gates, which don't care *which* provider ends up sending the mail.
+fn email_provider_configured(
+    resend_api_key: Option<&str>,
+    cloudflare_email_api_token: Option<&str>,
+    cloudflare_account_id: Option<&str>,
+) -> bool {
+    resend_api_key.is_some()
+        || (cloudflare_email_api_token.is_some() && cloudflare_account_id.is_some())
+}
+
 /// Parse a boolean-ish env var, accepting the common truthy spellings
 /// (`1`/`true`/`yes`/`on`, case- and whitespace-insensitive). A set-but-not-truthy
 /// value reads as `false`; only an unset var falls back to `default`.
@@ -496,7 +554,7 @@ fn validate_public_auth_posture(
     public_site_url: &str,
     jwt_secret: &str,
     cookie_secure: bool,
-    resend_api_key: Option<&str>,
+    email_provider_configured: bool,
     email_from: &str,
     signups_enabled: bool,
     turnstile_secret_key: Option<&str>,
@@ -504,7 +562,7 @@ fn validate_public_auth_posture(
 ) -> Result<(), String> {
     let public = looks_like_production(host, public_site_url);
     if !public {
-        if signups_enabled && resend_api_key.is_none() && !allow_insecure_dev_auth {
+        if signups_enabled && !email_provider_configured && !allow_insecure_dev_auth {
             return Err(
                 "ALLOW_INSECURE_DEV_AUTH=true is required to enable local signups without email; this bypass permits registration without mailbox proof"
                     .to_string(),
@@ -529,9 +587,9 @@ fn validate_public_auth_posture(
         return Err("COOKIE_SECURE must be true for an internet-facing deployment".to_string());
     }
     if signups_enabled {
-        if resend_api_key.is_none() {
+        if !email_provider_configured {
             return Err(
-                "RESEND_API_KEY is required before enabling signups on an internet-facing deployment; refusing the mailbox-proof bypass"
+                "an email provider (RESEND_API_KEY, or CLOUDFLARE_EMAIL_API_TOKEN + CLOUDFLARE_ACCOUNT_ID) is required before enabling signups on an internet-facing deployment; refusing the mailbox-proof bypass"
                     .to_string(),
             );
         }
@@ -645,6 +703,19 @@ impl Config {
         let email_from =
             env_trimmed("EMAIL_FROM").unwrap_or_else(|| DEFAULT_EMAIL_FROM.to_string());
 
+        // Cloudflare Email Service: the alternative provider (see the fields). The token
+        // is the credential; the account id rides in the send URL. A half-set pair can't
+        // send, so fail the boot closed (both-or-neither) rather than silently disabling
+        // email. Resend still wins if both providers are configured.
+        let cloudflare_email_api_token = env_trimmed("CLOUDFLARE_EMAIL_API_TOKEN");
+        let cloudflare_account_id = env_trimmed("CLOUDFLARE_ACCOUNT_ID");
+        if let Err(message) = validate_cloudflare_email_pair(
+            cloudflare_email_api_token.as_deref(),
+            cloudflare_account_id.as_deref(),
+        ) {
+            panic!("{message}");
+        }
+
         // Unset = CAPTCHA disabled (checks pass) — see the field.
         let turnstile_secret_key = env_trimmed("TURNSTILE_SECRET_KEY");
         // The public site key, served to the SPA at runtime via GET /api/config
@@ -739,7 +810,11 @@ impl Config {
             &public_site_url,
             &jwt_secret,
             cookie_secure,
-            resend_api_key.as_deref(),
+            email_provider_configured(
+                resend_api_key.as_deref(),
+                cloudflare_email_api_token.as_deref(),
+                cloudflare_account_id.as_deref(),
+            ),
             &email_from,
             signups_enabled,
             turnstile_secret_key.as_deref(),
@@ -766,6 +841,8 @@ impl Config {
             moxfield_user_agent,
             resend_api_key,
             email_from,
+            cloudflare_email_api_token,
+            cloudflare_account_id,
             turnstile_secret_key,
             turnstile_site_key,
             trust_proxy_headers,
@@ -1028,166 +1105,144 @@ mod tests {
         let public_site = "https://tcglense.app";
         let real_secret = "0123456789abcdef0123456789abcdef";
 
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                "http://tcglense.app",
-                real_secret,
-                true,
-                Some("re_live_key"),
-                "TCGLense <hello@tcglense.app>",
-                true,
-                Some("turnstile-secret"),
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                DEV_ONLY_JWT_SECRET,
-                true,
-                Some("re_live_key"),
-                "TCGLense <hello@tcglense.app>",
-                true,
-                Some("turnstile-secret"),
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                true,
-                None,
-                "TCGLense <hello@tcglense.app>",
-                true,
-                Some("turnstile-secret"),
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                true,
-                Some("re_live_key"),
-                DEFAULT_EMAIL_FROM,
-                true,
-                Some("turnstile-secret"),
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                true,
-                Some("re_live_key"),
-                "TCGLense <hello@tcglense.app>",
-                true,
-                None,
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                false,
-                Some("re_live_key"),
-                "TCGLense <hello@tcglense.app>",
-                true,
-                Some("turnstile-secret"),
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                true,
-                Some("re_live_key"),
-                "TCGLense <hello@tcglense.app>",
-                true,
-                Some("turnstile-secret"),
-                true,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                true,
-                Some("re_live_key"),
-                "TCGLense <hello@tcglense.app>",
-                true,
-                Some("turnstile-secret"),
-                false,
-            )
-            .is_ok()
-        );
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            "http://tcglense.app",
+            real_secret,
+            true,
+            true, // email provider configured
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            DEV_ONLY_JWT_SECRET,
+            true,
+            true, // email provider configured
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            false, // no email provider
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            true, // email provider configured
+            DEFAULT_EMAIL_FROM,
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            true, // email provider configured
+            "TCGLense <hello@tcglense.app>",
+            true,
+            None,
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            false,
+            true, // email provider configured
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            true, // email provider configured
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            true,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            true, // email provider configured
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_ok());
         // Closed registration is a safe bootstrap posture while the operator is
         // still provisioning the widget keys.
-        assert!(
-            validate_public_auth_posture(
-                "0.0.0.0",
-                public_site,
-                real_secret,
-                true,
-                None,
-                DEFAULT_EMAIL_FROM,
-                false,
-                None,
-                false,
-            )
-            .is_ok()
-        );
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            public_site,
+            real_secret,
+            true,
+            false, // no email provider
+            DEFAULT_EMAIL_FROM,
+            false,
+            None,
+            false,
+        )
+        .is_ok());
     }
 
     #[test]
     fn local_no_email_signup_bypass_requires_an_explicit_opt_in() {
-        assert!(
-            validate_public_auth_posture(
-                "127.0.0.1",
-                "http://localhost:5173",
-                DEV_ONLY_JWT_SECRET,
-                false,
-                None,
-                DEFAULT_EMAIL_FROM,
-                true,
-                None,
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_public_auth_posture(
-                "127.0.0.1",
-                "http://localhost:5173",
-                DEV_ONLY_JWT_SECRET,
-                false,
-                None,
-                DEFAULT_EMAIL_FROM,
-                true,
-                None,
-                true,
-            )
-            .is_ok()
-        );
+        assert!(validate_public_auth_posture(
+            "127.0.0.1",
+            "http://localhost:5173",
+            DEV_ONLY_JWT_SECRET,
+            false,
+            false, // no email provider
+            DEFAULT_EMAIL_FROM,
+            true,
+            None,
+            false,
+        )
+        .is_err());
+        assert!(validate_public_auth_posture(
+            "127.0.0.1",
+            "http://localhost:5173",
+            DEV_ONLY_JWT_SECRET,
+            false,
+            false, // no email provider
+            DEFAULT_EMAIL_FROM,
+            true,
+            None,
+            true,
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1197,6 +1252,49 @@ mod tests {
         assert!(sender_uses_resend_dev("user@mail.resend.dev"));
         assert!(!sender_uses_resend_dev("TCGLense <hello@tcglense.app>"));
         assert!(!sender_uses_resend_dev("user@resend.dev.example.com"));
+    }
+
+    #[test]
+    fn cloudflare_email_pair_must_be_set_together() {
+        assert!(validate_cloudflare_email_pair(None, None).is_ok());
+        assert!(validate_cloudflare_email_pair(Some("cf_token"), Some("acct123")).is_ok());
+        // A half-set pair can't send, so it fails the boot closed.
+        assert!(validate_cloudflare_email_pair(Some("cf_token"), None).is_err());
+        assert!(validate_cloudflare_email_pair(None, Some("acct123")).is_err());
+    }
+
+    #[test]
+    fn email_provider_is_configured_by_resend_or_a_complete_cloudflare_pair() {
+        assert!(email_provider_configured(Some("re_live_key"), None, None));
+        assert!(email_provider_configured(None, Some("cf_token"), Some("acct123")));
+        assert!(email_provider_configured(
+            Some("re_live_key"),
+            Some("cf_token"),
+            Some("acct123"),
+        ));
+        // Neither provider, or a half-set Cloudflare pair, is unconfigured.
+        assert!(!email_provider_configured(None, None, None));
+        assert!(!email_provider_configured(None, Some("cf_token"), None));
+        assert!(!email_provider_configured(None, None, Some("acct123")));
+    }
+
+    #[test]
+    fn cloudflare_email_satisfies_the_public_signup_mailbox_gate() {
+        // A public deployment with signups on but no Resend key still boots when a
+        // Cloudflare Email Service pair is configured — the mailbox-proof gate is
+        // provider-agnostic.
+        assert!(validate_public_auth_posture(
+            "0.0.0.0",
+            "https://tcglense.app",
+            "0123456789abcdef0123456789abcdef",
+            true,
+            email_provider_configured(None, Some("cf_token"), Some("acct123")),
+            "TCGLense <hello@tcglense.app>",
+            true,
+            Some("turnstile-secret"),
+            false,
+        )
+        .is_ok());
     }
 
     #[test]

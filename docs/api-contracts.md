@@ -135,10 +135,12 @@ as a reset — nor vice versa), single-use via the same atomic conditional `UPDA
 pruned by the same 6h background task. The emailed links point at the SPA
 (`{PUBLIC_SITE_URL}/complete-registration?token=…`, `/verify-email?token=…`,
 `/reset-password?token=…`); mail goes
-out through Resend's HTTPS API on the shared client (10s per-request timeout).
-With no `RESEND_API_KEY` sending is **disabled**: the message — including the
-link — is logged instead, so offline dev and the test suites work with zero
-network (the security-test harness swaps in a capturing mailbox). The SPA captures
+out through one of two interchangeable HTTPS providers on the shared client (10s
+per-request timeout): **Resend** (`RESEND_API_KEY`) or **Cloudflare Email Service**
+(`CLOUDFLARE_EMAIL_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`) — configure exactly one;
+Resend wins if both are set. With no provider configured sending is **disabled**:
+the message — including the link — is logged instead, so offline dev and the test
+suites work with zero network (the security-test harness swaps in a capturing mailbox). The SPA captures
 each query token into memory and immediately replaces the visible URL without it;
 production responses also set `Referrer-Policy: no-referrer`.
 

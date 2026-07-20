@@ -148,10 +148,12 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   dummy-hash verify on unknown users is timing equalization, not dead code).
   Password rules are validated **before** an email token is consumed. A missing/bad
   CAPTCHA token is deliberately **400** (never 401/403).
-- No `RESEND_API_KEY` = the local email dev bypass (register returns the completion
-  token; login skips the verified gate). Internet-facing configurations refuse to
-  enable signups without the key, a non-default `EMAIL_FROM`, and Turnstile; keep
-  those bypasses local only.
+- No email provider configured = the local email dev bypass (register returns the
+  completion token; login skips the verified gate). A provider is either
+  `RESEND_API_KEY` or the Cloudflare Email Service pair (`CLOUDFLARE_EMAIL_API_TOKEN`
+  + `CLOUDFLARE_ACCOUNT_ID`); configure exactly one (Resend wins if both are set).
+  Internet-facing configurations refuse to enable signups without a provider, a
+  non-default `EMAIL_FROM`, and Turnstile; keep those bypasses local only.
 - **API-key scope is enforced by extractor choice, not HTTP method:** reads take
   `AuthUser` (session JWT or any `tcgl_` key), writes take `WritableUser` (read-only
   key = **403**), key management (`/api/auth/api-keys`) takes `SessionUser` (JWT
@@ -273,4 +275,4 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
 Full reference: `docs/operations.md`. Dev essentials: `JWT_SECRET` (required,
 ≥ 32 bytes; `ALLOW_INSECURE_DEV_SECRET=true` for local dev) · `SEED_DUMMY_DATA=true`
 (offline dummy catalog + the seeded e2e account; overrides syncing) ·
-`RESEND_API_KEY` (unset = the email dev bypass above).
+`RESEND_API_KEY` or the Cloudflare Email Service pair (both unset = the email dev bypass above).

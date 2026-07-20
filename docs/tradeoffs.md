@@ -216,14 +216,25 @@ catalog) is planned but not implemented.
   differences confined to exotic-regex and non-ASCII inputs; ordinary ASCII searches are
   identical across backends.
 
-## Transactional email (Resend)
+## Transactional email (Resend / Cloudflare)
 
-- **Transactional email (Resend):** sends ride the shared reqwest client with a
+- **Providers are interchangeable, pick one:** the `Emailer` enum sends through either
+  [Resend](https://resend.com) (`RESEND_API_KEY`) or [Cloudflare Email Service](https://developers.cloudflare.com/email-service/)
+  (`CLOUDFLARE_EMAIL_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, a both-or-neither pair). Both
+  are single-POST HTTPS JSON APIs on the shared client, both share `EMAIL_FROM`, and both
+  paths render the identical messages — the only asymmetries are the URL/auth/`to` shape
+  (Resend takes `to` as an array, Cloudflare as a string in `/accounts/{id}/email/sending/send`)
+  and that Cloudflare's `client/v4` envelope is checked for `success:true` on top of the HTTP
+  status. **Resend takes precedence when both are configured** (an existing Resend deploy is
+  unaffected by the mere presence of Cloudflare variables); the choice is logged at boot. This
+  is an enum, not a trait object — two providers don't yet clear the rule-of-three bar for a
+  `Provider` trait, and the enum matches Turnstile/`collection_import`.
+- **Transactional email:** sends ride the shared reqwest client with a
   10s per-request timeout; there is no retry/queue — every account-lookup endpoint
   (register / resend / forgot) **spawns** its send off the request path and swallows
   failures (a surfaced 502 would only fire for existing accounts), and a dropped
   registration-completion mail is recovered by re-POSTing register. **Disabled mode
-  (no `RESEND_API_KEY`) returns the registration-completion token in the register
+  (no email provider) returns the registration-completion token in the register
   response instead of emailing it** (the SPA drives straight to the set-password step;
   login skips the unverified-`403` gate — see the auth contract) — the intended dev/CI
   posture, gated by `ALLOW_INSECURE_DEV_AUTH=true`; internet-facing registration
@@ -231,9 +242,9 @@ catalog) is planned but not implemented.
   body** so the otherwise-unrecoverable dev link can be read from stdout — but that body
   carries a live single-use reset/verification token, so `Emailer::from_config`
   **withholds the body on an internet-facing host** (`Config::looks_like_production()`):
-  a public deploy that runs with signups closed but no `RESEND_API_KEY` (existing users
-  can still request a reset) then never writes a live token into aggregated logs. Set
-  `RESEND_API_KEY` so account mail is actually delivered. **Residual timing channel:**
+  a public deploy that runs with signups closed but no email provider (existing users
+  can still request a reset) then never writes a live token into aggregated logs. Configure
+  an email provider so account mail is actually delivered. **Residual timing channel:**
   the send runs off the request path, but token *issuance* is an on-path DB write that
   happens only when the account exists, so register/forgot/resend carry a
   sub-millisecond exists-vs-not timing difference. It's left unmitigated (login is the
