@@ -121,7 +121,11 @@ const asOfText = computed(() => {
         Not enough price history yet for this window.
       </p>
       <div v-else class="grid gap-x-6 gap-y-4 sm:grid-cols-2">
-        <section>
+        <!-- `min-w-0`: these sections are grid items, which default to `min-width: auto` and
+             so refuse to shrink below their rows' min-content. On a narrow (mobile) single
+             column that let each MoverRow overflow the card, clipping the price column off
+             the right edge; allowing the track to shrink lets the row's name truncate instead. -->
+        <section class="min-w-0">
           <h3
             class="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase text-emerald-700 dark:text-emerald-400"
           >
@@ -135,7 +139,7 @@ const asOfText = computed(() => {
           </ul>
           <p v-else class="text-muted-foreground mt-2 text-sm">No gainers.</p>
         </section>
-        <section>
+        <section class="min-w-0">
           <h3
             class="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase text-red-700 dark:text-red-400"
           >
