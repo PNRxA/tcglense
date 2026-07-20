@@ -14,6 +14,15 @@
 //! long downtime runs immediately. The persisted `ETag` also lets a consumer's first post-restart
 //! import be a cheap conditional `304`.
 //!
+//! **The drop store is reseeded from the DB-persisted snapshot at boot** ([`super::sld_persist`]),
+//! before that deferral: the in-memory store otherwise reseeds from the committed `sld_drops.json`
+//! on every boot, so honouring the last-run deferral would serve that stale seed for up to an
+//! interval after a restart. Reseeding from the last-good persisted snapshot first means the
+//! deferral serves *fresh* drops, the mirror origin serves the same ETag it served before the
+//! restart, and a consumer's conditional import `304`s onto the persisted snapshot rather than the
+//! seed. Each successful scrape/import is persisted so the next boot has it; the committed file stays
+//! the offline / first-boot fallback.
+//!
 //! Split out of `tasks.rs` so the Secret Lair machinery lives beside its data ops under
 //! `scryfall/`; the generic maintenance/sync orchestration stays in `tasks.rs`.
 
@@ -25,7 +34,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::prelude::DateTimeUtc;
 
 use crate::catalog::ingest_state::{self, StateFields};
-use crate::scryfall::{drops, sld_scrape, sld_sync};
+use crate::scryfall::{drops, sld_persist, sld_scrape, sld_sync};
 
 /// `ingest_state.dataset` key the drop-sync bookkeeping is stored under (per the `mtg` game),
 /// reusing the shared ingest-state table so the last-run time + import `ETag` survive restarts.
@@ -94,11 +103,49 @@ async fn record_run(db: &DatabaseConnection, etag: Option<&str>, status: &str, d
     }
 }
 
+/// Reseed the in-memory drop store from the DB-persisted snapshot ([`sld_persist::load`]) if one
+/// exists, so a restart serves the last-good scraped/imported drops immediately instead of the
+/// committed seed. Best-effort: a missing row keeps the committed seed, and a corrupt/rejected
+/// snapshot is logged and ignored — [`drops::install_snapshot`] validates before swapping, so it can
+/// never wipe the seed. Run once at boot, before the first-refresh deferral.
+async fn reseed_from_persisted(db: &DatabaseConnection) {
+    match sld_persist::load(db).await {
+        Ok(Some(json)) => match drops::install_snapshot(&json) {
+            Ok(count) => {
+                tracing::info!(
+                    count,
+                    "reseeded Secret Lair drop store from the persisted snapshot"
+                )
+            }
+            Err(err) => tracing::warn!(
+                error = %err,
+                "persisted Secret Lair snapshot rejected; keeping the committed seed"
+            ),
+        },
+        Ok(None) => {} // nothing persisted yet — keep the committed seed
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to load the persisted Secret Lair snapshot")
+        }
+    }
+}
+
+/// Persist the snapshot the store now holds — its canonical JSON + content version, read together via
+/// [`drops::current_snapshot`] — so the next boot reseeds from it. Called after a successful install;
+/// best-effort (a write failure is logged, the live store still serves the fresh drops).
+async fn persist_current(db: &DatabaseConnection) {
+    let (json, version) = drops::current_snapshot();
+    if let Err(err) = sld_persist::save(db, &json, &version).await {
+        tracing::warn!(error = %err, "failed to persist the Secret Lair drop snapshot");
+    }
+}
+
 /// Spawn the mirror origin's daily Secret Lair scrape: fetch Scryfall's gallery and install the
 /// fresh snapshot into the drop store. A broken scrape (markup change → no drops) or an invalid
-/// snapshot is rejected by [`drops::install_snapshot`], so the store keeps its last-good table. The
-/// first scrape runs at startup unless one ran within the interval (persisted last-run defers it),
-/// then every `interval_hours` (a single pass when it's `0`).
+/// snapshot is rejected by [`drops::install_snapshot`], so the store keeps its last-good table. At
+/// boot the store is reseeded from the persisted snapshot so the deferral serves the last-good drops
+/// (and the mirror serves their ETag) instead of the committed seed; the first scrape then runs
+/// unless one ran within the interval (persisted last-run defers it), and each success is persisted.
+/// Then every `interval_hours` (a single pass when it's `0`).
 pub(crate) fn spawn_sld_scrape(
     db: DatabaseConnection,
     http: Client,
@@ -106,6 +153,7 @@ pub(crate) fn spawn_sld_scrape(
     interval_hours: u64,
 ) {
     tokio::spawn(async move {
+        reseed_from_persisted(&db).await;
         let (_, last_run) = load_state(&db).await;
         let delay = initial_delay(last_run, interval_hours, Utc::now());
         if !delay.is_zero() {
@@ -120,6 +168,12 @@ pub(crate) fn spawn_sld_scrape(
                 Ok(json) => match drops::install_snapshot(&json) {
                     Ok(count) => {
                         tracing::info!(count, "refreshed Secret Lair drop snapshot from Scryfall");
+                        // Persist the freshly-installed snapshot *before* recording the run — the two
+                        // writes hit different tables and aren't transactional, so on a crash between
+                        // them we want the snapshot fresh and the run-time stale (the next boot then
+                        // reseeds the fresh drops and re-scrapes immediately), not the reverse (which
+                        // would defer while serving the old snapshot).
+                        persist_current(&db).await;
                         // No upstream ETag on the gallery scrape — record only the run time.
                         record_run(&db, None, "complete", "scraped from Scryfall").await;
                     }
@@ -142,12 +196,12 @@ pub(crate) fn spawn_sld_scrape(
 }
 
 /// Spawn a consumer's daily Secret Lair drop import: pull the snapshot from the mirror (conditional
-/// on the last `ETag`, so an unchanged snapshot is a cheap `304`) and install it. The `ETag` and the
-/// last-run time are persisted in `ingest_state`, so a restart restores the `ETag` (its first
-/// post-restart import can still `304`) and defers the first import if one ran within the interval.
-/// The first import runs at startup (unless deferred), then every `interval_hours` (a single import
-/// when it's `0`). Every failure is logged, never fatal — the instance keeps serving whatever
-/// snapshot it already had loaded.
+/// on the last `ETag`, so an unchanged snapshot is a cheap `304`) and install it. At boot the store
+/// is reseeded from the persisted snapshot, so the restored `ETag` matches what's loaded — a first
+/// post-restart `304` then keeps the *persisted* fresh snapshot (not the committed seed), and the
+/// last-run deferral serves it too. The first import runs at startup (unless deferred), then every
+/// `interval_hours` (a single import when it's `0`); each successful import is persisted. Every
+/// failure is logged, never fatal — the instance keeps serving whatever snapshot it already had.
 pub(crate) fn spawn_sld_import(
     db: DatabaseConnection,
     http: Client,
@@ -156,6 +210,7 @@ pub(crate) fn spawn_sld_import(
 ) {
     use crate::scryfall::sld_sync::ImportOutcome;
     tokio::spawn(async move {
+        reseed_from_persisted(&db).await;
         // Restore the last import ETag (so the first fetch can be conditional) and last-run time.
         let (mut prev_etag, last_run) = load_state(&db).await;
         let delay = initial_delay(last_run, interval_hours, Utc::now());
@@ -174,6 +229,14 @@ pub(crate) fn spawn_sld_import(
                     if let Some(tag) = etag {
                         prev_etag = Some(tag);
                     }
+                    // Persist the freshly-imported snapshot *before* recording the ETag. The store
+                    // now holds exactly this import, so its canonical JSON is `current_snapshot`.
+                    // Order matters: the two writes aren't transactional, and a crash between them
+                    // must leave the snapshot fresh with the ETag one behind — the next boot reseeds
+                    // the fresh drops and the next conditional import `200`s and repairs the ETag. The
+                    // reverse (ETag new, snapshot old) would strand the store on the old snapshot
+                    // behind a matching ETag (a `304`) until the mirror next advances.
+                    persist_current(&db).await;
                     record_run(
                         &db,
                         prev_etag.as_deref(),

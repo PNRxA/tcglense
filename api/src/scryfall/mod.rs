@@ -14,6 +14,9 @@ pub mod model;
 mod price_history;
 mod progress;
 pub mod search;
+/// DB persistence for the Secret Lair drop snapshot (reseed the store on boot from the last-good
+/// scrape/import instead of the committed seed).
+pub mod sld_persist;
 /// Secret Lair drop gallery scrape (the mirror origin's daily "fetch from source").
 pub mod sld_scrape;
 /// Secret Lair drop snapshot import from the mirror (a consumer's daily pull).
