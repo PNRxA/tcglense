@@ -102,7 +102,26 @@ pub fn validate_discord_webhook_url(raw: &str) -> Result<String, String> {
     if !url.path().starts_with("/api/webhooks/") {
         return Err("Discord webhook URL must be a /api/webhooks/ URL".to_string());
     }
+    // Discord serves webhooks only on the default HTTPS port; an explicit port is never a
+    // real webhook and pinning it out keeps the allow-list tight (defence in depth).
+    if url.port().is_some() {
+        return Err("Discord webhook URL must not specify a port".to_string());
+    }
     Ok(url.to_string())
+}
+
+/// Validate a Telegram bot token: non-empty and free of URL-structural characters that
+/// could reshape the `bot<token>/sendMessage` path (a real BotFather token is
+/// `<digits>:<alnum-_->`). Shared by the save endpoint and [`send_telegram`] so the two
+/// never disagree on what a usable token is.
+pub fn validate_telegram_bot_token(token: &str) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("Telegram bot token must not be blank".to_string());
+    }
+    if token.contains(['/', ' ', '\t', '\n', '\r', '?', '#']) {
+        return Err("Telegram bot token is malformed".to_string());
+    }
+    Ok(())
 }
 
 /// POST an alert to a Discord incoming webhook. Re-validates the URL first (defence in
@@ -148,10 +167,10 @@ pub async fn send_telegram(
     chat_id: &str,
     notification: &AlertNotification,
 ) -> ChannelOutcome {
-    // Guard against a token with URL-structural characters ('/', whitespace) that could
-    // reshape the path; a real BotFather token is `<digits>:<alnum-_->`.
-    if bot_token.trim().is_empty() || bot_token.contains(['/', ' ', '\t', '\n', '?', '#']) {
-        return ChannelOutcome::fail("telegram", "Telegram bot token is malformed");
+    // Guard against a token with URL-structural characters that could reshape the path
+    // (a real BotFather token is `<digits>:<alnum-_->`) — the same check the save endpoint runs.
+    if let Err(reason) = validate_telegram_bot_token(bot_token) {
+        return ChannelOutcome::fail("telegram", reason);
     }
     let endpoint = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
     let payload = json!({
@@ -188,17 +207,26 @@ mod tests {
         ] {
             assert!(validate_discord_webhook_url(good).is_ok(), "{good}");
         }
-        // Rejected: non-https, wrong host (SSRF), credentials, wrong path.
+        // Rejected: non-https, wrong host (SSRF), credentials, wrong path, explicit port.
         for bad in [
             "http://discord.com/api/webhooks/1/a",            // not https
             "https://evil.example.com/api/webhooks/1/a",      // wrong host
             "https://discord.com.evil.com/api/webhooks/1/a",  // lookalike host
             "https://user:pass@discord.com/api/webhooks/1/a", // credentials
             "https://discord.com/api/notwebhooks/1/a",        // wrong path
+            "https://discord.com:8080/api/webhooks/1/a",      // explicit port
             "https://169.254.169.254/api/webhooks/1/a",       // metadata IP
             "not a url",
         ] {
             assert!(validate_discord_webhook_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn telegram_token_validation_rejects_url_structural_chars() {
+        assert!(validate_telegram_bot_token("123456:AbC-def_123").is_ok());
+        for bad in ["", "   ", "123/456", "123 456", "123?x", "123#x", "12\n3"] {
+            assert!(validate_telegram_bot_token(bad).is_err(), "{bad}");
         }
     }
 

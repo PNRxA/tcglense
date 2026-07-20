@@ -22,10 +22,12 @@ const save = useSetAlertChannelsMutation()
 const test = useTestAlertChannelsMutation()
 
 // Local form state, seeded from the server settings whenever they (re)load, so the form
-// prefills and a partial edit (e.g. toggling email) resubmits the other fields unchanged.
+// prefills and a partial edit (e.g. toggling a channel) resubmits the other fields unchanged.
 const discordWebhookUrl = ref('')
+const discordEnabled = ref(true)
 const telegramBotToken = ref('')
 const telegramChatId = ref('')
+const telegramEnabled = ref(true)
 const emailEnabled = ref(false)
 
 const emailAvailable = computed(() => channelsQuery.data.value?.email_available ?? false)
@@ -35,8 +37,10 @@ watch(
   (data) => {
     if (!data) return
     discordWebhookUrl.value = data.discord_webhook_url ?? ''
+    discordEnabled.value = data.discord_enabled
     telegramBotToken.value = data.telegram_bot_token ?? ''
     telegramChatId.value = data.telegram_chat_id ?? ''
+    telegramEnabled.value = data.telegram_enabled
     emailEnabled.value = data.email_enabled
   },
   { immediate: true },
@@ -54,8 +58,10 @@ async function onSave() {
   try {
     await save.mutateAsync({
       discord_webhook_url: discordWebhookUrl.value.trim() || null,
+      discord_enabled: discordEnabled.value,
       telegram_bot_token: telegramBotToken.value.trim() || null,
       telegram_chat_id: telegramChatId.value.trim() || null,
+      telegram_enabled: telegramEnabled.value,
       email_enabled: emailEnabled.value,
     })
     saved.value = true
@@ -93,10 +99,18 @@ async function onTest() {
       <form class="grid gap-5" @submit.prevent="onSave">
         <!-- Discord -->
         <div class="space-y-1.5">
-          <Label for="discord-webhook">Discord webhook URL</Label>
+          <div class="flex items-center justify-between gap-2">
+            <Label for="discord-webhook">Discord webhook URL</Label>
+            <Switch
+              :checked="discordEnabled"
+              aria-label="Discord alerts"
+              @update:checked="discordEnabled = $event"
+            />
+          </div>
           <Input
             id="discord-webhook"
             v-model="discordWebhookUrl"
+            :disabled="!discordEnabled"
             placeholder="https://discord.com/api/webhooks/…"
             autocomplete="off"
             spellcheck="false"
@@ -108,11 +122,20 @@ async function onTest() {
 
         <!-- Telegram -->
         <div class="grid gap-3 sm:grid-cols-2">
+          <div class="flex items-center justify-between gap-2 sm:col-span-2">
+            <span class="text-sm font-medium">Telegram</span>
+            <Switch
+              :checked="telegramEnabled"
+              aria-label="Telegram alerts"
+              @update:checked="telegramEnabled = $event"
+            />
+          </div>
           <div class="space-y-1.5">
             <Label for="telegram-token">Telegram bot token</Label>
             <Input
               id="telegram-token"
               v-model="telegramBotToken"
+              :disabled="!telegramEnabled"
               placeholder="123456:ABC-DEF…"
               autocomplete="off"
               spellcheck="false"
@@ -123,6 +146,7 @@ async function onTest() {
             <Input
               id="telegram-chat"
               v-model="telegramChatId"
+              :disabled="!telegramEnabled"
               placeholder="e.g. 987654321"
               autocomplete="off"
               spellcheck="false"

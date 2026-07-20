@@ -116,9 +116,13 @@ pub async fn evaluate_all(
         let met = is_met(&alert.direction, threshold_cents, price_cents);
         match (met, alert.triggered) {
             (true, false) => {
-                // Rising edge: fire, then latch so it won't re-notify until it re-arms.
+                // Rising edge: fire, and latch **only if** delivery reached at least one
+                // channel. Latching on a failed/absent delivery would permanently swallow
+                // the trigger — most concretely for an alert created before any channel is
+                // configured (nothing to deliver to yet). Leaving it un-latched means the
+                // next tick retries, so it delivers once the channel works / is added.
                 let notification = build_notification(&alert, &resolved, public_site_url);
-                deliver(
+                let delivered = deliver(
                     db,
                     notify_http,
                     emailer,
@@ -127,8 +131,10 @@ pub async fn evaluate_all(
                     &notification,
                 )
                 .await;
-                latch(db, alert, resolved.price.to_string()).await;
-                fired += 1;
+                if delivered {
+                    latch(db, alert, resolved.price.to_string()).await;
+                    fired += 1;
+                }
             }
             (false, true) => {
                 // Price crossed back: re-arm silently so a later crossing notifies again.
@@ -219,7 +225,9 @@ fn build_notification(
 
 /// Deliver one firing alert over every channel the user configured. Loads the user's
 /// [`alert_channel`] settings + email once; a channel that isn't set up is skipped. Failures
-/// are logged per-channel, never propagated.
+/// are logged per-channel, never propagated. Returns `true` iff at least one channel
+/// accepted the message — the caller latches the alert only then, so a failed or
+/// not-yet-configured delivery is retried next tick instead of silently swallowed.
 async fn deliver(
     db: &DatabaseConnection,
     notify_http: &reqwest::Client,
@@ -227,7 +235,7 @@ async fn deliver(
     email_globally_enabled: bool,
     user_id: i32,
     notification: &AlertNotification,
-) {
+) -> bool {
     let channels = match AlertChannel::find()
         .filter(alert_channel::Column::UserId.eq(user_id))
         .one(db)
@@ -236,20 +244,28 @@ async fn deliver(
         Ok(channels) => channels,
         Err(err) => {
             tracing::warn!(error = %err, user_id, "failed to load alert channels");
-            return;
+            return false;
         }
     };
-    let Some(channels) = channels else { return };
+    // No settings row = no channels configured yet: nothing delivered, so don't latch.
+    let Some(channels) = channels else {
+        return false;
+    };
 
     let mut outcomes: Vec<ChannelOutcome> = Vec::new();
 
-    if let Some(webhook) = channels.discord_webhook_url.as_deref() {
+    // Each channel delivers only when it's both enabled AND configured.
+    if channels.discord_enabled
+        && let Some(webhook) = channels.discord_webhook_url.as_deref()
+    {
         outcomes.push(notifications::send_discord(notify_http, webhook, notification).await);
     }
-    if let (Some(token), Some(chat)) = (
-        channels.telegram_bot_token.as_deref(),
-        channels.telegram_chat_id.as_deref(),
-    ) {
+    if channels.telegram_enabled
+        && let (Some(token), Some(chat)) = (
+            channels.telegram_bot_token.as_deref(),
+            channels.telegram_chat_id.as_deref(),
+        )
+    {
         outcomes.push(notifications::send_telegram(notify_http, token, chat, notification).await);
     }
     if channels.email_enabled && email_globally_enabled && emailer.is_enabled() {
@@ -266,6 +282,8 @@ async fn deliver(
             );
         }
     }
+
+    outcomes.iter().any(|outcome| outcome.ok)
 }
 
 /// Send the email channel for a firing alert (the user's account address).
@@ -382,5 +400,112 @@ mod tests {
     #[test]
     fn unknown_direction_never_fires() {
         assert!(!is_met("sideways", 1000, 1000));
+    }
+
+    /// The regression guard for the latch-on-delivery fix: a met alert with **no channel**
+    /// configured must NOT be latched (else adding a channel later never notifies), and once
+    /// a channel (here the capturing emailer) delivers, it latches with the firing price.
+    #[tokio::test]
+    async fn met_alert_latches_only_once_a_channel_delivers() {
+        use crate::email::{Emailer, Mailbox};
+        use crate::entities::prelude::{Card, PriceAlert};
+        use crate::entities::{alert_channel, card, price_alert};
+        use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = crate::test_support::insert_user(&db, "alerts@example.com").await;
+        let card_id = crate::test_support::insert_card(&db, "ext-alert-1").await;
+        // Price the card so the "below $50" alert evaluates as met at $8.25.
+        let mut priced: card::ActiveModel = Card::find_by_id(card_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .into();
+        priced.price_usd = Set(Some("8.25".to_string()));
+        priced.update(&db).await.unwrap();
+
+        let now = Utc::now();
+        let alert = price_alert::ActiveModel {
+            user_id: Set(user_id),
+            game: Set(crate::scryfall::GAME.to_string()),
+            target_kind: Set("card".to_string()),
+            card_id: Set(Some(card_id)),
+            finish: Set("nonfoil".to_string()),
+            direction: Set("below".to_string()),
+            threshold: Set("50.00".to_string()),
+            is_active: Set(true),
+            triggered: Set(false),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let http = reqwest::Client::new();
+
+        // No channels: met, but nothing delivered, so it must stay armed (not swallowed).
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Disabled { log_body: true },
+            "https://x.test",
+            true,
+        )
+        .await;
+        let after = PriceAlert::find_by_id(alert.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!after.triggered, "an undeliverable alert must stay armed");
+        assert!(after.last_price.is_none());
+
+        // Configure the email channel; the capturing emailer "delivers" with no network.
+        alert_channel::ActiveModel {
+            user_id: Set(user_id),
+            email_enabled: Set(true),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let mailbox = Mailbox::default();
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            "https://x.test",
+            true,
+        )
+        .await;
+
+        let after = PriceAlert::find_by_id(alert.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(after.triggered, "a delivered alert latches");
+        assert_eq!(after.last_price.as_deref(), Some("8.25"));
+        assert_eq!(mailbox.emails().len(), 1, "the email channel was delivered");
+
+        // Still met + already triggered: no re-notify (hysteresis).
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            "https://x.test",
+            true,
+        )
+        .await;
+        assert_eq!(
+            mailbox.emails().len(),
+            1,
+            "a latched alert does not re-notify"
+        );
     }
 }

@@ -54,15 +54,20 @@ pub async fn get_alert_channels(
     let channels = match row {
         Some(row) => AlertChannels {
             discord_webhook_url: row.discord_webhook_url,
+            discord_enabled: row.discord_enabled,
             telegram_bot_token: row.telegram_bot_token,
             telegram_chat_id: row.telegram_chat_id,
+            telegram_enabled: row.telegram_enabled,
             email_enabled: row.email_enabled,
             email_available: available,
         },
+        // No row yet: the free channels default to on, so filling a field just works.
         None => AlertChannels {
             discord_webhook_url: None,
+            discord_enabled: true,
             telegram_bot_token: None,
             telegram_chat_id: None,
+            telegram_enabled: true,
             email_enabled: false,
             email_available: available,
         },

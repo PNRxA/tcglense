@@ -92,8 +92,12 @@ pub struct AlertResponse {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AlertChannels {
     pub discord_webhook_url: Option<String>,
+    /// Whether Discord delivery is on (independent of whether a URL is saved).
+    pub discord_enabled: bool,
     pub telegram_bot_token: Option<String>,
     pub telegram_chat_id: Option<String>,
+    /// Whether Telegram delivery is on (independent of whether a token/chat is saved).
+    pub telegram_enabled: bool,
     pub email_enabled: bool,
     /// Whether the deployment offers the email channel at all (`ALERTS_EMAIL_ENABLED` set
     /// **and** an email provider configured). When false the SPA hides the email toggle.
@@ -159,12 +163,25 @@ pub struct UpdateAlertRequest {
 pub struct SetAlertChannelsRequest {
     #[serde(default)]
     pub discord_webhook_url: Option<String>,
+    /// Whether Discord delivers. Defaults to `true` when omitted so an older client that
+    /// only sends a URL keeps the channel on (a saved URL delivered before this flag existed).
+    #[serde(default = "default_true")]
+    pub discord_enabled: bool,
     #[serde(default)]
     pub telegram_bot_token: Option<String>,
     #[serde(default)]
     pub telegram_chat_id: Option<String>,
+    /// Whether Telegram delivers. Defaults to `true` when omitted (see `discord_enabled`).
+    #[serde(default = "default_true")]
+    pub telegram_enabled: bool,
     #[serde(default)]
     pub email_enabled: bool,
+}
+
+/// serde default for the channel on/off flags: an omitted flag means "on" so an older client
+/// that only sends the credential keeps the channel delivering.
+fn default_true() -> bool {
+    true
 }
 
 // ---------- Shared helpers ----------

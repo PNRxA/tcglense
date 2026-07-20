@@ -5,7 +5,15 @@
  * so the settings form can prefill; the Discord webhook URL and Telegram bot token are the
  * user's own credentials, never logged (redacted in the entity's `Debug`).
  */
-export type AlertChannels = { discord_webhook_url: string | null, telegram_bot_token: string | null, telegram_chat_id: string | null, email_enabled: boolean, 
+export type AlertChannels = { discord_webhook_url: string | null, 
+/**
+ * Whether Discord delivery is on (independent of whether a URL is saved).
+ */
+discord_enabled: boolean, telegram_bot_token: string | null, telegram_chat_id: string | null, 
+/**
+ * Whether Telegram delivery is on (independent of whether a token/chat is saved).
+ */
+telegram_enabled: boolean, email_enabled: boolean, 
 /**
  * Whether the deployment offers the email channel at all (`ALERTS_EMAIL_ENABLED` set
  * **and** an email provider configured). When false the SPA hides the email toggle.

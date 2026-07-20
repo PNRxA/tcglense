@@ -54,6 +54,10 @@ pub const MIGRATIONS: i64 = KEY_NAMESPACE | 1;
 /// Elects the card-sync leader for one tick (refresh + snapshot + backfill spawn).
 pub const CARD_SYNC: i64 = KEY_NAMESPACE | 2;
 
+/// Elects the price-alert evaluation leader for one tick (issue #525), so a
+/// multi-replica deployment delivers each triggered alert once, not once per replica.
+pub const ALERTS: i64 = KEY_NAMESPACE | 3;
+
 /// A held (or trivially-held) advisory lock, owning the dedicated connection the
 /// lock lives on. Release by [`Self::release`] (graceful close) or by dropping
 /// (the socket closes and the server frees the session's locks either way).

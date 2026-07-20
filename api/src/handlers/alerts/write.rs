@@ -178,12 +178,10 @@ pub async fn set_alert_channels(
             "Telegram needs both a bot token and a chat id".to_string(),
         ));
     }
-    if let Some(token) = telegram_token.as_deref()
-        && token.contains(['/', ' ', '\t', '\n'])
-    {
-        return Err(AppError::Validation(
-            "Telegram bot token is malformed".to_string(),
-        ));
+    if let Some(token) = telegram_token.as_deref() {
+        // The same validity check the sender applies, so a saved token can't silently
+        // fail to deliver later.
+        notifications::validate_telegram_bot_token(token).map_err(AppError::Validation)?;
     }
 
     let now = Utc::now();
@@ -196,8 +194,10 @@ pub async fn set_alert_channels(
         Some(row) => {
             let mut active: alert_channel::ActiveModel = row.into();
             active.discord_webhook_url = Set(discord.clone());
+            active.discord_enabled = Set(payload.discord_enabled);
             active.telegram_bot_token = Set(telegram_token.clone());
             active.telegram_chat_id = Set(telegram_chat.clone());
+            active.telegram_enabled = Set(payload.telegram_enabled);
             active.email_enabled = Set(payload.email_enabled);
             active.updated_at = Set(now);
             active.update(&state.db).await?;
@@ -206,8 +206,10 @@ pub async fn set_alert_channels(
             alert_channel::ActiveModel {
                 user_id: Set(user.id),
                 discord_webhook_url: Set(discord.clone()),
+                discord_enabled: Set(payload.discord_enabled),
                 telegram_bot_token: Set(telegram_token.clone()),
                 telegram_chat_id: Set(telegram_chat.clone()),
+                telegram_enabled: Set(payload.telegram_enabled),
                 email_enabled: Set(payload.email_enabled),
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -220,8 +222,10 @@ pub async fn set_alert_channels(
 
     Ok(Json(AlertChannels {
         discord_webhook_url: discord,
+        discord_enabled: payload.discord_enabled,
         telegram_bot_token: telegram_token,
         telegram_chat_id: telegram_chat,
+        telegram_enabled: payload.telegram_enabled,
         email_enabled: payload.email_enabled,
         email_available: email_available(&state),
     }))
@@ -256,14 +260,19 @@ pub async fn test_alert_channels(
 
     let mut results: Vec<AlertTestResult> = Vec::new();
 
-    if let Some(webhook) = channels.discord_webhook_url.as_deref() {
+    // Only test channels that are both configured AND enabled — the same gate delivery uses.
+    if channels.discord_enabled
+        && let Some(webhook) = channels.discord_webhook_url.as_deref()
+    {
         let outcome = notifications::send_discord(&state.notify_http, webhook, &notification).await;
         results.push(outcome.into());
     }
-    if let (Some(token), Some(chat)) = (
-        channels.telegram_bot_token.as_deref(),
-        channels.telegram_chat_id.as_deref(),
-    ) {
+    if channels.telegram_enabled
+        && let (Some(token), Some(chat)) = (
+            channels.telegram_bot_token.as_deref(),
+            channels.telegram_chat_id.as_deref(),
+        )
+    {
         let outcome =
             notifications::send_telegram(&state.notify_http, token, chat, &notification).await;
         results.push(outcome.into());

@@ -6,4 +6,13 @@
  * toggling email) resubmits the other fields unchanged. Telegram needs both the bot token
  * and the chat id, or neither.
  */
-export type SetAlertChannelsRequest = { discord_webhook_url: string | null, telegram_bot_token: string | null, telegram_chat_id: string | null, email_enabled: boolean, };
+export type SetAlertChannelsRequest = { discord_webhook_url: string | null, 
+/**
+ * Whether Discord delivers. Defaults to `true` when omitted so an older client that
+ * only sends a URL keeps the channel on (a saved URL delivered before this flag existed).
+ */
+discord_enabled: boolean, telegram_bot_token: string | null, telegram_chat_id: string | null, 
+/**
+ * Whether Telegram delivers. Defaults to `true` when omitted (see `discord_enabled`).
+ */
+telegram_enabled: boolean, email_enabled: boolean, };

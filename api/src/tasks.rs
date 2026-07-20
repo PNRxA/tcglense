@@ -335,6 +335,7 @@ fn spawn_card_sync(
 /// below/above threshold crossing (Discord / Telegram / optional email). The first tick
 /// fires immediately (against whatever prices are loaded), then on the interval; a run that
 /// overran is skipped rather than fired back-to-back. Only spawned when `ALERTS_ENABLED`.
+#[allow(clippy::too_many_arguments)]
 fn spawn_alert_evaluation(
     db: DatabaseConnection,
     notify_http: Client,
@@ -342,6 +343,7 @@ fn spawn_alert_evaluation(
     public_site_url: String,
     email_globally_enabled: bool,
     interval_minutes: u64,
+    database_url: String,
 ) {
     tokio::spawn(async move {
         // saturating_mul so an absurd interval can't overflow the seconds; `.max(1)` keeps
@@ -351,6 +353,20 @@ fn spawn_alert_evaluation(
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
+            // Leader-gate the tick like the card sync: exactly one replica evaluates +
+            // delivers per tick, so a multi-replica deployment doesn't send each triggered
+            // alert once per replica. Non-leaders skip; the lock frees with the leader's
+            // session (a crashed leader self-heals next tick). No-op on SQLite; fails open.
+            let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
+                &db,
+                &database_url,
+                crate::db_lock::ALERTS,
+            )
+            .await
+            else {
+                tracing::debug!("alert evaluation tick skipped: another replica is evaluating");
+                continue;
+            };
             crate::alerts::evaluate_all(
                 &db,
                 &notify_http,
@@ -359,6 +375,7 @@ fn spawn_alert_evaluation(
                 email_globally_enabled,
             )
             .await;
+            lease.release().await;
         }
     });
 }
@@ -391,6 +408,7 @@ pub async fn start(state: &AppState, http: &Client) {
             state.config.public_site_url.clone(),
             state.config.alerts_email_enabled,
             state.config.alerts_interval_minutes,
+            state.config.database_url.clone(),
         );
     }
 

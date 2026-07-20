@@ -23,10 +23,16 @@ pub struct Model {
     /// Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`), or null.
     /// Host-allow-listed on save and again before every send (SSRF defence).
     pub discord_webhook_url: Option<String>,
+    /// Whether the Discord channel delivers (lets a user pause it without clearing the URL).
+    /// Delivery needs this **and** a non-null `discord_webhook_url`.
+    pub discord_enabled: bool,
     /// Telegram bot token (from @BotFather), or null. Paired with `telegram_chat_id`.
     pub telegram_bot_token: Option<String>,
     /// Telegram chat id to deliver to, or null. Paired with `telegram_bot_token`.
     pub telegram_chat_id: Option<String>,
+    /// Whether the Telegram channel delivers (pause without clearing the token/chat id).
+    /// Delivery needs this **and** both `telegram_bot_token` + `telegram_chat_id`.
+    pub telegram_enabled: bool,
     /// Whether the user opted into email alerts (delivered to their account email).
     /// Effective only when the deployment enables `ALERTS_EMAIL_ENABLED` too.
     pub email_enabled: bool,
@@ -46,12 +52,14 @@ impl std::fmt::Debug for Model {
                 "discord_webhook_url",
                 &self.discord_webhook_url.as_ref().map(|_| "[redacted]"),
             )
+            .field("discord_enabled", &self.discord_enabled)
             .field(
                 "telegram_bot_token",
                 &self.telegram_bot_token.as_ref().map(|_| "[redacted]"),
             )
             // The chat id is a destination, not a secret, but keep it terse.
             .field("telegram_chat_id", &self.telegram_chat_id)
+            .field("telegram_enabled", &self.telegram_enabled)
             .field("email_enabled", &self.email_enabled)
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
