@@ -36,6 +36,13 @@ pub struct Model {
     /// Whether the user opted into email alerts (delivered to their account email).
     /// Effective only when the deployment enables `ALERTS_EMAIL_ENABLED` too.
     pub email_enabled: bool,
+    /// Whether the user opted into a heads-up the day before a **Secret Lair drop** releases.
+    /// Off by default (a deliberate opt-in). Delivered over the same channels above by
+    /// [`crate::release_alerts`].
+    pub sld_release_enabled: bool,
+    /// Whether the user opted into a heads-up the day before a **new regular set** releases
+    /// (one notification per set/theme, not per product). Off by default.
+    pub set_release_enabled: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
@@ -61,6 +68,8 @@ impl std::fmt::Debug for Model {
             .field("telegram_chat_id", &self.telegram_chat_id)
             .field("telegram_enabled", &self.telegram_enabled)
             .field("email_enabled", &self.email_enabled)
+            .field("sld_release_enabled", &self.sld_release_enabled)
+            .field("set_release_enabled", &self.set_release_enabled)
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .finish()

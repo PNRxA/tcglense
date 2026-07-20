@@ -22,6 +22,7 @@ mod notifications;
 mod openapi;
 mod phash;
 mod ratelimit;
+mod release_alerts;
 mod router;
 mod scryfall;
 mod state;

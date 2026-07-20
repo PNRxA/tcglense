@@ -283,3 +283,36 @@ async fn channels_reject_non_discord_webhook_urls() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn release_opt_ins_default_off_and_round_trip() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "alerts-releases@example.com", PW).await;
+
+    // With no settings row yet, both release opt-ins default off.
+    let (status, _, channels) = send(&app, get_with_bearer("/api/alerts/channels", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(channels["sld_release_enabled"], false);
+    assert_eq!(channels["set_release_enabled"], false);
+
+    // Opt into Secret Lair drop heads-ups only; the set opt-in stays off.
+    let (status, _, saved) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/alerts/channels",
+            &access,
+            json!({ "sld_release_enabled": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved:?}");
+    assert_eq!(saved["sld_release_enabled"], true);
+    assert_eq!(saved["set_release_enabled"], false);
+
+    // The choice round-trips through the GET.
+    let (status, _, channels) = send(&app, get_with_bearer("/api/alerts/channels", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(channels["sld_release_enabled"], true);
+    assert_eq!(channels["set_release_enabled"], false);
+}

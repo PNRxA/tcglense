@@ -102,6 +102,10 @@ pub struct AlertChannels {
     /// Whether the deployment offers the email channel at all (`ALERTS_EMAIL_ENABLED` set
     /// **and** an email provider configured). When false the SPA hides the email toggle.
     pub email_available: bool,
+    /// Whether the user opted into a heads-up the day before a **Secret Lair drop** releases.
+    pub sld_release_enabled: bool,
+    /// Whether the user opted into a heads-up the day before a **new set** releases.
+    pub set_release_enabled: bool,
 }
 
 /// One channel's outcome from the "send a test" probe.
@@ -176,6 +180,13 @@ pub struct SetAlertChannelsRequest {
     pub telegram_enabled: bool,
     #[serde(default)]
     pub email_enabled: bool,
+    /// Opt into a heads-up the day before a Secret Lair drop releases. Defaults to `false`
+    /// (a deliberate subscription — unlike the channel on/off flags, an omitted value is off).
+    #[serde(default)]
+    pub sld_release_enabled: bool,
+    /// Opt into a heads-up the day before a new set releases. Defaults to `false`.
+    #[serde(default)]
+    pub set_release_enabled: bool,
 }
 
 /// serde default for the channel on/off flags: an omitted flag means "on" so an older client

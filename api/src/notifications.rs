@@ -1,7 +1,10 @@
-//! Outbound price-alert notifications over the two free, self-service channels:
-//! Discord (an incoming-webhook URL) and Telegram (a bot token + chat id). Email is
-//! delivered separately through the shared [`crate::email::Emailer`]; this module owns
-//! only the HTTP channels.
+//! Outbound notifications over a user's configured channels: Discord (an incoming-webhook
+//! URL), Telegram (a bot token + chat id), and email (through the shared
+//! [`crate::email::Emailer`]). The low-level per-channel senders live here alongside
+//! [`deliver_to_user`], the shared per-user fan-out both the price-alert evaluator
+//! ([`crate::alerts`]) and the release-alert evaluator ([`crate::release_alerts`]) deliver
+//! through — so the "load the user's channels, dispatch each enabled+configured one, and
+//! report whether *any* accepted" logic is written once.
 //!
 //! **SSRF is the headline risk here**: the Discord webhook URL is user-supplied, so it is
 //! host-allow-listed both when the user saves it ([`validate_discord_webhook_url`]) and
@@ -14,8 +17,13 @@
 //! Every send returns a [`ChannelOutcome`] instead of failing the batch: a broken channel
 //! is logged and reported, never fatal to the others or to the evaluator.
 
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde_json::json;
 use url::{Host, Url};
+
+use crate::email::{self, Emailer};
+use crate::entities::alert_channel;
+use crate::entities::prelude::{AlertChannel, User};
 
 /// One rendered alert, reused across channels. `body` is plain text (Discord + Telegram
 /// both accept it as-is); `title` is the email subject / a bolded first line.
@@ -188,6 +196,100 @@ pub async fn send_telegram(
         Err(err) => {
             tracing::warn!(is_timeout = err.is_timeout(), "Telegram request failed");
             ChannelOutcome::fail("telegram", "request to Telegram failed")
+        }
+    }
+}
+
+/// Deliver one notification over every channel the user has both enabled and configured.
+/// Loads the user's [`alert_channel`] settings once; a channel that isn't set up is skipped.
+/// Failures are logged per-channel, never propagated. Returns `true` iff at least one channel
+/// **accepted** the message — a caller that latches / records only on delivery (both
+/// evaluators do) then retries next pass on a failed or not-yet-configured delivery instead
+/// of silently swallowing it.
+///
+/// Shared by the price-alert and release-alert evaluators so the fan-out is written once.
+/// `email_globally_enabled` is `ALERTS_EMAIL_ENABLED`: even a user who opted into email gets
+/// none while the deployment keeps it off.
+pub(crate) async fn deliver_to_user(
+    db: &DatabaseConnection,
+    notify_http: &reqwest::Client,
+    emailer: &Emailer,
+    email_globally_enabled: bool,
+    user_id: i32,
+    notification: &AlertNotification,
+) -> bool {
+    let channels = match AlertChannel::find()
+        .filter(alert_channel::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(channels) => channels,
+        Err(err) => {
+            tracing::warn!(error = %err, user_id, "failed to load alert channels");
+            return false;
+        }
+    };
+    // No settings row = no channels configured yet: nothing delivered, so don't latch.
+    let Some(channels) = channels else {
+        return false;
+    };
+
+    let mut outcomes: Vec<ChannelOutcome> = Vec::new();
+
+    // Each channel delivers only when it's both enabled AND configured.
+    if channels.discord_enabled
+        && let Some(webhook) = channels.discord_webhook_url.as_deref()
+    {
+        outcomes.push(send_discord(notify_http, webhook, notification).await);
+    }
+    if channels.telegram_enabled
+        && let (Some(token), Some(chat)) = (
+            channels.telegram_bot_token.as_deref(),
+            channels.telegram_chat_id.as_deref(),
+        )
+    {
+        outcomes.push(send_telegram(notify_http, token, chat, notification).await);
+    }
+    if channels.email_enabled && email_globally_enabled && emailer.is_enabled() {
+        outcomes.push(deliver_email(db, emailer, user_id, notification).await);
+    }
+
+    for outcome in &outcomes {
+        if !outcome.ok {
+            tracing::warn!(
+                user_id,
+                channel = outcome.channel,
+                detail = outcome.detail.as_deref().unwrap_or(""),
+                "notification delivery failed on a channel"
+            );
+        }
+    }
+
+    outcomes.iter().any(|outcome| outcome.ok)
+}
+
+/// Send the email channel for a notification (to the user's account address).
+async fn deliver_email(
+    db: &DatabaseConnection,
+    emailer: &Emailer,
+    user_id: i32,
+    notification: &AlertNotification,
+) -> ChannelOutcome {
+    let email = match User::find_by_id(user_id).one(db).await {
+        Ok(Some(user)) => user.email,
+        Ok(None) => return ChannelOutcome::fail("email", "user no longer exists"),
+        Err(err) => {
+            tracing::warn!(error = %err, user_id, "failed to load user for notification email");
+            return ChannelOutcome::fail("email", "failed to load user");
+        }
+    };
+    let link = notification.url.as_deref().unwrap_or("");
+    let message = email::alert_email(&email, &notification.title, &notification.body, link);
+    match emailer.send(message).await {
+        Ok(()) => ChannelOutcome::ok("email"),
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to send notification email");
+            ChannelOutcome::fail("email", "failed to send email")
         }
     }
 }

@@ -21,6 +21,7 @@ pub mod price_alert;
 pub mod product;
 pub mod product_price_history;
 pub mod refresh_token;
+pub mod release_notification;
 pub mod sealed_component;
 pub mod sealed_content;
 pub mod sld_drop_snapshot;

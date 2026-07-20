@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Bell, Check, LoaderCircle, Send, TriangleAlert } from '@lucide/vue'
+import {
+  Bell,
+  CalendarClock,
+  Check,
+  LoaderCircle,
+  Send,
+  Sparkles,
+  TriangleAlert,
+} from '@lucide/vue'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +37,10 @@ const telegramBotToken = ref('')
 const telegramChatId = ref('')
 const telegramEnabled = ref(true)
 const emailEnabled = ref(false)
+// Release heads-ups (opt-in, off by default): a day-before notification for a Secret Lair drop
+// and for a new set, delivered over the same channels above.
+const sldReleaseEnabled = ref(false)
+const setReleaseEnabled = ref(false)
 
 const emailAvailable = computed(() => channelsQuery.data.value?.email_available ?? false)
 
@@ -42,6 +54,8 @@ watch(
     telegramChatId.value = data.telegram_chat_id ?? ''
     telegramEnabled.value = data.telegram_enabled
     emailEnabled.value = data.email_enabled
+    sldReleaseEnabled.value = data.sld_release_enabled
+    setReleaseEnabled.value = data.set_release_enabled
   },
   { immediate: true },
 )
@@ -63,6 +77,8 @@ async function onSave() {
       telegram_chat_id: telegramChatId.value.trim() || null,
       telegram_enabled: telegramEnabled.value,
       email_enabled: emailEnabled.value,
+      sld_release_enabled: sldReleaseEnabled.value,
+      set_release_enabled: setReleaseEnabled.value,
     })
     saved.value = true
   } catch (err) {
@@ -91,8 +107,8 @@ async function onTest() {
         <Bell class="size-5" /> Notification channels
       </CardTitle>
       <CardDescription>
-        Where your triggered price alerts are delivered. Discord and Telegram are free and set up in
-        a couple of minutes; nothing is sent until an alert fires.
+        Where your alerts and release heads-ups are delivered. Discord and Telegram are free and set
+        up in a couple of minutes; nothing is sent until an alert fires.
       </CardDescription>
     </CardHeader>
     <CardContent>
@@ -172,6 +188,51 @@ async function onTest() {
             :checked="emailEnabled"
             @update:checked="emailEnabled = $event"
           />
+        </div>
+
+        <!-- Release heads-ups (opt-in): delivered over the channels above, a day before. -->
+        <div class="space-y-2 border-t pt-4">
+          <div class="space-y-0.5">
+            <p class="text-sm font-medium">Release heads-ups</p>
+            <p class="text-muted-foreground text-xs">
+              A notification the day before, over the channels above. Nothing else changes what you
+              already track.
+            </p>
+          </div>
+          <div class="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div class="flex items-center gap-2.5">
+              <Sparkles class="text-muted-foreground size-4 shrink-0" />
+              <div class="space-y-0.5">
+                <Label for="sld-release" class="font-medium">Secret Lair drops</Label>
+                <p class="text-muted-foreground text-xs">
+                  When a new Secret Lair drop is about to release.
+                </p>
+              </div>
+            </div>
+            <Switch
+              id="sld-release"
+              :checked="sldReleaseEnabled"
+              aria-label="Secret Lair drop releases"
+              @update:checked="sldReleaseEnabled = $event"
+            />
+          </div>
+          <div class="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div class="flex items-center gap-2.5">
+              <CalendarClock class="text-muted-foreground size-4 shrink-0" />
+              <div class="space-y-0.5">
+                <Label for="set-release" class="font-medium">New set releases</Label>
+                <p class="text-muted-foreground text-xs">
+                  One heads-up per new set (e.g. an upcoming expansion), not per product.
+                </p>
+              </div>
+            </div>
+            <Switch
+              id="set-release"
+              :checked="setReleaseEnabled"
+              aria-label="New set releases"
+              @update:checked="setReleaseEnabled = $event"
+            />
+          </div>
         </div>
 
         <!-- Feedback -->

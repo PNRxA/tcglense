@@ -215,6 +215,20 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Two more couplings: an undelivered met alert is `touch`ed so the retry-next-pass contract
   survives narrowing, and the `since` cursor advances **only** when `evaluate_all` returns
   `true` (a mid-scan DB error must re-scan, not skip).
+- **Release heads-ups** (`crate::release_alerts`, `RELEASE_ALERTS_ENABLED`) are two per-user
+  opt-ins on the **same `alert_channels` row** (`sld_release_enabled` / `set_release_enabled`,
+  both default **off** — subscriptions, unlike the channel on/off flags that default on) that
+  fire a **day-before** heads-up over the shared channel fan-out
+  (`notifications::deliver_to_user`, extracted so price alerts and release alerts deliver
+  through one path — don't re-fork it). **Edge-triggered via the `release_notifications`
+  ledger**, one row per `(user, kind, ref_key)` written **only on successful delivery** (an
+  undeliverable heads-up retries next pass, same latch-on-delivery contract as price alerts).
+  Dates are **derived, not newly ingested**: a Secret Lair drop's date is the earliest
+  `released_at` among its cards grouped by the runtime drop table; a set's is
+  `card_sets.released_at`. Regular sets are **one notification per theme** — top-level only
+  (`parent_set_code IS NULL`), a curated set-type allow-list, non-digital, never `sld` (drops
+  handle that per-drop). Session-only channel settings, like price alerts; the two flags ride
+  the `AlertChannels` DTO, so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

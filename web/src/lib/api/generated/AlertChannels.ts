@@ -18,4 +18,12 @@ telegram_enabled: boolean, email_enabled: boolean,
  * Whether the deployment offers the email channel at all (`ALERTS_EMAIL_ENABLED` set
  * **and** an email provider configured). When false the SPA hides the email toggle.
  */
-email_available: boolean, };
+email_available: boolean, 
+/**
+ * Whether the user opted into a heads-up the day before a **Secret Lair drop** releases.
+ */
+sld_release_enabled: boolean, 
+/**
+ * Whether the user opted into a heads-up the day before a **new set** releases.
+ */
+set_release_enabled: boolean, };

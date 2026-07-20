@@ -396,6 +396,58 @@ fn spawn_alert_evaluation(
     });
 }
 
+/// How often the release-notification evaluator runs. Release dates move at most daily, so a
+/// few checks a day is ample; the `release_notifications` ledger makes extra passes free
+/// (already-notified releases are skipped), and the look-ahead window spans a day so no exact
+/// cadence is required to catch "tomorrow".
+const RELEASE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Periodic release-notification evaluation ([`crate::release_alerts`]): every
+/// [`RELEASE_CHECK_INTERVAL`] the evaluator finds Secret Lair drops and regular sets releasing
+/// the next day and delivers a heads-up to users who opted in, over their configured channels.
+/// Edge-triggered via the `release_notifications` ledger (one heads-up per user per release).
+/// The first tick fires immediately, then on the interval; an overrun run is skipped rather
+/// than fired back-to-back. Leader-gated like the price-alert evaluator so a multi-replica
+/// deployment delivers each heads-up once. Only spawned when `RELEASE_ALERTS_ENABLED`.
+fn spawn_release_notifications(
+    db: DatabaseConnection,
+    notify_http: Client,
+    email: Arc<Emailer>,
+    public_site_url: String,
+    email_globally_enabled: bool,
+    database_url: String,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(RELEASE_CHECK_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            // Leader-gate the tick so exactly one replica evaluates + delivers per tick. No-op
+            // on SQLite; fails open. The lock frees with the leader's session.
+            let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
+                &db,
+                &database_url,
+                crate::db_lock::RELEASE_ALERTS,
+            )
+            .await
+            else {
+                tracing::debug!("release-notification tick skipped: another replica is evaluating");
+                continue;
+            };
+            crate::release_alerts::evaluate_all(
+                &db,
+                &notify_http,
+                &email,
+                email_globally_enabled,
+                &public_site_url,
+                Utc::now(),
+            )
+            .await;
+            lease.release().await;
+        }
+    });
+}
+
 /// Spawn all background tasks: the refresh-token pruner (always) plus, depending on
 /// config, either the offline dummy-catalog seed or the periodic card-data sync.
 ///
@@ -424,6 +476,20 @@ pub async fn start(state: &AppState, http: &Client) {
             state.config.public_site_url.clone(),
             state.config.alerts_email_enabled,
             state.config.alerts_interval_minutes,
+            state.config.database_url.clone(),
+        );
+    }
+
+    // Release heads-ups (Secret Lair drops + new sets): reads only the alert channels + catalog
+    // release dates and the notified-ledger, so it runs in every mode (it simply no-ops until a
+    // user opts in and a release nears). Its own switch — independent of price alerts.
+    if state.config.release_alerts_enabled {
+        spawn_release_notifications(
+            state.db.clone(),
+            state.notify_http.clone(),
+            state.email.clone(),
+            state.config.public_site_url.clone(),
+            state.config.alerts_email_enabled,
             state.config.database_url.clone(),
         );
     }
