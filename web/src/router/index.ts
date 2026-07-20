@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 import { safeInternalPath } from '@/lib/utils'
+import { reloadOnChunkError } from './reloadOnChunkError'
 import { useAuthStore } from '@/stores/auth'
 // HomeView stays eager (it's the landing page — lazy-loading it just adds a chunk RTT to
 // the most common first paint). The auth/profile/email views are lazy: they're reached
@@ -481,5 +482,9 @@ export async function authGuard(to: RouteLocationNormalized) {
 }
 
 router.beforeEach(authGuard)
+
+// Recover from a lazy route chunk that went missing after a deploy: hard-navigate to the
+// intended URL so a stale tab lands on the latest build instead of a dead click.
+reloadOnChunkError(router)
 
 export default router
