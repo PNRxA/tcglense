@@ -420,6 +420,27 @@ pub async fn fingerprint_index(
     Ok(response)
 }
 
+/// `GET /api/mirror/currency` — the daily USD reference-rate (FX) feed, proxied from the
+/// upstream provider ([`crate::currency::RATES_URL`], Frankfurter) and re-served with
+/// CDN-cacheable headers, so mirror consumers pull exchange rates from this origin instead of
+/// contacting the provider (their [`crate::currency::CurrencyRates`] points at this route — see
+/// [`crate::currency::CurrencyRates::from_config`]).
+///
+/// A proxy passthrough like the TCGCSV / MTGJSON routes above — the body is the provider's JSON
+/// **verbatim**, so the consumer's existing parser reads it unchanged. The feed needs no special
+/// User-Agent, and it changes at most daily, so it shares the metadata TTL ([`MIRROR_META_CACHE`]).
+pub async fn currency_proxy(State(state): State<AppState>) -> Result<Response, AppError> {
+    proxy_stream(
+        &state,
+        "currency",
+        crate::currency::RATES_URL,
+        None,
+        None,
+        MIRROR_META_CACHE,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

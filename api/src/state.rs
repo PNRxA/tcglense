@@ -114,6 +114,10 @@ impl AppState {
         // CAPTCHA verifier (Turnstile, or a pass-through when unconfigured) rides
         // the same shared client; the per-IP auth limiters are in-memory.
         let captcha = Arc::new(Captcha::from_config(&config, http.clone()));
+        // The daily FX-rate cache. `from_config` points it at the dataset mirror on a
+        // consumer (so rates are pulled from the main server, not the upstream provider) or
+        // straight at the provider on the mirror origin / an upstream-mode instance.
+        let currency_rates = Arc::new(CurrencyRates::from_config(&config));
         // Redis-backed when a connection was established at boot, else in-memory.
         // `ConnectionManager: Clone`, so the limiter sets and the analytics cache
         // all share the one multiplexed connection.
@@ -126,7 +130,7 @@ impl AppState {
             dummy_password_hash,
             images,
             http,
-            currency_rates: Arc::new(CurrencyRates::default()),
+            currency_rates,
             imports,
             email,
             captcha,

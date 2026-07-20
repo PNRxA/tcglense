@@ -18,7 +18,11 @@ pub const DEFAULT_CURRENCY: &str = "USD";
 /// European audiences. Every non-USD entry is available from Frankfurter's daily feed.
 pub const SUPPORTED_CURRENCIES: &[&str] = &["USD", "AUD", "CAD", "EUR", "GBP", "JPY", "NZD"];
 
-const RATES_URL: &str =
+/// The upstream daily FX feed (Frankfurter). `pub(crate)` so the dataset-mirror origin can
+/// re-serve it verbatim at `/api/mirror/currency`
+/// ([`crate::handlers::mirror::currency_proxy`]), letting mirror consumers pull rates from the
+/// main server instead of contacting the provider — the same posture as the card datasets.
+pub(crate) const RATES_URL: &str =
     "https://api.frankfurter.dev/v2/rates?base=USD&quotes=AUD,CAD,EUR,GBP,JPY,NZD";
 const REFRESH_AFTER: Duration = Duration::from_secs(12 * 60 * 60);
 // Daily feeds legitimately pause for weekends and holidays, but an indefinitely stale
@@ -92,6 +96,47 @@ impl Default for CurrencyRates {
 }
 
 impl CurrencyRates {
+    /// Build the rate cache from application config, choosing **where** the daily FX feed is
+    /// fetched.
+    ///
+    /// A default self-host (a dataset-mirror *consumer*) pulls the rates from the TCGLense
+    /// mirror at `{DATASET_MIRROR_URL}/api/mirror/currency` — so, exactly like the card
+    /// datasets (see [`crate::datasets`]), it never contacts the upstream FX provider directly.
+    /// The mirror **origin** (`MIRROR_ENABLED`) and any instance run with
+    /// `SYNC_FROM_UPSTREAM=true` fetch the feed straight from the provider ([`RATES_URL`]); the
+    /// origin then re-serves it to consumers via its `/api/mirror/currency` route. The
+    /// stale/fallback behaviour is unchanged either way: an unreachable source falls open to a
+    /// labelled USD conversion.
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        // The origin is the source of truth (it re-serves what it fetches), and an explicit
+        // upstream posture bypasses the mirror — both go straight to the provider. Everyone
+        // else reads the feed from the mirror, like every other dataset.
+        let rates_url = if config.sync_from_upstream || config.mirror_enabled {
+            RATES_URL.to_string()
+        } else {
+            // Must match the `/api/mirror/currency` route registered in [`crate::router`] (and
+            // the origin's [`crate::handlers::mirror::currency_proxy`]). Trim a trailing slash
+            // defensively — like the sibling [`crate::datasets::SyncSource::new`] — so the join
+            // stays well-formed even though `Config` already trims the stored value.
+            format!(
+                "{}/api/mirror/currency",
+                config.dataset_mirror_url.trim_end_matches('/')
+            )
+        };
+        Self {
+            state: Mutex::new(RatesState::default()),
+            rates_url,
+        }
+    }
+
+    /// Test-only accessor for the resolved feed URL, so a test outside this module (the
+    /// `AppState::new` wiring test) can assert where a consumer/origin points without
+    /// exposing the field in production code.
+    #[cfg(test)]
+    pub(crate) fn rates_url(&self) -> &str {
+        &self.rates_url
+    }
+
     #[cfg(test)]
     fn with_url(rates_url: String) -> Self {
         Self {
@@ -346,6 +391,47 @@ mod tests {
             quote: quote.to_string(),
             rate,
         }
+    }
+
+    #[test]
+    fn from_config_points_a_consumer_at_the_mirror_and_the_origin_upstream() {
+        use crate::config::Config;
+        // Default self-host (a dataset-mirror consumer): rates are pulled from the mirror,
+        // never the upstream FX provider directly.
+        let consumer = CurrencyRates::from_config(&Config {
+            sync_from_upstream: false,
+            mirror_enabled: false,
+            dataset_mirror_url: "https://mirror.example".to_string(),
+            ..crate::test_support::test_config()
+        });
+        assert_eq!(
+            consumer.rates_url,
+            "https://mirror.example/api/mirror/currency"
+        );
+        // A trailing slash on the mirror base is trimmed, so the join never doubles up.
+        let trailing = CurrencyRates::from_config(&Config {
+            sync_from_upstream: false,
+            mirror_enabled: false,
+            dataset_mirror_url: "https://mirror.example/".to_string(),
+            ..crate::test_support::test_config()
+        });
+        assert_eq!(
+            trailing.rates_url,
+            "https://mirror.example/api/mirror/currency"
+        );
+        // Explicit upstream posture: straight to the provider.
+        let upstream = CurrencyRates::from_config(&Config {
+            sync_from_upstream: true,
+            ..crate::test_support::test_config()
+        });
+        assert_eq!(upstream.rates_url, RATES_URL);
+        // The mirror origin is the source of truth (it re-serves what it fetches), so it also
+        // fetches straight from the provider.
+        let origin = CurrencyRates::from_config(&Config {
+            mirror_enabled: true,
+            ..crate::test_support::test_config()
+        });
+        assert_eq!(origin.rates_url, RATES_URL);
     }
 
     #[test]

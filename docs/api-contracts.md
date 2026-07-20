@@ -976,6 +976,7 @@ unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
+| `GET /api/mirror/currency` | the daily USD reference-rate (FX) feed proxied **verbatim** from the upstream provider (Frankfurter), so consumers pull exchange rates from this origin instead of the provider; shares the 1-hour meta TTL |
 
 The **fingerprint** route is not an upstream proxy: it serializes this origin's own
 in-memory index (built by the operator's `FINGERPRINT_BUILD_ENABLED` instance) into a
@@ -999,3 +1000,11 @@ snapshot has been persisted yet); a restart reseeds from the DB-persisted snapsh
 (`scryfall::sld_persist`), so it serves the last-good drops, not the committed seed. A scrape
 that yields no drops (a markup change) is rejected, so a broken scrape never wipes the good
 table. Version-gated by a strong content `ETag` (a bodyless `304` when unchanged).
+
+The **currency** route *is* an upstream proxy passthrough (like the TCGCSV / MTGJSON routes):
+it re-serves the upstream FX provider's daily JSON **verbatim** under the metadata TTL. A default
+self-host (a mirror consumer) points its rate cache at this route
+(`currency::CurrencyRates::from_config`, chosen unless `SYNC_FROM_UPSTREAM=true` or the instance
+is itself the mirror origin), so — exactly like the card datasets — it never contacts the FX
+provider directly. Catalog values stay canonical USD on the wire; these rates are display-only,
+cached ~12h per instance, and an unreachable feed still falls open to a labelled USD conversion.

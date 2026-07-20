@@ -58,8 +58,8 @@ use crate::{
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
-            fingerprint_index, mtgjson_all_printings, scryfall_bulk_data, scryfall_file,
-            scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
+            currency_proxy, fingerprint_index, mtgjson_all_printings, scryfall_bulk_data,
+            scryfall_file, scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
         },
         openapi::openapi_json,
         sharing::{
@@ -656,6 +656,10 @@ pub fn build_router(state: AppState) -> Router {
             // The visual-scanner fingerprint index — served from this origin's in-memory
             // index (no upstream), so self-hosts import it instead of hashing images.
             .route("/api/mirror/fingerprints/{game}", get(fingerprint_index))
+            // The daily currency (FX) reference feed, proxied from the upstream provider so
+            // mirror consumers pull rates from this origin instead of the provider directly
+            // (their `CurrencyRates` fetches this route — see `currency::CurrencyRates::from_config`).
+            .route("/api/mirror/currency", get(currency_proxy))
             .layer(map_response(public_cache_layer));
         app = app.merge(mirror);
     }
