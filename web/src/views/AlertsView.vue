@@ -8,7 +8,7 @@ import { useAlertsQuery } from '@/composables/useAlerts'
 import { usePageMeta } from '@/lib/seo'
 
 // App-only account page, so keep it out of search indexes (like the profile/settings pages).
-usePageMeta({ title: 'Price alerts', canonicalPath: '/alerts', noindex: true })
+usePageMeta({ title: 'Alerts', canonicalPath: '/alerts', noindex: true })
 
 const alertsQuery = useAlertsQuery()
 const alerts = computed(() => alertsQuery.data.value?.data ?? [])
@@ -18,7 +18,7 @@ const alerts = computed(() => alertsQuery.data.value?.data ?? [])
   <div class="mx-auto max-w-2xl px-4 py-12">
     <div class="mb-8">
       <h1 class="flex items-center gap-2 text-3xl font-semibold tracking-tight">
-        <Bell class="size-7" /> Price alerts
+        <Bell class="size-7" /> Alerts
       </h1>
       <p class="text-muted-foreground mt-2">
         Get notified when a card or sealed product crosses a price you set. Add an alert from any
