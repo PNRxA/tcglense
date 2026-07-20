@@ -4,21 +4,24 @@
 // payload, so it's lazily imported the first time the scanner starts (never at app
 // load), like tesseract.
 //
-// Robustness choices (each covers a real hand-held failure mode):
-// - Canny thresholds adapt to the frame's median luma, so a dim room or a low-contrast
-//   card/table pairing still yields edges (fixed thresholds went blind there).
-// - The edge map is morphologically CLOSED (not just dilated), bridging small glare /
-//   focus breaks in the card outline without fattening it outward.
-// - Corners come from each contour's CONVEX HULL, so a finger overlapping the edge or a
-//   glare gap that leaves a C-shaped contour still resolves to the card's outer quad —
-//   the raw contour of either is nowhere near a clean 4-gon.
-// - The hull is simplified with an escalating approxPolyDP epsilon ladder until it gives
-//   exactly 4 corners (rounded corners / edge noise often need a coarser epsilon), and
-//   the quad must cover most of the hull so a degenerate collapse can't stand in for it.
-// - When the edge pass finds nothing, an Otsu-threshold segmentation pass retries —
-//   catching soft-gradient outlines Canny under-fires on (uniform light, matte sleeves).
-// - Among candidates, the score is area-dominant but nudged toward the truer card
-//   aspect, so the outer card edge beats an inner frame rectangle of similar size.
+// Robustness constraints (each covers a real hand-held failure mode; each has a
+// discriminating case in __tests__/opencvDetect.spec.ts):
+// - Canny thresholds must scale with the frame's median luma — constant thresholds
+//   yield no edges at all in a dim or low-contrast scene.
+// - The edge map is morphologically CLOSED: small glare/focus breaks otherwise split
+//   the outline into fragments that individually fail the size/aspect gates.
+// - Corners come from each contour's CONVEX HULL: a finger overlapping the edge or a
+//   wide glare gap leaves a notched or C-shaped raw contour that never simplifies to a
+//   clean 4-gon, but whose hull is still the card's outer quad.
+// - The hull is simplified with an escalating approxPolyDP epsilon ladder until it
+//   yields exactly 4 corners (rounded corners / residual noise survive a fine epsilon),
+//   and the quad must cover most of the hull — the coverage gate is what keeps a
+//   card-aspect ellipse-ish blob from reading as a card.
+// - When the edge pass finds nothing, an Otsu-threshold segmentation retry catches
+//   soft-gradient outlines below any usable edge threshold. It re-reads the whole
+//   frame, so the live loop gates its cadence (see DetectOptions).
+// - Scoring is area-dominant but weighted toward the true card aspect, so the outer
+//   card edge outranks an inner frame rectangle and other near-card distractors.
 //
 // Corners are returned NORMALISED (0..1 of the frame) so the same quad drives both the
 // on-screen outline (any display size) and the capture warp (any capture resolution).
@@ -48,6 +51,7 @@ type Cv = {
     method: number,
   ) => void
   convexHull: (src: CvMat, dst: CvMat) => void
+  boundingRect: (contour: CvMat) => { x: number; y: number; width: number; height: number }
   arcLength: (curve: CvMat, closed: boolean) => number
   approxPolyDP: (curve: CvMat, approx: CvMat, epsilon: number, closed: boolean) => void
   contourArea: (contour: CvMat) => number
@@ -195,11 +199,20 @@ function bestCardQuad(
     let best: { quad: Quad; score: number } | null = null
     for (let i = 0; i < contours.size(); i++) {
       const cnt = contours.get(i)
+      // Cheap pre-gate before any hull work: the bounding box bounds the hull from
+      // above, so a too-small box can never hide a big-enough hull. An Otsu mask of a
+      // noisy cardless frame yields thousands of speckle contours — without this gate
+      // the per-contour hull loop alone blows the live tick's budget on a phone.
+      const bounds = cv.boundingRect(cnt)
+      if (bounds.width * bounds.height < frameArea * MIN_AREA_FRACTION) {
+        cnt.delete()
+        continue
+      }
       const hull = new cv.Mat()
       try {
-        // Hull first: a glare-broken (C-shaped) or finger-notched contour has a tiny /
-        // non-convex raw outline but a card-shaped hull, and the hull's area is the
-        // right size gate for it.
+        // Hull, not the raw contour: a glare-broken (C-shaped) or finger-notched
+        // contour has a tiny / non-convex raw outline but a card-shaped hull, and the
+        // hull's area is the right size gate for it.
         cv.convexHull(cnt, hull)
         const hullArea = cv.contourArea(hull)
         if (hullArea < frameArea * MIN_AREA_FRACTION) continue
@@ -223,9 +236,21 @@ function bestCardQuad(
   }
 }
 
+export interface DetectOptions {
+  /** Whether the Otsu segmentation retry may run when the edge pass finds nothing.
+   * It reads the whole frame again and is the expensive half of a cardless tick, so
+   * the live loop only enables it on a cadence of misses (the outline tracker bridges
+   * the added latency); a one-off capture-path detect should leave it on (default). */
+  segmentationFallback?: boolean
+}
+
 /** Detect the most card-shaped quadrilateral in `imageData`, or null. Corners are
  * returned normalised (0..1) and ordered [TL, TR, BR, BL]. All OpenCV mats are freed. */
-export function detectCardQuadCv(cv: Cv, imageData: ImageData): Quad | null {
+export function detectCardQuadCv(
+  cv: Cv,
+  imageData: ImageData,
+  options: DetectOptions = {},
+): Quad | null {
   const w = imageData.width
   const h = imageData.height
   const src = cv.matFromImageData(imageData)
@@ -248,11 +273,10 @@ export function detectCardQuadCv(cv: Cv, imageData: ImageData): Quad | null {
     kernel.delete()
     let best = bestCardQuad(cv, mask, w, h)
 
-    // Pass 2 (edge pass empty): Otsu segmentation — catches soft-gradient outlines
-    // where edges are too weak, and is polarity-agnostic (a dark card region is a hole
-    // contour, which RETR_LIST also traces). Only runs when needed, so the common case
-    // stays one pass per tick.
-    if (!best) {
+    // Pass 2 (edge pass empty, and the caller allows it): Otsu segmentation — catches
+    // soft-gradient outlines where edges are too weak, and is polarity-agnostic (a
+    // dark card region is a hole contour, which RETR_LIST also traces).
+    if (!best && (options.segmentationFallback ?? true)) {
       cv.threshold(blur, mask, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
       best = bestCardQuad(cv, mask, w, h)
     }

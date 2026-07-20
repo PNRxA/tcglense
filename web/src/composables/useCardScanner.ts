@@ -56,6 +56,12 @@ const DETECT_MAX = 640
 /** How often the live detection loop runs (ms) — ~8 fps for a responsive outline. */
 const DETECT_INTERVAL_MS = 120
 
+/** While nothing is detected, the expensive Otsu segmentation retry runs only every
+ * Nth consecutive miss: a cardless viewfinder is the scanner's dominant state, and the
+ * retry roughly triples a cardless tick's cost. The outline tracker's hold bridges a
+ * lock that lands a tick or two later, so the cadence is invisible on screen. */
+const SEGMENTATION_MISS_CADENCE = 3
+
 /** What one captured frame yields for the session. */
 export interface ScanCapture {
   /** 256-bit perceptual hashes of the deskewed card — the base crop plus small geometric
@@ -86,6 +92,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   // still, snaps on a real move, and bridges brief dropouts — so the outline stays
   // visibly locked on instead of wobbling/flickering (see lib/scan/quadTracker).
   const quadTracker = createQuadTracker()
+  // Consecutive live-loop ticks with no raw detection — the counter behind the Otsu
+  // retry cadence (a detection resets it, so a card that only the segmentation pass
+  // sees keeps being re-detected every tick while it stays in frame).
+  let rawMisses = 0
 
   let stream: MediaStream | null = null
   let worker: Tesseract.Worker | null = null
@@ -338,11 +348,14 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     const image = ctx.getImageData(0, 0, dw, dh)
     let raw: Quad | null
     if (cv) {
-      raw = detectCardQuadCv(cv, image)
+      raw = detectCardQuadCv(cv, image, {
+        segmentationFallback: rawMisses % SEGMENTATION_MISS_CADENCE === 0,
+      })
     } else {
       const q = detectCardQuad(toGray(image.data, dw, dh), dw, dh)
       raw = q ? (q.map((p) => ({ x: p.x / dw, y: p.y / dh })) as Quad) : null
     }
+    rawMisses = raw ? 0 : rawMisses + 1
     detectedQuad.value = quadTracker.update(raw)
   }
 
@@ -356,6 +369,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
       detectTimer = null
     }
     quadTracker.reset()
+    rawMisses = 0
     detectedQuad.value = null
   }
 

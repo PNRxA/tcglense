@@ -95,6 +95,26 @@ describe('createQuadTracker', () => {
     expect(tracker.update(null)).toBeNull()
   })
 
+  it('ships the intended defaults: smooth ≤0.05 apart, snap beyond, hold 3 ticks', () => {
+    // useCardScanner calls createQuadTracker() bare, so THESE defaults are the live
+    // scanner's behavior — pin them.
+    const tracker = createQuadTracker()
+    const base = quadAt(0.2, 0.15)
+    tracker.update(base)
+    // 0.04 mean offset — inside the default snapDistance, so it smooths (default
+    // blend 0.5 puts the track at the midpoint), rather than snapping.
+    const near = quadAt(0.24, 0.15)
+    expect(tracker.update(near)![0]!.x).toBeCloseTo(0.22, 10)
+    // 0.2 offset — beyond snapDistance: adopts the new position wholesale.
+    const far = quadAt(0.44, 0.15)
+    expect(tracker.update(far)).toEqual(far)
+    // Held for exactly 3 misses, gone on the 4th.
+    expect(tracker.update(null)).toEqual(far)
+    expect(tracker.update(null)).toEqual(far)
+    expect(tracker.update(null)).toEqual(far)
+    expect(tracker.update(null)).toBeNull()
+  })
+
   it('reset() forgets the track and the miss count', () => {
     const tracker = createQuadTracker({ holdTicks: 3 })
     tracker.update(quadAt(0.2, 0.15))
