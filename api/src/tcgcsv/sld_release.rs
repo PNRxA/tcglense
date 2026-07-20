@@ -8,10 +8,11 @@
 //!
 //! So we **derive** each SLD product's release date the same way [`super::sld_msrp`] derives
 //! its MSRP: resolve the product to its gallery drop (reusing [`crate::mtgjson::sld`]'s
-//! name-matching), then take the earliest `released_at` among that drop's cards. A product
-//! that resolves to no drop (a non-drop `SLD` product — commander deck, bundle, single-card
-//! promo) keeps the group date, as does a drop whose cards carry no known date yet — no worse
-//! than the status quo, never a wrong date.
+//! name-matching), then take the modal `released_at` among that drop's cards (ties → earliest),
+//! matching the card by-drop view's `handlers::catalog::sets::drop_released_at` so the two
+//! surfaces agree. A product that resolves to no drop (a non-drop `SLD` product — commander
+//! deck, bundle, single-card promo) keeps the group date, as does a drop whose cards carry no
+//! known date yet — no worse than the status quo, never a wrong date.
 //!
 //! Unlike the MSRP derivation this reads no static file: the per-drop dates come from the
 //! already-ingested `cards` table, passed in as a `collector_number -> released_at` map that
@@ -30,10 +31,11 @@ use crate::mtgjson::sld;
 /// product resolves to no gallery drop, or none of the drop's cards have a known release date.
 /// `card_dates` maps an `sld` collector number to that card's `released_at`.
 ///
-/// The **earliest** date among the drop's cards is used: a drop's cards share one release
-/// date, so the min is that date and it's robust to a stray outlier. Scryfall stores dates as
-/// ISO `YYYY-MM-DD`, which sort lexicographically = chronologically, so `min` over the raw
-/// strings is correct without parsing.
+/// The **modal** date among the drop's cards is used (ties → earliest): a drop's cards share
+/// one street date, so the mode *is* that date and shrugs off a stray reprint carrying a
+/// different one — matching `handlers::catalog::sets::drop_released_at`, which derives the same
+/// date for the card by-drop view, so the product and card surfaces agree. ISO `YYYY-MM-DD`
+/// dates compare lexicographically = chronologically, so the earliest-tie-break needs no parsing.
 pub fn derive(
     set_code: &str,
     external_id: &str,
@@ -45,10 +47,19 @@ pub fn derive(
     }
     let table = sld::table()?;
     let pd = sld::resolve_product_drop(&table, external_id, name)?;
-    pd.collector_numbers()
-        .filter_map(|cn| card_dates.get(cn))
-        .min()
-        .cloned()
+    // Tally the drop's cards' dates and take the mode (ties → the earlier ISO date), mirroring
+    // `handlers::catalog::sets::drop_released_at` so this agrees with the card by-drop view.
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for cn in pd.collector_numbers() {
+        if let Some(date) = card_dates.get(cn) {
+            *counts.entry(date.as_str()).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        // Highest count wins; on a tie prefer the earlier date (smaller ISO-8601 string).
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(date, _)| date.to_string())
 }
 
 /// A stable content hash (64 bits of SHA-256, hex) of the per-drop date inputs — the
@@ -89,13 +100,16 @@ mod tests {
     }
 
     #[test]
-    fn derives_earliest_date_among_a_drops_cards() {
-        // "Cats of Chaos" (in the shipped snapshot) is collector numbers 2690–2694. Give a few
-        // of them distinct dates, plus a card in no drop that must be ignored.
+    fn derives_modal_date_shrugging_off_a_stray_outlier() {
+        // "Cats of Chaos" (in the shipped snapshot) is collector numbers 2690–2694. Most of the
+        // drop's cards share one street date; a single reprint carries an earlier outlier date,
+        // and a card in no drop must be ignored. The modal date wins — `min` would wrongly pick
+        // the earlier outlier.
         let card_dates = dates(&[
-            ("2690", "2024-05-06"),
+            ("2690", "2024-05-03"),
             ("2691", "2024-05-03"),
-            ("2694", "2024-05-10"),
+            ("2692", "2024-05-03"),
+            ("2694", "2019-01-01"), // a stray reprint with a different, earlier date
             ("999999", "2000-01-01"), // not one of the drop's cards: ignored
         ]);
         assert_eq!(
