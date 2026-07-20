@@ -26,15 +26,20 @@ function anchors(wrapper: ReturnType<typeof mount>) {
 }
 
 describe('ProductBuyLinks', () => {
-  it('renders the "Where to buy" card with US and Australia sections for mtg', () => {
+  it('collapses to the featured US stores by default — no AU section (nothing featured there)', () => {
     const wrapper = mount(ProductBuyLinks, { props: { game: 'mtg', product: makeProduct() } })
     expect(wrapper.text()).toContain('Where to buy')
     const headings = wrapper.findAll('h3').map((h) => h.text())
-    expect(headings).toEqual(['US', 'Australia'])
+    expect(headings).toEqual(['US'])
+    expect(anchors(wrapper).map((a) => a.text())).toEqual(['TCGplayer', 'Card Kingdom'])
+    // The toggle says how many stores it hides (23 total − 2 featured).
+    expect(wrapper.get('button[aria-expanded]').text()).toContain('21 more')
   })
 
-  it('renders an outbound store link per store, each opening safely in a new tab', () => {
+  it('reveals an outbound link per store (each safely in a new tab) via "Show all stores"', async () => {
     const wrapper = mount(ProductBuyLinks, { props: { game: 'mtg', product: makeProduct() } })
+    await wrapper.get('button[aria-expanded]').trigger('click')
+    expect(wrapper.findAll('h3').map((h) => h.text())).toEqual(['US', 'Australia'])
     const links = anchors(wrapper)
     // 6 US + 17 Australia stores.
     expect(links).toHaveLength(23)

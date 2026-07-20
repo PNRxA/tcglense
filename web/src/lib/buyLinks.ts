@@ -14,6 +14,10 @@ import type { Card, Product } from '@/lib/api'
 interface BuyStore {
   name: string
   template: string
+  // Shown while the "Where to buy" card is collapsed (its default): the couple of
+  // headline stores per region. Everything else stays behind the "Show all stores"
+  // toggle (see BuyLinks.vue).
+  featured?: boolean
   // Set on stores whose template wraps {name} in %22 quotes (an exact-phrase
   // search): the few card names that contain literal double quotes (Portal
   // Three Kingdoms "nickname" cards, some Un-cards) would nest quotes and
@@ -33,6 +37,8 @@ interface BuySection {
 export interface BuyLink {
   name: string
   href: string
+  // Mirrors BuyStore.featured: visible while the buy card is collapsed.
+  featured: boolean
 }
 
 export interface BuyLinkSection {
@@ -54,11 +60,13 @@ const MTG_SECTIONS: BuySection[] = [
         name: 'TCGplayer',
         template:
           'https://www.tcgplayer.com/search/magic/product?productLineName=magic&view=grid&q={name}',
+        featured: true,
       },
       {
         name: 'Card Kingdom',
         template:
           'https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D={name}',
+        featured: true,
       },
       {
         name: 'Cardmarket',
@@ -92,7 +100,11 @@ const MTG_SECTIONS: BuySection[] = [
   {
     title: 'Australia',
     stores: [
-      { name: 'MTG Mate', template: 'https://www.mtgmate.com.au/cards/search?q={name}' },
+      {
+        name: 'MTG Mate',
+        template: 'https://www.mtgmate.com.au/cards/search?q={name}',
+        featured: true,
+      },
       { name: 'Good Games', template: 'https://tcg.goodgames.com.au/search?q={name}' },
       {
         name: 'MTG Singles Australia',
@@ -157,11 +169,13 @@ const MTG_PRODUCT_SECTIONS: BuySection[] = [
         template:
           'https://www.tcgplayer.com/search/magic/product?productLineName=magic&view=grid&q={name}',
         preferProductUrl: true,
+        featured: true,
       },
       {
         name: 'Card Kingdom',
         template:
           'https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D={name}',
+        featured: true,
       },
       {
         name: 'Star City Games',
@@ -262,7 +276,11 @@ function toLinkSections(
 ): BuyLinkSection[] {
   return sections.map((section) => ({
     title: section.title,
-    links: section.stores.map((store) => ({ name: store.name, href: hrefFor(store) })),
+    links: section.stores.map((store) => ({
+      name: store.name,
+      href: hrefFor(store),
+      featured: store.featured === true,
+    })),
   }))
 }
 
