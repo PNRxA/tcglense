@@ -119,8 +119,11 @@ const rarityChipClass = computed(
       <Skeleton class="h-6 w-80" />
     </div>
 
+    <!-- Rows pinned to [auto,1fr]: row 1 hugs the rail's content and row 2 (the buy links)
+      absorbs the spanning main column's surplus height — auto rows would instead split
+      that surplus into row 1, opening a gap between the rail and the buy links. -->
     <div
-      class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
+      class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:grid-rows-[auto_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
     >
       <!-- Left rail: the image plus everything price/ownership shaped. -->
       <aside class="space-y-4 md:col-start-1 md:row-start-1">

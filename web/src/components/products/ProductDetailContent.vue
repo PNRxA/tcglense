@@ -16,7 +16,6 @@ import type { ProductCardsSearchKeys } from '@/composables/useProductCardsSearch
 import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
-import { useAuthStore } from '@/stores/auth'
 
 // The body of a sealed product's detail — image, prices, collection/wish-list controls,
 // composition, price history, buy links, and contained cards — shared verbatim by the full
@@ -40,7 +39,6 @@ const props = defineProps<{
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 const money = useCurrency()
-const auth = useAuthStore()
 
 const productQuery = useProductQuery(game, id)
 const product = computed(() => productQuery.data.value)
@@ -131,8 +129,11 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
       <Skeleton class="h-6 w-64" />
     </div>
 
+    <!-- Rows pinned to [auto,1fr]: row 1 hugs the rail's content and row 2 (the buy links)
+      absorbs the spanning main column's surplus height — auto rows would instead split
+      that surplus into row 1, opening a gap between the rail and the buy links. -->
     <div
-      class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
+      class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:grid-rows-[auto_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
     >
       <!-- Left rail: the image plus everything price/ownership shaped. -->
       <aside class="space-y-4 md:col-start-1 md:row-start-1">
@@ -152,13 +153,10 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
             <p v-else class="text-muted-foreground text-sm">No current price.</p>
           </div>
 
-          <!-- Independent collection + wish-list sealed holdings (#364/#435). -->
-          <ProductWishlistControls
-            v-if="auth.isAuthenticated"
-            :game="game"
-            :product="product"
-            list="collection"
-          />
+          <!-- Independent collection + wish-list sealed holdings (#364/#435). Both gate
+               internally on auth (matching the card page), so signed-out visitors see the
+               sign-in nudges rather than a missing section. -->
+          <ProductWishlistControls :game="game" :product="product" list="collection" />
           <ProductWishlistControls :game="game" :product="product" list="wishlist" />
         </template>
         <template v-else>
