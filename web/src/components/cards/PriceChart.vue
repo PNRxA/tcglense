@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCurrency } from '@/composables/useCurrency'
-import { type PriceRange } from '@/lib/api'
+import { listSets, type CardSet, type PriceRange } from '@/lib/api'
+import { STRUCTURAL_CATALOG_STALE_MS } from '@/lib/queryClient'
 
 // The shared price-history chart + range picker, used by both card and sealed-product
 // detail pages. It's fed a `fetcher` (which takes the selected range and returns the USD
@@ -41,6 +42,10 @@ const props = withDefaults(
     /** Show a clickable legend that toggles each line on/off. Opt-in — the collection value
      * chart enables it to switch its Cards / Sealed products lines; detail charts leave it off. */
     toggleable?: boolean
+    /** Game id. When set, the chart overlays set-release markers (a dashed rule + the set's
+     * logo at each notable release in the plotted window) so price moves read against the
+     * drops that drove them. All three surfaces (card, sealed product, collection) pass it. */
+    game?: string
   }>(),
   {
     title: 'Price history',
@@ -48,6 +53,17 @@ const props = withDefaults(
   },
 )
 const money = useCurrency()
+
+// The game's set list feeds the release markers; keyed identically to `useSetsQuery` so it
+// rides the same warm cache as the catalog/collection set views rather than a second fetch.
+// Only fetched when a `game` is provided (the marker-enabled surfaces).
+const setsQuery = useQuery({
+  queryKey: ['sets', computed(() => props.game ?? '')],
+  queryFn: ({ signal }) => listSets(props.game as string, signal),
+  enabled: computed(() => !!props.game),
+  staleTime: STRUCTURAL_CATALOG_STALE_MS,
+})
+const sets = computed<CardSet[]>(() => (props.game ? (setsQuery.data.value?.data ?? []) : []))
 
 // The chart body is a separate chunk so unovis never bloats a detail route; a Skeleton
 // (reduced-motion aware, like every other placeholder) stands in immediately (delay 0)
@@ -154,6 +170,8 @@ const isEmpty = computed(
         :single-series="props.singleSeries"
         :series-labels="props.seriesLabels"
         :toggleable="props.toggleable"
+        :sets="sets"
+        :game="props.game"
       />
     </CardContent>
   </Card>

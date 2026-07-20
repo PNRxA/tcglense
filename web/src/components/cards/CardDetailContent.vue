@@ -227,10 +227,13 @@ const rarityChipClass = computed(
         </template>
 
         <!-- Price history over time. Keyed off game/id, so it mounts and fetches in
-          parallel with the card query above. -->
+          parallel with the card query above. `toggleable` adds the regular/foil key so
+          either line can be switched off; `game` overlays set-release markers. -->
         <PriceChart
           :query-key="['card-prices', game, id]"
           :fetcher="(range) => getPriceHistory(game, id, range)"
+          :game="game"
+          toggleable
         />
 
         <!-- This card's other printings (same gameplay object, issue #63). Keyed off the

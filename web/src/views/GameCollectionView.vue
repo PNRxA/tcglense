@@ -209,6 +209,7 @@ function fetchValueHistory(range: PriceRange) {
         :series-labels="{ primary: 'Cards', secondary: 'Sealed products' }"
         :query-key="['collection-value-history', game]"
         :fetcher="fetchValueHistory"
+        :game="game"
         toggleable
       />
 

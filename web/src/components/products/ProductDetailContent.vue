@@ -185,10 +185,14 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
         <ProductContainers ref="containersEl" class="scroll-mt-6" :game="game" :id="id" />
 
         <!-- Price history over time. Keyed off game/id, so it mounts and fetches in
-          parallel with the product query above. -->
+          parallel with the product query above. `game` overlays set-release markers.
+          Sealed products are sold at a single (regular) price, so plot one line only —
+          no empty foil series. -->
         <PriceChart
           :query-key="['product-prices', game, id]"
           :fetcher="(range) => getProductPrices(game, id, range)"
+          :game="game"
+          single-series
         />
 
         <!-- The cards this product contains / can be pulled from — the reverse of the
