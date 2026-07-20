@@ -2,6 +2,7 @@ pub mod api_key;
 pub mod card;
 pub mod card_fingerprint;
 pub mod card_price_history;
+pub mod card_ruling;
 pub mod card_set;
 pub mod cli_auth_code;
 pub mod collection_item;

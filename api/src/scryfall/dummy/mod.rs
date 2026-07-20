@@ -37,12 +37,13 @@ use super::ingest::{self, IngestError};
 use super::map;
 use super::price_history;
 use crate::entities::prelude::{
-    Card, Product, ProductPriceHistory, SealedComponent, SealedContent,
+    Card, CardRuling, Product, ProductPriceHistory, SealedComponent, SealedContent,
 };
 use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 use crate::entities::{
-    card, card_price_history, product, product_price_history, sealed_component, sealed_content,
+    card, card_price_history, card_ruling, product, product_price_history, sealed_component,
+    sealed_content,
 };
 use catalog::{dummy_cards, dummy_sets};
 use prices::price_walk;
@@ -480,6 +481,62 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
     Ok(total)
 }
 
+/// Seed a few dummy rulings ("Notes and Rules Information", issue #522) for the reprinted
+/// card's shared gameplay identity, so the card-detail rulings section renders offline for
+/// both of its printings (proving rulings are keyed on `oracle_id`, not the printing).
+/// Wipes the game's rows then inserts fresh, mirroring the real ingest's wholesale rebuild,
+/// so a reseed is idempotent. Returns the number written.
+async fn seed_rulings(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    // (source, published_at, comment). Two Wizards rulings on different dates plus a
+    // Scryfall note, so the offline section shows the ordered, multi-source shape.
+    let rulings: &[(&str, &str, &str)] = &[
+        (
+            "wotc",
+            "2024-01-01",
+            "Dummy Reprinted Relic's ability triggers only once each turn, even if several \
+             artifacts enter the battlefield at the same time.",
+        ),
+        (
+            "wotc",
+            "2024-06-15",
+            "If Dummy Reprinted Relic leaves the battlefield before its ability resolves, the \
+             ability still resolves.",
+        ),
+        (
+            "scryfall",
+            "2024-06-15",
+            "This is fabricated offline ruling text — real rulings come from Scryfall's \
+             `rulings` bulk data.",
+        ),
+    ];
+
+    let now = Utc::now();
+    let models: Vec<card_ruling::ActiveModel> = rulings
+        .iter()
+        .map(|(source, published_at, comment)| card_ruling::ActiveModel {
+            id: NotSet,
+            game: Set(GAME.to_string()),
+            oracle_id: Set(catalog::REPRINT_ORACLE_ID.to_string()),
+            source: Set(source.to_string()),
+            published_at: Set(published_at.to_string()),
+            comment: Set(comment.to_string()),
+            created_at: Set(now),
+        })
+        .collect();
+
+    CardRuling::delete_many()
+        .filter(card_ruling::Column::Game.eq(GAME))
+        .exec(db)
+        .await?;
+    let total = models.len() as u64;
+    if !models.is_empty() {
+        CardRuling::insert_many(models)
+            .exec_without_returning(db)
+            .await?;
+    }
+    Ok(total)
+}
+
 /// Seed the dummy MTG catalog, recording status in `ingest_state`. On failure the
 /// state row is best-effort marked `"error"` (mirroring `super::ingest::refresh`) so
 /// `GET /status` stays honest, and the error is returned for the caller to log.
@@ -556,6 +613,11 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         rows = component_rows,
         "seeded dummy sealed-product components"
     );
+
+    // Card rulings ("Notes and Rules Information"), so the card-detail rulings section
+    // renders offline. Keyed on the reprinted card's oracle id (seeded above).
+    let ruling_rows = seed_rulings(db).await?;
+    tracing::info!(rows = ruling_rows, "seeded dummy card rulings");
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not

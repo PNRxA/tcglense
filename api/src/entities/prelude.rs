@@ -2,6 +2,7 @@ pub use super::api_key::Entity as ApiKey;
 pub use super::card::Entity as Card;
 pub use super::card_fingerprint::Entity as CardFingerprint;
 pub use super::card_price_history::Entity as CardPriceHistory;
+pub use super::card_ruling::Entity as CardRuling;
 pub use super::card_set::Entity as CardSet;
 pub use super::cli_auth_code::Entity as CliAuthCode;
 pub use super::collection_item::Entity as CollectionItem;

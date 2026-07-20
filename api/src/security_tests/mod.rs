@@ -39,6 +39,7 @@ mod refresh;
 mod registration;
 mod request_body;
 mod request_params;
+mod rulings;
 mod scan;
 mod search;
 mod sharing;

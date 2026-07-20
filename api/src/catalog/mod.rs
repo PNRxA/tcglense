@@ -78,6 +78,13 @@ pub async fn refresh_all(
                         "foil-variant price enrichment failed"
                     ),
                 }
+                // Card rulings ("Notes and Rules Information", issue #522): official
+                // clarifications keyed by oracle_id. Runs after the card sync so it can
+                // scope rulings to stored cards' gameplay ids; version-gated independently,
+                // so an unchanged tick is skipped.
+                if let Err(err) = crate::scryfall::rulings::refresh(db, client, source).await {
+                    tracing::error!(game = game.id, error = %err, "card rulings refresh failed");
+                }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
                 if let Err(err) =

@@ -30,11 +30,11 @@ use crate::{
             public_holdings_cache_layer,
         },
         catalog::{
-            card_image, card_names, card_prices, card_prints, card_sealed, get_card, get_product,
-            get_set, ingest_status, list_cards, list_games, list_products, list_set_cards,
-            list_set_drops, list_set_subtypes, list_sets, product_card_sections, product_cards,
-            product_containers, product_contents, product_facets, product_image, product_prices,
-            scan_cards, set_icon,
+            card_image, card_names, card_prices, card_prints, card_rulings, card_sealed, get_card,
+            get_product, get_set, ingest_status, list_cards, list_games, list_products,
+            list_set_cards, list_set_drops, list_set_subtypes, list_sets, product_card_sections,
+            product_cards, product_containers, product_contents, product_facets, product_image,
+            product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -454,6 +454,9 @@ pub fn build_router(state: AppState) -> Router {
         // The sealed products this card is found in / can be pulled from (issue: card
         // sealed-product membership). A static-suffix sibling of `/prices` + `/prints`.
         .route("/api/games/{game}/cards/{id}/sealed", get(card_sealed))
+        // The card's rulings ("Notes and Rules Information", issue #522), keyed by
+        // oracle_id. A static-suffix sibling of `/prices` + `/prints` + `/sealed`.
+        .route("/api/games/{game}/cards/{id}/rulings", get(card_rulings))
         // Sealed products (booster boxes, bundles, decks, …) from TCGCSV. `facets`
         // is a static sibling of `/products/{id}` (static segments win in axum), so
         // it never collides with a product id.

@@ -13,6 +13,9 @@ mod map;
 pub mod model;
 mod price_history;
 mod progress;
+/// Card rulings ("Notes and Rules Information", issue #522): Scryfall's `rulings` bulk
+/// import into `card_rulings`, keyed by `oracle_id`.
+pub mod rulings;
 pub mod search;
 /// DB persistence for the Secret Lair drop snapshot (reseed the store on boot from the last-good
 /// scrape/import instead of the committed seed).
@@ -44,6 +47,10 @@ pub const GAME: &str = "mtg";
 pub(crate) const GAME_NAME: &str = "Magic: The Gathering";
 /// Bulk dataset we ingest: one card object per English (or sole-language) print.
 pub const DATASET: &str = "default_cards";
+/// Bulk dataset of card rulings ("Notes and Rules Information", issue #522), keyed by
+/// `oracle_id`. Tracked in its own `ingest_state` `(mtg, rulings)` row, so it version-gates
+/// independently of the card import.
+pub const DATASET_RULINGS: &str = "rulings";
 
 /// Upstream bulk-data catalog. `pub` so the dataset-source seam ([`crate::datasets`])
 /// and the mirror handler ([`crate::handlers::mirror`]) can resolve/re-serve it.
