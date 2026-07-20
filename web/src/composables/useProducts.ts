@@ -1,4 +1,4 @@
-import { type Ref } from 'vue'
+import { toValue, type MaybeRefOrGetter, type Ref } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   getCardSealed,
@@ -35,7 +35,10 @@ interface ProductListQueryOptions {
   set: Ref<string>
   type: Ref<string>
   sort: Ref<string>
-  defaultSort: string
+  // Plain value or ref/getter: the sealed browse passes a computed so the fallback sort tracks
+  // the active set (Secret Lair defaults to newest-first), matching the same computed handed to
+  // `useCardSearch`'s `defaultSort`.
+  defaultSort: MaybeRefOrGetter<string>
 }
 
 /** A page of a game's sealed products (name search + set/type filters + sort).
@@ -52,7 +55,7 @@ export function useProductsQuery(game: Ref<string>, opts: ProductListQueryOption
           type: opts.type.value || undefined,
           page: opts.page.value,
           pageSize: PRODUCT_PAGE_SIZE,
-          ...toSortParam(opts.sort.value, opts.defaultSort),
+          ...toSortParam(opts.sort.value, toValue(opts.defaultSort)),
         },
         signal,
       ),
