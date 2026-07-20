@@ -119,8 +119,8 @@ const sections = computed(() =>
 </script>
 
 <template>
-  <section v-if="showSection" class="mt-10">
-    <h2 class="mb-4 text-sm font-semibold">
+  <section v-if="showSection">
+    <h2 class="mb-4 text-base font-semibold tracking-tight">
       Cards in this product
       <span class="text-muted-foreground font-normal"> ({{ total.toLocaleString() }})</span>
     </h2>
@@ -149,9 +149,12 @@ const sections = computed(() =>
     <p v-else-if="searching && !sections.length" class="text-muted-foreground text-sm">
       No cards match “{{ query }}”.
     </p>
-    <div v-else class="space-y-8">
+    <div v-else class="space-y-3">
+      <!-- The first (most relevant) section starts expanded so the product's cards are
+        visible without a click — one page fetched up front; the rest keep #291's
+        collapsed-by-default economy. -->
       <ProductCardsSection
-        v-for="section in sections"
+        v-for="(section, index) in sections"
         :key="section.key"
         :game="game"
         :id="id"
@@ -161,6 +164,7 @@ const sections = computed(() =>
         :count="section.count"
         :search="query"
         :sort="sort"
+        :default-expanded="index === 0"
       />
     </div>
   </section>

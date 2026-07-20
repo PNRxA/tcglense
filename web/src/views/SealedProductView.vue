@@ -90,7 +90,7 @@ usePageMeta({
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-4 py-10">
+  <div class="mx-auto max-w-6xl px-4 py-10">
     <!-- Hierarchy trail (mirrors the JSON-LD BreadcrumbList; adds a crawlable link to the
       sealed browse). The back link below stays — it's history-aware (issue #203). -->
     <PageBreadcrumbs v-if="crumbs.length" :items="crumbs" />

@@ -17,7 +17,7 @@ const colorIdentityText = computed(() => colorLettersToText(props.card.color_ide
 </script>
 
 <template>
-  <dl class="mt-6 grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
+  <dl class="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2.5 text-sm">
     <dt class="text-muted-foreground">Set</dt>
     <dd>
       <RouterLink :to="`/cards/${game}/sets/${card.set_code}`" class="hover:underline">

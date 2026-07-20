@@ -43,7 +43,7 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
 </script>
 
 <template>
-  <section class="mt-6 rounded-lg border p-4">
+  <section class="bg-card rounded-xl border p-4 shadow-sm">
     <div class="mb-3 flex items-center justify-between gap-2">
       <h2 class="text-sm font-semibold">{{ wishlist ? 'Your wish list' : 'Your collection' }}</h2>
       <!-- Save status (signed-in only). -->

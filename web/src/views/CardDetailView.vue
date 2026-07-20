@@ -61,7 +61,7 @@ const backLink = useCardBackLink(game, card)
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-4 py-10">
+  <div class="mx-auto max-w-6xl px-4 py-10">
     <!-- Hierarchy trail (mirrors the JSON-LD BreadcrumbList; adds crawlable set links). The
       back link below stays — it's history-aware (issue #18/#63), a different affordance. -->
     <PageBreadcrumbs v-if="crumbs.length" :items="crumbs" />

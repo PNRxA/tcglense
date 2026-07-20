@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
+import { RouterLink } from 'vue-router'
 import CardImageZoom from '@/components/cards/CardImageZoom.vue'
 import CardMetaList from '@/components/cards/CardMetaList.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
@@ -18,6 +19,11 @@ import { getPriceHistory } from '@/lib/api'
 // (CardDetailView) and the browse-grid modal (CardDetailDialog). Page chrome (meta
 // tags, breadcrumb/back link, the modal frame) stays with the callers; both fetch the
 // same ['card', game, id] key, so the page and an overlay never double-fetch.
+//
+// Layout: a full-width header (name, mana cost, type, at-a-glance chips) over a
+// two-column body — a left rail holding the image plus everything price/ownership
+// shaped (price tiles, collection + wish-list steppers, buy links), and a main column
+// for the knowledge: rules text, details, price history, printings, sealed products.
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -48,118 +54,197 @@ const isMultiFace = computed(() => (card.value?.faces.length ?? 0) >= 2)
 const hasSeparateFaceImages = computed(
   () => isMultiFace.value && SEPARATE_FACE_IMAGE_LAYOUTS.includes(card.value?.layout ?? ''),
 )
+
+// Rarity chip tint, echoing the familiar TCG rarity metals (uncommon silver, rare
+// gold, mythic orange); anything unrecognised falls back to the muted chip.
+const RARITY_CHIP_CLASSES: Record<string, string> = {
+  common: 'bg-muted text-foreground/80',
+  uncommon: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+  rare: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  mythic: 'bg-orange-600/15 text-orange-700 dark:text-orange-400',
+}
+const rarityChipClass = computed(
+  () => RARITY_CHIP_CLASSES[card.value?.rarity ?? ''] ?? 'bg-muted text-foreground/80',
+)
 </script>
 
 <template>
   <p v-if="notFound" class="text-destructive py-12">Card not found.</p>
 
   <template v-else>
-    <!-- Card body — image(s) + details. On a cache-miss deep link a Skeleton stands in
-      until the query resolves; the chart, prints and sealed-product sections below mount
-      off the route params immediately, so they fetch in parallel rather than waiting. -->
-    <div v-if="!card" class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
-      <Skeleton class="aspect-[61/85] w-full rounded-[4.76%_/_3.42%]" />
-      <div class="space-y-4">
-        <Skeleton class="h-9 w-2/3" />
-        <Skeleton class="h-5 w-1/2" />
-        <Skeleton class="h-24 w-full" />
-        <Skeleton class="h-28 w-full" />
+    <!-- Header: name + mana cost, type line, and the at-a-glance chips (set, number,
+      rarity). On a cache-miss deep link a Skeleton stands in until the query resolves;
+      the chart, prints and sealed-product sections below mount off the route params
+      immediately, so they fetch in parallel rather than waiting. -->
+    <header v-if="card">
+      <div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+        <div class="min-w-0">
+          <h1 class="text-3xl font-semibold tracking-tight text-balance">{{ card.name }}</h1>
+          <p v-if="card.type_line" class="text-muted-foreground mt-1">{{ card.type_line }}</p>
+        </div>
+        <p
+          v-if="card.mana_cost && !isMultiFace"
+          class="bg-muted/50 shrink-0 rounded-lg border px-3 py-1.5 text-lg"
+          title="Mana cost"
+        >
+          <ManaSymbols :text="card.mana_cost" />
+        </p>
       </div>
+      <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs font-medium">
+        <RouterLink
+          :to="`/cards/${game}/sets/${card.set_code}`"
+          class="bg-muted/50 hover:bg-muted inline-flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors"
+        >
+          {{ card.set_name }}
+          <span class="text-muted-foreground">{{ card.set_code.toUpperCase() }}</span>
+        </RouterLink>
+        <span class="bg-muted/50 inline-flex items-center rounded-md border px-2 py-1 tabular-nums">
+          #{{ card.collector_number }}
+        </span>
+        <span
+          v-if="card.rarity"
+          class="inline-flex items-center rounded-md px-2 py-1 capitalize"
+          :class="rarityChipClass"
+        >
+          {{ card.rarity }}
+        </span>
+        <span v-if="card.released_at" class="text-muted-foreground px-1">
+          Released {{ card.released_at }}
+        </span>
+      </div>
+    </header>
+    <div v-else class="space-y-3">
+      <Skeleton class="h-9 w-2/3" />
+      <Skeleton class="h-5 w-1/2" />
+      <Skeleton class="h-6 w-80" />
     </div>
 
-    <div v-else class="grid gap-8 md:grid-cols-[minmax(0,20rem)_1fr]">
-      <!-- Image(s): one per face only for layouts with separate face images.
-        Each is clickable to enlarge it in a lightbox (issue #53). -->
-      <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
-        <template v-if="hasSeparateFaceImages">
-          <CardImageZoom
-            v-for="(face, index) in card.faces"
-            :key="index"
-            :game="game"
-            :id="card.id"
-            :name="face.name ?? card.name"
-            :face="index"
-            class="w-full"
-          />
+    <!-- Rows pinned to [auto,1fr]: row 1 hugs the rail's content and row 2 (the buy links)
+      absorbs the spanning main column's surplus height — auto rows would instead split
+      that surplus into row 1, opening a gap between the rail and the buy links. -->
+    <div
+      class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:grid-rows-[auto_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
+    >
+      <!-- Left rail: the image plus everything price/ownership shaped. -->
+      <aside class="space-y-4 md:col-start-1 md:row-start-1">
+        <template v-if="card">
+          <!-- Image(s): one per face only for layouts with separate face images.
+            Each is clickable to enlarge it in a lightbox (issue #53). -->
+          <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
+            <template v-if="hasSeparateFaceImages">
+              <CardImageZoom
+                v-for="(face, index) in card.faces"
+                :key="index"
+                :game="game"
+                :id="card.id"
+                :name="face.name ?? card.name"
+                :face="index"
+                class="w-full"
+              />
+            </template>
+            <CardImageZoom
+              v-else
+              :game="game"
+              :id="card.id"
+              :name="card.name"
+              :has-image="card.has_image"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Prices -->
+          <CardPriceSummary :card="card" />
+
+          <!-- Track how many copies you own (signed-in users). -->
+          <CollectionControls :game="game" :card="card" />
+
+          <!-- …and how many you want to buy — the wish-list twin (issue #167). Both
+               gate internally on auth, so signed-out visitors see the nudges. -->
+          <CollectionControls :game="game" :card="card" list="wishlist" />
         </template>
-        <CardImageZoom
-          v-else
-          :game="game"
-          :id="card.id"
-          :name="card.name"
-          :has-image="card.has_image"
-          class="w-full"
-        />
-      </div>
+        <template v-else>
+          <Skeleton class="aspect-[61/85] w-full rounded-[4.76%_/_3.42%]" />
+          <Skeleton class="h-24 w-full" />
+          <Skeleton class="h-28 w-full" />
+        </template>
+      </aside>
 
-      <!-- Details -->
-      <div>
-        <h1 class="text-3xl font-semibold tracking-tight">{{ card.name }}</h1>
-        <p v-if="card.type_line" class="text-muted-foreground mt-1">{{ card.type_line }}</p>
-
-        <CardMetaList :game="game" :card="card" />
-
-        <!-- Oracle text (single-faced cards; multi-faced show text per face below). -->
-        <p
-          v-if="!isMultiFace && card.oracle_text"
-          class="mt-6 text-sm leading-relaxed whitespace-pre-line"
-        >
-          <ManaSymbols :text="card.oracle_text" />
-        </p>
-
-        <!-- Per-face text breakdown for any multi-faced card (incl. split/flip). -->
-        <div v-if="isMultiFace" class="mt-6 space-y-3">
-          <div v-for="(face, index) in card.faces" :key="index" class="rounded-lg border p-3">
-            <p class="font-medium">{{ face.name }}</p>
-            <p v-if="face.type_line" class="text-muted-foreground text-sm">
-              {{ face.type_line }}
-            </p>
-            <p v-if="face.mana_cost" class="text-muted-foreground text-sm">
-              <ManaSymbols :text="face.mana_cost" />
-            </p>
-            <p v-if="face.oracle_text" class="mt-1 text-sm leading-relaxed whitespace-pre-line">
-              <ManaSymbols :text="face.oracle_text" />
-            </p>
-            <p
-              v-if="face.power && face.toughness"
-              class="text-muted-foreground mt-1 text-sm tabular-nums"
-            >
-              {{ face.power }} / {{ face.toughness }}
-            </p>
-            <p v-if="face.loyalty" class="text-muted-foreground mt-1 text-sm tabular-nums">
-              Loyalty {{ face.loyalty }}
+      <!-- Main column: rules text, details, price history, printings, sealed products.
+        Spans both rail rows on md+, so the buy links slot under the rail beside it. -->
+      <div class="min-w-0 space-y-6 md:col-start-2 md:row-span-2 md:row-start-1">
+        <template v-if="card">
+          <!-- Oracle text (single-faced cards; multi-faced show text per face below). -->
+          <div
+            v-if="!isMultiFace && card.oracle_text"
+            class="bg-card rounded-xl border p-4 shadow-sm"
+          >
+            <p class="text-sm leading-relaxed whitespace-pre-line">
+              <ManaSymbols :text="card.oracle_text" />
             </p>
           </div>
-        </div>
 
-        <!-- Prices -->
-        <CardPriceSummary :card="card" />
+          <!-- Per-face text breakdown for any multi-faced card (incl. split/flip). -->
+          <div v-if="isMultiFace" class="grid gap-3 sm:grid-cols-2">
+            <div
+              v-for="(face, index) in card.faces"
+              :key="index"
+              class="bg-card rounded-xl border p-4 shadow-sm"
+            >
+              <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <p class="font-medium">{{ face.name }}</p>
+                <p v-if="face.mana_cost" class="text-muted-foreground text-sm">
+                  <ManaSymbols :text="face.mana_cost" />
+                </p>
+              </div>
+              <p v-if="face.type_line" class="text-muted-foreground text-sm">
+                {{ face.type_line }}
+              </p>
+              <p v-if="face.oracle_text" class="mt-2 text-sm leading-relaxed whitespace-pre-line">
+                <ManaSymbols :text="face.oracle_text" />
+              </p>
+              <p
+                v-if="face.power && face.toughness"
+                class="text-muted-foreground mt-2 text-sm tabular-nums"
+              >
+                {{ face.power }} / {{ face.toughness }}
+              </p>
+              <p v-if="face.loyalty" class="text-muted-foreground mt-2 text-sm tabular-nums">
+                Loyalty {{ face.loyalty }}
+              </p>
+            </div>
+          </div>
 
-        <!-- Track how many copies you own (signed-in users). -->
-        <CollectionControls :game="game" :card="card" />
+          <!-- The full details list — everything the chips summarise and more. -->
+          <div class="bg-card rounded-xl border p-4 shadow-sm">
+            <h2 class="mb-3 text-sm font-semibold">Details</h2>
+            <CardMetaList :game="game" :card="card" />
+          </div>
+        </template>
+        <template v-else>
+          <Skeleton class="h-24 w-full rounded-xl" />
+          <Skeleton class="h-40 w-full rounded-xl" />
+        </template>
 
-        <!-- …and how many you want to buy — the wish-list twin (issue #167). Both
-             gate internally on auth, so signed-out visitors see the nudges. -->
-        <CollectionControls :game="game" :card="card" list="wishlist" />
+        <!-- Price history over time. Keyed off game/id, so it mounts and fetches in
+          parallel with the card query above. -->
+        <PriceChart
+          :query-key="['card-prices', game, id]"
+          :fetcher="(range) => getPriceHistory(game, id, range)"
+        />
+
+        <!-- This card's other printings (same gameplay object, issue #63). Keyed off the
+          route id so it mounts before the card loads; renders nothing when there are none. -->
+        <CardPrints :game="game" :id="id" />
+
+        <!-- Which sealed products this card is found in / can be pulled from / may be in.
+          Renders nothing when the card is in no ingested product. -->
+        <CardSealedProducts :game="game" :id="id" />
       </div>
+
+      <!-- Outbound "buy this card" links, grouped by region (issue #175). The rail's second
+        row on md+ (right under the price/ownership stack) but LAST in source order, so the
+        long store list doesn't push the card's actual content down on mobile. -->
+      <CardBuyLinks v-if="card" class="md:col-start-1 md:row-start-2" :game="game" :card="card" />
     </div>
-
-    <!-- Price history over time (full width, below the card details). -->
-    <PriceChart
-      :query-key="['card-prices', game, id]"
-      :fetcher="(range) => getPriceHistory(game, id, range)"
-    />
-
-    <!-- Outbound "buy this card" links, grouped by region (issue #175). Needs the full
-      card object, so it waits for the fetch (the sections below key off game/id alone). -->
-    <CardBuyLinks v-if="card" :game="game" :card="card" />
-
-    <!-- This card's other printings (same gameplay object, issue #63). Keyed off the
-      route id so it mounts before the card loads; renders nothing when there are none. -->
-    <CardPrints :game="game" :id="id" />
-
-    <!-- Which sealed products this card is found in / can be pulled from / may be in.
-      Renders nothing when the card is in no ingested product. -->
-    <CardSealedProducts :game="game" :id="id" />
   </template>
 </template>
