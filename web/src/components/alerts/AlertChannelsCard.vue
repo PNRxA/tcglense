@@ -80,17 +80,12 @@ const channelTest = reactive<Record<string, ChannelTestState | undefined>>({})
 // Which test is currently in flight — a single channel, or 'all' — for the button spinners.
 const pending = ref<AlertTestChannel | 'all' | null>(null)
 
-// A per-channel Test button fires the *saved* credentials, so it's live only when the saved
-// settings for that channel are complete AND the form has no unsaved edits to them — otherwise
-// the test would verify a stale value, and the inline hint tells the user to save first.
-const discordSavedReady = computed(
-  () => !!serverChannels.value?.discord_enabled && !!serverChannels.value?.discord_webhook_url,
-)
-const telegramSavedReady = computed(
-  () =>
-    !!serverChannels.value?.telegram_enabled &&
-    !!serverChannels.value?.telegram_bot_token &&
-    !!serverChannels.value?.telegram_chat_id,
+// A per-channel Test button fires the *saved* credentials, so it's live only when that channel
+// is saved (credentials present) AND enabled AND the form has no unsaved edits to it — otherwise
+// the test would verify a stale/absent value, and the inline status explains why.
+const discordConfigured = computed(() => !!serverChannels.value?.discord_webhook_url)
+const telegramConfigured = computed(
+  () => !!serverChannels.value?.telegram_bot_token && !!serverChannels.value?.telegram_chat_id,
 )
 const discordDirty = computed(() => {
   const s = serverChannels.value
@@ -107,8 +102,62 @@ const telegramDirty = computed(() => {
     telegramEnabled.value !== (s?.telegram_enabled ?? true)
   )
 })
-const canTestDiscord = computed(() => discordSavedReady.value && !discordDirty.value)
-const canTestTelegram = computed(() => telegramSavedReady.value && !telegramDirty.value)
+const canTestDiscord = computed(
+  () => discordConfigured.value && !!serverChannels.value?.discord_enabled && !discordDirty.value,
+)
+const canTestTelegram = computed(
+  () =>
+    telegramConfigured.value && !!serverChannels.value?.telegram_enabled && !telegramDirty.value,
+)
+
+// The single inline line shown beneath a channel. Priority: the unsaved-edit hint wins (so a
+// stale "Test sent" never lingers next to a value the test didn't verify), then the last test
+// result, then a configured/enabled hint that explains a disabled Test button.
+type StatusTone = 'ok' | 'fail' | 'muted'
+interface ChannelStatus {
+  tone: StatusTone
+  text: string
+}
+function channelStatus(args: {
+  name: string
+  loaded: boolean
+  configured: boolean
+  enabledSaved: boolean
+  dirty: boolean
+  result: ChannelTestState | undefined
+  unconfiguredText: string
+}): ChannelStatus | null {
+  const { name, loaded, configured, enabledSaved, dirty, result, unconfiguredText } = args
+  if (dirty) return { tone: 'muted', text: 'Save your changes to test them.' }
+  if (result?.kind === 'ok') return { tone: 'ok', text: `Test sent — check ${name}.` }
+  if (result?.kind === 'fail') return { tone: 'fail', text: result.detail || 'Test failed.' }
+  if (result?.kind === 'empty' || (loaded && !configured))
+    return { tone: 'muted', text: unconfiguredText }
+  if (loaded && !enabledSaved) return { tone: 'muted', text: `Enable ${name} and save to test it.` }
+  return null
+}
+const discordStatus = computed(() =>
+  channelStatus({
+    name: 'Discord',
+    loaded: !!serverChannels.value,
+    configured: discordConfigured.value,
+    enabledSaved: !!serverChannels.value?.discord_enabled,
+    dirty: discordDirty.value,
+    result: channelTest.discord,
+    unconfiguredText: 'Add a webhook URL and save it first.',
+  }),
+)
+const telegramStatus = computed(() =>
+  channelStatus({
+    name: 'Telegram',
+    loaded: !!serverChannels.value,
+    configured: telegramConfigured.value,
+    enabledSaved: !!serverChannels.value?.telegram_enabled,
+    dirty: telegramDirty.value,
+    result: channelTest.telegram,
+    unconfiguredText: 'Add a bot token and chat id and save them first.',
+  }),
+)
 
 function clearAllTestState() {
   testResults.value = null
@@ -140,9 +189,15 @@ async function onSave() {
   }
 }
 
-/** Test one channel using its saved credentials; the result shows inline beside its button. */
+/**
+ * Test one channel using its saved credentials; the result shows inline beside its button.
+ * Clears the "Test all" box and this channel's own slot only — a sibling channel's inline
+ * result is independent and left untouched.
+ */
 async function onTestChannel(channel: AlertTestChannel) {
-  clearAllTestState()
+  testResults.value = null
+  testError.value = null
+  channelTest[channel] = undefined
   pending.value = channel
   try {
     const response = await test.mutateAsync(channel)
@@ -222,27 +277,23 @@ async function onTestAll() {
             In your Discord server: Settings → Integrations → Webhooks → New Webhook → Copy URL.
           </p>
           <p
-            v-if="channelTest.discord?.kind === 'ok'"
-            class="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400"
+            v-if="discordStatus"
+            :class="[
+              'flex items-start gap-1.5 text-xs',
+              discordStatus.tone === 'ok'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : discordStatus.tone === 'fail'
+                  ? 'text-destructive'
+                  : 'text-muted-foreground',
+            ]"
+            :role="discordStatus.tone === 'fail' ? 'alert' : undefined"
           >
-            <Check class="size-3.5" /> Test sent — check Discord.
-          </p>
-          <p
-            v-else-if="channelTest.discord?.kind === 'fail'"
-            class="text-destructive flex items-start gap-1.5 text-xs"
-            role="alert"
-          >
-            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
-            <span>{{ channelTest.discord?.detail || 'Test failed.' }}</span>
-          </p>
-          <p
-            v-else-if="channelTest.discord?.kind === 'empty'"
-            class="text-muted-foreground text-xs"
-          >
-            Add a webhook URL and save it first.
-          </p>
-          <p v-else-if="discordDirty" class="text-muted-foreground text-xs">
-            Save your changes to test them.
+            <Check v-if="discordStatus.tone === 'ok'" class="mt-0.5 size-3.5 shrink-0" />
+            <TriangleAlert
+              v-else-if="discordStatus.tone === 'fail'"
+              class="mt-0.5 size-3.5 shrink-0"
+            />
+            <span>{{ discordStatus.text }}</span>
           </p>
         </div>
 
@@ -295,31 +346,25 @@ async function onTestAll() {
             Create a bot with <span class="font-mono">@BotFather</span> for the token, then message
             your bot and read your chat id from <span class="font-mono">@userinfobot</span>.
           </p>
-          <div class="sm:col-span-2">
-            <p
-              v-if="channelTest.telegram?.kind === 'ok'"
-              class="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400"
-            >
-              <Check class="size-3.5" /> Test sent — check Telegram.
-            </p>
-            <p
-              v-else-if="channelTest.telegram?.kind === 'fail'"
-              class="text-destructive flex items-start gap-1.5 text-xs"
-              role="alert"
-            >
-              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
-              <span>{{ channelTest.telegram?.detail || 'Test failed.' }}</span>
-            </p>
-            <p
-              v-else-if="channelTest.telegram?.kind === 'empty'"
-              class="text-muted-foreground text-xs"
-            >
-              Add a bot token and chat id and save them first.
-            </p>
-            <p v-else-if="telegramDirty" class="text-muted-foreground text-xs">
-              Save your changes to test them.
-            </p>
-          </div>
+          <p
+            v-if="telegramStatus"
+            :class="[
+              'flex items-start gap-1.5 text-xs sm:col-span-2',
+              telegramStatus.tone === 'ok'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : telegramStatus.tone === 'fail'
+                  ? 'text-destructive'
+                  : 'text-muted-foreground',
+            ]"
+            :role="telegramStatus.tone === 'fail' ? 'alert' : undefined"
+          >
+            <Check v-if="telegramStatus.tone === 'ok'" class="mt-0.5 size-3.5 shrink-0" />
+            <TriangleAlert
+              v-else-if="telegramStatus.tone === 'fail'"
+              class="mt-0.5 size-3.5 shrink-0"
+            />
+            <span>{{ telegramStatus.text }}</span>
+          </p>
         </div>
 
         <!-- Email (only when the deployment offers it) -->
