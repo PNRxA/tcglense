@@ -375,7 +375,7 @@ fn spawn_alert_evaluation(
             // Stamp the pass start *before* evaluating, so a change that lands mid-pass is
             // caught next pass (its updated_at >= this start) rather than being skipped.
             let pass_start = Utc::now();
-            crate::alerts::evaluate_all(
+            let completed = crate::alerts::evaluate_all(
                 &db,
                 &notify_http,
                 &email,
@@ -384,7 +384,13 @@ fn spawn_alert_evaluation(
                 since,
             )
             .await;
-            since = Some(pass_start);
+            // Advance the change cursor ONLY if the pass scanned every candidate. If a batch
+            // load errored mid-scan, keep the old `since` so the next pass re-scans the same
+            // window — otherwise a verdict flip in an un-scanned batch would be narrowed out of
+            // every future pass. Re-scanning is safe (idempotent, an older cursor over-evaluates).
+            if completed {
+                since = Some(pass_start);
+            }
             lease.release().await;
         }
     });

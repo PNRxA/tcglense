@@ -89,6 +89,11 @@ struct Resolved<'a> {
 /// `email_globally_enabled` is `ALERTS_EMAIL_ENABLED` — even a user who opted in gets no email
 /// while the deployment keeps it off. Errors on any single alert / channel are logged and
 /// swallowed so one bad row never stalls the batch.
+///
+/// Returns `true` iff the pass **completed** (scanned every candidate page). Returns `false`
+/// if a batch load errored mid-scan — the caller must then NOT advance its `since` cursor, or a
+/// verdict flip in an un-scanned higher-id batch would be permanently narrowed out of every
+/// future pass.
 pub async fn evaluate_all(
     db: &DatabaseConnection,
     notify_http: &reqwest::Client,
@@ -96,15 +101,15 @@ pub async fn evaluate_all(
     public_site_url: &str,
     email_globally_enabled: bool,
     since: Option<DateTimeUtc>,
-) {
+) -> bool {
     let mut after: i32 = 0;
     let mut fired = 0usize;
     loop {
         let batch = match load_candidate_batch(db, since, after).await {
             Ok(batch) => batch,
             Err(err) => {
-                tracing::warn!(error = %err, "failed to load a price-alert batch");
-                return;
+                tracing::warn!(error = %err, "failed to load a price-alert batch; pass incomplete");
+                return false;
             }
         };
         let Some(last) = batch.last() else { break };
@@ -139,6 +144,7 @@ pub async fn evaluate_all(
     if fired > 0 {
         tracing::info!(fired, "price alerts fired this evaluation");
     }
+    true
 }
 
 /// Load the next keyset page of armed candidate alerts (`id > after`, ascending), optionally
@@ -221,6 +227,12 @@ async fn evaluate_one(
                 latch(db, alert, resolved.price.to_string()).await;
                 return 1;
             }
+            // Not delivered (no channel configured yet, or a transient/misconfigured channel):
+            // touch `updated_at` so the change-narrowing keeps this still-met alert in the
+            // candidate set next pass. Configuring/fixing a channel writes `alert_channels`, not
+            // `price_alerts.updated_at`, so without this the retry-next-pass contract would be
+            // narrowed away and the alert would only fire once the target price next moves.
+            touch(db, alert).await;
             0
         }
         (false, true) => {
@@ -405,6 +417,17 @@ async fn latch(db: &DatabaseConnection, alert: price_alert::Model, price: String
     active.updated_at = Set(now);
     if let Err(err) = active.update(db).await {
         tracing::warn!(error = %err, "failed to latch a fired price alert");
+    }
+}
+
+/// Bump only `updated_at` (no verdict change) on a still-met but **undelivered** alert, so the
+/// change-narrowing re-includes it next pass — preserving the "retry delivery next pass"
+/// contract (a later channel setup / fix isn't otherwise visible to the narrowing).
+async fn touch(db: &DatabaseConnection, alert: price_alert::Model) {
+    let mut active: price_alert::ActiveModel = alert.into();
+    active.updated_at = Set(Utc::now());
+    if let Err(err) = active.update(db).await {
+        tracing::warn!(error = %err, "failed to touch an undelivered price alert");
     }
 }
 
@@ -693,6 +716,117 @@ mod tests {
                 .unwrap()
                 .triggered,
             "a full pass evaluates the alert"
+        );
+        assert_eq!(mailbox.emails().len(), 1);
+    }
+
+    /// The retry-under-narrowing guard: a met alert that can't deliver yet (no channel) is
+    /// *touched* so a later narrowed pass — one whose `since` would otherwise exclude the
+    /// stale alert — still re-includes and fires it once a channel is added. Without the touch,
+    /// configuring a channel (which writes only `alert_channels`) would be invisible to the
+    /// narrowing and the alert would never fire until the target price next moved.
+    #[tokio::test]
+    async fn undelivered_met_alert_is_retried_under_narrowing() {
+        use crate::email::{Emailer, Mailbox};
+        use crate::entities::prelude::{Card, PriceAlert};
+        use crate::entities::{alert_channel, card, price_alert};
+        use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let user_id = crate::test_support::insert_user(&db, "retry@example.com").await;
+        let card_id = crate::test_support::insert_card(&db, "ext-retry-1").await;
+
+        let past: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        let mut priced: card::ActiveModel = Card::find_by_id(card_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .into();
+        priced.price_usd = Set(Some("8.25".to_string()));
+        priced.updated_at = Set(past);
+        priced.update(&db).await.unwrap();
+
+        let alert = price_alert::ActiveModel {
+            user_id: Set(user_id),
+            game: Set(crate::scryfall::GAME.to_string()),
+            target_kind: Set("card".to_string()),
+            card_id: Set(Some(card_id)),
+            finish: Set("nonfoil".to_string()),
+            direction: Set("below".to_string()),
+            threshold: Set("50.00".to_string()),
+            is_active: Set(true),
+            triggered: Set(false),
+            created_at: Set(past),
+            updated_at: Set(past),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let http = reqwest::Client::new();
+        let mailbox = Mailbox::default();
+
+        // Pass 1: no channel yet. It's met but undeliverable, so it must be TOUCHED (updated_at
+        // advanced to ~now), not swallowed. A full pass here (since=None) returns completed=true.
+        let completed = evaluate_all(
+            &db,
+            &http,
+            &Emailer::Disabled { log_body: true },
+            "https://x.test",
+            true,
+            None,
+        )
+        .await;
+        assert!(completed, "a clean pass reports completed");
+        let touched = PriceAlert::find_by_id(alert.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!touched.triggered, "undelivered alert stays armed");
+        assert!(
+            touched.updated_at > past,
+            "undelivered alert is touched to keep it in the window"
+        );
+
+        // Configure a channel (writes alert_channels only — never price_alerts.updated_at).
+        alert_channel::ActiveModel {
+            user_id: Set(user_id),
+            email_enabled: Set(true),
+            created_at: Set(past),
+            updated_at: Set(past),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        // Pass 2, NARROWED with a `since` after the original 2024 stamps but before the touch: the
+        // touch is what keeps the alert in this window, so it now delivers + fires.
+        let since: DateTimeUtc = "2025-01-01T00:00:00Z".parse().unwrap();
+        assert!(
+            touched.updated_at > since,
+            "the touch is newer than the narrowing cursor"
+        );
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            "https://x.test",
+            true,
+            Some(since),
+        )
+        .await;
+        assert!(
+            PriceAlert::find_by_id(alert.id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .triggered,
+            "the retried alert fires once a channel is configured"
         );
         assert_eq!(mailbox.emails().len(), 1);
     }

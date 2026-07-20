@@ -207,9 +207,14 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   costs money at scale) and additionally needs `RESEND_API_KEY`. The evaluator scales to
   millions of alerts by **keyset-paginating** the armed set (memory is O(batch), never "load
   every alert + target") and **narrowing** each pass by a `since` cursor to alerts whose own
-  row or whose target's `updated_at` changed — correct only because the catalog upsert's
-  "changed guard" bumps `cards`/`products.updated_at` **only on a real datum change**; don't
-  break that guard or narrowing silently misses fires.
+  row or whose target's `updated_at` changed. That narrowing is correct **only** while every
+  live price write bumps the target's `updated_at`: the catalog upsert's "changed guard" does
+  (bumps on a real datum change), and `scryfall::enrich_foil_variant_prices` was fixed to stamp
+  it too (★-variant foil prices arrive only through that path) — **any new writer of
+  `cards`/`products.price_usd*` must bump `updated_at` or narrowing silently misses fires.**
+  Two more couplings: an undelivered met alert is `touch`ed so the retry-next-pass contract
+  survives narrowing, and the `since` cursor advances **only** when `evaluate_all` returns
+  `true` (a mid-scan DB error must re-scan, not skip).
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled
