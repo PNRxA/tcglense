@@ -199,6 +199,8 @@ pub async fn set_alert_channels(
             active.telegram_chat_id = Set(telegram_chat.clone());
             active.telegram_enabled = Set(payload.telegram_enabled);
             active.email_enabled = Set(payload.email_enabled);
+            active.sld_release_enabled = Set(payload.sld_release_enabled);
+            active.set_release_enabled = Set(payload.set_release_enabled);
             active.updated_at = Set(now);
             active.update(&state.db).await?;
         }
@@ -211,6 +213,8 @@ pub async fn set_alert_channels(
                 telegram_chat_id: Set(telegram_chat.clone()),
                 telegram_enabled: Set(payload.telegram_enabled),
                 email_enabled: Set(payload.email_enabled),
+                sld_release_enabled: Set(payload.sld_release_enabled),
+                set_release_enabled: Set(payload.set_release_enabled),
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
@@ -228,6 +232,8 @@ pub async fn set_alert_channels(
         telegram_enabled: payload.telegram_enabled,
         email_enabled: payload.email_enabled,
         email_available: email_available(&state),
+        sld_release_enabled: payload.sld_release_enabled,
+        set_release_enabled: payload.set_release_enabled,
     }))
 }
 

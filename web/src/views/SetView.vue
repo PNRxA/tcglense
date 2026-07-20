@@ -34,6 +34,7 @@ import { useWishlistCounts } from '@/composables/useWishlist'
 import { SET_DEFAULT_SORT, SET_SORT_OPTIONS } from '@/lib/cardSort'
 import { type Card } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
+import { formatReleaseLabel } from '@/lib/releaseDate'
 
 const props = defineProps<{ game: string; code: string }>()
 const game = toRef(props, 'game')
@@ -152,21 +153,10 @@ const printsTotals = computed(() =>
 // Each by-drop header also shows the drop's release date (DropGroup.released_at, derived
 // server-side from the drop's cards — they share one street date). A future date reads as
 // "Releases …" so a freshly-previewed Scryfall drop shows when it's due; a past one as
-// "Released …". Index-aligned to `groups` in the by-drop view, exactly like `printsTotals`.
-function formatDropRelease(raw: string | null): { label: string; upcoming: boolean } | null {
-  if (!raw) return null
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return null
-  const upcoming = date.getTime() > Date.now()
-  const when = date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-  return { label: `${upcoming ? 'Releases' : 'Released'} ${when}`, upcoming }
-}
+// "Released …" — the shared `formatReleaseLabel` (short month here). Index-aligned to `groups`
+// in the by-drop view, exactly like `printsTotals`.
 const releaseDates = computed(() =>
-  (dropsQuery.data.value?.data ?? []).map((drop) => formatDropRelease(drop.released_at)),
+  (dropsQuery.data.value?.data ?? []).map((drop) => formatReleaseLabel(drop.released_at, 'short')),
 )
 
 // The list's loading / error / empty state reads from whichever query drives the current

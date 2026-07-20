@@ -16,6 +16,7 @@ import type { ProductCardsSearchKeys } from '@/composables/useProductCardsSearch
 import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
+import { formatReleaseLabel } from '@/lib/releaseDate'
 
 // The body of a sealed product's detail — image, prices, collection/wish-list controls,
 // composition, price history, buy links, and contained cards — shared verbatim by the full
@@ -73,14 +74,9 @@ const priceRows = computed(() => {
   ].filter((row): row is { label: string; value: string } => row.value != null)
 })
 
-const releasedDate = computed(() => {
-  const raw = product.value?.released_at
-  if (!raw) return null
-  const date = new Date(raw)
-  return Number.isNaN(date.getTime())
-    ? null
-    : date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
-})
+// A future release date reads as "Releases …", a past one as "Released …", so an
+// as-yet-unreleased product shows when it's due rather than claiming it already came out.
+const releaseLabel = computed(() => formatReleaseLabel(product.value?.released_at))
 
 // Jump targets for the overview strip's chips. Template refs (not element ids) so the
 // same body can render twice at once — the full page under an open detail modal —
@@ -118,8 +114,8 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
           {{ setName }}
           <span class="text-muted-foreground">{{ product.set_code.toUpperCase() }}</span>
         </RouterLink>
-        <span v-if="releasedDate" class="text-muted-foreground px-1">
-          Released {{ releasedDate }}
+        <span v-if="releaseLabel" class="text-muted-foreground px-1">
+          {{ releaseLabel.label }}
         </span>
       </div>
     </header>

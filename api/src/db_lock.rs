@@ -58,6 +58,10 @@ pub const CARD_SYNC: i64 = KEY_NAMESPACE | 2;
 /// multi-replica deployment delivers each triggered alert once, not once per replica.
 pub const ALERTS: i64 = KEY_NAMESPACE | 3;
 
+/// Elects the release-notification leader for one tick (Secret Lair drop / set release
+/// heads-ups), so a multi-replica deployment delivers each heads-up once, not per replica.
+pub const RELEASE_ALERTS: i64 = KEY_NAMESPACE | 4;
+
 /// A held (or trivially-held) advisory lock, owning the dedicated connection the
 /// lock lives on. Release by [`Self::release`] (graceful close) or by dropping
 /// (the socket closes and the server frees the session's locks either way).

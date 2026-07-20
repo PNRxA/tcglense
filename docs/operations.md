@@ -424,6 +424,13 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   both hold), `ALERTS_INTERVAL_MINUTES` (`60`; how often the evaluator re-checks every
   active alert — hourly is plenty since catalog prices refresh at most daily). See
   `api/.env.example`.
+- **Release heads-ups:** `RELEASE_ALERTS_ENABLED` (`true`; a background task that finds Secret
+  Lair drops and new sets releasing the next day and delivers a day-before heads-up to users
+  who opted in — per-user, in their notification settings — over the same channels as price
+  alerts. Its own switch, independent of `ALERTS_ENABLED`; set `false` to stop all release
+  heads-ups). Secret Lair drop dates are derived from the drop's cards' `released_at`; set dates
+  come from `card_sets.released_at`. Edge-triggered (each heads-up sent once per user per
+  release). See `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
   (The Turnstile site key is no longer a web build var — it's the API's runtime
   `TURNSTILE_SITE_KEY`, fetched by the SPA from `GET /api/config`.)

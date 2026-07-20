@@ -271,13 +271,13 @@ pub fn alert_email(to: &str, subject: &str, body: &str, link: &str) -> OutgoingE
         html: format!(
             "<p>{body}</p>\
              <p><a href=\"{link}\">View on TCGLense</a></p>\
-             <p>You're receiving this because you set a price alert on TCGLense. \
-             Manage or remove your alerts from the Alerts page.</p>"
+             <p>You're receiving this because you enabled notifications on TCGLense. \
+             Manage them from the Alerts page.</p>"
         ),
         text: format!(
             "{body}\n\n{link}\n\n\
-             You're receiving this because you set a price alert on TCGLense. \
-             Manage or remove your alerts from the Alerts page.\n"
+             You're receiving this because you enabled notifications on TCGLense. \
+             Manage them from the Alerts page.\n"
         ),
     }
 }

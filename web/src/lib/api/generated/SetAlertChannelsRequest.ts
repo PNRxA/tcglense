@@ -15,4 +15,13 @@ discord_enabled: boolean, telegram_bot_token: string | null, telegram_chat_id: s
 /**
  * Whether Telegram delivers. Defaults to `true` when omitted (see `discord_enabled`).
  */
-telegram_enabled: boolean, email_enabled: boolean, };
+telegram_enabled: boolean, email_enabled: boolean, 
+/**
+ * Opt into a heads-up the day before a Secret Lair drop releases. Defaults to `false`
+ * (a deliberate subscription — unlike the channel on/off flags, an omitted value is off).
+ */
+sld_release_enabled: boolean, 
+/**
+ * Opt into a heads-up the day before a new set releases. Defaults to `false`.
+ */
+set_release_enabled: boolean, };

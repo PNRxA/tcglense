@@ -206,6 +206,13 @@ pub struct Config {
     /// `60` (hourly) — catalog prices refresh at most daily, so a tighter cadence buys little.
     /// Clamped to at least 1 where read; ignored when [`Self::alerts_enabled`] is `false`.
     pub alerts_interval_minutes: u64,
+    /// Master switch for the **release-notification** background task
+    /// ([`crate::release_alerts`]). Default `true`: the task periodically finds Secret Lair
+    /// drops and regular sets releasing the next day and delivers a heads-up to users who opted
+    /// in (per-user, in their notification settings), over the same channels as price alerts.
+    /// Independent of [`Self::alerts_enabled`] so a deployment can run one without the other.
+    /// Set `false` to stop all release heads-ups. **Not** a secret.
+    pub release_alerts_enabled: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -278,6 +285,7 @@ impl std::fmt::Debug for Config {
             .field("alerts_enabled", &self.alerts_enabled)
             .field("alerts_email_enabled", &self.alerts_email_enabled)
             .field("alerts_interval_minutes", &self.alerts_interval_minutes)
+            .field("release_alerts_enabled", &self.release_alerts_enabled)
             .finish()
     }
 }
@@ -722,6 +730,9 @@ impl Config {
         let alerts_interval_minutes = env_parse::<u64>("ALERTS_INTERVAL_MINUTES")
             .filter(|m| *m > 0)
             .unwrap_or(60);
+        // Release heads-ups (Secret Lair drops + new sets) — on by default, its own switch so
+        // it can run independently of price alerts.
+        let release_alerts_enabled = env_bool("RELEASE_ALERTS_ENABLED", true);
 
         if let Err(message) = validate_public_auth_posture(
             &host,
@@ -779,6 +790,7 @@ impl Config {
             alerts_enabled,
             alerts_email_enabled,
             alerts_interval_minutes,
+            release_alerts_enabled,
         }
     }
 

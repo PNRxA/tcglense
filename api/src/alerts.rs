@@ -20,11 +20,11 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, RelationTrait, Set,
 };
 
-use crate::email::{self, Emailer};
-use crate::entities::prelude::{AlertChannel, Card, PriceAlert, Product, User};
-use crate::entities::{alert_channel, card, price_alert, product};
+use crate::email::Emailer;
+use crate::entities::prelude::{Card, PriceAlert, Product};
+use crate::entities::{card, price_alert, product};
 use crate::handlers::shared::valuation::price_cents;
-use crate::notifications::{self, AlertNotification, ChannelOutcome};
+use crate::notifications::{self, AlertNotification};
 
 /// How many alerts one evaluation batch loads at a time. The scan is keyset-paginated by id
 /// so **memory stays O(batch)** no matter how many total alerts exist — the difference
@@ -214,7 +214,7 @@ async fn evaluate_one(
             // most concretely for an alert created before any channel is configured. Leaving
             // it un-latched means the next pass retries, so it delivers once a channel works.
             let notification = build_notification(&alert, &resolved, public_site_url);
-            let delivered = deliver(
+            let delivered = notifications::deliver_to_user(
                 db,
                 notify_http,
                 emailer,
@@ -315,95 +315,6 @@ fn build_notification(
         title,
         body,
         url: Some(url),
-    }
-}
-
-/// Deliver one firing alert over every channel the user configured. Loads the user's
-/// [`alert_channel`] settings + email once; a channel that isn't set up is skipped. Failures
-/// are logged per-channel, never propagated. Returns `true` iff at least one channel
-/// accepted the message — the caller latches the alert only then, so a failed or
-/// not-yet-configured delivery is retried next tick instead of silently swallowed.
-async fn deliver(
-    db: &DatabaseConnection,
-    notify_http: &reqwest::Client,
-    emailer: &Emailer,
-    email_globally_enabled: bool,
-    user_id: i32,
-    notification: &AlertNotification,
-) -> bool {
-    let channels = match AlertChannel::find()
-        .filter(alert_channel::Column::UserId.eq(user_id))
-        .one(db)
-        .await
-    {
-        Ok(channels) => channels,
-        Err(err) => {
-            tracing::warn!(error = %err, user_id, "failed to load alert channels");
-            return false;
-        }
-    };
-    // No settings row = no channels configured yet: nothing delivered, so don't latch.
-    let Some(channels) = channels else {
-        return false;
-    };
-
-    let mut outcomes: Vec<ChannelOutcome> = Vec::new();
-
-    // Each channel delivers only when it's both enabled AND configured.
-    if channels.discord_enabled
-        && let Some(webhook) = channels.discord_webhook_url.as_deref()
-    {
-        outcomes.push(notifications::send_discord(notify_http, webhook, notification).await);
-    }
-    if channels.telegram_enabled
-        && let (Some(token), Some(chat)) = (
-            channels.telegram_bot_token.as_deref(),
-            channels.telegram_chat_id.as_deref(),
-        )
-    {
-        outcomes.push(notifications::send_telegram(notify_http, token, chat, notification).await);
-    }
-    if channels.email_enabled && email_globally_enabled && emailer.is_enabled() {
-        outcomes.push(deliver_email(db, emailer, user_id, notification).await);
-    }
-
-    for outcome in &outcomes {
-        if !outcome.ok {
-            tracing::warn!(
-                user_id,
-                channel = outcome.channel,
-                detail = outcome.detail.as_deref().unwrap_or(""),
-                "price-alert delivery failed on a channel"
-            );
-        }
-    }
-
-    outcomes.iter().any(|outcome| outcome.ok)
-}
-
-/// Send the email channel for a firing alert (the user's account address).
-async fn deliver_email(
-    db: &DatabaseConnection,
-    emailer: &Emailer,
-    user_id: i32,
-    notification: &AlertNotification,
-) -> ChannelOutcome {
-    let email = match User::find_by_id(user_id).one(db).await {
-        Ok(Some(user)) => user.email,
-        Ok(None) => return ChannelOutcome::fail("email", "user no longer exists"),
-        Err(err) => {
-            tracing::warn!(error = %err, user_id, "failed to load user for alert email");
-            return ChannelOutcome::fail("email", "failed to load user");
-        }
-    };
-    let link = notification.url.as_deref().unwrap_or("");
-    let message = email::alert_email(&email, &notification.title, &notification.body, link);
-    match emailer.send(message).await {
-        Ok(()) => ChannelOutcome::ok("email"),
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to send alert email");
-            ChannelOutcome::fail("email", "failed to send email")
-        }
     }
 }
 

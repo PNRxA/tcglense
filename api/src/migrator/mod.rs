@@ -59,6 +59,8 @@ mod m20240101_000056_create_price_alerts_table;
 mod m20240101_000057_create_alert_channels_table;
 mod m20240101_000058_add_alert_channel_enabled_flags;
 mod m20240101_000059_add_price_alert_scan_indexes;
+mod m20240101_000060_add_alert_channel_release_flags;
+mod m20240101_000061_create_release_notifications_table;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -128,6 +130,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000057_create_alert_channels_table::Migration),
             Box::new(m20240101_000058_add_alert_channel_enabled_flags::Migration),
             Box::new(m20240101_000059_add_price_alert_scan_indexes::Migration),
+            Box::new(m20240101_000060_add_alert_channel_release_flags::Migration),
+            Box::new(m20240101_000061_create_release_notifications_table::Migration),
         ]
     }
 }

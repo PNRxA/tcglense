@@ -62,6 +62,7 @@ pub(crate) fn test_config() -> Config {
         alerts_enabled: false,
         alerts_email_enabled: false,
         alerts_interval_minutes: 60,
+        release_alerts_enabled: false,
     }
 }
 

@@ -60,8 +60,11 @@ pub async fn get_alert_channels(
             telegram_enabled: row.telegram_enabled,
             email_enabled: row.email_enabled,
             email_available: available,
+            sld_release_enabled: row.sld_release_enabled,
+            set_release_enabled: row.set_release_enabled,
         },
-        // No row yet: the free channels default to on, so filling a field just works.
+        // No row yet: the free channels default to on, so filling a field just works. The
+        // release subscriptions default off — a deliberate opt-in.
         None => AlertChannels {
             discord_webhook_url: None,
             discord_enabled: true,
@@ -70,6 +73,8 @@ pub async fn get_alert_channels(
             telegram_enabled: true,
             email_enabled: false,
             email_available: available,
+            sld_release_enabled: false,
+            set_release_enabled: false,
         },
     };
     Ok(Json(channels))

@@ -14,6 +14,7 @@ import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCardQuery } from '@/composables/useCatalog'
 import { getPriceHistory } from '@/lib/api'
+import { formatReleaseLabel } from '@/lib/releaseDate'
 
 // The body of a card's detail — image(s), rules text, prices + history, collection and
 // wish-list count controls, other printings — shared verbatim by the full page
@@ -32,6 +33,9 @@ const id = toRef(props, 'id')
 const cardQuery = useCardQuery(game, id)
 
 const card = computed(() => cardQuery.data.value)
+// A future release date reads as "Releases …", a past one as "Released …", so an as-yet-unreleased
+// (freshly-previewed) printing shows when it's due rather than claiming it already came out.
+const releaseLabel = computed(() => formatReleaseLabel(card.value?.released_at))
 // "Not found" once the fetch has settled without a card — not merely on `isError`: a 2xx
 // with an empty body resolves to `undefined` data with `isError` false, which would
 // otherwise sit on the loading skeleton forever. `!isPending` = settled, so a pending
@@ -109,8 +113,8 @@ const rarityChipClass = computed(
         >
           {{ card.rarity }}
         </span>
-        <span v-if="card.released_at" class="text-muted-foreground px-1">
-          Released {{ card.released_at }}
+        <span v-if="releaseLabel" class="text-muted-foreground px-1">
+          {{ releaseLabel.label }}
         </span>
       </div>
     </header>
