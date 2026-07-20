@@ -7,8 +7,11 @@ import {
   COLLECTION_SORT_OPTIONS,
   PRODUCT_CARDS_DEFAULT_SORT,
   PRODUCT_CARDS_SORT_OPTIONS,
+  PRODUCT_DEFAULT_SORT,
+  PRODUCT_SORT_OPTIONS,
   SET_DEFAULT_SORT,
   SET_SORT_OPTIONS,
+  productDefaultSortFor,
   toSortParam,
 } from '../cardSort'
 
@@ -74,6 +77,18 @@ describe('sort option lists', () => {
       expect(sort).not.toBe('default')
       expect(['asc', 'desc']).toContain(dir)
     }
+  })
+
+  it('defaults Secret Lair sealed products to newest-first, other sets to name', () => {
+    // Secret Lair drops are individually dated, so `sld` defaults to `released:desc`; every
+    // other set (and the all-products view, where the set filter is empty) keeps name-A→Z.
+    expect(productDefaultSortFor('sld')).toBe('released:desc')
+    expect(productDefaultSortFor('mkm')).toBe(PRODUCT_DEFAULT_SORT)
+    expect(productDefaultSortFor('')).toBe(PRODUCT_DEFAULT_SORT)
+    // Both resolved defaults are selectable options in the browse sort menu, so the URL clamp
+    // and the menu accept them.
+    expect(PRODUCT_SORT_OPTIONS.some((o) => o.value === productDefaultSortFor('sld'))).toBe(true)
+    expect(PRODUCT_SORT_OPTIONS.some((o) => o.value === productDefaultSortFor('mkm'))).toBe(true)
   })
 
   it('offer a total-copies quantity sort on the collection/wish-list view (issue #228)', () => {

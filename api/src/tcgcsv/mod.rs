@@ -29,6 +29,7 @@ pub mod msrp;
 pub mod price_history;
 mod progress;
 pub mod sld_msrp;
+pub mod sld_release;
 
 pub use error::BackfillError;
 /// Name of the sync progress span; `main.rs` scopes the `IndicatifLayer` to it

@@ -63,6 +63,20 @@ export const PRODUCT_SORT_OPTIONS: SortOption[] = [
 /** Default sort for the sealed-products view — alphabetical by name. */
 export const PRODUCT_DEFAULT_SORT = 'name:asc'
 
+/** Set code whose sealed products default to newest-first instead of name-A→Z. Secret Lair
+ * (`sld`) is a rolling series of individually-dated drops — all filed under one TCGCSV group —
+ * so "newest first" is the useful default there; every other set releases at once, where
+ * alphabetical reads better. */
+const NEWEST_FIRST_SET_CODE = 'sld'
+
+/** The default product sort for a (possibly set-scoped) sealed browse: newest-first for Secret
+ * Lair (`sld`), else the name-A→Z default. `setCode` is the active set filter — empty for the
+ * all-products view, which keeps the name default. Pure so a view can wrap it in a `computed`
+ * keyed on the active set and feed it to `useCardSearch`'s reactive `defaultSort`. */
+export function productDefaultSortFor(setCode: string): string {
+  return setCode === NEWEST_FIRST_SET_CODE ? 'released:desc' : PRODUCT_DEFAULT_SORT
+}
+
 /** Sort options for the cards **inside** a sealed product (distinct from the sealed-products
  * browse's `PRODUCT_SORT_OPTIONS` above, which sorts the products themselves). A product's
  * cards are a curated group like a set's, so this mirrors a set's card sorts — but the default

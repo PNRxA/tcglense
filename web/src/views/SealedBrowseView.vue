@@ -28,7 +28,7 @@ import {
   useProductsQuery,
 } from '@/composables/useProducts'
 import { useClampPage } from '@/composables/useClampPage'
-import { PRODUCT_DEFAULT_SORT, PRODUCT_SORT_OPTIONS } from '@/lib/cardSort'
+import { PRODUCT_SORT_OPTIONS, productDefaultSortFor } from '@/lib/cardSort'
 import { productTypeLabel } from '@/lib/productType'
 import { usePageMeta } from '@/lib/seo'
 
@@ -40,17 +40,10 @@ const props = defineProps<{ game: string; code?: string }>()
 const game = toRef(props, 'game')
 const scoped = computed(() => !!props.code)
 
-// Page, name search and sort live in the URL (shared with useCardSearch, same as the
-// card browse views). Note `q` here matches each word as an order-independent name
-// substring (all words must be present), not Scryfall syntax (issue #273).
-const { page, searchInput, query, sort } = useCardSearch(
-  PRODUCT_DEFAULT_SORT,
-  PRODUCT_SORT_OPTIONS.map((option) => option.value),
-)
-
-// The set + type filters also live in the URL. reka's Select can't hold '' as a value
-// (it reserves it for "no selection"), so an `all` sentinel means "no filter". Writes
-// merge into the existing query, reset paging, and drop the key when cleared.
+// The set + type filters live in the URL. reka's Select can't hold '' as a value (it reserves
+// it for "no selection"), so an `all` sentinel means "no filter". Writes merge into the
+// existing query, reset paging, and drop the key when cleared. Declared before the sort
+// controls below so the per-set sort default can key on the active set.
 const route = useRoute()
 const router = useRouter()
 const ALL = 'all'
@@ -76,6 +69,25 @@ const typeSelect = computed({
   set: (value: string) => patchFilter('type', value),
 })
 
+// The active set: the scoped route's `code`, else the in-URL set filter (any `?set=` is ignored
+// in scoped mode, where the set `<Select>` is hidden). Drives the products query and the
+// per-set sort default below.
+const effectiveSet = computed(() => (scoped.value ? (props.code ?? '') : setFilter.value))
+
+// Secret Lair is a rolling series of individually-dated drops, so its sealed products default
+// to newest-first; every other set keeps the name-A→Z default. A computed (not a constant) so
+// switching the set filter re-clamps the committed sort through useCardSearch's reactive
+// `defaultSort` seam.
+const productDefaultSort = computed(() => productDefaultSortFor(effectiveSet.value))
+
+// Page, name search and sort live in the URL (shared with useCardSearch, same as the card
+// browse views). Note `q` here matches each word as an order-independent name substring (all
+// words must be present), not Scryfall syntax (issue #273).
+const { page, searchInput, query, sort } = useCardSearch(
+  productDefaultSort,
+  PRODUCT_SORT_OPTIONS.map((option) => option.value),
+)
+
 const gameName = useGameName(game)
 
 const facetsQuery = useProductFacetsQuery(game)
@@ -83,14 +95,12 @@ const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
 const setOptions = computed(() => facetsQuery.data.value?.data.sets ?? [])
 
 // Set-scoped mode: resolve the scoped set's display name from the facet list (fallback to the
-// upper-cased code) for the heading + breadcrumb, and pin the products query's `set` param to
-// `code` — any `?set=` in the URL is ignored (the set `<Select>` is hidden). The unscoped view
-// keeps the in-URL set filter.
+// upper-cased code) for the heading + breadcrumb. The unscoped view keeps the in-URL set
+// filter; either way `effectiveSet` (above) is what the products query is pinned to.
 const scopedSetRef = computed(() => setOptions.value.find((s) => s.code === props.code))
 const heading = computed(() =>
   scoped.value ? (scopedSetRef.value?.name ?? props.code?.toUpperCase() ?? '') : 'All products',
 )
-const effectiveSet = computed(() => (scoped.value ? (props.code ?? '') : setFilter.value))
 
 usePageMeta({
   title: () =>
@@ -113,7 +123,7 @@ const productsQuery = useProductsQuery(game, {
   set: effectiveSet,
   type: typeFilter,
   sort,
-  defaultSort: PRODUCT_DEFAULT_SORT,
+  defaultSort: productDefaultSort,
 })
 
 const products = computed(() => productsQuery.data.value?.data ?? [])
