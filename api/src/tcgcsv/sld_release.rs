@@ -8,10 +8,11 @@
 //!
 //! So we **derive** each SLD product's release date the same way [`super::sld_msrp`] derives
 //! its MSRP: resolve the product to its gallery drop (reusing [`crate::mtgjson::sld`]'s
-//! name-matching), then take the earliest `released_at` among that drop's cards. A product
-//! that resolves to no drop (a non-drop `SLD` product — commander deck, bundle, single-card
-//! promo) keeps the group date, as does a drop whose cards carry no known date yet — no worse
-//! than the status quo, never a wrong date.
+//! name-matching), then reduce that drop's cards to their modal `released_at` (ties → earliest)
+//! via the shared [`drops::modal_release_date`], the same reducer the card by-drop view uses, so
+//! the two surfaces agree. A product that resolves to no drop (a non-drop `SLD` product — commander
+//! deck, bundle, single-card promo) keeps the group date, as does a drop whose cards carry no
+//! known date yet — no worse than the status quo, never a wrong date.
 //!
 //! Unlike the MSRP derivation this reads no static file: the per-drop dates come from the
 //! already-ingested `cards` table, passed in as a `collector_number -> released_at` map that
@@ -24,16 +25,18 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 use crate::mtgjson::sld;
+use crate::scryfall::drops;
 
 /// Derive the release date (`YYYY-MM-DD`) for a Secret Lair sealed product from its drop's
 /// cards, or `None` when it doesn't apply: not the `sld` set, no drop snapshot loaded, the
 /// product resolves to no gallery drop, or none of the drop's cards have a known release date.
 /// `card_dates` maps an `sld` collector number to that card's `released_at`.
 ///
-/// The **earliest** date among the drop's cards is used: a drop's cards share one release
-/// date, so the min is that date and it's robust to a stray outlier. Scryfall stores dates as
-/// ISO `YYYY-MM-DD`, which sort lexicographically = chronologically, so `min` over the raw
-/// strings is correct without parsing.
+/// The drop's date is the **modal** date among its cards (ties → earliest), computed by the
+/// shared [`drops::modal_release_date`] — the same reducer the card by-drop view
+/// (`handlers::catalog::sets::drop_released_at`) uses, so the product and card surfaces derive
+/// the identical date. A drop's cards share one street date, so the mode *is* that date and
+/// shrugs off a stray reprint carrying a different one.
 pub fn derive(
     set_code: &str,
     external_id: &str,
@@ -45,10 +48,10 @@ pub fn derive(
     }
     let table = sld::table()?;
     let pd = sld::resolve_product_drop(&table, external_id, name)?;
-    pd.collector_numbers()
-        .filter_map(|cn| card_dates.get(cn))
-        .min()
-        .cloned()
+    drops::modal_release_date(
+        pd.collector_numbers()
+            .filter_map(|cn| card_dates.get(cn).map(String::as_str)),
+    )
 }
 
 /// A stable content hash (64 bits of SHA-256, hex) of the per-drop date inputs — the
@@ -89,13 +92,16 @@ mod tests {
     }
 
     #[test]
-    fn derives_earliest_date_among_a_drops_cards() {
-        // "Cats of Chaos" (in the shipped snapshot) is collector numbers 2690–2694. Give a few
-        // of them distinct dates, plus a card in no drop that must be ignored.
+    fn derives_modal_date_shrugging_off_a_stray_outlier() {
+        // "Cats of Chaos" (in the shipped snapshot) is collector numbers 2690–2694. Most of the
+        // drop's cards share one street date; a single reprint carries an earlier outlier date,
+        // and a card in no drop must be ignored. The modal date wins — `min` would wrongly pick
+        // the earlier outlier.
         let card_dates = dates(&[
-            ("2690", "2024-05-06"),
+            ("2690", "2024-05-03"),
             ("2691", "2024-05-03"),
-            ("2694", "2024-05-10"),
+            ("2692", "2024-05-03"),
+            ("2694", "2019-01-01"), // a stray reprint with a different, earlier date
             ("999999", "2000-01-01"), // not one of the drop's cards: ignored
         ]);
         assert_eq!(
