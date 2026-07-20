@@ -8,9 +8,9 @@
 //!
 //! So we **derive** each SLD product's release date the same way [`super::sld_msrp`] derives
 //! its MSRP: resolve the product to its gallery drop (reusing [`crate::mtgjson::sld`]'s
-//! name-matching), then take the modal `released_at` among that drop's cards (ties → earliest),
-//! matching the card by-drop view's `handlers::catalog::sets::drop_released_at` so the two
-//! surfaces agree. A product that resolves to no drop (a non-drop `SLD` product — commander
+//! name-matching), then reduce that drop's cards to their modal `released_at` (ties → earliest)
+//! via the shared [`drops::modal_release_date`], the same reducer the card by-drop view uses, so
+//! the two surfaces agree. A product that resolves to no drop (a non-drop `SLD` product — commander
 //! deck, bundle, single-card promo) keeps the group date, as does a drop whose cards carry no
 //! known date yet — no worse than the status quo, never a wrong date.
 //!
@@ -25,17 +25,18 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 use crate::mtgjson::sld;
+use crate::scryfall::drops;
 
 /// Derive the release date (`YYYY-MM-DD`) for a Secret Lair sealed product from its drop's
 /// cards, or `None` when it doesn't apply: not the `sld` set, no drop snapshot loaded, the
 /// product resolves to no gallery drop, or none of the drop's cards have a known release date.
 /// `card_dates` maps an `sld` collector number to that card's `released_at`.
 ///
-/// The **modal** date among the drop's cards is used (ties → earliest): a drop's cards share
-/// one street date, so the mode *is* that date and shrugs off a stray reprint carrying a
-/// different one — matching `handlers::catalog::sets::drop_released_at`, which derives the same
-/// date for the card by-drop view, so the product and card surfaces agree. ISO `YYYY-MM-DD`
-/// dates compare lexicographically = chronologically, so the earliest-tie-break needs no parsing.
+/// The drop's date is the **modal** date among its cards (ties → earliest), computed by the
+/// shared [`drops::modal_release_date`] — the same reducer the card by-drop view
+/// (`handlers::catalog::sets::drop_released_at`) uses, so the product and card surfaces derive
+/// the identical date. A drop's cards share one street date, so the mode *is* that date and
+/// shrugs off a stray reprint carrying a different one.
 pub fn derive(
     set_code: &str,
     external_id: &str,
@@ -47,19 +48,10 @@ pub fn derive(
     }
     let table = sld::table()?;
     let pd = sld::resolve_product_drop(&table, external_id, name)?;
-    // Tally the drop's cards' dates and take the mode (ties → the earlier ISO date), mirroring
-    // `handlers::catalog::sets::drop_released_at` so this agrees with the card by-drop view.
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for cn in pd.collector_numbers() {
-        if let Some(date) = card_dates.get(cn) {
-            *counts.entry(date.as_str()).or_default() += 1;
-        }
-    }
-    counts
-        .into_iter()
-        // Highest count wins; on a tie prefer the earlier date (smaller ISO-8601 string).
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
-        .map(|(date, _)| date.to_string())
+    drops::modal_release_date(
+        pd.collector_numbers()
+            .filter_map(|cn| card_dates.get(cn).map(String::as_str)),
+    )
 }
 
 /// A stable content hash (64 bits of SHA-256, hex) of the per-drop date inputs — the

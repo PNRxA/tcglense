@@ -384,9 +384,47 @@ pub fn is_spend_incentive(game: &str, set_code: &str, collector_number: &str) ->
         .any(|&(g, s, cn)| g == game && s == set_code && cn == collector_number)
 }
 
+/// The representative release date among a Secret Lair drop's cards' `released_at` values: the
+/// **most common** date, ties broken to the **earliest**. A drop's cards share one street date,
+/// so the mode *is* that date and stays robust to a stray reprint carrying a different one.
+/// `None` when the iterator yields no date. Dates compare as raw ISO `YYYY-MM-DD` strings
+/// (lexicographic = chronological), so no parsing is needed.
+///
+/// The one seam the two surfaces that must agree on a drop's date both call: the card by-drop
+/// view (`handlers::catalog::sets::drop_released_at`) and the sealed-product release-date
+/// derivation (`tcgcsv::sld_release::derive`). Keeping the reducer here makes that agreement
+/// structural — neither surface can drift the tie-break out from under the other.
+pub fn modal_release_date<'a>(dates: impl Iterator<Item = &'a str>) -> Option<String> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for date in dates {
+        *counts.entry(date).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        // Highest count wins; on a tie prefer the earlier date (smaller ISO-8601 string).
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(date, _)| date.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modal_release_date_is_the_mode_ties_break_earliest() {
+        // The mode wins over a less-common, earlier outlier (a stray reprint's date).
+        assert_eq!(
+            modal_release_date(["2024-05-03", "2024-05-03", "2019-01-01"].into_iter()).as_deref(),
+            Some("2024-05-03"),
+        );
+        // A tie on count resolves to the earlier date, deterministically.
+        assert_eq!(
+            modal_release_date(["2026-08-17", "2024-10-04"].into_iter()).as_deref(),
+            Some("2024-10-04"),
+        );
+        // No dates -> no date.
+        assert_eq!(modal_release_date(std::iter::empty()), None);
+    }
 
     #[test]
     fn snapshot_parses_and_covers_sld() {

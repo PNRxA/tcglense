@@ -466,21 +466,15 @@ fn drop_cheapest_prints(
 }
 
 /// One drop's release date, derived from its cards: the most common non-null `released_at`
-/// among them. A Secret Lair drop's cards share one street date, so the mode *is* that date
-/// and stays robust to a stray reprint carrying a different one; ties break to the earliest
-/// date (a stable, sensible choice). `None` when no card in the drop carries a date.
+/// among them (ties → earliest). A Secret Lair drop's cards share one street date, so the mode
+/// *is* that date and stays robust to a stray reprint carrying a different one. `None` when no
+/// card in the drop carries a date. A thin adapter over the shared
+/// [`drops::modal_release_date`](crate::scryfall::drops::modal_release_date) reducer — the same
+/// one `tcgcsv::sld_release` derives sealed-product dates with, so both surfaces agree.
 fn drop_released_at(cards: &[card::Model]) -> Option<String> {
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for card in cards {
-        if let Some(date) = card.released_at.as_deref() {
-            *counts.entry(date).or_default() += 1;
-        }
-    }
-    counts
-        .into_iter()
-        // Highest count wins; on a tie prefer the earlier date (smaller ISO-8601 string).
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
-        .map(|(date, _)| date.to_string())
+    crate::scryfall::drops::modal_release_date(
+        cards.iter().filter_map(|c| c.released_at.as_deref()),
+    )
 }
 
 /// List set sub-types
