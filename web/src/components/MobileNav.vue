@@ -175,7 +175,7 @@ const docsLinkClass =
         </RouterLink>
         <RouterLink to="/alerts" :class="docsLinkClass">
           <Bell class="mx-0.5 size-4" aria-hidden="true" />
-          Price alerts
+          Alerts
         </RouterLink>
         <RouterLink to="/docs" :class="docsLinkClass">
           <Code class="mx-0.5 size-4" aria-hidden="true" />
