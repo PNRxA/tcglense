@@ -456,6 +456,10 @@ mod coverage_drift {
             "/api/mirror/fingerprints/{game}",
             "opt-in scanner fingerprint index",
         ),
+        (
+            "/api/mirror/currency",
+            "opt-in dataset mirror (currency rate feed passthrough)",
+        ),
         // --- The WEB_ROOT catch-all turning an unmatched `/api/*` into a JSON 404. ---
         (
             "/api/{*rest}",

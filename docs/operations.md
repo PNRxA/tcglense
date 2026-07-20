@@ -382,10 +382,14 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   fresh/dedicated DB),
   `SYNC_FROM_UPSTREAM` (`false`; fetch the raw datasets straight from
   Scryfall/MTGJSON/TCGCSV — the mirror host's posture — instead of from the mirror at
-  `DATASET_MIRROR_URL`), `DATASET_MIRROR_URL` (`https://tcglense.com`; the TCGLense
-  mirror a self-host reads datasets from by default; trailing slash trimmed),
+  `DATASET_MIRROR_URL`; the daily currency/FX rate feed rides the same switch — a consumer
+  pulls it from the mirror unless `SYNC_FROM_UPSTREAM=true` or this instance is itself the
+  mirror origin (`MIRROR_ENABLED`)),
+  `DATASET_MIRROR_URL` (`https://tcglense.com`; the TCGLense
+  mirror a self-host reads datasets **and the currency-rate feed** from by default; trailing slash trimmed),
   `MIRROR_ENABLED` (`false`; serve the `/api/mirror/*` dataset endpoints so other
-  instances can pull the datasets from this one — off by default so a self-host isn't
+  instances can pull the datasets — cards, sealed data, Secret Lair titles, the scanner
+  index, and the currency-rate feed — from this one — off by default so a self-host isn't
   an open proxy to the upstreams; the public mirror sets it with
   `SYNC_FROM_UPSTREAM=true`),
   `FINGERPRINT_BUILD_ENABLED` (`false`; build the visual-scanner fingerprint index on

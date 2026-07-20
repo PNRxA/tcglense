@@ -56,10 +56,35 @@ async fn mirror_routes_are_absent_by_default() {
         "/api/mirror/mtgjson/AllPrintings.json.gz",
         "/api/mirror/tcgcsv/last-updated.txt",
         "/api/mirror/fingerprints/mtg",
+        "/api/mirror/currency",
     ] {
         let (status, _headers, _body) = send(&app, get(path)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path} should be absent");
     }
+}
+
+#[tokio::test]
+async fn app_state_points_currency_rates_at_the_mirror_for_a_consumer() {
+    // The load-bearing wiring for pulling FX rates from the main server: `AppState::new`
+    // must build the rate cache via `CurrencyRates::from_config`, so a default consumer
+    // reads rates from `{DATASET_MIRROR_URL}/api/mirror/currency` rather than contacting the
+    // upstream provider. A silent revert to `CurrencyRates::default()` would reintroduce a
+    // direct provider fetch with no other test failing — this pins it. No network is touched.
+    let db = crate::test_support::migrated_memory_db().await;
+    let config = Config {
+        mirror_enabled: false,
+        sync_from_upstream: false,
+        dataset_mirror_url: "https://mirror.example".to_string(),
+        ..crate::test_support::test_config()
+    };
+    let http = reqwest::Client::builder().build().expect("http client");
+    let image_http = reqwest::Client::builder().build().expect("image client");
+    let state = AppState::new(config, db, http, image_http, None).expect("assemble app state");
+    assert_eq!(
+        state.currency_rates.rates_url(),
+        "https://mirror.example/api/mirror/currency",
+        "a consumer's AppState must resolve FX rates through the dataset mirror"
+    );
 }
 
 #[tokio::test]
