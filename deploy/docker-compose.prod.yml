@@ -68,10 +68,13 @@ services:
       # stack stays closed until the operator deliberately sets this to true.
       SIGNUPS_ENABLED: ${SIGNUPS_ENABLED:-false}
       SIGNUPS_DISABLED_MESSAGE: ${SIGNUPS_DISABLED_MESSAGE:-New registrations are not open yet.}
-      # Production signups must prove mailbox ownership. These are required here
-      # instead of silently falling back to the local-development token bypass.
-      RESEND_API_KEY: ${RESEND_API_KEY:?set the production Resend API key}
-      EMAIL_FROM: ${EMAIL_FROM:?set a Resend-verified From address}
+      # Production signups must prove mailbox ownership. Configure ONE provider —
+      # Resend or the Cloudflare Email Service pair — instead of falling back to the
+      # local-development token bypass; the API refuses to open signups without one.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      EMAIL_FROM: ${EMAIL_FROM:?set a verified-domain From address}
       # Require the bot gate on the internet-facing reference stack. Operators
       # deliberately using an upstream WAF can run the images directly with their
       # own configuration, but the shipped production path stays fail-closed.

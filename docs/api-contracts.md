@@ -46,9 +46,9 @@ still-unverified ones are the accounts login's `403` gate and `resend-verificati
 continue to serve (accounts predating email verification itself were grandfathered as
 verified by *that* feature's migration).
 
-**No-email dev bypass:** when **no email provider is configured** (no
-`RESEND_API_KEY` — `Emailer::is_enabled()` is false), the completion link can't be
-delivered, so register hands it back instead: the response's `completion_token` carries
+**No-email dev bypass:** when **no email provider is configured** (neither
+`RESEND_API_KEY` nor the Cloudflare Email Service pair — `Emailer::is_enabled()` is
+false), the completion link can't be delivered, so register hands it back instead: the response's `completion_token` carries
 the token (its **only** non-null case), and the SPA drives straight to the set-password
 page — the offline dev/CI/e2e journey stays completable through the real two-step UI.
 Login's unverified-`403` gate is likewise skipped in this posture. This is the dev/CI
