@@ -4,6 +4,7 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import type Tesseract from 'tesseract.js'
 import { detectCardQuad, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
 import { detectCardQuadCv, loadOpenCv } from '@/lib/scan/opencvDetect'
+import { createQuadTracker } from '@/lib/scan/quadTracker'
 import { phashFromRgba } from '@/lib/scan/phash'
 import { SET_REGION, guideRect, regionInRect } from '@/lib/scan/regions'
 
@@ -81,6 +82,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   /** The card the live loop currently detects, as NORMALISED corners (0..1 of the frame),
    * or null when none is found — drives the on-screen outline and the capture crop. */
   const detectedQuad = ref<Quad | null>(null)
+  // Stabilises the raw per-tick detections: smooths corner noise while the card holds
+  // still, snaps on a real move, and bridges brief dropouts — so the outline stays
+  // visibly locked on instead of wobbling/flickering (see lib/scan/quadTracker).
+  const quadTracker = createQuadTracker()
 
   let stream: MediaStream | null = null
   let worker: Tesseract.Worker | null = null
@@ -331,12 +336,14 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     if (!ctx) return
     ctx.drawImage(el, 0, 0, dw, dh)
     const image = ctx.getImageData(0, 0, dw, dh)
+    let raw: Quad | null
     if (cv) {
-      detectedQuad.value = detectCardQuadCv(cv, image)
+      raw = detectCardQuadCv(cv, image)
     } else {
       const q = detectCardQuad(toGray(image.data, dw, dh), dw, dh)
-      detectedQuad.value = q ? (q.map((p) => ({ x: p.x / dw, y: p.y / dh })) as Quad) : null
+      raw = q ? (q.map((p) => ({ x: p.x / dw, y: p.y / dh })) as Quad) : null
     }
+    detectedQuad.value = quadTracker.update(raw)
   }
 
   function startDetectLoop(): void {
@@ -348,6 +355,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
       clearInterval(detectTimer)
       detectTimer = null
     }
+    quadTracker.reset()
     detectedQuad.value = null
   }
 
