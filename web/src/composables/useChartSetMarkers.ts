@@ -58,11 +58,12 @@ export interface SetMarker {
 
 /** A [`SetMarker`] placed horizontally within the plot area. */
 export interface PositionedSetMarker extends SetMarker {
-  /** Pixel offset from the chart container's left edge for the marker's logo. */
+  /** Pixel offset from the chart container's left edge for the marker's chip. */
   left: number
-  /** False when a prior logo sits too close — the plotline still draws, but its logo is
-   * suppressed so adjacent releases don't overlap into an unreadable smear. */
-  showIcon: boolean
+  /** False when a prior marker sits too close — the plotline still draws, but this marker's
+   * chip (logo + code) is suppressed so adjacent releases don't overlap into an unreadable
+   * smear. Independent of `hasIcon`: an icon-less set still shows its code label. */
+  show: boolean
 }
 
 /** Rendered plot geometry + the pinned x-domain, all the pixel math needs. */
@@ -115,10 +116,12 @@ export function selectSetMarkers(
 }
 
 /**
- * Place each marker horizontally within the plot and thin out logos that would collide.
- * Markers must be oldest-first (so `left` ascends); the greedy pass keeps a logo only when
- * it clears the previous kept logo by `minGapPx`, leaving the plotline to still mark the
- * suppressed ones.
+ * Place each marker horizontally within the plot and thin out chips that would collide.
+ * Markers must be oldest-first (so `left` ascends); the greedy pass keeps a chip only when
+ * it clears the previous kept chip by `minGapPx`, leaving the plotline to still mark the
+ * suppressed ones. Thinning is by displayed position, not icon presence — an icon-less set
+ * still reserves a slot and shows its code — so the label promised for every kept marker
+ * always renders.
  */
 export function positionSetMarkers(
   markers: readonly SetMarker[],
@@ -127,12 +130,12 @@ export function positionSetMarkers(
 ): PositionedSetMarker[] {
   const span = geo.xMax - geo.xMin
   if (geo.plotWidth <= 0 || span <= 0) return []
-  let lastIconLeft = Number.NEGATIVE_INFINITY
+  let lastLeft = Number.NEGATIVE_INFINITY
   return markers.map((m) => {
     const left = geo.marginLeft + ((m.x - geo.xMin) / span) * geo.plotWidth
-    const showIcon = m.hasIcon && left - lastIconLeft >= minGapPx
-    if (showIcon) lastIconLeft = left
-    return { ...m, left, showIcon }
+    const show = left - lastLeft >= minGapPx
+    if (show) lastLeft = left
+    return { ...m, left, show }
   })
 }
 

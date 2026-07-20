@@ -39,8 +39,9 @@ const props = withDefaults(
     /** Optional semantic names for the two generic USD fields. Collection analytics uses
      * these to label its Cards and Sealed products lines. */
     seriesLabels?: { primary: string; secondary: string }
-    /** Show a clickable legend that toggles each line on/off. Opt-in — the collection value
-     * chart enables it to switch its Cards / Sealed products lines; detail charts leave it off. */
+    /** Show a clickable legend that toggles each line on/off. Opt-in — the card detail chart
+     * enables it as the regular/foil key and the collection value chart to switch its
+     * Cards / Sealed products lines; the sealed-product chart is single-series instead. */
     toggleable?: boolean
     /** Game id. When set, the chart overlays set-release markers (a dashed rule + the set's
      * logo at each notable release in the plotted window) so price moves read against the

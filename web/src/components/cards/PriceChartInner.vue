@@ -36,8 +36,9 @@ const props = defineProps<{
   singleSeries?: boolean
   /** Semantic names for the two generic price fields when they are not regular/foil. */
   seriesLabels?: { primary: string; secondary: string }
-  /** Show a clickable legend that toggles each plotted line on/off. Opt-in (the collection
-   * value chart uses it); off for the card/product detail charts, which stay legend-less. */
+  /** Show a clickable legend that toggles each plotted line on/off. Opt-in: the card detail
+   * chart uses it as the regular/foil key, the collection value chart to switch its
+   * Cards/Sealed lines. The sealed-product chart is single-series, so it stays legend-less. */
   toggleable?: boolean
   /** The game's full set list, for the set-release markers. Empty (the default) draws no
    * markers, so a chart without a game stays exactly as before. */
@@ -91,10 +92,17 @@ const setsRef = computed<CardSet[]>(() => props.sets ?? [])
 const geometry = ref<PlotGeometry | null>(null)
 const { positioned: setMarkers } = useChartSetMarkers(setsRef, xMin, xMax, geometry)
 
+// unovis' crosshair circle radius: unovis insets the plotted x-scale range by the crosshair's
+// bleed (`range = [bleed.left, width - bleed.right]`) but does NOT include the crosshair in the
+// `bleed` it reports to onRenderComplete (that sums only the plotted components — our 2px lines,
+// plotlines and axes contribute none). We always render a ChartCrosshair, so the drawn scale is
+// inset by its default circle radius on each side; fold that back in or the overlay drifts ±4px
+// from the plotlines (0 at centre, worst at the edges). Matches VisCrosshair's default.
+const CROSSHAIR_BLEED_PX = 4
+
 // unovis reports the computed margins (axis + label width) and the plot area size after each
-// render/resize; combined with the pinned domain that's everything the overlay needs to sit a
-// logo exactly on its plotline. `bleed` is unovis' internal overflow padding, folded into the
-// left offset so the origin matches the drawn scale.
+// render/resize; combined with the pinned domain and the crosshair inset above, that's
+// everything the overlay needs to sit a logo exactly on its plotline.
 // unovis' margin/bleed spacing shape (avoids a fragile deep type import).
 type Spacing = { left?: number; right?: number; top?: number; bottom?: number }
 function onRenderComplete(
@@ -109,9 +117,13 @@ function onRenderComplete(
     if (geometry.value) geometry.value = null
     return
   }
+  // The scale is inset by max(reported bleed, crosshair radius) on each side; mirror that so the
+  // overlay's fraction math maps onto the same pixel band the plotlines are drawn in.
+  const insetLeft = Math.max(bleed.left ?? 0, CROSSHAIR_BLEED_PX)
+  const insetRight = Math.max(bleed.right ?? 0, CROSSHAIR_BLEED_PX)
   const next: PlotGeometry = {
-    marginLeft: (margin.left ?? 0) + (bleed.left ?? 0),
-    plotWidth: componentWidth,
+    marginLeft: (margin.left ?? 0) + insetLeft,
+    plotWidth: componentWidth - insetLeft - insetRight,
     xMin: xMin.value,
     xMax: xMax.value,
   }
@@ -325,14 +337,17 @@ const tooltipTemplate = computed(() =>
       >
         <template v-for="m in setMarkers" :key="m.code">
           <RouterLink
-            v-if="m.showIcon && game && !failedIcons.has(m.code)"
+            v-if="m.show && game"
             :to="`/cards/${game}/sets/${m.code}`"
             class="group focus-visible:ring-ring/50 pointer-events-auto absolute top-1 flex -translate-x-1/2 flex-col items-center gap-0.5 rounded focus-visible:ring-2 focus-visible:outline-none"
             :style="{ left: `${m.left}px` }"
             :title="`${m.name} · released ${formatDate(m.x)}`"
             :aria-label="`${m.name} (${m.code}), released ${formatDate(m.x)} — view set`"
           >
+            <!-- The code always labels the marker; the logo shows on top when the set has one
+                 and it loads (a null/failed icon collapses to the code-only link). -->
             <img
+              v-if="m.hasIcon && !failedIcons.has(m.code)"
               :src="setIconUrl(game, m.code)"
               alt=""
               class="size-4 object-contain opacity-70 transition-opacity group-hover:opacity-100 dark:invert"

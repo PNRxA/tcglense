@@ -109,20 +109,22 @@ describe('positionSetMarkers', () => {
     expect(placed[1]!.left).toBeCloseTo(240)
   })
 
-  it('suppresses a logo that collides with a kept neighbour but keeps its line', () => {
+  it('suppresses a chip that collides with a kept neighbour but keeps its line', () => {
     const placed = positionSetMarkers(
       [marker('a', '2024-06-01'), marker('b', '2024-06-05')],
       geo,
       24,
     )
-    expect(placed[0]!.showIcon).toBe(true)
-    // Only a few px apart at this scale — the second logo is hidden, its plotline still drawn.
-    expect(placed[1]!.showIcon).toBe(false)
+    expect(placed[0]!.show).toBe(true)
+    // Only a few px apart at this scale — the second chip is hidden, its plotline still drawn.
+    expect(placed[1]!.show).toBe(false)
     expect(placed.map((m) => m.code)).toEqual(['a', 'b'])
   })
 
-  it('never shows a logo for an icon-less marker', () => {
-    expect(positionSetMarkers([marker('a', '2024-06-01', false)], geo, 24)[0]!.showIcon).toBe(false)
+  it('still shows an icon-less marker so its code labels the line', () => {
+    const [only] = positionSetMarkers([marker('a', '2024-06-01', false)], geo, 24)
+    expect(only!.show).toBe(true)
+    expect(only!.hasIcon).toBe(false)
   })
 
   it('returns nothing when the plot has no width or span', () => {
@@ -144,6 +146,6 @@ describe('useChartSetMarkers', () => {
 
     geometry.value = { marginLeft: 40, plotWidth: 200, xMin: xMin.value, xMax: xMax.value }
     expect(positioned.value).toHaveLength(1)
-    expect(positioned.value[0]!.showIcon).toBe(true)
+    expect(positioned.value[0]!.show).toBe(true)
   })
 })
