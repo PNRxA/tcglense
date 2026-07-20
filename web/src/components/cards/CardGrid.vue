@@ -7,7 +7,7 @@ import OwnedMarkBadge from '@/components/cards/OwnedMarkBadge.vue'
 import ReadonlyOwnedBadge from '@/components/cards/ReadonlyOwnedBadge.vue'
 import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 import { useCardNavList } from '@/composables/useCardNavList'
-import { CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
+import { CARD_SIZE_GRID_CLASS, type CardSize } from '@/lib/cardSize'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useAuthStore } from '@/stores/auth'
 
@@ -54,6 +54,10 @@ const props = withDefaults(
     // quick-add editor, ignoring auth. A signed-in viewer of someone else's public page must
     // never get an editor that would write the owner's counts into their own collection.
     readonly?: boolean
+    // Density map (the user's size preference → column classes). Defaults to the catalog scale;
+    // the sealed-product "Cards in this product" section passes the bumped-up scale
+    // (PRODUCT_CARD_SIZE_GRID_CLASS) so its fewer cards render one size larger per selection.
+    sizeClasses?: Record<CardSize, string>
   }>(),
   {
     ownership: undefined,
@@ -63,6 +67,7 @@ const props = withDefaults(
     ownedMarks: undefined,
     wishlist: undefined,
     readonly: false,
+    sizeClasses: () => CARD_SIZE_GRID_CLASS,
   },
 )
 
@@ -103,7 +108,7 @@ function wishlistSeed(card: Card): OwnedCountSeed | undefined {
 // CardSizeMenu); fewer columns render larger cards. The store reads localStorage
 // synchronously, so the right density is applied on the first paint.
 const cardSize = useCardSizeStore()
-const gridClass = computed(() => CARD_SIZE_GRID_CLASS[cardSize.size])
+const gridClass = computed(() => props.sizeClasses[cardSize.size])
 
 // Quick-add controls (issue #95) are a signed-in feature.
 const auth = useAuthStore()

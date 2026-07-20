@@ -5,6 +5,7 @@ import { PRODUCT_CARDS_PAGE_SIZE, useProductCardsQuery } from '@/composables/use
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import { PRODUCT_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
@@ -121,6 +122,7 @@ const { ownership: wishlistOwnership } = useWishlistCounts(game, cards)
             :cards="cards"
             :ownership="ownership"
             :wishlist="wishlistOwnership"
+            :size-classes="PRODUCT_CARD_SIZE_GRID_CLASS"
           />
         </UpdatingOverlay>
         <div class="mt-6">
