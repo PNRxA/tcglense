@@ -6,6 +6,7 @@ import CardMetaList from '@/components/cards/CardMetaList.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/collection/CollectionControls.vue'
+import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
@@ -13,7 +14,7 @@ import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCardQuery } from '@/composables/useCatalog'
-import { getPriceHistory } from '@/lib/api'
+import { getPriceHistory, type AlertFinish } from '@/lib/api'
 import { formatReleaseLabel } from '@/lib/releaseDate'
 
 // The body of a card's detail — image(s), rules text, prices + history, collection and
@@ -71,6 +72,18 @@ const RARITY_CHIP_CLASSES: Record<string, string> = {
 const rarityChipClass = computed(
   () => RARITY_CHIP_CLASSES[card.value?.rarity ?? ''] ?? 'bg-muted text-foreground/80',
 )
+
+// The finishes this card is actually priced in, so the price-alert dialog offers only those
+// (a regular-only card shows no finish picker). Etched isn't surfaced in CardPrices — like the
+// price summary and the toggleable chart, this is regular/foil only; a fully unpriced card
+// falls back to regular so an alert can still be armed for when a price arrives.
+const alertFinishes = computed<AlertFinish[]>(() => {
+  const prices = card.value?.prices
+  const finishes: AlertFinish[] = []
+  if (prices?.usd != null) finishes.push('nonfoil')
+  if (prices?.usd_foil != null) finishes.push('foil')
+  return finishes.length ? finishes : ['nonfoil']
+})
 </script>
 
 <template>
@@ -159,6 +172,17 @@ const rarityChipClass = computed(
 
           <!-- Prices -->
           <CardPriceSummary :card="card" />
+
+          <!-- Watch this card's price (issue #525). In the shared body so it shows on both the
+               full page and the browse-grid modal; shown to everyone (the dialog nudges
+               signed-out visitors to make an account). -->
+          <SetPriceAlertButton
+            :game="game"
+            target-kind="card"
+            :external-id="card.id"
+            :name="card.name"
+            :finishes="alertFinishes"
+          />
 
           <!-- Track how many copies you own (signed-in users). -->
           <CollectionControls :game="game" :card="card" />

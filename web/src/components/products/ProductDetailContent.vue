@@ -8,13 +8,14 @@ import ProductContainers from '@/components/products/ProductContainers.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
 import ProductOverview from '@/components/products/ProductOverview.vue'
 import ProductWishlistControls from '@/components/products/ProductWishlistControls.vue'
+import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import PriceStatGrid from '@/components/shared/PriceStatGrid.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductQuery } from '@/composables/useProducts'
 import type { ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
 import { useCurrency } from '@/composables/useCurrency'
-import { getProductPrices } from '@/lib/api'
+import { getProductPrices, type AlertFinish } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
 import { formatReleaseLabel } from '@/lib/releaseDate'
 
@@ -77,6 +78,15 @@ const priceRows = computed(() => {
 // A future release date reads as "Releases …", a past one as "Released …", so an
 // as-yet-unreleased product shows when it's due rather than claiming it already came out.
 const releaseLabel = computed(() => formatReleaseLabel(product.value?.released_at))
+
+// Sealed products are finish-less (TCGCSV is effectively single-price, and the price chart is
+// single-series), so the alert dialog shows no finish picker — it watches the one available
+// price. Prefer the regular column; use foil only when it's the sole priced one.
+const alertFinishes = computed<AlertFinish[]>(() => {
+  const prices = product.value?.prices
+  if (prices?.usd == null && prices?.usd_foil != null) return ['foil']
+  return ['nonfoil']
+})
 
 // Jump targets for the overview strip's chips. Template refs (not element ids) so the
 // same body can render twice at once — the full page under an open detail modal —
@@ -148,6 +158,17 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
             <PriceStatGrid v-if="priceRows.length" :rows="priceRows" />
             <p v-else class="text-muted-foreground text-sm">No current price.</p>
           </div>
+
+          <!-- Watch this product's price (issue #525). In the shared body so it shows on both
+               the full page and the browse-grid modal; shown to everyone (the dialog nudges
+               signed-out visitors to make an account). -->
+          <SetPriceAlertButton
+            :game="game"
+            target-kind="product"
+            :external-id="product.id"
+            :name="product.name"
+            :finishes="alertFinishes"
+          />
 
           <!-- Independent collection + wish-list sealed holdings (#364/#435). Both gate
                internally on auth (matching the card page), so signed-out visitors see the
