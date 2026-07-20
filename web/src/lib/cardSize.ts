@@ -33,3 +33,15 @@ export const CARD_SIZE_GRID_CLASS: Record<CardSize, string> = {
   medium: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6',
   large: 'grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4',
 }
+
+// The sealed-product "Cards in this product" section renders one size larger than the catalog
+// default at every step: a sealed product lists far fewer cards than a full set, so each one
+// gets more room. The user's persisted size preference still drives it — here 'small' matches
+// the catalog's 'medium' density, 'medium' matches the catalog's 'large', and 'large' goes
+// bigger still (fewer columns than the catalog ever uses). Same literal-class rule as
+// CARD_SIZE_GRID_CLASS: Tailwind's scanner only emits utilities it sees verbatim in the source.
+export const PRODUCT_CARD_SIZE_GRID_CLASS: Record<CardSize, string> = {
+  small: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6',
+  medium: 'grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4',
+  large: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3',
+}

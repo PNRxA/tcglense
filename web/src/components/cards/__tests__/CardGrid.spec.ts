@@ -10,6 +10,8 @@ import type { GhostStyle } from '@/lib/ghostDisplay'
 import CardGrid from '../CardGrid.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
+import { useCardSizeStore } from '@/stores/cardSize'
+import { CARD_SIZE_GRID_CLASS, PRODUCT_CARD_SIZE_GRID_CLASS, type CardSize } from '@/lib/cardSize'
 
 function makeCard(id: string): Card {
   return {
@@ -55,6 +57,8 @@ function mountGrid(
     wishlist?: OwnedCountsMap
     collectionCounts?: OwnedCountsMap
     readonly?: boolean
+    sizeClasses?: Record<CardSize, string>
+    size?: CardSize
   } = {},
 ) {
   const router = createRouter({
@@ -67,6 +71,9 @@ function mountGrid(
   // The ghost desaturation style (grayscale default / full colour) is a Pinia preference the
   // tile reads at setup, so set it before mounting (issue #213).
   if (opts.ghostStyle) useGhostDisplayStore().setStyle(opts.ghostStyle)
+  // The grid maps the persisted size preference to column classes, so set it before mounting
+  // when a test cares about which density row is chosen.
+  if (opts.size) useCardSizeStore().setSize(opts.size)
   // CardTile renders a RouterLink, CardGrid reads the card-size preference from a Pinia
   // store, and the quick-add control uses vue-query, so the tree needs all three.
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -81,6 +88,7 @@ function mountGrid(
       wishlist: opts.wishlist,
       collectionCounts: opts.collectionCounts,
       readonly: opts.readonly,
+      sizeClasses: opts.sizeClasses,
     },
     global: { plugins: [router, pinia, [VueQueryPlugin, { queryClient }]] },
   })
@@ -374,5 +382,35 @@ describe('CardGrid owned-in-collection marks (issue #213)', () => {
   it('shows no marks without an ownedMarks map', () => {
     const wrapper = mountGrid([makeCard('a')], undefined, true, false, 'wishlist')
     expect(wrapper.find('[aria-label="Owned in your collection"]').exists()).toBe(false)
+  })
+})
+
+describe('CardGrid density map', () => {
+  // The grid root carries the column classes for the persisted size. By default that's the
+  // catalog scale; a caller (the sealed-product "Cards in this product" section) can pass a
+  // bumped-up scale that renders each selection one size larger.
+  it('uses the catalog scale by default', () => {
+    const wrapper = mountGrid([makeCard('a')], undefined, false, false, 'collection', {
+      size: 'large',
+    })
+    expect(wrapper.classes()).toContain('xl:grid-cols-4') // CARD_SIZE_GRID_CLASS.large
+    expect(CARD_SIZE_GRID_CLASS.large).toContain('xl:grid-cols-4')
+  })
+
+  it('applies a provided sizeClasses override for the same size preference', () => {
+    // Product scale's `large` goes bigger than the catalog's — fewer columns at xl.
+    const wrapper = mountGrid([makeCard('a')], undefined, false, false, 'collection', {
+      size: 'large',
+      sizeClasses: PRODUCT_CARD_SIZE_GRID_CLASS,
+    })
+    expect(wrapper.classes()).toContain('xl:grid-cols-3') // PRODUCT_CARD_SIZE_GRID_CLASS.large
+    expect(wrapper.classes()).not.toContain('xl:grid-cols-4')
+  })
+
+  it('shifts each product-scale selection one size up from the catalog scale', () => {
+    // The product page's `small` matches the catalog's `medium`, and its `medium` matches the
+    // catalog's `large` — the promised one-step-larger shift, per selection.
+    expect(PRODUCT_CARD_SIZE_GRID_CLASS.small).toBe(CARD_SIZE_GRID_CLASS.medium)
+    expect(PRODUCT_CARD_SIZE_GRID_CLASS.medium).toBe(CARD_SIZE_GRID_CLASS.large)
   })
 })
