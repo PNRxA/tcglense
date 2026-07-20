@@ -263,7 +263,10 @@ impl std::fmt::Debug for Config {
             // The Cloudflare Email Service token is a credential; print only whether set.
             .field(
                 "cloudflare_email_api_token",
-                &self.cloudflare_email_api_token.as_ref().map(|_| "[redacted]"),
+                &self
+                    .cloudflare_email_api_token
+                    .as_ref()
+                    .map(|_| "[redacted]"),
             )
             // The account id is an identifier (it shows in dashboard URLs), not a
             // secret, and is useless without the token — print it plainly.
@@ -1105,144 +1108,166 @@ mod tests {
         let public_site = "https://tcglense.app";
         let real_secret = "0123456789abcdef0123456789abcdef";
 
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            "http://tcglense.app",
-            real_secret,
-            true,
-            true, // email provider configured
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            DEV_ONLY_JWT_SECRET,
-            true,
-            true, // email provider configured
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            false, // no email provider
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            true, // email provider configured
-            DEFAULT_EMAIL_FROM,
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            true, // email provider configured
-            "TCGLense <hello@tcglense.app>",
-            true,
-            None,
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            false,
-            true, // email provider configured
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            true, // email provider configured
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            true,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            true, // email provider configured
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                "http://tcglense.app",
+                real_secret,
+                true,
+                true, // email provider configured
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                DEV_ONLY_JWT_SECRET,
+                true,
+                true, // email provider configured
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                false, // no email provider
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                true, // email provider configured
+                DEFAULT_EMAIL_FROM,
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                true, // email provider configured
+                "TCGLense <hello@tcglense.app>",
+                true,
+                None,
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                false,
+                true, // email provider configured
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                true, // email provider configured
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                true,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                true, // email provider configured
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_ok()
+        );
         // Closed registration is a safe bootstrap posture while the operator is
         // still provisioning the widget keys.
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            public_site,
-            real_secret,
-            true,
-            false, // no email provider
-            DEFAULT_EMAIL_FROM,
-            false,
-            None,
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                public_site,
+                real_secret,
+                true,
+                false, // no email provider
+                DEFAULT_EMAIL_FROM,
+                false,
+                None,
+                false,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn local_no_email_signup_bypass_requires_an_explicit_opt_in() {
-        assert!(validate_public_auth_posture(
-            "127.0.0.1",
-            "http://localhost:5173",
-            DEV_ONLY_JWT_SECRET,
-            false,
-            false, // no email provider
-            DEFAULT_EMAIL_FROM,
-            true,
-            None,
-            false,
-        )
-        .is_err());
-        assert!(validate_public_auth_posture(
-            "127.0.0.1",
-            "http://localhost:5173",
-            DEV_ONLY_JWT_SECRET,
-            false,
-            false, // no email provider
-            DEFAULT_EMAIL_FROM,
-            true,
-            None,
-            true,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "127.0.0.1",
+                "http://localhost:5173",
+                DEV_ONLY_JWT_SECRET,
+                false,
+                false, // no email provider
+                DEFAULT_EMAIL_FROM,
+                true,
+                None,
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_public_auth_posture(
+                "127.0.0.1",
+                "http://localhost:5173",
+                DEV_ONLY_JWT_SECRET,
+                false,
+                false, // no email provider
+                DEFAULT_EMAIL_FROM,
+                true,
+                None,
+                true,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1266,7 +1291,11 @@ mod tests {
     #[test]
     fn email_provider_is_configured_by_resend_or_a_complete_cloudflare_pair() {
         assert!(email_provider_configured(Some("re_live_key"), None, None));
-        assert!(email_provider_configured(None, Some("cf_token"), Some("acct123")));
+        assert!(email_provider_configured(
+            None,
+            Some("cf_token"),
+            Some("acct123")
+        ));
         assert!(email_provider_configured(
             Some("re_live_key"),
             Some("cf_token"),
@@ -1283,18 +1312,20 @@ mod tests {
         // A public deployment with signups on but no Resend key still boots when a
         // Cloudflare Email Service pair is configured — the mailbox-proof gate is
         // provider-agnostic.
-        assert!(validate_public_auth_posture(
-            "0.0.0.0",
-            "https://tcglense.app",
-            "0123456789abcdef0123456789abcdef",
-            true,
-            email_provider_configured(None, Some("cf_token"), Some("acct123")),
-            "TCGLense <hello@tcglense.app>",
-            true,
-            Some("turnstile-secret"),
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_public_auth_posture(
+                "0.0.0.0",
+                "https://tcglense.app",
+                "0123456789abcdef0123456789abcdef",
+                true,
+                email_provider_configured(None, Some("cf_token"), Some("acct123")),
+                "TCGLense <hello@tcglense.app>",
+                true,
+                Some("turnstile-secret"),
+                false,
+            )
+            .is_ok()
+        );
     }
 
     #[test]

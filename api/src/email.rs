@@ -519,7 +519,10 @@ mod tests {
         };
         assert!(cloudflare.is_enabled());
         let debug = format!("{cloudflare:?}");
-        assert!(!debug.contains("cf_super_secret"), "token must be redacted: {debug}");
+        assert!(
+            !debug.contains("cf_super_secret"),
+            "token must be redacted: {debug}"
+        );
         assert!(debug.contains("[redacted]"));
         // The account id (a non-secret identifier) and the From address are printed.
         assert!(debug.contains("acct123"));
