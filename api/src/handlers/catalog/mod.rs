@@ -33,6 +33,7 @@ mod cards;
 mod image;
 mod prices;
 mod products;
+mod rulings;
 mod scan;
 mod sets;
 mod status;
@@ -47,6 +48,7 @@ pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
     product_containers, product_contents, product_facets, product_image, product_prices,
 };
+pub use rulings::card_rulings;
 pub use scan::scan_cards;
 pub use sets::{get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon};
 pub use status::{ingest_status, list_games};
@@ -63,6 +65,7 @@ pub use products::{
     __path_product_cards, __path_product_containers, __path_product_contents,
     __path_product_facets, __path_product_prices,
 };
+pub use rulings::__path_card_rulings;
 pub use scan::__path_scan_cards;
 pub use sets::{
     __path_get_set, __path_list_set_cards, __path_list_set_drops, __path_list_set_subtypes,

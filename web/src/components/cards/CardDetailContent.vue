@@ -7,6 +7,7 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/collection/CollectionControls.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
+import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
 import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
@@ -239,6 +240,11 @@ const rarityChipClass = computed(
         <!-- Which sealed products this card is found in / can be pulled from / may be in.
           Renders nothing when the card is in no ingested product. -->
         <CardSealedProducts :game="game" :id="id" />
+
+        <!-- The card's "Notes and Rules Information" (rulings, issue #522), last on the page.
+          Keyed off the route id so it mounts before the card loads; renders nothing when
+          there are none. -->
+        <CardRulings :game="game" :id="id" />
       </div>
 
       <!-- Outbound "buy this card" links, grouped by region (issue #175). The rail's second

@@ -51,6 +51,22 @@ pub struct ScryfallSet {
     pub parent_set_code: Option<String>,
 }
 
+/// One entry in Scryfall's `rulings` bulk file: an official clarification ("Notes and
+/// Rules Information") keyed by the card's gameplay identity (`oracle_id`), shared across
+/// all its printings. Unknown fields (e.g. `object`) are ignored. Every field is optional
+/// defensively — the ingest keeps only rulings carrying an `oracle_id` and a `comment`.
+#[derive(Debug, Deserialize)]
+pub struct ScryfallRuling {
+    #[serde(default)]
+    pub oracle_id: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
 /// A Scryfall card object (only the fields we store).
 ///
 /// `Default` is derived so the dummy seeder can fill new fields via

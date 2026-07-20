@@ -367,8 +367,10 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
 }
 
 /// Shared gameplay identity for the reprinted card, so its printings group as one
-/// (mirrors a real Scryfall `oracle_id`; only needs to be stable and distinct).
-const REPRINT_ORACLE_ID: &str = "dummy-oracle-reprint-0001";
+/// (mirrors a real Scryfall `oracle_id`; only needs to be stable and distinct). Also the
+/// oracle id the dummy rulings hang off (see `super::seed_rulings`), so both printings of
+/// the reprinted card show the same "Notes and Rules Information" offline.
+pub(super) const REPRINT_ORACLE_ID: &str = "dummy-oracle-reprint-0001";
 
 /// One printing of a card reprinted across sets: every printing shares the same
 /// name and `oracle_id` but lives in its own set with its own collector number and

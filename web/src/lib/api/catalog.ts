@@ -7,6 +7,7 @@ import type {
   IngestStatus,
   Page,
   PricePoint,
+  Ruling,
   SubtypeGroup,
 } from './generated'
 
@@ -26,6 +27,7 @@ export type {
   IngestStatus,
   Page,
   PricePoint,
+  Ruling,
   SubtypeGroup,
 } from './generated'
 
@@ -184,6 +186,15 @@ export function getCardPrints(game: string, id: string): Promise<{ data: Card[] 
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<{ data: Card[] }>(`/api/games/${g}/cards/${i}/prints`)
+}
+
+/** A card's rulings ("Notes and Rules Information"), oldest first — official
+ * clarifications keyed by the card's gameplay identity (oracle id), so every printing
+ * returns the same list. Empty when the card has no rulings. */
+export function getCardRulings(game: string, id: string): Promise<{ data: Ruling[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: Ruling[] }>(`/api/games/${g}/cards/${i}/rulings`)
 }
 
 /**
