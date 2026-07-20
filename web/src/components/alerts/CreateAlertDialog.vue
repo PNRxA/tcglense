@@ -44,10 +44,12 @@ const props = defineProps<{
 const auth = useAuthStore()
 const route = useRoute()
 
-// Where the sign-in nudge sends a signed-out visitor. `redirect` returns them to exactly where
-// they were — including a `?card=`/`?product=` modal param — so the detail reopens post-login
-// and they can set the alert without hunting for it again (matching CollectionControls).
+// Where the nudge's two links send a signed-out visitor. Both carry `redirect: route.fullPath`
+// — including a `?card=`/`?product=` modal param — so the detail reopens once they're back and
+// they can set the alert without hunting for it again (RegisterView threads the redirect on
+// through the completion flow, matching CollectionControls' sign-in prompt).
 const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullPath } }))
+const registerTo = computed(() => ({ path: '/register', query: { redirect: route.fullPath } }))
 
 const open = defineModel<boolean>('open', { default: false })
 
@@ -136,7 +138,7 @@ async function submit() {
           <RouterLink :to="loginTo" :class="buttonVariants({ variant: 'outline' })"
             >Sign in</RouterLink
           >
-          <RouterLink to="/register" :class="buttonVariants()">Create free account</RouterLink>
+          <RouterLink :to="registerTo" :class="buttonVariants()">Create free account</RouterLink>
         </div>
       </div>
 

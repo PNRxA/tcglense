@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
@@ -6,14 +6,13 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import type { AlertFinish } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 
-// The create mutation is mocked so the dialog can mount without the authed-mutation/query
-// wiring — these tests are about which branch renders (nudge vs form) and the finish picker's
-// visibility, not the network layer.
+// A stable create-mutation mock so tests can assert the submitted payload. The composable is
+// mocked so the dialog mounts without the authed-mutation/query wiring — these tests are about
+// which branch renders (nudge vs form), the finish picker's visibility, and the finish the
+// hidden-picker path submits, not the network layer.
+const mocks = vi.hoisted(() => ({ mutateAsync: vi.fn<(body: unknown) => Promise<unknown>>() }))
 vi.mock('@/composables/useAlerts', () => ({
-  useCreateAlertMutation: () => ({
-    mutateAsync: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
-    isPending: ref(false),
-  }),
+  useCreateAlertMutation: () => ({ mutateAsync: mocks.mutateAsync, isPending: ref(false) }),
 }))
 
 import CreateAlertDialog from '../CreateAlertDialog.vue'
@@ -35,6 +34,11 @@ const dialogStubs = {
   SelectValue: PassThrough,
 }
 
+// A query-bearing route so `route.fullPath` (what the nudge links preserve) differs from
+// `route.path` — a bare path would let a fullPath->path regression pass unnoticed. This mirrors
+// the real modal case: the detail overlay lives on `?card=<id>` over the browse grid.
+const NAV_PATH = '/cards/mtg/cards?card=sol-ring'
+
 async function mountDialog(opts: {
   authed: boolean
   resolved?: boolean
@@ -54,15 +58,19 @@ async function mountDialog(opts: {
       { path: '/login', component: { template: '<div />' } },
       { path: '/register', component: { template: '<div />' } },
       { path: '/alerts', component: { template: '<div />' } },
+      { path: '/cards/:game/cards', component: { template: '<div />' } },
       { path: '/cards/:game/cards/:id', component: { template: '<div />' } },
     ],
   })
-  await router.push('/cards/mtg/cards/sol-ring')
+  await router.push(NAV_PATH)
   await router.isReady()
 
   const wrapper = mount(CreateAlertDialog, {
     props: {
-      open: true,
+      // Mount closed, then open, so the `watch(open)` reset actually fires on the false->true
+      // edge (it has no `immediate`) — that's the path that flips `finish` to the single
+      // available finish when the picker is hidden.
+      open: false,
       game: 'mtg',
       targetKind: opts.targetKind ?? 'card',
       externalId: 'sol-ring',
@@ -71,6 +79,7 @@ async function mountDialog(opts: {
     },
     global: { plugins: [pinia, router], stubs: dialogStubs },
   })
+  await wrapper.setProps({ open: true })
   await flushPromises()
   return wrapper
 }
@@ -113,6 +122,11 @@ describe('SetPriceAlertButton', () => {
 })
 
 describe('CreateAlertDialog auth branch', () => {
+  beforeEach(() => {
+    mocks.mutateAsync.mockReset()
+    mocks.mutateAsync.mockResolvedValue({})
+  })
+
   it('nudges a signed-out visitor to create an account instead of showing the form', async () => {
     const wrapper = await mountDialog({ authed: false })
     expect(wrapper.text()).toContain('Create free account')
@@ -122,16 +136,16 @@ describe('CreateAlertDialog auth branch', () => {
     wrapper.unmount()
   })
 
-  it('sends the sign-in link back to the current page so the detail reopens post-login', async () => {
+  it('sends BOTH nudge links back to the current full path so the detail reopens after auth', async () => {
     const wrapper = await mountDialog({ authed: false })
-    const signIn = wrapper
-      .findAllComponents({ name: 'RouterLink' })
-      .find((l) => (l.text() ?? '').includes('Sign in'))
+    const links = wrapper.findAllComponents({ name: 'RouterLink' })
+    const signIn = links.find((l) => (l.text() ?? '').includes('Sign in'))
+    const register = links.find((l) => (l.text() ?? '').includes('Create free account'))
     expect(signIn).toBeTruthy()
-    expect(signIn!.props('to')).toEqual({
-      path: '/login',
-      query: { redirect: '/cards/mtg/cards/sol-ring' },
-    })
+    expect(register).toBeTruthy()
+    // Both carry the query-bearing full path (not the bare path) so the modal param survives.
+    expect(signIn!.props('to')).toEqual({ path: '/login', query: { redirect: NAV_PATH } })
+    expect(register!.props('to')).toEqual({ path: '/register', query: { redirect: NAV_PATH } })
     wrapper.unmount()
   })
 
@@ -151,6 +165,11 @@ describe('CreateAlertDialog auth branch', () => {
 })
 
 describe('CreateAlertDialog finish picker', () => {
+  beforeEach(() => {
+    mocks.mutateAsync.mockReset()
+    mocks.mutateAsync.mockResolvedValue({})
+  })
+
   it('hides the finish picker when only one finish is available', async () => {
     const wrapper = await mountDialog({ authed: true, finishes: ['nonfoil'] })
     expect(wrapper.text()).not.toContain('Finish')
@@ -170,6 +189,22 @@ describe('CreateAlertDialog finish picker', () => {
       finishes: ['nonfoil'],
     })
     expect(wrapper.text()).not.toContain('Finish')
+    wrapper.unmount()
+  })
+
+  it('submits the single available finish implicitly when the picker is hidden (foil-only)', async () => {
+    // The hidden-picker contract: `watch(open)` flips `finish` to the one available finish, so a
+    // foil-only target arms a foil alert even though the user never touched a picker. Guards
+    // against line 84 regressing to a hardcoded 'nonfoil'.
+    const wrapper = await mountDialog({ authed: true, finishes: ['foil'] })
+    expect(wrapper.text()).not.toContain('Finish')
+    await wrapper.find('#alert-threshold').setValue('5.00')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.mutateAsync).toHaveBeenCalledTimes(1)
+    expect(mocks.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ target_kind: 'card', finish: 'foil', threshold: '5.00' }),
+    )
     wrapper.unmount()
   })
 })
