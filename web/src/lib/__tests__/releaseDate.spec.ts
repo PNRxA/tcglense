@@ -27,6 +27,12 @@ describe('formatReleaseLabel', () => {
     expect(formatReleaseLabel('2026-08-01', 'short')?.label).toContain('Aug')
   })
 
+  it('renders the exact calendar day for a date-only value (no UTC-parse off-by-one)', () => {
+    // Parsed as local midnight, so the displayed day matches the stored date regardless of the
+    // viewer's timezone — a card dated Aug 1 never shows "July 31".
+    expect(formatReleaseLabel('2026-08-01', 'long')?.label).toBe('Releases August 1, 2026')
+  })
+
   it('returns null for a missing or unparseable date', () => {
     expect(formatReleaseLabel(null)).toBeNull()
     expect(formatReleaseLabel(undefined)).toBeNull()

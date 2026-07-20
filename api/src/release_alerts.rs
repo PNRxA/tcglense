@@ -203,7 +203,16 @@ async fn deliver_kind(
         let page_len = page.len();
 
         let user_ids: Vec<i32> = page.iter().map(|&(_, uid)| uid).collect();
-        let already = load_already_notified(db, kind, &user_ids, &ref_keys).await;
+        // Fail SAFE: if the dedup ledger can't be read, skip *this page's* deliveries rather than
+        // re-notifying everyone on it (an empty "already" set would make the dedup guard below
+        // always false). `after` is already advanced, so we move on; the whole set is re-scanned
+        // on the next full pass, and delivery is idempotently retried — deferring beats spamming.
+        let Some(already) = load_already_notified(db, kind, &user_ids, &ref_keys).await else {
+            if (page_len as u64) < USER_BATCH {
+                break;
+            }
+            continue;
+        };
 
         for &(_, user_id) in &page {
             for release in releases {
@@ -361,17 +370,20 @@ async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<Upc
 }
 
 /// The `(user_id, ref_key)` pairs already in the ledger for this kind, scoped to a page of
-/// users and the pass's release keys — so a delivered heads-up is never sent twice.
+/// users and the pass's release keys — so a delivered heads-up is never sent twice. Returns
+/// `None` on a DB error: the caller must then **skip** the page rather than treat it as
+/// "nobody notified yet" (which would re-deliver to everyone), because delivery is not
+/// transactional with recording — the retry-next-pass path is safe, a false empty set is not.
 async fn load_already_notified(
     db: &DatabaseConnection,
     kind: ReleaseKind,
     user_ids: &[i32],
     ref_keys: &[String],
-) -> HashSet<(i32, String)> {
+) -> Option<HashSet<(i32, String)>> {
     if user_ids.is_empty() || ref_keys.is_empty() {
-        return HashSet::new();
+        return Some(HashSet::new());
     }
-    let rows: Vec<(i32, String)> = ReleaseNotification::find()
+    match ReleaseNotification::find()
         .select_only()
         .column(release_notification::Column::UserId)
         .column(release_notification::Column::RefKey)
@@ -381,11 +393,13 @@ async fn load_already_notified(
         .into_tuple()
         .all(db)
         .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(error = %err, "failed to load the release-notification ledger");
-            Vec::new()
-        });
-    rows.into_iter().collect()
+    {
+        Ok(rows) => Some(rows.into_iter().collect()),
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to load the release-notification ledger; skipping this page to avoid re-notifying");
+            None
+        }
+    }
 }
 
 /// Record a delivered heads-up in the ledger. A unique-constraint conflict (a race, or a stale
@@ -689,6 +703,134 @@ mod tests {
             "SLD opt-out gets no SLD heads-up"
         );
         assert_eq!(ledger_count(&db).await, 0);
+    }
+
+    /// A set releasing **today** — the inclusive low bound of the look-ahead window — is caught
+    /// (the day-of catch-up), and reads "releases today". Guards against a regression that
+    /// tightens the low bound to `> today` and silently drops the catch-up path.
+    #[tokio::test]
+    async fn release_today_is_caught_by_the_inclusive_boundary() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let now: DateTimeUtc = "2026-07-20T09:00:00Z".parse().unwrap();
+        let today = now.date_naive();
+        subscriber(&db, "today@example.com", false, true).await;
+        // Releasing today (day 0), the inclusive `from` bound.
+        insert_set(
+            &db,
+            "tdy",
+            "Today Set",
+            Some("expansion"),
+            &day(0, today),
+            false,
+            None,
+        )
+        .await;
+
+        let http = reqwest::Client::new();
+        let mailbox = Mailbox::default();
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            true,
+            "https://x.test",
+            now,
+        )
+        .await;
+        assert_eq!(mailbox.emails().len(), 1, "a same-day release is caught");
+        assert!(
+            mailbox.emails()[0].text.contains("releases today"),
+            "day-of wording: {}",
+            mailbox.emails()[0].text
+        );
+        assert_eq!(ledger_count(&db).await, 1);
+    }
+
+    /// The "record only on delivery, retry until a channel works" contract: an opted-in user with
+    /// no working channel is not recorded (so it isn't silently swallowed), and delivers exactly
+    /// once when a channel is later configured — then dedups. Mirrors the price-alert
+    /// `met_alert_latches_only_once_a_channel_delivers` guard for the release surface.
+    #[tokio::test]
+    async fn undelivered_headsup_is_retried_until_a_channel_works() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let now: DateTimeUtc = "2026-07-20T09:00:00Z".parse().unwrap();
+        let today = now.date_naive();
+
+        // Opt into SLD but with NO working channel (email off; no Discord/Telegram).
+        let user_id = crate::test_support::insert_user(&db, "nochan@example.com").await;
+        let ts = Utc::now();
+        alert_channel::ActiveModel {
+            user_id: Set(user_id),
+            email_enabled: Set(false),
+            sld_release_enabled: Set(true),
+            set_release_enabled: Set(false),
+            created_at: Set(ts),
+            updated_at: Set(ts),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        insert_sld_card(&db, "2658", &day(1, today)).await;
+
+        let http = reqwest::Client::new();
+        let mailbox = Mailbox::default();
+
+        // Pass 1: nothing delivered → nothing recorded (retryable, not swallowed).
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            true,
+            "https://x.test",
+            now,
+        )
+        .await;
+        assert_eq!(mailbox.emails().len(), 0, "no channel: nothing delivered");
+        assert_eq!(
+            ledger_count(&db).await,
+            0,
+            "an undeliverable heads-up must not be recorded"
+        );
+
+        // Configure the email channel; now it delivers exactly once.
+        let row = AlertChannel::find()
+            .filter(alert_channel::Column::UserId.eq(user_id))
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut active: alert_channel::ActiveModel = row.into();
+        active.email_enabled = Set(true);
+        active.update(&db).await.unwrap();
+
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            true,
+            "https://x.test",
+            now,
+        )
+        .await;
+        assert_eq!(mailbox.emails().len(), 1, "delivers once a channel exists");
+        assert_eq!(ledger_count(&db).await, 1);
+
+        // Pass 3: deduped — no re-notify.
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            true,
+            "https://x.test",
+            now,
+        )
+        .await;
+        assert_eq!(
+            mailbox.emails().len(),
+            1,
+            "a recorded heads-up does not re-fire"
+        );
     }
 
     /// Insert a `card_sets` row for the set-release tests.
