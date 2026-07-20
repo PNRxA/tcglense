@@ -34,6 +34,8 @@ export type AlertFinish = 'nonfoil' | 'foil' | 'etched'
 export type AlertDirection = 'below' | 'above'
 /** What an alert targets. */
 export type AlertTargetKind = 'card' | 'product'
+/** A single notification channel the test probe can be scoped to. */
+export type AlertTestChannel = 'discord' | 'telegram' | 'email'
 
 // ----- Alerts CRUD -----
 
@@ -76,7 +78,15 @@ export function setAlertChannels(
   return request<AlertChannels>('/api/alerts/channels', { method: 'PUT', body, token })
 }
 
-/** Send a test notification to every configured channel and report the per-channel outcome. */
-export function testAlertChannels(token: string): Promise<AlertTestResponse> {
-  return request<AlertTestResponse>('/api/alerts/channels/test', { method: 'POST', token })
+/**
+ * Send a test notification and report the per-channel outcome. Omitting `channel` tests every
+ * configured channel; passing one (`discord` / `telegram` / `email`) tests only that channel,
+ * so a per-channel "Test" button verifies a single setup without pinging the others.
+ */
+export function testAlertChannels(
+  token: string,
+  channel?: AlertTestChannel,
+): Promise<AlertTestResponse> {
+  const query = channel ? `?channel=${channel}` : ''
+  return request<AlertTestResponse>(`/api/alerts/channels/test${query}`, { method: 'POST', token })
 }

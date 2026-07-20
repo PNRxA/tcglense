@@ -5,12 +5,13 @@
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
+use serde::Deserialize;
 
 use crate::auth::extractor::SessionUser;
 use crate::entities::prelude::{AlertChannel, PriceAlert};
 use crate::entities::{alert_channel, price_alert};
 use crate::error::AppError;
-use crate::extract::{JsonBody, Path};
+use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::{load_card, load_product, require_game};
 use crate::notifications::{self, AlertNotification};
 use crate::state::AppState;
@@ -237,15 +238,41 @@ pub async fn set_alert_channels(
     }))
 }
 
+/// Query for `POST /api/alerts/channels/test`: an optional single-channel filter. Omitted =
+/// test every configured+enabled channel (the original behaviour); `discord` / `telegram` /
+/// `email` = test only that one, so the SPA's per-channel "Test" buttons can verify a single
+/// setup without pinging the others.
+#[derive(Debug, Deserialize)]
+pub struct TestChannelsQuery {
+    #[serde(default)]
+    pub channel: Option<String>,
+}
+
 /// Test alert channels
 ///
-/// `POST /api/alerts/channels/test` -> send a test notification to every configured channel
-/// and report the per-channel outcome, so a user can verify their setup. Returns an empty
-/// result list when nothing is configured.
+/// `POST /api/alerts/channels/test` -> send a test notification and report the per-channel
+/// outcome, so a user can verify their setup. Tests every configured+enabled channel by
+/// default; `?channel=discord|telegram|email` narrows it to one (an unknown value is a `422`).
+/// Returns an empty result list when the selected channel(s) aren't configured.
 pub async fn test_alert_channels(
     State(state): State<AppState>,
     SessionUser(user): SessionUser,
+    Query(query): Query<TestChannelsQuery>,
 ) -> Result<Json<AlertTestResponse>, AppError> {
+    // Resolve the optional single-channel filter into which channels this call may touch.
+    // `None` = all of them (the original behaviour); an unrecognised name is a 422.
+    let (do_discord, do_telegram, do_email) = match query.channel.as_deref() {
+        None => (true, true, true),
+        Some("discord") => (true, false, false),
+        Some("telegram") => (false, true, false),
+        Some("email") => (false, false, true),
+        Some(_) => {
+            return Err(AppError::Validation(
+                "channel must be 'discord', 'telegram', or 'email'".to_string(),
+            ));
+        }
+    };
+
     let channels = AlertChannel::find()
         .filter(alert_channel::Column::UserId.eq(user.id))
         .one(&state.db)
@@ -266,14 +293,17 @@ pub async fn test_alert_channels(
 
     let mut results: Vec<AlertTestResult> = Vec::new();
 
-    // Only test channels that are both configured AND enabled — the same gate delivery uses.
-    if channels.discord_enabled
+    // Only test channels that are in scope AND both configured AND enabled — the same
+    // configured+enabled gate delivery uses.
+    if do_discord
+        && channels.discord_enabled
         && let Some(webhook) = channels.discord_webhook_url.as_deref()
     {
         let outcome = notifications::send_discord(&state.notify_http, webhook, &notification).await;
         results.push(outcome.into());
     }
-    if channels.telegram_enabled
+    if do_telegram
+        && channels.telegram_enabled
         && let (Some(token), Some(chat)) = (
             channels.telegram_bot_token.as_deref(),
             channels.telegram_chat_id.as_deref(),
@@ -283,7 +313,7 @@ pub async fn test_alert_channels(
             notifications::send_telegram(&state.notify_http, token, chat, &notification).await;
         results.push(outcome.into());
     }
-    if channels.email_enabled && email_available(&state) {
+    if do_email && channels.email_enabled && email_available(&state) {
         let link = notification.url.as_deref().unwrap_or("");
         let message =
             crate::email::alert_email(&user.email, &notification.title, &notification.body, link);

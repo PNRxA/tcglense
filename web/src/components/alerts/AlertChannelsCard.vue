@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import {
   Bell,
   CalendarClock,
@@ -19,11 +19,12 @@ import {
   useSetAlertChannelsMutation,
   useTestAlertChannelsMutation,
 } from '@/composables/useAlerts'
-import { ApiError, type AlertTestResult } from '@/lib/api'
+import { ApiError, type AlertTestChannel, type AlertTestResult } from '@/lib/api'
 
 // The notification-channels settings card on the Alerts page. Free, self-service channels —
 // a Discord incoming-webhook URL and a Telegram bot token + chat id — plus an optional email
-// toggle (only when the deployment enables it). "Send test" verifies a setup end to end.
+// toggle (only when the deployment enables it). Each of Discord and Telegram has its own
+// "Test" button that verifies just that setup; "Test all" probes every configured channel.
 
 const channelsQuery = useAlertChannelsQuery()
 const save = useSetAlertChannelsMutation()
@@ -42,7 +43,10 @@ const emailEnabled = ref(false)
 const sldReleaseEnabled = ref(false)
 const setReleaseEnabled = ref(false)
 
-const emailAvailable = computed(() => channelsQuery.data.value?.email_available ?? false)
+// The last-loaded server settings, used to gate the per-channel Test buttons (they fire the
+// *saved* credentials, not the unsaved form values).
+const serverChannels = computed(() => channelsQuery.data.value)
+const emailAvailable = computed(() => serverChannels.value?.email_available ?? false)
 
 watch(
   () => channelsQuery.data.value,
@@ -62,13 +66,62 @@ watch(
 
 const saveError = ref<string | null>(null)
 const saved = ref(false)
+
+// "Test all" results box (one row per configured channel).
 const testResults = ref<AlertTestResult[] | null>(null)
 const testError = ref<string | null>(null)
+
+// Per-channel "Test" outcome, shown inline beside that channel's own Test button.
+interface ChannelTestState {
+  kind: 'ok' | 'fail' | 'empty'
+  detail?: string | null
+}
+const channelTest = reactive<Record<string, ChannelTestState | undefined>>({})
+// Which test is currently in flight — a single channel, or 'all' — for the button spinners.
+const pending = ref<AlertTestChannel | 'all' | null>(null)
+
+// A per-channel Test button fires the *saved* credentials, so it's live only when the saved
+// settings for that channel are complete AND the form has no unsaved edits to them — otherwise
+// the test would verify a stale value, and the inline hint tells the user to save first.
+const discordSavedReady = computed(
+  () => !!serverChannels.value?.discord_enabled && !!serverChannels.value?.discord_webhook_url,
+)
+const telegramSavedReady = computed(
+  () =>
+    !!serverChannels.value?.telegram_enabled &&
+    !!serverChannels.value?.telegram_bot_token &&
+    !!serverChannels.value?.telegram_chat_id,
+)
+const discordDirty = computed(() => {
+  const s = serverChannels.value
+  return (
+    (discordWebhookUrl.value.trim() || null) !== (s?.discord_webhook_url ?? null) ||
+    discordEnabled.value !== (s?.discord_enabled ?? true)
+  )
+})
+const telegramDirty = computed(() => {
+  const s = serverChannels.value
+  return (
+    (telegramBotToken.value.trim() || null) !== (s?.telegram_bot_token ?? null) ||
+    (telegramChatId.value.trim() || null) !== (s?.telegram_chat_id ?? null) ||
+    telegramEnabled.value !== (s?.telegram_enabled ?? true)
+  )
+})
+const canTestDiscord = computed(() => discordSavedReady.value && !discordDirty.value)
+const canTestTelegram = computed(() => telegramSavedReady.value && !telegramDirty.value)
+
+function clearAllTestState() {
+  testResults.value = null
+  testError.value = null
+  channelTest.discord = undefined
+  channelTest.telegram = undefined
+  channelTest.email = undefined
+}
 
 async function onSave() {
   saveError.value = null
   saved.value = false
-  testResults.value = null
+  clearAllTestState()
   try {
     await save.mutateAsync({
       discord_webhook_url: discordWebhookUrl.value.trim() || null,
@@ -87,15 +140,36 @@ async function onSave() {
   }
 }
 
-async function onTest() {
-  testError.value = null
-  testResults.value = null
+/** Test one channel using its saved credentials; the result shows inline beside its button. */
+async function onTestChannel(channel: AlertTestChannel) {
+  clearAllTestState()
+  pending.value = channel
   try {
-    const response = await test.mutateAsync()
+    const response = await test.mutateAsync(channel)
+    const result = response.results[0]
+    channelTest[channel] = result
+      ? { kind: result.ok ? 'ok' : 'fail', detail: result.detail }
+      : { kind: 'empty' }
+  } catch (err) {
+    testError.value =
+      err instanceof ApiError ? err.message : 'Could not send a test. Please try again.'
+  } finally {
+    pending.value = null
+  }
+}
+
+/** Test every configured channel at once; the outcomes show in the box below. */
+async function onTestAll() {
+  clearAllTestState()
+  pending.value = 'all'
+  try {
+    const response = await test.mutateAsync(undefined)
     testResults.value = response.results
   } catch (err) {
     testError.value =
       err instanceof ApiError ? err.message : 'Could not send a test. Please try again.'
+  } finally {
+    pending.value = null
   }
 }
 </script>
@@ -117,11 +191,24 @@ async function onTest() {
         <div class="space-y-1.5">
           <div class="flex items-center justify-between gap-2">
             <Label for="discord-webhook">Discord webhook URL</Label>
-            <Switch
-              :checked="discordEnabled"
-              aria-label="Discord alerts"
-              @update:checked="discordEnabled = $event"
-            />
+            <div class="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                :disabled="!canTestDiscord || pending !== null"
+                @click="onTestChannel('discord')"
+              >
+                <LoaderCircle v-if="pending === 'discord'" class="animate-spin" />
+                <Send v-else class="size-4" />
+                Test
+              </Button>
+              <Switch
+                :checked="discordEnabled"
+                aria-label="Discord alerts"
+                @update:checked="discordEnabled = $event"
+              />
+            </div>
           </div>
           <Input
             id="discord-webhook"
@@ -134,17 +221,53 @@ async function onTest() {
           <p class="text-muted-foreground text-xs">
             In your Discord server: Settings → Integrations → Webhooks → New Webhook → Copy URL.
           </p>
+          <p
+            v-if="channelTest.discord?.kind === 'ok'"
+            class="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400"
+          >
+            <Check class="size-3.5" /> Test sent — check Discord.
+          </p>
+          <p
+            v-else-if="channelTest.discord?.kind === 'fail'"
+            class="text-destructive flex items-start gap-1.5 text-xs"
+            role="alert"
+          >
+            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
+            <span>{{ channelTest.discord?.detail || 'Test failed.' }}</span>
+          </p>
+          <p
+            v-else-if="channelTest.discord?.kind === 'empty'"
+            class="text-muted-foreground text-xs"
+          >
+            Add a webhook URL and save it first.
+          </p>
+          <p v-else-if="discordDirty" class="text-muted-foreground text-xs">
+            Save your changes to test them.
+          </p>
         </div>
 
         <!-- Telegram -->
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="flex items-center justify-between gap-2 sm:col-span-2">
             <span class="text-sm font-medium">Telegram</span>
-            <Switch
-              :checked="telegramEnabled"
-              aria-label="Telegram alerts"
-              @update:checked="telegramEnabled = $event"
-            />
+            <div class="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                :disabled="!canTestTelegram || pending !== null"
+                @click="onTestChannel('telegram')"
+              >
+                <LoaderCircle v-if="pending === 'telegram'" class="animate-spin" />
+                <Send v-else class="size-4" />
+                Test
+              </Button>
+              <Switch
+                :checked="telegramEnabled"
+                aria-label="Telegram alerts"
+                @update:checked="telegramEnabled = $event"
+              />
+            </div>
           </div>
           <div class="space-y-1.5">
             <Label for="telegram-token">Telegram bot token</Label>
@@ -172,6 +295,31 @@ async function onTest() {
             Create a bot with <span class="font-mono">@BotFather</span> for the token, then message
             your bot and read your chat id from <span class="font-mono">@userinfobot</span>.
           </p>
+          <div class="sm:col-span-2">
+            <p
+              v-if="channelTest.telegram?.kind === 'ok'"
+              class="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400"
+            >
+              <Check class="size-3.5" /> Test sent — check Telegram.
+            </p>
+            <p
+              v-else-if="channelTest.telegram?.kind === 'fail'"
+              class="text-destructive flex items-start gap-1.5 text-xs"
+              role="alert"
+            >
+              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
+              <span>{{ channelTest.telegram?.detail || 'Test failed.' }}</span>
+            </p>
+            <p
+              v-else-if="channelTest.telegram?.kind === 'empty'"
+              class="text-muted-foreground text-xs"
+            >
+              Add a bot token and chat id and save them first.
+            </p>
+            <p v-else-if="telegramDirty" class="text-muted-foreground text-xs">
+              Save your changes to test them.
+            </p>
+          </div>
         </div>
 
         <!-- Email (only when the deployment offers it) -->
@@ -247,7 +395,7 @@ async function onTest() {
           <Check class="size-4" /> Channels saved.
         </p>
 
-        <!-- Test results -->
+        <!-- "Test all" results -->
         <div v-if="testResults" class="rounded-lg border p-3">
           <p v-if="testResults.length === 0" class="text-muted-foreground text-sm">
             No channels configured yet — add one above and save first.
@@ -270,10 +418,10 @@ async function onTest() {
             <LoaderCircle v-if="save.isPending.value" class="animate-spin" />
             Save channels
           </Button>
-          <Button type="button" variant="outline" :disabled="test.isPending.value" @click="onTest">
-            <LoaderCircle v-if="test.isPending.value" class="animate-spin" />
+          <Button type="button" variant="outline" :disabled="pending !== null" @click="onTestAll">
+            <LoaderCircle v-if="pending === 'all'" class="animate-spin" />
             <Send v-else class="size-4" />
-            Send test
+            Test all
           </Button>
         </div>
       </form>
