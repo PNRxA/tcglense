@@ -87,7 +87,7 @@ async function onSignOut() {
               <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
                 <RouterLink to="/alerts">
                   <Bell aria-hidden="true" />
-                  Price alerts
+                  Alerts
                 </RouterLink>
               </NavigationMenuLink>
             </li>
