@@ -9,7 +9,9 @@ password reset for an active account, or authenticated users.
 
 - Generate a unique `JWT_SECRET` with `openssl rand -hex 32`. Never reuse the
   example/dev value or a secret from another environment.
-- Set an exact HTTPS `PUBLIC_SITE_URL`, `COOKIE_SECURE=true`, and a verified Resend
+- Set an exact HTTPS `PUBLIC_SITE_URL`, `COOKIE_SECURE=true`, and configure an email
+  provider — Resend (`RESEND_API_KEY`) or Cloudflare Email Service
+  (`CLOUDFLARE_EMAIL_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`) — with a verified-domain
   `EMAIL_FROM`. Send a real test email from that sender and confirm SPF/DKIM status
   in the provider dashboard.
 - Configure both Turnstile keys. Restrict the widget to the production hostname;

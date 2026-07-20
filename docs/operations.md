@@ -276,7 +276,7 @@ Both `web/scripts/*` require the Playwright browsers installed
 |------|------------|
 | `deploy/docker-compose.yml` | Local Postgres + Redis for optional-backend development and the gated integration tests (`cargo test -- --ignored` from `api/`). Not used by the default SQLite dev flow |
 | `deploy/docker-compose.homelab.yml` | Homelab stack: the single `combined` image + SQLite in one container (API serves `/api` **and** the SPA via `WEB_ROOT`); DB + cached images persist in the `tcglense_data` volume. `JWT_SECRET` is required and signups default closed; a trusted local-only no-email setup must explicitly set both `SIGNUPS_ENABLED=true` and `ALLOW_INSECURE_DEV_AUTH=true`. Put a reverse proxy in front for HTTPS + set `COOKIE_SECURE=true` + `PUBLIC_SITE_URL`. Pin a release with `IMAGE_TAG=vX.Y.Z` (defaults `:latest`) |
-| `deploy/docker-compose.prod.yml` | Production split stack: edge Caddy terminates TLS and routes API/sitemaps directly to `api`, with all other traffic going to `web` (SPA); the API uses Postgres (`db`) + Redis (`cache`). Compose requires `SITE_ADDRESS`, `JWT_SECRET`, `POSTGRES_PASSWORD`, Resend + verified `EMAIL_FROM`, and both Turnstile keys; signups still default closed until the launch checklist passes. Images from GHCR, pin with `IMAGE_TAG` |
+| `deploy/docker-compose.prod.yml` | Production split stack: edge Caddy terminates TLS and routes API/sitemaps directly to `api`, with all other traffic going to `web` (SPA); the API uses Postgres (`db`) + Redis (`cache`). Compose requires `SITE_ADDRESS`, `JWT_SECRET`, `POSTGRES_PASSWORD`, an email provider (Resend or the Cloudflare Email Service pair) + verified `EMAIL_FROM`, and both Turnstile keys; signups still default closed until the launch checklist passes. Images from GHCR, pin with `IMAGE_TAG` |
 | `deploy/docker-compose.do.yml` + `deploy/do.Caddyfile` + `deploy/do.env.example` | Managed-cloud stack for the DigitalOcean + Upstash + Cloudflare deploy: one Droplet runs Caddy + the `combined` image, backed by DO Managed Postgres (private VPC, `?sslmode=require`) and Upstash Redis (`rediss://`), fronted by a free Cloudflare CDN. The Caddyfile terminates origin TLS (Cloudflare Origin cert) and rewrites `X-Forwarded-For` from `CF-Connecting-IP`. Full walkthrough: [`deploy-digitalocean.md`](./deploy-digitalocean.md) |
 | `.do/app.yaml` | DigitalOcean **App Platform** (PaaS) spec: one `combined`-image instance + DO Managed Postgres, **no Redis, single instance**. Ephemeral disk ⇒ `CDN_MODE=true` (Cloudflare holds the images). The release workflow's `deploy-app-platform` job auto-redeploys it on a published Release when `DIGITALOCEAN_ACCESS_TOKEN` + `DIGITALOCEAN_APP_ID` secrets are set. Walkthrough (incl. the per-IP rate-limit caveat): [`deploy-app-platform.md`](./deploy-app-platform.md) |
 | `deploy/web.Caddyfile` | Caddy config baked into the `tcglense-web` image: serve the built SPA + reverse-proxy `/api/*` to the API (upstream defaults to compose service `api:8080`, override with `API_UPSTREAM`). Terminate TLS in front of this container |
@@ -351,9 +351,14 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —
   email support@moxfield.com to get one approved, and treat it as a secret),
   `RESEND_API_KEY` (unset; the Resend API key for registration-completion/verification/reset email — a
-  secret; unset = email sending disabled, messages logged instead), `EMAIL_FROM`
-  (`TCGLense <onboarding@resend.dev>`; the outbound From address — Resend's shared
-  onboarding sender only delivers to the account owner, so set a verified-domain
+  secret; unset = email sending disabled unless Cloudflare is configured, messages logged instead),
+  `CLOUDFLARE_EMAIL_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (both unset; the alternative
+  [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) provider — the
+  token is a secret, the account id rides in the send URL. Set BOTH together or NEITHER, or the
+  server refuses to boot. Configure only one provider; if Resend is also set it wins and these are
+  ignored with a startup warning), `EMAIL_FROM`
+  (`TCGLense <onboarding@resend.dev>`; the outbound From address, shared by both providers — Resend's
+  shared onboarding sender only delivers to the account owner, so set a verified-domain
   sender in prod), `ALLOW_INSECURE_DEV_AUTH` (`false`; local-only opt-in required to
   enable signups without email, returning the completion token without mailbox proof;
   always rejected for an internet-facing origin),
