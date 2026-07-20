@@ -10,6 +10,7 @@ import {
 } from '@/lib/api/alerts'
 import type {
   AlertChannels,
+  AlertTestChannel,
   AlertTestResponse,
   ApiError,
   CreateAlertRequest,
@@ -105,11 +106,15 @@ export function useSetAlertChannelsMutation() {
   return useAuthedMutation<AlertChannels, SetAlertChannelsRequest>(options)
 }
 
-/** Send a test notification. No cache effect — the result is shown transiently. */
+/**
+ * Send a test notification. The variable is an optional channel to scope the test to (omit to
+ * test every configured channel). No cache effect — the result is shown transiently.
+ */
 export function useTestAlertChannelsMutation() {
   const options = {
-    mutationFn: (token: string) => testAlertChannels(token),
+    mutationFn: (token: string, channel: AlertTestChannel | undefined) =>
+      testAlertChannels(token, channel),
     onSettled: (_d: AlertTestResponse | undefined, _e: ApiError | null) => {},
   }
-  return useAuthedMutation<AlertTestResponse, void>(options)
+  return useAuthedMutation<AlertTestResponse, AlertTestChannel | undefined>(options)
 }

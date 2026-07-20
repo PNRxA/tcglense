@@ -285,6 +285,72 @@ async fn channels_reject_non_discord_webhook_urls() {
 }
 
 #[tokio::test]
+async fn channel_test_scopes_to_a_single_channel() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "alerts-test-scope@example.com", PW).await;
+
+    // Save a Discord webhook only — no Telegram, and email is unavailable in tests.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/alerts/channels",
+            &access,
+            json!({ "discord_webhook_url": "https://discord.com/api/webhooks/123/abc" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+
+    // Scoping the test to Telegram touches no channel: Discord is excluded by the scope and
+    // Telegram isn't configured, so the result list is empty and nothing is sent over the
+    // network (keeps the test hermetic while proving the scope filter is applied).
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/alerts/channels/test?channel=telegram",
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        body["results"].as_array().expect("results array").len(),
+        0,
+        "telegram-scoped test must not run the configured Discord channel"
+    );
+
+    // Scoping to email (unavailable in tests) is likewise a no-op empty result.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/alerts/channels/test?channel=email",
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["results"].as_array().expect("results array").len(), 0);
+
+    // An unrecognised channel name is a 422 (before any send is attempted).
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/alerts/channels/test?channel=carrier-pigeon",
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn release_opt_ins_default_off_and_round_trip() {
     let app = test_app_with_catalog().await;
     let (access, _) = register(&app, "alerts-releases@example.com", PW).await;
