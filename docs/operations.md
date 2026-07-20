@@ -415,6 +415,15 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   `FINGERPRINT_MAX_DISTANCE` (`96`; largest Hamming distance of 256 bits still offered as
   a candidate — generous so a weak/off-angle scan still offers the right card; beyond it
   a scan resolves to no match). See `api/.env.example`.
+- **Price alerts (issue #525):** `ALERTS_ENABLED` (`true`; the background evaluator
+  re-prices every active alert on a tick and notifies its owner when a below/above
+  threshold is crossed — Discord/Telegram, both free + user-configured, plus optional
+  email; set `false` to stop all evaluation/delivery), `ALERTS_EMAIL_ENABLED` (`false`;
+  the email channel is opt-in per deployment because it costs money at scale — even when
+  `true`, delivery still needs `RESEND_API_KEY`, and the SPA hides the email toggle unless
+  both hold), `ALERTS_INTERVAL_MINUTES` (`60`; how often the evaluator re-checks every
+  active alert — hourly is plenty since catalog prices refresh at most daily). See
+  `api/.env.example`.
 - **Web:** `VITE_API_URL` (default empty → relative `/api`, via the dev proxy).
   (The Turnstile site key is no longer a web build var — it's the API's runtime
   `TURNSTILE_SITE_KEY`, fetched by the SPA from `GET /api/config`.)

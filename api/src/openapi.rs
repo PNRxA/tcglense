@@ -407,6 +407,25 @@ mod coverage_drift {
             "/api/auth/cli/token",
             "CLI browser sign-in: exchanges the one-time code for a session; SPA/CLI session flow",
         ),
+        // --- Price alerts (issue #525): a session-only SPA account/notifications feature.
+        //     Session-only (never an API key), so — like the account preference endpoints
+        //     above — they're part of the SPA flow, not the public API-key surface. ---
+        (
+            "/api/alerts",
+            "price alerts: session-only SPA account/notifications feature",
+        ),
+        (
+            "/api/alerts/channels",
+            "alert notification settings: session-only SPA account feature",
+        ),
+        (
+            "/api/alerts/channels/test",
+            "send a test alert: session-only SPA account feature",
+        ),
+        (
+            "/api/alerts/{id}",
+            "price alert edit/delete: session-only SPA account feature",
+        ),
         // --- Binary image proxies: return image/SVG bytes, not JSON. ---
         (
             "/api/games/{game}/sets/{code}/icon",

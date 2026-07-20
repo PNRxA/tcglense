@@ -38,6 +38,12 @@ pub struct AppState {
     /// collection from Archidekt). Follows redirects and carries the app User-Agent;
     /// `reqwest::Client` is internally reference-counted, so cloning it is cheap.
     pub http: reqwest::Client,
+    /// Dedicated client for price-alert notifications (Discord webhooks + Telegram), built
+    /// with redirects **disabled** and a whole-request timeout. Kept separate from `http`
+    /// (which follows redirects and has no overall timeout) because a Discord webhook URL is
+    /// user-supplied: disabling redirects means a host-allow-listed URL can't bounce to an
+    /// internal service (SSRF), and the timeout means a hung endpoint can't stall a send.
+    pub notify_http: reqwest::Client,
     /// Daily USD exchange rates for display conversion, fetched lazily and shared across
     /// requests. The service keeps its last good snapshot through provider outages.
     pub currency_rates: Arc<CurrencyRates>,
@@ -98,6 +104,17 @@ impl AppState {
         redis: Option<redis::aio::ConnectionManager>,
     ) -> Result<Self, AppError> {
         let dummy_password_hash: Arc<str> = hash_password(TIMING_EQUALIZER_PLAINTEXT)?.into();
+        // The alert-notification client: no redirects (a user-supplied Discord webhook URL
+        // must not be able to bounce to an internal host) and a bounded whole-request
+        // timeout (these are small POSTs, unlike the streaming bulk downloads `http` serves,
+        // so a global timeout is safe here). Built from config's User-Agent for parity.
+        let notify_http = reqwest::Client::builder()
+            .user_agent(config.scryfall_user_agent.clone())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| AppError::Internal(format!("failed to build notify HTTP client: {e}")))?;
         let images = Arc::new(ImageCache::new(
             config.data_dir.join("images"),
             image_http,
@@ -130,6 +147,7 @@ impl AppState {
             dummy_password_hash,
             images,
             http,
+            notify_http,
             currency_rates,
             imports,
             email,

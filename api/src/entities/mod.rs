@@ -1,3 +1,4 @@
+pub mod alert_channel;
 pub mod api_key;
 pub mod card;
 pub mod card_fingerprint;
@@ -16,6 +17,7 @@ pub mod deck_section;
 pub mod email_token;
 pub mod ingest_state;
 pub mod prelude;
+pub mod price_alert;
 pub mod product;
 pub mod product_price_history;
 pub mod refresh_token;

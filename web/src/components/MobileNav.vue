@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ChevronRight, Code, Heart, Layers, Library, Menu, Package, ScanLine } from '@lucide/vue'
+import {
+  Bell,
+  ChevronRight,
+  Code,
+  Heart,
+  Layers,
+  Library,
+  Menu,
+  Package,
+  ScanLine,
+} from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,6 +58,7 @@ function warmAll(open: boolean) {
   }
   prefetchRouteChunks(router, '/scan')
   prefetchRouteChunks(router, '/decks')
+  prefetchRouteChunks(router, '/alerts')
   prefetchRouteChunks(router, '/docs')
 }
 
@@ -161,6 +172,10 @@ const docsLinkClass =
         <RouterLink to="/decks" :class="docsLinkClass">
           <Layers class="mx-0.5 size-4" aria-hidden="true" />
           Decks
+        </RouterLink>
+        <RouterLink to="/alerts" :class="docsLinkClass">
+          <Bell class="mx-0.5 size-4" aria-hidden="true" />
+          Price alerts
         </RouterLink>
         <RouterLink to="/docs" :class="docsLinkClass">
           <Code class="mx-0.5 size-4" aria-hidden="true" />

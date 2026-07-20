@@ -2,6 +2,7 @@
 import { computed, type Component } from 'vue'
 import {
   ArrowRight,
+  Bell,
   Bot,
   ChevronRight,
   CircleCheck,
@@ -116,8 +117,8 @@ const rowLinkClass =
         <span
           class="border-border bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
         >
-          <Package class="size-3.5" aria-hidden="true" />
-          New — sealed products, priced daily
+          <Bell class="size-3.5" aria-hidden="true" />
+          New — price alerts for cards &amp; sealed
         </span>
         <h1 class="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
           Your collection, priced every day.
@@ -243,6 +244,91 @@ const rowLinkClass =
          sides at md+. -->
     <section class="mt-20 sm:mt-24">
       <div class="space-y-20 sm:space-y-24">
+        <!-- Row (new) — Price alerts (demo left, so it alternates with Row A's right). -->
+        <FeatureDemoRow
+          :icon="Bell"
+          eyebrow="Price alerts"
+          heading="Get pinged when the price is right"
+          :body="
+            'Set a target on any card or sealed product and TCGLense watches its price for you — ' +
+            'a Discord, Telegram, or email ping the moment it crosses your threshold, up or down. ' +
+            'The free Discord and Telegram channels take a minute to set up, each with its own ' +
+            'on/off switch, and nothing is sent until an alert actually fires.'
+          "
+          demo-side="left"
+        >
+          <RouterLink to="/alerts" :class="rowLinkClass">
+            <template v-if="auth.isAuthenticated">Manage your alerts</template>
+            <template v-else-if="auth.sessionResolved"
+              >Create a free account to set alerts</template
+            >
+            <Skeleton v-else class="h-4 w-40" />
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
+            <!-- Decorative mock UI — illustrative values, not real market data. -->
+            <div class="flex items-center justify-between gap-2">
+              <span class="flex items-center gap-1.5 text-sm font-semibold">
+                <Bell class="size-4" aria-hidden="true" />
+                Price alerts
+              </span>
+              <div class="flex items-center gap-1">
+                <span
+                  class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                >
+                  Discord
+                </span>
+                <span
+                  class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                >
+                  Telegram
+                </span>
+                <span class="text-muted-foreground rounded-full border px-2 py-0.5 text-[10px]">
+                  Email
+                </span>
+              </div>
+            </div>
+            <!-- A triggered alert (price dropped below the target). -->
+            <div class="mt-4 flex items-center gap-3 rounded-lg border p-2.5">
+              <div class="bg-muted h-11 w-8 shrink-0 overflow-hidden rounded border">
+                <div
+                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
+                ></div>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="bg-foreground/15 h-1.5 w-24 rounded-full"></div>
+                <div class="text-muted-foreground mt-1.5 flex items-center gap-1.5 text-xs">
+                  <span aria-hidden="true">↓</span>
+                  At or below <span class="text-foreground font-medium">$1.50</span>
+                  <span class="text-foreground/70">· now $1.20</span>
+                </div>
+              </div>
+              <span
+                class="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
+              >
+                Triggered
+              </span>
+            </div>
+            <!-- A pending alert (still watching). -->
+            <div class="mt-2.5 flex items-center gap-3 rounded-lg border p-2.5">
+              <div class="bg-muted h-11 w-8 shrink-0 overflow-hidden rounded border">
+                <div
+                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
+                ></div>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="bg-foreground/15 h-1.5 w-28 rounded-full"></div>
+                <div class="text-muted-foreground mt-1.5 flex items-center gap-1.5 text-xs">
+                  <span aria-hidden="true">↑</span>
+                  At or above <span class="text-foreground font-medium">$250.00</span>
+                  <span class="text-foreground/70">· now $210.00</span>
+                </div>
+              </div>
+              <span class="text-muted-foreground shrink-0 text-[10px]">Watching</span>
+            </div>
+          </template>
+        </FeatureDemoRow>
+
         <!-- Row A — Prices (demo right). -->
         <FeatureDemoRow
           :icon="TrendingUp"

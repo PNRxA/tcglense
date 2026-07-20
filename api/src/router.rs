@@ -19,6 +19,10 @@ use tower_http::{
 use crate::{
     error::AppError,
     handlers::{
+        alerts::{
+            create_alert, delete_alert, get_alert_channels, list_alerts, set_alert_channels,
+            test_alert_channels, update_alert,
+        },
         api_keys::{create_api_key, list_api_keys, revoke_api_key},
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
@@ -407,6 +411,20 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/decks/{deck_id}/copy",
             post(copy_public_deck),
         )
+        // Per-user price alerts (issue #525): notify a signed-in user when a card / sealed
+        // product crosses a below/above price threshold, over their configured channels
+        // (Discord / Telegram / optional email). Session-only (SessionUser) — the channel
+        // settings hold delivery credentials, so an API key can neither read nor redirect a
+        // user's notifications (the same reasoning that gates API-key management). The static
+        // `channels` segment wins over the dynamic `{id}` in axum (like `/products/facets`),
+        // so the settings routes never collide with an alert id.
+        .route("/api/alerts", get(list_alerts).post(create_alert))
+        .route(
+            "/api/alerts/channels",
+            get(get_alert_channels).put(set_alert_channels),
+        )
+        .route("/api/alerts/channels/test", post(test_alert_channels))
+        .route("/api/alerts/{id}", put(update_alert).delete(delete_alert))
         // Rate limiting, two complementary middlewares (each picks a quota by path
         // and no-ops for the rest): per-IP for the unauthenticated auth endpoints,
         // and per-user (keyed by the access-token user id) for the authenticated

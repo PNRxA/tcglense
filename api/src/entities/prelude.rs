@@ -1,3 +1,4 @@
+pub use super::alert_channel::Entity as AlertChannel;
 pub use super::api_key::Entity as ApiKey;
 pub use super::card::Entity as Card;
 pub use super::card_fingerprint::Entity as CardFingerprint;
@@ -15,6 +16,7 @@ pub use super::deck_folder::Entity as DeckFolder;
 pub use super::deck_section::Entity as DeckSection;
 pub use super::email_token::Entity as EmailToken;
 pub use super::ingest_state::Entity as IngestState;
+pub use super::price_alert::Entity as PriceAlert;
 pub use super::product::Entity as Product;
 pub use super::product_price_history::Entity as ProductPriceHistory;
 pub use super::refresh_token::Entity as RefreshToken;

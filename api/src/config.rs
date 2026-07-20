@@ -189,6 +189,23 @@ pub struct Config {
     /// `false` to keep only the committed fallback snapshot / opt out of the outbound pull.
     /// **Not** a secret.
     pub sld_drops_import_enabled: bool,
+    /// Master switch for the price-alert evaluation background task (issue #525). Default
+    /// `true`: the task periodically re-prices every active alert against the live catalog
+    /// prices and notifies its owner (Discord / Telegram / optional email) when a
+    /// below/above threshold is crossed. Set `false` to stop all evaluation + delivery
+    /// (users can still manage their alerts; nothing fires). **Not** a secret.
+    pub alerts_enabled: bool,
+    /// Whether the **email** alert channel is offered and delivered. Default `false` — email
+    /// costs money at scale, so it's opt-in per deployment (the free Discord / Telegram
+    /// channels are always available). When `false` the SPA hides the email toggle (via
+    /// `GET /api/config`) and the evaluator never sends alert email, even for a user who
+    /// enabled it while it was on. Delivery also still requires a configured
+    /// [`Self::resend_api_key`]. **Not** a secret.
+    pub alerts_email_enabled: bool,
+    /// How often, in minutes, the price-alert evaluator re-checks every active alert. Default
+    /// `60` (hourly) — catalog prices refresh at most daily, so a tighter cadence buys little.
+    /// Clamped to at least 1 where read; ignored when [`Self::alerts_enabled`] is `false`.
+    pub alerts_interval_minutes: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -256,6 +273,11 @@ impl std::fmt::Debug for Config {
                 &self.fingerprint_import_enabled,
             )
             .field("sld_drops_import_enabled", &self.sld_drops_import_enabled)
+            // Alert knobs are not secrets (the per-user webhook/token credentials live in
+            // the `alert_channels` table, redacted there, never in Config).
+            .field("alerts_enabled", &self.alerts_enabled)
+            .field("alerts_email_enabled", &self.alerts_email_enabled)
+            .field("alerts_interval_minutes", &self.alerts_interval_minutes)
             .finish()
     }
 }
@@ -692,6 +714,15 @@ impl Config {
         // mirror daily); the mirror origin ignores it (it scrapes the source itself).
         let sld_drops_import_enabled = env_bool("SLD_DROPS_IMPORT_ENABLED", true);
 
+        // Price alerts (issue #525): evaluation runs by default; the email channel is
+        // off by default (it costs money at scale — the free Discord/Telegram channels
+        // are always on). An unparseable / zero interval falls back to hourly.
+        let alerts_enabled = env_bool("ALERTS_ENABLED", true);
+        let alerts_email_enabled = env_bool("ALERTS_EMAIL_ENABLED", false);
+        let alerts_interval_minutes = env_parse::<u64>("ALERTS_INTERVAL_MINUTES")
+            .filter(|m| *m > 0)
+            .unwrap_or(60);
+
         if let Err(message) = validate_public_auth_posture(
             &host,
             &public_site_url,
@@ -745,6 +776,9 @@ impl Config {
             fingerprint_max_distance,
             fingerprint_import_enabled,
             sld_drops_import_enabled,
+            alerts_enabled,
+            alerts_email_enabled,
+            alerts_interval_minutes,
         }
     }
 

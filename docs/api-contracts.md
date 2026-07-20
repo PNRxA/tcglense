@@ -944,6 +944,53 @@ owner handle (no email/PII).
 | `GET /api/u/{handle}/decks` | `{ data: Deck[] }` — the owner's public decks (across games), newest first. `404` when the handle is unknown **or** the user has no public deck (non-oracle, like the public profile) |
 | `GET /api/u/{handle}/decks/{deck_id}` | `DeckDetail` — one public deck (the shareable view). `404` if private/absent |
 
+## Price alerts API contract (issue #525)
+
+Per-user **price alerts**: a below/above threshold on a single card's or sealed product's
+live catalog price. When crossed, the background evaluator (`crate::alerts`) notifies the
+owner over their configured channels — a Discord webhook, a Telegram bot, and (opt-in per
+deployment) email. The whole surface is **session-only** (`SessionUser` — a JWT sign-in,
+never an API key): the channel settings hold delivery credentials, so a leaked API key must
+be unable to read or redirect a user's notifications (the same reasoning that gates API-key
+management). All routes are in the router's `private`, `no-store`, per-user-rate-limited
+group and are **intentionally undocumented in the OpenAPI spec** (allow-listed like the other
+account/session-flow endpoints). An alert stores its target by the **internal** catalog id
+(resolved from the provider external id on create) and is orphan-tolerant; an alert that
+isn't the caller's is a **404**, never 403.
+
+The evaluator is **edge-triggered** (hysteresis): an alert fires **once** when its condition
+first becomes true (`met && !triggered`) and re-arms silently when the price crosses back
+(`!met && triggered`), so a persistently-crossed alert doesn't re-notify every tick. Prices
+are decimal strings compared in integer USD cents (`valuation::price_cents`); an unpriced or
+orphaned target is skipped. A fired alert **latches only once delivery reaches ≥1 channel**,
+so an alert created before any channel exists (or a transient all-channel failure) is retried
+next pass rather than swallowed. `ALERTS_ENABLED` / `ALERTS_INTERVAL_MINUTES` /
+`ALERTS_EMAIL_ENABLED` tune it (see `docs/operations.md`).
+
+**Scaling.** The evaluation pass is built for a very large alert population: it
+**keyset-paginates** the armed alerts in batches (memory stays O(batch), not "every alert +
+target at once"), and **narrows** each pass with a `since` cursor to only the alerts whose own
+row or whose target's price changed since the last pass — the catalog upsert bumps
+`cards`/`products.updated_at` only on a real change, so an unchanged alert on an unchanged
+target can't have flipped and is skipped. A restart / leadership change does one full pass to
+re-establish the baseline (safe: an older cursor only ever over-evaluates, and evaluation is
+idempotent). The tick is leader-gated so only one replica evaluates.
+
+| Method & path | Body | Returns |
+|---------------|------|---------|
+| `GET /api/alerts` | — | `{ data: PriceAlert[] }` — the caller's alerts across all games, most-recently-updated first. `PriceAlert = { id, game, target, finish, direction, threshold, is_active, triggered, last_triggered_at, last_price, created_at }`; `target = { kind, external_id, name, set_code, image_url, current_price }` (a removed catalog target renders as an orphan placeholder so a stale alert can still be seen + deleted) |
+| `POST /api/alerts` | `{ game, target_kind, external_id, finish, direction, threshold }` | `PriceAlert` — create. `target_kind` ∈ `card`/`product`; `finish` ∈ `nonfoil`/`foil`/`etched` (etched card-only, else `422`); `direction` ∈ `below`/`above`; `threshold` a positive USD number, normalised to a 2-dp string. `404` unknown game/target; `422` bad field or over the per-user cap (**500**) |
+| `PUT /api/alerts/{id}` | `{ finish?, direction?, threshold?, is_active? }` | `PriceAlert` — change any subset (absent = unchanged). Changing finish/direction/threshold **re-arms** the alert. `404` if not the caller's; `422` bad field |
+| `DELETE /api/alerts/{id}` | — | `204` — delete. `404` if not the caller's |
+| `GET /api/alerts/channels` | — | `AlertChannels { discord_webhook_url, discord_enabled, telegram_bot_token, telegram_chat_id, telegram_enabled, email_enabled, email_available }` — the caller's delivery settings (empty defaults if never set, the free channels defaulting to `enabled`). A channel delivers only when its `*_enabled` flag is on **and** it's configured, so a user can pause a channel without clearing its credential. `email_available` = `ALERTS_EMAIL_ENABLED` **and** an email provider is configured. Returned to the owner to prefill the settings form |
+| `PUT /api/alerts/channels` | `{ discord_webhook_url?, discord_enabled?, telegram_bot_token?, telegram_chat_id?, telegram_enabled?, email_enabled }` | `AlertChannels` — replace the settings (a blank string clears a field; the `*_enabled` flags default to `true` when omitted). The Discord webhook URL is **host-allow-listed** to a `discord.com` webhook (`422` otherwise — SSRF gate); Telegram needs both the token and the chat id, or neither (`422`) |
+| `POST /api/alerts/channels/test` | — | `AlertTestResponse { results: AlertTestResult[] }` (`{ channel, ok, detail }` per configured channel) — send a test notification to every configured channel and report the outcome. Empty `results` when nothing is configured |
+
+The Discord webhook + Telegram/email dispatch rides a dedicated HTTP client
+(`AppState::notify_http`) with **redirects disabled** and a request timeout, so a validated
+webhook URL cannot bounce to an internal host and a hung endpoint cannot stall a send. Both
+credentials are redacted in the entity's `Debug` so they never reach logs.
+
 ## Dataset mirror
 
 Optional public endpoints (`handlers::mirror`), wired **only when `MIRROR_ENABLED=true`**

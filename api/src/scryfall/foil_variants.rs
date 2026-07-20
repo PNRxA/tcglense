@@ -16,7 +16,8 @@
 //! Matches the consolidation rule exactly (foil-only star ↔ nonfoil base, same set + oracle id
 //! + collector number sans the star), so a card whose foil never folds is never touched.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection};
+use chrono::Utc;
+use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 
 use super::ingest::IngestError;
 
@@ -44,13 +45,25 @@ use super::ingest::IngestError;
 pub(crate) async fn enrich_foil_variant_prices(
     db: &DatabaseConnection,
 ) -> Result<u64, IngestError> {
-    let result = db.execute_unprepared(ENRICH_SQL).await?;
+    // Stamp `updated_at` too, and only on the rows this actually changes (the `IS DISTINCT
+    // FROM` guard). This is a **live price write**, so it must bump `updated_at` exactly like
+    // the guarded card upsert does — the price-alert evaluator's change-narrowing
+    // (`crate::alerts`) treats `cards.updated_at` as "a datum (incl. foil price) changed", and
+    // for ★-variant Secret Lair cards the base's foil price arrives *only* through this path,
+    // so an un-stamped write here would hide a foil-price crossing from the narrowed scan. The
+    // `?` binds a chrono `Value` (the same encoding SeaORM stores `updated_at` with, so the
+    // narrowing's `updated_at >= since` comparison lines up); the shared `Dialect::placeholders`
+    // seam renumbers it to `$1` on Postgres.
+    let backend = db.get_database_backend();
+    let sql = crate::db::Dialect::from_backend(backend).placeholders(ENRICH_SQL);
+    let stmt = Statement::from_sql_and_values(backend, sql, [Utc::now().into()]);
+    let result = db.execute(stmt).await?;
     Ok(result.rows_affected())
 }
 
 const ENRICH_SQL: &str = r#"
 UPDATE cards AS base
-SET price_usd_foil = star.price_usd_foil
+SET price_usd_foil = star.price_usd_foil, updated_at = ?
 FROM cards AS star
 WHERE star.finishes = 'foil'
   AND star.collector_number LIKE '%★'
@@ -97,14 +110,17 @@ mod tests {
         .expect("insert card");
     }
 
-    async fn foil_price(db: &DatabaseConnection, external_id: &str) -> Option<String> {
+    async fn fetch(db: &DatabaseConnection, external_id: &str) -> card::Model {
         card::Entity::find()
             .filter(card::Column::ExternalId.eq(external_id))
             .one(db)
             .await
             .unwrap()
             .unwrap()
-            .price_usd_foil
+    }
+
+    async fn foil_price(db: &DatabaseConnection, external_id: &str) -> Option<String> {
+        fetch(db, external_id).await.price_usd_foil
     }
 
     #[tokio::test]
@@ -160,6 +176,19 @@ mod tests {
             foil_price(&db, "ext-6").await.as_deref(),
             Some("3.33"),
             "alphanumeric base gets star foil price"
+        );
+
+        // A live foil-price write must bump `updated_at` (the alert evaluator's change-narrowing
+        // depends on it) — the seeded rows carry a fixed 2024-01-01 stamp, so an enriched base is
+        // now-stamped while an untouched card keeps the old stamp.
+        let seeded: sea_orm::prelude::DateTimeUtc = "2024-01-02T00:00:00Z".parse().unwrap();
+        assert!(
+            fetch(&db, "ext-1").await.updated_at > seeded,
+            "enriched base is re-stamped"
+        );
+        assert!(
+            fetch(&db, "ext-5").await.updated_at < seeded,
+            "untouched card keeps its stamp"
         );
     }
 

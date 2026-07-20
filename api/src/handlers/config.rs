@@ -32,6 +32,12 @@ pub struct PublicConfig {
     /// `SIGNUPS_DISABLED_MESSAGE`, or a generic fallback). `null` while signups are
     /// enabled, so the SPA can key purely off a non-null value.
     pub signups_disabled_message: Option<String>,
+    /// Whether the price-alert **email** channel is offered on this deployment
+    /// (`ALERTS_EMAIL_ENABLED` set **and** an email provider configured). The free
+    /// Discord/Telegram channels are always available; the SPA uses this only to show or
+    /// hide the email-alert toggle. The `/api/alerts/channels` endpoint is the source of
+    /// truth (its `email_available` mirrors this).
+    pub alerts_email_enabled: bool,
 }
 
 /// `GET /api/config` -> `200 { "maintenance_mode": …, "turnstile_site_key": … ,
@@ -54,5 +60,8 @@ pub async fn public_config(State(state): State<AppState>) -> impl IntoResponse {
         // it iff the message is non-null.
         signups_disabled_message: (!signups_enabled)
             .then(|| state.config.signups_disabled_notice()),
+        // The free Discord/Telegram channels are always on; only email is gated per
+        // deployment (it costs money at scale) and needs a real email provider too.
+        alerts_email_enabled: state.config.alerts_email_enabled && state.email.is_enabled(),
     })
 }

@@ -14,6 +14,7 @@
 
 mod harness;
 
+mod alerts;
 mod api_keys;
 mod caching;
 mod captcha;
