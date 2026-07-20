@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
-import { ChevronDown } from '@lucide/vue'
 import { useQuery } from '@tanstack/vue-query'
 import { getCardPrints } from '@/lib/api'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import CardGrid from '@/components/cards/CardGrid.vue'
+import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -57,42 +57,32 @@ watch(id, () => {
 <template>
   <!-- Hidden entirely until there's at least one other printing to show, so a
     one-printing card (the common case) adds nothing to the page. -->
-  <section v-if="prints.length" class="mt-10">
-    <button
-      type="button"
-      class="group -mx-1.5 mb-3 flex items-start gap-1.5 rounded-md px-1.5 py-1 text-left"
-      :aria-expanded="expanded"
-      @click="expanded = !expanded"
-    >
-      <ChevronDown
-        class="text-muted-foreground group-hover:text-foreground mt-0.5 size-4 shrink-0 transition-transform"
-        :class="expanded ? 'rotate-180' : ''"
+  <CollapsibleSection
+    v-if="prints.length"
+    v-model:expanded="expanded"
+    title="Other printings"
+    :count="prints.length"
+    blurb="Every printing of this card, with its own price."
+    heading="h2"
+  >
+    <div v-if="prints.length > 1" class="mb-4 flex flex-wrap items-center gap-2">
+      <CardSearchBox
+        v-model="filter"
+        class="w-full sm:w-72"
+        placeholder="Filter by set, number, or rarity…"
+        aria-label="Filter printings by set, number, or rarity"
       />
-      <h2 class="text-sm font-semibold">
-        Other printings
-        <span class="text-muted-foreground font-normal">({{ prints.length }})</span>
-      </h2>
-    </button>
-    <template v-if="expanded">
-      <div v-if="prints.length > 1" class="mb-4 flex flex-wrap items-center gap-2">
-        <CardSearchBox
-          v-model="filter"
-          class="w-full sm:w-72"
-          placeholder="Filter by set, number, or rarity…"
-          aria-label="Filter printings by set, number, or rarity"
-        />
-        <CardSortMenu v-model="sort" :options="PRINTING_SORT_OPTIONS" />
-      </div>
-      <p v-if="visiblePrints.length === 0" class="text-muted-foreground py-8 text-center text-sm">
-        No printings match “{{ filter.trim() }}”.
-      </p>
-      <CardGrid
-        v-else
-        :game="game"
-        :cards="visiblePrints"
-        :ownership="ownership"
-        :wishlist="wishlistOwnership"
-      />
-    </template>
-  </section>
+      <CardSortMenu v-model="sort" :options="PRINTING_SORT_OPTIONS" />
+    </div>
+    <p v-if="visiblePrints.length === 0" class="text-muted-foreground py-8 text-center text-sm">
+      No printings match “{{ filter.trim() }}”.
+    </p>
+    <CardGrid
+      v-else
+      :game="game"
+      :cards="visiblePrints"
+      :ownership="ownership"
+      :wishlist="wishlistOwnership"
+    />
+  </CollapsibleSection>
 </template>

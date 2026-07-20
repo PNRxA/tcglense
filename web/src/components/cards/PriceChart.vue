@@ -107,7 +107,7 @@ const isEmpty = computed(
 </script>
 
 <template>
-  <Card class="mt-6">
+  <Card>
     <CardHeader>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <CardTitle class="text-sm font-semibold">{{ props.title }}</CardTitle>

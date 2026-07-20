@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
-import { ChevronDown } from '@lucide/vue'
 import type { Card, ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_PAGE_SIZE, useProductCardsQuery } from '@/composables/useProducts'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -9,6 +8,7 @@ import CardGrid from '@/components/cards/CardGrid.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
 
 // One independently-paginated block of a sealed product's "Cards in this product" section
 // (issue #224): a collapsible heading + blurb (collapsed by default, issue #291), this
@@ -36,6 +36,11 @@ const props = defineProps<{
   // query so every section re-orders together; the manifest is sort-independent (a sort never
   // changes which sections exist or their counts), so only the paged cards move.
   sort: string
+  // Start expanded rather than collapsed. The parent sets this on the manifest's first
+  // section so a sealed product leads with its most relevant cards already visible —
+  // one page fetched up front — while the later (often much larger) sections keep
+  // #291's collapsed-by-default economy.
+  defaultExpanded?: boolean
 }>()
 
 const game = toRef(props, 'game')
@@ -61,7 +66,7 @@ watch([id, search, sort], () => {
 // issue #149's rationale), since a section the filtered manifest still lists holds matches
 // the user just searched for. Product-to-product navigation re-collapses (unless arriving
 // with a search already committed, e.g. a `?q=` deep link).
-const expanded = ref(false)
+const expanded = ref(props.defaultExpanded === true)
 watch(
   search,
   (q) => {
@@ -70,7 +75,7 @@ watch(
   { immediate: true },
 )
 watch(id, () => {
-  expanded.value = search.value.length > 0
+  expanded.value = props.defaultExpanded === true || search.value.length > 0
 })
 
 const query = useProductCardsQuery(game, id, page, props.sectionKey, search, sort, expanded)
@@ -98,25 +103,7 @@ const { ownership: wishlistOwnership } = useWishlistCounts(game, cards)
 
 <template>
   <div v-if="show" ref="sectionTop" class="scroll-mt-6">
-    <button
-      type="button"
-      class="group -mx-1.5 mb-3 flex items-start gap-1.5 rounded-md px-1.5 py-1 text-left"
-      :aria-expanded="expanded"
-      @click="expanded = !expanded"
-    >
-      <ChevronDown
-        class="text-muted-foreground group-hover:text-foreground mt-0.5 size-4 shrink-0 transition-transform"
-        :class="expanded ? 'rotate-180' : ''"
-      />
-      <span>
-        <h3 class="text-sm font-medium">
-          {{ title }}
-          <span class="text-muted-foreground font-normal">({{ count.toLocaleString() }})</span>
-        </h3>
-        <p class="text-muted-foreground text-xs">{{ blurb }}</p>
-      </span>
-    </button>
-    <template v-if="expanded">
+    <CollapsibleSection v-model:expanded="expanded" :title="title" :count="count" :blurb="blurb">
       <template v-if="loaded">
         <!-- Top pager mirrors the one below (#264) so a long section can be paged from its top too. -->
         <div class="mb-4">
@@ -147,6 +134,6 @@ const { ownership: wishlistOwnership } = useWishlistCounts(game, cards)
         </div>
       </template>
       <LoadingRow v-else label="Loading cards…" />
-    </template>
+    </CollapsibleSection>
   </div>
 </template>

@@ -12,7 +12,7 @@ const props = defineProps<{ sections: BuyLinkSection[] }>()
 </script>
 
 <template>
-  <Card v-if="props.sections.length" class="mt-6">
+  <Card v-if="props.sections.length" class="gap-4 py-4">
     <CardHeader>
       <CardTitle class="text-sm font-semibold">Where to buy</CardTitle>
     </CardHeader>

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, toRef, watch } from 'vue'
-import { ChevronDown } from '@lucide/vue'
 import type { SealedProductRef } from '@/lib/api'
 import { useCardSealedQuery } from '@/composables/useProducts'
 import { useCollectionProductCounts } from '@/composables/useCollection'
 import { useWishlistProductCounts } from '@/composables/useWishlist'
 import ProductGrid from '@/components/products/ProductGrid.vue'
+import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
 
 // The card-detail "Sealed products" section: which sealed products this card is found
 // in (decks / promos / Secret Lair), can be pulled from (boosters), or may be in
@@ -67,36 +67,19 @@ watch(id, () => {
 </script>
 
 <template>
-  <section v-if="sections.length" class="mt-10">
-    <h2 class="mb-4 text-sm font-semibold">Sealed products</h2>
-    <div class="space-y-8">
-      <div v-for="section in sections" :key="section.key">
-        <button
-          type="button"
-          class="group -mx-1.5 mb-3 flex items-start gap-1.5 rounded-md px-1.5 py-1 text-left"
-          :aria-expanded="!!expanded[section.key]"
-          @click="expanded[section.key] = !expanded[section.key]"
-        >
-          <ChevronDown
-            class="text-muted-foreground group-hover:text-foreground mt-0.5 size-4 shrink-0 transition-transform"
-            :class="expanded[section.key] ? 'rotate-180' : ''"
-          />
-          <span>
-            <h3 class="text-sm font-medium">
-              {{ section.title }}
-              <span class="text-muted-foreground font-normal">({{ section.products.length }})</span>
-            </h3>
-            <p class="text-muted-foreground text-xs">{{ section.blurb }}</p>
-          </span>
-        </button>
-        <ProductGrid
-          v-if="expanded[section.key]"
-          :game="game"
-          :products="section.products"
-          :owned="owned"
-          :wanted="wanted"
-        />
-      </div>
+  <section v-if="sections.length">
+    <h2 class="mb-3 text-base font-semibold tracking-tight">Sealed products</h2>
+    <div class="space-y-3">
+      <CollapsibleSection
+        v-for="section in sections"
+        :key="section.key"
+        v-model:expanded="expanded[section.key]"
+        :title="section.title"
+        :count="section.products.length"
+        :blurb="section.blurb"
+      >
+        <ProductGrid :game="game" :products="section.products" :owned="owned" :wanted="wanted" />
+      </CollapsibleSection>
     </div>
   </section>
 </template>

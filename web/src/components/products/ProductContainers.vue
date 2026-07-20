@@ -25,8 +25,8 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
 </script>
 
 <template>
-  <section v-if="show" class="mt-10">
-    <h2 class="mb-1 flex items-baseline gap-2 text-sm font-semibold">
+  <section v-if="show">
+    <h2 class="mb-1 flex items-baseline gap-2 text-base font-semibold tracking-tight">
       Included in
       <span class="text-muted-foreground text-xs font-normal">
         {{ rows.length }} product{{ rows.length === 1 ? '' : 's' }}
