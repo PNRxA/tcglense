@@ -86,7 +86,7 @@ const CANON_HEIGHT = 144
 /** Angular bins for the radial profile (5° each) — enough to resolve a star's 5 points. */
 const RADIAL_BINS = 72
 
-/** Merge peaks closer than this many bins (25°): one star point can't span two peaks. */
+/** Merge peaks closer than this many bins (30°): one star point can't span two peaks. */
 const PEAK_MERGE_BINS = 6
 
 /** Fraction of the (max−min) radius a bin must exceed to count as a peak. */

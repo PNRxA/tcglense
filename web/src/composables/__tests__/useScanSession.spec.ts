@@ -346,4 +346,38 @@ describe('useScanSession foil detection', () => {
     expect(session.target.quantity).toBe(1)
     expect(session.target.foil_quantity).toBe(0)
   })
+
+  it('adds the foil copy on top of an existing holding, never overwriting the base counts', async () => {
+    // The scan write is absolute, so seeding a detected foil must preserve the copies already
+    // owned in both finishes — a regression that dropped the base would delete real copies.
+    ownedData.value = { quantity: 3, foil_quantity: 2 }
+    const target = await captureInto(true)
+    expect(session.target.quantity).toBe(3)
+    expect(session.target.foil_quantity).toBe(3)
+
+    await session.confirmCurrent()
+    expect(save).toHaveBeenCalledWith({
+      game: 'mtg',
+      id: target.id,
+      quantity: 3,
+      foil_quantity: 3,
+    })
+  })
+
+  it('upgrades a same-card rescan to foil when the star is detected only the second time', async () => {
+    // First scan misses the star (e.g. OpenCV still loading), seeding a regular copy.
+    await captureInto(false)
+    expect(session.target.quantity).toBe(1)
+    expect(session.target.foil_quantity).toBe(0)
+
+    // Re-pointing the same card, now with the star detected, re-seeds onto foil.
+    await session.handleCapture({
+      fingerprints: [new Uint8Array(32)],
+      setText: 'NEO • EN',
+      foil: true,
+    })
+    await flushPromises()
+    expect(session.target.quantity).toBe(0)
+    expect(session.target.foil_quantity).toBe(1)
+  })
 })
