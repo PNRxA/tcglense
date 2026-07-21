@@ -1138,6 +1138,16 @@ catalog) is planned but not implemented.
   computes the 32-byte fingerprint locally and uploads only that (a small, non-reversible
   vector) to `POST /api/games/{game}/scan`. The endpoint is auth-gated (scanning builds a
   signed-in user's collection) and `no-store`.
+- **Crop correctness wins at the frame edge.** A clipped card cannot produce the tight
+  full-card crop that pHash and printing OCR need, so both browser detectors reject contours
+  and corners inside a small scale-aware frame inset rather than allowing a convex hull to
+  invent a boundary corner. The outline tracker also treats unsupported corner movement as
+  a miss instead of blending it toward the edge. Capture re-detects at its higher resolution,
+  requires the first quad to agree tightly with the green lock, and only pools later burst
+  frames whose geometry and pHash still belong to that card; a failed first-frame check asks
+  the user to move the whole card inside the frame. This
+  deliberately trades a little edge-of-view recall for reliable crops while retaining the
+  glare/finger hull recovery and the live loop's bounded mobile cost.
 - **OCR runtime is self-hosted — no third-party code at runtime (issue #451).** The
   set/collector-number OCR half of the hybrid scanner uses `tesseract.js`, whose browser
   *default* downloads its worker, wasm core, and `eng.traineddata` from

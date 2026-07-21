@@ -2,11 +2,11 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 // tesseract.js is a CommonJS `export =` namespace, so the type comes in via a default
 // import (esModuleInterop) and the runtime via a lazy dynamic import().
 import type Tesseract from 'tesseract.js'
-import { detectCardQuad, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
+import { detectCardQuad, quadArea, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
 import { detectCardQuadCv, loadOpenCv } from '@/lib/scan/opencvDetect'
-import { createQuadTracker } from '@/lib/scan/quadTracker'
-import { phashFromRgba } from '@/lib/scan/phash'
-import { SET_REGION, guideRect, regionInRect } from '@/lib/scan/regions'
+import { cornerMetrics, createQuadTracker } from '@/lib/scan/quadTracker'
+import { hamming, phashFromRgba } from '@/lib/scan/phash'
+import { SET_REGION, regionInRect } from '@/lib/scan/regions'
 
 // Camera + on-device vision engine for the card scanner. Owns the getUserMedia stream
 // and turns "the current video frame" into what the session needs to identify the card:
@@ -16,8 +16,8 @@ import { SET_REGION, guideRect, regionInRect } from '@/lib/scan/regions'
 // 32-byte fingerprint is later sent to the match endpoint.
 //
 // The card is auto-detected and perspective-warped to a fixed upright crop (see
-// `lib/scan/detect`); when detection fails (busy background, heavy rotation) it falls
-// back to warping the on-screen guide box. tesseract.js is a big WASM + trained-data
+// `lib/scan/detect`); capture revalidates the live lock at higher resolution and refuses
+// clipped or unstable geometry. tesseract.js is a big WASM + trained-data
 // payload, so it's dynamically imported the first time the camera starts (never at app
 // load) and its worker is reused; it now only reads the small set-line strip. Its
 // worker/core/traineddata are self-hosted same-origin assets (see tesseractAssets() in
@@ -37,8 +37,8 @@ const FRAME_MAX = 1000
 // Geometric variants of each deskewed crop the match query carries. A hand-held scan has
 // residual rotation and small framing error even after detection+warp, and pHash is very
 // sensitive to both, so we hash a small grid of rotations × inset (zoom) corrections and
-// let the server keep the closest. The base crop (rot 0, inset 0) is FIRST so
-// `fingerprints[0]` is the canonical hash (used by the same-card stability gate).
+// let the server keep the closest. The base crop (rot 0, inset 0) stays first so callers
+// can treat `fingerprints[0]` as the canonical hash.
 const VARIANT_ROTATIONS = [0, -5, 5]
 const VARIANT_INSETS = [0, 0.05, 0.1]
 
@@ -61,6 +61,16 @@ const DETECT_INTERVAL_MS = 120
  * retry roughly triples a cardless tick's cost. The outline tracker's hold bridges a
  * lock that lands a tick or two later, so the cadence is invisible on screen. */
 const SEGMENTATION_MISS_CADENCE = 3
+
+/** Capture-time geometry must agree with the green lock before its crop is accepted. */
+const CAPTURE_MEAN_DISTANCE = 0.05
+const CAPTURE_MAX_CORNER_DISTANCE = 0.08
+const CAPTURE_MIN_AREA_RATIO = 0.9
+const CAPTURE_MAX_AREA_RATIO = 1.1
+/** Adjacent burst frames should be much closer than an arbitrary catalog match. This is
+ * deliberately far stricter than the server's 96-bit recognition radius: pooling two
+ * identities is worse than dropping a useful-but-noisy later frame. */
+const CAPTURE_SAME_CARD_MAX_DISTANCE = 32
 
 /** What one captured frame yields for the session. */
 export interface ScanCapture {
@@ -293,18 +303,6 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return workerInit
   }
 
-  // The guide box's four corners in frame pixels — the detection fallback: when no card
-  // is detected we warp exactly the region the user aligned to.
-  function guideQuad(frameW: number, frameH: number): Quad {
-    const g = guideRect(frameW, frameH)
-    return [
-      { x: g.left, y: g.top },
-      { x: g.left + g.width, y: g.top },
-      { x: g.left + g.width, y: g.top + g.height },
-      { x: g.left, y: g.top + g.height },
-    ]
-  }
-
   /** Scale a normalised quad (0..1) up to the pixel coords of a `w`×`h` frame. */
   function denormalizeQuad(quad: Quad, w: number, h: number): Quad {
     return quad.map((p) => ({ x: p.x * w, y: p.y * h })) as Quad
@@ -373,10 +371,8 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     detectedQuad.value = null
   }
 
-  // Draw the current frame (downscaled), pick the card quad (the one the live loop is
-  // tracking, else a one-off lightweight detect, else the guide box), and warp it to an
-  // upright WARP_W×WARP_H crop. Null if the camera isn't ready / the frame has no size yet.
-  function warpFrame(): Uint8ClampedArray | null {
+  /** Read one current video frame at the bounded capture resolution. */
+  function readFrame(): ImageData | null {
     const el = video.value
     if (!frameCanvas || status.value !== 'ready' || !el) return null
     const vw = el.videoWidth
@@ -384,29 +380,60 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     if (!vw || !vh) return null
 
     const scale = Math.min(1, FRAME_MAX / Math.max(vw, vh))
-    const fw = Math.max(1, Math.round(vw * scale))
-    const fh = Math.max(1, Math.round(vh * scale))
-    frameCanvas.width = fw
-    frameCanvas.height = fh
-    const fctx = frameCanvas.getContext('2d', { willReadFrequently: true })
-    if (!fctx) return null
-    fctx.drawImage(el, 0, 0, fw, fh)
-    const frame = fctx.getImageData(0, 0, fw, fh)
-
-    // Prefer the card the live loop is tracking (what the outline shows), scaled to the
-    // full-res frame; else a one-off lightweight detect; else the guide box.
-    const norm = detectedQuad.value
-    const quad: Quad = norm
-      ? denormalizeQuad(norm, fw, fh)
-      : (detectCardQuad(toGray(frame.data, fw, fh), fw, fh) ?? guideQuad(fw, fh))
-    return warpToRect(frame.data, fw, fh, quad, WARP_W, WARP_H)
+    const width = Math.max(1, Math.round(vw * scale))
+    const height = Math.max(1, Math.round(vh * scale))
+    frameCanvas.width = width
+    frameCanvas.height = height
+    const context = frameCanvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return null
+    context.drawImage(el, 0, 0, width, height)
+    return context.getImageData(0, 0, width, height)
   }
 
-  /** The fingerprint of the current frame's deskewed card, or null if the camera isn't
-   * ready yet. Cheap (no OCR) — the live loop calls this every tick to gate on stability. */
-  function captureFingerprint(): Uint8Array | null {
-    const rgba = warpFrame()
-    return rgba ? phashFromRgba(rgba, WARP_W, WARP_H) : null
+  /** Detect a fresh normalised quad on the capture-resolution frame. */
+  function detectCaptureQuad(frame: ImageData): Quad | null {
+    if (cv) return detectCardQuadCv(cv, frame, { segmentationFallback: true })
+    const quad = detectCardQuad(
+      toGray(frame.data, frame.width, frame.height),
+      frame.width,
+      frame.height,
+    )
+    return quad
+      ? (quad.map((point) => ({
+          x: point.x / frame.width,
+          y: point.y / frame.height,
+        })) as Quad)
+      : null
+  }
+
+  function captureQuadAgrees(tracked: Quad, candidate: Quad): boolean {
+    const trackedArea = quadArea(tracked)
+    if (trackedArea <= 0) return false
+    const areaRatio = quadArea(candidate) / trackedArea
+    const metrics = cornerMetrics(tracked, candidate)
+    return (
+      metrics.mean <= CAPTURE_MEAN_DISTANCE &&
+      metrics.max <= CAPTURE_MAX_CORNER_DISTANCE &&
+      areaRatio >= CAPTURE_MIN_AREA_RATIO &&
+      areaRatio <= CAPTURE_MAX_AREA_RATIO
+    )
+  }
+
+  function invalidateLock(): void {
+    quadTracker.reset()
+    detectedQuad.value = null
+  }
+
+  /** Warp one captured frame with an already validated normalised quad. */
+  function warpFrame(frame: ImageData, quad: Quad): Uint8ClampedArray {
+    return warpToRect(
+      frame.data,
+      frame.width,
+      frame.height,
+      denormalizeQuad(quad, frame.width, frame.height),
+      WARP_W,
+      WARP_H,
+    )
   }
 
   // Draw the deskewed crop onto `cropCanvas` — the shared source for the variant
@@ -426,7 +453,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   // Fingerprint the crop on `cropCanvas` plus a grid of rotation × inset (zoom) variants,
   // so a residually-rotated or slightly-loose scan still matches its tight, upright
   // reference (the server keeps the closest). The base crop (rot 0, inset 0) is included.
-  function variantFingerprints(): Uint8Array[] {
+  function variantFingerprints(baseFingerprint?: Uint8Array): Uint8Array[] {
     const out: Uint8Array[] = []
     if (!cropCanvas || !variantCanvas) return out
     variantCanvas.width = WARP_W
@@ -439,6 +466,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
       const sw = WARP_W - 2 * sx
       const sh = WARP_H - 2 * sy
       for (const rot of VARIANT_ROTATIONS) {
+        if (inset === 0 && rot === 0 && baseFingerprint) {
+          out.push(baseFingerprint)
+          continue
+        }
         ctx.save()
         ctx.clearRect(0, 0, WARP_W, WARP_H)
         if (rot !== 0) {
@@ -455,19 +486,18 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return out
   }
 
-  // OCR the set/collector strip of the crop already on `cropCanvas`: crop out the
-  // SET_REGION strip upscaled + high-contrast and recognise just that (a small,
-  // preprocessed, now-deskewed region reads far more reliably than the raw frame did).
-  async function recognizeSetLine(): Promise<string> {
-    if (!cropCanvas || !ocrCanvas) return ''
+  // Copy the validated first crop's set/collector strip before later burst frames reuse
+  // cropCanvas. The small upscaled, high-contrast region reads much better than raw video.
+  function prepareSetLine(): boolean {
+    if (!cropCanvas || !ocrCanvas) return false
     const rect = regionInRect(SET_REGION, { left: 0, top: 0, width: WARP_W, height: WARP_H })
     const scale = 2
     ocrCanvas.width = Math.max(1, Math.round(rect.width * scale))
     ocrCanvas.height = Math.max(1, Math.round(rect.height * scale))
-    const octx = ocrCanvas.getContext('2d')
-    if (!octx) return ''
-    octx.filter = 'grayscale(1) contrast(1.5) brightness(1.05)'
-    octx.drawImage(
+    const context = ocrCanvas.getContext('2d')
+    if (!context) return false
+    context.filter = 'grayscale(1) contrast(1.5) brightness(1.05)'
+    context.drawImage(
       cropCanvas,
       rect.left,
       rect.top,
@@ -478,7 +508,11 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
       ocrCanvas.width,
       ocrCanvas.height,
     )
+    return true
+  }
 
+  async function recognizeSetLine(): Promise<string> {
+    if (!ocrCanvas) return ''
     const activeWorker = await ensureWorker()
     const { PSM } = await import('tesseract.js')
     await activeWorker.setParameters({
@@ -498,30 +532,47 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     })
   }
 
-  /** A full capture for committing a match: the pooled variant fingerprints of a short
-   * burst of frames plus an OCR of the set line (which pins the exact printing). Null if
-   * the camera isn't ready / no frame had dimensions; a transient OCR failure just yields
-   * an empty `setText` (the printing then falls back to the newest, next capture retries). */
+  /** A full capture for committing a match: validate the green lock at capture resolution,
+   * include only burst frames that remain the same card, then OCR the validated first crop.
+   * Null means the first frame became clipped or no longer agrees with the displayed lock. */
   async function capture(): Promise<ScanCapture | null> {
-    const fingerprints: Uint8Array[] = []
-    let lastRgba: Uint8ClampedArray | null = null
-    for (let f = 0; f < BURST_FRAMES; f++) {
-      const rgba = warpFrame()
-      if (rgba && drawCropToCanvas(rgba)) {
-        lastRgba = rgba
-        for (const fp of variantFingerprints()) fingerprints.push(fp)
-      }
-      if (f < BURST_FRAMES - 1) await nextFrame()
+    const tracked = detectedQuad.value
+    const firstFrame = readFrame()
+    if (!tracked || !firstFrame) return null
+    const firstQuad = detectCaptureQuad(firstFrame)
+    if (!firstQuad || !captureQuadAgrees(tracked, firstQuad)) {
+      invalidateLock()
+      return null
     }
-    if (!lastRgba) return null
-    // Fallback if canvas variants were unavailable: at least the last crop's fingerprint.
-    if (fingerprints.length === 0) fingerprints.push(phashFromRgba(lastRgba, WARP_W, WARP_H))
-    // OCR the set line off the last frame's crop (still on cropCanvas).
+
+    const validatedRgba = warpFrame(firstFrame, firstQuad)
+    const referenceFingerprint = phashFromRgba(validatedRgba, WARP_W, WARP_H)
+    if (!drawCropToCanvas(validatedRgba)) return null
+    const setLineReady = prepareSetLine()
+    const fingerprints = variantFingerprints(referenceFingerprint)
+    // Fallback if canvas variants were unavailable: keep the geometry-validated base crop.
+    if (fingerprints.length === 0) fingerprints.push(referenceFingerprint)
+
+    for (let f = 1; f < BURST_FRAMES; f++) {
+      await nextFrame()
+      const frame = readFrame()
+      if (!frame) break
+      const quad = detectCaptureQuad(frame)
+      if (!quad || !captureQuadAgrees(firstQuad, quad)) break
+      const rgba = warpFrame(frame, quad)
+      const fingerprint = phashFromRgba(rgba, WARP_W, WARP_H)
+      if (hamming(referenceFingerprint, fingerprint) > CAPTURE_SAME_CARD_MAX_DISTANCE) break
+      if (!drawCropToCanvas(rgba)) break
+      for (const variant of variantFingerprints(fingerprint)) fingerprints.push(variant)
+    }
+
     let setText = ''
-    try {
-      setText = await recognizeSetLine()
-    } catch {
-      setText = ''
+    if (setLineReady) {
+      try {
+        setText = await recognizeSetLine()
+      } catch {
+        setText = ''
+      }
     }
     return { fingerprints, setText }
   }
@@ -550,6 +601,5 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     stop,
     switchCamera,
     capture,
-    captureFingerprint,
   }
 }

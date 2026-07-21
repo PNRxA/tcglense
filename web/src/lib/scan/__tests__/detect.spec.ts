@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cardFrameInset,
   detectCardQuad,
   orderCorners,
   quadArea,
@@ -26,10 +27,41 @@ function frameWithCard(
   fg = 210,
 ): Uint8Array {
   const gray = new Uint8Array(width * height).fill(bg)
-  for (let y = rect.y0; y < rect.y1; y++) {
-    for (let x = rect.x0; x < rect.x1; x++) gray[y * width + x] = fg
+  for (let y = Math.max(0, rect.y0); y < Math.min(height, rect.y1); y++) {
+    for (let x = Math.max(0, rect.x0); x < Math.min(width, rect.x1); x++) {
+      gray[y * width + x] = fg
+    }
   }
   return gray
+}
+
+function drawGrayLine(
+  gray: Uint8Array,
+  width: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  value: number,
+) {
+  const dx = Math.abs(x1 - x0)
+  const sx = x0 < x1 ? 1 : -1
+  const dy = -Math.abs(y1 - y0)
+  const sy = y0 < y1 ? 1 : -1
+  let error = dx + dy
+  while (true) {
+    gray[y0 * width + x0] = value
+    if (x0 === x1 && y0 === y1) break
+    const twice = 2 * error
+    if (twice >= dy) {
+      error += dy
+      x0 += sx
+    }
+    if (twice <= dx) {
+      error += dx
+      y0 += sy
+    }
+  }
 }
 
 describe('orderCorners', () => {
@@ -140,6 +172,37 @@ describe('quadIsPlausibleCard', () => {
     expect(quadIsPlausibleCard(quad, frameW, frameH)).toBe(true)
   })
 
+  it('requires every corner to clear the frame safety inset', () => {
+    const inset = cardFrameInset(frameW, frameH)
+    const cardAtInset: Quad = [
+      { x: inset, y: 40 },
+      { x: 145, y: 40 },
+      { x: 145, y: 240 },
+      { x: inset, y: 240 },
+    ]
+    expect(quadIsPlausibleCard(cardAtInset, frameW, frameH)).toBe(true)
+    expect(
+      quadIsPlausibleCard(
+        cardAtInset.map((point) => ({
+          ...point,
+          x: point.x === inset ? inset - 1 : point.x,
+        })) as Quad,
+        frameW,
+        frameH,
+      ),
+    ).toBe(false)
+  })
+
+  it('rejects a card-shaped quad with one corner on the frame edge', () => {
+    const quad: Quad = [
+      { x: 0, y: 40 },
+      { x: 140, y: 40 },
+      { x: 140, y: 240 },
+      { x: 30, y: 240 },
+    ]
+    expect(quadIsPlausibleCard(quad, frameW, frameH)).toBe(false)
+  })
+
   it('rejects a wrong-aspect (square) quad', () => {
     const quad: Quad = [
       { x: 30, y: 30 },
@@ -186,6 +249,23 @@ describe('detectCardQuad', () => {
     expect(tr.x).toBeCloseTo(169, -1)
     expect(br.y).toBeCloseTo(239, -1)
     expect(bl.x).toBeCloseTo(30, -1)
+  })
+
+  it('rejects a card tethered to the frame instead of using the spur as a corner', () => {
+    const width = 200
+    const height = 280
+    const gray = frameWithCard(width, height, { x0: 30, y0: 40, x1: 170, y1: 240 })
+    drawGrayLine(gray, width, 30, 40, 0, 0, 210)
+    expect(detectCardQuad(gray, width, height)).toBeNull()
+  })
+
+  it.each([
+    { x0: -2, y0: 40, x1: 138, y1: 240 },
+    { x0: 62, y0: 40, x1: 202, y1: 240 },
+    { x0: 30, y0: -2, x1: 170, y1: 198 },
+    { x0: 30, y0: 82, x1: 170, y1: 282 },
+  ])('rejects a card clipped by the camera frame', (rect) => {
+    expect(detectCardQuad(frameWithCard(200, 280, rect), 200, 280)).toBeNull()
   })
 
   it('returns null when there is no foreground (blank frame)', () => {

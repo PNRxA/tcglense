@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Quad } from '../detect'
-import { blendQuads, createQuadTracker, meanCornerDistance } from '../quadTracker'
+import {
+  blendQuads,
+  createQuadTracker,
+  maxCornerDistance,
+  meanCornerDistance,
+} from '../quadTracker'
 
 /** An axis-aligned card-ish quad at (x, y), in normalised units. */
 function quadAt(x: number, y: number, w = 0.4, h = 0.56): Quad {
@@ -12,12 +17,14 @@ function quadAt(x: number, y: number, w = 0.4, h = 0.56): Quad {
   ]
 }
 
-describe('meanCornerDistance', () => {
-  it('is zero for identical quads and the offset for a pure translation', () => {
+describe('corner distances', () => {
+  it('measures identical quads and a pure translation', () => {
     const a = quadAt(0.1, 0.1)
     expect(meanCornerDistance(a, a)).toBe(0)
+    expect(maxCornerDistance(a, a)).toBe(0)
     const b = quadAt(0.13, 0.14)
     expect(meanCornerDistance(a, b)).toBeCloseTo(Math.hypot(0.03, 0.04), 10)
+    expect(maxCornerDistance(a, b)).toBeCloseTo(Math.hypot(0.03, 0.04), 10)
   })
 })
 
@@ -50,6 +57,37 @@ describe('createQuadTracker', () => {
     // The displayed quad moves only part-way toward the jittered detection.
     expect(out[0]!.x).toBeCloseTo(0.205, 10)
     expect(out[0]!.y).toBeCloseTo(0.15, 10)
+  })
+
+  it('holds instead of blending a single corner that jumps to the frame edge', () => {
+    const tracker = createQuadTracker()
+    const base = quadAt(0.2, 0.15)
+    const malformed: Quad = base.map((point) => ({ ...point })) as Quad
+    malformed[0] = { x: 0, y: 0 }
+
+    expect(meanCornerDistance(base, malformed)).toBeLessThan(0.07)
+    expect(maxCornerDistance(base, malformed)).toBeGreaterThan(0.08)
+    tracker.update(base)
+    expect(tracker.update(malformed)).toEqual(base)
+    expect(tracker.update(malformed)).toEqual(base)
+    expect(tracker.update(malformed)).toEqual(base)
+    expect(tracker.update(malformed)).toBeNull()
+    // Expiring the display hold must not let the same malformed quad reacquire as new.
+    expect(tracker.update(malformed)).toBeNull()
+    expect(tracker.update(base)).toEqual(base)
+  })
+
+  it('holds when two adjacent corners jump but their mean movement still reads as nearby', () => {
+    const tracker = createQuadTracker()
+    const base = quadAt(0.2, 0.15)
+    const malformed: Quad = base.map((point) => ({ ...point })) as Quad
+    malformed[0]!.y += 0.09
+    malformed[1]!.y += 0.09
+
+    expect(meanCornerDistance(base, malformed)).toBeLessThan(0.05)
+    expect(maxCornerDistance(base, malformed)).toBeGreaterThan(0.08)
+    tracker.update(base)
+    expect(tracker.update(malformed)).toEqual(base)
   })
 
   it('converges onto a card that settles at a nearby position', () => {

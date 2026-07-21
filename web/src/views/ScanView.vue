@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { Camera, CameraOff, Loader2, ScanLine, SwitchCamera, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -74,8 +74,14 @@ const {
 // True while a frame is being processed — gates overlapping captures and drives the UI.
 const reading = ref(false)
 const stopping = ref(false)
-
+const captureRejected = ref(false)
 const isReady = computed(() => status.value === 'ready')
+const cardDetected = computed(() => detectedQuad.value !== null)
+watch([status, cardDetected], ([nextStatus, hasCard]) => {
+  if (captureRejected.value && (nextStatus !== 'ready' || hasCard)) {
+    captureRejected.value = false
+  }
+})
 
 // The viewport tracks the camera's aspect (container matches the video, so the outline
 // overlay maps 1:1 to the frame).
@@ -84,9 +90,6 @@ function onLoadedMetadata() {
   const el = video.value
   if (el?.videoWidth && el.videoHeight) videoAspect.value = el.videoWidth / el.videoHeight
 }
-
-// Whether a card is currently detected in the live frame.
-const cardDetected = computed(() => detectedQuad.value !== null)
 
 // The detected card's outline as an SVG polygon `points` string in a 0..100 viewBox
 // (normalised corners × 100), or '' when no card is detected.
@@ -98,16 +101,18 @@ const outlinePoints = computed(() =>
 
 // Capture + match one frame on demand — tap the camera or the Capture button. Capturing a
 // new card first commits the previous one (the rapid-add rhythm), handled in the session.
-// Only fires when a card is locked on (the green outline is showing) — capturing an empty
-// frame would just warp the guide box into a guaranteed non-match, so we gate it out.
+// Only fires when a card is locked on (the green outline is showing); capture then
+// revalidates that geometry before it hashes any crop.
 async function captureNow() {
   if (!isReady.value || reading.value || finalizing.value || undoing.value || !cardDetected.value) {
     return
   }
   reading.value = true
+  captureRejected.value = false
   try {
     const cap = await capture()
     if (cap) await handleCapture(cap)
+    else captureRejected.value = true
   } finally {
     reading.value = false
   }
@@ -155,9 +160,12 @@ const statusHint = computed(() => {
   if (undoing.value) return 'Updating the session…'
   if (resolving.value) return 'Matching…'
   if (reading.value) return 'Scanning…'
+  if (captureRejected.value) {
+    return 'Keep the whole card inside the frame and hold it still, then try again.'
+  }
   if (match.value) return 'Capture the next card to add this one.'
   if (cardDetected.value) return 'Card locked on — tap to scan.'
-  return 'Point at a card, flat and filling the frame.'
+  return 'Point at a flat card with a little space around every edge.'
 })
 </script>
 
@@ -168,9 +176,9 @@ const statusHint = computed(() => {
     <header class="mb-6">
       <h1 class="text-3xl font-semibold tracking-tight">Scan cards</h1>
       <p class="text-muted-foreground mt-1 max-w-2xl">
-        Hold a card flat and straight-on, filling the frame, then tap the camera to scan it — it's
-        identified from its artwork. Pick the right match, then capture the next card to add the
-        previous one.
+        Hold a card flat and straight-on with a little space around every edge, then tap the camera
+        to scan it — it's identified from its artwork. Pick the right match, then capture the next
+        card to add the previous one.
       </p>
     </header>
 
