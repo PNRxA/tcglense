@@ -18,6 +18,7 @@ import {
   Lock,
   Package,
   PackageOpen,
+  ScanLine,
   Search,
   Terminal,
   TrendingUp,
@@ -26,6 +27,7 @@ import { RouterLink } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
 import DemoCardTile from '@/components/home/DemoCardTile.vue'
 import FeatureDemoRow from '@/components/home/FeatureDemoRow.vue'
+import ScannerFeatureDemo from '@/components/home/ScannerFeatureDemo.vue'
 import { buttonVariants } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useGamesQuery } from '@/composables/useCatalog'
@@ -36,9 +38,9 @@ const auth = useAuthStore()
 
 usePageMeta({
   description:
-    'Browse trading-card games, sets, cards, and sealed products, chart daily prices, and ' +
-    'track your collection and wish list — with ghost mode showing exactly which cards you ' +
-    'are missing.',
+    'Browse trading-card games, sets, cards, and sealed products, chart daily prices, scan Magic ' +
+    'cards, and track your collection and wish list — with ghost mode showing exactly which cards ' +
+    'you are missing.',
   canonicalPath: '/',
 })
 
@@ -444,7 +446,40 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row C — Ghost mode (demo right). -->
+        <!-- Row C — Visual card scanner (demo right). -->
+        <FeatureDemoRow
+          :icon="ScanLine"
+          eyebrow="Visual card scanner"
+          heading="Turn a stack of Magic cards into your collection"
+          :body="
+            'Use your phone or webcam to match each card\'s artwork, confirm the exact printing, ' +
+            'and add it as you work through a stack. Photos are processed locally and never ' +
+            'uploaded; compact visual fingerprints are sent for matching.'
+          "
+          demo-side="right"
+        >
+          <template v-if="auth.isAuthenticated">
+            <RouterLink to="/scan" :class="rowLinkClass">
+              Scan Magic cards
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <template v-else-if="auth.sessionResolved">
+            <RouterLink
+              :to="{ path: '/register', query: { redirect: '/scan' } }"
+              :class="rowLinkClass"
+            >
+              Create a free account to scan
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <Skeleton v-else class="h-5 w-48" />
+          <template #demo>
+            <ScannerFeatureDemo />
+          </template>
+        </FeatureDemoRow>
+
+        <!-- Row D — Ghost mode (demo left at md+). -->
         <FeatureDemoRow
           :icon="Ghost"
           eyebrow="Ghost mode"
@@ -455,7 +490,7 @@ const rowLinkClass =
             'carries a quick-add button right where it sits. It works across your collection and ' +
             'your wish list, including Secret Lair by-drop views.'
           "
-          demo-side="right"
+          demo-side="left"
         >
           <template v-if="auth.isAuthenticated">
             <RouterLink to="/collection" :class="rowLinkClass">
@@ -502,7 +537,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row D — Import & sync (demo left at md+). -->
+        <!-- Row E — Import & sync (demo right). -->
         <FeatureDemoRow
           :icon="Import"
           eyebrow="Import & sync"
@@ -513,7 +548,7 @@ const rowLinkClass =
             're-sync on demand. Prefer a file? Upload a CSV export from Archidekt or Moxfield and ' +
             'it reconciles on the spot.'
           "
-          demo-side="left"
+          demo-side="right"
         >
           <RouterLink to="/collection" :class="rowLinkClass">
             Import into your collection
@@ -557,7 +592,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row E — Wish list (demo right). -->
+        <!-- Row F — Wish list (demo left at md+). -->
         <FeatureDemoRow
           :icon="Heart"
           eyebrow="Wish lists"
@@ -567,7 +602,7 @@ const rowLinkClass =
             'views, ghosts across whole sets — but for the cards you\'re still hunting. It keeps ' +
             'a running USD total, so you always know what buying the list would cost.'
           "
-          demo-side="right"
+          demo-side="left"
         >
           <RouterLink to="/wishlist" :class="rowLinkClass">
             <template v-if="auth.isAuthenticated">Open your wish list</template>
@@ -616,7 +651,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row F — CLI & agents (demo left at md+). -->
+        <!-- Row G — CLI & agents (demo right). -->
         <FeatureDemoRow
           :icon="Terminal"
           eyebrow="CLI & agents"
@@ -628,7 +663,7 @@ const rowLinkClass =
             'without leaving the shell. Scriptable output and scoped tcgl_ API keys make it a clean ' +
             'surface for automation and AI agents to work your collection on your behalf.'
           "
-          demo-side="left"
+          demo-side="right"
         >
           <a
             href="https://github.com/PNRxA/tcglense-cli"

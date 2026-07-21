@@ -23,4 +23,12 @@ describe('router catch-all (404)', () => {
     // the empty result), not a 404 — the catch-all only claims fully unrouted paths.
     expect(router.resolve('/cards/mtg/sets/zzz').name).toBe('set')
   })
+
+  it('keeps the card scanner on an authenticated route', async () => {
+    const router = (await import('@/router')).default
+    const resolved = router.resolve('/scan')
+
+    expect(resolved.name).toBe('scan')
+    expect(resolved.matched[resolved.matched.length - 1]?.meta.requiresAuth).toBe(true)
+  })
 })

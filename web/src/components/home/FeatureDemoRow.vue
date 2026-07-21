@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 
-// The shared shell for the homepage's five feature-demo rows: a text column (eyebrow, heading,
+// The shared shell for the homepage's feature-demo rows: a text column (eyebrow, heading,
 // body, CTA slot) paired with a decorative mock panel that alternates sides at md+. The panel
 // markup is passed through the named "demo" slot so nothing about the rendered SVG/values changes.
 withDefaults(
