@@ -210,9 +210,9 @@ export function useScanSession(game: Ref<string>) {
       if (selectedId.value && ownedReady.value && !seeded.value) {
         seedBase.quantity = owned.value.quantity
         seedBase.foil_quantity = owned.value.foil_quantity
-        // A foil star read off the collector line (modern foils print a `★` there) seeds the
+        // When the scanner's visual detector found a printed foil star on the card, seed the
         // scanned copy as a foil rather than a regular. The user still sees both steppers and
-        // can correct it before it commits, so a misread star is a one-tap fix, not a wrong
+        // can correct it before it commits, so a misdetected star is a one-tap fix, not a wrong
         // write.
         const foil = match.value?.hint.foil === true
         target.quantity = seedBase.quantity + (foil ? 0 : SCANNED_COPIES)
@@ -409,10 +409,11 @@ export function useScanSession(game: Ref<string>) {
       // card than the match panel.
       candidates.value = matches
       // Visual match gives identity (name); the OCR'd set line pins the printing via the
-      // existing hint → matchPrinting flow (see the auto-pick watch above).
+      // existing hint → matchPrinting flow (see the auto-pick watch above). The finish comes
+      // from the visual foil-star detector on the capture (OCR can't read the `★`).
       startMatch({
         ocrName: name,
-        hint: parseSetHint(capture.setText),
+        hint: { ...parseSetHint(capture.setText), foil: capture.foil },
         candidates: uniqueNames(matches),
         name,
       })

@@ -14,11 +14,11 @@ export interface SetHint {
   setCode?: string
   /** Collector number with any zero-padding stripped, e.g. `123` — or undefined. */
   collectorNumber?: string
-  /** True when the info line carries a foil star (`★`). Modern Magic foils print a star on
-   * the bottom-left collector line, so this is the card's printed "this copy is foil" signal
-   * — it covers ordinary set foils, not only the Secret Lair star-variant printings Scryfall
-   * models as a *separate* `123★` object (issue #209). Undefined/false when no star was read
-   * (an older foil predating the convention, or a glyph the OCR missed). */
+  /** True when the card carries a printed foil star (`★`) on its info line. Modern Magic foils
+   * ink a star there (`SLD ★ EN`), so it's the card's printed "this copy is foil" signal. It is
+   * set from the scanner's **visual** star detector (`lib/scan/foilStar`), not parsed here: the
+   * OCR engine (tesseract, eng LSTM) has no `★` glyph and silently drops it, so the star is only
+   * recoverable geometrically. Undefined when no star was detected. */
   foil?: boolean
 }
 
@@ -113,18 +113,9 @@ export function parseSetHint(raw: string): SetHint {
   const upper = raw.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()
   const hint: SetHint = {}
 
-  // Foil star: modern foils ink a `★` onto the collector line, so a star means "foil".
-  // Record the finish, then blank the star before reading the number/set code — it commonly
-  // sits right against the collector number (`123★/281`) and would otherwise break the
-  // slashed-number match below. The number stays plain, so printing resolution lands on the
-  // ordinary dual-finish card (or the #209-folded base of a separate `123★` object), and the
-  // scanned foil never becomes its own star row.
-  if (upper.includes('★')) hint.foil = true
-  const line = upper.replace(/★/g, ' ')
-
   // Collector number: the "123/264" form is unambiguous (a bare number could be the
   // card's power/toughness or CMC bleeding in, so only trust the slashed form).
-  const numbered = line.match(/(\d{1,5})\s*\/\s*\d{1,5}/)?.[1]
+  const numbered = upper.match(/(\d{1,5})\s*\/\s*\d{1,5}/)?.[1]
   if (numbered) hint.collectorNumber = normalizeCollectorNumber(numbered)
 
   // Set code: the first *whole* 3-5 char alphanumeric token that isn't a language code
@@ -132,7 +123,7 @@ export function parseSetHint(raw: string): SetHint {
   // a 3-5 run) avoids picking a fragment of a longer word like an artist's name. A false
   // positive here is harmless — it only *pre-selects* a printing, and a bogus code that
   // matches none of the current card's printings simply falls back to the newest.
-  for (const token of line.split(/[^A-Z0-9]+/)) {
+  for (const token of upper.split(/[^A-Z0-9]+/)) {
     if (token.length < 3 || token.length > 5) continue
     if (LANGUAGE_CODES.has(token)) continue
     if (/^\d+$/.test(token)) continue

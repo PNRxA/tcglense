@@ -84,6 +84,7 @@ async function mountSession() {
   await session.handleCapture({
     fingerprints: [new Uint8Array(32)],
     setText: 'OLD • EN',
+    foil: false,
   })
   await flushPromises()
 }
@@ -222,7 +223,11 @@ describe('useScanSession printing resolution', () => {
     session.selectId(alternate.id)
     session.discardCurrent()
     await expect(
-      session.handleCapture({ fingerprints: [new Uint8Array(32)], setText: 'ALT • EN' }),
+      session.handleCapture({
+        fingerprints: [new Uint8Array(32)],
+        setText: 'ALT • EN',
+        foil: false,
+      }),
     ).resolves.toBe('busy')
 
     expect(session.target.quantity).toBe(1)
@@ -247,6 +252,7 @@ describe('useScanSession printing resolution', () => {
     await session.handleCapture({
       fingerprints: [new Uint8Array(32)],
       setText: 'OLD • EN',
+      foil: false,
     })
     await flushPromises()
     expect(session.ready.value).toBe(true)
@@ -292,9 +298,9 @@ describe('useScanSession printing resolution', () => {
 })
 
 describe('useScanSession foil detection', () => {
-  // Mount a session and feed one capture whose OCR'd set line is `setText`, resolving to a
-  // single already-loaded printing.
-  async function captureInto(setText: string) {
+  // Mount a session and feed one capture, resolving to a single already-loaded printing. `foil`
+  // is the scanner's visual foil-star verdict (see lib/scan/foilStar).
+  async function captureInto(foil: boolean) {
     const target = makeCard('star-printing', { set_code: 'neo' })
     picker.printings.value = [target]
     picker.hasNextPage.value = false
@@ -313,16 +319,15 @@ describe('useScanSession foil detection', () => {
       },
     })
     wrapper = mount(Host)
-    await session.handleCapture({ fingerprints: [new Uint8Array(32)], setText })
+    await session.handleCapture({ fingerprints: [new Uint8Array(32)], setText: 'NEO • EN', foil })
     await flushPromises()
     return target
   }
 
-  it('seeds the scanned copy as foil when the collector line carries a star', async () => {
-    const target = await captureInto('0123/0264 R ★\nNEO • EN')
+  it('seeds the scanned copy as foil when the capture detected a foil star', async () => {
+    const target = await captureInto(true)
     expect(session.ready.value).toBe(true)
-    // The star routes the +1 into the foil count; the copy still lands on the plain-number
-    // printing, not a separate star row.
+    // The star routes the +1 into the foil count; the copy still lands on the matched printing.
     expect(session.target.quantity).toBe(0)
     expect(session.target.foil_quantity).toBe(1)
 
@@ -335,8 +340,8 @@ describe('useScanSession foil detection', () => {
     })
   })
 
-  it('seeds the scanned copy as regular when no star is read', async () => {
-    await captureInto('0123/0264 R\nNEO • EN')
+  it('seeds the scanned copy as regular when no foil star was detected', async () => {
+    await captureInto(false)
     expect(session.ready.value).toBe(true)
     expect(session.target.quantity).toBe(1)
     expect(session.target.foil_quantity).toBe(0)

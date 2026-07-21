@@ -99,25 +99,10 @@ describe('parseSetHint', () => {
     expect(parseSetHint('artist 264').collectorNumber).toBeUndefined()
   })
 
-  it('flags foil when the collector line carries a star, keeping the plain number and code', () => {
-    // Modern foils print a `★` on the collector line; the star drives the finish while the
-    // number/code stay plain so printing resolution lands on the ordinary card.
-    const hint = parseSetHint('0123/0264 R ★\nNEO • EN')
-    expect(hint.foil).toBe(true)
-    expect(hint.collectorNumber).toBe('123')
-    expect(hint.setCode).toBe('NEO')
-  })
-
-  it('still reads the number when the star sits against it (123★/264)', () => {
-    // The star is blanked before the slashed-number match, so an adjacent star can't hide it.
-    const hint = parseSetHint('0123★/0264 R\nNEO • EN')
-    expect(hint.foil).toBe(true)
-    expect(hint.collectorNumber).toBe('123')
-    expect(hint.setCode).toBe('NEO')
-  })
-
-  it('leaves foil unset when no star is present', () => {
-    expect(parseSetHint('0123/0264 U\nNEO • EN').foil).toBeUndefined()
+  it('never sets foil from OCR text — the star is detected visually, not read', () => {
+    // tesseract cannot emit `★`, so parseSetHint deliberately makes no attempt at the finish
+    // (a literal star in the raw string is treated as noise, like any other stray glyph).
+    expect(parseSetHint('0123/0264 R\nSLD ★ EN').foil).toBeUndefined()
   })
 })
 
