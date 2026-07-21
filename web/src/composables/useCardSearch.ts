@@ -61,10 +61,16 @@ function patchQuery(
  * set depends on a mode (e.g. the collection view's owned vs. show-ghosts toggle,
  * which swaps the collection sorts for the catalog ones) passes getters so the
  * committed sort re-clamps to the active mode's default when the mode flips.
+ *
+ * `onSortCommit`, when given, returns extra query changes merged into the same atomic
+ * `replace` that commits a new sort — the set/holding views use it to leave a grouped
+ * (fixed-order) view for the flat sorted grid (`?view=all`) in one write, so the sort
+ * and the view flip can't race two separate replaces.
  */
 export function useCardSearch(
   defaultSort: MaybeRefOrGetter<string> = '',
   validSorts?: MaybeRefOrGetter<readonly string[] | undefined>,
+  onSortCommit?: () => Record<string, string | undefined>,
 ) {
   const route = useRoute()
   const router = useRouter()
@@ -86,8 +92,13 @@ export function useCardSearch(
       return raw && (!valid || valid.includes(raw)) ? raw : toValue(defaultSort)
     },
     // A new sort restarts paging — page 3 of the old order is meaningless in the new.
+    // `onSortCommit` folds any view-flip (grouped → all cards) into the same write.
     set: (value) =>
-      patch({ sort: value && value !== toValue(defaultSort) ? value : undefined, page: undefined }),
+      patch({
+        sort: value && value !== toValue(defaultSort) ? value : undefined,
+        page: undefined,
+        ...onSortCommit?.(),
+      }),
   })
 
   // The text box mirrors the committed query, debounced so we don't rewrite the URL

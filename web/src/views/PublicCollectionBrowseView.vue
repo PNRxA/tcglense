@@ -199,7 +199,8 @@ const notFound = computed(() => summaryQuery.isError.value)
 
       <template v-else>
         <!-- Controls: the grouped / all-cards toggle + the show-ghosts toggle, then the
-             card-size + sort menus (flat views only — a grouped view has a fixed order). -->
+             card-size + sort menus (both views — picking a sort from a grouped view flips
+             to the flat all-cards grid, since a grouped view has a fixed order). -->
         <div
           ref="resultsTop"
           class="mb-4 flex scroll-mt-24 flex-wrap items-center justify-between gap-3"
@@ -215,7 +216,7 @@ const notFound = computed(() => summaryQuery.isError.value)
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <CardSizeMenu />
-            <CardSortMenu v-if="!grouped" v-model="sort" :options="sortOptions" />
+            <CardSortMenu v-model="sort" :options="sortOptions" />
           </div>
         </div>
 

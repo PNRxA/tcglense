@@ -219,8 +219,8 @@ export function useHoldingsBrowse(
   // the catalog's sorts — a set's collector order, or the all-cards name order — while the
   // held-only mode keeps the holding's recency-first sorts. Recency is meaningless for cards
   // you don't hold, so the two sort sets (and their defaults) swap with the mode; the getters
-  // let `useCardSearch` re-clamp the committed sort when the toggle flips. (By-drop hides the
-  // sort menu — a fixed drop order — so its sort set is moot there.)
+  // let `useCardSearch` re-clamp the committed sort when the toggle flips. (Committing a sort
+  // from a grouped view flips to the flat all-cards grid, so the sort set applies there.)
   const sortOptions = computed(() =>
     showGhosts.value
       ? scoped.value
@@ -238,8 +238,12 @@ export function useHoldingsBrowse(
   const validSorts = computed(() => sortOptions.value.map((option) => option.value))
 
   // Page, search and sort live in the URL query (like the catalog browse views), so they
-  // survive opening a card and pressing Back and are shareable/reload-safe.
-  const { page, searchInput, query, sort } = useCardSearch(defaultSort, validSorts)
+  // survive opening a card and pressing Back and are shareable/reload-safe. Committing a
+  // sort while grouped leaves the fixed-order grouped view for the flat sorted grid
+  // (?view=all), folded into the same write so the two don't race.
+  const { page, searchInput, query, sort } = useCardSearch(defaultSort, validSorts, () =>
+    grouped.value ? { view: 'all' } : {},
+  )
 
   // A cold scoped link must wait for the set list (which decides byDrop/hasDrops) before
   // firing a flat fetch, so a drop-set link doesn't flash the flat grid then discard it. The

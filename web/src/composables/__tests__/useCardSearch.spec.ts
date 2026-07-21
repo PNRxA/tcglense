@@ -83,6 +83,47 @@ describe('useCardSearch', () => {
     expect(api.sort.value).toBe(ALL_CARDS_DEFAULT_SORT)
   })
 
+  it('folds onSortCommit extras (grouped → all cards) into the same sort write', async () => {
+    // The set/holding views pass onSortCommit so committing a sort from a grouped view
+    // also writes ?view=all — one atomic replace, so the sort and the view flip can't race.
+    const router = makeRouter()
+    await router.push('/cards/mtg/sets/sld?page=3&drop=bloom')
+    await router.isReady()
+
+    const grouped = ref(true)
+    let api!: ReturnType<typeof useCardSearch>
+    mount(
+      defineComponent({
+        setup() {
+          // SetView's closure: leave the grouped view (?view=all) and shed the by-drop
+          // ?drop= filter, matching its setGroupView flat switch.
+          api = useCardSearch(ALL_CARDS_DEFAULT_SORT, VALID_SORTS, () =>
+            grouped.value ? { view: 'all', drop: undefined } : {},
+          )
+          return () => h('div')
+        },
+      }),
+      { global: { plugins: [router] } },
+    )
+    await nextTick()
+
+    // Grouped: sorting flips to the flat all-cards grid in the same write, page reset,
+    // and the now-inert by-drop filter is dropped.
+    api.sort.value = 'name:desc'
+    await flushPromises()
+    expect(query(router).sort).toBe('name:desc')
+    expect(query(router).view).toBe('all')
+    expect(query(router).page).toBeUndefined()
+    expect(query(router).drop).toBeUndefined()
+
+    // Already flat: sorting leaves the view untouched (no phantom view flip).
+    grouped.value = false
+    api.sort.value = 'price:desc'
+    await flushPromises()
+    expect(query(router).sort).toBe('price:desc')
+    expect(query(router).view).toBe('all')
+  })
+
   it('debounces the search box into ?q and restarts paging', async () => {
     const { router, api } = await start('/cards/mtg/cards?page=5')
     api.searchInput.value = 'dragon'
