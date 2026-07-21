@@ -1,28 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { Camera, CameraOff, Loader2, ScanLine, SwitchCamera, TriangleAlert } from '@lucide/vue'
+import { TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import CardImage from '@/components/cards/CardImage.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
+import ScanCameraSurface from '@/components/collection/ScanCameraSurface.vue'
+import ScanCaptureDock from '@/components/collection/ScanCaptureDock.vue'
 import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import ScanSessionList from '@/components/collection/ScanSessionList.vue'
 import { useCardScanner } from '@/composables/useCardScanner'
 import { useScanSession } from '@/composables/useScanSession'
+import { printingMetadataLabel } from '@/lib/printings'
 import { usePageMeta } from '@/lib/seo'
 
-// Scan physical cards into the collection with the phone/webcam camera. Tap the camera (or
-// the Capture button) to take a shot: the app detects + deskews the card, identifies it
-// visually (a perceptual-hash fingerprint), and offers the closest matches to pick from,
-// pinning the exact printing from an OCR of the set line. Capturing the NEXT card commits
-// the previous one — a deliberate bulk-add rhythm. The photo never leaves the device; only
-// the small fingerprint is sent. The route is auth-gated, so this only renders when signed in.
+// Scan physical cards into the collection with the phone/webcam camera. A capture identifies
+// the card visually and uses OCR to pin its printing. The current match remains tentative until
+// it is confirmed, scanning advances to another card, or the session ends.
 usePageMeta({ title: 'Scan cards', canonicalPath: '/scan', noindex: true })
 
 const game = ref('mtg')
-
 const video = ref<HTMLVideoElement | null>(null)
+const videoAspect = ref(3 / 4)
 const {
   status,
   errorMessage,
@@ -48,6 +48,7 @@ const {
   owned,
   target,
   ready,
+  advanceReady,
   resolving,
   finalizing,
   undoing,
@@ -71,67 +72,67 @@ const {
   loadMorePrintings,
 } = useScanSession(game)
 
-// True while a frame is being processed — gates overlapping captures and drives the UI.
 const reading = ref(false)
 const stopping = ref(false)
 const captureRejected = ref(false)
 const isReady = computed(() => status.value === 'ready')
 const cardDetected = computed(() => detectedQuad.value !== null)
+const captureEnabled = computed(
+  () =>
+    isReady.value &&
+    cardDetected.value &&
+    advanceReady.value &&
+    !reading.value &&
+    !resolving.value &&
+    !finalizing.value &&
+    !undoing.value &&
+    !stopping.value,
+)
+
 watch([status, cardDetected], ([nextStatus, hasCard]) => {
   if (captureRejected.value && (nextStatus !== 'ready' || hasCard)) {
     captureRejected.value = false
   }
 })
 
-// The viewport tracks the camera's aspect (container matches the video, so the outline
-// overlay maps 1:1 to the frame).
-const videoAspect = ref(3 / 4)
-function onLoadedMetadata() {
-  const el = video.value
-  if (el?.videoWidth && el.videoHeight) videoAspect.value = el.videoWidth / el.videoHeight
-}
-
-// The detected card's outline as an SVG polygon `points` string in a 0..100 viewBox
-// (normalised corners × 100), or '' when no card is detected.
-const outlinePoints = computed(() =>
-  detectedQuad.value
-    ? detectedQuad.value.map((p) => `${(p.x * 100).toFixed(2)},${(p.y * 100).toFixed(2)}`).join(' ')
-    : '',
-)
-
-// Capture + match one frame on demand — tap the camera or the Capture button. Capturing a
-// new card first commits the previous one (the rapid-add rhythm), handled in the session.
-// Only fires when a card is locked on (the green outline is showing); capture then
-// revalidates that geometry before it hashes any crop.
-async function captureNow() {
-  if (!isReady.value || reading.value || finalizing.value || undoing.value || !cardDetected.value) {
+const successMessage = ref<string | null>(null)
+let successTimer: number | null = null
+watch(addedCount, (count, previous) => {
+  if (count < previous) {
+    if (successTimer !== null) window.clearTimeout(successTimer)
+    successTimer = null
+    successMessage.value = null
     return
   }
+  if (count === previous) return
+  const name = log.value[0]?.card.name ?? 'Card'
+  successMessage.value = `Added ${name}. ${count} ${count === 1 ? 'card' : 'cards'} added this session.`
+  if (successTimer !== null) window.clearTimeout(successTimer)
+  successTimer = window.setTimeout(() => {
+    successMessage.value = null
+    successTimer = null
+  }, 2500)
+})
+
+async function captureNow() {
+  if (!captureEnabled.value) return
   reading.value = true
   captureRejected.value = false
   try {
-    const cap = await capture()
-    if (cap) await handleCapture(cap)
+    const captured = await capture()
+    if (captured) await handleCapture(captured)
     else captureRejected.value = true
   } finally {
     reading.value = false
   }
 }
 
-async function startScanning() {
-  await start()
-}
-
 async function stopScanning() {
-  // Capturing the next card commits the previous — so does stopping: save the last one.
-  // Do not race a frame that is still being captured/matched: it could install a new tentative
-  // match after this finalizer has discarded the previous one and stopped the camera.
+  // Stopping follows the same loss-prevention contract as navigation: wait for any printing
+  // resolution and save the final tentative card before releasing the camera.
   if (stopping.value || finalizing.value || reading.value || resolving.value) return
   stopping.value = true
   try {
-    // Printing pagination and the selected printing's owned count can still be resolving after
-    // capture returns. Keep the camera/session open on an error so the user can retry or pick a
-    // loaded printing instead of silently discarding the final card.
     if (!(await finalizeCurrent())) return
     discardCurrent()
     stop()
@@ -141,212 +142,130 @@ async function stopScanning() {
 }
 
 onBeforeUnmount(() => {
-  // Best effort for non-router teardown. Normal SPA navigation is held by the async route
-  // guard below until printing resolution and the final save settle.
+  if (successTimer !== null) window.clearTimeout(successTimer)
   void finalizeCurrent()
 })
 
 onBeforeRouteLeave(async () => {
-  // A capture already in flight can still install a new tentative match. Cancel this navigation
-  // attempt until it finishes; the next attempt will finalize that newly resolved card.
   if (reading.value || resolving.value) return false
   if (!(await finalizeCurrent())) return false
   discardCurrent()
   return true
 })
 
-const statusHint = computed(() => {
-  if (finalizing.value) return 'Saving the final card…'
+const activityLabel = computed(() => {
+  if (finalizing.value || stopping.value) return 'Saving the final card…'
   if (undoing.value) return 'Updating the session…'
-  if (resolving.value) return 'Matching…'
-  if (reading.value) return 'Scanning…'
-  if (captureRejected.value) {
-    return 'Keep the whole card inside the frame and hold it still, then try again.'
-  }
-  if (match.value) return 'Capture the next card to add this one.'
-  if (cardDetected.value) return 'Card locked on — tap to scan.'
-  return 'Point at a flat card with a little space around every edge.'
+  if (resolving.value) return 'Matching the card…'
+  return 'Scanning the card…'
 })
+const processing = computed(
+  () => reading.value || resolving.value || finalizing.value || undoing.value || stopping.value,
+)
+const statusHint = computed(() => {
+  if (processing.value) return activityLabel.value
+  if (captureRejected.value) {
+    return 'Keep the whole card inside the guide and hold it still, then try again.'
+  }
+  if (commitError.value) return "Couldn't save the last card. Check your connection and retry."
+  if (ownedError.value) return "Couldn't load the count for this printing."
+  if (unrecognized.value) return "That card wasn't recognised. Try again or add it by name."
+  if (successMessage.value) return successMessage.value
+  if (match.value && !advanceReady.value) return 'Finishing the current match…'
+  if (match.value) return `Review ${match.value.name}, or add it and scan the next card.`
+  if (cardDetected.value) return 'Card locked on — ready to scan.'
+  return 'Fit one flat card inside the guide with space around every edge.'
+})
+const captureLabel = computed(() => {
+  if (match.value && !advanceReady.value) return 'Finishing match…'
+  return match.value ? 'Add & scan next' : 'Scan card'
+})
+
+const reviewSection = ref<HTMLElement | null>(null)
+function reviewMatch() {
+  const section = reviewSection.value
+  if (!section) return
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  section.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+  section.focus({ preventScroll: true })
+}
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-4 py-8">
-    <PageBreadcrumbs :items="[{ label: 'Collection', to: '/collection' }, { label: 'Scan' }]" />
+  <div
+    class="mx-auto max-w-6xl px-4 pt-4 sm:pt-6 lg:pt-8"
+    :class="isReady ? 'pb-32 lg:pb-8' : 'pb-4 sm:pb-6 lg:pb-8'"
+  >
+    <div class="hidden lg:block">
+      <PageBreadcrumbs :items="[{ label: 'Collection', to: '/collection' }, { label: 'Scan' }]" />
+    </div>
 
-    <header class="mb-6">
-      <h1 class="text-3xl font-semibold tracking-tight">Scan cards</h1>
-      <p class="text-muted-foreground mt-1 max-w-2xl">
-        Hold a card flat and straight-on with a little space around every edge, then tap the camera
-        to scan it — it's identified from its artwork. Pick the right match, then capture the next
-        card to add the previous one.
+    <header class="scan-page-header mb-3 lg:mb-6">
+      <div class="flex items-center gap-2">
+        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Scan cards</h1>
+        <span
+          v-if="addedCount > 0"
+          class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs tabular-nums lg:hidden"
+        >
+          {{ addedCount }} added
+        </span>
+      </div>
+      <p
+        class="text-muted-foreground mt-1 max-w-2xl text-sm sm:text-base"
+        :class="{ 'hidden lg:block': status !== 'idle' }"
+      >
+        Fit one card inside the guide and tap Scan. Review the match; scanning the next card adds
+        the previous one.
       </p>
     </header>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <!-- Camera + controls -->
-      <section class="min-w-0">
-        <div
-          class="bg-muted relative mx-auto w-full max-w-md overflow-hidden rounded-xl border"
-          :class="{
-            'cursor-pointer': isReady && !reading && !finalizing && !undoing && cardDetected,
-          }"
-          :style="{ aspectRatio: String(videoAspect) }"
-          role="button"
-          :aria-label="
-            isReady && cardDetected && !reading && !finalizing && !undoing
-              ? 'Tap to scan the card in view'
-              : undefined
-          "
-          :aria-disabled="reading || finalizing || undoing || undefined"
-          @click="captureNow"
-        >
-          <!-- The live frame (always mounted so the ref/stream can attach); overlays sit on
-               top per camera state. -->
-          <video
-            ref="video"
-            class="h-full w-full object-contain"
-            :class="{ 'opacity-0': !isReady }"
-            autoplay
-            muted
-            playsinline
-            @loadedmetadata="onLoadedMetadata"
-          ></video>
+    <p class="sr-only" aria-live="polite">
+      {{ isReady || successMessage ? statusHint : '' }}
+    </p>
 
-          <!-- Live detection outline: the four corners the detector found, tracking the
-               card in real time (green = locked on). Maps 1:1 to the frame (container
-               matches the video aspect); non-scaling stroke stays an even width. -->
-          <svg
-            v-if="isReady && cardDetected"
-            class="pointer-events-none absolute inset-0 h-full w-full"
-            viewBox="0 0 100 100"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <polygon
-              :points="outlinePoints"
-              fill="rgba(34, 197, 94, 0.12)"
-              stroke="rgb(34, 197, 94)"
-              stroke-width="3"
-              stroke-linejoin="round"
-              vector-effect="non-scaling-stroke"
-            />
-          </svg>
-
-          <!-- Tap-to-scan hint (idle-ready): green + "Tap to scan" when a card is locked
-               on, else a nudge to line one up. -->
-          <div
-            v-if="isReady && !reading && !resolving && !finalizing && !undoing"
-            class="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full px-2.5 py-1 text-xs font-medium text-white"
-            :class="cardDetected ? 'bg-green-600/85' : 'bg-black/60'"
-          >
-            {{ cardDetected ? 'Tap to scan' : 'Point at a card' }}
-          </div>
-
-          <!-- Scanning / matching pulse. -->
-          <div
-            v-if="isReady && (reading || resolving || finalizing || undoing)"
-            class="absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
-          >
-            <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-            {{ finalizing ? 'Saving' : undoing ? 'Updating' : resolving ? 'Matching' : 'Scanning' }}
-          </div>
-
-          <!-- Idle: start CTA. -->
-          <div
-            v-if="status === 'idle'"
-            class="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
-          >
-            <Camera class="size-10 opacity-60" aria-hidden="true" />
-            <p class="max-w-xs text-sm">
-              Camera access is needed to scan. Your photo never leaves your device — only a small
-              fingerprint is sent to identify the card.
-            </p>
-            <Button @click.stop="startScanning">
-              <ScanLine class="size-4" aria-hidden="true" />
-              Start scanning
-            </Button>
-          </div>
-
-          <!-- Starting. -->
-          <div
-            v-else-if="status === 'starting'"
-            class="text-muted-foreground absolute inset-0 flex items-center justify-center gap-2 text-sm"
-          >
-            <Loader2 class="size-4 animate-spin" aria-hidden="true" />
-            Starting camera…
-          </div>
-
-          <!-- Permission denied / no camera / error. -->
-          <div
-            v-else-if="status === 'denied' || status === 'unavailable' || status === 'error'"
-            class="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
-          >
-            <CameraOff class="size-10 opacity-60" aria-hidden="true" />
-            <p class="max-w-xs text-sm">{{ errorMessage }}</p>
-            <Button v-if="status !== 'denied'" variant="outline" @click.stop="startScanning">
-              Try again
-            </Button>
-          </div>
-
-          <!-- Loading the detector / OCR engine (first scan of the session). -->
-          <div
-            v-if="isReady && (ocrLoading || cvLoading)"
-            class="absolute right-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white"
-          >
-            <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-            Preparing scanner…
-          </div>
-        </div>
-
-        <!-- Controls under the viewport. -->
-        <div v-if="isReady" class="mx-auto mt-3 flex w-full max-w-md flex-col gap-3">
-          <p class="text-muted-foreground text-center text-sm" aria-live="polite">
-            {{ statusHint }}
-          </p>
-
-          <div class="flex flex-wrap items-center justify-center gap-2">
-            <Button
-              :disabled="reading || finalizing || undoing || !cardDetected"
-              aria-label="Capture the card in view"
-              @click="captureNow"
-            >
-              <ScanLine class="size-4" aria-hidden="true" />
-              Capture
-            </Button>
-
-            <Button
-              variant="outline"
-              size="icon"
-              :disabled="finalizing || undoing"
-              aria-label="Switch camera"
-              @click="switchCamera"
-            >
-              <SwitchCamera class="size-4" aria-hidden="true" />
-            </Button>
-
-            <Button
-              variant="outline"
-              :disabled="finalizing || reading || resolving"
-              @click="stopScanning"
-            >
-              <Loader2 v-if="stopping" class="size-4 animate-spin" aria-hidden="true" />
-              <CameraOff v-else class="size-4" aria-hidden="true" />
-              {{ stopping ? 'Saving…' : 'Stop' }}
-            </Button>
-          </div>
-        </div>
+    <div class="grid gap-0 lg:grid-cols-2 lg:grid-rows-[auto_1fr] lg:gap-x-6">
+      <section class="min-w-0 lg:col-start-1 lg:row-start-1">
+        <ScanCameraSurface
+          v-model:video="video"
+          v-model:aspect="videoAspect"
+          :status="status"
+          :error-message="errorMessage"
+          :ocr-loading="ocrLoading"
+          :cv-loading="cvLoading"
+          :detected-quad="detectedQuad"
+          :capture-enabled="captureEnabled"
+          :capture-label="captureLabel"
+          :processing="processing"
+          :activity-label="activityLabel"
+          :status-hint="statusHint"
+          @start="start"
+          @capture="captureNow"
+        />
       </section>
 
-      <!-- Current match + session tally -->
-      <section class="min-w-0 space-y-6">
-        <!-- Manual fallback: type a card by name when the scan won't match it. -->
-        <div>
-          <label class="text-muted-foreground mb-1 block text-xs font-medium">
-            Not matching? Add a card by name
-          </label>
-          <QuickAddBox :game="game" />
-        </div>
+      <ScanCaptureDock
+        v-if="isReady"
+        class="lg:col-start-1 lg:row-start-2"
+        :status-hint="statusHint"
+        :capture-label="captureLabel"
+        :capture-disabled="!captureEnabled"
+        :controls-disabled="reading || resolving || finalizing || undoing || stopping"
+        :stop-disabled="finalizing || reading || resolving || stopping"
+        :stopping="stopping"
+        :match-name="match?.name ?? null"
+        :added-count="addedCount"
+        @capture="captureNow"
+        @switch-camera="switchCamera"
+        @stop="stopScanning"
+        @review="reviewMatch"
+      />
 
+      <section
+        ref="reviewSection"
+        class="min-w-0 space-y-4 pt-5 focus:outline-none lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:space-y-6 lg:pt-0"
+        tabindex="-1"
+        aria-label="Scan results"
+      >
         <div
           v-if="commitError"
           class="border-destructive/40 text-destructive flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
@@ -361,45 +280,27 @@ const statusHint = computed(() => {
         >
           <TriangleAlert class="size-4 shrink-0" aria-hidden="true" />
           <span>Couldn't read your current count for this printing.</span>
-          <Button variant="outline" size="sm" class="ml-auto" @click="retryOwned">Retry</Button>
+          <Button variant="outline" class="ml-auto min-h-11 lg:min-h-9" @click="retryOwned">
+            Retry
+          </Button>
         </div>
 
-        <!-- Pickable strip of the closest matches — tap the right card (its art) if the top
-             pick is wrong or the match was weak. -->
-        <div v-if="match && candidates.length > 1" class="rounded-xl border p-3">
-          <p class="text-muted-foreground mb-2 text-xs font-medium">
-            Closest matches — tap the right card
-          </p>
-          <div class="flex gap-2 overflow-x-auto pb-1">
-            <button
-              v-for="candidate in candidates"
-              :key="candidate.card.id"
-              type="button"
-              class="group shrink-0 rounded-md focus-visible:ring-2 focus-visible:outline-none"
-              :aria-label="`Pick ${candidate.card.name}`"
-              :aria-pressed="candidate.card.id === selectedId"
-              :disabled="finalizing || resolving || undoing"
-              @click="pickCandidate(candidate.card)"
-            >
-              <CardImage
-                :game="game"
-                :id="candidate.card.id"
-                :name="candidate.card.name"
-                :has-image="candidate.card.has_image"
-                size="small"
-                class="w-20 rounded-md ring-2 transition"
-                :class="
-                  candidate.card.id === selectedId
-                    ? 'ring-primary'
-                    : 'ring-transparent group-hover:ring-muted-foreground/40'
-                "
-              />
-            </button>
-          </div>
+        <div
+          v-if="unrecognized"
+          class="border-amber-500/40 bg-amber-500/5 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm"
+        >
+          <TriangleAlert
+            class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+            aria-hidden="true"
+          />
+          <span>
+            That card wasn't recognised. Keep it flat, fill the guide, and use a contrasting
+            background — or add it by name below.
+          </span>
         </div>
 
-        <!-- The card being edited before it commits. -->
-        <div v-if="match" class="rounded-xl border p-4">
+        <!-- Put the result before fallback tools so the card just scanned is the next thing read. -->
+        <div v-if="match" class="rounded-xl border p-3 sm:p-4">
           <ScanMatchPanel
             :game="game"
             :match="match"
@@ -426,20 +327,49 @@ const statusHint = computed(() => {
           />
         </div>
 
-        <!-- Nudge before the first match, or when the last scan didn't resolve. -->
-        <div
-          v-else-if="isReady"
-          class="text-muted-foreground rounded-xl border border-dashed p-6 text-center text-sm"
-        >
-          <template v-if="unrecognized">
-            Couldn't recognise that card. Hold it flat and straight-on (not tilted), close and
-            filling the frame, with a contrasting background — or its set may not be in the catalog
-            yet.
-          </template>
-          <template v-else> The card you scan will appear here to review and edit. </template>
+        <div v-if="match && candidates.length > 1" class="rounded-xl border p-3">
+          <p class="text-muted-foreground mb-2 text-xs font-medium">
+            Closest visual matches — choose the right artwork
+          </p>
+          <div class="flex gap-2 overflow-x-auto pb-1">
+            <button
+              v-for="candidate in candidates"
+              :key="candidate.card.id"
+              type="button"
+              class="group w-24 shrink-0 rounded-md text-left focus-visible:ring-2 focus-visible:outline-none"
+              :aria-label="`Pick ${candidate.card.name}, ${printingMetadataLabel(candidate.card)}`"
+              :aria-pressed="candidate.card.id === selectedId"
+              :disabled="finalizing || resolving || undoing"
+              @click="pickCandidate(candidate.card)"
+            >
+              <CardImage
+                :game="game"
+                :id="candidate.card.id"
+                :name="candidate.card.name"
+                :has-image="candidate.card.has_image"
+                size="small"
+                class="w-full rounded-md ring-2 transition"
+                :class="
+                  candidate.card.id === selectedId
+                    ? 'ring-primary'
+                    : 'ring-transparent group-hover:ring-muted-foreground/40'
+                "
+              />
+              <span class="mt-1 block truncate text-xs font-medium">{{ candidate.card.name }}</span>
+              <span class="text-muted-foreground block truncate text-[0.6875rem]">
+                {{ printingMetadataLabel(candidate.card) }}
+              </span>
+            </button>
+          </div>
         </div>
 
-        <!-- Session tally. -->
+        <div
+          v-else-if="isReady && !match"
+          class="text-muted-foreground rounded-xl border border-dashed p-5 text-center text-sm"
+        >
+          The card you scan will appear here to review before it is added.
+        </div>
+
         <div v-if="addedCount > 0">
           <h2 class="mb-1 text-sm font-medium">
             Added this session
@@ -452,7 +382,46 @@ const statusHint = computed(() => {
             @undo="undo"
           />
         </div>
+
+        <details class="group rounded-xl border" :open="unrecognized || undefined">
+          <summary
+            class="hover:bg-muted/50 flex min-h-11 cursor-pointer list-none items-center px-3 text-sm font-medium [&::-webkit-details-marker]:hidden"
+          >
+            Can't scan this card? Add it by name
+            <span class="text-muted-foreground ml-auto text-xs group-open:hidden">Show</span>
+            <span class="text-muted-foreground ml-auto hidden text-xs group-open:inline">Hide</span>
+          </summary>
+          <div class="border-t p-3">
+            <QuickAddBox :game="game" />
+          </div>
+        </details>
       </section>
     </div>
   </div>
 </template>
+
+<style scoped>
+@media (orientation: landscape) and (max-height: 31.25rem) {
+  .scan-page-header {
+    margin-bottom: 0.5rem;
+  }
+
+  .scan-page-header p {
+    display: none;
+  }
+}
+
+@media (orientation: landscape) and (max-width: 39.999rem) and (max-height: 31.25rem) {
+  .scan-page-header {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+</style>

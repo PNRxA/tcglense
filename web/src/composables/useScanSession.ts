@@ -482,6 +482,7 @@ export function useScanSession(game: Ref<string>) {
     owned,
     target,
     ready,
+    advanceReady: currentSettled,
     resolving,
     finalizing,
     undoing,

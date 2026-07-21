@@ -73,7 +73,9 @@ const rows = computed(() => [
 </script>
 
 <template>
-  <div class="grid gap-5 sm:grid-cols-[minmax(0,10rem)_1fr]">
+  <div
+    class="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 sm:grid-cols-[minmax(0,10rem)_1fr] sm:gap-5"
+  >
     <!-- The matched printing's art, big enough to eyeball against the physical card. -->
     <CardImage
       v-if="selectedCard"
@@ -82,11 +84,11 @@ const rows = computed(() => [
       :name="selectedCard.name"
       :has-image="selectedCard.has_image"
       size="normal"
-      class="w-full max-w-40"
+      class="w-full max-w-40 justify-self-center"
     />
     <div
       v-else
-      class="bg-muted text-muted-foreground flex aspect-[61/85] w-full max-w-40 items-center justify-center rounded-lg text-sm"
+      class="bg-muted text-muted-foreground flex aspect-[61/85] w-full max-w-40 items-center justify-center justify-self-center rounded-lg text-sm"
     >
       <Loader2 v-if="resolving || printsLoading" class="size-5 animate-spin" aria-hidden="true" />
       <span v-else>No art</span>
@@ -106,7 +108,7 @@ const rows = computed(() => [
           :disabled="disabled"
           @update:model-value="(v) => emit('name', String(v))"
         >
-          <SelectTrigger class="mt-1 w-full" aria-label="Matched card name">
+          <SelectTrigger class="mt-1 min-h-11 w-full lg:min-h-9" aria-label="Matched card name">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -115,7 +117,9 @@ const rows = computed(() => [
             </SelectItem>
           </SelectContent>
         </Select>
-        <h2 v-else class="text-xl font-semibold tracking-tight">{{ match.name }}</h2>
+        <h2 v-else class="text-xl font-semibold tracking-tight [overflow-wrap:anywhere]">
+          {{ match.name }}
+        </h2>
       </div>
 
       <!-- Printing picker: pre-selected from the set/collector hint (or newest), overridable. -->
@@ -131,7 +135,7 @@ const rows = computed(() => [
           :disabled="disabled"
           @update:model-value="(v) => emit('select', String(v))"
         >
-          <SelectTrigger class="w-full" aria-label="Printing">
+          <SelectTrigger class="min-h-11 w-full lg:min-h-9" aria-label="Printing">
             <SelectValue placeholder="Pick a printing" />
           </SelectTrigger>
           <SelectContent>
@@ -158,7 +162,7 @@ const rows = computed(() => [
           <Button
             variant="outline"
             size="sm"
-            class="ml-auto h-7 px-2"
+            class="ml-auto min-h-11 px-2 lg:min-h-7"
             :disabled="disabled"
             @click="emit('retryPrintings')"
           >
@@ -174,7 +178,7 @@ const rows = computed(() => [
             v-if="printsHasMore && !printsError"
             variant="ghost"
             size="sm"
-            class="h-7 px-2"
+            class="min-h-11 px-2 lg:min-h-7"
             :disabled="printsLoadingMore || disabled"
             @click="emit('loadMore')"
           >
@@ -205,7 +209,7 @@ const rows = computed(() => [
             <Button
               variant="outline"
               size="icon"
-              class="size-8"
+              class="size-11 lg:size-8"
               :disabled="!ready || disabled"
               :aria-disabled="row.value <= 0"
               :class="{ 'pointer-events-none opacity-50': row.value <= 0 }"
@@ -223,7 +227,7 @@ const rows = computed(() => [
             <Button
               variant="outline"
               size="icon"
-              class="size-8"
+              class="size-11 lg:size-8"
               :disabled="!ready || disabled"
               :aria-label="`Add one ${row.label.toLowerCase()} copy`"
               @click="emit('adjust', row.key, 1)"
@@ -236,15 +240,20 @@ const rows = computed(() => [
 
       <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
         <p class="text-muted-foreground text-xs">Or capture the next card to add this one.</p>
-        <div class="flex items-center gap-2">
-          <Button size="sm" :disabled="!ready || disabled" @click="emit('confirm')">
+        <div class="flex max-w-full flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            class="min-h-11 lg:min-h-8"
+            :disabled="!ready || disabled"
+            @click="emit('confirm')"
+          >
             <Check class="size-4" aria-hidden="true" />
-            Confirm
+            Add card
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            class="text-muted-foreground"
+            class="text-muted-foreground min-h-11 lg:min-h-8"
             :disabled="disabled"
             @click="emit('discard')"
           >
