@@ -99,13 +99,21 @@ describe('parseSetHint', () => {
     expect(parseSetHint('artist 264').collectorNumber).toBeUndefined()
   })
 
-  it('flags foil when the info line carries a star, keeping the plain collector number', () => {
-    // A Secret Lair foil prints its star-variant number; the star drives the finish, but the
-    // collector number stays plain so the copy lands on the folded base (issue #209).
-    const hint = parseSetHint('0123/0121 ★ M\nSLD • EN')
+  it('flags foil when the collector line carries a star, keeping the plain number and code', () => {
+    // Modern foils print a `★` on the collector line; the star drives the finish while the
+    // number/code stay plain so printing resolution lands on the ordinary card.
+    const hint = parseSetHint('0123/0264 R ★\nNEO • EN')
     expect(hint.foil).toBe(true)
     expect(hint.collectorNumber).toBe('123')
-    expect(hint.setCode).toBe('SLD')
+    expect(hint.setCode).toBe('NEO')
+  })
+
+  it('still reads the number when the star sits against it (123★/264)', () => {
+    // The star is blanked before the slashed-number match, so an adjacent star can't hide it.
+    const hint = parseSetHint('0123★/0264 R\nNEO • EN')
+    expect(hint.foil).toBe(true)
+    expect(hint.collectorNumber).toBe('123')
+    expect(hint.setCode).toBe('NEO')
   })
 
   it('leaves foil unset when no star is present', () => {

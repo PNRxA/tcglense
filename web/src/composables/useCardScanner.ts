@@ -83,10 +83,9 @@ export interface ScanCapture {
 
 // Only the characters the set/collector strip can contain — constraining the OCR here
 // sharply cuts misreads of that tiny text. The name strip stays unconstrained (card names
-// use a wide, accented character set). The `★` is load-bearing: without it in the whitelist
-// tesseract can never emit the foil star, so parseSetHint's foil detection would be dead —
-// the star inked on a foil star-variant's collector line (issue #209) is our one printed
-// foil signal.
+// use a wide, accented character set). The `★` is load-bearing: modern foils print a star
+// on the bottom-left collector line, and without it in the whitelist tesseract can never
+// emit the glyph, so parseSetHint's foil detection would be dead.
 const SET_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•·★ '
 
 export function useCardScanner(video: Ref<HTMLVideoElement | null>) {

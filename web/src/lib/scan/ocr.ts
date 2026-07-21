@@ -14,12 +14,11 @@ export interface SetHint {
   setCode?: string
   /** Collector number with any zero-padding stripped, e.g. `123` — or undefined. */
   collectorNumber?: string
-  /** True when the info line carries a foil star (`★`). A handful of printings — Secret
-   * Lair foils especially — print their foil as a *distinct* object whose collector number
-   * is the nonfoil's plus a star (`123` vs `123★`, issue #209), and that star is inked onto
-   * the card's bottom-left line. It is the one printed foil signal on a Magic card: ordinary
-   * set foils share the nonfoil's collector line and look identical here, so this flags only
-   * those star variants, never foil in general. Undefined/false when no star was read. */
+  /** True when the info line carries a foil star (`★`). Modern Magic foils print a star on
+   * the bottom-left collector line, so this is the card's printed "this copy is foil" signal
+   * — it covers ordinary set foils, not only the Secret Lair star-variant printings Scryfall
+   * models as a *separate* `123★` object (issue #209). Undefined/false when no star was read
+   * (an older foil predating the convention, or a glyph the OCR missed). */
   foil?: boolean
 }
 
@@ -114,16 +113,18 @@ export function parseSetHint(raw: string): SetHint {
   const upper = raw.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()
   const hint: SetHint = {}
 
-  // Foil star: a `★` inked onto the info line marks a foil star-variant printing (see the
-  // `foil` field docs). Detected before the star is treated as a token delimiter below, and
-  // deliberately *not* fed into `collectorNumber` — the catalog folds a `123★` foil onto its
-  // `123` base as a foil copy (issue #209), so the star drives the *finish*, and printing
-  // resolution stays keyed on the plain number so the scanned copy lands on that base.
+  // Foil star: modern foils ink a `★` onto the collector line, so a star means "foil".
+  // Record the finish, then blank the star before reading the number/set code — it commonly
+  // sits right against the collector number (`123★/281`) and would otherwise break the
+  // slashed-number match below. The number stays plain, so printing resolution lands on the
+  // ordinary dual-finish card (or the #209-folded base of a separate `123★` object), and the
+  // scanned foil never becomes its own star row.
   if (upper.includes('★')) hint.foil = true
+  const line = upper.replace(/★/g, ' ')
 
   // Collector number: the "123/264" form is unambiguous (a bare number could be the
   // card's power/toughness or CMC bleeding in, so only trust the slashed form).
-  const numbered = upper.match(/(\d{1,5})\s*\/\s*\d{1,5}/)?.[1]
+  const numbered = line.match(/(\d{1,5})\s*\/\s*\d{1,5}/)?.[1]
   if (numbered) hint.collectorNumber = normalizeCollectorNumber(numbered)
 
   // Set code: the first *whole* 3-5 char alphanumeric token that isn't a language code
@@ -131,7 +132,7 @@ export function parseSetHint(raw: string): SetHint {
   // a 3-5 run) avoids picking a fragment of a longer word like an artist's name. A false
   // positive here is harmless — it only *pre-selects* a printing, and a bogus code that
   // matches none of the current card's printings simply falls back to the newest.
-  for (const token of upper.split(/[^A-Z0-9]+/)) {
+  for (const token of line.split(/[^A-Z0-9]+/)) {
     if (token.length < 3 || token.length > 5) continue
     if (LANGUAGE_CODES.has(token)) continue
     if (/^\d+$/.test(token)) continue
