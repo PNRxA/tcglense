@@ -20,7 +20,7 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, EntityTrait, Iterable, QueryFilter, QuerySelect,
+    DatabaseConnection, EntityTrait, Iterable,
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
@@ -30,8 +30,8 @@ use super::progress::SyncProgress;
 use super::{BackfillError, GAME, MTG_CATEGORY_ID, PRODUCTS_DATASET};
 use crate::catalog::ingest_state::{self, StateFields};
 use crate::db::upsert_changed_guard;
-use crate::entities::prelude::{Card, Product};
-use crate::entities::{card, product};
+use crate::entities::prelude::Product;
+use crate::entities::product;
 use crate::mtgjson::sld;
 
 /// Courtesy pacing between provider requests (TCGCSV asks for < 10k req/day; a full
@@ -80,31 +80,18 @@ async fn refresh_inner(
     source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
     let base_url = source.tcgcsv_base_url();
-    // Per-drop Secret Lair release dates: TCGCSV files every drop under one `SLD` group with a
-    // single `publishedOn`, so without this every SLD product would share that one date. Map
-    // each `sld` collector number to its card's `released_at` so each SLD product's drop can
-    // take the earliest date among its cards (see `super::sld_release`). Cards sync before
-    // products in `catalog::refresh_all`, so this is populated on the first sweep; an empty map
-    // (fresh DB) just falls back to the group date. Built once **before the gate** so its hash
-    // can join the version below (a change to the `sld` cards' dates re-runs the sweep even when
-    // TCGCSV is unchanged), then reused for every group in the sweep.
-    let sld_card_dates = sld_card_release_dates(db).await?;
     // Version gate: one cheap request. Skip the whole sweep if TCGCSV hasn't refreshed
     // since our last complete sync. The stored version couples TCGCSV's `last-updated`
     // value with the curated hashes (see `compose_version`), so editing `msrp.json` or the
-    // Secret Lair Drop MSRP defaults — or a change to the `sld` cards' release dates —
-    // re-applies on the next sync even when TCGCSV itself is unchanged.
+    // Secret Lair Drop MSRP defaults re-applies on the next sync even when TCGCSV itself is
+    // unchanged.
     let remote_version = super::client::last_updated(http, &base_url, user_agent).await?;
-    // The curated hashes gate the sweep independently of TCGCSV: the hand-curated `msrp.json`,
-    // the derived Secret Lair Drop MSRP defaults (`sld_msrp`, which also covers the drop
-    // snapshot), and the per-drop release-date inputs (`sld_release`, the `sld` cards' dates).
-    // A change to any re-runs the sweep on the next tick even when TCGCSV itself is unchanged.
-    let curated = format!(
-        "{}{}{}",
-        super::msrp::version(),
-        super::sld_msrp::version(),
-        super::sld_release::version(&sld_card_dates),
-    );
+    // The curated hashes gate the sweep independently of TCGCSV: the hand-curated `msrp.json`
+    // and the derived Secret Lair Drop MSRP defaults (`sld_msrp`, which also covers the drop
+    // snapshot). A change to either re-runs the sweep on the next tick even when TCGCSV itself
+    // is unchanged. (Per-drop SLD *release dates* are derived separately, after the contents
+    // sync — see `crate::catalog::sld_product_dates` — so they don't gate this sweep.)
+    let curated = format!("{}{}", super::msrp::version(), super::sld_msrp::version());
     let version = compose_version(&remote_version, &curated);
     let existing = ingest_state::load(db, GAME, PRODUCTS_DATASET).await?;
     if let Some(state) = &existing
@@ -175,7 +162,7 @@ async fn refresh_inner(
             .results,
         );
 
-        let models = build_group_products(group, products, &prices, msrp, &sld_card_dates, now);
+        let models = build_group_products(group, products, &prices, msrp, now);
         let sealed = models.len();
         total_products += upsert_products(db, models).await? as i32;
         progress.inc();
@@ -235,29 +222,6 @@ async fn refresh_inner(
     Ok(())
 }
 
-/// Every Secret Lair card's `released_at`, keyed by its `sld` collector number — the source
-/// for a drop product's per-drop release date (see [`super::sld_release`]). Rows without a
-/// known date are dropped, so a present key always maps to a real date. One indexed scan of
-/// the small `sld` partition; an empty map (cards not yet synced) simply leaves SLD products
-/// on the group date.
-async fn sld_card_release_dates(
-    db: &DatabaseConnection,
-) -> Result<HashMap<String, String>, BackfillError> {
-    let rows: Vec<(String, Option<String>)> = Card::find()
-        .select_only()
-        .column(card::Column::CollectorNumber)
-        .column(card::Column::ReleasedAt)
-        .filter(card::Column::Game.eq(GAME))
-        .filter(card::Column::SetCode.eq(sld::SET_CODE))
-        .into_tuple()
-        .all(db)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|(cn, date)| date.map(|d| (cn, d)))
-        .collect())
-}
-
 /// Build product `ActiveModel`s for a group's **sealed** products, attaching each
 /// product's current market prices from `prices` and its retail price. The curated `msrp`
 /// map (keyed by TCGplayer product id) wins; a Secret Lair Drop product not listed there
@@ -265,10 +229,11 @@ async fn sld_card_release_dates(
 /// individual drops get MSRP without a per-product curated entry.
 ///
 /// The release date is the group's `publishedOn` for ordinary sets (one group per set, so the
-/// group date *is* every product's release), but Secret Lair files every drop under one group
-/// with a single `publishedOn` — so an SLD product's date is *derived* per drop from its cards
-/// (`sld_card_dates` maps an `sld` collector number to its `released_at`; see
-/// [`super::sld_release`]), falling back to the group date when a product resolves to no drop.
+/// group date *is* every product's release). Secret Lair is the exception: TCGCSV files every
+/// drop under one group with a single, *rolling* `publishedOn`, so that date is meaningless as a
+/// per-drop release — SLD products are therefore left **undated** here and dated separately, per
+/// product, from their own contents after the contents sync (see
+/// [`crate::catalog::sld_product_dates`]).
 ///
 /// Cards (products with a `Rarity`/`Number` attribute) are filtered out. Pure so it's
 /// unit-testable without a DB.
@@ -277,7 +242,6 @@ fn build_group_products(
     products: Vec<super::model::Product>,
     prices: &HashMap<i64, super::model::DayPrice>,
     msrp: &HashMap<i64, String>,
-    sld_card_dates: &HashMap<String, String>,
     now: DateTimeUtc,
 ) -> Vec<product::ActiveModel> {
     let set_code = group
@@ -300,11 +264,14 @@ fn build_group_products(
                 .get(&p.product_id)
                 .cloned()
                 .or_else(|| super::sld_msrp::derive(&set_code, &external_id, &p.name));
-            // A Secret Lair drop's own release date (from its cards) wins over the shared group
-            // date; every other product uses the group date. Computed before `p.name` moves.
-            let released_at =
-                super::sld_release::derive(&set_code, &external_id, &p.name, sld_card_dates)
-                    .or_else(|| group_released_at.clone());
+            // Secret Lair's single rolling group `publishedOn` is meaningless as a per-drop
+            // release date, so SLD products are left undated here and dated from their own
+            // contents by `crate::catalog::sld_product_dates`; every other set uses the group date.
+            let released_at = if set_code == sld::SET_CODE {
+                None
+            } else {
+                group_released_at.clone()
+            };
             product::ActiveModel {
                 id: NotSet,
                 game: Set(GAME.to_string()),
@@ -427,7 +394,7 @@ mod tests {
         // Curated MSRP for the box only; the bundle isn't listed.
         let msrp: HashMap<i64, String> = HashMap::from([(100, "249.99".to_string())]);
         let now = Utc::now();
-        let models = build_group_products(&group(), products, &prices, &msrp, &HashMap::new(), now);
+        let models = build_group_products(&group(), products, &prices, &msrp, now);
 
         assert_eq!(models.len(), 2, "the single card is filtered out");
         let box_model = models
@@ -467,7 +434,6 @@ mod tests {
             vec![src_product(1, "Booster Box", &[])],
             &HashMap::new(),
             &HashMap::new(),
-            &HashMap::new(),
             Utc::now(),
         );
         assert_eq!(models[0].set_code.as_ref(), "");
@@ -482,7 +448,6 @@ mod tests {
         let first = build_group_products(
             &group(),
             vec![src_product(100, "Collector Booster Box", &["UPC"])],
-            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             now,
@@ -502,7 +467,6 @@ mod tests {
             &group(),
             vec![src_product(100, "Collector Booster Box", &["UPC"])],
             &prices,
-            &HashMap::new(),
             &HashMap::new(),
             now,
         );
@@ -549,7 +513,6 @@ mod tests {
             products,
             &HashMap::new(),
             &HashMap::new(),
-            &HashMap::new(),
             Utc::now(),
         );
         let non_foil = models
@@ -578,27 +541,22 @@ mod tests {
             )],
             &HashMap::new(),
             &msrp,
-            &HashMap::new(),
             Utc::now(),
         );
         assert_eq!(models[0].msrp.as_ref().as_deref(), Some("49.99"));
     }
 
     #[test]
-    fn sld_products_take_their_drops_release_date_over_the_group_date() {
-        // The `SLD` group carries one `publishedOn` for every drop; a resolvable drop's product
-        // instead takes the earliest release date among its own cards, while a non-drop `SLD`
-        // product (which resolves to no gallery drop) keeps the shared group date.
+    fn sld_products_are_left_undated_for_the_contents_pass() {
+        // The `SLD` group carries one *rolling* `publishedOn` for every drop, so stamping it made
+        // every SLD product share one meaningless near-today date (and sort as "newest"). SLD
+        // product dates are now derived per product from their own contents, after the contents
+        // sync (`catalog::sld_product_dates`) — so the group date must NOT leak onto an SLD
+        // product here, even though the group carries one.
         let group = Group {
             published_on: Some("2019-12-02T00:00:00".to_string()),
             ..sld_group()
         };
-        // "Cats of Chaos" is collector numbers 2690–2694 in the shipped snapshot; give two of
-        // them dates so the earlier one wins.
-        let card_dates: HashMap<String, String> = HashMap::from([
-            ("2691".to_string(), "2024-05-03".to_string()),
-            ("2690".to_string(), "2024-05-06".to_string()),
-        ]);
         let models = build_group_products(
             &group,
             vec![
@@ -615,20 +573,22 @@ mod tests {
             ],
             &HashMap::new(),
             &HashMap::new(),
-            &card_dates,
             Utc::now(),
         );
+        for model in &models {
+            assert!(
+                model.released_at.as_ref().is_none(),
+                "SLD product {} must be left undated for the contents pass",
+                model.external_id.as_ref(),
+            );
+        }
+        // MSRP derivation runs off the same gallery-drop resolution and is untouched by this
+        // change — the resolvable drop still gets its derived retail price.
         let drop = models
             .iter()
             .find(|m| m.external_id.as_ref() == "700795")
             .expect("drop product present");
-        assert_eq!(drop.released_at.as_ref().as_deref(), Some("2024-05-03"));
-        let promo = models
-            .iter()
-            .find(|m| m.external_id.as_ref() == "554987")
-            .expect("promo product present");
-        // No gallery drop → the shared group `publishedOn` (date part only) stands.
-        assert_eq!(promo.released_at.as_ref().as_deref(), Some("2019-12-02"));
+        assert_eq!(drop.msrp.as_ref().as_deref(), Some("29.99"));
     }
 
     #[test]
