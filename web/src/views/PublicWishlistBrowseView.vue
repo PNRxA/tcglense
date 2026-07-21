@@ -197,7 +197,7 @@ const notFound = computed(() => summaryQuery.isError.value)
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <CardSizeMenu />
-            <CardSortMenu v-if="!grouped" v-model="sort" :options="sortOptions" />
+            <CardSortMenu v-model="sort" :options="sortOptions" />
           </div>
         </div>
 

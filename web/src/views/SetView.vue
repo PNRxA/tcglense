@@ -64,11 +64,12 @@ const {
 // Page, search and sort live in the URL query (alongside the related/from scope), so
 // they survive opening a card and pressing Back. Routing to a different set lands on
 // a fresh URL, so it starts clean. Committing a sort while grouped leaves the fixed-order
-// grouped view for the flat sorted grid (?view=all), folded into the same write.
+// grouped view for the flat sorted grid (?view=all), folded into the same write — and sheds
+// the by-drop ?drop= filter, matching setGroupView's flat switch (it's inert on the flat grid).
 const { page, searchInput, query, sort } = useCardSearch(
   SET_DEFAULT_SORT,
   SET_SORT_OPTIONS.map((option) => option.value),
-  () => (grouped.value ? { view: 'all' } : {}),
+  () => (grouped.value ? { view: 'all', drop: undefined } : {}),
 )
 
 // The grouped view breaks down into either Secret Lair drops or card sub-types (never
