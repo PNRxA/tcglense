@@ -11,6 +11,7 @@ pub(crate) mod fingerprint_tasks;
 pub mod fingerprints;
 pub mod images;
 pub mod ingest_state;
+pub mod sld_product_dates;
 
 use reqwest::Client;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection};
@@ -97,6 +98,26 @@ pub async fn refresh_all(
                 // exist to resolve its Scryfall-id / TCGplayer-id references against.
                 if let Err(err) = crate::mtgjson::ingest::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "sealed-contents refresh failed");
+                }
+                // Secret Lair per-product release dates, derived from each product's own
+                // contents (its `contains` cards' modal release date). Runs after the contents
+                // sync so the rows exist to read, and every tick — even when the version-gated
+                // syncs above were skipped — so a card-date change or newly-ingested contents
+                // re-stamps. TCGCSV files every SLD drop under one group with a single rolling
+                // `publishedOn`, so without this SLD products can't be ordered by release date
+                // (see `sld_product_dates`).
+                match crate::catalog::sld_product_dates::restamp_from_contents(db).await {
+                    Ok(changed) if changed > 0 => tracing::info!(
+                        game = game.id,
+                        changed,
+                        "restamped Secret Lair product release dates from contents"
+                    ),
+                    Ok(_) => {}
+                    Err(err) => tracing::error!(
+                        game = game.id,
+                        error = %err,
+                        "Secret Lair product date restamp failed"
+                    ),
                 }
             }
             other => {

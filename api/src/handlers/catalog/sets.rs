@@ -470,7 +470,7 @@ fn drop_cheapest_prints(
 /// *is* that date and stays robust to a stray reprint carrying a different one. `None` when no
 /// card in the drop carries a date. A thin adapter over the shared
 /// [`drops::modal_release_date`](crate::scryfall::drops::modal_release_date) reducer — the same
-/// one `tcgcsv::sld_release` derives sealed-product dates with, so both surfaces agree.
+/// one `catalog::sld_product_dates` derives sealed-product dates with, so both surfaces agree.
 fn drop_released_at(cards: &[card::Model]) -> Option<String> {
     crate::scryfall::drops::modal_release_date(
         cards.iter().filter_map(|c| c.released_at.as_deref()),

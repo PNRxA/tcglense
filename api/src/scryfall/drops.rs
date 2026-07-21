@@ -392,7 +392,7 @@ pub fn is_spend_incentive(game: &str, set_code: &str, collector_number: &str) ->
 ///
 /// The one seam the two surfaces that must agree on a drop's date both call: the card by-drop
 /// view (`handlers::catalog::sets::drop_released_at`) and the sealed-product release-date
-/// derivation (`tcgcsv::sld_release::derive`). Keeping the reducer here makes that agreement
+/// derivation (`catalog::sld_product_dates`). Keeping the reducer here makes that agreement
 /// structural — neither surface can drift the tie-break out from under the other.
 pub fn modal_release_date<'a>(dates: impl Iterator<Item = &'a str>) -> Option<String> {
     let mut counts: HashMap<&str, usize> = HashMap::new();
