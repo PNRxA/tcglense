@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { Heart } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
+import { Button } from '@/components/ui/button'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // Build-time app version (injected via the `define` in vite.config.ts), shown next to the
@@ -34,15 +36,28 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
             Track trading-card prices and your collection.
           </p>
-          <a
-            href="https://github.com/PNRxA/tcglense"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="TCGLense on GitHub"
-            class="text-muted-foreground hover:text-foreground mt-3 inline-flex transition-colors"
-          >
-            <GitHubMark class="size-5" />
-          </a>
+          <div class="mt-3 flex items-center gap-3">
+            <a
+              href="https://github.com/PNRxA/tcglense"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="TCGLense on GitHub"
+              class="text-muted-foreground hover:text-foreground inline-flex transition-colors"
+            >
+              <GitHubMark class="size-5" />
+            </a>
+            <Button as-child variant="outline" size="sm">
+              <a
+                href="https://github.com/sponsors/PNRxA"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Sponsor TCGLense on GitHub"
+              >
+                <Heart class="size-4 fill-rose-500 text-rose-500" />
+                Donate
+              </a>
+            </Button>
+          </div>
         </div>
 
         <nav aria-label="Footer" class="contents">
