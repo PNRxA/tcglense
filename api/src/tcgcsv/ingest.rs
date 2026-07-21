@@ -164,7 +164,12 @@ async fn refresh_inner(
 
         let models = build_group_products(group, products, &prices, msrp, now);
         let sealed = models.len();
-        total_products += upsert_products(db, models).await? as i32;
+        // Secret Lair product `released_at` is owned by `catalog::sld_product_dates` (derived
+        // from each product's contents after this sweep). Keep the sweep from writing that
+        // column for the SLD group so an already-dated product isn't blanked to NULL mid-sweep
+        // and its `updated_at` isn't churned (which would needlessly over-scan its price alerts).
+        let preserve_released_at = group_set_code(group) == sld::SET_CODE;
+        total_products += upsert_products(db, models, preserve_released_at).await? as i32;
         progress.inc();
         progress.set_count(total_products as u64);
         tracing::debug!(
@@ -222,6 +227,17 @@ async fn refresh_inner(
     Ok(())
 }
 
+/// The lowercased set code a TCGCSV group maps to — its abbreviation trimmed and lowercased
+/// (matching how products/cards store `set_code`), or `""` when the group has no abbreviation.
+/// Shared by the product builder and the upsert so both agree on which group is Secret Lair.
+fn group_set_code(group: &Group) -> String {
+    group
+        .abbreviation
+        .as_deref()
+        .map(|a| a.trim().to_lowercase())
+        .unwrap_or_default()
+}
+
 /// Build product `ActiveModel`s for a group's **sealed** products, attaching each
 /// product's current market prices from `prices` and its retail price. The curated `msrp`
 /// map (keyed by TCGplayer product id) wins; a Secret Lair Drop product not listed there
@@ -244,11 +260,7 @@ fn build_group_products(
     msrp: &HashMap<i64, String>,
     now: DateTimeUtc,
 ) -> Vec<product::ActiveModel> {
-    let set_code = group
-        .abbreviation
-        .as_deref()
-        .map(|a| a.trim().to_lowercase())
-        .unwrap_or_default();
+    let set_code = group_set_code(group);
     let group_released_at = published_on_to_date(group.published_on.as_deref());
 
     products
@@ -295,9 +307,17 @@ fn build_group_products(
 
 /// Batched upsert on `(game, external_id)`, updating every provider-owned column (all
 /// but the identity/conflict keys and `created_at`). Returns the number of rows sent.
+///
+/// When `preserve_released_at` is set (the Secret Lair group), `released_at` is left out of
+/// **both** the `DO UPDATE` set and the changed-guard compare, so the sweep neither overwrites
+/// nor is triggered by that column: `catalog::sld_product_dates` owns the SLD date (derived from
+/// contents after the sweep). A fresh SLD product still inserts its `NULL` from the model and is
+/// dated by the later restamp; an already-dated one keeps its date through the sweep — no
+/// transient blank, and no `updated_at` churn (which would over-scan its price alerts).
 async fn upsert_products(
     db: &DatabaseConnection,
     models: Vec<product::ActiveModel>,
+    preserve_released_at: bool,
 ) -> Result<u64, BackfillError> {
     let mut total: u64 = 0;
     let mut iter = models.into_iter();
@@ -317,12 +337,13 @@ async fn upsert_products(
                                 | product::Column::Game
                                 | product::Column::ExternalId
                                 | product::Column::CreatedAt
-                        )
+                        ) && !(preserve_released_at && matches!(c, product::Column::ReleasedAt))
                     }))
                     // Skip the write when the sealed product is unchanged — the daily
                     // sweep re-upserts every row on each version bump, and most are
                     // identical. `updated_at` stays in the SET list but out of the
-                    // compare (same rationale as the card upsert in `scryfall::ingest`).
+                    // compare (same rationale as the card upsert in `scryfall::ingest`);
+                    // `released_at` joins it out of the compare for the SLD group (see above).
                     .action_and_where(upsert_changed_guard::<product::Column>("products", |c| {
                         matches!(
                             c,
@@ -331,7 +352,7 @@ async fn upsert_products(
                                 | product::Column::ExternalId
                                 | product::Column::CreatedAt
                                 | product::Column::UpdatedAt
-                        )
+                        ) || (preserve_released_at && matches!(c, product::Column::ReleasedAt))
                     }))
                     .to_owned(),
             )
@@ -346,7 +367,7 @@ mod tests {
     use super::*;
     use crate::entities::prelude::Product;
     use crate::tcgcsv::model::{DayPrice, ExtendedData, Product as SrcProduct};
-    use sea_orm::EntityTrait;
+    use sea_orm::{ActiveModelTrait, EntityTrait};
 
     fn src_product(id: i64, name: &str, extended: &[&str]) -> SrcProduct {
         SrcProduct {
@@ -452,7 +473,9 @@ mod tests {
             &HashMap::new(),
             now,
         );
-        upsert_products(&db, first).await.expect("first upsert");
+        upsert_products(&db, first, false)
+            .await
+            .expect("first upsert");
 
         // Re-sweep with a changed price: upserts the same row rather than duplicating.
         let mut prices: HashMap<i64, DayPrice> = HashMap::new();
@@ -470,7 +493,9 @@ mod tests {
             &HashMap::new(),
             now,
         );
-        upsert_products(&db, second).await.expect("second upsert");
+        upsert_products(&db, second, false)
+            .await
+            .expect("second upsert");
 
         let all = Product::find().all(&db).await.unwrap();
         assert_eq!(
@@ -479,6 +504,81 @@ mod tests {
             "same (game, external_id) upserts, not duplicates"
         );
         assert_eq!(all[0].price_usd.as_deref(), Some("149.99"));
+    }
+
+    #[tokio::test]
+    async fn sld_upsert_preserves_the_restamped_release_date() {
+        // Regression guard: SLD products upsert undated (dated later from contents by
+        // `catalog::sld_product_dates`). A subsequent sweep must NOT blank that derived date back
+        // to NULL nor churn `updated_at` — `preserve_released_at` keeps `released_at` out of both
+        // the DO UPDATE set and the changed-guard compare for the SLD group.
+        let db = crate::test_support::migrated_memory_db().await;
+        let product = || {
+            vec![src_product(
+                700795,
+                "Secret Lair Drop: Cats of Chaos - Non-Foil Edition",
+                &[],
+            )]
+        };
+
+        // First sweep inserts it undated.
+        let insert = build_group_products(
+            &sld_group(),
+            product(),
+            &HashMap::new(),
+            &HashMap::new(),
+            Utc::now(),
+        );
+        upsert_products(&db, insert, true).await.expect("insert");
+
+        // `catalog::sld_product_dates` stamps the derived date (without bumping `updated_at`).
+        let row = Product::find().one(&db).await.unwrap().unwrap();
+        let stamped_updated_at = row.updated_at;
+        product::ActiveModel {
+            id: Set(row.id),
+            released_at: Set(Some("2024-05-03".to_string())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("stamp derived date");
+
+        // A later sweep re-upserts the same still-undated model. With preservation the derived
+        // date survives and the unchanged row is not rewritten (`updated_at` untouched).
+        let resweep = build_group_products(
+            &sld_group(),
+            product(),
+            &HashMap::new(),
+            &HashMap::new(),
+            Utc::now(),
+        );
+        upsert_products(&db, resweep, true).await.expect("resweep");
+        let after = Product::find().one(&db).await.unwrap().unwrap();
+        assert_eq!(
+            after.released_at.as_deref(),
+            Some("2024-05-03"),
+            "the restamped date survives the sweep"
+        );
+        assert_eq!(
+            after.updated_at, stamped_updated_at,
+            "an unchanged SLD row is not rewritten"
+        );
+
+        // Without preservation the identical re-upsert clobbers the date to NULL — the transient
+        // this flag exists to prevent.
+        let clobber = build_group_products(
+            &sld_group(),
+            product(),
+            &HashMap::new(),
+            &HashMap::new(),
+            Utc::now(),
+        );
+        upsert_products(&db, clobber, false).await.expect("clobber");
+        let blanked = Product::find().one(&db).await.unwrap().unwrap();
+        assert_eq!(
+            blanked.released_at, None,
+            "without preservation the sweep blanks the derived date"
+        );
     }
 
     /// The `SLD` group name/abbreviation TCGCSV uses for Secret Lair; `set_code` derives
