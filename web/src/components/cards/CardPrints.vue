@@ -6,7 +6,9 @@ import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
+import { DETAIL_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
 import { filterPrintings } from '@/lib/quickAddFilter'
@@ -65,14 +67,21 @@ watch(id, () => {
     blurb="Every printing of this card, with its own price."
     heading="h2"
   >
-    <div v-if="prints.length > 1" class="mb-4 flex flex-wrap items-center gap-2">
+    <!-- Grid controls, matching the sealed-product "Cards in this product" box. Card size is
+      always offered (like that box, which shows it whenever there are cards) — it writes the
+      shared display preference and the grid below renders one step larger than the catalog
+      scale (DETAIL_CARD_SIZE_GRID_CLASS) for this narrower, few-card column. Filter + sort only
+      appear once there's more than one printing to narrow or reorder. -->
+    <div class="mb-4 flex flex-wrap items-center gap-2">
       <CardSearchBox
+        v-if="prints.length > 1"
         v-model="filter"
         class="w-full sm:w-72"
         placeholder="Filter by set, number, or rarity…"
         aria-label="Filter printings by set, number, or rarity"
       />
-      <CardSortMenu v-model="sort" :options="PRINTING_SORT_OPTIONS" />
+      <CardSizeMenu />
+      <CardSortMenu v-if="prints.length > 1" v-model="sort" :options="PRINTING_SORT_OPTIONS" />
     </div>
     <p v-if="visiblePrints.length === 0" class="text-muted-foreground py-8 text-center text-sm">
       No printings match “{{ filter.trim() }}”.
@@ -83,6 +92,7 @@ watch(id, () => {
       :cards="visiblePrints"
       :ownership="ownership"
       :wishlist="wishlistOwnership"
+      :size-classes="DETAIL_CARD_SIZE_GRID_CLASS"
     />
   </CollapsibleSection>
 </template>

@@ -6,6 +6,7 @@ import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Card } from '@/lib/api'
 import CardPrints from '../CardPrints.vue'
+import CardSizeMenu from '../CardSizeMenu.vue'
 
 function makeCard(id: string, setCode: string): Card {
   return {
@@ -94,6 +95,34 @@ describe('CardPrints', () => {
       .get('input[aria-label="Filter printings by set, number, or rarity"]')
       .setValue('zzz')
     expect(wrapper.text()).toContain('No printings match')
+  })
+
+  it('offers the size menu whenever expanded, even for a single other printing (#472 follow-up)', async () => {
+    // Just one other printing: the filter + sort are pointless (nothing to narrow/reorder), but
+    // the size control still shows — matching the sealed-product box, which offers it whenever
+    // there are cards.
+    const wrapper = await mountPrints('dummy-aaa-0001', [makeCard('dummy-bbb-0002', 'bbb')])
+    // Collapsed by default: nothing in the body mounts yet.
+    expect(wrapper.findComponent(CardSizeMenu).exists()).toBe(false)
+
+    await wrapper.get('button[aria-expanded]').trigger('click')
+    expect(wrapper.findComponent(CardSizeMenu).exists()).toBe(true)
+    // Filter + sort stay hidden with a lone printing.
+    expect(
+      wrapper.find('input[aria-label="Filter printings by set, number, or rarity"]').exists(),
+    ).toBe(false)
+  })
+
+  it('shows the size menu alongside the filter + sort with more than one printing', async () => {
+    const wrapper = await mountPrints('dummy-aaa-0001', [
+      makeCard('dummy-aaa-0001', 'aaa'),
+      makeCard('dummy-bbb-0002', 'bbb'),
+    ])
+    await wrapper.get('button[aria-expanded]').trigger('click')
+    expect(wrapper.findComponent(CardSizeMenu).exists()).toBe(true)
+    expect(
+      wrapper.find('input[aria-label="Filter printings by set, number, or rarity"]').exists(),
+    ).toBe(true)
   })
 
   it('renders nothing when the card has no other printings', async () => {

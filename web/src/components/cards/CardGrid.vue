@@ -55,8 +55,9 @@ const props = withDefaults(
     // never get an editor that would write the owner's counts into their own collection.
     readonly?: boolean
     // Density map (the user's size preference → column classes). Defaults to the catalog scale;
-    // the sealed-product "Cards in this product" section passes the bumped-up scale
-    // (PRODUCT_CARD_SIZE_GRID_CLASS) so its fewer cards render one size larger per selection.
+    // the detail-page card sub-sections ("Cards in this product", "Other printings") pass the
+    // bumped-up scale (DETAIL_CARD_SIZE_GRID_CLASS) so their fewer cards render one size larger
+    // per selection.
     sizeClasses?: Record<CardSize, string>
   }>(),
   {
