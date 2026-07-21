@@ -210,8 +210,12 @@ export function useScanSession(game: Ref<string>) {
       if (selectedId.value && ownedReady.value && !seeded.value) {
         seedBase.quantity = owned.value.quantity
         seedBase.foil_quantity = owned.value.foil_quantity
-        target.quantity = seedBase.quantity + SCANNED_COPIES
-        target.foil_quantity = seedBase.foil_quantity
+        // A foil star read off the info line (issue #209) seeds the scanned copy as a foil
+        // rather than a regular. The user still sees both steppers and can correct it before
+        // it commits, so a misread star is a one-tap fix, not a wrong write.
+        const foil = match.value?.hint.foil === true
+        target.quantity = seedBase.quantity + (foil ? 0 : SCANNED_COPIES)
+        target.foil_quantity = seedBase.foil_quantity + (foil ? SCANNED_COPIES : 0)
         seeded.value = true
       }
     },

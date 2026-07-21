@@ -7,13 +7,20 @@
 // catalog autocomplete (which the user confirms) and the set/number are only ever used
 // to *prefer* a printing.
 
-/** Hints parsed from a modern (2015+) MTG card's bottom-left info line. Either field may
- * be absent when the OCR is too noisy; both are advisory (they pre-select a printing). */
+/** Hints parsed from a modern (2015+) MTG card's bottom-left info line. Fields may be
+ * absent when the OCR is too noisy; all are advisory (they pre-select a printing / finish). */
 export interface SetHint {
   /** Uppercased set code, e.g. `NEO`, `MH2`, `40K` — or undefined if unreadable. */
   setCode?: string
   /** Collector number with any zero-padding stripped, e.g. `123` — or undefined. */
   collectorNumber?: string
+  /** True when the info line carries a foil star (`★`). A handful of printings — Secret
+   * Lair foils especially — print their foil as a *distinct* object whose collector number
+   * is the nonfoil's plus a star (`123` vs `123★`, issue #209), and that star is inked onto
+   * the card's bottom-left line. It is the one printed foil signal on a Magic card: ordinary
+   * set foils share the nonfoil's collector line and look identical here, so this flags only
+   * those star variants, never foil in general. Undefined/false when no star was read. */
+  foil?: boolean
 }
 
 /** Minimum length of a cleaned name before it's worth querying the catalog. */
@@ -106,6 +113,13 @@ export function normalizeCollectorNumber(value: string): string {
 export function parseSetHint(raw: string): SetHint {
   const upper = raw.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()
   const hint: SetHint = {}
+
+  // Foil star: a `★` inked onto the info line marks a foil star-variant printing (see the
+  // `foil` field docs). Detected before the star is treated as a token delimiter below, and
+  // deliberately *not* fed into `collectorNumber` — the catalog folds a `123★` foil onto its
+  // `123` base as a foil copy (issue #209), so the star drives the *finish*, and printing
+  // resolution stays keyed on the plain number so the scanned copy lands on that base.
+  if (upper.includes('★')) hint.foil = true
 
   // Collector number: the "123/264" form is unambiguous (a bare number could be the
   // card's power/toughness or CMC bleeding in, so only trust the slashed form).
