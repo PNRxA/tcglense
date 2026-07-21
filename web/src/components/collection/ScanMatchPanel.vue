@@ -125,8 +125,13 @@ const rows = computed(() => [
               <span class="truncate">{{ match.name }}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="candidate in match.candidates" :key="candidate" :value="candidate">
-                <span class="flex min-w-0 items-center gap-2">
+              <SelectItem
+                v-for="candidate in match.candidates"
+                :key="candidate"
+                :value="candidate"
+                class="py-2"
+              >
+                <span class="flex min-w-0 items-center gap-3">
                   <span v-if="nameCard(candidate)" aria-hidden="true" class="shrink-0">
                     <CardImage
                       :game="game"
@@ -134,7 +139,7 @@ const rows = computed(() => [
                       :name="candidate"
                       :has-image="nameCard(candidate)!.has_image"
                       size="small"
-                      class="w-6"
+                      class="w-12"
                     />
                   </span>
                   <span class="truncate">{{ candidate }}</span>
