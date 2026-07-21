@@ -27,7 +27,14 @@
 // on-screen outline (any display size) and the capture warp (any capture resolution).
 // The lightweight `detect.ts` detector stays as the fallback when OpenCV isn't loaded.
 
-import { orderCorners, quadArea, type Point, type Quad } from './detect'
+import {
+  cardFrameInset,
+  orderCorners,
+  quadArea,
+  quadHasFrameClearance,
+  type Point,
+  type Quad,
+} from './detect'
 import { CARD_ASPECT } from './regions'
 
 // The OpenCV runtime is untyped-ish (the shipped d.ts lags the build), so `cv` is `any`;
@@ -120,6 +127,53 @@ const APPROX_EPSILONS = [0.02, 0.03, 0.045, 0.065]
  * rejects a quad that cut a real corner off rather than absorbing it. */
 const MIN_HULL_COVERAGE = 0.8
 
+/** A printed inner frame aligned with a clipped outer contour is not a second card.
+ * Suppress it rather than crop away the card border and collector line. */
+const MAX_NESTED_CENTER_OFFSET = 0.12
+
+interface Bounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function touchesFrameInset(bounds: Bounds, w: number, h: number, inset: number): boolean {
+  return (
+    bounds.x < inset ||
+    bounds.y < inset ||
+    bounds.x + bounds.width - 1 > w - 1 - inset ||
+    bounds.y + bounds.height - 1 > h - 1 - inset
+  )
+}
+
+function cardLikeBounds(bounds: Bounds): boolean {
+  return Math.abs(bounds.width / bounds.height - CARD_ASPECT) <= ASPECT_TOLERANCE
+}
+
+function nestedInClippedCard(candidate: Bounds, clipped: Bounds): boolean {
+  const candidateRight = candidate.x + candidate.width - 1
+  const candidateBottom = candidate.y + candidate.height - 1
+  const clippedRight = clipped.x + clipped.width - 1
+  const clippedBottom = clipped.y + clipped.height - 1
+  if (
+    candidate.x < clipped.x ||
+    candidate.y < clipped.y ||
+    candidateRight > clippedRight ||
+    candidateBottom > clippedBottom
+  ) {
+    return false
+  }
+  const candidateCx = candidate.x + candidate.width / 2
+  const candidateCy = candidate.y + candidate.height / 2
+  const clippedCx = clipped.x + clipped.width / 2
+  const clippedCy = clipped.y + clipped.height / 2
+  return (
+    Math.abs(candidateCx - clippedCx) <= clipped.width * MAX_NESTED_CENTER_OFFSET &&
+    Math.abs(candidateCy - clippedCy) <= clipped.height * MAX_NESTED_CENTER_OFFSET
+  )
+}
+
 /** Median of an 8-bit grayscale plane, via a 256-bin histogram. Exported for tests. */
 export function medianLuma(pixels: Uint8Array): number {
   if (pixels.length === 0) return 127
@@ -196,15 +250,33 @@ function bestCardQuad(
   try {
     cv.findContours(mask, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
     const frameArea = w * h
+    const inset = cardFrameInset(w, h)
+    const candidateContours: Array<{ index: number; bounds: Bounds }> = []
+    const clippedCardBounds: Bounds[] = []
+    for (let index = 0; index < contours.size(); index++) {
+      const contour = contours.get(index)
+      try {
+        const bounds = cv.boundingRect(contour)
+        const area = bounds.width * bounds.height
+        // A noisy Otsu mask can yield thousands of specks. Only retain contours whose
+        // bounds could contain a card, so the hull pass never revisits cardless noise.
+        if (area < frameArea * MIN_AREA_FRACTION) continue
+        if (touchesFrameInset(bounds, w, h, inset)) {
+          if (area <= frameArea * MAX_AREA_FRACTION && cardLikeBounds(bounds)) {
+            clippedCardBounds.push(bounds)
+          }
+          continue
+        }
+        candidateContours.push({ index, bounds })
+      } finally {
+        contour.delete()
+      }
+    }
+
     let best: { quad: Quad; score: number } | null = null
-    for (let i = 0; i < contours.size(); i++) {
-      const cnt = contours.get(i)
-      // Cheap pre-gate before any hull work: the bounding box bounds the hull from
-      // above, so a too-small box can never hide a big-enough hull. An Otsu mask of a
-      // noisy cardless frame yields thousands of speckle contours — without this gate
-      // the per-contour hull loop alone blows the live tick's budget on a phone.
-      const bounds = cv.boundingRect(cnt)
-      if (bounds.width * bounds.height < frameArea * MIN_AREA_FRACTION) {
+    for (const { index, bounds } of candidateContours) {
+      const cnt = contours.get(index)
+      if (clippedCardBounds.some((clipped) => nestedInClippedCard(bounds, clipped))) {
         cnt.delete()
         continue
       }
@@ -219,10 +291,15 @@ function bestCardQuad(
         if (hullArea > frameArea * MAX_AREA_FRACTION) continue
         const pts = quadFromHull(cv, hull, hullArea)
         if (!pts) continue
-        const quad = orderCorners(pts.map((p) => ({ x: p.x / w, y: p.y / h })))
+        const pixelQuad = orderCorners(pts)
+        if (!quadHasFrameClearance(pixelQuad, w, h)) continue
+        const area = quadArea(pixelQuad)
+        if (area < frameArea * MIN_AREA_FRACTION) continue
+        if (area > frameArea * MAX_AREA_FRACTION) continue
+        const quad = pixelQuad.map((p) => ({ x: p.x / w, y: p.y / h })) as Quad
         const err = cardShapeError(quad, frameAspect)
         if (err === null) continue
-        const score = hullArea * (1 - 0.5 * (err / ASPECT_TOLERANCE))
+        const score = area * (1 - 0.5 * (err / ASPECT_TOLERANCE))
         if (!best || score > best.score) best = { quad, score }
       } finally {
         hull.delete()

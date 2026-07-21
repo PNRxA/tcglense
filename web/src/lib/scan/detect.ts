@@ -3,16 +3,16 @@
 // Given a camera frame, find the card's four corners and warp them to an upright
 // fixed-size crop, so the perceptual hash (and the set-line OCR) see a consistent,
 // deskewed image regardless of how the card was held. Everything here is pure and
-// unit-tested; the camera plumbing lives in `useCardScanner`, which falls back to the
-// on-screen guide box when {@link detectCardQuad} returns null (busy background, heavy
-// rotation, low contrast).
+// unit-tested; the camera plumbing lives in `useCardScanner`, which refuses capture when
+// {@link detectCardQuad} returns null (busy background, clipped card, heavy rotation, or
+// low contrast).
 //
 // The detector is deliberately lightweight (no OpenCV): it segments the card from the
 // background by luma difference and takes the diagonal extrema of the foreground as the
 // corners. That is exact for an axis-aligned card and good for the small rotations a
 // hand-held portrait card actually has; a strongly rotated or low-contrast card fails
-// {@link quadIsPlausibleCard} and the caller uses the guide box instead. A rotating-
-// calipers / contour upgrade is tracked with the accuracy work.
+// {@link quadIsPlausibleCard} instead of producing an unreliable crop. A rotating-calipers
+// / contour upgrade is tracked with the accuracy work.
 
 import { CARD_ASPECT } from './regions'
 
@@ -23,6 +23,23 @@ export interface Point {
 
 /** Four corners in a fixed order: top-left, top-right, bottom-right, bottom-left. */
 export type Quad = [Point, Point, Point, Point]
+
+/** Keep detected corners clear of preprocessing artifacts at the camera-frame edge. A
+ * clipped card cannot produce an accurate full-card crop, so recall at the very edge is
+ * deliberately traded for reliable perspective warps. */
+export function cardFrameInset(width: number, height: number): number {
+  return Math.max(5, Math.round(Math.min(width, height) * 0.01))
+}
+
+/** Whether every pixel-space corner is safely inside the complete camera frame. */
+export function quadHasFrameClearance(quad: Quad, width: number, height: number): boolean {
+  const inset = cardFrameInset(width, height)
+  const maxX = width - 1 - inset
+  const maxY = height - 1 - inset
+  return quad.every((point) => {
+    return point.x >= inset && point.y >= inset && point.x <= maxX && point.y <= maxY
+  })
+}
 
 /** Rec. 601 integer luma (matches the hasher's grayscale), for a packed RGBA buffer. */
 export function toGray(
@@ -179,11 +196,9 @@ export function quadIsPlausibleCard(quad: Quad, width: number, height: number): 
   // The card should fill a meaningful share of the frame.
   if (quadArea(quad) < width * height * 0.1) return false
 
-  // Corners inside the frame (small slack for edge-touching cards).
-  const slack = 2
-  return quad.every(
-    (p) => p.x >= -slack && p.y >= -slack && p.x <= width + slack && p.y <= height + slack,
-  )
+  // Every corner must be visible with enough room for a reliable warp. Edge-touching
+  // geometry is usually a clipped card or a foreground spur joined to the frame.
+  return quadHasFrameClearance(quad, width, height)
 }
 
 /** Solve `A x = b` for an n×n system by Gaussian elimination with partial pivoting.

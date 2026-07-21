@@ -101,6 +101,29 @@ class Frame {
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) this.set(x, y, value)
   }
 
+  /** Draw a deterministic integer line, including a square `width` around each point. */
+  drawLine(x0: number, y0: number, x1: number, y1: number, value: number, width = 1) {
+    const dx = Math.abs(x1 - x0)
+    const sx = x0 < x1 ? 1 : -1
+    const dy = -Math.abs(y1 - y0)
+    const sy = y0 < y1 ? 1 : -1
+    let error = dx + dy
+    const radius = Math.floor(width / 2)
+    while (true) {
+      this.fillRect(x0 - radius, y0 - radius, x0 + radius + 1, y0 + radius + 1, value)
+      if (x0 === x1 && y0 === y1) break
+      const twice = 2 * error
+      if (twice >= dy) {
+        error += dy
+        x0 += sx
+      }
+      if (twice <= dx) {
+        error += dx
+        y0 += sy
+      }
+    }
+  }
+
   /** Draw a filled axis-aligned octagon: a `w`×`h` rectangle centred at (cx, cy) with
    * a straight 45° cut of leg length `cut` at each corner. */
   drawOctagon(cx: number, cy: number, w: number, h: number, cut: number, value: number) {
@@ -213,6 +236,56 @@ describe('detectCardQuadCv', () => {
     const frame = new Frame(320, 240, 50)
     const { w, h } = cardDims(185)
     const truth = frame.drawCard(160, 120, w, h, 9, 205)
+    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.03)
+  })
+
+  it('rejects a card contour tethered to the frame instead of snapping one corner', () => {
+    const frame = new Frame(320, 240, 50)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(160, 120, w, h, 0, 205, 1)
+    // A foreground streak joins only the card's top-left corner to the camera boundary.
+    // The old hull completed that contour as a plausible card with one corner at y=0;
+    // selecting an uncontaminated inner contour is also a safe outcome.
+    frame.drawLine(92, 25, 59, 0, 205, 3)
+    const detected = detectCardQuadCv(cv, frame.imageData(), { segmentationFallback: false })
+    expect(detected === null || maxCornerError(detected, truth) <= 0.03).toBe(true)
+  })
+
+  it.each([
+    ['top', 160, 92],
+    ['right', 254, 120],
+    ['bottom', 160, 148],
+    ['left', 66, 120],
+  ])('rejects a card clipped at the %s frame edge', (_edge, cx, cy) => {
+    const frame = new Frame(320, 240, 50)
+    const { w, h } = cardDims(190)
+    frame.drawCard(cx, cy, w, h, 0, 205, 1)
+    expect(detectCardQuadCv(cv, frame.imageData())).toBeNull()
+  })
+
+  it.each([0.6, 0.8])('rejects an inner frame at scale %s of a clipped outer card', (scale) => {
+    const frame = new Frame(320, 240, 50)
+    const { w, h } = cardDims(190)
+    frame.drawCard(66, 120, w, h, 0, 205, 1)
+    // Printed frame/art borders remain fully visible when the physical card is clipped.
+    // They must not replace the rejected outer contour and become a too-tight crop.
+    frame.drawCard(66, 120, Math.round(w * scale), Math.round(h * scale), 0, 70, 1)
+    expect(detectCardQuadCv(cv, frame.imageData(), { segmentationFallback: false })).toBeNull()
+    expect(detectCardQuadCv(cv, frame.imageData())).toBeNull()
+  })
+
+  it('still accepts a complete rotated card just beyond the safety inset', () => {
+    const frame = new Frame(320, 240, 50)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(160, 117, w, h, 15, 205, 1)
+    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.02)
+  })
+
+  it('ignores a frame-attached distractor when a complete card is present', () => {
+    const frame = new Frame(400, 300, 50)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(275, 150, w, h, 0, 205, 1)
+    frame.fillRect(0, 55, 115, 245, 205)
     expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.03)
   })
 

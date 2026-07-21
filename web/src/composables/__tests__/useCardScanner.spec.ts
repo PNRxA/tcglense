@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     detectCardQuadCv: vi.fn<
       (cv: unknown, image: unknown, opts: { segmentationFallback: boolean }) => Quad | null
     >(() => null),
+    hamming: vi.fn<(a: Uint8Array, b: Uint8Array) => number>(() => 0),
   }
 })
 
@@ -34,6 +35,10 @@ vi.mock('@/lib/scan/opencvDetect', () => ({
   loadOpenCv: mocks.loadOpenCv,
   detectCardQuadCv: mocks.detectCardQuadCv,
 }))
+vi.mock('@/lib/scan/phash', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/scan/phash')>()
+  return { ...actual, hamming: mocks.hamming }
+})
 
 import { useCardScanner } from '../useCardScanner'
 
@@ -63,6 +68,7 @@ function mockCamera() {
 afterEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   Reflect.deleteProperty(navigator, 'mediaDevices')
 })
 
@@ -118,6 +124,12 @@ describe('useCardScanner live detection loop', () => {
     }
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: () => {},
+      putImageData: () => {},
+      clearRect: () => {},
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
       getImageData: (x: number, y: number, w: number, h: number) => ({
         data: new Uint8ClampedArray(w * h * 4),
         width: w,
@@ -125,6 +137,23 @@ describe('useCardScanner live detection loop', () => {
       }),
     } as unknown as CanvasRenderingContext2D)
     return ref(el as unknown as HTMLVideoElement)
+  }
+
+  function mockBurstFrameEnvironment() {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0)
+      return 1
+    })
+    vi.stubGlobal(
+      'ImageData',
+      class {
+        constructor(
+          public data: Uint8ClampedArray,
+          public width: number,
+          public height: number,
+        ) {}
+      },
+    )
   }
 
   async function startLive() {
@@ -191,6 +220,113 @@ describe('useCardScanner live detection loop', () => {
       false,
     ])
 
+    wrapper.unmount()
+  })
+
+  it('refuses capture when fresh full-resolution geometry no longer matches the lock', async () => {
+    vi.useFakeTimers()
+    const { scanner, wrapper } = await startLive()
+    const locked = quadAt(0.2, 0.15)
+    const oneCornerAtEdge: Quad = locked.map((point) => ({ ...point })) as Quad
+    oneCornerAtEdge[0] = { x: 0, y: 0 }
+
+    mocks.detectCardQuadCv.mockReturnValueOnce(locked).mockReturnValueOnce(oneCornerAtEdge)
+    vi.advanceTimersByTime(120)
+    expect(scanner.detectedQuad.value).toEqual(locked)
+
+    expect(await scanner.capture()).toBeNull()
+    expect(scanner.detectedQuad.value).toBeNull()
+    expect(mocks.detectCardQuadCv).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ width: 640, height: 480 }),
+      { segmentationFallback: true },
+    )
+    // Strong capture-time evidence invalidates the stale green hold immediately, but the
+    // next good live frame can reacquire without waiting out the old miss window.
+    mocks.detectCardQuadCv.mockReturnValue(locked)
+    vi.advanceTimersByTime(120)
+    expect(scanner.detectedQuad.value).toEqual(locked)
+
+    wrapper.unmount()
+  })
+
+  it('rejects a coherent inner-frame crop that would omit the card border', async () => {
+    vi.useFakeTimers()
+    const { scanner, wrapper } = await startLive()
+    const outer = quadAt(0.2, 0.1, 0.6, 0.8)
+    const inner = quadAt(0.224, 0.132, 0.552, 0.736)
+
+    mocks.detectCardQuadCv.mockReturnValueOnce(outer).mockReturnValueOnce(inner)
+    vi.advanceTimersByTime(120)
+
+    expect(await scanner.capture()).toBeNull()
+    expect(scanner.detectedQuad.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('validates every accepted frame while keeping one quad per burst frame', async () => {
+    vi.useFakeTimers()
+    mockBurstFrameEnvironment()
+    const { scanner, wrapper } = await startLive()
+    const locked = quadAt(0.2, 0.15)
+    mocks.detectCardQuadCv.mockReturnValue(locked)
+    vi.advanceTimersByTime(120)
+    const callsBeforeCapture = mocks.detectCardQuadCv.mock.calls.length
+
+    const captured = await scanner.capture()
+
+    expect(captured).not.toBeNull()
+    expect(captured!.fingerprints).toHaveLength(36)
+    // Every pooled frame has fresh high-resolution geometry; the live tracked quad is
+    // only the initial reference and cannot mutate the in-progress burst.
+    expect(mocks.detectCardQuadCv).toHaveBeenCalledTimes(callsBeforeCapture + 4)
+    expect(mocks.detectCardQuadCv).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ width: 640, height: 480 }),
+      { segmentationFallback: true },
+    )
+
+    wrapper.unmount()
+  })
+
+  it('stops pooling when a later burst frame moves away from the validated card', async () => {
+    vi.useFakeTimers()
+    mockBurstFrameEnvironment()
+    const { scanner, wrapper } = await startLive()
+    const locked = quadAt(0.2, 0.15)
+    const moved = quadAt(0.4, 0.15)
+    mocks.detectCardQuadCv
+      .mockReturnValueOnce(locked) // live lock
+      .mockReturnValueOnce(locked) // first capture frame
+      .mockReturnValueOnce(moved) // next frame: stop the burst
+    vi.advanceTimersByTime(120)
+    const callsBeforeCapture = mocks.detectCardQuadCv.mock.calls.length
+
+    const captured = await scanner.capture()
+
+    expect(captured).not.toBeNull()
+    expect(captured!.fingerprints).toHaveLength(9)
+    expect(mocks.detectCardQuadCv).toHaveBeenCalledTimes(callsBeforeCapture + 2)
+    wrapper.unmount()
+  })
+
+  it('does not pool a later frame from another card at the same geometry', async () => {
+    vi.useFakeTimers()
+    mockBurstFrameEnvironment()
+    const { scanner, wrapper } = await startLive()
+    const locked = quadAt(0.2, 0.15)
+    mocks.detectCardQuadCv.mockReturnValue(locked)
+    // Geometry alone cannot distinguish a rapid replacement at the same position. A
+    // 64-bit pHash change is within the server's broad match radius but not same-frame
+    // continuity, so only the first card's variants may survive.
+    mocks.hamming.mockReturnValueOnce(64)
+    vi.advanceTimersByTime(120)
+
+    const captured = await scanner.capture()
+
+    expect(captured).not.toBeNull()
+    expect(captured!.fingerprints).toHaveLength(9)
+    expect(mocks.hamming).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 
