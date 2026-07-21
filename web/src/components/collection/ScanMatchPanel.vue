@@ -258,7 +258,10 @@ const rows = computed(() => [
           />
         </template>
       </PrintingPickerGrid>
-      <div v-if="printsError" class="mt-2 flex justify-center">
+      <!-- Only when the grid has no "Load more" of its own to retry through (a failed first
+         page, or a failed refetch of an already-complete list) — otherwise it would stack a
+         third recovery control beside the grid's own error text and load-more button. -->
+      <div v-if="printsError && !printsHasMore" class="mt-2 flex justify-center">
         <Button
           variant="outline"
           size="sm"
