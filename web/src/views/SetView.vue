@@ -40,14 +40,6 @@ const props = defineProps<{ game: string; code: string }>()
 const game = toRef(props, 'game')
 const code = toRef(props, 'code')
 
-// Page, search and sort live in the URL query (alongside the related/from scope), so
-// they survive opening a card and pressing Back. Routing to a different set lands on
-// a fresh URL, so it starts clean.
-const { page, searchInput, query, sort } = useCardSearch(
-  SET_DEFAULT_SORT,
-  SET_SORT_OPTIONS.map((option) => option.value),
-)
-
 // Related-sub-set grouping + the "view all together" / "view just one set" scope nav +
 // the grouped view (Secret Lair drops or card sub-types), all keyed off the (game-cached)
 // full set list. `groupMode`/`grouped` and `setsPending` come from that same list, which
@@ -68,6 +60,16 @@ const {
   viewSingleSet,
   setGroupView,
 } = useSetGrouping(game, code)
+
+// Page, search and sort live in the URL query (alongside the related/from scope), so
+// they survive opening a card and pressing Back. Routing to a different set lands on
+// a fresh URL, so it starts clean. Committing a sort while grouped leaves the fixed-order
+// grouped view for the flat sorted grid (?view=all), folded into the same write.
+const { page, searchInput, query, sort } = useCardSearch(
+  SET_DEFAULT_SORT,
+  SET_SORT_OPTIONS.map((option) => option.value),
+  () => (grouped.value ? { view: 'all' } : {}),
+)
 
 // The grouped view breaks down into either Secret Lair drops or card sub-types (never
 // both — see `groupMode`). Split the flag so the drops-only bits (the drop-title filter)
@@ -273,9 +275,10 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       />
 
       <!-- Controls: a grouped / All-cards toggle for grouped sets (By drop or By
-           treatment), a card-size menu, and the sort menu (flat view only — a grouped
-           view has a fixed order). The size menu shows in both views since the grouped
-           sections are grids too. These sit above the results (not inside the has-results
+           treatment), a card-size menu, and the sort menu. The size and sort menus show in
+           both views (the grouped sections are grids too); picking a sort from a grouped
+           view flips to the flat all-cards grid (a grouped view has a fixed order — see the
+           sort's onSortCommit above). These sit above the results (not inside the has-results
            branch below) so the toggle and its drop-name filter stay visible — and
            clearable — even when the filter narrows to nothing; the size/sort menus only
            make sense with cards on screen, so they hide while the current view is empty. -->
@@ -293,7 +296,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         <span v-else />
         <div v-if="!isEmpty" class="flex gap-2">
           <CardSizeMenu />
-          <CardSortMenu v-if="!grouped" v-model="sort" :options="SET_SORT_OPTIONS" />
+          <CardSortMenu v-model="sort" :options="SET_SORT_OPTIONS" />
         </div>
       </div>
 
