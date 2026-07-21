@@ -47,8 +47,12 @@ describe('ScanCameraSurface', () => {
 
     await wrapper.setProps({ detectedQuad: lockedQuad, captureEnabled: true })
     expect(wrapper.find('[data-testid="scan-guide"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="scan-outline"] polygon').attributes('points')).toBe(
-      '10.00,20.00 90.00,20.00 90.00,80.00 10.00,80.00',
+    // The outline is a rounded-corner path (~6% of each corner's shorter edge) so the
+    // lock-on frame reads like a card, not a hard rectangle. The 80×60 test quad has
+    // 60-long side edges, so every corner curves over 3.6 units.
+    expect(wrapper.get('[data-testid="scan-outline"] path').attributes('d')).toBe(
+      'M 10.00 23.60 Q 10.00 20.00 13.60 20.00 L 86.40 20.00 Q 90.00 20.00 90.00 23.60 ' +
+        'L 90.00 76.40 Q 90.00 80.00 86.40 80.00 L 13.60 80.00 Q 10.00 80.00 10.00 76.40 Z',
     )
 
     const enabledShortcut = wrapper.get('button[aria-label="Camera preview — Scan card"]')

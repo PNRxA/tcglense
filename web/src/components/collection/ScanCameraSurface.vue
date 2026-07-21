@@ -28,13 +28,52 @@ const video = defineModel<HTMLVideoElement | null>('video', { required: true })
 const videoAspect = defineModel<number>('aspect', { required: true })
 
 const isReady = computed(() => props.status === 'ready')
-const outlinePoints = computed(() =>
-  props.detectedQuad
-    ? props.detectedQuad
-        .map((point) => `${(point.x * 100).toFixed(2)},${(point.y * 100).toFixed(2)}`)
-        .join(' ')
-    : '',
-)
+
+// Round the lock-on outline's corners so it reads like a real card instead of a hard
+// rectangle. A 63 mm card has a ~3 mm corner radius (≈4.8% of its width), so trimming
+// ~6% of each corner's shorter edge and curving through the vertex keeps the rounding
+// proportional to the detected quad — the same card-shaped feel CardImage's frame uses.
+// Purely visual: the detected geometry (props.detectedQuad) is untouched.
+const OUTLINE_CORNER_RATIO = 0.06
+const outlinePath = computed(() => {
+  const quad = props.detectedQuad
+  if (!quad) return ''
+  const points = quad.map((point) => ({ x: point.x * 100, y: point.y * 100 }))
+  const n = points.length
+  const fmt = (value: number) => value.toFixed(2)
+  let path = ''
+  let started = false
+  for (let i = 0; i < n; i++) {
+    const corner = points[i]
+    const prev = points[(i - 1 + n) % n]
+    const next = points[(i + 1) % n]
+    if (!corner || !prev || !next) continue
+    const toPrev = { x: prev.x - corner.x, y: prev.y - corner.y }
+    const toNext = { x: next.x - corner.x, y: next.y - corner.y }
+    const lenPrev = Math.hypot(toPrev.x, toPrev.y)
+    const lenNext = Math.hypot(toNext.x, toNext.y)
+    // Trim the same distance down both edges so the corner is a symmetric arc; capped by
+    // the shorter edge it can never overrun a neighbouring corner (2 × 6% < 100%).
+    const radius = OUTLINE_CORNER_RATIO * Math.min(lenPrev, lenNext)
+    const enter =
+      lenPrev > 0
+        ? {
+            x: corner.x + (toPrev.x / lenPrev) * radius,
+            y: corner.y + (toPrev.y / lenPrev) * radius,
+          }
+        : corner
+    const exit =
+      lenNext > 0
+        ? {
+            x: corner.x + (toNext.x / lenNext) * radius,
+            y: corner.y + (toNext.y / lenNext) * radius,
+          }
+        : corner
+    path += `${started ? 'L' : 'M'} ${fmt(enter.x)} ${fmt(enter.y)} Q ${fmt(corner.x)} ${fmt(corner.y)} ${fmt(exit.x)} ${fmt(exit.y)} `
+    started = true
+  }
+  return started ? `${path}Z` : ''
+})
 const guideStyle = computed(() => {
   const aspect = videoAspect.value
   const rect = guideRect(aspect * 100, 100)
@@ -111,16 +150,16 @@ function syncVideoAspect() {
       preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <polygon
-        :points="outlinePoints"
+      <path
+        :d="outlinePath"
         fill="none"
         stroke="rgba(0, 0, 0, 0.8)"
         stroke-width="7"
         stroke-linejoin="round"
         vector-effect="non-scaling-stroke"
       />
-      <polygon
-        :points="outlinePoints"
+      <path
+        :d="outlinePath"
         fill="rgba(34, 197, 94, 0.12)"
         stroke="rgb(34, 197, 94)"
         stroke-width="3"

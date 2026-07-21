@@ -38,6 +38,8 @@ const {
 const {
   match,
   prints,
+  printsFilter,
+  printsFiltered,
   printsLoading,
   printsLoadingMore,
   printsError,
@@ -302,9 +304,11 @@ function reviewMatch() {
         <!-- Put the result before fallback tools so the card just scanned is the next thing read. -->
         <div v-if="match" class="rounded-xl border p-3 sm:p-4">
           <ScanMatchPanel
+            v-model:filter="printsFilter"
             :game="game"
             :match="match"
             :prints="prints"
+            :prints-filtered="printsFiltered"
             :prints-loading="printsLoading"
             :prints-loading-more="printsLoadingMore"
             :prints-error="printsError"
@@ -316,6 +320,7 @@ function reviewMatch() {
             :target="target"
             :ready="ready"
             :resolving="resolving"
+            :candidates="candidates"
             :disabled="finalizing || resolving || undoing"
             @name="setName"
             @select="selectId"

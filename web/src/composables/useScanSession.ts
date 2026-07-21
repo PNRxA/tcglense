@@ -472,6 +472,11 @@ export function useScanSession(game: Ref<string>) {
     // match state
     match,
     prints,
+    // The shared visual printing picker's loaded-page filter (v-model) and its filtered
+    // view — exposed so the match panel can drive the same PrintingPickerGrid other
+    // surfaces use, rather than a bespoke text dropdown.
+    printsFilter: printsPicker.filter,
+    printsFiltered: printsPicker.filteredPrintings,
     printsLoading,
     printsLoadingMore,
     printsError,
