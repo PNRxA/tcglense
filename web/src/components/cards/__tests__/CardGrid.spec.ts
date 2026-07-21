@@ -11,7 +11,7 @@ import CardGrid from '../CardGrid.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useGhostDisplayStore } from '@/stores/ghostDisplay'
 import { useCardSizeStore } from '@/stores/cardSize'
-import { CARD_SIZE_GRID_CLASS, PRODUCT_CARD_SIZE_GRID_CLASS, type CardSize } from '@/lib/cardSize'
+import { CARD_SIZE_GRID_CLASS, DETAIL_CARD_SIZE_GRID_CLASS, type CardSize } from '@/lib/cardSize'
 
 function makeCard(id: string): Card {
   return {
@@ -398,19 +398,19 @@ describe('CardGrid density map', () => {
   })
 
   it('applies a provided sizeClasses override for the same size preference', () => {
-    // Product scale's `large` goes bigger than the catalog's — fewer columns at xl.
+    // Detail scale's `large` goes bigger than the catalog's — fewer columns at xl.
     const wrapper = mountGrid([makeCard('a')], undefined, false, false, 'collection', {
       size: 'large',
-      sizeClasses: PRODUCT_CARD_SIZE_GRID_CLASS,
+      sizeClasses: DETAIL_CARD_SIZE_GRID_CLASS,
     })
-    expect(wrapper.classes()).toContain('xl:grid-cols-3') // PRODUCT_CARD_SIZE_GRID_CLASS.large
+    expect(wrapper.classes()).toContain('xl:grid-cols-3') // DETAIL_CARD_SIZE_GRID_CLASS.large
     expect(wrapper.classes()).not.toContain('xl:grid-cols-4')
   })
 
-  it('shifts each product-scale selection one size up from the catalog scale', () => {
-    // The product page's `small` matches the catalog's `medium`, and its `medium` matches the
-    // catalog's `large` — the promised one-step-larger shift, per selection.
-    expect(PRODUCT_CARD_SIZE_GRID_CLASS.small).toBe(CARD_SIZE_GRID_CLASS.medium)
-    expect(PRODUCT_CARD_SIZE_GRID_CLASS.medium).toBe(CARD_SIZE_GRID_CLASS.large)
+  it('shifts each detail-scale selection one size up from the catalog scale', () => {
+    // The detail sub-sections' `small` matches the catalog's `medium`, and their `medium` matches
+    // the catalog's `large` — the promised one-step-larger shift, per selection.
+    expect(DETAIL_CARD_SIZE_GRID_CLASS.small).toBe(CARD_SIZE_GRID_CLASS.medium)
+    expect(DETAIL_CARD_SIZE_GRID_CLASS.medium).toBe(CARD_SIZE_GRID_CLASS.large)
   })
 })
