@@ -52,12 +52,15 @@ let cvPromise: Promise<Cv> | null = null
  * cache so a later retry can succeed) if the payload fails to load. */
 export function loadOpenCv(): Promise<Cv> {
   if (!cvPromise) {
-    cvPromise = import('@techstark/opencv-js')
+    // Import through the local ESM wrapper (opencvRuntime.ts), NOT '@techstark/opencv-js'
+    // directly — a production-only Rolldown interop trap poisons the direct import's
+    // resolution and throws before this `.then` runs. See opencvRuntime.ts for the full
+    // mechanism; the wrapper's `default` is the genuine promise the package exposes.
+    cvPromise = import('./opencvRuntime')
       .then(async (mod): Promise<Cv> => {
-        const cvModule = (mod.default ?? mod) as unknown as Cv & {
+        const cvModule = (await mod.default) as unknown as Cv & {
           onRuntimeInitialized?: () => void
         }
-        if (cvModule instanceof Promise) return (await cvModule) as Cv
         if (cvModule.Mat) return cvModule
         await new Promise<void>((resolve) => {
           cvModule.onRuntimeInitialized = () => resolve()

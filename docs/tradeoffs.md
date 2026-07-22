@@ -1227,6 +1227,27 @@ catalog) is planned but not implemented.
   started again. Do not move the import into global app startup or route-chunk prefetching —
   opening the mobile navigation prefetches `/scan`, and must not make every user download
   OpenCV.
+- **OpenCV loads through a one-line ESM wrapper — a production-only interop trap, not a
+  network failure.** `@techstark/opencv-js` is a UMD/CJS module whose **`default` export is a
+  real `Promise`** that resolves to the initialised `cv`. A *direct* dynamic
+  `import('@techstark/opencv-js')` makes the production Rolldown build insert its CJS→ESM
+  interop (`__toESM`) into the import's own `.then`, which re-wraps that promise in an object
+  built with `Object.create(Object.getPrototypeOf(promise))` — it inherits `Promise.prototype`
+  (so `instanceof Promise` is true) but holds no internal promise state. Returning that
+  fake-thenable through a `.then` chain makes the runtime call `Promise.prototype.then` on an
+  incompatible receiver and **throw** (`Method Promise.prototype.then called on incompatible
+  receiver`), so `loadOpenCv` rejected and the scanner silently ran the basic detector — **in
+  the production build only** (the Vite dev optimizer hands the module over in a shape that
+  doesn't trip the interop, which is why it "worked locally"). The fix is `opencvRuntime.ts`, a
+  local ES module that *statically* `import cv from '@techstark/opencv-js'` and re-exports it;
+  `loadOpenCv` dynamically imports **that wrapper** instead. Because the wrapper is a genuine ES
+  module, dynamically importing it yields a normal namespace whose `default` is the real
+  promise, and the interop stays local and correct. OpenCV still ends up in its own ~15 MB lazy
+  chunk (the wrapper is reached only via dynamic import from `ScanView`). The same thenable
+  mis-assimilation is why the Node integration spec `require()`s the package directly rather
+  than going through `loadOpenCv`. `opencvRuntime.spec.ts` pins the wrapper indirection; don't
+  collapse it back to a direct `@techstark/opencv-js` dynamic import (verify a real `vite build`,
+  not just dev — this bug is invisible in dev and in `cargo test`/vitest).
 - **OCR runtime is self-hosted — no third-party code at runtime (issue #451).** The
   set/collector-number OCR half of the hybrid scanner uses `tesseract.js`, whose browser
   *default* downloads its worker, wasm core, and `eng.traineddata` from
