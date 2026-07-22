@@ -392,6 +392,15 @@ already-submitted URLs. The web build's `robots.txt` points crawlers at
 stale-while-revalidate, preserved by the cache layer); an unknown/out-of-range child
 is a `no-store` `404`.
 
+Alongside `robots.txt`, the web build also emits **`/llms.txt`** — the
+[llmstxt.org](https://llmstxt.org) convention for an LLM/agent-friendly map of the site.
+Because TCGLense is API-first, it's a curated entry point pointing agents at the
+machine-readable OpenAPI spec (`/api/openapi.json`), the interactive docs (`/docs`), and
+the main public/authenticated endpoint groups — so an agent reads the contract rather
+than scraping the SPA. Like `robots.txt` it's a static build-time file (no DB needed, so
+not an API route), generated from `VITE_SITE_URL` by the `seoDiscoveryFiles` Vite plugin
+and served at the site root; keep its endpoint facts in sync with this document.
+
 ### Image proxy
 
 `size` ∈ `small|normal|large|png|art_crop` (default `normal`), `face` is a 0-based face

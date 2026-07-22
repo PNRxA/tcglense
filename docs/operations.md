@@ -440,7 +440,8 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   (The Turnstile site key is no longer a web build var — it's the API's runtime
   `TURNSTILE_SITE_KEY`, fetched by the SPA from `GET /api/config`.)
   `VITE_SITE_URL` (public site origin, default `http://localhost:5173`) — used at
-  **build time** for the absolute `Sitemap:` URL in `robots.txt`; canonical and OG
+  **build time** for the absolute URLs in the site-root discovery files (`robots.txt`'s
+  `Sitemap:` line and `llms.txt`'s spec/docs/sitemap links); canonical and OG
   URLs are resolved at runtime from the live origin, and the sitemap itself is
   API-served (so the API's `PUBLIC_SITE_URL` builds its `<loc>`s). Set it in
   production CI (alongside the API's matching `PUBLIC_SITE_URL`).
