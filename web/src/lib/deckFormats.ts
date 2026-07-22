@@ -30,3 +30,14 @@ export const DECK_FORMAT_GROUPS: Record<string, DeckFormatGroup[]> = {
 export function formatGroupsFor(game: string): DeckFormatGroup[] {
   return DECK_FORMAT_GROUPS[game] ?? []
 }
+
+// What the New-deck dialog preselects — the game's most-played format (Commander is by
+// far MTG's most-played; the deck-count skew on Archidekt/Moxfield tells the same
+// story). Must be an option label from the game's DECK_FORMAT_GROUPS so the select
+// resolves it; games without curated formats default to no format.
+const DECK_FORMAT_DEFAULTS: Record<string, string> = { mtg: 'Commander' }
+
+/** The format the New-deck dialog starts on for a game ('' = no format). */
+export function defaultFormatFor(game: string): string {
+  return DECK_FORMAT_DEFAULTS[game] ?? ''
+}

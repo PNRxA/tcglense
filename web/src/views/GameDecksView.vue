@@ -34,6 +34,7 @@ import {
   useMoveDeckToFolderMutation,
 } from '@/composables/useDecks'
 import { ApiError, type Deck } from '@/lib/api'
+import { defaultFormatFor } from '@/lib/deckFormats'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
 
@@ -75,7 +76,9 @@ async function resolveFolderByName(name: string): Promise<number> {
 // --- Create deck ---
 const createOpen = ref(false)
 const newDeckName = ref('')
-const newDeckFormat = ref('')
+// Starts on the game's most-played format (Commander for MTG); the select still offers
+// "No format" and every other option.
+const newDeckFormat = ref(defaultFormatFor(props.game))
 // Folder choice for the new deck. reka's Select reserves '' for "no selection", so the
 // picker uses explicit string sentinels: NO_FOLDER = no folder, NEW_FOLDER = create one
 // from `newDeckFolderName`; any other value is the chosen folder's id as a string.
@@ -89,7 +92,7 @@ const createDeck = useCreateDeckMutation()
 watch(createOpen, (open) => {
   if (!open) return
   newDeckName.value = ''
-  newDeckFormat.value = ''
+  newDeckFormat.value = defaultFormatFor(props.game)
   newDeckFolderChoice.value = NO_FOLDER
   newDeckFolderName.value = ''
 })
@@ -118,7 +121,7 @@ async function submitCreateDeck() {
   })
   createOpen.value = false
   newDeckName.value = ''
-  newDeckFormat.value = ''
+  newDeckFormat.value = defaultFormatFor(props.game)
   newDeckFolderChoice.value = NO_FOLDER
   newDeckFolderName.value = ''
   void router.push(`/decks/${props.game}/${deck.id}`)

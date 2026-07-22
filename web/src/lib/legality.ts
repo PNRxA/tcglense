@@ -20,6 +20,11 @@ export interface MtgFormat {
   group: 'Constructed' | 'Commander' | 'Arena' | 'Other'
   /** Extra spellings `normalizeFormatKey` accepts (canonicalized before compare). */
   aliases?: string[]
+  /**
+   * Widely-played format (the paper staples plus the big Arena queues) — what the
+   * card-page legality panel shows before its "Show all formats" expansion.
+   */
+  popular?: boolean
 }
 
 /**
@@ -29,13 +34,19 @@ export interface MtgFormat {
  * deliberately not surfaced (meaningless to deck builders).
  */
 export const MTG_FORMATS: MtgFormat[] = [
-  { key: 'standard', label: 'Standard', group: 'Constructed' },
-  { key: 'pioneer', label: 'Pioneer', group: 'Constructed' },
-  { key: 'modern', label: 'Modern', group: 'Constructed' },
-  { key: 'legacy', label: 'Legacy', group: 'Constructed' },
-  { key: 'vintage', label: 'Vintage', group: 'Constructed' },
-  { key: 'pauper', label: 'Pauper', group: 'Constructed' },
-  { key: 'commander', label: 'Commander', group: 'Commander', aliases: ['edh', 'cedh'] },
+  { key: 'standard', label: 'Standard', group: 'Constructed', popular: true },
+  { key: 'pioneer', label: 'Pioneer', group: 'Constructed', popular: true },
+  { key: 'modern', label: 'Modern', group: 'Constructed', popular: true },
+  { key: 'legacy', label: 'Legacy', group: 'Constructed', popular: true },
+  { key: 'vintage', label: 'Vintage', group: 'Constructed', popular: true },
+  { key: 'pauper', label: 'Pauper', group: 'Constructed', popular: true },
+  {
+    key: 'commander',
+    label: 'Commander',
+    group: 'Commander',
+    aliases: ['edh', 'cedh'],
+    popular: true,
+  },
   { key: 'oathbreaker', label: 'Oathbreaker', group: 'Commander' },
   {
     key: 'paupercommander',
@@ -51,10 +62,10 @@ export const MTG_FORMATS: MtgFormat[] = [
   },
   { key: 'predh', label: 'PreDH', group: 'Commander', aliases: ['preedh'] },
   { key: 'alchemy', label: 'Alchemy', group: 'Arena' },
-  { key: 'historic', label: 'Historic', group: 'Arena' },
-  { key: 'timeless', label: 'Timeless', group: 'Arena' },
+  { key: 'historic', label: 'Historic', group: 'Arena', popular: true },
+  { key: 'timeless', label: 'Timeless', group: 'Arena', popular: true },
   { key: 'gladiator', label: 'Gladiator', group: 'Arena' },
-  { key: 'brawl', label: 'Brawl', group: 'Arena', aliases: ['historicbrawl'] },
+  { key: 'brawl', label: 'Brawl', group: 'Arena', aliases: ['historicbrawl'], popular: true },
   { key: 'standardbrawl', label: 'Standard Brawl', group: 'Arena' },
   {
     key: 'competitivebrawl',

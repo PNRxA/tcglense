@@ -60,6 +60,24 @@ describe('normalizeFormatKey', () => {
   })
 })
 
+describe('popular formats', () => {
+  it('marks exactly the widely-played set the card panel shows by default', () => {
+    const popular = MTG_FORMATS.filter((format) => format.popular).map((format) => format.key)
+    expect(popular).toEqual([
+      'standard',
+      'pioneer',
+      'modern',
+      'legacy',
+      'vintage',
+      'pauper',
+      'commander',
+      'historic',
+      'timeless',
+      'brawl',
+    ])
+  })
+})
+
 describe('formatLabel / legalityLabel', () => {
   it('labels known keys and falls back to the key itself', () => {
     expect(formatLabel('paupercommander')).toBe('Pauper Commander')
