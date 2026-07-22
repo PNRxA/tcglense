@@ -7,6 +7,7 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/collection/CollectionControls.vue'
 import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
+import CardLegalities from '@/components/cards/CardLegalities.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
@@ -248,6 +249,10 @@ const alertFinishes = computed<AlertFinish[]>(() => {
             <h2 class="mb-3 text-sm font-semibold">Details</h2>
             <CardMetaList :game="game" :card="card" />
           </div>
+
+          <!-- Per-format legality, Scryfall-style (issue #557). Rides the card payload
+            (no extra fetch); renders nothing for a card with no legality data. -->
+          <CardLegalities :card="card" />
         </template>
         <template v-else>
           <Skeleton class="h-24 w-full rounded-xl" />

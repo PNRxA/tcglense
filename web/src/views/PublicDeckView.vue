@@ -5,6 +5,7 @@ import { Copy, Layers } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
+import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
@@ -12,6 +13,7 @@ import { useCurrency } from '@/composables/useCurrency'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError, type DeckCardEntry } from '@/lib/api'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
+import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
@@ -77,6 +79,18 @@ const sectionNavItems = computed(() =>
 function copies(entry: DeckCardEntry): number {
   return entry.quantity + entry.foil_quantity
 }
+
+// Format legality (issue #557), mirroring the owner view: computed from the cards the
+// page already holds; null when the format isn't a legality-tracked one.
+const legality = computed(() =>
+  deck.value ? evaluateDeckLegality(deck.value.format, deck.value.cards) : null,
+)
+// Breach chips sit bottom-right; the copy-count badge owns bottom-left here.
+const LEGALITY_CHIP_TEXT: Record<string, string> = {
+  banned: 'text-red-600 dark:text-red-400',
+  not_legal: 'text-muted-foreground',
+  restricted: 'text-amber-600 dark:text-amber-400',
+}
 </script>
 
 <template>
@@ -125,6 +139,9 @@ function copies(entry: DeckCardEntry): number {
         </div>
       </header>
 
+      <!-- Is this deck legal in its format? (issue #557) -->
+      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+
       <DeckStats :cards="deck.cards" :sections="deck.sections" />
 
       <div
@@ -157,6 +174,16 @@ function copies(entry: DeckCardEntry): number {
                     class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
                     >×{{ copies(entry) }}</span
                   >
+                  <!-- Format-legality breach chip (issue #557): bottom-right (the copy
+                    count owns bottom-left), matching the owner view; pointer-events-none
+                    keeps the tile's stretched link clickable through it. -->
+                  <span
+                    v-if="legality?.statusByCardId.get(entry.card.id)"
+                    class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
+                    :class="LEGALITY_CHIP_TEXT[legality.statusByCardId.get(entry.card.id)!]"
+                  >
+                    {{ legalityLabel(legality.statusByCardId.get(entry.card.id)!) }}
+                  </span>
                 </template>
               </CardTile>
             </div>

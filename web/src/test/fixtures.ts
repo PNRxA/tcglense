@@ -28,6 +28,7 @@ export function makeCard(id: string, over: Partial<Card> = {}): Card {
     secret_lair_bonus: false,
     secret_lair_spend_incentive: false,
     faces: [],
+    legalities: null,
     ...over,
   }
 }

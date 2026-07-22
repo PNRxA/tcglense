@@ -40,12 +40,15 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
+import DeckFormatField from '@/components/decks/DeckFormatField.vue'
+import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckEditor } from '@/composables/useDeckEditor'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
+import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 
 const props = defineProps<{ game: string; id: string }>()
@@ -99,6 +102,18 @@ const {
 } = useDeckEditor(props)
 
 usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true })
+
+// Format legality (issue #557): evaluated client-side from the cards the page already
+// holds. Null when the deck's format isn't a legality-tracked one (custom text, Cube…).
+const legality = computed(() =>
+  deck.value ? evaluateDeckLegality(deck.value.format, allCards.value) : null,
+)
+// Per-tile breach chips (bottom-right; the control sits bottom-left, ownership top-right).
+const LEGALITY_CHIP_TEXT: Record<string, string> = {
+  banned: 'text-red-600 dark:text-red-400',
+  not_legal: 'text-muted-foreground',
+  restricted: 'text-amber-600 dark:text-amber-400',
+}
 </script>
 
 <template>
@@ -245,6 +260,9 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
         {{ exportError }}
       </p>
 
+      <!-- Is this deck legal in its format? (issue #557) -->
+      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+
       <DeckStats :cards="allCards" :sections="sections" />
 
       <!-- Add cards -->
@@ -370,6 +388,18 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
                     :foil-quantity="entry.foil_quantity"
                     :sections="sections"
                   />
+                  <!-- Format-legality breach chip (issue #557): bottom-right, the one
+                    corner the control (bottom-left) and ownership (top-right) never use —
+                    on an 88px mobile tile a top-left "Not Legal" would collide with the
+                    ownership badges. pointer-events-none keeps the tile's stretched link
+                    clickable through it; the banner above carries the full explanation. -->
+                  <span
+                    v-if="legality?.statusByCardId.get(entry.card.id)"
+                    class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
+                    :class="LEGALITY_CHIP_TEXT[legality.statusByCardId.get(entry.card.id)!]"
+                  >
+                    {{ legalityLabel(legality.statusByCardId.get(entry.card.id)!) }}
+                  </span>
                   <!-- Ownership indicators (top-right): how many of this card you own
                    (collection) and want (wish list), each shown only when non-zero. -->
                   <div
@@ -410,7 +440,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
           <DialogTitle>Edit deck</DialogTitle>
           <form class="mt-2 space-y-3" @submit.prevent="submitRename">
             <Input v-model="editName" placeholder="Deck name" />
-            <Input v-model="editFormat" placeholder="Format (optional)" />
+            <DeckFormatField v-model="editFormat" :game="game" />
             <div class="flex justify-end gap-2">
               <DialogClose :class="buttonVariants({ variant: 'ghost' })">Cancel</DialogClose>
               <Button type="submit" :disabled="!editName.trim()">Save</Button>

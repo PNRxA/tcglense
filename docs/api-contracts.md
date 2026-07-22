@@ -250,12 +250,21 @@ mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
 prices: { usd, usd_foil, eur, tix }, has_image,
 drop_name: string | null, drop_slug: string | null, secret_lair_bonus: boolean,
-faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[] }`.
+secret_lair_spend_incentive: boolean,
+faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[],
+legalities: { [format: string]: string } | null }`.
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
 `null` elsewhere) — see the `/sets/{code}/drops` endpoint above. `secret_lair_bonus`
 is `true` for a Secret Lair **chase/bonus** card (Scryfall's `sldbonus` promo type) —
 the optional card given with a qualifying drop purchase, which has no sealed product of
 its own, so the SPA marks it and links to its drop rather than a "found in" section.
+`secret_lair_spend_incentive` marks the superdrop spend-reward promos instead (issue
+#331, curated list). `legalities` is the card's per-format legality, the stored
+Scryfall object parsed as-is (issue #557): keys are Scryfall format slugs
+(`"standard"`, `"commander"`, `"paupercommander"`, …), values are
+`"legal" | "not_legal" | "banned" | "restricted"`; `null` when the row has no (valid)
+legality data. It rides **every** `Card` payload (lists included) so the deck views can
+evaluate format breaches client-side from the deck detail they already hold.
 
 **Visual scanner (authed).** `POST /api/games/{game}/scan` — identify a photographed
 card from its perceptual hash. Body `{ fingerprint: number[], top_k?: number }` where
@@ -873,7 +882,10 @@ a path are the **external** card id, resolved to the internal `cards.id` on writ
 deck card survives a catalog re-import — same as the collection).
 
 A deck is three tables: `entities/deck.rs` (`decks` — the deck row, carrying `name`,
-`description`, `format`, a nullable `folder_id`, and an `is_public` flag), `deck_section.rs`
+`description`, `format` (free text on the wire; the SPA's create/edit dialogs offer the
+curated format list from `web/src/lib/legality.ts` with a "Custom…" free-text escape
+hatch, and the deck views map whatever string is stored to a legality key client-side —
+issue #557), a nullable `folder_id`, and an `is_public` flag), `deck_section.rs`
 (`deck_sections` — the Archidekt-style categories a deck's cards are filed into, one row per
 `(deck, name)`, ordered by `position`), and `deck_card.rs` (`deck_cards` — one row per
 `(deck, card, section)`, the same two-count `{ quantity, foil_quantity }` shape as a holding
