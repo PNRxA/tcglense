@@ -18,7 +18,15 @@ const mocks = vi.hoisted(() => {
     // the detection-loop specs override it to resolve.
     loadOpenCv: vi.fn<() => Promise<unknown>>(() => new Promise<never>(() => {})),
     detectCardQuadCv: vi.fn<
-      (cv: unknown, image: unknown, opts: { segmentationFallback: boolean }) => Quad | null
+      (
+        cv: unknown,
+        image: { width: number; height: number },
+        opts: {
+          fallbackPasses: boolean
+          window?: { x: number; y: number; width: number; height: number }
+          select?: { mode: string; prior?: unknown; guide?: unknown }
+        },
+      ) => Quad | null
     >(() => null),
     hamming: vi.fn<(a: Uint8Array, b: Uint8Array) => number>(() => 0),
   }
@@ -166,7 +174,7 @@ describe('useCardScanner live detection loop', () => {
     return { scanner, wrapper }
   }
 
-  it('smooths nearby detections, holds through 3 missed ticks, then clears', async () => {
+  it('shows no outline for a single detection, locks on the confirming second tick', async () => {
     vi.useFakeTimers()
     const { scanner, wrapper } = await startLive()
 
@@ -177,11 +185,13 @@ describe('useCardScanner live detection loop', () => {
       .mockReturnValueOnce(jittered)
       .mockReturnValue(null)
 
+    // One isolated detection is tentative: a transient clutter quad must never flash
+    // a green lock the user could try to capture.
     vi.advanceTimersByTime(120)
-    expect(scanner.detectedQuad.value).toEqual(first)
+    expect(scanner.detectedQuad.value).toBeNull()
 
-    // A near detection is blended (default 0.5), not adopted raw — the outline
-    // moves to the midpoint instead of twitching.
+    // The consistent second detection confirms — blended from the tentative quad
+    // (default 0.5), so the outline appears already settled at the midpoint.
     vi.advanceTimersByTime(120)
     expect(scanner.detectedQuad.value![0]!.x).toBeCloseTo(0.21, 10)
 
@@ -197,28 +207,64 @@ describe('useCardScanner live detection loop', () => {
     wrapper.unmount()
   })
 
-  it('runs the Otsu retry on a 1-in-3 miss cadence, and always after a detection', async () => {
+  it('runs cardless full-frame acquisition with fallback passes on a 1-in-3 cadence', async () => {
     vi.useFakeTimers()
     const { wrapper } = await startLive()
 
-    mocks.detectCardQuadCv
-      .mockReturnValueOnce(quadAt(0.2, 0.15))
-      .mockReturnValueOnce(quadAt(0.2, 0.15))
-      .mockReturnValue(null)
-
+    mocks.detectCardQuadCv.mockReturnValue(null)
     for (let tick = 0; tick < 7; tick++) vi.advanceTimersByTime(120)
 
-    // Ticks 1-2 detect (misses stay 0 → retry allowed), tick 3 misses (still the
-    // 0th miss → allowed), then the cadence gates 2 of every 3 cardless ticks.
-    expect(mocks.detectCardQuadCv.mock.calls.map((call) => call[2].segmentationFallback)).toEqual([
+    // Cardless ticks search the full frame in acquisition mode; the expensive
+    // fallback passes only run every third consecutive miss.
+    const calls = mocks.detectCardQuadCv.mock.calls
+    expect(calls.map((call) => call[2].fallbackPasses)).toEqual([
       true,
-      true,
+      false,
+      false,
       true,
       false,
       false,
       true,
-      false,
     ])
+    for (const call of calls) {
+      expect(call[2].select.mode).toBe('acquisition')
+      expect(call[2].window).toBeUndefined()
+    }
+
+    wrapper.unmount()
+  })
+
+  it('searches a prior ROI in tracking mode once a card is seen, full-frame on the 2nd miss', async () => {
+    vi.useFakeTimers()
+    const { wrapper } = await startLive()
+
+    const seen = quadAt(0.2, 0.15)
+    mocks.detectCardQuadCv.mockReturnValueOnce(seen).mockReturnValueOnce(seen).mockReturnValue(null)
+
+    // Tick 1: cold acquisition finds the card (tentative). Ticks 2-3: the tentative /
+    // locked prior narrows the search to its padded ROI, always with the full ladder.
+    for (let tick = 0; tick < 3; tick++) vi.advanceTimersByTime(120)
+    const calls = mocks.detectCardQuadCv.mock.calls
+    expect(calls[0]![2].select!.mode).toBe('acquisition')
+    for (const call of calls.slice(1)) {
+      expect(call[2].select!).toEqual({ mode: 'tracking', prior: expect.anything() })
+    }
+    expect(calls[1]![2].window).toMatchObject({ fullWidth: 640, fullHeight: 480 })
+    expect(calls[1]![2].fallbackPasses).toBe(true)
+    // The ROI read is the window's crop, not the whole frame.
+    expect(calls[1]![1]).toMatchObject({
+      width: calls[1]![2].window!.width,
+      height: calls[1]![2].window!.height,
+    })
+
+    // Tick 3 was the first ROI miss (tolerated, single call). Tick 4 = second
+    // consecutive miss: the ROI search is retried full-frame, still prior-associated.
+    const tick4Before = mocks.detectCardQuadCv.mock.calls.length
+    vi.advanceTimersByTime(120)
+    const tick4Calls = mocks.detectCardQuadCv.mock.calls.slice(tick4Before)
+    expect(tick4Calls).toHaveLength(2)
+    expect(tick4Calls[1]![2].window).toBeUndefined()
+    expect(tick4Calls[1]![2].select!.mode).toBe('tracking')
 
     wrapper.unmount()
   })
@@ -230,21 +276,30 @@ describe('useCardScanner live detection loop', () => {
     const oneCornerAtEdge: Quad = locked.map((point) => ({ ...point })) as Quad
     oneCornerAtEdge[0] = { x: 0, y: 0 }
 
-    mocks.detectCardQuadCv.mockReturnValueOnce(locked).mockReturnValueOnce(oneCornerAtEdge)
-    vi.advanceTimersByTime(120)
+    mocks.detectCardQuadCv
+      .mockReturnValueOnce(locked)
+      .mockReturnValueOnce(locked)
+      .mockReturnValueOnce(oneCornerAtEdge)
+    vi.advanceTimersByTime(240)
     expect(scanner.detectedQuad.value).toEqual(locked)
 
     expect(await scanner.capture()).toBeNull()
     expect(scanner.detectedQuad.value).toBeNull()
+    // The capture re-detection searches the tracked prior's ROI in capture mode with
+    // the full detection ladder.
     expect(mocks.detectCardQuadCv).toHaveBeenLastCalledWith(
       expect.anything(),
-      expect.objectContaining({ width: 640, height: 480 }),
-      { segmentationFallback: true },
+      expect.anything(),
+      expect.objectContaining({
+        fallbackPasses: true,
+        select: expect.objectContaining({ mode: 'capture' }),
+        window: expect.objectContaining({ fullWidth: 640, fullHeight: 480 }),
+      }),
     )
-    // Strong capture-time evidence invalidates the stale green hold immediately, but the
-    // next good live frame can reacquire without waiting out the old miss window.
+    // Strong capture-time evidence invalidates the stale green hold immediately; the
+    // next two good live frames reacquire without waiting out the old miss window.
     mocks.detectCardQuadCv.mockReturnValue(locked)
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(240)
     expect(scanner.detectedQuad.value).toEqual(locked)
 
     wrapper.unmount()
@@ -256,8 +311,11 @@ describe('useCardScanner live detection loop', () => {
     const outer = quadAt(0.2, 0.1, 0.6, 0.8)
     const inner = quadAt(0.224, 0.132, 0.552, 0.736)
 
-    mocks.detectCardQuadCv.mockReturnValueOnce(outer).mockReturnValueOnce(inner)
-    vi.advanceTimersByTime(120)
+    mocks.detectCardQuadCv
+      .mockReturnValueOnce(outer)
+      .mockReturnValueOnce(outer)
+      .mockReturnValueOnce(inner)
+    vi.advanceTimersByTime(240)
 
     expect(await scanner.capture()).toBeNull()
     expect(scanner.detectedQuad.value).toBeNull()
@@ -270,7 +328,7 @@ describe('useCardScanner live detection loop', () => {
     const { scanner, wrapper } = await startLive()
     const locked = quadAt(0.2, 0.15)
     mocks.detectCardQuadCv.mockReturnValue(locked)
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(240)
     const callsBeforeCapture = mocks.detectCardQuadCv.mock.calls.length
 
     const captured = await scanner.capture()
@@ -280,10 +338,15 @@ describe('useCardScanner live detection loop', () => {
     // Every pooled frame has fresh high-resolution geometry; the live tracked quad is
     // only the initial reference and cannot mutate the in-progress burst.
     expect(mocks.detectCardQuadCv).toHaveBeenCalledTimes(callsBeforeCapture + 4)
+    // Burst frames search the previous accepted quad's ROI in capture mode.
     expect(mocks.detectCardQuadCv).toHaveBeenLastCalledWith(
       expect.anything(),
-      expect.objectContaining({ width: 640, height: 480 }),
-      { segmentationFallback: true },
+      expect.anything(),
+      expect.objectContaining({
+        fallbackPasses: true,
+        select: expect.objectContaining({ mode: 'capture' }),
+        window: expect.anything(),
+      }),
     )
 
     wrapper.unmount()
@@ -296,10 +359,11 @@ describe('useCardScanner live detection loop', () => {
     const locked = quadAt(0.2, 0.15)
     const moved = quadAt(0.4, 0.15)
     mocks.detectCardQuadCv
-      .mockReturnValueOnce(locked) // live lock
+      .mockReturnValueOnce(locked) // live: tentative
+      .mockReturnValueOnce(locked) // live: confirm → lock
       .mockReturnValueOnce(locked) // first capture frame
       .mockReturnValueOnce(moved) // next frame: stop the burst
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(240)
     const callsBeforeCapture = mocks.detectCardQuadCv.mock.calls.length
 
     const captured = await scanner.capture()
@@ -320,7 +384,7 @@ describe('useCardScanner live detection loop', () => {
     // 64-bit pHash change is within the server's broad match radius but not same-frame
     // continuity, so only the first card's variants may survive.
     mocks.hamming.mockReturnValueOnce(64)
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(240)
 
     const captured = await scanner.capture()
 
@@ -334,8 +398,11 @@ describe('useCardScanner live detection loop', () => {
     vi.useFakeTimers()
     const { scanner, wrapper } = await startLive()
 
-    mocks.detectCardQuadCv.mockReturnValueOnce(quadAt(0.2, 0.15)).mockReturnValue(null)
-    vi.advanceTimersByTime(120)
+    mocks.detectCardQuadCv
+      .mockReturnValueOnce(quadAt(0.2, 0.15))
+      .mockReturnValueOnce(quadAt(0.2, 0.15))
+      .mockReturnValue(null)
+    vi.advanceTimersByTime(240)
     expect(scanner.detectedQuad.value).not.toBeNull()
 
     scanner.stop()

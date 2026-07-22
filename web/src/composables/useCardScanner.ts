@@ -2,11 +2,14 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 // tesseract.js is a CommonJS `export =` namespace, so the type comes in via a default
 // import (esModuleInterop) and the runtime via a lazy dynamic import().
 import type Tesseract from 'tesseract.js'
+import { createCardLock } from '@/lib/scan/cardLock'
 import { detectCardQuad, quadArea, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
+import { cropImageData, priorSearchWindow } from '@/lib/scan/guidedDetect'
 import { detectCardQuadCv, loadOpenCv } from '@/lib/scan/opencvDetect'
 import { detectFoilStar } from '@/lib/scan/foilStar'
-import { cornerMetrics, createQuadTracker } from '@/lib/scan/quadTracker'
+import { cornerMetrics } from '@/lib/scan/quadTracker'
 import { hamming, phashFromRgba } from '@/lib/scan/phash'
+import { guideTarget } from '@/lib/scan/quadSelect'
 import { SET_REGION, regionInRect } from '@/lib/scan/regions'
 
 // Camera + on-device vision engine for the card scanner. Owns the getUserMedia stream
@@ -57,11 +60,19 @@ const DETECT_MAX = 640
 /** How often the live detection loop runs (ms) — ~8 fps for a responsive outline. */
 const DETECT_INTERVAL_MS = 120
 
-/** While nothing is detected, the expensive Otsu segmentation retry runs only every
- * Nth consecutive miss: a cardless viewfinder is the scanner's dominant state, and the
- * retry roughly triples a cardless tick's cost. The outline tracker's hold bridges a
- * lock that lands a tick or two later, so the cadence is invisible on screen. */
-const SEGMENTATION_MISS_CADENCE = 3
+/** While nothing is detected (and no prior narrows the search), the expensive fallback
+ * passes (extra Canny bands + the Otsu segmentation retry) run only every Nth
+ * consecutive miss: a cardless viewfinder is the scanner's dominant state, and the
+ * fallbacks multiply a cardless tick's cost. The outline tracker's hold bridges a
+ * lock that lands a tick or two later, so the cadence is invisible on screen. Ticks
+ * that search a prior's small region of interest always run the full ladder. */
+const FALLBACK_MISS_CADENCE = 3
+
+/** With a prior, one consecutive ROI miss is tolerated before a full-frame retry —
+ * the card usually just moved within (or slightly out of) the padded ROI. The
+ * full-frame retry stays associated to the prior, so an unrelated object across the
+ * frame can never take the lock over. */
+const PRIOR_MISSES_BEFORE_FULL_FRAME = 1
 
 /** Capture-time geometry must agree with the green lock before its crop is accepted. */
 const CAPTURE_MEAN_DISTANCE = 0.05
@@ -104,14 +115,18 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   /** The card the live loop currently detects, as NORMALISED corners (0..1 of the frame),
    * or null when none is found — drives the on-screen outline and the capture crop. */
   const detectedQuad = ref<Quad | null>(null)
-  // Stabilises the raw per-tick detections: smooths corner noise while the card holds
-  // still, snaps on a real move, and bridges brief dropouts — so the outline stays
-  // visibly locked on instead of wobbling/flickering (see lib/scan/quadTracker).
-  const quadTracker = createQuadTracker()
-  // Consecutive live-loop ticks with no raw detection — the counter behind the Otsu
-  // retry cadence (a detection resets it, so a card that only the segmentation pass
+  // Owns lock acquisition and stability: a first detection stays tentative (no green)
+  // until a consistent second confirms it, then the wrapped quadTracker smooths corner
+  // noise, snaps on a real move, and bridges brief dropouts. Also the source of the
+  // spatial prior the next tick searches around (see lib/scan/cardLock).
+  const lock = createCardLock()
+  // Consecutive live-loop ticks with no raw detection — the counter behind the
+  // fallback-pass cadence (a detection resets it, so a card that only a fallback pass
   // sees keeps being re-detected every tick while it stays in frame).
   let rawMisses = 0
+  // Consecutive prior-ROI misses — after tolerating one, the tick retries full-frame
+  // (still associated to the prior) in case the card moved out of the ROI.
+  let priorMisses = 0
 
   let stream: MediaStream | null = null
   let worker: Tesseract.Worker | null = null
@@ -335,6 +350,13 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   // One live-detection step: downscale the current frame and find the card's corners,
   // updating `detectedQuad` (normalised) so the outline tracks the card. OpenCV when
   // loaded, else the lightweight detector. Runs on a timer while the camera is live.
+  //
+  // With a prior (a tentative or locked card), only a padded region of interest around
+  // it is read and searched, in tracking mode: clutter outside the ROI vanishes from
+  // the search — the busy-background lock keeps holding — and the smaller crop is
+  // cheap enough to always run the full detection ladder. Without a prior, the full
+  // frame is searched in acquisition mode (guide-weighted, ambiguity-rejecting), with
+  // the expensive fallback passes on a cadence of misses.
   function detectFrame(): void {
     const el = video.value
     if (!detectCanvas || status.value !== 'ready' || !el) return
@@ -349,31 +371,59 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     const ctx = detectCanvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
     ctx.drawImage(el, 0, 0, dw, dh)
-    const image = ctx.getImageData(0, 0, dw, dh)
     let raw: Quad | null
     if (cv) {
-      raw = detectCardQuadCv(cv, image, {
-        segmentationFallback: rawMisses % SEGMENTATION_MISS_CADENCE === 0,
-      })
+      const prior = lock.prior()
+      if (prior) {
+        const roi = priorSearchWindow(prior, dw, dh)
+        raw = detectCardQuadCv(cv, ctx.getImageData(roi.x, roi.y, roi.width, roi.height), {
+          window: roi,
+          select: { mode: 'tracking', prior },
+          fallbackPasses: true,
+        })
+        if (!raw && priorMisses >= PRIOR_MISSES_BEFORE_FULL_FRAME) {
+          raw = detectCardQuadCv(cv, ctx.getImageData(0, 0, dw, dh), {
+            select: { mode: 'tracking', prior },
+            fallbackPasses: false,
+          })
+        }
+        priorMisses = raw ? 0 : priorMisses + 1
+      } else {
+        priorMisses = 0
+        raw = detectCardQuadCv(cv, ctx.getImageData(0, 0, dw, dh), {
+          select: { mode: 'acquisition', guide: guideTarget(dw, dh) },
+          fallbackPasses: rawMisses % FALLBACK_MISS_CADENCE === 0,
+        })
+      }
     } else {
+      const image = ctx.getImageData(0, 0, dw, dh)
       const q = detectCardQuad(toGray(image.data, dw, dh), dw, dh)
       raw = q ? (q.map((p) => ({ x: p.x / dw, y: p.y / dh })) as Quad) : null
     }
     rawMisses = raw ? 0 : rawMisses + 1
-    detectedQuad.value = quadTracker.update(raw)
+    detectedQuad.value = lock.update(raw, performance.now())
   }
 
+  // A chained timeout, not an interval: a detection tick that overruns its budget on a
+  // slow device must delay the next tick rather than queue back-to-back callbacks.
+  function scheduleDetect(): void {
+    detectTimer = window.setTimeout(() => {
+      detectFrame()
+      if (detectTimer !== null) scheduleDetect()
+    }, DETECT_INTERVAL_MS)
+  }
   function startDetectLoop(): void {
     if (detectTimer !== null) return
-    detectTimer = window.setInterval(detectFrame, DETECT_INTERVAL_MS)
+    scheduleDetect()
   }
   function stopDetectLoop(): void {
     if (detectTimer !== null) {
-      clearInterval(detectTimer)
+      clearTimeout(detectTimer)
       detectTimer = null
     }
-    quadTracker.reset()
+    lock.reset()
     rawMisses = 0
+    priorMisses = 0
     detectedQuad.value = null
   }
 
@@ -396,9 +446,26 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return context.getImageData(0, 0, width, height)
   }
 
-  /** Detect a fresh normalised quad on the capture-resolution frame. */
-  function detectCaptureQuad(frame: ImageData): Quad | null {
-    if (cv) return detectCardQuadCv(cv, frame, { segmentationFallback: true })
+  /** Detect a fresh normalised quad on the capture-resolution frame. With a prior (the
+   * live lock, or the previous accepted burst quad), the search runs prior-associated
+   * capture selection over the prior's region of interest first, retrying full-frame —
+   * so whatever pass produced the live lock on a busy background is reproducible here,
+   * and an unassociated rectangle elsewhere in the frame can never be "the card". */
+  function detectCaptureQuad(frame: ImageData, prior: Quad | null): Quad | null {
+    if (cv) {
+      if (prior) {
+        const roi = priorSearchWindow(prior, frame.width, frame.height)
+        return (
+          detectCardQuadCv(cv, cropImageData(frame, roi), {
+            window: roi,
+            select: { mode: 'capture', prior },
+            fallbackPasses: true,
+          }) ??
+          detectCardQuadCv(cv, frame, { select: { mode: 'capture', prior }, fallbackPasses: true })
+        )
+      }
+      return detectCardQuadCv(cv, frame, { fallbackPasses: true })
+    }
     const quad = detectCardQuad(
       toGray(frame.data, frame.width, frame.height),
       frame.width,
@@ -426,7 +493,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   }
 
   function invalidateLock(): void {
-    quadTracker.reset()
+    lock.reset()
     detectedQuad.value = null
   }
 
@@ -563,7 +630,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     const tracked = detectedQuad.value
     const firstFrame = readFrame()
     if (!tracked || !firstFrame) return null
-    const firstQuad = detectCaptureQuad(firstFrame)
+    const firstQuad = detectCaptureQuad(firstFrame, tracked)
     if (!firstQuad || !captureQuadAgrees(tracked, firstQuad)) {
       invalidateLock()
       return null
@@ -579,12 +646,16 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     // Fallback if canvas variants were unavailable: keep the geometry-validated base crop.
     if (fingerprints.length === 0) fingerprints.push(referenceFingerprint)
 
+    let burstPrior = firstQuad
     for (let f = 1; f < BURST_FRAMES; f++) {
       await nextFrame()
       const frame = readFrame()
       if (!frame) break
-      const quad = detectCaptureQuad(frame)
+      // ROI around the previous accepted quad; agreement stays anchored to the FIRST
+      // quad so small per-frame drift cannot accumulate across the burst.
+      const quad = detectCaptureQuad(frame, burstPrior)
       if (!quad || !captureQuadAgrees(firstQuad, quad)) break
+      burstPrior = quad
       const rgba = warpFrame(frame, quad)
       const fingerprint = phashFromRgba(rgba, WARP_W, WARP_H)
       if (hamming(referenceFingerprint, fingerprint) > CAPTURE_SAME_CARD_MAX_DISTANCE) break
