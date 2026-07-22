@@ -145,7 +145,9 @@ describe('PublicDeckView card display (issue #562)', () => {
 
   it('filters the cards client-side with a copy-weighted status line', async () => {
     const { wrapper } = mountView()
-    const input = wrapper.get('input[aria-label="Filter cards by name, type, text, or set"]')
+    const input = wrapper.get(
+      'input[aria-label="Filter cards by name, type, text, set, number, rarity, or language"]',
+    )
 
     await input.setValue('zzz-no-match')
     expect(wrapper.text()).toContain('Showing 0 of 3 cards.')

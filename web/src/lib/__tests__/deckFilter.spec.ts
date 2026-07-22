@@ -108,7 +108,6 @@ describe('filterDeckEntries', () => {
 
   it('treats a bare number as an exact collector-number lookup, never a substring', () => {
     expect(filterDeckEntries(all, '161', [])).toEqual([bolt])
-    expect(filterDeckEntries(all, '#161', [])).toEqual([bolt])
     expect(filterDeckEntries(all, '16', [])).toEqual([])
     // Leading zeros ignored on both sides; sol's "333" must not swallow it either.
     expect(filterDeckEntries(all, '1', [])).toEqual([island])
@@ -120,7 +119,24 @@ describe('filterDeckEntries', () => {
   })
 
   it('matches a standalone number in rules text without substring noise', () => {
-    // "deals 3 damage" — while sol's collector number 333 stays clear of the bare 3.
-    expect(filterDeckEntries(all, '3', [])).toEqual([bolt])
+    const burn = entry('burn', {
+      name: 'Crater Blast',
+      type_line: 'Sorcery',
+      oracle_text: 'Crater Blast deals 30 damage to each creature.',
+      color_identity: ['R'],
+      set_code: 'tsr',
+      set_name: 'Test Reforged',
+      collector_number: '77',
+    })
+    const pool = [...all, burn]
+    // "deals 3 damage" matches; "deals 30 damage" must not (word boundary, not substring).
+    expect(filterDeckEntries(pool, '3', [])).toEqual([bolt])
+    expect(filterDeckEntries(pool, '30', [])).toEqual([burn])
+  })
+
+  it('keeps a #-prefixed number a pure collector-number lookup', () => {
+    expect(filterDeckEntries(all, '#161', [])).toEqual([bolt])
+    // Never falls through to rules text: "#3" must not surface "deals 3 damage".
+    expect(filterDeckEntries(all, '#3', [])).toEqual([])
   })
 })

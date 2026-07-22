@@ -60,12 +60,13 @@ function matchesColors(entry: DeckCardEntry, colors: readonly DeckFilterColor[])
 
 /**
  * Match one already-lowercased token against an entry's gameplay text or its printing
- * metadata. A bare number — optionally `#`-prefixed — keeps the printing picker's exact
- * semantics (the collector number with leading zeros ignored, or a standalone number in
- * the set name/code) and additionally matches a *standalone* number in the gameplay text
- * ("deals 3 damage") — never a substring, so "1" stays clear of "100" and #161. Any other
- * token is a plain substring of either haystack (set name/code, rarity, and language ride
- * the printing one).
+ * metadata. A bare number keeps the printing picker's exact semantics (the collector
+ * number with leading zeros ignored, or a standalone number in the set name/code) and
+ * additionally matches a *standalone* number in the gameplay text ("deals 3 damage") —
+ * never a substring, so "1" stays clear of "100". A `#`-prefixed number is the picker's
+ * established collector-number syntax, so it stays a pure printing lookup and never falls
+ * through to rules text. Any other token is a plain substring of either haystack (set
+ * name/code, rarity, and language ride the printing one).
  */
 function matchesTextToken(
   entry: DeckCardEntry,
@@ -77,7 +78,7 @@ function matchesTextToken(
   if (/^\d+$/.test(bare)) {
     return (
       matchesPrintingToken(entry.card, printing, token) ||
-      new RegExp(`\\b${bare}\\b`).test(gameplay)
+      (!token.startsWith('#') && new RegExp(`\\b${bare}\\b`).test(gameplay))
     )
   }
   return gameplay.includes(token) || matchesPrintingToken(entry.card, printing, token)
