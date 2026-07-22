@@ -37,9 +37,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
+import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
@@ -47,9 +50,11 @@ import DeckStats from '@/components/decks/DeckStats.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckEditor } from '@/composables/useDeckEditor'
+import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
+import { useCardSizeStore } from '@/stores/cardSize'
 
 const props = defineProps<{ game: string; id: string }>()
 const money = useCurrency()
@@ -64,6 +69,12 @@ const {
   showEmpty,
   visibleSections,
   sectionNavItems,
+  filterQuery,
+  filterColors,
+  filterActive,
+  clearFilters,
+  matchCount,
+  totalCount,
   ownedInCollection,
   wantedInWishlist,
   folders,
@@ -100,6 +111,7 @@ const {
   confirmSectionDelete,
   moveSection,
 } = useDeckEditor(props)
+const cardSize = useCardSizeStore()
 
 usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true })
 
@@ -274,30 +286,56 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
         :cards="allCards"
       />
 
-      <div class="mb-4 flex items-center justify-between gap-2">
-        <Dialog v-model:open="newSectionOpen">
-          <DialogTrigger as-child>
-            <Button variant="outline" size="sm"><Plus class="size-4" /> Add section</Button>
-          </DialogTrigger>
-          <DialogContent class="max-w-sm">
-            <DialogTitle>New section</DialogTitle>
-            <DialogDescription>Add a custom category to sort cards into.</DialogDescription>
-            <form class="mt-2 space-y-3" @submit.prevent="submitNewSection">
-              <Input v-model="newSectionName" placeholder="Section name" autofocus />
-              <div class="flex justify-end gap-2">
-                <DialogClose :class="buttonVariants({ variant: 'ghost' })">Cancel</DialogClose>
-                <Button type="submit" :disabled="!newSectionName.trim()">Add</Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
-        <label class="text-muted-foreground flex items-center gap-1.5 text-sm">
-          <input v-model="showEmpty" type="checkbox" class="rounded border" />
-          Show empty sections
-        </label>
+      <!-- Card list controls (issue #562): text + colour filters narrow the sections below
+        (client-side — the whole deck is already loaded); the size menu writes the shared
+        display preference. Deck actions (add section, show empty) sit at the row's end. -->
+      <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <CardSearchBox
+          v-if="allCards.length > 0"
+          v-model="filterQuery"
+          class="w-full sm:w-60"
+          placeholder="Filter cards…"
+          aria-label="Filter cards by name, type, text, set, number, rarity, or language"
+        />
+        <DeckColorFilter v-if="allCards.length > 0" v-model="filterColors" />
+        <CardSizeMenu />
+        <div class="ml-auto flex flex-wrap items-center gap-3">
+          <Dialog v-model:open="newSectionOpen">
+            <DialogTrigger as-child>
+              <Button variant="outline" size="sm"><Plus class="size-4" /> Add section</Button>
+            </DialogTrigger>
+            <DialogContent class="max-w-sm">
+              <DialogTitle>New section</DialogTitle>
+              <DialogDescription>Add a custom category to sort cards into.</DialogDescription>
+              <form class="mt-2 space-y-3" @submit.prevent="submitNewSection">
+                <Input v-model="newSectionName" placeholder="Section name" autofocus />
+                <div class="flex justify-end gap-2">
+                  <DialogClose :class="buttonVariants({ variant: 'ghost' })">Cancel</DialogClose>
+                  <Button type="submit" :disabled="!newSectionName.trim()">Add</Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <label class="text-muted-foreground flex items-center gap-1.5 text-sm">
+            <input v-model="showEmpty" type="checkbox" class="rounded border" />
+            Show empty sections
+          </label>
+        </div>
       </div>
+      <p v-if="filterActive" class="text-muted-foreground mb-4 text-sm" aria-live="polite">
+        Showing {{ matchCount }} of {{ totalCount }} card{{ totalCount === 1 ? '' : 's' }}.
+        <button type="button" class="text-primary underline" @click="clearFilters">
+          Clear filters
+        </button>
+      </p>
 
-      <p v-if="visibleSections.length === 0" class="text-muted-foreground py-12 text-center">
+      <p
+        v-if="visibleSections.length === 0 && filterActive"
+        class="text-muted-foreground py-12 text-center"
+      >
+        No cards in this deck match your filter.
+      </p>
+      <p v-else-if="visibleSections.length === 0" class="text-muted-foreground py-12 text-center">
         This deck is empty. Use the box above to add cards, or show the empty sections to sort into.
       </p>
 
@@ -322,10 +360,12 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                 >
               </div>
               <div class="flex items-center gap-0.5">
+                <!-- Reordering is disabled while a filter narrows the list: the visible
+                  neighbour may not be the real neighbour (hidden sections in between). -->
                 <button
                   class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
                   aria-label="Move section up"
-                  :disabled="index === 0"
+                  :disabled="index === 0 || filterActive"
                   @click="moveSection(section.id, -1)"
                 >
                   <ChevronUp class="size-4" />
@@ -333,7 +373,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                 <button
                   class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
                   aria-label="Move section down"
-                  :disabled="index === visibleSections.length - 1"
+                  :disabled="index === visibleSections.length - 1 || filterActive"
                   @click="moveSection(section.id, 1)"
                 >
                   <ChevronDown class="size-4" />
@@ -351,13 +391,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                     >
                     <DropdownMenuItem
                       class="text-destructive"
-                      @click="
-                        requestSectionDelete(
-                          section.id,
-                          section.name,
-                          cardsBySection.get(section.id)?.length ?? 0,
-                        )
-                      "
+                      @click="requestSectionDelete(section.id, section.name)"
                       >Delete section</DropdownMenuItem
                     >
                   </DropdownMenuContent>
@@ -371,7 +405,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
             >
               No cards here yet.
             </p>
-            <div v-else class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+            <div v-else class="grid gap-3" :class="DECK_CARD_SIZE_GRID_CLASS[cardSize.size]">
               <CardTile
                 v-for="entry in cardsBySection.get(section.id) ?? []"
                 :key="`${entry.card.id}-${entry.section_id}`"

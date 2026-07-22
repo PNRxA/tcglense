@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { makeCard } from '@/test/fixtures'
+import { useCardSizeStore } from '@/stores/cardSize'
+import type { DeckDetail } from '@/lib/api'
 
 // A single shared copy-mutation spy so tests can assert what the copy button dispatched.
 const copyMutateAsync = vi.hoisted(() =>
@@ -15,7 +19,8 @@ const authState = vi.hoisted(() => ({
   user: { handle: 'bob-0002' } as { handle: string | null } | null,
 }))
 
-const deck = {
+// Typed as the real wire shape so DTO drift fails here instead of silently passing.
+const deck: DeckDetail = {
   id: 7,
   game: 'mtg',
   name: 'Alice Brew',
@@ -24,11 +29,11 @@ const deck = {
   folder_id: null,
   is_public: true,
   handle: 'alice-0001',
-  summary: { total_cards: 3, total_value_usd: 0 },
+  summary: { unique_cards: 1, total_cards: 3, total_value_usd: null, bulk_value_usd: null },
   sections: [{ id: 1, name: 'Creatures', position: 0 }],
   cards: [
     {
-      card: { id: 'c1', name: 'Goblin' },
+      card: makeCard('c1', { name: 'Goblin', color_identity: ['R'] }),
       section_id: 1,
       quantity: 3,
       foil_quantity: 0,
@@ -69,7 +74,7 @@ const ButtonStub = defineComponent({
   template: '<button v-bind="$attrs"><slot /></button>',
 })
 
-function mountView() {
+function mountView(pinia = createPinia()) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/:pathMatch(.*)*', component: PassThrough }],
@@ -78,11 +83,13 @@ function mountView() {
   const wrapper = mount(PublicDeckView, {
     props: { handle: 'alice-0001', id: '7' },
     global: {
-      plugins: [router],
+      // A real Pinia for the card-size store the view reads (issue #562).
+      plugins: [router, pinia],
       stubs: {
         Button: ButtonStub,
         LoadingRow: PassThrough,
         CardTile: PassThrough,
+        CardSizeMenu: PassThrough,
         DeckSectionNav: PassThrough,
         DeckStats: PassThrough,
       },
@@ -128,6 +135,44 @@ describe('PublicDeckView copy-to-my-decks', () => {
 
     const { wrapper } = mountView()
     expect(copyButton(wrapper)).toBeFalsy()
+    wrapper.unmount()
+  })
+})
+
+describe('PublicDeckView card display (issue #562)', () => {
+  // The card-size preference persists to localStorage; keep tests order-independent.
+  afterEach(() => localStorage.removeItem('tcglense_card_size'))
+
+  it('filters the cards client-side with a copy-weighted status line', async () => {
+    const { wrapper } = mountView()
+    const input = wrapper.get(
+      'input[aria-label="Filter cards by name, type, text, set, number, rarity, or language"]',
+    )
+
+    await input.setValue('zzz-no-match')
+    expect(wrapper.text()).toContain('Showing 0 of 3 cards.')
+    expect(wrapper.text()).toContain('No cards in this deck match your filter.')
+
+    await wrapper.get('button[aria-label="Filter to red"]').trigger('click')
+    await input.setValue('')
+    // The Goblin fixture's colour identity is red, so the pip alone matches all copies.
+    expect(wrapper.text()).toContain('Showing 3 of 3 cards.')
+
+    const clear = wrapper.findAll('button').find((b) => b.text() === 'Clear filters')
+    expect(clear).toBeTruthy()
+    await clear!.trigger('click')
+    expect(wrapper.text()).not.toContain('Showing')
+    wrapper.unmount()
+  })
+
+  it('applies the persisted card-size preference to the section grid', () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useCardSizeStore().setSize('large')
+
+    const { wrapper } = mountView(pinia)
+    const grid = wrapper.get('section div.grid')
+    expect(grid.classes()).toContain('grid-cols-2')
     wrapper.unmount()
   })
 })

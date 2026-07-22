@@ -4,17 +4,23 @@ import { RouterLink, useRouter } from 'vue-router'
 import { Copy, Layers } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
+import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
+import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError, type DeckCardEntry } from '@/lib/api'
+import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
+import { useCardSizeStore } from '@/stores/cardSize'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
 // view; the only control is "Copy to my decks" for a signed-in visitor (issue #502).
@@ -59,23 +65,22 @@ usePageMeta({
   canonicalPath: computed(() => `/u/${props.handle}/decks/${props.id}`),
 })
 
+// Grouping + the card filter (issue #562) come from the display engine shared with the
+// owner view; the size menu writes the same persisted preference every grid reads.
 const sections = computed(() => deck.value?.sections ?? [])
-const cardsBySection = computed(() => {
-  const map = new Map<number, DeckCardEntry[]>()
-  for (const s of sections.value) map.set(s.id, [])
-  for (const c of deck.value?.cards ?? []) map.get(c.section_id)?.push(c)
-  return map
-})
-const visibleSections = computed(() =>
-  sections.value.filter((s) => (cardsBySection.value.get(s.id)?.length ?? 0) > 0),
-)
-const sectionNavItems = computed(() =>
-  visibleSections.value.map((section) => ({
-    id: section.id,
-    name: section.name,
-    count: cardsBySection.value.get(section.id)?.length ?? 0,
-  })),
-)
+const allCards = computed<DeckCardEntry[]>(() => deck.value?.cards ?? [])
+const {
+  filterQuery,
+  filterColors,
+  filterActive,
+  clearFilters,
+  cardsBySection,
+  visibleSections,
+  sectionNavItems,
+  matchCount,
+  totalCount,
+} = useDeckCardDisplay({ cards: allCards, sections })
+const cardSize = useCardSizeStore()
 function copies(entry: DeckCardEntry): number {
   return entry.quantity + entry.foil_quantity
 }
@@ -144,6 +149,31 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
 
       <DeckStats :cards="deck.cards" :sections="deck.sections" />
 
+      <!-- Card list controls (issue #562), mirroring the owner view: client-side text +
+        colour filters over the loaded deck, and the shared card-size preference. -->
+      <div v-if="allCards.length > 0" class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <CardSearchBox
+          v-model="filterQuery"
+          class="w-full sm:w-60"
+          placeholder="Filter cards…"
+          aria-label="Filter cards by name, type, text, set, number, rarity, or language"
+        />
+        <DeckColorFilter v-model="filterColors" />
+        <CardSizeMenu />
+      </div>
+      <p v-if="filterActive" class="text-muted-foreground mb-4 text-sm" aria-live="polite">
+        Showing {{ matchCount }} of {{ totalCount }} card{{ totalCount === 1 ? '' : 's' }}.
+        <button type="button" class="text-primary underline" @click="clearFilters">
+          Clear filters
+        </button>
+      </p>
+      <p
+        v-if="filterActive && visibleSections.length === 0"
+        class="text-muted-foreground py-12 text-center"
+      >
+        No cards in this deck match your filter.
+      </p>
+
       <div
         v-if="visibleSections.length > 0"
         class="xl:grid xl:grid-cols-[12rem_minmax(0,1fr)] xl:gap-6"
@@ -162,7 +192,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                 >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
               >
             </h2>
-            <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+            <div class="grid gap-3" :class="DECK_CARD_SIZE_GRID_CLASS[cardSize.size]">
               <CardTile
                 v-for="entry in cardsBySection.get(section.id) ?? []"
                 :key="`${entry.card.id}-${entry.section_id}`"
