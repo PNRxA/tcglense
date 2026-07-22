@@ -489,6 +489,25 @@ catalog) is planned but not implemented.
   scanner keeps its compact Select but shares the same query + metadata label; when OCR gives
   a set code it loads all pages before auto-picking, avoiding a partial-list fuzzy match that
   could hide the exact older printing beyond row 200.
+- **Format legality rides the shared `Card` DTO; deck breach is client-derived (issue
+  #557).** `cards.legalities` (the verbatim Scryfall object, already stored for `f:` search)
+  is parsed into an optional `legalities` map on the shared `CardResponse` — so it appears on
+  *every* card payload, lists included. The alternative (a rulings-style
+  `/cards/{id}/legalities` endpoint) was rejected: the deck page needs legalities for **all**
+  of a deck's cards to show breaches, and per-card fetches or a bespoke bulk endpoint cost
+  more than the field, which is highly repetitive JSON that gzip collapses to a few KB per
+  60-card page while the DB already selects the column. Deck "in breach" is then evaluated
+  client-side (`web/src/lib/legality.ts`) from the `DeckDetail.cards` payload the page
+  already holds — same pattern as the deck analytics above, and it keeps owner/public views
+  in lockstep for free. Semantics are deliberately conservative: `deck.format` stays free
+  text on the wire and is normalized (aliases: EDH, PDH, Comp. Brawl, …) to a legality key —
+  a custom/unknown format means *no evaluation*, never "everything is illegal"; a card with
+  missing/malformed legality data is counted as unknown, never flagged; `banned`/`not_legal`
+  always breach; `restricted` breaches only past 1 total copy per name (Vintage's rule).
+  Every section counts (there is no board-role enum to tell a maybeboard apart — see the
+  sections trade-off above). The malformed-JSON tolerance lives in one place
+  (`parse_legalities` in `handlers/shared/dto.rs`): a bad row degrades to `null`, it never
+  fails the request.
 - **Deck import/export is a sibling pipeline, not collection reconcile (issue #389).** The
   provider *deck* endpoints and uploaded deck-list rows carry a category/board that the flat
   collection intermediate cannot represent. `deck_import` therefore produces `DeckCardRow`

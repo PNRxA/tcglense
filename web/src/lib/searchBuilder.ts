@@ -19,6 +19,7 @@ import {
   setRange,
   upsertFilter,
 } from './searchQuery'
+import { formatLabel } from '@/lib/legality'
 
 // --- Option lists (value is the token value; '' means "Any", i.e. no filter) ---------
 
@@ -60,19 +61,25 @@ export const RARITY_OPTIONS: readonly { value: string; label: string }[] = [
   { value: 'mythic', label: 'Mythic' },
 ]
 
+// A deliberately compact subset of lib/legality's MTG_FORMATS (the panel dropdown
+// stays short); labels come from the shared table so the two can't drift.
+const SEARCH_FORMAT_KEYS = [
+  'standard',
+  'pioneer',
+  'modern',
+  'legacy',
+  'vintage',
+  'pauper',
+  'commander',
+  'brawl',
+  'historic',
+  'premodern',
+  'oldschool',
+] as const
+
 export const FORMAT_OPTIONS: readonly { value: string; label: string }[] = [
   { value: '', label: 'Any format' },
-  { value: 'standard', label: 'Standard' },
-  { value: 'pioneer', label: 'Pioneer' },
-  { value: 'modern', label: 'Modern' },
-  { value: 'legacy', label: 'Legacy' },
-  { value: 'vintage', label: 'Vintage' },
-  { value: 'pauper', label: 'Pauper' },
-  { value: 'commander', label: 'Commander' },
-  { value: 'brawl', label: 'Brawl' },
-  { value: 'historic', label: 'Historic' },
-  { value: 'premodern', label: 'Premodern' },
-  { value: 'oldschool', label: 'Old School' },
+  ...SEARCH_FORMAT_KEYS.map((key) => ({ value: key, label: formatLabel(key) })),
 ]
 
 /**

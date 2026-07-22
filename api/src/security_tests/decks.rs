@@ -113,6 +113,19 @@ async fn create_seeds_default_sections_and_round_trips_a_card() {
     assert_eq!(cards[0]["card"]["id"], card);
     assert_eq!(cards[0]["section_id"], section_id);
     assert_eq!(deck["summary"]["total_cards"], 4);
+    // The embedded card carries the parsed legalities map (issue #557) — the deck page
+    // computes its breach banner from exactly this payload, and the dummy catalog seeds
+    // a full Scryfall-shaped object on every card.
+    let legalities = cards[0]["card"]["legalities"]
+        .as_object()
+        .expect("legalities object");
+    for format in ["standard", "modern", "commander", "vintage", "pauper"] {
+        let status = legalities[format].as_str().expect("legality status");
+        assert!(
+            ["legal", "not_legal", "banned", "restricted"].contains(&status),
+            "unexpected legality status {status:?} for {format}"
+        );
+    }
 
     // The deck list shows the card count.
     let (status, _, list) = send(&app, get_with_bearer("/api/decks/mtg", &access)).await;

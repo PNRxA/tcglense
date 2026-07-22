@@ -8,6 +8,8 @@
 //! API types are generated from these structs rather than hand-mirrored. The
 //! `ts(rename)`s pin the names the web code already uses.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 use crate::entities::card;
@@ -79,6 +81,10 @@ pub(crate) struct CardResponse {
     pub secret_lair_spend_incentive: bool,
     /// Present for multi-faced cards; request face images via `?face=N`.
     pub faces: Vec<CardFaceResponse>,
+    /// Per-format legality, parsed from the stored Scryfall object: format key
+    /// (`"modern"`, `"commander"`, …) -> `"legal" | "not_legal" | "banned" |
+    /// "restricted"`. `None` when the catalog row has no legality data (issue #557).
+    pub legalities: Option<BTreeMap<String, String>>,
 }
 
 impl From<card::Model> for CardResponse {
@@ -92,6 +98,8 @@ impl From<card::Model> for CardResponse {
         let secret_lair_bonus = is_secret_lair_bonus(m.promo_types.as_deref());
         let secret_lair_spend_incentive =
             crate::scryfall::drops::is_spend_incentive(&m.game, &m.set_code, &m.collector_number);
+
+        let legalities = parse_legalities(m.legalities.as_deref());
 
         let stored_faces = stored_faces(&m);
 
@@ -146,6 +154,7 @@ impl From<card::Model> for CardResponse {
             secret_lair_bonus,
             secret_lair_spend_incentive,
             faces,
+            legalities,
         }
     }
 }
@@ -163,6 +172,13 @@ pub(crate) fn stored_faces(card: &card::Model) -> Vec<StoredFace> {
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default()
+}
+
+/// Parse the stored per-format legality object (`cards.legalities`, provider-written
+/// JSON) into the wire map. Tolerant by design: a missing column, non-JSON text, a
+/// non-object, or non-string values all yield `None` rather than failing the request.
+fn parse_legalities(raw: Option<&str>) -> Option<BTreeMap<String, String>> {
+    raw.and_then(|json| serde_json::from_str(json).ok())
 }
 
 pub(crate) fn split_csv(value: Option<String>) -> Vec<String> {
@@ -199,5 +215,20 @@ mod tests {
         assert!(is_secret_lair_bonus(Some("ffx,sldbonus,universesbeyond")));
         // Exact-token match: a tag that merely contains the substring must not match.
         assert!(!is_secret_lair_bonus(Some("notsldbonus")));
+    }
+
+    #[test]
+    fn parse_legalities_is_tolerant() {
+        // The happy path: the stored Scryfall object becomes the wire map.
+        let parsed = parse_legalities(Some(r#"{"modern":"banned","vintage":"restricted"}"#))
+            .expect("valid object parses");
+        assert_eq!(parsed["modern"], "banned");
+        assert_eq!(parsed["vintage"], "restricted");
+        // Anything malformed degrades to None instead of failing the request.
+        assert_eq!(parse_legalities(None), None);
+        assert_eq!(parse_legalities(Some("")), None);
+        assert_eq!(parse_legalities(Some("not json")), None);
+        assert_eq!(parse_legalities(Some(r#"["legal"]"#)), None);
+        assert_eq!(parse_legalities(Some(r#"{"modern":1}"#)), None);
     }
 }

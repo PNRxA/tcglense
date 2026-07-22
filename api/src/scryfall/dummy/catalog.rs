@@ -137,6 +137,84 @@ fn dummy_prices(n: i32) -> Prices {
     }
 }
 
+/// Deterministic per-format legalities mirroring the real column's shape (all format
+/// keys present, values `legal`/`not_legal`/`banned`/`restricted`), so the legality
+/// panel and deck breach checks (issue #557) are exercisable offline. Tokens are
+/// `not_legal` everywhere (as on Scryfall); otherwise the interesting statuses land on
+/// a deterministic spread of cards: some banned in modern/legacy/commander, some
+/// restricted in vintage, pauper tracks rarity, and rotating formats skip some cards.
+fn dummy_legalities(rarity: &str, type_line: Option<&str>, seed: usize) -> serde_json::Value {
+    if type_line.is_some_and(|t| t.contains("Token")) {
+        let all: serde_json::Map<String, serde_json::Value> = LEGALITY_FORMATS
+            .iter()
+            .map(|f| ((*f).to_string(), "not_legal".into()))
+            .collect();
+        return serde_json::Value::Object(all);
+    }
+    let standard = if seed % 3 == 0 { "legal" } else { "not_legal" };
+    let modern = if seed % 7 == 0 { "banned" } else { "legal" };
+    let vintage = if seed % 9 == 0 { "restricted" } else { "legal" };
+    let legacy = if seed % 13 == 0 { "banned" } else { "legal" };
+    let commander = if seed % 17 == 0 { "banned" } else { "legal" };
+    let pauper = if rarity == "common" {
+        "legal"
+    } else {
+        "not_legal"
+    };
+    serde_json::json!({
+        "standard": standard,
+        "future": standard,
+        "alchemy": standard,
+        "standardbrawl": standard,
+        "pioneer": if seed % 5 == 0 { "not_legal" } else { "legal" },
+        "modern": modern,
+        "legacy": legacy,
+        "vintage": vintage,
+        "pauper": pauper,
+        "paupercommander": pauper,
+        "commander": commander,
+        "oathbreaker": commander,
+        "duel": commander,
+        "predh": commander,
+        "brawl": "legal",
+        "competitivebrawl": "legal",
+        "historic": "legal",
+        "timeless": "legal",
+        "gladiator": "legal",
+        "penny": if seed % 2 == 0 { "legal" } else { "not_legal" },
+        "oldschool": "not_legal",
+        "premodern": if seed % 4 == 0 { "legal" } else { "not_legal" },
+        "tlr": "legal",
+    })
+}
+
+/// Every format key the dummy legalities object carries (the real Scryfall key set).
+const LEGALITY_FORMATS: &[&str] = &[
+    "standard",
+    "future",
+    "alchemy",
+    "standardbrawl",
+    "pioneer",
+    "modern",
+    "legacy",
+    "vintage",
+    "pauper",
+    "paupercommander",
+    "commander",
+    "oathbreaker",
+    "duel",
+    "predh",
+    "brawl",
+    "competitivebrawl",
+    "historic",
+    "timeless",
+    "gladiator",
+    "penny",
+    "oldschool",
+    "premodern",
+    "tlr",
+];
+
 /// The fields that vary per generated card; the constant ones (paper, English,
 /// non-digital, no images) are filled in by [`SeedCard::into_scryfall`].
 struct SeedCard {
@@ -166,6 +244,10 @@ impl SeedCard {
         } else {
             Some(self.colors)
         };
+        // Seeded off the external id's bytes: stable across runs (the determinism test
+        // relies on it) yet varied enough to hit every legality status somewhere.
+        let legality_seed: usize = self.external_id.bytes().map(usize::from).sum();
+        let legalities = dummy_legalities(self.rarity, self.type_line.as_deref(), legality_seed);
         ScryfallCard {
             id: self.external_id,
             oracle_id: self.oracle_id,
@@ -192,6 +274,7 @@ impl SeedCard {
             image_uris: None,
             card_faces: self.card_faces,
             prices: Some(self.prices),
+            legalities: Some(legalities),
             // Parity fields the dummy catalog doesn't fabricate default to None/absent.
             ..Default::default()
         }

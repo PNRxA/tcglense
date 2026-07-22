@@ -39,4 +39,10 @@ secret_lair_spend_incentive: boolean,
 /**
  * Present for multi-faced cards; request face images via `?face=N`.
  */
-faces: Array<CardFace>, };
+faces: Array<CardFace>, 
+/**
+ * Per-format legality, parsed from the stored Scryfall object: format key
+ * (`"modern"`, `"commander"`, …) -> `"legal" | "not_legal" | "banned" |
+ * "restricted"`. `None` when the catalog row has no legality data (issue #557).
+ */
+legalities: { [key in string]: string } | null, };

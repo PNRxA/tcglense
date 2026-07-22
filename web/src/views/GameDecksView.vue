@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import DeckTile from '@/components/decks/DeckTile.vue'
+import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckImportDialog from '@/components/decks/DeckImportDialog.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
@@ -33,7 +34,6 @@ import {
   useMoveDeckToFolderMutation,
 } from '@/composables/useDecks'
 import { ApiError, type Deck } from '@/lib/api'
-import { formatPresetsFor } from '@/lib/deckFormats'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
 
@@ -76,7 +76,6 @@ async function resolveFolderByName(name: string): Promise<number> {
 const createOpen = ref(false)
 const newDeckName = ref('')
 const newDeckFormat = ref('')
-const formatPresets = computed(() => formatPresetsFor(props.game))
 // Folder choice for the new deck. reka's Select reserves '' for "no selection", so the
 // picker uses explicit string sentinels: NO_FOLDER = no folder, NEW_FOLDER = create one
 // from `newDeckFolderName`; any other value is the chosen folder's id as a string.
@@ -247,15 +246,8 @@ function removeFolder(folderId: number, name: string) {
               </DialogDescription>
               <form class="mt-2 space-y-3" @submit.prevent="submitCreateDeck">
                 <Input v-model="newDeckName" placeholder="Deck name" autofocus />
-                <!-- Free-typed format with preset suggestions via a native datalist. -->
-                <Input
-                  v-model="newDeckFormat"
-                  list="deck-format-presets"
-                  placeholder="Format (optional, e.g. Commander)"
-                />
-                <datalist id="deck-format-presets">
-                  <option v-for="f in formatPresets" :key="f" :value="f" />
-                </datalist>
+                <!-- Real formats first, free text as the last-resort "Custom…" (issue #557). -->
+                <DeckFormatField v-model="newDeckFormat" :game="game" />
                 <!-- Folder: none, an existing one, or a brand-new one. -->
                 <Select v-model="newDeckFolderChoice">
                   <SelectTrigger class="w-full" aria-label="Folder">
