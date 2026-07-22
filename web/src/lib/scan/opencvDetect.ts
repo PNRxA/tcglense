@@ -1,7 +1,7 @@
 // OpenCV.js card detection: find the card's four corners in a camera frame robustly,
 // for the live outline and a tight, deskewed capture crop. OpenCV.js is a ~13 MB WASM
-// payload, so it's lazily imported the first time the scanner starts (never at app
-// load), like tesseract.
+// payload, so it's lazily imported when the dedicated scanner page mounts (never at app
+// load). That overlaps its download with the user's reading/camera-permission time.
 //
 // In the scanner's guided modes (acquisition / tracking / capture) the detector is an
 // escalation ladder of edge passes over one shared grayscale+blur, cheapest and most
@@ -30,8 +30,8 @@
 //
 // Corners are returned NORMALISED (0..1 of the full frame) so the same quad drives
 // both the on-screen outline (any display size) and the capture warp (any capture
-// resolution). The lightweight `detect.ts` detector stays as the fallback when OpenCV
-// isn't loaded.
+// resolution). The lightweight `detect.ts` detector stays as the explicit fallback when
+// OpenCV fails to load; ordinary warm-up waits for this full detector.
 
 import type { Quad } from './detect'
 import { fullFrameWindow, type SearchWindow } from './guidedDetect'

@@ -18,7 +18,7 @@ function mountSurface(overrides: Partial<InstanceType<typeof ScanCameraSurface>[
       status: 'idle',
       errorMessage: null,
       ocrLoading: false,
-      cvLoading: false,
+      cvStatus: 'ready',
       detectedQuad: null,
       captureEnabled: false,
       captureLabel: 'Scan card',
@@ -63,6 +63,18 @@ describe('ScanCameraSurface', () => {
     await wrapper.setProps({ captureEnabled: false })
     expect(wrapper.get('button[aria-label="Camera preview — Scan card"]').element).toBe(
       shortcut.element,
+    )
+  })
+
+  it('distinguishes normal detector warm-up from degraded fallback mode', async () => {
+    const wrapper = mountSurface({ status: 'ready', cvStatus: 'loading' })
+
+    expect(wrapper.text()).toContain('Preparing scanner…')
+    expect(wrapper.text()).not.toContain('Basic detection')
+
+    await wrapper.setProps({ cvStatus: 'fallback', detectedQuad: lockedQuad })
+    expect(wrapper.text()).toContain(
+      'Basic detection active — use a plain, contrasting background.',
     )
   })
 

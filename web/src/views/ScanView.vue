@@ -27,7 +27,7 @@ const {
   status,
   errorMessage,
   ocrLoading,
-  cvLoading,
+  cvStatus,
   detectedQuad,
   start,
   stop,
@@ -233,7 +233,7 @@ function reviewMatch() {
           :status="status"
           :error-message="errorMessage"
           :ocr-loading="ocrLoading"
-          :cv-loading="cvLoading"
+          :cv-status="cvStatus"
           :detected-quad="detectedQuad"
           :capture-enabled="captureEnabled"
           :capture-label="captureLabel"

@@ -28,6 +28,7 @@ import { SET_REGION, regionInRect } from '@/lib/scan/regions'
 // vite.config.ts), never a third-party CDN.
 
 export type CameraStatus = 'idle' | 'starting' | 'ready' | 'denied' | 'unavailable' | 'error'
+export type CvStatus = 'loading' | 'ready' | 'fallback'
 
 /** Size of the upright, deskewed crop the card is warped to (61:85, matching the guide
  * and the reference images the index is built from). */
@@ -109,9 +110,9 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   const facingMode = ref<'environment' | 'user'>('environment')
   /** True while the OCR worker's WASM/trained-data is still downloading/initialising. */
   const ocrLoading = ref(false)
-  /** True while OpenCV.js is still loading (detection uses the lightweight fallback until
-   * then). */
-  const cvLoading = ref(false)
+  /** OpenCV readiness. Detection waits during ordinary warm-up and only enters the
+   * lightweight fallback after an actual load failure. */
+  const cvStatus = ref<CvStatus>('loading')
   /** The card the live loop currently detects, as NORMALISED corners (0..1 of the frame),
    * or null when none is found — drives the on-screen outline and the capture crop. */
   const detectedQuad = ref<Quad | null>(null)
@@ -227,8 +228,8 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
       status.value = 'ready'
       // Warm the OCR worker so the first real scan isn't stalled behind the download.
       void ensureWorker().catch(() => {})
-      // Load OpenCV + start the live card-detection outline (uses the lightweight
-      // detector until OpenCV is ready).
+      // The scanner page starts warming OpenCV on mount. Retry here if that attempt failed;
+      // detection waits for the normal warm-up and only degrades after an actual load failure.
       ensureCv()
       startDetectLoop()
     } catch (err) {
@@ -329,21 +330,25 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return quad.map((p) => ({ x: p.x * w, y: p.y * h })) as Quad
   }
 
-  // Warm the OpenCV runtime once (detection uses the lightweight detector until it's
-  // ready). A load failure is swallowed — the fallback keeps the scanner working.
+  // Warm the OpenCV runtime once. A failed load still leaves the basic detector available,
+  // but the degraded mode is explicit and the next camera start retries it.
   function ensureCv(): void {
     if (cv || cvRequested) return
     cvRequested = true
-    cvLoading.value = true
+    cvStatus.value = 'loading'
     loadOpenCv()
       .then((loaded) => {
-        if (!disposed) cv = loaded
+        if (!disposed) {
+          cv = loaded
+          cvStatus.value = 'ready'
+        }
       })
-      .catch(() => {
+      .catch((err) => {
         cvRequested = false // allow a retry on the next start
-      })
-      .finally(() => {
-        cvLoading.value = false
+        if (!disposed) {
+          cvStatus.value = 'fallback'
+          console.warn('OpenCV failed to load; using basic card detection', err)
+        }
       })
   }
 
@@ -360,6 +365,9 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   function detectFrame(): void {
     const el = video.value
     if (!detectCanvas || status.value !== 'ready' || !el) return
+    // The normal warm-up is not a detection mode: avoid burning camera/canvas work or
+    // advancing tracker state until the full detector is ready (or has genuinely failed).
+    if (cvStatus.value === 'loading') return
     const vw = el.videoWidth
     const vh = el.videoHeight
     if (!vw || !vh) return
@@ -688,6 +696,11 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return { fingerprints, setText, foil }
   }
 
+  // `/scan` is a dedicated scanner route, so begin the essential detector download as soon as
+  // the page mounts. This overlaps the large payload with the user's reading/permission time
+  // instead of starting it only after the camera is already live.
+  ensureCv()
+
   onBeforeUnmount(() => {
     disposed = true
     stop()
@@ -706,7 +719,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     errorMessage,
     facingMode,
     ocrLoading,
-    cvLoading,
+    cvStatus,
     detectedQuad,
     start,
     stop,
