@@ -84,6 +84,7 @@ async function mountSession() {
   await session.handleCapture({
     fingerprints: [new Uint8Array(32)],
     setText: 'OLD • EN',
+    foil: false,
   })
   await flushPromises()
 }
@@ -222,7 +223,11 @@ describe('useScanSession printing resolution', () => {
     session.selectId(alternate.id)
     session.discardCurrent()
     await expect(
-      session.handleCapture({ fingerprints: [new Uint8Array(32)], setText: 'ALT • EN' }),
+      session.handleCapture({
+        fingerprints: [new Uint8Array(32)],
+        setText: 'ALT • EN',
+        foil: false,
+      }),
     ).resolves.toBe('busy')
 
     expect(session.target.quantity).toBe(1)
@@ -247,6 +252,7 @@ describe('useScanSession printing resolution', () => {
     await session.handleCapture({
       fingerprints: [new Uint8Array(32)],
       setText: 'OLD • EN',
+      foil: false,
     })
     await flushPromises()
     expect(session.ready.value).toBe(true)
@@ -288,5 +294,90 @@ describe('useScanSession printing resolution', () => {
         },
       ],
     ])
+  })
+})
+
+describe('useScanSession foil detection', () => {
+  // Mount a session and feed one capture, resolving to a single already-loaded printing. `foil`
+  // is the scanner's visual foil-star verdict (see lib/scan/foilStar).
+  async function captureInto(foil: boolean) {
+    const target = makeCard('star-printing', { set_code: 'neo' })
+    picker.printings.value = [target]
+    picker.hasNextPage.value = false
+
+    const visualMatch = makeCard('visual-match')
+    mocks.useScanMutation.mockReturnValue({
+      mutateAsync: vi
+        .fn<(...args: unknown[]) => Promise<{ data: Array<{ card: Card; distance: number }> }>>()
+        .mockResolvedValue({ data: [{ card: visualMatch, distance: 0 }] }),
+    })
+
+    const Host = defineComponent({
+      setup() {
+        session = useScanSession(ref('mtg'))
+        return () => null
+      },
+    })
+    wrapper = mount(Host)
+    await session.handleCapture({ fingerprints: [new Uint8Array(32)], setText: 'NEO • EN', foil })
+    await flushPromises()
+    return target
+  }
+
+  it('seeds the scanned copy as foil when the capture detected a foil star', async () => {
+    const target = await captureInto(true)
+    expect(session.ready.value).toBe(true)
+    // The star routes the +1 into the foil count; the copy still lands on the matched printing.
+    expect(session.target.quantity).toBe(0)
+    expect(session.target.foil_quantity).toBe(1)
+
+    await session.confirmCurrent()
+    expect(save).toHaveBeenCalledWith({
+      game: 'mtg',
+      id: target.id,
+      quantity: 0,
+      foil_quantity: 1,
+    })
+  })
+
+  it('seeds the scanned copy as regular when no foil star was detected', async () => {
+    await captureInto(false)
+    expect(session.ready.value).toBe(true)
+    expect(session.target.quantity).toBe(1)
+    expect(session.target.foil_quantity).toBe(0)
+  })
+
+  it('adds the foil copy on top of an existing holding, never overwriting the base counts', async () => {
+    // The scan write is absolute, so seeding a detected foil must preserve the copies already
+    // owned in both finishes — a regression that dropped the base would delete real copies.
+    ownedData.value = { quantity: 3, foil_quantity: 2 }
+    const target = await captureInto(true)
+    expect(session.target.quantity).toBe(3)
+    expect(session.target.foil_quantity).toBe(3)
+
+    await session.confirmCurrent()
+    expect(save).toHaveBeenCalledWith({
+      game: 'mtg',
+      id: target.id,
+      quantity: 3,
+      foil_quantity: 3,
+    })
+  })
+
+  it('upgrades a same-card rescan to foil when the star is detected only the second time', async () => {
+    // First scan misses the star (e.g. OpenCV still loading), seeding a regular copy.
+    await captureInto(false)
+    expect(session.target.quantity).toBe(1)
+    expect(session.target.foil_quantity).toBe(0)
+
+    // Re-pointing the same card, now with the star detected, re-seeds onto foil.
+    await session.handleCapture({
+      fingerprints: [new Uint8Array(32)],
+      setText: 'NEO • EN',
+      foil: true,
+    })
+    await flushPromises()
+    expect(session.target.quantity).toBe(0)
+    expect(session.target.foil_quantity).toBe(1)
   })
 })

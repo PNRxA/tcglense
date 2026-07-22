@@ -7,13 +7,19 @@
 // catalog autocomplete (which the user confirms) and the set/number are only ever used
 // to *prefer* a printing.
 
-/** Hints parsed from a modern (2015+) MTG card's bottom-left info line. Either field may
- * be absent when the OCR is too noisy; both are advisory (they pre-select a printing). */
+/** Hints parsed from a modern (2015+) MTG card's bottom-left info line. Fields may be
+ * absent when the OCR is too noisy; all are advisory (they pre-select a printing / finish). */
 export interface SetHint {
   /** Uppercased set code, e.g. `NEO`, `MH2`, `40K` — or undefined if unreadable. */
   setCode?: string
   /** Collector number with any zero-padding stripped, e.g. `123` — or undefined. */
   collectorNumber?: string
+  /** True when the card carries a printed foil star (`★`) on its info line. Modern Magic foils
+   * ink a star there (`SLD ★ EN`), so it's the card's printed "this copy is foil" signal. It is
+   * set from the scanner's **visual** star detector (`lib/scan/foilStar`), not parsed here: the
+   * OCR engine (tesseract, eng LSTM) has no `★` glyph and silently drops it, so the star is only
+   * recoverable geometrically. Undefined when no star was detected. */
+  foil?: boolean
 }
 
 /** Minimum length of a cleaned name before it's worth querying the catalog. */

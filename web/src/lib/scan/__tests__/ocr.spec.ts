@@ -98,6 +98,12 @@ describe('parseSetHint', () => {
   it('does not treat a bare number as a collector number', () => {
     expect(parseSetHint('artist 264').collectorNumber).toBeUndefined()
   })
+
+  it('never sets foil from OCR text — the star is detected visually, not read', () => {
+    // tesseract cannot emit `★`, so parseSetHint deliberately makes no attempt at the finish
+    // (a literal star in the raw string is treated as noise, like any other stray glyph).
+    expect(parseSetHint('0123/0264 R\nSLD ★ EN').foil).toBeUndefined()
+  })
 })
 
 describe('sameCardText', () => {

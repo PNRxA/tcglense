@@ -4,6 +4,7 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import type Tesseract from 'tesseract.js'
 import { detectCardQuad, quadArea, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
 import { detectCardQuadCv, loadOpenCv } from '@/lib/scan/opencvDetect'
+import { detectFoilStar } from '@/lib/scan/foilStar'
 import { cornerMetrics, createQuadTracker } from '@/lib/scan/quadTracker'
 import { hamming, phashFromRgba } from '@/lib/scan/phash'
 import { SET_REGION, regionInRect } from '@/lib/scan/regions'
@@ -79,11 +80,16 @@ export interface ScanCapture {
   fingerprints: Uint8Array[]
   /** Raw OCR of the bottom-left collector/set line — the printing hint. */
   setText: string
+  /** Whether a printed foil star was found on the card's info line (see `lib/scan/foilStar`).
+   * False when OpenCV isn't loaded yet, the crop is too noisy, or the card prints no star. */
+  foil: boolean
 }
 
 // Only the characters the set/collector strip can contain — constraining the OCR here
 // sharply cuts misreads of that tiny text. The name strip stays unconstrained (card names
-// use a wide, accented character set).
+// use a wide, accented character set). (The foil star `★` is deliberately absent: tesseract's
+// eng model has no such glyph and can never emit it — the star is found visually instead, see
+// `lib/scan/foilStar` + the `foil` field below.)
 const SET_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•· '
 
 export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
@@ -511,6 +517,24 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     return true
   }
 
+  // Look for the printed foil star on the validated first crop (still on cropCanvas, before
+  // the burst loop reuses it). OpenCV-only and best-effort: a not-yet-loaded runtime, a
+  // missing canvas, or any detector error just means "no star" (a regular copy), never a throw
+  // on the capture path.
+  function detectStarFromCrop(): boolean {
+    if (!cv || !cropCanvas) return false
+    const context = cropCanvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return false
+    try {
+      // The loaded runtime is fully-featured; opencvDetect's `Cv` types only the calls it
+      // makes, so widen it to the (larger) surface detectFoilStar needs.
+      const runtime = cv as unknown as Parameters<typeof detectFoilStar>[0]
+      return detectFoilStar(runtime, context.getImageData(0, 0, WARP_W, WARP_H))
+    } catch {
+      return false
+    }
+  }
+
   async function recognizeSetLine(): Promise<string> {
     if (!ocrCanvas) return ''
     const activeWorker = await ensureWorker()
@@ -549,6 +573,8 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     const referenceFingerprint = phashFromRgba(validatedRgba, WARP_W, WARP_H)
     if (!drawCropToCanvas(validatedRgba)) return null
     const setLineReady = prepareSetLine()
+    // Read the foil star off this first crop before the burst loop overwrites cropCanvas.
+    const foil = detectStarFromCrop()
     const fingerprints = variantFingerprints(referenceFingerprint)
     // Fallback if canvas variants were unavailable: keep the geometry-validated base crop.
     if (fingerprints.length === 0) fingerprints.push(referenceFingerprint)
@@ -574,7 +600,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
         setText = ''
       }
     }
-    return { fingerprints, setText }
+    return { fingerprints, setText, foil }
   }
 
   onBeforeUnmount(() => {

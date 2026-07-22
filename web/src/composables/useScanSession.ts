@@ -203,17 +203,24 @@ export function useScanSession(game: Ref<string>) {
     if (picked) applySelectedId(picked.id)
   })
 
-  // Seed the target counts off the settled holding, once per printing.
+  // Seed the target counts off the settled holding: the base counts plus the scanned copy,
+  // routed to foil when the scanner's visual detector found a printed foil star (else regular).
+  // The user still sees both steppers and can correct it before it commits, so a misdetected star
+  // is a one-tap fix, not a wrong write.
+  function seedTargetFromHolding() {
+    seedBase.quantity = owned.value.quantity
+    seedBase.foil_quantity = owned.value.foil_quantity
+    const foil = match.value?.hint.foil === true
+    target.quantity = seedBase.quantity + (foil ? 0 : SCANNED_COPIES)
+    target.foil_quantity = seedBase.foil_quantity + (foil ? SCANNED_COPIES : 0)
+    seeded.value = true
+  }
+
+  // Seed once per printing, off the settled holding.
   watch(
     [selectedId, ownedReady],
     () => {
-      if (selectedId.value && ownedReady.value && !seeded.value) {
-        seedBase.quantity = owned.value.quantity
-        seedBase.foil_quantity = owned.value.foil_quantity
-        target.quantity = seedBase.quantity + SCANNED_COPIES
-        target.foil_quantity = seedBase.foil_quantity
-        seeded.value = true
-      }
+      if (selectedId.value && ownedReady.value && !seeded.value) seedTargetFromHolding()
     },
     { immediate: true },
   )
@@ -389,9 +396,16 @@ export function useScanSession(game: Ref<string>) {
         return 'unmatched'
       }
       // Same card re-scanned: refresh the pickable strip in place — the match is unchanged,
-      // so candidates and match stay consistent.
+      // so candidates and match stay consistent. One exception: a later capture can resolve a
+      // foil star the first one missed (e.g. OpenCV finished loading between scans), so upgrade
+      // a false→true foil verdict and re-seed the scanned copy onto foil. Only false→true, so a
+      // manual correction (or an already-foil hint) is never clobbered.
       if (match.value && name === match.value.name) {
         candidates.value = matches
+        if (capture.foil && match.value.hint.foil !== true) {
+          match.value = { ...match.value, hint: { ...match.value.hint, foil: true } }
+          if (selectedId.value && ownedReady.value) seedTargetFromHolding()
+        }
         return 'same'
       }
       await commitCurrent()
@@ -404,10 +418,11 @@ export function useScanSession(game: Ref<string>) {
       // card than the match panel.
       candidates.value = matches
       // Visual match gives identity (name); the OCR'd set line pins the printing via the
-      // existing hint → matchPrinting flow (see the auto-pick watch above).
+      // existing hint → matchPrinting flow (see the auto-pick watch above). The finish comes
+      // from the visual foil-star detector on the capture (OCR can't read the `★`).
       startMatch({
         ocrName: name,
-        hint: parseSetHint(capture.setText),
+        hint: { ...parseSetHint(capture.setText), foil: capture.foil },
         candidates: uniqueNames(matches),
         name,
       })
