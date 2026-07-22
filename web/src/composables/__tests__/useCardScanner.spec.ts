@@ -74,10 +74,44 @@ function mockCamera() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.clearAllMocks()
+  mocks.loadOpenCv.mockImplementation(() => new Promise<never>(() => {}))
+  mocks.detectCardQuadCv.mockReturnValue(null)
+  mocks.hamming.mockReturnValue(0)
   vi.useRealTimers()
   vi.unstubAllGlobals()
   Reflect.deleteProperty(navigator, 'mediaDevices')
+})
+
+describe('useCardScanner OpenCV warm-up', () => {
+  it('starts loading the full detector as soon as the scanner page mounts', () => {
+    const { scanner, wrapper } = mountScanner()
+
+    expect(mocks.loadOpenCv).toHaveBeenCalledTimes(1)
+    expect(scanner.cvStatus.value).toBe('loading')
+
+    wrapper.unmount()
+  })
+
+  it('reports an explicit fallback after failure and retries when the camera starts', async () => {
+    mockCamera()
+    const failure = new Error('chunk unavailable')
+    mocks.loadOpenCv.mockRejectedValueOnce(failure)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { scanner, wrapper } = mountScanner()
+
+    await flushPromises()
+    expect(scanner.cvStatus.value).toBe('fallback')
+    expect(warn).toHaveBeenCalledWith('OpenCV failed to load; using basic card detection', failure)
+
+    await scanner.start()
+    await flushPromises()
+    expect(mocks.loadOpenCv).toHaveBeenCalledTimes(2)
+    expect(scanner.cvStatus.value).toBe('loading')
+
+    wrapper.unmount()
+  })
 })
 
 describe('useCardScanner OCR worker', () => {
@@ -130,7 +164,7 @@ describe('useCardScanner live detection loop', () => {
       videoWidth: 640,
       videoHeight: 480,
     }
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: () => {},
       putImageData: () => {},
       clearRect: () => {},
@@ -144,7 +178,7 @@ describe('useCardScanner live detection loop', () => {
         height: h,
       }),
     } as unknown as CanvasRenderingContext2D)
-    return ref(el as unknown as HTMLVideoElement)
+    return { video: ref(el as unknown as HTMLVideoElement), getContext }
   }
 
   function mockBurstFrameEnvironment() {
@@ -167,12 +201,28 @@ describe('useCardScanner live detection loop', () => {
   async function startLive() {
     mockCamera()
     mocks.loadOpenCv.mockResolvedValue({}) // a truthy stand-in runtime
-    const video = mockVideoAndCanvas()
+    const { video } = mockVideoAndCanvas()
     const { scanner, wrapper } = mountScanner(video)
     await scanner.start()
     await flushPromises() // lets the mocked OpenCV runtime finish "loading"
     return { scanner, wrapper }
   }
+
+  it('waits for OpenCV instead of running the weak detector during warm-up', async () => {
+    vi.useFakeTimers()
+    mockCamera()
+    const { video, getContext } = mockVideoAndCanvas()
+    const { scanner, wrapper } = mountScanner(video)
+    await scanner.start()
+
+    vi.advanceTimersByTime(360)
+
+    expect(scanner.cvStatus.value).toBe('loading')
+    expect(getContext).not.toHaveBeenCalled()
+    expect(scanner.detectedQuad.value).toBeNull()
+
+    wrapper.unmount()
+  })
 
   it('shows no outline for a single detection, locks on the confirming second tick', async () => {
     vi.useFakeTimers()

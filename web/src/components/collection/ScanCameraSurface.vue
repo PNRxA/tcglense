@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, type ComponentPublicInstance } from 'vue'
-import { Camera, CameraOff, Loader2, ScanLine } from '@lucide/vue'
+import { Camera, CameraOff, Loader2, ScanLine, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import type { CameraStatus } from '@/composables/useCardScanner'
+import type { CameraStatus, CvStatus } from '@/composables/useCardScanner'
 import type { Quad } from '@/lib/scan/detect'
 import { guideRect } from '@/lib/scan/regions'
 
@@ -10,7 +10,7 @@ const props = defineProps<{
   status: CameraStatus
   errorMessage: string | null
   ocrLoading: boolean
-  cvLoading: boolean
+  cvStatus: CvStatus
   detectedQuad: Quad | null
   captureEnabled: boolean
   captureLabel: string
@@ -97,7 +97,10 @@ const surfaceStyle = computed<Record<string, string>>(() => {
 })
 const overlayHint = computed(() => {
   if (props.processing) return props.activityLabel
-  if ((props.ocrLoading || props.cvLoading) && !props.detectedQuad) return 'Preparing scanner…'
+  if ((props.ocrLoading || props.cvStatus === 'loading') && !props.detectedQuad)
+    return 'Preparing scanner…'
+  if (props.cvStatus === 'fallback')
+    return 'Basic detection active — use a plain, contrasting background.'
   return props.statusHint
 })
 
@@ -189,8 +192,13 @@ function syncVideoAspect() {
         class="flex max-w-full items-center gap-1.5 rounded-full bg-black/65 px-3 py-1.5 text-center text-xs font-medium text-white backdrop-blur-sm"
       >
         <Loader2
-          v-if="processing || ocrLoading || cvLoading"
+          v-if="processing || ocrLoading || cvStatus === 'loading'"
           class="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+        />
+        <TriangleAlert
+          v-else-if="cvStatus === 'fallback'"
+          class="size-3.5 shrink-0 text-amber-300"
+          aria-hidden="true"
         />
         <span class="line-clamp-2">{{ overlayHint }}</span>
       </div>

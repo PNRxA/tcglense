@@ -1216,6 +1216,17 @@ catalog) is planned but not implemented.
   guard reads it as the viewport), so a crisp printed inner frame there can win — the
   guard cannot be removed without breaking the hole-contour mechanism on portrait
   phones, where the closed texture blob legitimately fills the frame.
+- **Detector readiness is explicit.** The npm-bundled OpenCV runtime is a multi-megabyte
+  payload that compiles embedded WASM on the main thread. The dedicated scanner route starts
+  warming it as soon as the page mounts, overlapping that cost with reading and camera
+  permission rather than waiting for the live preview. The ordinary warm-up window does not
+  run the lightweight detector: letting that weaker algorithm establish a lock and then
+  switching geometry underneath it made cold production loads behave differently from warm
+  local ones. The fallback remains available only after a real load failure, is visibly
+  labelled in the camera overlay, logs the underlying error, and retries when the camera is
+  started again. Do not move the import into global app startup or route-chunk prefetching —
+  opening the mobile navigation prefetches `/scan`, and must not make every user download
+  OpenCV.
 - **OCR runtime is self-hosted — no third-party code at runtime (issue #451).** The
   set/collector-number OCR half of the hybrid scanner uses `tesseract.js`, whose browser
   *default* downloads its worker, wasm core, and `eng.traineddata` from
