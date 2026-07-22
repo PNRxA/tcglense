@@ -1152,38 +1152,51 @@ catalog) is planned but not implemented.
   skipped outright (neither candidate nor clipped-card blocker) — only crop sides that
   coincide with the real camera frame keep clipped-card semantics — so a windowed search
   can never invent a corner the full frame would not have produced.
-- **Busy-background lock-on: escalate evidence, never loosen gates.** The OpenCV detector
-  is an escalation ladder over one shared grayscale+blur (`opencvDetect.ts` orchestrates;
-  candidate gating lives in `opencvContours.ts`, mode-aware selection in `quadSelect.ts`,
-  window geometry in `guidedDetect.ts`): median-luma Canny (the historical pass) → a
-  gradient-percentile band (a bright region drags the luma median above a weak card edge;
-  percentiles of the Sobel-magnitude distribution follow the scene's actual edge strengths)
-  → a fixed low band (defocused edges below any adaptive threshold; the card surfaces as
-  the hole its border moat leaves in the closed texture blob) → the Otsu retry. Each band
-  tries its morphologically closed map then the raw one (the 5×5 close both bridges glare
-  breaks *and* glues the outline to clutter — the raw map preserves topology when gluing
-  is what defeated the closed pass), and clipped-card blockers are per-mask, so one band's
-  merged blob can't veto another's clean candidate. A pass's winner returns early only
-  when two orthogonal evidence checks agree — perimeter support (sides trace real edges;
-  inverts on grid textures, where a texture-aligned phantom out-scores a true quad whose
-  sides bow a pixel) and interior-ring emptiness (the card's border moat; the one signal
-  busy texture cannot fake) — otherwise the ladder continues and the best
-  support+interior-weighted winner is returned at the end. Selection is spatially aware
+- **Busy-background lock-on: escalate evidence, never loosen gates.** In the scanner's
+  guided modes the OpenCV detector is an escalation ladder over one shared grayscale+blur
+  (`opencvDetect.ts` orchestrates; candidate gating lives in `opencvContours.ts`,
+  mode-aware selection in `quadSelect.ts`, window geometry in `guidedDetect.ts`):
+  median-luma Canny (the historical pass) → a fixed low band (a superset edge map for
+  soft or luma-mismatched edges the median thresholds sit above — a bright region drags
+  the luma median far past a weak card edge; the card typically surfaces as the hole its
+  border moat leaves in the closed texture blob) → the Otsu retry. The plain
+  (default) mode is deliberately NOT the ladder — it stays the historical median-band +
+  Otsu pipeline, behaviour-compatible, so non-scanner callers can never see a
+  card-identity change. Each guided band tries its morphologically closed map then the
+  raw one (the 5×5 close both bridges glare breaks *and* glues the outline to clutter —
+  the raw map preserves topology when gluing is what defeated the closed pass), and
+  clipped-card blockers are per-mask, so one band's merged blob can't veto another's
+  clean candidate. A pass's winner returns early only when two orthogonal evidence
+  checks agree — perimeter support (sides trace real edges; inverts on grid textures,
+  where a texture-aligned phantom out-scores a true quad whose sides bow a pixel) and
+  interior-ring emptiness (the card's border moat; the one signal busy texture cannot
+  fake) — otherwise the ladder continues and the best support+interior-weighted winner
+  is returned at the end; an ambiguous pass (two near-tied spatially distinct
+  candidates, after same-card-tolerance dedup) refuses the whole frame rather than
+  letting an earlier pass's banked winner shadow it. Selection is spatially aware
   without weakening geometry: acquisition gates hard on distance to the on-screen guide
-  (up-weighting near-guide candidates, refusing near-ties between distinct rectangles), a
-  first detection stays *tentative* (no green) until a consistent second confirms it
-  (`cardLock.ts` wraps the unchanged `quadTracker`), and once locked, ticks search only a
-  padded ROI around the prior in tracking mode — clutter outside the ROI simply vanishes —
-  with a prior-associated full-frame retry on the second consecutive miss, so the lock can
-  never jump to an unrelated object. The capture path threads the tracked quad as its
-  prior (ROI-first, capture-strict association, then full-frame; the historical
-  tight-agreement gate stays as defense in depth) so whatever pass produced a
-  busy-background live lock is reproducible at capture resolution — previously an
-  unconditioned full-frame re-detect could fail at commit time even with a correct green
-  lock. Costs stay bounded: fallback bands run on a 1-in-3 miss cadence full-frame, always
-  on (cheap) ROI crops; deliberately *excluded* for now — Hough-line quad assembly (no
-  reproducible failing scene needs it; highest false-positive and perf risk), adaptive
-  thresholding, `minAreaRect`, and any learned segmentation.
+  (up-weighting near-guide candidates), a first detection stays *tentative* (no green)
+  until a consistent second confirms it (`cardLock.ts` wraps `quadTracker`, and resets
+  it when a track is lost so the tracker's retained memory of the old card can't veto a
+  legitimate reacquisition), and once locked, ticks search only a padded ROI around the
+  prior in tracking mode — clutter outside the ROI simply vanishes — with a
+  prior-associated, fallback-free full-frame retry on the second consecutive miss, so
+  the lock can never jump to an unrelated object. ROI crop sides within the camera
+  frame's safety inset keep physical (clipped-card) semantics; truly artificial crop
+  sides make a touching contour neither candidate nor blocker. The capture path threads
+  the tracked quad as its prior (ROI-first, capture-strict association, then
+  full-frame; the historical tight-agreement gate stays as defense in depth) so
+  whatever pass produced a busy-background live lock is reproducible at capture
+  resolution — previously an unconditioned full-frame re-detect could fail at commit
+  time even with a correct green lock. Costs stay bounded: fallback bands run on a
+  1-in-3 miss cadence full-frame, always on (cheap) ROI crops. Deliberately *excluded*
+  for now — Hough-line quad assembly (no reproducible failing scene needs it; highest
+  false-positive and perf risk), adaptive thresholding, `minAreaRect`, and any learned
+  segmentation. Known pre-existing edge case (unchanged by this work): a card whose
+  bounds fill >95% of the frame registers no clipped-card blocker (the near-full-frame
+  guard reads it as the viewport), so a crisp printed inner frame there can win — the
+  guard cannot be removed without breaking the hole-contour mechanism on portrait
+  phones, where the closed texture blob legitimately fills the frame.
 - **OCR runtime is self-hosted — no third-party code at runtime (issue #451).** The
   set/collector-number OCR half of the hybrid scanner uses `tesseract.js`, whose browser
   *default* downloads its worker, wasm core, and `eng.traineddata` from

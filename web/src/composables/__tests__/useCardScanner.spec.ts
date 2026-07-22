@@ -227,7 +227,7 @@ describe('useCardScanner live detection loop', () => {
       true,
     ])
     for (const call of calls) {
-      expect(call[2].select.mode).toBe('acquisition')
+      expect(call[2].select!.mode).toBe('acquisition')
       expect(call[2].window).toBeUndefined()
     }
 
@@ -246,8 +246,10 @@ describe('useCardScanner live detection loop', () => {
     for (let tick = 0; tick < 3; tick++) vi.advanceTimersByTime(120)
     const calls = mocks.detectCardQuadCv.mock.calls
     expect(calls[0]![2].select!.mode).toBe('acquisition')
+    // The association prior is the ACTUAL tentative/displayed quad — not just any
+    // value; a wrong prior would make the real detector reject the card itself.
     for (const call of calls.slice(1)) {
-      expect(call[2].select!).toEqual({ mode: 'tracking', prior: expect.anything() })
+      expect(call[2].select!).toEqual({ mode: 'tracking', prior: seen })
     }
     expect(calls[1]![2].window).toMatchObject({ fullWidth: 640, fullHeight: 480 })
     expect(calls[1]![2].fallbackPasses).toBe(true)
@@ -258,13 +260,40 @@ describe('useCardScanner live detection loop', () => {
     })
 
     // Tick 3 was the first ROI miss (tolerated, single call). Tick 4 = second
-    // consecutive miss: the ROI search is retried full-frame, still prior-associated.
+    // consecutive miss: the ROI search is retried full-frame, still prior-associated,
+    // but WITHOUT the fallback ladder — the retry must not defeat the cadence-gated
+    // cost bound.
     const tick4Before = mocks.detectCardQuadCv.mock.calls.length
     vi.advanceTimersByTime(120)
     const tick4Calls = mocks.detectCardQuadCv.mock.calls.slice(tick4Before)
     expect(tick4Calls).toHaveLength(2)
     expect(tick4Calls[1]![2].window).toBeUndefined()
     expect(tick4Calls[1]![2].select!.mode).toBe('tracking')
+    expect(tick4Calls[1]![2].fallbackPasses).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('falls back to a full-frame capture detect when the ROI search misses', async () => {
+    vi.useFakeTimers()
+    mockBurstFrameEnvironment()
+    const { scanner, wrapper } = await startLive()
+    const locked = quadAt(0.2, 0.15)
+    mocks.detectCardQuadCv.mockReturnValueOnce(locked).mockReturnValueOnce(locked)
+    vi.advanceTimersByTime(240)
+    expect(scanner.detectedQuad.value).toEqual(locked)
+
+    // First capture frame: the ROI search misses (e.g. the card sits against the
+    // window's artificial edge) and the full-frame retry recovers it.
+    mocks.detectCardQuadCv.mockReturnValueOnce(null).mockReturnValue(locked)
+    const captured = await scanner.capture()
+    expect(captured).not.toBeNull()
+
+    const captureCalls = mocks.detectCardQuadCv.mock.calls.slice(2)
+    expect(captureCalls[0]![2].window).toBeDefined()
+    expect(captureCalls[0]![2].select!).toEqual({ mode: 'capture', prior: locked })
+    expect(captureCalls[1]![2].window).toBeUndefined()
+    expect(captureCalls[1]![2].select!).toEqual({ mode: 'capture', prior: locked })
 
     wrapper.unmount()
   })
@@ -292,7 +321,7 @@ describe('useCardScanner live detection loop', () => {
       expect.anything(),
       expect.objectContaining({
         fallbackPasses: true,
-        select: expect.objectContaining({ mode: 'capture' }),
+        select: { mode: 'capture', prior: locked },
         window: expect.objectContaining({ fullWidth: 640, fullHeight: 480 }),
       }),
     )

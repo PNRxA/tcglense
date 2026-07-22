@@ -25,7 +25,7 @@
 
 import { cardFrameInset, orderCorners, quadArea, type Point, type Quad } from './detect'
 import { physicalSides, type SearchWindow } from './guidedDetect'
-import type { Cv, CvMat } from './opencvTypes'
+import type { Cv, CvMat, CvMatVector } from './opencvTypes'
 import { CARD_ASPECT } from './regions'
 
 /** Relative tolerance on the card aspect ratio (perspective foreshortens it). */
@@ -307,10 +307,12 @@ export function collectCardQuads(cv: Cv, mask: CvMat, window: SearchWindow): Qua
   const frameAspect = window.fullWidth / window.fullHeight
   const physical = physicalSides(window)
   const inset = cardFrameInset(window.fullWidth, window.fullHeight)
-  const contours = new cv.MatVector()
-  const hierarchy = new cv.Mat()
   const candidates: QuadCandidate[] = []
+  let contours: CvMatVector | null = null
+  let hierarchy: CvMat | null = null
   try {
+    contours = new cv.MatVector()
+    hierarchy = new cv.Mat()
     cv.findContours(mask, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
     const candidateContours: Array<{ index: number; bounds: Bounds }> = []
     const clippedCardBounds: Bounds[] = []
@@ -324,26 +326,30 @@ export function collectCardQuads(cv: Cv, mask: CvMat, window: SearchWindow): Qua
         if (area < frameArea * MIN_AREA_FRACTION) continue
         const atPhysical = touchedSides(bounds, w, h, inset)
         const atArtificial = touchedSides(bounds, w, h, ARTIFICIAL_EDGE_MARGIN)
-        // Touching a physical camera edge = possibly clipped card: register the blocker
-        // that suppresses its printed inner frame. Touching only an artificial crop edge
-        // = geometry cut by the crop: skip silently (neither candidate nor blocker).
-        const touchesPhysical =
-          (physical.left && atPhysical.left) ||
-          (physical.top && atPhysical.top) ||
-          (physical.right && atPhysical.right) ||
-          (physical.bottom && atPhysical.bottom)
+        // Touching an artificial crop edge = geometry cut by the crop: skip silently.
+        // Checked FIRST, so cropped geometry can become neither a candidate nor a
+        // clipped-card blocker — a contour truncated by the crop has unreliable
+        // bounds, and a blocker derived from them could veto a valid nested card the
+        // full frame would have kept.
         const touchesArtificial =
           (!physical.left && atArtificial.left) ||
           (!physical.top && atArtificial.top) ||
           (!physical.right && atArtificial.right) ||
           (!physical.bottom && atArtificial.bottom)
+        if (touchesArtificial) continue
+        // Touching a physical camera edge = possibly clipped card: register the
+        // blocker that suppresses its printed inner frame.
+        const touchesPhysical =
+          (physical.left && atPhysical.left) ||
+          (physical.top && atPhysical.top) ||
+          (physical.right && atPhysical.right) ||
+          (physical.bottom && atPhysical.bottom)
         if (touchesPhysical) {
           if (area <= frameArea * MAX_AREA_FRACTION && cardLikeBounds(bounds)) {
             clippedCardBounds.push(bounds)
           }
           continue
         }
-        if (touchesArtificial) continue
         candidateContours.push({ index, bounds })
       } finally {
         contour.delete()
@@ -352,15 +358,13 @@ export function collectCardQuads(cv: Cv, mask: CvMat, window: SearchWindow): Qua
 
     for (const { index, bounds } of candidateContours) {
       const cnt = contours.get(index)
-      if (clippedCardBounds.some((clipped) => nestedInClippedCard(bounds, clipped))) {
-        cnt.delete()
-        continue
-      }
-      const hull = new cv.Mat()
+      let hull: CvMat | null = null
       try {
+        if (clippedCardBounds.some((clipped) => nestedInClippedCard(bounds, clipped))) continue
         // Hull, not the raw contour: a glare-broken (C-shaped) or finger-notched
         // contour has a tiny / non-convex raw outline but a card-shaped hull, and the
         // hull's area is the right size gate for it.
+        hull = new cv.Mat()
         cv.convexHull(cnt, hull)
         const hullArea = cv.contourArea(hull)
         if (hullArea < frameArea * MIN_AREA_FRACTION) continue
@@ -380,13 +384,13 @@ export function collectCardQuads(cv: Cv, mask: CvMat, window: SearchWindow): Qua
         if (err === null) continue
         candidates.push({ quad, areaFraction: area / frameArea, shapeError: err })
       } finally {
-        hull.delete()
+        hull?.delete()
         cnt.delete()
       }
     }
     return candidates
   } finally {
-    contours.delete()
-    hierarchy.delete()
+    contours?.delete()
+    hierarchy?.delete()
   }
 }

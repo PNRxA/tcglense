@@ -76,6 +76,26 @@ describe('createCardLock', () => {
     expect(lock.prior()).toBeNull()
   })
 
+  it('reacquires cleanly after a lost track, even near the old position', () => {
+    const lock = createCardLock()
+    lock.update(quadAt(0.2, 0.2, 0.4, 0.56), 0)
+    lock.update(quadAt(0.2, 0.2, 0.4, 0.56), 120)
+    // Lose the track: three held misses, then the clearing fourth.
+    for (let miss = 0; miss < 4; miss++) lock.update(null, 240 + miss * 120)
+    expect(lock.prior()).toBeNull()
+    // The same card reappears under a perspective change: three corners near the old
+    // quad, one corner ~0.09 away. The wrapped tracker's retained memory of the LOST
+    // card must not veto this genuinely confirmed new acquisition.
+    const shifted: Quad = [
+      { x: 0.2, y: 0.2 },
+      { x: 0.6, y: 0.2 },
+      { x: 0.69, y: 0.76 },
+      { x: 0.2, y: 0.76 },
+    ]
+    expect(lock.update(shifted, 840)).toBeNull()
+    expect(lock.update(shifted, 960)).toEqual(shifted)
+  })
+
   it('reset() clears tentative state, the track, and the prior', () => {
     const lock = createCardLock()
     lock.update(quadAt(0.2, 0.15), 0)

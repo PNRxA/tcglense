@@ -389,6 +389,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
         }
         priorMisses = raw ? 0 : priorMisses + 1
       } else {
+        // Just dropped out of prior mode (lock lost/invalidated): restart the miss
+        // cadence so the first cold acquisition tick gets the full ladder instead of
+        // inheriting a stale count from ROI ticks that never used it.
+        if (priorMisses > 0) rawMisses = 0
         priorMisses = 0
         raw = detectCardQuadCv(cv, ctx.getImageData(0, 0, dw, dh), {
           select: { mode: 'acquisition', guide: guideTarget(dw, dh) },
@@ -405,11 +409,17 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   }
 
   // A chained timeout, not an interval: a detection tick that overruns its budget on a
-  // slow device must delay the next tick rather than queue back-to-back callbacks.
+  // slow device must delay the next tick rather than queue back-to-back callbacks. The
+  // finally keeps the chain alive through a transiently throwing tick (a mid-resize
+  // getImageData, an OpenCV hiccup) — like setInterval, one bad frame must not
+  // silently freeze the outline for the rest of the session.
   function scheduleDetect(): void {
     detectTimer = window.setTimeout(() => {
-      detectFrame()
-      if (detectTimer !== null) scheduleDetect()
+      try {
+        detectFrame()
+      } finally {
+        if (detectTimer !== null) scheduleDetect()
+      }
     }, DETECT_INTERVAL_MS)
   }
   function startDetectLoop(): void {
@@ -494,6 +504,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
 
   function invalidateLock(): void {
     lock.reset()
+    // Fresh acquisition deserves a fresh cadence — the very next tick may need the
+    // fallback bands to re-find the card the capture just distrusted.
+    rawMisses = 0
+    priorMisses = 0
     detectedQuad.value = null
   }
 

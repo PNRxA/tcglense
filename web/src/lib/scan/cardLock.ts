@@ -66,7 +66,13 @@ export function createCardLock(options: CardLockOptions = {}): CardLock {
       if (locked) {
         displayed = tracker.update(detected)
         if (!displayed) {
-          // Track lost: cold acquisition next — a stale prior must not linger.
+          // Track lost: cold acquisition next — a stale prior must not linger, and
+          // the tracker itself must forget the old card. Its internal trusted-quad
+          // retention (which deliberately survives display expiry) would otherwise
+          // veto a legitimately reacquired card as a corner outlier of the LOST one,
+          // forever; the two-hit confirmation here already provides the transient-
+          // candidate protection that retention existed for.
+          tracker.reset()
           locked = false
           tentative = null
         }

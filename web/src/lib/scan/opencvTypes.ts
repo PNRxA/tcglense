@@ -11,7 +11,6 @@ export type Cv = {
   cvtColor: (src: CvMat, dst: CvMat, code: number) => void
   GaussianBlur: (src: CvMat, dst: CvMat, ksize: unknown, sigma: number) => void
   Canny: (src: CvMat, dst: CvMat, t1: number, t2: number) => void
-  Sobel: (src: CvMat, dst: CvMat, ddepth: number, dx: number, dy: number) => void
   getStructuringElement: (shape: number, ksize: unknown) => CvMat
   morphologyEx: (src: CvMat, dst: CvMat, op: number, kernel: CvMat) => void
   threshold: (src: CvMat, dst: CvMat, thresh: number, maxval: number, type: number) => number
@@ -34,14 +33,12 @@ export type Cv = {
   THRESH_OTSU: number
   RETR_LIST: number
   CHAIN_APPROX_SIMPLE: number
-  CV_16S: number
 }
 
 export interface CvMat {
   rows: number
   data: Uint8Array
   data32S: Int32Array
-  data16S: Int16Array
   delete: () => void
 }
 

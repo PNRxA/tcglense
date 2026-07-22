@@ -227,25 +227,26 @@ describe('detectCardQuadCv', () => {
   // escalation-ladder or arbitration mechanism; the failure modes were reproduced
   // against the pre-ladder detector before the mechanisms existed. ———
 
-  it('finds a weak-edged dark card on dark busy wood under a bright region (gradient band)', () => {
+  it('finds a weak-edged dark card on dark busy wood under a bright region (low band)', () => {
     // The bright band drags the LUMA median far above the soft card edge, so the
     // median-scaled Canny thresholds miss ~80% of the boundary while the wood grain
-    // still fires — only thresholds derived from the gradient-magnitude distribution
-    // resolve this scene.
+    // still fires — only the fixed low band sees the whole outline.
     const frame = new Frame(320, 240, 50)
     frame.fillRect(0, 0, 320, 80, 190)
     for (let y = 80; y < 240; y += 5) frame.fillRect(0, y, 320, y + 2, 70)
     const { w, h } = cardDims(150)
     const truth = frame.drawCard(160, 155, w, h, 0, 35)
     frame.blur(1, 1)
-    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.03)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.03)
   })
 
   it('finds a defocused card whose luma sits inside the texture range (low band + interior ring)', () => {
-    // Defocus drops the card edge below every luma- or percentile-derived threshold
-    // (texture dominates the gradient distribution), so only the fixed low band sees
-    // the full boundary — the card surfaces as the hole its border moat leaves in the
-    // closed texture blob. The tight tolerance additionally pins the interior-ring
+    // Defocus drops the card edge below the luma-derived median thresholds, so only
+    // the fixed low band sees the full boundary — the card surfaces as the hole its
+    // border moat leaves in the closed texture blob. The tight tolerance additionally pins the interior-ring
     // arbitration: the always-on median band produces a plausible quad that leaked
     // half a tile outward through hysteresis gaps (error ~0.076), and only the
     // interior-clearance ranking lets the low band's true quad outrank it.
@@ -255,9 +256,12 @@ describe('detectCardQuadCv', () => {
     const truth = frame.drawCard(160, 120, w, h, 0, 130)
     frame.blur(1, 1)
     frame.addNoise(3)
-    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.03)
+    const select = { mode: 'acquisition', guide: guideTarget(320, 240) } as const
+    expect(
+      maxCornerError(detectCardQuadCv(cv, frame.imageData(), { select }), truth),
+    ).toBeLessThanOrEqual(0.03)
     // The recovery lives in the fallback passes — the cadence gate really gates it.
-    expect(detectCardQuadCv(cv, frame.imageData(), { fallbackPasses: false })).toBeNull()
+    expect(detectCardQuadCv(cv, frame.imageData(), { select, fallbackPasses: false })).toBeNull()
   })
 
   it('finds a motion-smeared card on a busy background', () => {
@@ -267,7 +271,10 @@ describe('detectCardQuadCv', () => {
     const truth = frame.drawCard(160, 120, w, h, 2, 200)
     frame.motionBlurX(7)
     frame.addNoise(3)
-    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.03)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.03)
   })
 
   it('finds a soft-focus card on a bright busy background', () => {
@@ -277,7 +284,10 @@ describe('detectCardQuadCv', () => {
     const truth = frame.drawCard(160, 120, w, h, 0, 120)
     frame.blur(2, 2)
     frame.addNoise(3)
-    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.05)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.05)
   })
 
   it('keeps a perspective trapezoid tight on a textured background (support arbitration)', () => {
@@ -299,9 +309,10 @@ describe('detectCardQuadCv', () => {
       frame.fillRect(Math.round(cx - hw), y, Math.round(cx + hw), y + 1, 205)
     }
     frame.blur(1, 1)
-    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(
-      0.035,
-    )
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.035)
   })
 
   it.each([
@@ -317,7 +328,11 @@ describe('detectCardQuadCv', () => {
     const frame = new Frame(320, 240, 60)
     texture(frame)
     frame.blur(1, 1)
-    expect(detectCardQuadCv(cv, frame.imageData())).toBeNull()
+    expect(
+      detectCardQuadCv(cv, frame.imageData(), {
+        select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+      }),
+    ).toBeNull()
   })
 
   // ——— Guided modes: spatial priors change selection, never the geometric gates. ———
@@ -406,7 +421,9 @@ describe('detectCardQuadCv', () => {
       return { frame, truth }
     }
     const live = scene(320)
-    const liveQuad = detectCardQuadCv(cv, live.frame.imageData())
+    const liveQuad = detectCardQuadCv(cv, live.frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
     expect(maxCornerError(liveQuad, live.truth)).toBeLessThanOrEqual(0.03)
 
     const capture = scene(1000)

@@ -3,30 +3,28 @@
 // payload, so it's lazily imported the first time the scanner starts (never at app
 // load), like tesseract.
 //
-// The detector is an escalation ladder of edge passes over one shared grayscale+blur,
-// cheapest and most conservative first, returning at the first pass whose gated
-// candidates yield a selectable quad:
+// In the scanner's guided modes (acquisition / tracking / capture) the detector is an
+// escalation ladder of edge passes over one shared grayscale+blur, cheapest and most
+// conservative first, exiting early only when a winner's edge evidence is convincing:
 //
 // 1. Median-luma Canny (the classic auto-Canny ±33% band) — the historical pass; still
 //    first because it is the best-behaved on ordinary scenes.
-// 2. Gradient-percentile Canny — thresholds from the Sobel-magnitude distribution
-//    instead of luma. A busy or partly bright scene drags the luma median far above a
-//    weak card edge (the edge never enters the map at all); percentile thresholds
-//    follow the scene's actual edge strengths. (Empirically: a dark card on dark wood
-//    under a bright window goes from 22% of its boundary in the edge map to 100%.)
-// 3. Low fixed Canny — the floor for defocused scenes where even gradient percentiles
-//    sit above a soft card edge because strong background texture dominates the
-//    distribution. The dense map this produces is safe because the contour gates do
-//    the rejecting; the card typically surfaces as the hole its border moat leaves in
-//    the closed texture blob.
-// 4. Otsu threshold segmentation — polarity-agnostic catch-all for soft-gradient
+// 2. Low fixed Canny — a superset edge map for busy or defocused scenes where the
+//    luma-keyed thresholds sit above a soft card edge (a bright region drags the
+//    median far past it: empirically, a dark card on dark wood under a bright window
+//    has only 22% of its boundary in the median map but 100% in the low map). Its
+//    density is safe because the contour gates do the rejecting; the card typically
+//    surfaces as the hole its border moat leaves in the closed texture blob.
+// 3. Otsu threshold segmentation — polarity-agnostic catch-all for soft-gradient
 //    outlines below any usable edge threshold (bimodal scenes only).
 //
 // Each edge band runs its CLOSED map first (small glare/focus breaks otherwise split
 // the outline into fragments that individually fail the size/aspect gates), then the
 // RAW map (the 5×5 close can also glue the card outline to background clutter — raw
 // preserves the original Canny topology when that gluing is what defeated the closed
-// pass). Candidate gating lives in opencvContours.ts, mode-aware selection (guide /
+// pass). In the default 'plain' mode the ladder is OFF: plain is the historical
+// pipeline (median-band closed contours, then Otsu), kept behaviour-compatible.
+// Candidate gating lives in opencvContours.ts, mode-aware selection (guide /
 // tracking / capture priors, ambiguity rejection) in quadSelect.ts, and search-window
 // geometry in guidedDetect.ts.
 //
@@ -39,7 +37,12 @@ import type { Quad } from './detect'
 import { fullFrameWindow, type SearchWindow } from './guidedDetect'
 import { collectCardQuads, quadEdgeSupport, quadInteriorEdgeDensity } from './opencvContours'
 import type { Cv, CvMat } from './opencvTypes'
-import { selectScoredCardQuad, type QuadSelection } from './quadSelect'
+import {
+  crossPassAmbiguous,
+  selectCardQuadResult,
+  type QuadSelection,
+  type SelectedQuad,
+} from './quadSelect'
 
 export type { Cv } from './opencvTypes'
 
@@ -100,51 +103,8 @@ function medianBand(blur: CvMat): CannyBand {
   return { lower, upper }
 }
 
-/** Percentiles of the Sobel gradient-magnitude (|gx|+|gy|) distribution the band's
- * Canny thresholds come from. */
-const GRADIENT_LOW_PERCENTILE = 0.8
-const GRADIENT_HIGH_PERCENTILE = 0.95
-
-/** Canny thresholds from the frame's gradient-magnitude distribution: the lower/upper
- * thresholds land at fixed percentiles of |gx|+|gy|, so a weak-but-real card edge in a
- * scene whose *luma* median is dragged up by unrelated bright regions still clears the
- * threshold. */
-function gradientBand(cv: Cv, blur: CvMat): CannyBand {
-  const gx = new cv.Mat()
-  const gy = new cv.Mat()
-  try {
-    cv.Sobel(blur, gx, cv.CV_16S, 1, 0)
-    cv.Sobel(blur, gy, cv.CV_16S, 0, 1)
-    const dx = gx.data16S
-    const dy = gy.data16S
-    const n = dx.length
-    // |gx|+|gy| of an 8-bit image under 3×3 Sobel is bounded by 8×255; a 1021-bin
-    // histogram (cap 1020) is plenty for percentile picking.
-    const hist = new Uint32Array(1021)
-    for (let i = 0; i < n; i++) {
-      const m = Math.min(1020, Math.abs(dx[i]!) + Math.abs(dy[i]!))
-      hist[m] = (hist[m] ?? 0) + 1
-    }
-    const pick = (fraction: number): number => {
-      const target = n * fraction
-      let acc = 0
-      for (let v = 0; v < 1021; v++) {
-        acc += hist[v]!
-        if (acc >= target) return v
-      }
-      return 1020
-    }
-    const lower = Math.max(10, pick(GRADIENT_LOW_PERCENTILE))
-    const upper = Math.max(lower + 20, pick(GRADIENT_HIGH_PERCENTILE))
-    return { lower, upper }
-  } finally {
-    gx.delete()
-    gy.delete()
-  }
-}
-
-/** The fixed low band that catches soft, defocused card edges the adaptive bands sit
- * above. Kept last among the edge bands: its dense map costs the most to gate. */
+/** The fixed low band that catches soft, defocused, or luma-mismatched card edges the
+ * adaptive median band sits above. */
 const LOW_BAND: CannyBand = { lower: 10, upper: 30 }
 
 /** Two bands this close would re-run an equivalent edge map — skip the duplicate. */
@@ -179,25 +139,28 @@ function interiorWeight(density: number): number {
 }
 
 export interface DetectOptions {
-  /** Whether the fallback passes (the gradient-percentile and low Canny bands, and the
-   * Otsu segmentation retry) may run when the primary median-band pass finds nothing.
-   * They are the expensive share of a cardless tick, so the live loop only enables
-   * them on a cadence of misses (the outline tracker bridges the added latency) and on
-   * region-of-interest crops; a one-off capture-path detect should leave them on
-   * (default). */
+  /** Whether the fallback passes (in guided modes: the low Canny band and the Otsu
+   * segmentation retry; in plain mode: the Otsu retry) may run when the primary
+   * median-band pass finds nothing. They are the expensive share of a cardless tick,
+   * so the live loop only enables them on a cadence of misses (the outline tracker
+   * bridges the added latency) and on region-of-interest crops; a one-off
+   * capture-path detect should leave them on (default). */
   fallbackPasses?: boolean
   /** The crop's location within the full detection frame when `imageData` is a
    * region-of-interest crop rather than the whole frame. Gates and output coordinates
    * are always in full-frame terms. */
   window?: SearchWindow
-  /** Candidate-selection policy (guide-weighted acquisition, prior-associated tracking
-   * or capture). Defaults to the classic area-dominant, aspect-weighted selection. */
+  /** Candidate-selection policy. Guided modes (acquisition/tracking/capture) run the
+   * full escalation ladder with evidence arbitration; the default 'plain' mode IS the
+   * historical detector — median-band closed contours, then the Otsu retry — kept
+   * behaviour-compatible so a plain caller can never see a card-identity change
+   * against the classic pipeline. */
   select?: QuadSelection
 }
 
 /** Detect the most card-shaped quadrilateral in `imageData`, or null. Corners are
  * returned normalised (0..1 of the full frame) and ordered [TL, TR, BR, BL]. All
- * OpenCV mats are freed. */
+ * OpenCV mats are freed, on success and on error alike. */
 export function detectCardQuadCv(
   cv: Cv,
   imageData: ImageData,
@@ -206,64 +169,95 @@ export function detectCardQuadCv(
   const fallbackPasses = options.fallbackPasses ?? true
   const window = options.window ?? fullFrameWindow(imageData.width, imageData.height)
   const select = options.select ?? { mode: 'plain' }
-  const src = cv.matFromImageData(imageData)
-  const gray = new cv.Mat()
-  const blur = new cv.Mat()
-  const edges = new cv.Mat()
-  const closed = new cv.Mat()
-  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5))
-  // Shared edge-evidence map for support scoring (the permissive low band, so soft
-  // boundaries still count as evidence). Built lazily: only frames where some pass
-  // actually finds a winner pay for it. (Boxed so the closure assignment below isn't
-  // flow-narrowed away at the cleanup site.)
+  // Every native allocation happens inside the try and is declared here so the
+  // finally can free whatever subset was actually created — an allocation failure
+  // halfway through must not leak the earlier mats.
+  let src: CvMat | null = null
+  let gray: CvMat | null = null
+  let blur: CvMat | null = null
+  let edges: CvMat | null = null
+  let closed: CvMat | null = null
+  let kernel: CvMat | null = null
+  // Shared edge-evidence map for support/interior scoring (the permissive low band,
+  // so soft boundaries still count as evidence). Built lazily: only frames where some
+  // pass actually finds a winner pay for it. (Boxed so the closure assignment below
+  // isn't flow-narrowed away at the cleanup site.)
   const lazy: { supportEdges: CvMat | null } = { supportEdges: null }
   try {
+    src = cv.matFromImageData(imageData)
+    gray = new cv.Mat()
+    blur = new cv.Mat()
+    edges = new cv.Mat()
+    closed = new cv.Mat()
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5))
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY)
     cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0)
+    // Non-null locals for the closures below (the outer lets stay nullable for the
+    // finally).
+    const blurMat = blur
+    const edgesMat = edges
+    const closedMat = closed
+    const kernelMat = kernel
 
-    const provisional: Array<{ quad: Quad; rank: number }> = []
+    const primary = medianBand(blurMat)
+
+    // ——— Plain mode: the historical pipeline, verbatim. Median-band closed contours,
+    // then the Otsu retry — no raw maps, no extra bands, no evidence arbitration —
+    // so a plain caller's selected card can never differ from the classic detector's.
+    if (select.mode === 'plain') {
+      cv.Canny(blurMat, edgesMat, primary.lower, primary.upper)
+      cv.morphologyEx(edgesMat, closedMat, cv.MORPH_CLOSE, kernelMat)
+      const closedPick = selectCardQuadResult(collectCardQuads(cv, closedMat, window), select)
+      if (closedPick.selected) return closedPick.selected.quad
+      if (!fallbackPasses) return null
+      cv.threshold(blurMat, edgesMat, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+      const otsuPick = selectCardQuadResult(collectCardQuads(cv, edgesMat, window), select)
+      return otsuPick.selected?.quad ?? null
+    }
+
+    // ——— Guided modes: the escalation ladder with evidence arbitration.
+    const provisional: Array<{ pick: SelectedQuad; rank: number }> = []
+    let sawAmbiguity = false
     // Run one mask's collect+select; returns the winner only when the edge evidence
-    // makes it confident, else banks it for the end-of-ladder arbitration.
+    // makes it confident, else banks it for the end-of-ladder arbitration. An
+    // ambiguous pass poisons the whole frame — a banked winner from another pass must
+    // not shadow ambiguity a more inclusive map discovered.
     const consider = (mask: CvMat): Quad | null => {
-      const pick = selectScoredCardQuad(collectCardQuads(cv, mask, window), select)
+      const result = selectCardQuadResult(collectCardQuads(cv, mask, window), select)
+      if (result.ambiguous) {
+        sawAmbiguity = true
+        return null
+      }
+      const pick = result.selected
       if (!pick) return null
       if (!lazy.supportEdges) {
         lazy.supportEdges = new cv.Mat()
-        cv.Canny(blur, lazy.supportEdges, LOW_BAND.lower, LOW_BAND.upper)
+        cv.Canny(blurMat, lazy.supportEdges, LOW_BAND.lower, LOW_BAND.upper)
       }
       const support = quadEdgeSupport(lazy.supportEdges, window, pick.quad)
       const interior = quadInteriorEdgeDensity(lazy.supportEdges, window, pick.quad)
       provisional.push({
-        quad: pick.quad,
+        pick,
         rank: pick.score * supportWeight(support) * interiorWeight(interior),
       })
       const confident = support >= CONFIDENT_SUPPORT && interior <= CONFIDENT_MAX_INTERIOR
       return confident ? pick.quad : null
     }
-    const best = (): Quad | null => {
-      let top: { quad: Quad; rank: number } | null = null
-      for (const entry of provisional) {
-        if (!top || entry.rank > top.rank) top = entry
-      }
-      return top?.quad ?? null
-    }
 
-    const bands: CannyBand[] = [medianBand(blur)]
-    if (fallbackPasses) {
-      // Low before gradient: the low map is a superset of edge evidence, so when a
-      // soft card boundary exists at all, the low pass finds it hugging the true
-      // outline (usually as the hole its border moat leaves in the closed texture
-      // blob). The gradient band still catches scenes whose dense low map fuses into
-      // a frame-touching blob with no usable hole.
-      if (!bands.some((band) => similarBand(band, LOW_BAND))) bands.push(LOW_BAND)
-      const gradient = gradientBand(cv, blur)
-      if (!bands.some((band) => similarBand(band, gradient))) bands.push(gradient)
+    const bands: CannyBand[] = [primary]
+    if (fallbackPasses && !similarBand(primary, LOW_BAND)) {
+      // The low map is a superset of edge evidence: when a soft card boundary exists
+      // at all, the low pass finds it hugging the true outline (usually as the hole
+      // its border moat leaves in the closed texture blob).
+      bands.push(LOW_BAND)
     }
 
     for (const band of bands) {
-      cv.Canny(blur, edges, band.lower, band.upper)
-      cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, kernel)
-      const confident = consider(closed) ?? consider(edges)
+      cv.Canny(blurMat, edgesMat, band.lower, band.upper)
+      cv.morphologyEx(edgesMat, closedMat, cv.MORPH_CLOSE, kernelMat)
+      let confident = consider(closedMat)
+      if (!confident && !sawAmbiguity) confident = consider(edgesMat)
+      if (sawAmbiguity) return null
       if (confident) return confident
     }
 
@@ -271,18 +265,34 @@ export function detectCardQuadCv(
       // Otsu segmentation — catches soft-gradient outlines where edges are too weak,
       // and is polarity-agnostic (a dark card region is a hole contour, which
       // RETR_LIST also traces).
-      cv.threshold(blur, edges, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
-      const confident = consider(edges)
+      cv.threshold(blurMat, edgesMat, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+      const confident = consider(edgesMat)
+      if (sawAmbiguity) return null
       if (confident) return confident
     }
-    return best()
+
+    // End-of-ladder arbitration. Two distinct near-tied winners that only ever
+    // surfaced in DIFFERENT maps are just as ambiguous as an in-map near-tie.
+    if (
+      crossPassAmbiguous(
+        provisional.map((entry) => entry.pick),
+        select,
+      )
+    ) {
+      return null
+    }
+    let top: { pick: SelectedQuad; rank: number } | null = null
+    for (const entry of provisional) {
+      if (!top || entry.rank > top.rank) top = entry
+    }
+    return top?.pick.quad ?? null
   } finally {
-    src.delete()
-    gray.delete()
-    blur.delete()
-    edges.delete()
-    closed.delete()
-    kernel.delete()
+    src?.delete()
+    gray?.delete()
+    blur?.delete()
+    edges?.delete()
+    closed?.delete()
+    kernel?.delete()
     lazy.supportEdges?.delete()
   }
 }

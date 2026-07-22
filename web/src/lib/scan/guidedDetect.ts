@@ -12,7 +12,7 @@
 // area changes — so every downstream gate (frame clearance, area fractions, tracker
 // association) keeps its meaning.
 
-import type { Point, Quad } from './detect'
+import { cardFrameInset, type Point, type Quad } from './detect'
 
 /** An integer pixel rectangle of a detection frame. */
 export interface PixelRect {
@@ -47,11 +47,17 @@ export function fullFrameWindow(width: number, height: number): SearchWindow {
 }
 
 export function physicalSides(window: SearchWindow): PhysicalSides {
+  // A crop side within the camera frame's safety inset carries physical semantics
+  // even when it doesn't coincide with the frame exactly: geometry cut there could
+  // never have cleared the inset anyway, and treating it as merely artificial would
+  // silently drop the clipped-card blocker the full-frame search would have
+  // registered (letting a clipped card's printed inner frame become the lock).
+  const inset = cardFrameInset(window.fullWidth, window.fullHeight)
   return {
-    left: window.x === 0,
-    top: window.y === 0,
-    right: window.x + window.width === window.fullWidth,
-    bottom: window.y + window.height === window.fullHeight,
+    left: window.x <= inset,
+    top: window.y <= inset,
+    right: window.x + window.width >= window.fullWidth - inset,
+    bottom: window.y + window.height >= window.fullHeight - inset,
   }
 }
 

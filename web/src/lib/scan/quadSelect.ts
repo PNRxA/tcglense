@@ -70,10 +70,16 @@ const CAPTURE_AREA_RATIO = [0.9, 1.1] as const
 const CONTINUITY_SIGMA = 0.04
 const SCALE_SIGMA = 0.12
 
-/** Two candidates this close are the same detection seen twice (e.g. by two passes);
- * keep the better-scored one instead of calling the frame ambiguous. */
-const DEDUP_MAX_CORNER = 0.025
-const DEDUP_AREA_RATIO = [0.85, 1.15] as const
+/** Same-card tolerance for deduplicating candidates before the ambiguity check. Both
+ * one mask and different edge maps legitimately estimate the same physical card with
+ * corners several hundredths apart (a closed blob's hull dilates, a dense map's hole
+ * hugs the inner boundary), and those variants are agreement, not an ambiguous pair.
+ * Two genuinely distinct side-by-side cards differ by at least a card width (~0.3),
+ * far beyond the corner radius; a printed inner frame nested in its card stays
+ * distinct through the area-ratio bound (0.8² = 0.64 < 0.7) and is instead dominated
+ * on score, preserving the outer-edge preference. */
+const SAME_CARD_MAX_CORNER = 0.1
+const SAME_CARD_AREA_RATIO = [0.7, 1.4] as const
 
 /** A spatially distinct runner-up scoring at least this share of the top score makes
  * the frame ambiguous: refuse to pick rather than lock onto an arbitrary rectangle.
@@ -155,12 +161,12 @@ function scoreCandidate(candidate: QuadCandidate, selection: QuadSelection): num
 }
 
 function sameDetection(a: Quad, b: Quad): boolean {
-  if (cornerMetrics(a, b).max > DEDUP_MAX_CORNER) return false
+  if (cornerMetrics(a, b).max > SAME_CARD_MAX_CORNER) return false
   const areaA = quadArea(a)
   const areaB = quadArea(b)
   if (areaA <= 0 || areaB <= 0) return false
   const ratio = areaB / areaA
-  return ratio >= DEDUP_AREA_RATIO[0] && ratio <= DEDUP_AREA_RATIO[1]
+  return ratio >= SAME_CARD_AREA_RATIO[0] && ratio <= SAME_CARD_AREA_RATIO[1]
 }
 
 /** A selected quad with the mode score that chose it, so the caller can arbitrate
@@ -170,18 +176,35 @@ export interface SelectedQuad {
   score: number
 }
 
-/** Pick the quad the scanner should trust from a pass's candidates, or null when no
- * candidate is eligible for the mode — or the frame is too ambiguous to trust. */
-export function selectScoredCardQuad(
+/** One pass's selection outcome. `ambiguous` is distinct from "nothing eligible": an
+ * ambiguous pass SAW spatially distinct near-tied candidates, and the caller must
+ * refuse the whole frame rather than fall back to a winner some other pass banked —
+ * conflating the two would let an earlier pass's provisional candidate survive
+ * ambiguity a later, more inclusive pass discovered. */
+export interface QuadSelectionResult {
+  selected: SelectedQuad | null
+  ambiguous: boolean
+}
+
+/** The mode's ambiguity bar: how close (as a score ratio) a spatially distinct
+ * runner-up must come to the winner before the frame is refused. */
+function ambiguityRatioFor(selection: QuadSelection): number {
+  return selection.mode === 'acquisition' ? ACQUISITION_AMBIGUITY_RATIO : ASSOCIATED_AMBIGUITY_RATIO
+}
+
+/** Pick the quad the scanner should trust from a pass's candidates. `selected` is null
+ * when no candidate is eligible for the mode or the frame is ambiguous (see
+ * {@link QuadSelectionResult}). */
+export function selectCardQuadResult(
   candidates: QuadCandidate[],
   selection: QuadSelection,
-): SelectedQuad | null {
+): QuadSelectionResult {
   const scored: Scored[] = []
   for (const candidate of candidates) {
     const score = scoreCandidate(candidate, selection)
     if (score !== null) scored.push({ candidate, score })
   }
-  if (scored.length === 0) return null
+  if (scored.length === 0) return { selected: null, ambiguous: false }
   scored.sort((a, b) => b.score - a.score)
 
   // Same-mechanism duplicates (two passes seeing one card) collapse to the best one.
@@ -194,14 +217,30 @@ export function selectScoredCardQuad(
 
   const top = distinct[0]!
   if (selection.mode !== 'plain' && distinct.length > 1) {
-    const ambiguityRatio =
-      selection.mode === 'acquisition' ? ACQUISITION_AMBIGUITY_RATIO : ASSOCIATED_AMBIGUITY_RATIO
-    if (distinct[1]!.score >= top.score * ambiguityRatio) return null
+    if (distinct[1]!.score >= top.score * ambiguityRatioFor(selection)) {
+      return { selected: null, ambiguous: true }
+    }
   }
-  return { quad: top.candidate.quad, score: top.score }
+  return { selected: { quad: top.candidate.quad, score: top.score }, ambiguous: false }
 }
 
-/** {@link selectScoredCardQuad} without the score, for callers that only display. */
+/** Whether winners banked by different detection passes are near-tied distinct quads —
+ * the cross-pass counterpart of the in-pass ambiguity refusal, for two cards that only
+ * ever surface in different edge maps. Winners are merged under the same-card
+ * tolerance first: several maps estimating one card differently is agreement, not
+ * ambiguity. */
+export function crossPassAmbiguous(winners: SelectedQuad[], selection: QuadSelection): boolean {
+  if (selection.mode === 'plain' || winners.length < 2) return false
+  const sorted = [...winners].sort((a, b) => b.score - a.score)
+  const distinct: SelectedQuad[] = []
+  for (const entry of sorted) {
+    if (!distinct.some((kept) => sameDetection(kept.quad, entry.quad))) distinct.push(entry)
+  }
+  if (distinct.length < 2) return false
+  return distinct[1]!.score >= distinct[0]!.score * ambiguityRatioFor(selection)
+}
+
+/** {@link selectCardQuadResult}'s winner alone, for callers that only display. */
 export function selectCardQuad(candidates: QuadCandidate[], selection: QuadSelection): Quad | null {
-  return selectScoredCardQuad(candidates, selection)?.quad ?? null
+  return selectCardQuadResult(candidates, selection).selected?.quad ?? null
 }

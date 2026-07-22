@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Quad } from '../detect'
 import type { QuadCandidate } from '../opencvContours'
-import { guideTarget, selectCardQuad, selectScoredCardQuad } from '../quadSelect'
+import {
+  crossPassAmbiguous,
+  guideTarget,
+  selectCardQuad,
+  selectCardQuadResult,
+} from '../quadSelect'
 import { CARD_ASPECT, GUIDE_MARGIN } from '../regions'
 
 /** An axis-aligned candidate centred at (cx, cy), `h` tall at the exact card aspect
@@ -105,8 +110,48 @@ describe('selectCardQuad', () => {
 
   it('returns the mode score alongside the quad for cross-pass arbitration', () => {
     const candidate = candidateAt(0.5, 0.5, 0.5)
-    const selected = selectScoredCardQuad([candidate], { mode: 'plain' })
+    const { selected } = selectCardQuadResult([candidate], { mode: 'plain' })
     expect(selected!.quad).toEqual(candidate.quad)
     expect(selected!.score).toBeCloseTo(candidate.areaFraction, 10)
+  })
+
+  it('distinguishes an ambiguous frame from an empty one', () => {
+    const left = candidateAt(0.42, 0.5, 0.5)
+    const right = candidateAt(0.58, 0.5, 0.5)
+    expect(selectCardQuadResult([left, right], { mode: 'acquisition', guide })).toEqual({
+      selected: null,
+      ambiguous: true,
+    })
+    expect(selectCardQuadResult([], { mode: 'acquisition', guide })).toEqual({
+      selected: null,
+      ambiguous: false,
+    })
+  })
+})
+
+describe('crossPassAmbiguous', () => {
+  const guide = guideTarget(640, 480)
+
+  it('merges the same card estimated differently by two passes', () => {
+    // A closed map and a dense map legitimately place the same card's corners several
+    // hundredths apart — agreement, not ambiguity.
+    const a = { quad: candidateAt(0.5, 0.5, 0.5).quad, score: 1 }
+    const b = { quad: candidateAt(0.53, 0.5, 0.52).quad, score: 0.97 }
+    expect(crossPassAmbiguous([a, b], { mode: 'acquisition', guide })).toBe(false)
+  })
+
+  it('flags two genuinely distinct near-tied winners from different passes', () => {
+    const a = { quad: candidateAt(0.3, 0.5, 0.5).quad, score: 1 }
+    const b = { quad: candidateAt(0.7, 0.5, 0.5).quad, score: 0.95 }
+    expect(crossPassAmbiguous([a, b], { mode: 'acquisition', guide })).toBe(true)
+    // A clearly-dominated runner-up is not ambiguity.
+    const weak = { quad: candidateAt(0.7, 0.5, 0.5).quad, score: 0.5 }
+    expect(crossPassAmbiguous([a, weak], { mode: 'acquisition', guide })).toBe(false)
+  })
+
+  it('never flags plain mode', () => {
+    const a = { quad: candidateAt(0.3, 0.5, 0.5).quad, score: 1 }
+    const b = { quad: candidateAt(0.7, 0.5, 0.5).quad, score: 1 }
+    expect(crossPassAmbiguous([a, b], { mode: 'plain' })).toBe(false)
   })
 })
