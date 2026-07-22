@@ -46,3 +46,14 @@ export const DETAIL_CARD_SIZE_GRID_CLASS: Record<CardSize, string> = {
   medium: 'grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4',
   large: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3',
 }
+
+// The deck views' section grids (issue #562) have always been one step denser than the
+// catalog (small tiles under an ownership badge and a quantity control), so 'medium' here
+// reproduces that historical deck layout exactly and small/large step around it. Driven by
+// the same persisted preference as every other grid. Same literal-class rule as above:
+// Tailwind's scanner only emits utilities it sees verbatim in the source.
+export const DECK_CARD_SIZE_GRID_CLASS: Record<CardSize, string> = {
+  small: 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8',
+  medium: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6',
+  large: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4',
+}

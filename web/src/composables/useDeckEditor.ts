@@ -13,6 +13,7 @@ import {
   useUpdateSectionMutation,
 } from '@/composables/useDecks'
 import { useOwnedCounts as useCollectionOwnedCounts } from '@/composables/useCollection'
+import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
 import { useWishlistCounts } from '@/composables/useWishlist'
 import { ApiError, exportDeckFile } from '@/lib/api'
 import type { Card, DeckCardEntry, DeckExportFormat } from '@/lib/api'
@@ -36,28 +37,22 @@ export function useDeckEditor(props: DeckEditorProps) {
 
   const sections = computed(() => deck.value?.sections ?? [])
   const allCards = computed<DeckCardEntry[]>(() => deck.value?.cards ?? [])
-  const cardsBySection = computed(() => {
-    const map = new Map<number, DeckCardEntry[]>()
-    for (const section of sections.value) map.set(section.id, [])
-    for (const card of allCards.value) map.get(card.section_id)?.push(card)
-    return map
-  })
 
   // Empty sections are hidden by default (a deck seeds ~19), with a toggle to reveal them so
   // the user can still target them from the add box (which always lists every section).
+  // Filtering + grouping live in the display engine shared with the public view (#562).
   const showEmpty = ref(false)
-  const visibleSections = computed(() =>
-    showEmpty.value
-      ? sections.value
-      : sections.value.filter((section) => (cardsBySection.value.get(section.id)?.length ?? 0) > 0),
-  )
-  const sectionNavItems = computed(() =>
-    visibleSections.value.map((section) => ({
-      id: section.id,
-      name: section.name,
-      count: cardsBySection.value.get(section.id)?.length ?? 0,
-    })),
-  )
+  const {
+    filterQuery,
+    filterColors,
+    filterActive,
+    clearFilters,
+    cardsBySection,
+    visibleSections,
+    sectionNavItems,
+    matchCount,
+    totalCount,
+  } = useDeckCardDisplay({ cards: allCards, sections, showEmpty })
 
   // Owner-only collection/wish-list overlays, batched over the deck's catalog card ids.
   const catalogCards = computed<Card[]>(() => allCards.value.map((entry) => entry.card))
@@ -290,6 +285,12 @@ export function useDeckEditor(props: DeckEditorProps) {
     showEmpty,
     visibleSections,
     sectionNavItems,
+    filterQuery,
+    filterColors,
+    filterActive,
+    clearFilters,
+    matchCount,
+    totalCount,
     ownedInCollection,
     wantedInWishlist,
     folders,

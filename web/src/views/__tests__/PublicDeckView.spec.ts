@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 // A single shared copy-mutation spy so tests can assert what the copy button dispatched.
@@ -78,11 +79,13 @@ function mountView() {
   const wrapper = mount(PublicDeckView, {
     props: { handle: 'alice-0001', id: '7' },
     global: {
-      plugins: [router],
+      // A real Pinia for the card-size store the view reads (issue #562).
+      plugins: [router, createPinia()],
       stubs: {
         Button: ButtonStub,
         LoadingRow: PassThrough,
         CardTile: PassThrough,
+        CardSizeMenu: PassThrough,
         DeckSectionNav: PassThrough,
         DeckStats: PassThrough,
       },
