@@ -26,7 +26,7 @@ describe('CardLegalities', () => {
     expect(wrapper.text()).toBe('')
   })
 
-  it('shows each known status beside its format with the matching tint', () => {
+  it('shows each known status beside its format with the matching tint', async () => {
     const wrapper = mount(CardLegalities, {
       props: {
         card: cardWithLegalities({
@@ -37,6 +37,9 @@ describe('CardLegalities', () => {
         }),
       },
     })
+
+    // Vintage sits behind the "Show all formats" expansion.
+    await wrapper.get('button').trigger('click')
 
     const cases = [
       ['modern', 'Legal', 'Modern', 'bg-emerald-500/15', 'text-emerald-700'],
@@ -66,14 +69,42 @@ describe('CardLegalities', () => {
     expect(chip.classes()).toContain('text-muted-foreground')
   })
 
-  it('renders every tracked format label', () => {
+  it('shows only the popular formats until "Show all formats" is clicked', async () => {
     const wrapper = mount(CardLegalities, {
       props: { card: cardWithLegalities({}) },
     })
+
+    const popular = MTG_FORMATS.filter((format) => format.popular)
+    const niche = MTG_FORMATS.filter((format) => !format.popular)
+    expect(popular.length).toBeGreaterThan(0)
+    expect(niche.length).toBeGreaterThan(0)
+
+    for (const format of popular) {
+      expect(wrapper.find(`[data-format="${format.key}"]`).exists()).toBe(true)
+    }
+    for (const format of niche) {
+      expect(wrapper.find(`[data-format="${format.key}"]`).exists()).toBe(false)
+    }
+    expect(wrapper.get('button').text()).toContain(`Show all formats (${niche.length} more)`)
+
+    await wrapper.get('button').trigger('click')
 
     for (const format of MTG_FORMATS) {
       const labels = formatRow(wrapper, format.key).findAll('span')
       expect(labels[1]?.text()).toBe(format.label)
     }
+    expect(wrapper.get('button').text()).toContain('Show fewer formats')
+  })
+
+  it('collapses back to the popular formats when the card changes', async () => {
+    const wrapper = mount(CardLegalities, {
+      props: { card: cardWithLegalities({}) },
+    })
+
+    await wrapper.get('button').trigger('click')
+    expect(wrapper.find('[data-format="premodern"]').exists()).toBe(true)
+
+    await wrapper.setProps({ card: { ...cardWithLegalities({}), id: 'card-2' } as Card })
+    expect(wrapper.find('[data-format="premodern"]').exists()).toBe(false)
   })
 })

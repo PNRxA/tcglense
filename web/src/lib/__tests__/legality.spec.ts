@@ -60,6 +60,13 @@ describe('normalizeFormatKey', () => {
   })
 })
 
+describe('popular formats', () => {
+  it('marks exactly the six most-played formats — two rows of the card panel', () => {
+    const popular = MTG_FORMATS.filter((format) => format.popular).map((format) => format.key)
+    expect(popular).toEqual(['standard', 'pioneer', 'modern', 'legacy', 'pauper', 'commander'])
+  })
+})
+
 describe('formatLabel / legalityLabel', () => {
   it('labels known keys and falls back to the key itself', () => {
     expect(formatLabel('paupercommander')).toBe('Pauper Commander')

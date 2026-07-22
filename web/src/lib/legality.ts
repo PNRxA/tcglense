@@ -20,6 +20,12 @@ export interface MtgFormat {
   group: 'Constructed' | 'Commander' | 'Arena' | 'Other'
   /** Extra spellings `normalizeFormatKey` accepts (canonicalized before compare). */
   aliases?: string[]
+  /**
+   * One of the six most-played formats — what the card-page legality panel shows
+   * before its "Show all formats" expansion (six fills the panel's 3-column grid
+   * with exactly two rows).
+   */
+  popular?: boolean
 }
 
 /**
@@ -29,13 +35,19 @@ export interface MtgFormat {
  * deliberately not surfaced (meaningless to deck builders).
  */
 export const MTG_FORMATS: MtgFormat[] = [
-  { key: 'standard', label: 'Standard', group: 'Constructed' },
-  { key: 'pioneer', label: 'Pioneer', group: 'Constructed' },
-  { key: 'modern', label: 'Modern', group: 'Constructed' },
-  { key: 'legacy', label: 'Legacy', group: 'Constructed' },
+  { key: 'standard', label: 'Standard', group: 'Constructed', popular: true },
+  { key: 'pioneer', label: 'Pioneer', group: 'Constructed', popular: true },
+  { key: 'modern', label: 'Modern', group: 'Constructed', popular: true },
+  { key: 'legacy', label: 'Legacy', group: 'Constructed', popular: true },
   { key: 'vintage', label: 'Vintage', group: 'Constructed' },
-  { key: 'pauper', label: 'Pauper', group: 'Constructed' },
-  { key: 'commander', label: 'Commander', group: 'Commander', aliases: ['edh', 'cedh'] },
+  { key: 'pauper', label: 'Pauper', group: 'Constructed', popular: true },
+  {
+    key: 'commander',
+    label: 'Commander',
+    group: 'Commander',
+    aliases: ['edh', 'cedh'],
+    popular: true,
+  },
   { key: 'oathbreaker', label: 'Oathbreaker', group: 'Commander' },
   {
     key: 'paupercommander',

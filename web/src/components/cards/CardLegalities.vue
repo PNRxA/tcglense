@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { ChevronDown, ChevronUp } from '@lucide/vue'
 import type { Card } from '@/lib/api'
 import { legalityLabel, MTG_FORMATS, statusOf, type LegalityStatus } from '@/lib/legality'
 
@@ -14,8 +15,21 @@ const STATUS_CHIP_CLASSES: Record<LegalityStatus, string> = {
   restricted: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
 }
 
+// The panel opens on the widely-played formats only; "Show all formats" reveals the
+// niche rest. Collapses again when the modal swaps to another card, like the rulings
+// section, so a long-lived overlay doesn't leak one card's expansion to the next.
+const showAll = ref(false)
+watch(
+  () => props.card.id,
+  () => {
+    showAll.value = false
+  },
+)
+
+const hiddenCount = MTG_FORMATS.filter((format) => !format.popular).length
+
 const formats = computed(() =>
-  MTG_FORMATS.map((format) => {
+  MTG_FORMATS.filter((format) => showAll.value || format.popular).map((format) => {
     const status = statusOf(props.card, format.key)
     return {
       ...format,
@@ -46,5 +60,14 @@ const formats = computed(() =>
         <span class="min-w-0 text-sm">{{ format.label }}</span>
       </div>
     </div>
+    <button
+      type="button"
+      class="text-muted-foreground hover:text-foreground mt-3 inline-flex items-center gap-1 text-xs font-medium"
+      :aria-expanded="showAll"
+      @click="showAll = !showAll"
+    >
+      <component :is="showAll ? ChevronUp : ChevronDown" class="size-3.5" aria-hidden="true" />
+      {{ showAll ? 'Show fewer formats' : `Show all formats (${hiddenCount} more)` }}
+    </button>
   </div>
 </template>
