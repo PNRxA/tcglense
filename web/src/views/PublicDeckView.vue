@@ -85,7 +85,7 @@ function copies(entry: DeckCardEntry): number {
 const legality = computed(() =>
   deck.value ? evaluateDeckLegality(deck.value.format, deck.value.cards) : null,
 )
-// Breach chips sit top-left; the copy-count badge owns bottom-left here.
+// Breach chips sit bottom-right; the copy-count badge owns bottom-left here.
 const LEGALITY_CHIP_TEXT: Record<string, string> = {
   banned: 'text-red-600 dark:text-red-400',
   not_legal: 'text-muted-foreground',
@@ -174,12 +174,13 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                     class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
                     >×{{ copies(entry) }}</span
                   >
-                  <!-- Format-legality breach chip (issue #557), matching the owner view. -->
+                  <!-- Format-legality breach chip (issue #557): bottom-right (the copy
+                    count owns bottom-left), matching the owner view; pointer-events-none
+                    keeps the tile's stretched link clickable through it. -->
                   <span
                     v-if="legality?.statusByCardId.get(entry.card.id)"
-                    class="bg-background/90 absolute top-1.5 left-1.5 z-20 inline-flex cursor-default items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
+                    class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
                     :class="LEGALITY_CHIP_TEXT[legality.statusByCardId.get(entry.card.id)!]"
-                    :title="`${legalityLabel(legality.statusByCardId.get(entry.card.id)!)} in ${legality.formatLabel}`"
                   >
                     {{ legalityLabel(legality.statusByCardId.get(entry.card.id)!) }}
                   </span>

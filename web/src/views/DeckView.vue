@@ -108,7 +108,7 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
 const legality = computed(() =>
   deck.value ? evaluateDeckLegality(deck.value.format, allCards.value) : null,
 )
-// Per-tile breach chips (top-left; the control sits bottom-left, ownership top-right).
+// Per-tile breach chips (bottom-right; the control sits bottom-left, ownership top-right).
 const LEGALITY_CHIP_TEXT: Record<string, string> = {
   banned: 'text-red-600 dark:text-red-400',
   not_legal: 'text-muted-foreground',
@@ -388,13 +388,15 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                     :foil-quantity="entry.foil_quantity"
                     :sections="sections"
                   />
-                  <!-- Format-legality breach chip (issue #557), top-left so it can't
-                    collide with the control (bottom-left) or ownership (top-right). -->
+                  <!-- Format-legality breach chip (issue #557): bottom-right, the one
+                    corner the control (bottom-left) and ownership (top-right) never use —
+                    on an 88px mobile tile a top-left "Not Legal" would collide with the
+                    ownership badges. pointer-events-none keeps the tile's stretched link
+                    clickable through it; the banner above carries the full explanation. -->
                   <span
                     v-if="legality?.statusByCardId.get(entry.card.id)"
-                    class="bg-background/90 absolute top-1.5 left-1.5 z-20 inline-flex cursor-default items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
+                    class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
                     :class="LEGALITY_CHIP_TEXT[legality.statusByCardId.get(entry.card.id)!]"
-                    :title="`${legalityLabel(legality.statusByCardId.get(entry.card.id)!)} in ${legality.formatLabel}`"
                   >
                     {{ legalityLabel(legality.statusByCardId.get(entry.card.id)!) }}
                   </span>
