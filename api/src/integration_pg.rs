@@ -804,17 +804,19 @@ async fn search_smoke_battery_on_pg() {
     assert_eq!(status, StatusCode::OK);
     assert!(data_len(&body) > 0, "regex matches the transform card");
 
-    // Legality via json ->> — seed one card's legalities so the filter must positively
-    // match (the dummy catalog carries none, which would let a broken expression that
-    // returns 0 rows slip through).
+    // Legality via json ->> — flip one card to a status the dummy scheme never
+    // produces in standard (`banned`; the seeded catalog is only ever
+    // `legal`/`not_legal` there — see `dummy_legalities`), so the filter must
+    // positively match exactly that card and a broken expression returning 0 rows
+    // still fails.
     db.conn()
         .execute_unprepared(
-            "UPDATE cards SET legalities = '{\"standard\":\"legal\"}', full_art = TRUE \
+            "UPDATE cards SET legalities = '{\"standard\":\"banned\"}', full_art = TRUE \
              WHERE name = 'Dummy Foil-Only Showcase'",
         )
         .await
         .expect("seed legality + full_art on one card");
-    let (status, body) = get(&router, &cards("f:standard")).await;
+    let (status, body) = get(&router, &cards("banned:standard")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body["total"].as_u64(),
