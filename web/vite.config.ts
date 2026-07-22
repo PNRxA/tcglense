@@ -76,9 +76,64 @@ function robotsTxt(): string {
   ].join('\n')
 }
 
-// Emit robots.txt at build time (correct absolute Sitemap: URL), and serve the
-// same content in the dev/preview servers so both environments match. It's
-// generated rather than committed to public/ so the URL tracks VITE_SITE_URL and
+// /llms.txt — the emerging convention (llmstxt.org) for an LLM/agent-friendly map of a
+// site. TCGLense is API-first (a public, CDN-cacheable JSON catalog plus scoped `tcgl_`
+// keys), so this is a curated entry point that points agents straight at the
+// machine-readable OpenAPI spec and the main endpoint groups instead of scraping the SPA.
+// Built from VITE_SITE_URL for the same reason robots.txt is (absolute links must track
+// the origin); it needs no database, so — unlike the sitemap — it's a static build-time
+// file, not an API route. Keep the endpoint facts in sync with docs/api-contracts.md.
+function llmsTxt(): string {
+  return `# TCGLense
+
+> TCGLense is a self-hostable trading-card-game tracker with a public, read-friendly JSON API. It serves a card catalog (Magic: The Gathering first, sourced from Scryfall), daily price history for singles and sealed products, and — with a scoped API key — a signed-in user's own collection and wish list.
+
+The entire public catalog is anonymous, JSON, and CDN-cacheable; only per-user data needs a key. Every endpoint lives under \`/api\`, and the complete contract is published as OpenAPI 3.1, so an agent can read the spec directly instead of scraping the HTML app.
+
+- Base URL: \`${SITE_URL}/api\`
+- All responses are JSON. Errors are always \`{ "error": string }\` with a matching HTTP status.
+- Primary game slug: \`mtg\` (call \`GET /api/games\` for the live list).
+
+## API reference
+
+- [OpenAPI 3.1 specification](${SITE_URL}/api/openapi.json): the complete, machine-readable contract — every endpoint, query parameter, and response shape. This is the authoritative source; prefer it over this file for exact details.
+- [Interactive API docs](${SITE_URL}/docs): a "try it out" reference (Scalar) rendered from the same spec.
+
+## Public catalog (no authentication)
+
+- \`GET /api/games\` — supported games.
+- \`GET /api/games/{game}/sets\` — a game's sets, newest first.
+- \`GET /api/games/{game}/cards?q=&page=&page_size=\` — search cards. \`q\` accepts (near-)full Scryfall syntax, e.g. \`c:red t:instant cmc<=2\`. Paging is 1-based; \`page_size\` defaults to 60 (max 200).
+- \`GET /api/games/{game}/cards/{id}\` — one card, with its current prices.
+- \`GET /api/games/{game}/cards/{id}/prices?range=\` — daily price history; \`range\` is one of \`7d\`, \`30d\`, \`1y\`, \`2y\`, \`3y\`, \`all\`.
+- \`GET /api/games/{game}/cards/{id}/prints\` — other printings of the same card.
+- \`GET /api/games/{game}/products?q=&set=&type=&sort=&dir=\` — sealed products (booster boxes, bundles, decks, …).
+- \`GET /api/games/{game}/products/{id}/prices?range=\` — sealed-product price history.
+
+Prices are decimal strings and may be \`null\`: cards carry \`usd\`, \`usd_foil\`, \`eur\`, \`tix\`; sealed products carry \`usd\`, \`usd_foil\` — passed through as stored, with no display-currency conversion. Public reads are shared-cacheable (\`Cache-Control: public, s-maxage=…\`) and support \`ETag\` / \`If-None-Match\` revalidation.
+
+## Authenticated API (per-user, API key)
+
+A signed-in user mints a scoped API key in the web app and presents it exactly like a session token: \`Authorization: Bearer tcgl_<hex>\`. A key reaches only its owner's data.
+
+- Scopes: \`read\` (read endpoints only) or \`read_write\`. A read-only key on a write is \`403\`; a bad, expired, or revoked key is \`401\`.
+- \`GET /api/collection/{game}\` — the caller's owned cards. \`PUT /api/collection/{game}/cards/{id}\` upserts a holding.
+- \`GET /api/wishlist/{game}\` — the caller's wish list (same shape as the collection).
+- \`GET /api/collection/{game}/summary\`, \`.../value-history\`, \`.../movers\` — totals, collection value over time, and the biggest price movers.
+- Key management (\`/api/auth/api-keys\`) is session-only: an API key cannot mint or revoke keys.
+
+## Discovery & clients
+
+- [Sitemap index](${SITE_URL}/sitemap.xml): every catalog page (games, sets, cards, sealed products), for crawlers.
+- Rate limits apply to both public and per-user traffic; over-limit is \`429\` with a \`Retry-After\` header.
+- A command-line client and TUI over this same API: https://github.com/PNRxA/tcglense-cli
+`
+}
+
+// Emit the site-root discovery files (robots.txt for crawlers, llms.txt for
+// LLM/agent clients) at build time — each with correct absolute URLs — and serve the
+// same content in the dev/preview servers so both environments match. They're
+// generated rather than committed to public/ so their URLs track VITE_SITE_URL and
 // can't go stale. The sitemap itself is served by the API (see src/../api's
 // handlers::sitemap), so it isn't emitted here. Also rewrites the baseline
 // og:image/twitter:image in index.html to an absolute VITE_SITE_URL for non-JS
@@ -86,6 +141,9 @@ function robotsTxt(): string {
 function seoDiscoveryFiles(): Plugin {
   const files: Record<string, { body: string; type: string }> = {
     '/robots.txt': { body: robotsTxt(), type: 'text/plain' },
+    // llms.txt is Markdown, but a `.txt` file server hands it back as text/plain in
+    // production; match that in dev, with an explicit UTF-8 charset for the em-dashes.
+    '/llms.txt': { body: llmsTxt(), type: 'text/plain; charset=utf-8' },
   }
   const handle = (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const path = req.url?.split('?')[0]
@@ -108,8 +166,12 @@ function seoDiscoveryFiles(): Plugin {
     transformIndexHtml(html) {
       return html.replaceAll(`content="${OG_IMAGE_PATH}"`, `content="${OG_IMAGE_URL}"`)
     },
+    // Emit every discovery file from the same map the dev/preview middleware serves,
+    // so the two paths can't drift and adding one is a single `files` entry.
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'robots.txt', source: robotsTxt() })
+      for (const [path, file] of Object.entries(files)) {
+        this.emitFile({ type: 'asset', fileName: path.slice(1), source: file.body })
+      }
     },
   }
 }
