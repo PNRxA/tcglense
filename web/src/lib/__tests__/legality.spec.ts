@@ -61,20 +61,9 @@ describe('normalizeFormatKey', () => {
 })
 
 describe('popular formats', () => {
-  it('marks exactly the widely-played set the card panel shows by default', () => {
+  it('marks exactly the six most-played formats — two rows of the card panel', () => {
     const popular = MTG_FORMATS.filter((format) => format.popular).map((format) => format.key)
-    expect(popular).toEqual([
-      'standard',
-      'pioneer',
-      'modern',
-      'legacy',
-      'vintage',
-      'pauper',
-      'commander',
-      'historic',
-      'timeless',
-      'brawl',
-    ])
+    expect(popular).toEqual(['standard', 'pioneer', 'modern', 'legacy', 'pauper', 'commander'])
   })
 })
 

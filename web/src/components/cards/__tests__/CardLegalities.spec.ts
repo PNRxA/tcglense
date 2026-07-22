@@ -26,7 +26,7 @@ describe('CardLegalities', () => {
     expect(wrapper.text()).toBe('')
   })
 
-  it('shows each known status beside its format with the matching tint', () => {
+  it('shows each known status beside its format with the matching tint', async () => {
     const wrapper = mount(CardLegalities, {
       props: {
         card: cardWithLegalities({
@@ -37,6 +37,9 @@ describe('CardLegalities', () => {
         }),
       },
     })
+
+    // Vintage sits behind the "Show all formats" expansion.
+    await wrapper.get('button').trigger('click')
 
     const cases = [
       ['modern', 'Legal', 'Modern', 'bg-emerald-500/15', 'text-emerald-700'],

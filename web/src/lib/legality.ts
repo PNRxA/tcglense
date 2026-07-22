@@ -21,8 +21,9 @@ export interface MtgFormat {
   /** Extra spellings `normalizeFormatKey` accepts (canonicalized before compare). */
   aliases?: string[]
   /**
-   * Widely-played format (the paper staples plus the big Arena queues) — what the
-   * card-page legality panel shows before its "Show all formats" expansion.
+   * One of the six most-played formats — what the card-page legality panel shows
+   * before its "Show all formats" expansion (six fills the panel's 3-column grid
+   * with exactly two rows).
    */
   popular?: boolean
 }
@@ -38,7 +39,7 @@ export const MTG_FORMATS: MtgFormat[] = [
   { key: 'pioneer', label: 'Pioneer', group: 'Constructed', popular: true },
   { key: 'modern', label: 'Modern', group: 'Constructed', popular: true },
   { key: 'legacy', label: 'Legacy', group: 'Constructed', popular: true },
-  { key: 'vintage', label: 'Vintage', group: 'Constructed', popular: true },
+  { key: 'vintage', label: 'Vintage', group: 'Constructed' },
   { key: 'pauper', label: 'Pauper', group: 'Constructed', popular: true },
   {
     key: 'commander',
@@ -62,10 +63,10 @@ export const MTG_FORMATS: MtgFormat[] = [
   },
   { key: 'predh', label: 'PreDH', group: 'Commander', aliases: ['preedh'] },
   { key: 'alchemy', label: 'Alchemy', group: 'Arena' },
-  { key: 'historic', label: 'Historic', group: 'Arena', popular: true },
-  { key: 'timeless', label: 'Timeless', group: 'Arena', popular: true },
+  { key: 'historic', label: 'Historic', group: 'Arena' },
+  { key: 'timeless', label: 'Timeless', group: 'Arena' },
   { key: 'gladiator', label: 'Gladiator', group: 'Arena' },
-  { key: 'brawl', label: 'Brawl', group: 'Arena', aliases: ['historicbrawl'], popular: true },
+  { key: 'brawl', label: 'Brawl', group: 'Arena', aliases: ['historicbrawl'] },
   { key: 'standardbrawl', label: 'Standard Brawl', group: 'Arena' },
   {
     key: 'competitivebrawl',
