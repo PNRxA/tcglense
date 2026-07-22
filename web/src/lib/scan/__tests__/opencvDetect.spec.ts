@@ -9,8 +9,10 @@
 import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { Quad } from '../detect'
+import { cropImageData, priorSearchWindow } from '../guidedDetect'
 import { detectCardQuadCv, loadOpenCv, medianLuma } from '../opencvDetect'
-import { CARD_ASPECT } from '../regions'
+import { guideTarget } from '../quadSelect'
+import { Frame, cardDims, maxCornerError } from './syntheticFrame'
 
 type Cv = Awaited<ReturnType<typeof loadOpenCv>>
 
@@ -23,188 +25,6 @@ beforeAll(async () => {
   const mod = createRequire(import.meta.url)('@techstark/opencv-js') as PromiseLike<unknown>
   cv = (await mod) as Cv
 }, 60_000)
-
-/** A synthetic grayscale-ish RGBA frame (all channels equal) with helpers to draw
- * rounded, rotated card rectangles and blobs — plus the ground-truth corners. */
-class Frame {
-  data: Uint8ClampedArray
-  constructor(
-    public width: number,
-    public height: number,
-    background: number,
-  ) {
-    this.data = new Uint8ClampedArray(width * height * 4)
-    for (let i = 0; i < width * height; i++) this.setIndex(i, background)
-  }
-
-  private setIndex(i: number, v: number) {
-    this.data[i * 4] = v
-    this.data[i * 4 + 1] = v
-    this.data[i * 4 + 2] = v
-    this.data[i * 4 + 3] = 255
-  }
-
-  set(x: number, y: number, v: number) {
-    if (x >= 0 && y >= 0 && x < this.width && y < this.height) this.setIndex(y * this.width + x, v)
-  }
-
-  /** Draw a filled, rounded-corner rectangle rotated by `deg` around its centre; returns
-   * the (sharp) ground-truth corners ordered [TL, TR, BR, BL], normalised 0..1. */
-  drawCard(
-    cx: number,
-    cy: number,
-    w: number,
-    h: number,
-    deg: number,
-    value: number,
-    cornerRadius = Math.round(w / 20),
-  ): Quad {
-    const rad = (deg * Math.PI) / 180
-    const cos = Math.cos(rad)
-    const sin = Math.sin(rad)
-    const hw = w / 2
-    const hh = h / 2
-    const r = cornerRadius
-    for (let y = 0; y < this.height; y++) {
-      for (let x = 0; x < this.width; x++) {
-        // Into the card's local frame.
-        const u = cos * (x - cx) + sin * (y - cy)
-        const v = -sin * (x - cx) + cos * (y - cy)
-        const au = Math.abs(u)
-        const av = Math.abs(v)
-        if (au > hw || av > hh) continue
-        if (au > hw - r && av > hh - r) {
-          const du = au - (hw - r)
-          const dv = av - (hh - r)
-          if (du * du + dv * dv > r * r) continue
-        }
-        this.set(x, y, value)
-      }
-    }
-    const corner = (su: number, sv: number) => ({
-      x: (cx + cos * su * hw - sin * sv * hh) / this.width,
-      y: (cy + sin * su * hw + cos * sv * hh) / this.height,
-    })
-    return [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)]
-  }
-
-  drawDisk(cx: number, cy: number, radius: number, value: number) {
-    for (let y = Math.floor(cy - radius); y <= cy + radius; y++) {
-      for (let x = Math.floor(cx - radius); x <= cx + radius; x++) {
-        if ((x - cx) ** 2 + (y - cy) ** 2 <= radius * radius) this.set(x, y, value)
-      }
-    }
-  }
-
-  /** Fill an axis-aligned rectangle. */
-  fillRect(x0: number, y0: number, x1: number, y1: number, value: number) {
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) this.set(x, y, value)
-  }
-
-  /** Draw a deterministic integer line, including a square `width` around each point. */
-  drawLine(x0: number, y0: number, x1: number, y1: number, value: number, width = 1) {
-    const dx = Math.abs(x1 - x0)
-    const sx = x0 < x1 ? 1 : -1
-    const dy = -Math.abs(y1 - y0)
-    const sy = y0 < y1 ? 1 : -1
-    let error = dx + dy
-    const radius = Math.floor(width / 2)
-    while (true) {
-      this.fillRect(x0 - radius, y0 - radius, x0 + radius + 1, y0 + radius + 1, value)
-      if (x0 === x1 && y0 === y1) break
-      const twice = 2 * error
-      if (twice >= dy) {
-        error += dy
-        x0 += sx
-      }
-      if (twice <= dx) {
-        error += dx
-        y0 += sy
-      }
-    }
-  }
-
-  /** Draw a filled axis-aligned octagon: a `w`×`h` rectangle centred at (cx, cy) with
-   * a straight 45° cut of leg length `cut` at each corner. */
-  drawOctagon(cx: number, cy: number, w: number, h: number, cut: number, value: number) {
-    const hw = w / 2
-    const hh = h / 2
-    for (let y = 0; y < this.height; y++) {
-      for (let x = 0; x < this.width; x++) {
-        const au = Math.abs(x - cx)
-        const av = Math.abs(y - cy)
-        if (au > hw || av > hh) continue
-        if (au - (hw - cut) + (av - (hh - cut)) > cut) continue
-        this.set(x, y, value)
-      }
-    }
-  }
-
-  /** Wash out edge response inside a patch the way glare/defocus does: blend each
-   * pixel toward a heavily box-blurred copy, with a weight that feathers to zero at
-   * the patch border — so the wash kills the local gradient without introducing any
-   * sharp boundary of its own. */
-  washPatch(x0: number, y0: number, x1: number, y1: number, feather: number) {
-    const snapshot = new Uint8ClampedArray(this.data)
-    const at = (x: number, y: number) => {
-      const cx = Math.min(this.width - 1, Math.max(0, x))
-      const cy = Math.min(this.height - 1, Math.max(0, y))
-      return snapshot[(cy * this.width + cx) * 4]!
-    }
-    const R = 14
-    const smooth = (t: number) => {
-      const c = Math.min(1, Math.max(0, t))
-      return c * c * (3 - 2 * c)
-    }
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        let sum = 0
-        let n = 0
-        for (let dy = -R; dy <= R; dy++) {
-          for (let dx = -R; dx <= R; dx++) {
-            sum += at(x + dx, y + dy)
-            n++
-          }
-        }
-        const target = sum / n
-        const w =
-          smooth(Math.min(x - x0, x1 - 1 - x) / feather) *
-          smooth(Math.min(y - y0, y1 - 1 - y) / feather)
-        this.set(x, y, Math.round(at(x, y) * (1 - w) + target * w))
-      }
-    }
-  }
-
-  /** Deterministic per-pixel noise (LCG), ± amplitude. */
-  addNoise(amplitude: number, seed = 1) {
-    let s = seed
-    for (let i = 0; i < this.width * this.height; i++) {
-      s = (s * 1103515245 + 12345) & 0x7fffffff
-      const n = ((s >> 16) % (2 * amplitude + 1)) - amplitude
-      this.setIndex(i, this.data[i * 4]! + n)
-    }
-  }
-
-  imageData(): ImageData {
-    return { data: this.data, width: this.width, height: this.height } as unknown as ImageData
-  }
-}
-
-/** Worst corner distance from the truth (normalised units) — Infinity when nothing was
- * detected, so `expect(maxCornerError(...)).toBeLessThanOrEqual(tol)` covers both. */
-function maxCornerError(detected: Quad | null, truth: Quad): number {
-  if (!detected) return Infinity
-  let max = 0
-  for (let i = 0; i < 4; i++) {
-    max = Math.max(max, Math.hypot(detected[i]!.x - truth[i]!.x, detected[i]!.y - truth[i]!.y))
-  }
-  return max
-}
-
-/** A centred card `heightPx` tall at the standard aspect. */
-function cardDims(heightPx: number): { w: number; h: number } {
-  return { w: Math.round(heightPx * CARD_ASPECT), h: heightPx }
-}
 
 /** The dim-scene base several cases share: a dark background with a bright glare band
  * across the top. Edge response in the dark region sits far below fixed thresholds,
@@ -247,7 +67,7 @@ describe('detectCardQuadCv', () => {
     // The old hull completed that contour as a plausible card with one corner at y=0;
     // selecting an uncontaminated inner contour is also a safe outcome.
     frame.drawLine(92, 25, 59, 0, 205, 3)
-    const detected = detectCardQuadCv(cv, frame.imageData(), { segmentationFallback: false })
+    const detected = detectCardQuadCv(cv, frame.imageData(), { fallbackPasses: false })
     expect(detected === null || maxCornerError(detected, truth) <= 0.03).toBe(true)
   })
 
@@ -270,7 +90,7 @@ describe('detectCardQuadCv', () => {
     // Printed frame/art borders remain fully visible when the physical card is clipped.
     // They must not replace the rejected outer contour and become a too-tight crop.
     frame.drawCard(66, 120, Math.round(w * scale), Math.round(h * scale), 0, 70, 1)
-    expect(detectCardQuadCv(cv, frame.imageData(), { segmentationFallback: false })).toBeNull()
+    expect(detectCardQuadCv(cv, frame.imageData(), { fallbackPasses: false })).toBeNull()
     expect(detectCardQuadCv(cv, frame.imageData())).toBeNull()
   })
 
@@ -401,5 +221,217 @@ describe('detectCardQuadCv', () => {
     const frame = new Frame(320, 240, 50)
     frame.drawOctagon(160, 120, 136, 190, 40, 205)
     expect(detectCardQuadCv(cv, frame.imageData())).toBeNull()
+  })
+
+  // ——— Busy-background cases: realistic optics on cluttered scenes. Each pins one
+  // escalation-ladder or arbitration mechanism; the failure modes were reproduced
+  // against the pre-ladder detector before the mechanisms existed. ———
+
+  it('finds a weak-edged dark card on dark busy wood under a bright region (low band)', () => {
+    // The bright band drags the LUMA median far above the soft card edge, so the
+    // median-scaled Canny thresholds miss ~80% of the boundary while the wood grain
+    // still fires — only the fixed low band sees the whole outline.
+    const frame = new Frame(320, 240, 50)
+    frame.fillRect(0, 0, 320, 80, 190)
+    for (let y = 80; y < 240; y += 5) frame.fillRect(0, y, 320, y + 2, 70)
+    const { w, h } = cardDims(150)
+    const truth = frame.drawCard(160, 155, w, h, 0, 35)
+    frame.blur(1, 1)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.03)
+  })
+
+  it('finds a defocused card whose luma sits inside the texture range (low band + interior ring)', () => {
+    // Defocus drops the card edge below the luma-derived median thresholds, so only
+    // the fixed low band sees the full boundary — the card surfaces as the hole its
+    // border moat leaves in the closed texture blob. The tight tolerance additionally pins the interior-ring
+    // arbitration: the always-on median band produces a plausible quad that leaked
+    // half a tile outward through hysteresis gaps (error ~0.076), and only the
+    // interior-clearance ranking lets the low band's true quad outrank it.
+    const frame = new Frame(320, 240, 60)
+    frame.checkerboard(18, 90, 170)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(160, 120, w, h, 0, 130)
+    frame.blur(1, 1)
+    frame.addNoise(3)
+    const select = { mode: 'acquisition', guide: guideTarget(320, 240) } as const
+    expect(
+      maxCornerError(detectCardQuadCv(cv, frame.imageData(), { select }), truth),
+    ).toBeLessThanOrEqual(0.03)
+    // The recovery lives in the fallback passes — the cadence gate really gates it.
+    expect(detectCardQuadCv(cv, frame.imageData(), { select, fallbackPasses: false })).toBeNull()
+  })
+
+  it('finds a motion-smeared card on a busy background', () => {
+    const frame = new Frame(320, 240, 60)
+    frame.checkerboard(14, 50, 130)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(160, 120, w, h, 2, 200)
+    frame.motionBlurX(7)
+    frame.addNoise(3)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.03)
+  })
+
+  it('finds a soft-focus card on a bright busy background', () => {
+    const frame = new Frame(320, 240, 60)
+    frame.checkerboard(16, 150, 190)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(160, 120, w, h, 0, 120)
+    frame.blur(2, 2)
+    frame.addNoise(3)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.05)
+  })
+
+  it('keeps a perspective trapezoid tight on a textured background (support arbitration)', () => {
+    // Texture glued to the outline pulls hull corners outward; the perimeter-support
+    // ranking prefers the pass whose quad actually traces the boundary.
+    const frame = new Frame(320, 240, 60)
+    frame.checkerboard(16, 80, 140)
+    const cx = 160
+    const cy = 120
+    const truth: Quad = [
+      { x: (cx - 60) / 320, y: (cy - 88) / 240 },
+      { x: (cx + 60) / 320, y: (cy - 88) / 240 },
+      { x: (cx + 70) / 320, y: (cy + 88) / 240 },
+      { x: (cx - 70) / 320, y: (cy + 88) / 240 },
+    ]
+    for (let y = cy - 88; y <= cy + 88; y++) {
+      const t = (y - (cy - 88)) / 176
+      const hw = 60 + 10 * t
+      frame.fillRect(Math.round(cx - hw), y, Math.round(cx + hw), y + 1, 205)
+    }
+    frame.blur(1, 1)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.035)
+  })
+
+  it.each([
+    ['checkerboard', (frame: Frame) => frame.checkerboard(18, 90, 170)],
+    [
+      'stripes with noise',
+      (frame: Frame) => {
+        for (let y = 0; y < 240; y += 6) frame.fillRect(0, y, 320, y + 3, 110)
+        frame.addNoise(6)
+      },
+    ],
+  ])('stays null on a cardless %s texture even with every fallback pass', (_name, texture) => {
+    const frame = new Frame(320, 240, 60)
+    texture(frame)
+    frame.blur(1, 1)
+    expect(
+      detectCardQuadCv(cv, frame.imageData(), {
+        select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+      }),
+    ).toBeNull()
+  })
+
+  // ——— Guided modes: spatial priors change selection, never the geometric gates. ———
+
+  it('acquisition locks the card at the guide, not a larger distractor at the frame edge', () => {
+    const frame = new Frame(400, 240, 50)
+    const { w, h } = cardDims(150)
+    const truth = frame.drawCard(200, 120, w, h, 0, 205, 1)
+    // A larger, equally card-shaped rectangle near the right edge (a book, a phone).
+    const distractor = frame.drawCard(330, 120, Math.round(170 * (61 / 85)), 170, 0, 160, 1)
+    const guide = guideTarget(400, 240)
+
+    // Classic selection is area-dominant: the distractor demonstrably wins it.
+    const plain = detectCardQuadCv(cv, frame.imageData())
+    expect(maxCornerError(plain, distractor)).toBeLessThanOrEqual(0.03)
+    // Guide-weighted acquisition picks the card the user is aiming.
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide },
+    })
+    expect(maxCornerError(acquired, truth)).toBeLessThanOrEqual(0.03)
+  })
+
+  it('acquisition refuses a lone candidate far outside the guide', () => {
+    const frame = new Frame(400, 240, 50)
+    frame.drawCard(330, 120, Math.round(170 * (61 / 85)), 170, 0, 160, 1)
+    const acquired = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(400, 240) },
+    })
+    expect(acquired).toBeNull()
+  })
+
+  it('tracking keeps the prior card identity against a larger newcomer', () => {
+    const frame = new Frame(400, 240, 50)
+    const { w, h } = cardDims(140)
+    const truth = frame.drawCard(120, 120, w, h, 0, 205, 1)
+    const larger = frame.drawCard(300, 120, Math.round(170 * (61 / 85)), 170, 0, 205, 1)
+    // Classic selection prefers the larger card; a prior on the smaller one must not.
+    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), larger)).toBeLessThanOrEqual(
+      0.03,
+    )
+    const prior = truth.map((p) => ({ x: p.x + 0.005, y: p.y })) as Quad
+    const tracked = detectCardQuadCv(cv, frame.imageData(), {
+      select: { mode: 'tracking', prior },
+    })
+    expect(maxCornerError(tracked, truth)).toBeLessThanOrEqual(0.03)
+  })
+
+  it('detects inside a prior ROI crop and maps corners back to full-frame coordinates', () => {
+    const frame = new Frame(320, 240, 60)
+    frame.checkerboard(16, 80, 140)
+    const { w, h } = cardDims(170)
+    const truth = frame.drawCard(160, 120, w, h, 3, 205)
+    frame.blur(1, 1)
+    const window = priorSearchWindow(truth, 320, 240)
+    const crop = cropImageData(frame.imageData(), window)
+    const detected = detectCardQuadCv(cv, crop, {
+      window,
+      select: { mode: 'tracking', prior: truth },
+    })
+    expect(maxCornerError(detected, truth)).toBeLessThanOrEqual(0.03)
+  })
+
+  it('never invents a corner at an artificial crop edge', () => {
+    // The crop cuts through a complete, detectable card. Its contour touches the
+    // artificial right edge of the window, where geometry is unknown — the detector
+    // must skip it rather than hull-complete a fake boundary corner.
+    const frame = new Frame(400, 240, 50)
+    const { w, h } = cardDims(190)
+    const truth = frame.drawCard(200, 120, w, h, 0, 205)
+    expect(maxCornerError(detectCardQuadCv(cv, frame.imageData()), truth)).toBeLessThanOrEqual(0.03)
+    const window = { x: 0, y: 0, width: 200, height: 240, fullWidth: 400, fullHeight: 240 }
+    const crop = cropImageData(frame.imageData(), window)
+    expect(detectCardQuadCv(cv, crop, { window })).toBeNull()
+  })
+
+  it('reproduces a busy-background live lock at capture resolution via the prior ROI', () => {
+    // The capture path must rediscover whatever the live loop locked, at a different
+    // resolution — otherwise a busy-background lock still fails at commit time.
+    const scene = (width: number): { frame: Frame; truth: Quad } => {
+      const scale = width / 320
+      const height = Math.round(240 * scale)
+      const frame = new Frame(width, height, 60)
+      frame.checkerboard(Math.round(20 * scale), 60, 140)
+      const { w, h } = cardDims(Math.round(190 * scale))
+      const truth = frame.drawCard(width / 2, height / 2, w, h, 0, 205)
+      return { frame, truth }
+    }
+    const live = scene(320)
+    const liveQuad = detectCardQuadCv(cv, live.frame.imageData(), {
+      select: { mode: 'acquisition', guide: guideTarget(320, 240) },
+    })
+    expect(maxCornerError(liveQuad, live.truth)).toBeLessThanOrEqual(0.03)
+
+    const capture = scene(1000)
+    const window = priorSearchWindow(liveQuad!, 1000, 750)
+    const captured = detectCardQuadCv(cv, cropImageData(capture.frame.imageData(), window), {
+      window,
+      select: { mode: 'capture', prior: liveQuad! },
+    })
+    expect(maxCornerError(captured, capture.truth)).toBeLessThanOrEqual(0.02)
   })
 })
