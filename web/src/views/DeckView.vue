@@ -360,10 +360,12 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                 >
               </div>
               <div class="flex items-center gap-0.5">
+                <!-- Reordering is disabled while a filter narrows the list: the visible
+                  neighbour may not be the real neighbour (hidden sections in between). -->
                 <button
                   class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
                   aria-label="Move section up"
-                  :disabled="index === 0"
+                  :disabled="index === 0 || filterActive"
                   @click="moveSection(section.id, -1)"
                 >
                   <ChevronUp class="size-4" />
@@ -371,7 +373,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                 <button
                   class="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-30"
                   aria-label="Move section down"
-                  :disabled="index === visibleSections.length - 1"
+                  :disabled="index === visibleSections.length - 1 || filterActive"
                   @click="moveSection(section.id, 1)"
                 >
                   <ChevronDown class="size-4" />
@@ -389,13 +391,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                     >
                     <DropdownMenuItem
                       class="text-destructive"
-                      @click="
-                        requestSectionDelete(
-                          section.id,
-                          section.name,
-                          cardsBySection.get(section.id)?.length ?? 0,
-                        )
-                      "
+                      @click="requestSectionDelete(section.id, section.name)"
                       >Delete section</DropdownMenuItem
                     >
                   </DropdownMenuContent>

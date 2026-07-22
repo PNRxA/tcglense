@@ -230,8 +230,11 @@ export function useDeckEditor(props: DeckEditorProps) {
     })
   }
 
-  function requestSectionDelete(sectionId: number, name: string, count: number) {
+  function requestSectionDelete(sectionId: number, name: string) {
     if (!deck.value) return
+    // Deleting moves EVERY entry in the section, so the confirmation must count the
+    // unfiltered deck — the display map only holds the entries matching an active filter.
+    const count = allCards.value.filter((entry) => entry.section_id === sectionId).length
     sectionDeleteError.value = ''
     sectionDeleteTarget.value = { id: sectionId, name, count }
   }
@@ -259,7 +262,10 @@ export function useDeckEditor(props: DeckEditorProps) {
   }
 
   function moveSection(sectionId: number, delta: number) {
-    if (!deck.value) return
+    // Never reorder against a filter-narrowed list: the "neighbour" could be separated
+    // from this section by hidden populated sections, and the swap would silently move
+    // it past them. The view also disables the buttons while a filter is active.
+    if (!deck.value || filterActive.value) return
     // Swap against the visible neighbour while still submitting the complete section id list.
     const visible = visibleSections.value
     const visibleIndex = visible.findIndex((section) => section.id === sectionId)

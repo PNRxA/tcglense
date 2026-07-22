@@ -52,8 +52,12 @@ export function useDeckCardDisplay({ cards, sections, showEmpty }: DeckCardDispl
     })),
   )
 
-  const matchCount = computed(() => filteredCards.value.length)
-  const totalCount = computed(() => cards.value.length)
+  // Copy-weighted (regular + foil), matching the header's `summary.total_cards` — an
+  // entry-count "6 cards" beside a header's "10 cards" would read as a contradiction.
+  const countCopies = (entries: DeckCardEntry[]) =>
+    entries.reduce((sum, entry) => sum + entry.quantity + entry.foil_quantity, 0)
+  const matchCount = computed(() => countCopies(filteredCards.value))
+  const totalCount = computed(() => countCopies(cards.value))
 
   return {
     filterQuery,
