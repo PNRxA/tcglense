@@ -1,9 +1,16 @@
 import type { DeckCardEntry } from './api'
+import {
+  matchesPrintingToken,
+  printingTokenContext,
+  type PrintingTokenContext,
+} from './quickAddFilter'
 
 // Client-side filter for the deck views (issue #562). A deck's full card list is already
 // on the page (the detail payload carries every entry), so filtering is a pure re-shape of
 // loaded data — no server round-trip. Kept here (not inline in the views) so the matching
-// rules are unit-tested, mirroring `quickAddFilter`.
+// rules are unit-tested. Text tokens match the card's gameplay text OR its printing
+// metadata — the latter via `quickAddFilter`'s shared token rules, so set/number/rarity
+// queries behave exactly like the printing picker's filter box.
 
 /** One selectable colour pip: the five colours plus colourless. */
 export type DeckFilterColor = 'W' | 'U' | 'B' | 'R' | 'G' | 'C'
@@ -25,8 +32,9 @@ export const DECK_FILTER_COLOR_OPTIONS: readonly DeckFilterColorOption[] = [
   { value: 'C', label: 'Colorless', icon: 'ms-c' },
 ]
 
-/** The lowercased free text an entry is matched against: name, type line, and rules text,
- * including every face of a multi-faced card (so an MDFC's back face is findable too). */
+/** The gameplay half of the text haystack: name, type line, and rules text, including
+ * every face of a multi-faced card (so an MDFC's back face is findable too). Printing
+ * metadata (set/number/rarity/language) is matched via `quickAddFilter`'s context. */
 function entryHaystack(entry: DeckCardEntry): string {
   const card = entry.card
   const parts = [card.name, card.type_line ?? '', card.oracle_text ?? '']
@@ -51,9 +59,34 @@ function matchesColors(entry: DeckCardEntry, colors: readonly DeckFilterColor[])
 }
 
 /**
+ * Match one already-lowercased token against an entry's gameplay text or its printing
+ * metadata. A bare number — optionally `#`-prefixed — keeps the printing picker's exact
+ * semantics (the collector number with leading zeros ignored, or a standalone number in
+ * the set name/code) and additionally matches a *standalone* number in the gameplay text
+ * ("deals 3 damage") — never a substring, so "1" stays clear of "100" and #161. Any other
+ * token is a plain substring of either haystack (set name/code, rarity, and language ride
+ * the printing one).
+ */
+function matchesTextToken(
+  entry: DeckCardEntry,
+  gameplay: string,
+  printing: PrintingTokenContext,
+  token: string,
+): boolean {
+  const bare = token.startsWith('#') ? token.slice(1) : token
+  if (/^\d+$/.test(bare)) {
+    return (
+      matchesPrintingToken(entry.card, printing, token) ||
+      new RegExp(`\\b${bare}\\b`).test(gameplay)
+    )
+  }
+  return gameplay.includes(token) || matchesPrintingToken(entry.card, printing, token)
+}
+
+/**
  * Filter deck entries by a free-text query and a colour-pip selection, ANDed together.
- * Whitespace-separated query tokens are ANDed, each a case-insensitive substring of the
- * entry's name/type line/rules text. Blank query + no pips returns the list unchanged.
+ * Whitespace-separated query tokens are ANDed, each matched per `matchesTextToken`.
+ * Blank query + no pips returns the list unchanged.
  */
 export function filterDeckEntries(
   entries: DeckCardEntry[],
@@ -65,7 +98,8 @@ export function filterDeckEntries(
   return entries.filter((entry) => {
     if (!matchesColors(entry, colors)) return false
     if (tokens.length === 0) return true
-    const haystack = entryHaystack(entry)
-    return tokens.every((token) => haystack.includes(token))
+    const gameplay = entryHaystack(entry)
+    const printing = printingTokenContext(entry.card)
+    return tokens.every((token) => matchesTextToken(entry, gameplay, printing, token))
   })
 }

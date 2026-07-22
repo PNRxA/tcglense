@@ -47,6 +47,32 @@ function matchesToken(
   return new RegExp(`\\b${bare}\\b`).test(`${card.set_name} ${card.set_code}`.toLowerCase())
 }
 
+/** Per-card matching state, precomputed once so a multi-token query doesn't rebuild it. */
+export interface PrintingTokenContext {
+  haystack: string
+  cardNumber: string | null
+}
+
+export function printingTokenContext(card: Card): PrintingTokenContext {
+  return {
+    haystack: printHaystack(card),
+    cardNumber: normalizedCollectorNumber(card.collector_number),
+  }
+}
+
+/**
+ * Match one already-lowercased token against a printing, per `matchesToken`'s rules.
+ * Exported for the deck filter (issue #562 follow-up), which ORs these printing rules
+ * with its own gameplay-text matching so both surfaces share one number/set semantics.
+ */
+export function matchesPrintingToken(
+  card: Card,
+  context: PrintingTokenContext,
+  token: string,
+): boolean {
+  return matchesToken(card, context.haystack, context.cardNumber, token)
+}
+
 /**
  * Filter printings by a free-text query: whitespace-separated tokens are ANDed, each
  * matched per `matchesToken`. A blank query returns the list unchanged.
@@ -55,8 +81,7 @@ export function filterPrintings(cards: Card[], query: string): Card[] {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (!tokens.length) return cards
   return cards.filter((card) => {
-    const haystack = printHaystack(card)
-    const cardNumber = normalizedCollectorNumber(card.collector_number)
-    return tokens.every((token) => matchesToken(card, haystack, cardNumber, token))
+    const context = printingTokenContext(card)
+    return tokens.every((token) => matchesPrintingToken(card, context, token))
   })
 }

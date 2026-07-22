@@ -156,7 +156,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
           v-model="filterQuery"
           class="w-full sm:w-60"
           placeholder="Filter cards…"
-          aria-label="Filter cards by name, type, or text"
+          aria-label="Filter cards by name, type, text, or set"
         />
         <DeckColorFilter v-model="filterColors" />
         <CardSizeMenu />

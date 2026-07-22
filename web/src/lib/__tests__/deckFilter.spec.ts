@@ -25,22 +25,36 @@ const bolt = entry('bolt', {
   type_line: 'Instant',
   oracle_text: 'Lightning Bolt deals 3 damage to any target.',
   color_identity: ['R'],
+  set_code: 'lea',
+  set_name: 'Limited Edition Alpha',
+  collector_number: '161',
 })
 const island = entry('island', {
   name: 'Island',
   type_line: 'Basic Land — Island',
   color_identity: ['U'],
+  set_code: 'dmu',
+  set_name: 'Dominaria United',
+  collector_number: '0001',
 })
 const sol = entry('sol', {
   name: 'Sol Ring',
   type_line: 'Artifact',
   oracle_text: '{T}: Add {C}{C}.',
   color_identity: [],
+  set_code: 'c21',
+  set_name: 'Commander 2021',
+  collector_number: '333',
+  rarity: 'uncommon',
 })
 const mdfc = entry('mdfc', {
   name: 'Malakir Rebirth // Malakir Mire',
   type_line: 'Instant // Land',
   color_identity: ['B'],
+  set_code: 'znr',
+  set_name: 'Zendikar Rising',
+  collector_number: '18a',
+  rarity: 'mythic',
   faces: [
     face({ name: 'Malakir Rebirth', type_line: 'Instant', oracle_text: 'Choose target creature.' }),
     face({ name: 'Malakir Mire', type_line: 'Land', oracle_text: 'Malakir Mire enters tapped.' }),
@@ -84,5 +98,29 @@ describe('filterDeckEntries', () => {
   it('ANDs the text query with the colour selection', () => {
     expect(filterDeckEntries(all, 'instant', ['R'])).toEqual([bolt])
     expect(filterDeckEntries(all, 'instant', ['U'])).toEqual([])
+  })
+
+  it('matches set codes, set names, and rarity like the printing picker', () => {
+    expect(filterDeckEntries(all, 'lea', [])).toEqual([bolt])
+    expect(filterDeckEntries(all, 'zendikar', [])).toEqual([mdfc])
+    expect(filterDeckEntries(all, 'mythic', [])).toEqual([mdfc])
+  })
+
+  it('treats a bare number as an exact collector-number lookup, never a substring', () => {
+    expect(filterDeckEntries(all, '161', [])).toEqual([bolt])
+    expect(filterDeckEntries(all, '#161', [])).toEqual([bolt])
+    expect(filterDeckEntries(all, '16', [])).toEqual([])
+    // Leading zeros ignored on both sides; sol's "333" must not swallow it either.
+    expect(filterDeckEntries(all, '1', [])).toEqual([island])
+  })
+
+  it('matches letter-suffixed collector numbers and standalone set-name years', () => {
+    expect(filterDeckEntries(all, '#18a', [])).toEqual([mdfc])
+    expect(filterDeckEntries(all, '2021', [])).toEqual([sol])
+  })
+
+  it('matches a standalone number in rules text without substring noise', () => {
+    // "deals 3 damage" — while sol's collector number 333 stays clear of the bare 3.
+    expect(filterDeckEntries(all, '3', [])).toEqual([bolt])
   })
 })
