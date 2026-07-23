@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import CardImage from '@/components/cards/CardImage.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
@@ -14,12 +15,14 @@ import { useCardScanner } from '@/composables/useCardScanner'
 import { useScanSession } from '@/composables/useScanSession'
 import { printingMetadataLabel } from '@/lib/printings'
 import { usePageMeta } from '@/lib/seo'
+import { useScanPreferencesStore } from '@/stores/scanPreferences'
 
 // Scan physical cards into the collection with the phone/webcam camera. A capture identifies
 // the card visually and uses OCR to pin its printing. The current match remains tentative until
 // it is confirmed, scanning advances to another card, or the session ends.
 usePageMeta({ title: 'Scan cards', canonicalPath: '/scan', noindex: true })
 
+const scanPrefs = useScanPreferencesStore()
 const game = ref('mtg')
 const video = ref<HTMLVideoElement | null>(null)
 const videoAspect = ref(3 / 4)
@@ -122,8 +125,15 @@ async function captureNow() {
   captureRejected.value = false
   try {
     const captured = await capture()
-    if (captured) await handleCapture(captured)
-    else captureRejected.value = true
+    if (!captured) {
+      captureRejected.value = true
+      return
+    }
+    // Only a fresh card ('matched') swaps in a new panel to review; a re-scan of the same
+    // card, an unrecognised frame, or a busy loop leaves the review section unchanged, so
+    // there's nothing new to scroll to.
+    const outcome = await handleCapture(captured)
+    if (outcome === 'matched' && shouldAutoScrollAfterMatch()) reviewMatch({ focus: false })
   } finally {
     reading.value = false
   }
@@ -184,12 +194,24 @@ const captureLabel = computed(() => {
 })
 
 const reviewSection = ref<HTMLElement | null>(null)
-function reviewMatch() {
+// `focus` moves keyboard focus onto the results — right for the explicit "Review" tap
+// (deliberate navigation), but the automatic post-scan scroll only brings the panel into
+// view: stealing focus each scan would break the rapid "Add & scan next" rhythm, and the
+// aria-live region already announces the match to screen readers.
+function reviewMatch({ focus = true }: { focus?: boolean } = {}) {
   const section = reviewSection.value
   if (!section) return
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   section.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
-  section.focus({ preventScroll: true })
+  if (focus) section.focus({ preventScroll: true })
+}
+
+// Auto-scroll only helps the single-column (mobile/tablet) layout, where the review section
+// sits below the camera and off-screen. On the two-column (lg+) layout it's already beside
+// the camera — and the toggle is hidden there — so a scroll would just yank the page around.
+function shouldAutoScrollAfterMatch() {
+  if (!scanPrefs.autoScrollToReview) return false
+  return !window.matchMedia('(min-width: 1024px)').matches
 }
 </script>
 
@@ -220,6 +242,21 @@ function reviewMatch() {
         the previous one.
       </p>
     </header>
+
+    <!-- Auto-scroll toggle: only the single-column layout scrolls the review into view after a
+         scan, so the control lives here and is hidden on the two-column (lg+) layout where the
+         review is always beside the camera. -->
+    <div class="scan-auto-scroll-row mb-3 flex items-center gap-2 lg:mb-6 lg:hidden">
+      <Switch
+        id="scan-auto-scroll"
+        :checked="scanPrefs.autoScrollToReview"
+        aria-label="Auto-scroll to the review section after each successful scan"
+        @update:checked="scanPrefs.setAutoScrollToReview"
+      />
+      <label for="scan-auto-scroll" class="cursor-pointer text-sm select-none">
+        Auto-scroll to review
+      </label>
+    </div>
 
     <p class="sr-only" aria-live="polite">
       {{ isReady || successMessage ? statusHint : '' }}
@@ -427,6 +464,12 @@ function reviewMatch() {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  /* Reclaim the vertical space on small phones held sideways, where the header is hidden
+     too. The setting is still honoured from its last (portrait) value. */
+  .scan-auto-scroll-row {
+    display: none;
   }
 }
 </style>
