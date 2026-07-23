@@ -4,6 +4,7 @@ import {
   hasFlag,
   parseToken,
   readFilter,
+  readFlagValues,
   readRange,
   removeFilter,
   setFlag,
@@ -189,6 +190,29 @@ describe('setFlag', () => {
 
   it('leaves negated tokens verbatim', () => {
     expect(setFlag('-is:foil', ['is'], 'is', 'foil', false)).toBe('-is:foil')
+  })
+})
+
+describe('readFlagValues', () => {
+  it('lists every positive value across the key aliases, in query order', () => {
+    expect(
+      readFlagValues('art:squirrel bolt atag:dinosaur arttag:moon', ['art', 'arttag', 'atag']),
+    ).toEqual(['squirrel', 'dinosaur', 'moon'])
+  })
+
+  it('returns values verbatim (quotes intact) but dedupes case-insensitively', () => {
+    expect(
+      readFlagValues('art:"White Border" art:white-border ART:squirrel art:Squirrel', ['art']),
+    ).toEqual(['"White Border"', 'white-border', 'squirrel'])
+  })
+
+  it('ignores negated tokens and other operators', () => {
+    expect(readFlagValues('-art:squirrel art>moon', ['art'])).toEqual([])
+  })
+
+  it('is empty for an empty or unrelated query', () => {
+    expect(readFlagValues('', ['art'])).toEqual([])
+    expect(readFlagValues('bolt is:foil', ['art'])).toEqual([])
   })
 })
 

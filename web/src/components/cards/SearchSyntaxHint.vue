@@ -10,6 +10,7 @@
     <code class="bg-muted rounded px-1 py-0.5">t:goblin c:r</code>
     <code class="bg-muted ml-1 rounded px-1 py-0.5">mv&lt;=2</code>
     <code class="bg-muted ml-1 rounded px-1 py-0.5">o:flying r&gt;=rare</code>
+    <code class="bg-muted ml-1 rounded px-1 py-0.5">art:squirrel</code>
     <a
       href="https://scryfall.com/docs/syntax"
       target="_blank"

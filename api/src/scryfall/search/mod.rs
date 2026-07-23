@@ -8,10 +8,11 @@
 //! power / toughness / loyalty / pt / defense, prices, rarity, set, set type,
 //! collector number, language, layout, release date, legality (`f:`/`banned:`/…),
 //! keywords, artist, flavour text, watermark, border/frame/stamp, finishes and the
-//! print-flag `is:` subjects, printing counts (`prints`/`sets`), plus boolean
+//! print-flag `is:` subjects, printing counts (`prints`/`sets`), Tagger art tags
+//! (`art:`/`arttag:`/`atag:`, from the ingested `art_tags` bulk dataset), plus boolean
 //! `and`/`or`, `-` negation, parentheses, quoted phrases, and the `order:` /
 //! `direction:` / `unique:` result-shaping directives. Filters backed by datasets we
-//! don't ingest — Tagger tags (`otag:`/`atag:`/`function:`) and `cube:` — return a
+//! don't ingest — Tagger oracle tags (`otag:`/`function:`) and `cube:` — return a
 //! [`SearchError`] the handler maps to HTTP 422.
 //!
 //! Pipeline: [`lex`] → [`Parser::parse_query`] (recursive descent → `Node`) →

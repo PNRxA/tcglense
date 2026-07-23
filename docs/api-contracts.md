@@ -239,6 +239,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}/subtypes?q&page&page_size` | a set's cards grouped by **sub-type** (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by sub-type** — `{ data: SubtypeGroup[], page, page_size, total, has_more }` where `SubtypeGroup = { slug, title, card_count, cards: Card[] }` and `total` counts sub-types. The sub-type is **derived** from the card's print attributes (see `crate::scryfall::subtypes`); every card classifies, so `Normal` heads the list, then treatments. Unlike `/drops` this never `404`s (any set groups — one `Normal` group if plain; the SPA gates the view on `has_subtypes`); optional `q` filters cards, dropping now-empty sub-types |
 | `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
 | `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection/wish-list quick-add autocomplete |
+| `GET /api/games/{game}/art-tags?q&limit` | `{ data: ArtTagEntry[] }` — Tagger **art tags** usable with the `art:` search filter, `ArtTagEntry = { slug, label, count, description }` (`count` = distinct stored artworks matching, hierarchy-expanded; tags matching nothing we store are absent). With `q`: up to `limit` (default 10, max 50) tags whose slug **or** label contains `q` (case-insensitive; starts-with matches first, then by `count`) — the advanced-search autocomplete. Without `q`: the game's **full** tag list ordered by slug — the SPA tag-browser payload (a few thousand entries; ETag/CDN-cached like every public catalog read) |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
@@ -320,16 +321,26 @@ legality via `json_extract` over the stored `legalities` JSON), `kw`/`keyword`,
 counts via an `oracle_id`-sibling subquery), and a broad `is:`/`not:` vocabulary
 (layout/colour/mana/type-derived — incl. `permanent`/`spell`/`vanilla` — plus finish
 `foil`/`nonfoil`/`etched`, print flags `reprint`/`fullart`/`textless`/`oversized`/
-`promo`/`reserved`/…, and promo categories). Global **result-shaping** directives
+`promo`/`reserved`/…, and promo categories), and `art`/`arttag`/`atag` (community
+Tagger **art tags**, issue #140 — what the artwork depicts, from Scryfall's daily
+`art_tags` bulk dataset via a correlated `EXISTS` on `card_art_tags`). An art-tag
+value is the tag's slug (input is lowercased, whitespace → hyphens, so
+`art:"Rashida Scalebane"` works); matching is by tagged **artwork**
+(`illustration_id`, so every reprint of a tagged painting matches), the tag hierarchy
+is expanded **at ingest** (a parent tag like `art:animal` also matches artworks
+tagged with any descendant), and an unknown tag simply matches nothing — all
+mirroring Scryfall. The dataset syncs on the regular catalog tick (version-gated,
+swapped atomically, after the card sync; on by default like rulings, no flag).
+Global **result-shaping** directives
 `order:` (name/set/rarity/released/cmc/color/power/toughness/usd/eur/tix/edhrec/
 artist/number), `direction:` (asc/desc) and `unique:` (cards/art/prints) are honoured
 on the public catalog lists (URL `?sort`/`?dir` win over an in-query directive; the
 collection lists parse-and-ignore them). Comparison operators `: = != > >= < <=`,
 boolean `and`/`or`, `-` negation, and parentheses. Filters backed by datasets we
-don't ingest — Tagger tags (`otag:`/`atag:`/`function:`, issue #140), `cube:` (issue
-#141), and the curated `is:` land-cycle subjects — plus malformed queries return
-**422** `{ error }` (surfaced in the UI under the search box). All user values bind
-as SeaORM/SQL parameters — never interpolated into SQL.
+don't ingest — Tagger **oracle** tags (`otag:`/`function:`, the remainder of issue
+#140), `cube:` (issue #141), and the curated `is:` land-cycle subjects — plus
+malformed queries return **422** `{ error }` (surfaced in the UI under the search
+box). All user values bind as SeaORM/SQL parameters — never interpolated into SQL.
 
 ### HTTP caching (CDN)
 

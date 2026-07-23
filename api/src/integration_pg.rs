@@ -856,6 +856,28 @@ async fn search_smoke_battery_on_pg() {
     let (status, _) = get(&router, &cards("pow>tou")).await;
     assert_eq!(status, StatusCode::OK, "pow>tou compiles");
 
+    // Tagger art tags (issue #140) — the correlated, game-scoped EXISTS probe on the
+    // ingest-expanded card_art_tags, on live Postgres ($N-renumbered binds). `relic`
+    // tags the artwork the two reprint printings share; `object` is its seeded
+    // ancestor carrying the same expanded row; an unknown tag matches nothing.
+    let (status, body) = get(&router, &cards("art:relic")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["total"].as_u64(),
+        Some(2),
+        "artwork-keyed: both printings match"
+    );
+    let (status, body) = get(&router, &cards("atag:object")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_u64(), Some(2), "expanded ancestor matches");
+    let (status, body) = get(&router, &cards("art:no-such-tag")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["total"].as_u64(),
+        Some(0),
+        "unknown tag matches nothing"
+    );
+
     // Negation totality (F1): the leaf for a numeric-stat range compare is total (0/1,
     // never NULL) because the integer guard is re-ANDed outside the CASE, so `-pow>=5`
     // INCLUDES the NULL-power dummy cards rather than silently dropping them. Every

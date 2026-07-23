@@ -35,10 +35,10 @@ use crate::{
         },
         catalog::{
             card_image, card_names, card_prices, card_prints, card_rulings, card_sealed, get_card,
-            get_product, get_set, ingest_status, list_cards, list_games, list_products,
-            list_set_cards, list_set_drops, list_set_subtypes, list_sets, product_card_sections,
-            product_cards, product_containers, product_contents, product_facets, product_image,
-            product_prices, scan_cards, set_icon,
+            get_product, get_set, ingest_status, list_art_tags, list_cards, list_games,
+            list_products, list_set_cards, list_set_drops, list_set_subtypes, list_sets,
+            product_card_sections, product_cards, product_containers, product_contents,
+            product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -465,6 +465,9 @@ pub fn build_router(state: AppState) -> Router {
         // Distinct card-name autocomplete for the collection quick-add box. A sibling
         // of `/cards` (not `/cards/{name}`) so it never collides with `/cards/{id}`.
         .route("/api/games/{game}/card-names", get(card_names))
+        // Art-tag lookup for the advanced-search panel: `?q=` autocomplete matches, or
+        // the full tag list (the tag-browser payload) without `q`.
+        .route("/api/games/{game}/art-tags", get(list_art_tags))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
