@@ -73,33 +73,34 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
         {{ list === 'wishlist' ? 'wish list' : 'collection' }}.
       </DialogDescription>
 
-      <!-- Only the printing grid scrolls, so the header above and the Done button below stay
-        pinned to the modal edges — a long printing list never buries "Done" off-screen. -->
-      <div class="mt-4 min-h-0 flex-1 overflow-y-auto">
-        <PrintingPickerGrid
-          v-model:filter="picker.filter.value"
-          :printings="picker.printings.value"
-          :filtered-printings="picker.filteredPrintings.value"
-          :total="picker.total.value"
-          :pending="picker.isPending.value"
-          :error="picker.failed.value"
-          :has-more="picker.hasNextPage.value"
-          :loading-more="picker.isFetchingNextPage.value"
-          error-message="Couldn't load printings. Please close and try again."
-          empty-message="No printings found for this name."
-          @load-more="picker.loadMore"
-        >
-          <template #tile="{ printing }">
-            <QuickAddPrintTile
-              :game="game"
-              :card="printing"
-              :seed="seedFor(printing)"
-              :ready="seedReady"
-              :list="list"
-            />
-          </template>
-        </PrintingPickerGrid>
-      </div>
+      <!-- The grid fills the dialog and scrolls on its own (scrollable), so the title above,
+        the filter/sort bar, and the Done button below all stay pinned — a long printing list
+        never buries them off-screen. -->
+      <PrintingPickerGrid
+        v-model:filter="picker.filter.value"
+        scrollable
+        class="mt-4 min-h-0 flex-1"
+        :printings="picker.printings.value"
+        :filtered-printings="picker.filteredPrintings.value"
+        :total="picker.total.value"
+        :pending="picker.isPending.value"
+        :error="picker.failed.value"
+        :has-more="picker.hasNextPage.value"
+        :loading-more="picker.isFetchingNextPage.value"
+        error-message="Couldn't load printings. Please close and try again."
+        empty-message="No printings found for this name."
+        @load-more="picker.loadMore"
+      >
+        <template #tile="{ printing }">
+          <QuickAddPrintTile
+            :game="game"
+            :card="printing"
+            :seed="seedFor(printing)"
+            :ready="seedReady"
+            :list="list"
+          />
+        </template>
+      </PrintingPickerGrid>
 
       <div class="mt-6 flex justify-end">
         <DialogClose :class="buttonVariants({ variant: 'outline' })">Done</DialogClose>
