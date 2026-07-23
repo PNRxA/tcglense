@@ -245,12 +245,12 @@ function shouldAutoScrollAfterMatch() {
 
     <!-- Auto-scroll toggle: only the single-column layout scrolls the review into view after a
          scan, so the control lives here and is hidden on the two-column (lg+) layout where the
-         review is always beside the camera. -->
-    <div class="scan-auto-scroll-row mb-3 flex items-center gap-2 lg:mb-6 lg:hidden">
+         review is always beside the camera — matching where the behaviour itself applies. -->
+    <div class="mb-3 flex items-center gap-2 lg:mb-6 lg:hidden">
       <Switch
         id="scan-auto-scroll"
         :checked="scanPrefs.autoScrollToReview"
-        aria-label="Auto-scroll to the review section after each successful scan"
+        aria-label="Auto-scroll to review"
         @update:checked="scanPrefs.setAutoScrollToReview"
       />
       <label for="scan-auto-scroll" class="cursor-pointer text-sm select-none">
@@ -464,12 +464,6 @@ function shouldAutoScrollAfterMatch() {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
-  }
-
-  /* Reclaim the vertical space on small phones held sideways, where the header is hidden
-     too. The setting is still honoured from its last (portrait) value. */
-  .scan-auto-scroll-row {
-    display: none;
   }
 }
 </style>
