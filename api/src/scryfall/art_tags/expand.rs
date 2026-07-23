@@ -152,6 +152,11 @@ impl Dfs<'_> {
         if self.color[i] == Color::Gray {
             // Back-edge: we're already computing `i` somewhere up the stack. Treat the
             // cycle edge as empty; the in-flight computation still gathers the union.
+            // Within a cycle this makes results order-dependent (a member memoized
+            // before the loop closes can miss artworks only reachable back through
+            // it) — accepted: real Tagger data is acyclic (verified against the live
+            // bulk file), every tag always keeps at least its own direct taggings,
+            // and the guard exists purely so a malformed file terminates.
             return &[];
         }
         if self.memo[i].is_none() {

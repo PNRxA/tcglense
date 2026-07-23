@@ -542,9 +542,11 @@ async fn seed_rulings(db: &DatabaseConnection) -> Result<u64, IngestError> {
 /// `art:` search filter and the art-tag autocomplete/browser work offline. The shape
 /// mirrors what the real ingest produces post-expansion: `relic` tags the reprint
 /// pair's shared illustration, its ancestor `object` carries the same (expanded) row,
-/// and `squirrel` tags an unrelated artwork. Wipes the game's rows then inserts fresh,
-/// mirroring the real ingest's wholesale rebuild, so a reseed is idempotent. Returns
-/// the number of tag + mapping rows written.
+/// and `squirrel` tags an unrelated artwork. **Upsert-only** like the rest of the
+/// dummy seed (never deletes — the module contract): keyed on the same unique indexes
+/// the real ingest's tables carry (`(game, slug)` / `(game, tag_slug,
+/// illustration_id)`), so a reseed overwrites its own three tags and leaves anything
+/// else alone. Returns the number of tag + mapping rows written.
 async fn seed_art_tags(db: &DatabaseConnection) -> Result<u64, IngestError> {
     // (scryfall_id, slug, label, description, illustration_id)
     let tags: &[(&str, &str, &str, Option<&str>, &str)] = &[
@@ -599,19 +601,30 @@ async fn seed_art_tags(db: &DatabaseConnection) -> Result<u64, IngestError> {
         )
         .collect();
 
-    CardArtTag::delete_many()
-        .filter(card_art_tag::Column::Game.eq(GAME))
-        .exec(db)
-        .await?;
-    ArtTag::delete_many()
-        .filter(art_tag::Column::Game.eq(GAME))
-        .exec(db)
-        .await?;
     let total = (tag_models.len() + mapping_models.len()) as u64;
     ArtTag::insert_many(tag_models)
+        .on_conflict(
+            OnConflict::columns([art_tag::Column::Game, art_tag::Column::Slug])
+                .update_columns([
+                    art_tag::Column::ScryfallId,
+                    art_tag::Column::Label,
+                    art_tag::Column::Description,
+                    art_tag::Column::TaggingsCount,
+                ])
+                .to_owned(),
+        )
         .exec_without_returning(db)
         .await?;
     CardArtTag::insert_many(mapping_models)
+        .on_conflict(
+            OnConflict::columns([
+                card_art_tag::Column::Game,
+                card_art_tag::Column::TagSlug,
+                card_art_tag::Column::IllustrationId,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
         .exec_without_returning(db)
         .await?;
     Ok(total)

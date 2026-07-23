@@ -21,6 +21,13 @@ use crate::state::AppState;
 const DEFAULT_TAG_SUGGESTIONS: u64 = 10;
 const MAX_TAG_SUGGESTIONS: u64 = 50;
 
+/// Hard bound on the no-`q` full-vocabulary listing. Today's whole vocabulary is
+/// ~10-11k tags (a few hundred KB of JSON, ETag/CDN-cached); the cap only exists so a
+/// future runaway upstream vocabulary can't make this public route serve an unbounded
+/// body. Burst cost is covered by the public catalog per-IP rate limiter the route
+/// group already carries.
+const FULL_LIST_MAX: u64 = 20_000;
+
 /// One art tag: a community Tagger label describing what a card's artwork depicts.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
@@ -82,7 +89,11 @@ pub async fn list_art_tags(
 
     match trim_query(params.q.as_deref()) {
         // No search term: the whole vocabulary, slug-ordered, for the tag browser.
-        None => query = query.order_by_asc(art_tag::Column::Slug),
+        None => {
+            query = query
+                .order_by_asc(art_tag::Column::Slug)
+                .limit(FULL_LIST_MAX);
+        }
         Some(term) => {
             let limit = params
                 .limit

@@ -562,7 +562,11 @@ catalog) is planned but not implemented.
     scoping to stored artworks — trivial next to price history) rebuilt wholesale on each
     changed tick inside one transaction (same atomic-swap + zero-row wipe-guard contract as
     rulings; `card_art_tags.id` is i64 because the daily rebuild would exhaust an i32
-    Postgres sequence in a few years).
+    Postgres sequence in a few years). The version gate folds the **card dataset's**
+    imported version in beside the tag file's `updated_at` — the mapping derives from both
+    inputs, so a card re-import (new sets → new artworks) rebuilds it; and an empty card
+    catalog (fresh DB, failed card import) **defers** the import without stamping the
+    version, so it can never latch empty tables as "complete".
   - **Tag slugs are denormalized onto the mapping rows** (no join to `art_tags` on the hot
     path). Scryfall warns slugs can drift — the durable id is stored in `art_tags` — but the
     wholesale daily rebuild self-corrects any drift, so v1 trades referential purity for the
@@ -573,6 +577,11 @@ catalog) is planned but not implemented.
     them for plain `art:`, and an ancestor-expanded row has no single meaningful weight) and
     tag `aliases` (1.3k across 11.4k tags; revisit if users ask). Oracle tags (`otag:`) stay
     422 — same infra would work but they key on `oracle_id` and ship in a separate bulk file.
+  - **Known limitation — multi-face artworks:** `cards.illustration_id` is the catalog's
+    flattened artwork id (first face carrying one), so a tagging that applies only to a
+    non-first face (a transform card's back-face painting) is dropped at ingest and `art:`
+    won't match that card, where Scryfall would. Fixing it needs per-face artwork identity
+    on `cards` — it equally affects `unique:art` grouping — and is deferred with that work.
 - **Sealed products (TCGCSV):** sealed-product price tracking is **built** — a TCGCSV
   provider (`crate::tcgcsv`) feeds the `products` + `product_price_history` tables and the
   public `/api/games/{game}/products*` endpoints (`handlers::catalog::products`). [TCGCSV](https://tcgcsv.com)

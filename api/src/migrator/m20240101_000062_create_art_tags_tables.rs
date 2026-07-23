@@ -39,9 +39,10 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // The one read shape: autocomplete lookup by `(game, slug)`. Unique — the bulk
-        // file's slugs are canonical (a dupe would fail the refresh transaction and keep
-        // the previous good tag set).
+        // The one read shape: autocomplete lookup by `(game, slug)`. Unique as defence
+        // in depth — the ingest already drops duplicate slugs while parsing, so this
+        // only trips (failing the swap transaction and keeping the previous good tag
+        // set) if a dupe slips in through some other path.
         manager
             .create_index(
                 Index::create()

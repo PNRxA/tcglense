@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check } from '@lucide/vue'
+import { Check, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useArtTagList } from '@/composables/useArtTags'
 import { artTagSlug, getArtTagValues, toggleArtTag } from '@/lib/searchBuilder'
@@ -16,6 +22,11 @@ import type { ArtTagEntry } from '@/lib/api'
 const query = defineModel<string>({ required: true })
 const open = defineModel<boolean>('open', { required: true })
 const props = defineProps<{ game: string }>()
+// Forwarded so the opener can prevent reka's default close-focus (which would land
+// on <body> — this dialog has no trigger element — and dismiss the Filters popover
+// hosting it) and refocus its own Browse button instead. Same contract as
+// QuickAddPrintDialog's closeAutoFocus.
+const emit = defineEmits<{ closeAutoFocus: [event: Event] }>()
 
 const enabled = computed(() => open.value)
 const { data, isPending, isError } = useArtTagList(
@@ -74,8 +85,19 @@ function jumpTo(letter: string) {
   <Dialog v-model:open="open">
     <DialogContent
       class="bg-background flex max-h-[85svh] w-[min(96vw,48rem)] flex-col gap-3 rounded-xl border p-5 shadow-lg"
+      @close-auto-focus="emit('closeAutoFocus', $event)"
     >
-      <DialogTitle>Browse art tags</DialogTitle>
+      <div class="flex items-start justify-between gap-2">
+        <DialogTitle>Browse art tags</DialogTitle>
+        <!-- A real, focusable close control: keyboard/AT users shouldn't depend on
+             Escape or the overlay to leave a modal holding thousands of buttons. -->
+        <DialogClose
+          class="text-muted-foreground hover:text-foreground -mt-1 -mr-1 rounded-md p-1"
+          aria-label="Close"
+        >
+          <X class="size-4" aria-hidden="true" />
+        </DialogClose>
+      </div>
       <DialogDescription class="text-muted-foreground text-sm">
         Community Tagger labels for what a card's artwork depicts. Pick any number of tags — each
         becomes an
@@ -123,13 +145,21 @@ function jumpTo(letter: string) {
           <h3 class="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide">
             {{ section.letter }}
           </h3>
+          <!-- Native <button>s, not the Button component: the full vocabulary is
+               ~10k tags, and that many component instances would stall the open /
+               filter-clear render; plain elements patch an order of magnitude
+               cheaper (the QuickAddBox option-list precedent). -->
           <div class="flex flex-wrap gap-1.5">
-            <Button
+            <button
               v-for="tag in section.tags"
               :key="tag.slug"
-              :variant="selected.has(tag.slug) ? 'secondary' : 'outline'"
-              size="sm"
-              class="h-7 gap-1 px-2 text-xs font-normal"
+              type="button"
+              class="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors"
+              :class="
+                selected.has(tag.slug)
+                  ? 'bg-secondary text-secondary-foreground border-transparent'
+                  : 'hover:bg-accent hover:text-accent-foreground'
+              "
               :aria-pressed="selected.has(tag.slug)"
               :title="tag.description ?? undefined"
               @click="toggle(tag.slug)"
@@ -137,7 +167,7 @@ function jumpTo(letter: string) {
               <Check v-if="selected.has(tag.slug)" class="size-3" aria-hidden="true" />
               <span>{{ tag.label }}</span>
               <span class="text-muted-foreground tabular-nums">{{ tag.count }}</span>
-            </Button>
+            </button>
           </div>
         </section>
       </div>

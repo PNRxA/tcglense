@@ -132,6 +132,16 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 const inputId = useId()
+
+// The browser dialog has no trigger element, so reka's default close-focus would land
+// on <body> — read as "focus outside" by the Filters popover hosting this control,
+// dismissing the whole panel. Keep focus on the Browse button instead (the
+// QuickAddBox precedent).
+const browseButtonRef = ref<InstanceType<typeof Button>>()
+function onBrowserCloseAutoFocus(event: Event) {
+  event.preventDefault()
+  ;(browseButtonRef.value?.$el as HTMLElement | undefined)?.focus()
+}
 </script>
 
 <template>
@@ -139,6 +149,7 @@ const inputId = useId()
     <div class="flex items-center justify-between">
       <label :for="inputId" class="text-sm leading-none font-medium">Art tags</label>
       <Button
+        ref="browseButtonRef"
         variant="ghost"
         size="sm"
         class="text-muted-foreground -mr-2 h-7 gap-1.5"
@@ -215,6 +226,11 @@ const inputId = useId()
       </div>
     </div>
 
-    <ArtTagBrowser v-model="query" v-model:open="browserOpen" :game="game" />
+    <ArtTagBrowser
+      v-model="query"
+      v-model:open="browserOpen"
+      :game="game"
+      @close-auto-focus="onBrowserCloseAutoFocus"
+    />
   </div>
 </template>

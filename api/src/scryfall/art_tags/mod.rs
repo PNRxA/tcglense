@@ -8,8 +8,16 @@
 //! only taggings whose artwork belongs to a card we actually store, expand the tag
 //! hierarchy at ingest ([`expand`]) so a parent tag like `animal` matches its
 //! descendants' artworks without a query-time tree walk, then swap both tables in one
-//! transaction so a refresh is atomic. Version-gated on the bulk file's `updated_at` via
-//! `ingest_state` `(mtg, art_tags)`, so an unchanged dataset is skipped on the next tick.
+//! transaction so a refresh is atomic. Version-gated via `ingest_state` `(mtg,
+//! art_tags)` on the bulk file's `updated_at` **combined with** the card dataset's
+//! imported version (the mapping derives from both inputs), so an unchanged pair is
+//! skipped on the next tick and a card re-import rebuilds the mapping.
+//!
+//! Known limitation: `cards.illustration_id` is the catalog's *flattened* artwork id
+//! (the first face carrying one — see `map::map_card`), so a tagging that applies only
+//! to a non-first face's artwork (e.g. a transform card's back face) is dropped here
+//! and `art:` won't match that card. Fixing that means per-face artwork identity on
+//! `cards` (it equally affects `unique:art` grouping) — deferred with that work.
 
 mod expand;
 
@@ -27,7 +35,7 @@ use tokio_util::io::StreamReader;
 use super::client;
 use super::ingest::IngestError;
 use super::model::ScryfallArtTag;
-use super::{DATASET_ART_TAGS, GAME};
+use super::{DATASET, DATASET_ART_TAGS, GAME};
 use crate::catalog::ingest_state::{self, StateFields};
 use crate::datasets::SyncSource;
 use crate::entities::prelude::{ArtTag, Card, CardArtTag};
@@ -76,12 +84,33 @@ async fn refresh_inner(
             ))
         })?;
 
-    // Skip if we already imported this exact version.
+    // The mapping derives from BOTH inputs — the art-tags file *and* the card
+    // catalog's illustration ids it's scoped to — so the version gate folds the card
+    // dataset's imported version into its value: a card re-import (new sets → new
+    // artworks) rebuilds the mapping even when the tag file itself is unchanged.
+    let cards_version = ingest_state::load(db, GAME, DATASET)
+        .await?
+        .and_then(|s| s.source_updated_at)
+        .unwrap_or_default();
+    let source_version = format!("{} (cards {cards_version})", entry.updated_at);
+
+    // Skip if we already imported this exact input pair.
     if let Some(state) = ingest_state::load(db, GAME, DATASET_ART_TAGS).await?
         && state.status == "complete"
-        && state.source_updated_at.as_deref() == Some(entry.updated_at.as_str())
+        && state.source_updated_at.as_deref() == Some(source_version.as_str())
     {
         tracing::info!(updated_at = %entry.updated_at, "scryfall {DATASET_ART_TAGS} already up to date");
+        return Ok(());
+    }
+
+    // Taggings key on `illustration_id`; keep only those for artworks we actually store,
+    // so the table stays scoped to the (paper) catalog — same posture as rulings. No
+    // stored artworks (fresh DB, or the card import failed this tick) means building
+    // now would swap in empty tables and stamp them complete — defer instead, leaving
+    // the previous state so the next tick retries once cards exist.
+    let known = known_illustration_ids(db).await?;
+    if known.is_empty() {
+        tracing::info!("no stored artworks yet; deferring scryfall {DATASET_ART_TAGS} import");
         return Ok(());
     }
 
@@ -97,7 +126,7 @@ async fn refresh_inner(
             game: GAME,
             dataset: DATASET_ART_TAGS,
             status: "running",
-            source_updated_at: Some(&entry.updated_at),
+            source_updated_at: Some(&source_version),
             detail: "importing art tags",
             sets_imported: 0,
             cards_imported: 0,
@@ -107,10 +136,6 @@ async fn refresh_inner(
     )
     .await?;
 
-    // Taggings key on `illustration_id`; keep only those for artworks we actually store,
-    // so the table stays scoped to the (paper) catalog — same posture as rulings.
-    let known = known_illustration_ids(db).await?;
-
     // In mirror mode the file streams from the mirror (overriding the catalog's embedded
     // upstream `download_uri`); upstream mode follows that `download_uri` directly.
     let download_url = source
@@ -119,11 +144,11 @@ async fn refresh_inner(
     let inputs = collect_tags(client, &download_url).await?;
     let expanded = expand::expand(inputs, &known);
 
-    // A run that fetched everything but matched nothing while we DO hold artworks means
-    // the download was bad (empty/garbage body, or a format drift). Fail it — before
-    // touching the tables — rather than wiping good tags and version-locking the empty
-    // state.
-    if expanded.rows == 0 && !known.is_empty() {
+    // A run that fetched everything but matched nothing — while we DO hold artworks
+    // (guaranteed by the empty-`known` deferral above) — means the download was bad
+    // (empty/garbage body, or a format drift). Fail it — before touching the tables —
+    // rather than wiping good tags and version-locking the empty state.
+    if expanded.rows == 0 {
         return Err(IngestError::Other(
             "art-tag import produced 0 rows despite stored artworks; treating as failure to retry"
                 .to_string(),
@@ -140,7 +165,7 @@ async fn refresh_inner(
             game: GAME,
             dataset: DATASET_ART_TAGS,
             status: "complete",
-            source_updated_at: Some(&entry.updated_at),
+            source_updated_at: Some(&source_version),
             detail: &format!("imported {tag_count} art tags ({row_count} artwork mappings)"),
             sets_imported: tag_count,
             cards_imported: row_count,
