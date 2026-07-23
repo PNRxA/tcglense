@@ -31,6 +31,13 @@ const props = withDefaults(
     collectionOnly?: boolean
     /** Owned counts are still loading after the checkbox flipped on — show a checking state. */
     collectionLoading?: boolean
+    /**
+     * Fill the parent's height and confine the scroll to the printing grid, keeping the
+     * filter/sort header pinned above it. A caller that hands this a bounded flex column (the
+     * quick-add dialog) then keeps that header — and its own footer — in view instead of
+     * scrolling the whole panel. Off (default) = the single-flow layout scan/deck rely on.
+     */
+    scrollable?: boolean
   }>(),
   {
     errorMessage: 'Could not load printings. Please try again.',
@@ -39,6 +46,7 @@ const props = withDefaults(
     collectionFilter: false,
     collectionOnly: false,
     collectionLoading: false,
+    scrollable: false,
   },
 )
 
@@ -91,8 +99,11 @@ const emptyFilterMessage = computed(() => {
   <p v-else-if="printings.length === 0" class="text-muted-foreground py-8 text-center text-sm">
     {{ emptyMessage }}
   </p>
-  <div v-else>
-    <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
+  <div v-else :class="scrollable ? 'flex flex-col' : undefined">
+    <div
+      class="mb-4 flex flex-wrap items-start justify-between gap-2"
+      :class="scrollable ? 'shrink-0' : undefined"
+    >
       <!-- Filter/sort are pointless for a lone printing, but the collection toggle must stay
         reachable whenever it's offered — it persists across card picks, so a single-printing
         card mustn't strand it "on" with no way back off. -->
@@ -128,30 +139,35 @@ const emptyFilterMessage = computed(() => {
       </div>
     </div>
 
-    <LoadingRow v-if="collectionLoading" label="Checking your collection…" />
-    <p
-      v-else-if="filteredPrintings.length === 0"
-      class="text-muted-foreground py-8 text-center text-sm"
-    >
-      {{ emptyFilterMessage }}
-    </p>
-    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-4">
-      <slot
-        v-for="printing in sortedPrintings"
-        :key="printing.id"
-        name="tile"
-        :printing="printing"
-      />
-    </div>
+    <!-- In `scrollable` mode this is the only scroll region, so the filter/sort header above
+      stays pinned while the grid scrolls; otherwise `display: contents` dissolves the wrapper
+      so non-scrollable callers (scan, deck) keep their exact single-flow layout. -->
+    <div :class="scrollable ? 'min-h-0 flex-1 overflow-y-auto' : 'contents'">
+      <LoadingRow v-if="collectionLoading" label="Checking your collection…" />
+      <p
+        v-else-if="filteredPrintings.length === 0"
+        class="text-muted-foreground py-8 text-center text-sm"
+      >
+        {{ emptyFilterMessage }}
+      </p>
+      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-4">
+        <slot
+          v-for="printing in sortedPrintings"
+          :key="printing.id"
+          name="tile"
+          :printing="printing"
+        />
+      </div>
 
-    <p v-if="error" class="text-destructive mt-4 text-center text-sm" role="alert">
-      Could not load more printings. Please retry.
-    </p>
-    <div v-if="hasMore" class="mt-5 flex justify-center">
-      <Button variant="outline" :disabled="loadingMore" @click="emit('loadMore')">
-        <Loader2 v-if="loadingMore" class="size-4 animate-spin" aria-hidden="true" />
-        {{ loadingMore ? 'Loading…' : 'Load more printings' }}
-      </Button>
+      <p v-if="error" class="text-destructive mt-4 text-center text-sm" role="alert">
+        Could not load more printings. Please retry.
+      </p>
+      <div v-if="hasMore" class="mt-5 flex justify-center">
+        <Button variant="outline" :disabled="loadingMore" @click="emit('loadMore')">
+          <Loader2 v-if="loadingMore" class="size-4 animate-spin" aria-hidden="true" />
+          {{ loadingMore ? 'Loading…' : 'Load more printings' }}
+        </Button>
+      </div>
     </div>
   </div>
 </template>

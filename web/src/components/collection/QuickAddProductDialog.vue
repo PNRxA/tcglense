@@ -76,7 +76,7 @@ const verb = computed(() => (props.list === 'wishlist' ? 'want' : 'own'))
 <template>
   <Dialog v-model:open="open">
     <DialogContent
-      class="bg-background w-[min(94vw,28rem)] rounded-xl border p-6 shadow-xl"
+      class="bg-background flex max-h-[85vh] w-[min(94vw,28rem)] flex-col overflow-hidden rounded-xl border p-6 shadow-xl"
       @close-auto-focus="emit('closeAutoFocus', $event)"
     >
       <DialogTitle class="text-lg font-semibold">
@@ -86,89 +86,93 @@ const verb = computed(() => (props.list === 'wishlist' ? 'want' : 'own'))
         Set how many you {{ verb }} in your {{ listName }}. Zero removes it.
       </DialogDescription>
 
-      <div v-if="product" class="mt-4 flex gap-4">
-        <ProductImage
-          :game="game"
-          :id="product.id"
-          :name="product.name"
-          :has-image="product.has_image"
-          size="normal"
-          class="w-28 shrink-0"
-        />
-        <div class="flex min-w-0 flex-1 flex-col">
-          <p class="font-medium" :title="product.name">{{ product.name }}</p>
-          <p class="text-muted-foreground text-sm">
-            {{ product.set_name ?? product.set_code.toUpperCase() }} ·
-            {{ productTypeLabel(product.product_type) }}
-          </p>
-          <p class="mt-1 text-sm font-medium tabular-nums">
-            <template v-if="price"
-              >{{ price.text
-              }}<span
-                v-if="price.foil"
-                class="text-muted-foreground ml-1 text-[0.65rem] tracking-wide uppercase"
-                title="Foil price (no regular listing)"
-                >foil</span
-              ></template
-            >
-            <span v-else class="text-muted-foreground">—</span>
-          </p>
+      <!-- Body scrolls if it ever outgrows a short viewport, keeping the Done button below
+        pinned to the modal's bottom edge instead of sliding off-screen. -->
+      <div class="min-h-0 flex-1 overflow-y-auto">
+        <div v-if="product" class="mt-4 flex gap-4">
+          <ProductImage
+            :game="game"
+            :id="product.id"
+            :name="product.name"
+            :has-image="product.has_image"
+            size="normal"
+            class="w-28 shrink-0"
+          />
+          <div class="flex min-w-0 flex-1 flex-col">
+            <p class="font-medium" :title="product.name">{{ product.name }}</p>
+            <p class="text-muted-foreground text-sm">
+              {{ product.set_name ?? product.set_code.toUpperCase() }} ·
+              {{ productTypeLabel(product.product_type) }}
+            </p>
+            <p class="mt-1 text-sm font-medium tabular-nums">
+              <template v-if="price"
+                >{{ price.text
+                }}<span
+                  v-if="price.foil"
+                  class="text-muted-foreground ml-1 text-[0.65rem] tracking-wide uppercase"
+                  title="Foil price (no regular listing)"
+                  >foil</span
+                ></template
+              >
+              <span v-else class="text-muted-foreground">—</span>
+            </p>
 
-          <!-- One quantity stepper (no foil counterpart for sealed products). Disabled
+            <!-- One quantity stepper (no foil counterpart for sealed products). Disabled
             until the authoritative seed loads, so a click can never save off a stale
             zero. -->
-          <div class="mt-4 flex items-center justify-between gap-3">
-            <span class="text-sm">Quantity</span>
-            <div class="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                :disabled="!ready || regular <= 0"
-                :aria-label="`Remove one from your ${listName}`"
-                @click="adjust('quantity', -1)"
-              >
-                <Minus />
-              </Button>
-              <span class="w-8 text-center text-sm font-medium tabular-nums">{{
-                ready ? regular : '—'
-              }}</span>
-              <Button
-                variant="outline"
-                size="icon"
-                :disabled="!ready"
-                :aria-label="`Add one to your ${listName}`"
-                @click="adjust('quantity', 1)"
-              >
-                <Plus />
-              </Button>
+            <div class="mt-4 flex items-center justify-between gap-3">
+              <span class="text-sm">Quantity</span>
+              <div class="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  :disabled="!ready || regular <= 0"
+                  :aria-label="`Remove one from your ${listName}`"
+                  @click="adjust('quantity', -1)"
+                >
+                  <Minus />
+                </Button>
+                <span class="w-8 text-center text-sm font-medium tabular-nums">{{
+                  ready ? regular : '—'
+                }}</span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  :disabled="!ready"
+                  :aria-label="`Add one to your ${listName}`"
+                  @click="adjust('quantity', 1)"
+                >
+                  <Plus />
+                </Button>
+              </div>
             </div>
-          </div>
 
-          <!-- Load/save status: a load failure or the in-flight count both explain why the
+            <!-- Load/save status: a load failure or the in-flight count both explain why the
             steppers are disabled; otherwise the save state. Fixed height so it never shifts
             the dialog as it changes. -->
-          <div
-            class="text-muted-foreground mt-2 flex h-4 items-center gap-1 text-xs"
-            aria-live="polite"
-          >
-            <template v-if="entryQuery.isError.value">
-              <span class="text-destructive">Couldn't load — close and try again</span>
-            </template>
-            <template v-else-if="!ready">
-              <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-              Loading…
-            </template>
-            <template v-else-if="saveError">
-              <span class="text-destructive">Couldn't save — retry</span>
-            </template>
-            <template v-else-if="saving">
-              <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-              Saving…
-            </template>
-            <template v-else-if="held">
-              <Check class="size-3.5" aria-hidden="true" />
-              Saved
-            </template>
+            <div
+              class="text-muted-foreground mt-2 flex h-4 items-center gap-1 text-xs"
+              aria-live="polite"
+            >
+              <template v-if="entryQuery.isError.value">
+                <span class="text-destructive">Couldn't load — close and try again</span>
+              </template>
+              <template v-else-if="!ready">
+                <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+                Loading…
+              </template>
+              <template v-else-if="saveError">
+                <span class="text-destructive">Couldn't save — retry</span>
+              </template>
+              <template v-else-if="saving">
+                <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+                Saving…
+              </template>
+              <template v-else-if="held">
+                <Check class="size-3.5" aria-hidden="true" />
+                Saved
+              </template>
+            </div>
           </div>
         </div>
       </div>

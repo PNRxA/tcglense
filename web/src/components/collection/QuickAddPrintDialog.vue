@@ -62,7 +62,7 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
 <template>
   <Dialog v-model:open="open">
     <DialogContent
-      class="bg-background max-h-[85vh] w-[min(94vw,44rem)] overflow-y-auto rounded-xl border p-6 shadow-xl"
+      class="bg-background flex max-h-[85vh] w-[min(94vw,44rem)] flex-col overflow-hidden rounded-xl border p-6 shadow-xl"
       @close-auto-focus="emit('closeAutoFocus', $event)"
     >
       <DialogTitle class="text-lg font-semibold">
@@ -73,9 +73,13 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
         {{ list === 'wishlist' ? 'wish list' : 'collection' }}.
       </DialogDescription>
 
+      <!-- The grid fills the dialog and scrolls on its own (scrollable), so the title above,
+        the filter/sort bar, and the Done button below all stay pinned — a long printing list
+        never buries them off-screen. -->
       <PrintingPickerGrid
         v-model:filter="picker.filter.value"
-        class="mt-4"
+        scrollable
+        class="mt-4 min-h-0 flex-1"
         :printings="picker.printings.value"
         :filtered-printings="picker.filteredPrintings.value"
         :total="picker.total.value"
