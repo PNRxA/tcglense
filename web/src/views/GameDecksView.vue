@@ -225,7 +225,9 @@ function removeFolder(folderId: number, name: string) {
             <DialogTrigger as-child>
               <Button variant="outline"><FolderPlus class="size-4" /> New folder</Button>
             </DialogTrigger>
-            <DialogContent class="max-w-sm">
+            <DialogContent
+              class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl"
+            >
               <DialogTitle>New folder</DialogTitle>
               <DialogDescription>Group your decks under a named folder.</DialogDescription>
               <form class="mt-2 space-y-3" @submit.prevent="submitCreateFolder">
@@ -242,7 +244,9 @@ function removeFolder(folderId: number, name: string) {
             <DialogTrigger as-child>
               <Button><Plus class="size-4" /> New deck</Button>
             </DialogTrigger>
-            <DialogContent class="max-w-sm">
+            <DialogContent
+              class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl"
+            >
               <DialogTitle>New deck</DialogTitle>
               <DialogDescription>
                 Give your deck a name, pick a format, and file it in a folder — all optional.

@@ -304,7 +304,9 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
             <DialogTrigger as-child>
               <Button variant="outline" size="sm"><Plus class="size-4" /> Add section</Button>
             </DialogTrigger>
-            <DialogContent class="max-w-sm">
+            <DialogContent
+              class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl"
+            >
               <DialogTitle>New section</DialogTitle>
               <DialogDescription>Add a custom category to sort cards into.</DialogDescription>
               <form class="mt-2 space-y-3" @submit.prevent="submitNewSection">
@@ -470,7 +472,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
 
       <!-- Rename deck dialog -->
       <Dialog v-model:open="renameOpen">
-        <DialogContent class="max-w-sm">
+        <DialogContent class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl">
           <DialogTitle>Edit deck</DialogTitle>
           <form class="mt-2 space-y-3" @submit.prevent="submitRename">
             <Input v-model="editName" placeholder="Deck name" />
@@ -484,7 +486,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
       </Dialog>
 
       <Dialog :open="sectionDeleteTarget != null" @update:open="onSectionDeleteOpenChange">
-        <DialogContent class="max-w-sm">
+        <DialogContent class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl">
           <DialogTitle>Delete {{ sectionDeleteTarget?.name }}?</DialogTitle>
           <DialogDescription v-if="sectionDeleteTarget?.count">
             Its {{ sectionDeleteTarget.count }} card
@@ -509,7 +511,7 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
       </Dialog>
 
       <Dialog v-model:open="deleteOpen">
-        <DialogContent class="max-w-sm">
+        <DialogContent class="bg-background w-[min(92vw,24rem)] rounded-xl border p-6 shadow-xl">
           <DialogTitle>Delete {{ deck.name }}?</DialogTitle>
           <DialogDescription>
             This permanently deletes the deck, its sections, and every card entry. This action
