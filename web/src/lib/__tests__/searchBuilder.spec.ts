@@ -2,8 +2,13 @@ import { describe, it, expect } from 'vitest'
 
 import {
   activeFilterCount,
+  addArtTag,
+  artTagSlug,
   CARD_FLAG_OPTIONS,
   clearBuilderFilters,
+  getArtTagValues,
+  removeArtTag,
+  toggleArtTag,
   COLOR_MODES,
   COLOR_PIPS,
   FORMAT_OPTIONS,
@@ -336,6 +341,51 @@ describe('card flags (is: toggles)', () => {
   })
 })
 
+describe('art tags (art: chips)', () => {
+  it('normalises typed input to Tagger slug shape', () => {
+    expect(artTagSlug('Rashida Scalebane')).toBe('rashida-scalebane')
+    expect(artTagSlug('"White  Border"')).toBe('white-border')
+    expect(artTagSlug('  ')).toBe('')
+    expect(artTagSlug('squirrel')).toBe('squirrel')
+  })
+
+  it('lists each art token under any alias, verbatim', () => {
+    expect(getArtTagValues('art:squirrel atag:"night sky" bolt')).toEqual([
+      'squirrel',
+      '"night sky"',
+    ])
+  })
+
+  it('adds tags as their own tokens without touching other filters', () => {
+    let query = addArtTag('bolt c:r', 'squirrel')
+    expect(query).toBe('bolt c:r art:squirrel')
+    query = addArtTag(query, 'Night Sky')
+    expect(query).toBe('bolt c:r art:squirrel art:night-sky')
+  })
+
+  it('does not duplicate a tag already present under another alias or quoting', () => {
+    expect(addArtTag('atag:squirrel', 'squirrel')).toBe('atag:squirrel')
+    expect(addArtTag('art:"night sky"', 'night-sky')).toBe('art:"night sky"')
+    expect(addArtTag('art:squirrel', '')).toBe('art:squirrel')
+  })
+
+  it('removes only the given tag, by verbatim value', () => {
+    expect(removeArtTag('art:squirrel art:moon', 'squirrel')).toBe('art:moon')
+    expect(removeArtTag('atag:"night sky" art:moon', '"night sky"')).toBe('art:moon')
+  })
+
+  it('toggles a tag on and off regardless of alias/quoting', () => {
+    expect(toggleArtTag('bolt', 'squirrel')).toBe('bolt art:squirrel')
+    expect(toggleArtTag('atag:"night sky"', 'night-sky')).toBe('')
+    expect(toggleArtTag('art:moon', 'squirrel')).toBe('art:moon art:squirrel')
+  })
+
+  it('leaves a negated tag alone', () => {
+    expect(addArtTag('-art:squirrel', 'squirrel')).toBe('-art:squirrel art:squirrel')
+    expect(removeArtTag('-art:squirrel', 'squirrel')).toBe('-art:squirrel')
+  })
+})
+
 describe('activeFilterCount', () => {
   it('is zero for an empty or plain-text query', () => {
     expect(activeFilterCount('')).toBe(0)
@@ -354,6 +404,10 @@ describe('activeFilterCount', () => {
 
   it('counts the flags group once even with several flags set', () => {
     expect(activeFilterCount('is:foil is:promo is:reprint')).toBe(1)
+  })
+
+  it('counts the art-tag group once even with several tags set', () => {
+    expect(activeFilterCount('art:squirrel atag:moon')).toBe(1)
   })
 
   it('counts a colourless selection as an active colour filter', () => {
@@ -385,6 +439,10 @@ describe('clearBuilderFilters', () => {
   it('clears a builder-owned is: value the toggles cannot show', () => {
     // Same philosophy as `r:special`: the group owns the key, so count and Clear agree.
     expect(clearBuilderFilters('bolt is:mdfc')).toBe('bolt')
+  })
+
+  it('clears art tags under every alias', () => {
+    expect(clearBuilderFilters('bolt art:squirrel atag:moon arttag:sun')).toBe('bolt')
   })
 
   it('leaves a query with no builder filters unchanged', () => {

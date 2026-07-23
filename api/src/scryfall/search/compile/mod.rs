@@ -6,8 +6,8 @@
 //! its filter family: [`text`] (name/type/oracle), [`color`] (colours & colour
 //! identity), [`mana`] (mana cost), [`numeric`] (mana value, power/toughness/
 //! loyalty, prices, collector number), [`date`], [`rarity`], [`sets`],
-//! [`enums`] (language/layout/game/oracle id), and [`predicates`] (`is:`/`not:`).
-//! Shared low-level helpers live in [`common`].
+//! [`enums`] (language/layout/game/oracle id), [`tags`] (Tagger art tags), and
+//! [`predicates`] (`is:`/`not:`). Shared low-level helpers live in [`common`].
 
 mod color;
 mod common;
@@ -18,6 +18,7 @@ mod numeric;
 mod predicates;
 mod rarity;
 mod sets;
+mod tags;
 mod text;
 
 use sea_orm::Condition;
@@ -36,6 +37,7 @@ use numeric::{cmc, collector_number, price, pt, ptl};
 use predicates::is_predicate;
 use rarity::rarity;
 use sets::{prints_filter, set, set_type, sets_filter};
+use tags::art_tag;
 use text::{exact, text_field, text_pattern};
 
 pub(crate) use common::{cust_vals, escape_like};
@@ -128,12 +130,14 @@ fn compile_filter(
         // Sibling-print aggregates: counts over a card's other printings.
         "prints" => prints_filter(dialect, op, value),
         "sets" | "papersets" => sets_filter(dialect, op, value),
+        // Tagger art tags (issue #140), from the ingest-populated `card_art_tags`.
+        "art" | "arttag" | "atag" => art_tag(dialect, op, value),
         // Recognised Scryfall filters we can't back yet: dataset-derived — Tagger
-        // tags (#140) and cube (#141) — plus block/in/devotion/cheapest, and the
-        // order:/direction:/unique: directives (handled before compile).
-        "block" | "b" | "in" | "cube" | "function" | "oracletag" | "otag" | "art" | "arttag"
-        | "atag" | "order" | "direction" | "unique" | "display" | "prefer" | "devotion"
-        | "cheapest" | "new" | "old" => Err(SearchError::UnsupportedKey(key.to_string())),
+        // oracle tags (#140) and cube (#141) — plus block/in/devotion/cheapest, and
+        // the order:/direction:/unique: directives (handled before compile).
+        "block" | "b" | "in" | "cube" | "function" | "oracletag" | "otag" | "order"
+        | "direction" | "unique" | "display" | "prefer" | "devotion" | "cheapest" | "new"
+        | "old" => Err(SearchError::UnsupportedKey(key.to_string())),
         _ => Err(SearchError::UnknownKey(key.to_string())),
     }
 }

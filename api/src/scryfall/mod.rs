@@ -4,6 +4,9 @@
 //! its own provider module; the generic catalog layer (`crate::catalog`) decides
 //! which provider to invoke per game.
 
+/// Tagger art tags (issue #140): Scryfall's `art_tags` bulk import into `art_tags` +
+/// `card_art_tags`, keyed by `illustration_id` — the data behind the `art:` search filter.
+pub mod art_tags;
 pub mod client;
 pub mod drops;
 mod dummy;
@@ -51,6 +54,10 @@ pub const DATASET: &str = "default_cards";
 /// `oracle_id`. Tracked in its own `ingest_state` `(mtg, rulings)` row, so it version-gates
 /// independently of the card import.
 pub const DATASET_RULINGS: &str = "rulings";
+/// Bulk dataset of Tagger art tags (issue #140), keyed by `illustration_id`. Tracked in
+/// its own `ingest_state` `(mtg, art_tags)` row, so it version-gates independently of
+/// the card import.
+pub const DATASET_ART_TAGS: &str = "art_tags";
 
 /// Upstream bulk-data catalog. `pub` so the dataset-source seam ([`crate::datasets`])
 /// and the mirror handler ([`crate::handlers::mirror`]) can resolve/re-serve it.

@@ -1,6 +1,8 @@
 pub use super::alert_channel::Entity as AlertChannel;
 pub use super::api_key::Entity as ApiKey;
+pub use super::art_tag::Entity as ArtTag;
 pub use super::card::Entity as Card;
+pub use super::card_art_tag::Entity as CardArtTag;
 pub use super::card_fingerprint::Entity as CardFingerprint;
 pub use super::card_price_history::Entity as CardPriceHistory;
 pub use super::card_ruling::Entity as CardRuling;

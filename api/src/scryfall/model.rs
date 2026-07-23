@@ -51,6 +51,40 @@ pub struct ScryfallSet {
     pub parent_set_code: Option<String>,
 }
 
+/// One entry in Scryfall's `art_tags` bulk file: a community Tagger tag describing what
+/// a card's artwork depicts (issue #140), with its position in the tag hierarchy and the
+/// artworks it's directly applied to. Unknown fields (`object`, `uri`, `aliases`, …) are
+/// ignored. Every field except the stable `id` is optional defensively — the ingest
+/// keeps only tags carrying a `slug` and drops anything else per line, like rulings.
+#[derive(Debug, Deserialize)]
+pub struct ScryfallArtTag {
+    pub id: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Tag type: `illustration` for art tags (`oracle` tags ship in a separate file).
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Child tags in the hierarchy (UUIDs within the same bulk file). The bulk data holds
+    /// only *direct* taggings, so a parent tag's artworks are collected by traversing
+    /// these at ingest.
+    #[serde(default)]
+    pub child_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub taggings: Option<Vec<ScryfallArtTagging>>,
+}
+
+/// One direct tagging inside a [`ScryfallArtTag`]: the artwork the tag is applied to.
+/// `weight` / `annotation` exist on the wire but aren't stored.
+#[derive(Debug, Deserialize)]
+pub struct ScryfallArtTagging {
+    #[serde(default)]
+    pub illustration_id: Option<String>,
+}
+
 /// One entry in Scryfall's `rulings` bulk file: an official clarification ("Notes and
 /// Rules Information") keyed by the card's gameplay identity (`oracle_id`), shared across
 /// all its printings. Unknown fields (e.g. `object`) are ignored. Every field is optional

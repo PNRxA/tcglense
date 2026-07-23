@@ -1,6 +1,8 @@
 pub mod alert_channel;
 pub mod api_key;
+pub mod art_tag;
 pub mod card;
+pub mod card_art_tag;
 pub mod card_fingerprint;
 pub mod card_price_history;
 pub mod card_ruling;
