@@ -143,6 +143,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::collection::export_collection,
         crate::handlers::collection::import_collection,
         crate::handlers::collection::import_collection_csv,
+        crate::handlers::collection::import_collection_text,
         crate::handlers::collection::get_import_job,
         crate::handlers::collection::get_collection_source,
         crate::handlers::collection::save_collection_source,

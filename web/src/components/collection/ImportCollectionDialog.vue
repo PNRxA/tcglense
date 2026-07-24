@@ -13,6 +13,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import CsvImportFields from '@/components/collection/CsvImportFields.vue'
+import PasteImportFields from '@/components/collection/PasteImportFields.vue'
 import ImportProgressBar from '@/components/collection/ImportProgressBar.vue'
 import { useCollectionImport } from '@/composables/useCollectionImport'
 import { formatImportSummaryLines } from '@/lib/importSummary'
@@ -27,15 +28,17 @@ const props = defineProps<{ game: string; source: CollectionSource | null }>()
 
 // One entry per provider. Moxfield's link import is temporarily disabled — its API only
 // serves clients with a User-Agent it has approved, which we don't have yet — so it's shown
-// but not selectable here; its CSV export still imports via the "Upload a CSV" tab. Drop
+// but not selectable here; its CSV export still imports via the "Upload a file" tab. Drop
 // `disabled` to re-enable once an approved MOXFIELD_USER_AGENT is configured server-side.
 const PROVIDERS: { value: CollectionProvider; label: string; disabled?: boolean }[] = [
   { value: 'archidekt', label: 'Archidekt' },
-  { value: 'moxfield', label: 'Moxfield — use the CSV tab for now', disabled: true },
+  { value: 'moxfield', label: 'Moxfield — use the upload or paste tab for now', disabled: true },
 ]
 
-// An example collection URL per provider, as the source input's placeholder.
-const PLACEHOLDERS: Record<CollectionProvider, string> = {
+// An example collection URL per provider, as the source input's placeholder. Partial:
+// only providers listed in PROVIDERS above can be selected here, and a paste-only one
+// (Mythic Tools) has no collection URL to show.
+const PLACEHOLDERS: Partial<Record<CollectionProvider, string>> = {
   archidekt: 'https://archidekt.com/collection/v2/1042487',
   moxfield: 'https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q',
 }
@@ -79,10 +82,15 @@ const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
   },
 ]
 
-// Two ways in: paste a public collection link (fetched server-side, async) or upload an
-// exported CSV (parsed server-side, synchronous). A CSV is inherently one-off — there's
-// no location to re-sync from — so the "save link" affordance only applies to the link tab.
-type SourceType = 'link' | 'csv'
+// Three ways in: paste a public collection link (fetched server-side, async), upload an
+// exported file, or paste the export's text straight in. The last two are inherently
+// one-off — there's no location to re-sync from — so the "save link" affordance only
+// applies to the link tab.
+//
+// The paste tab exists because not every service has an API or a browser-friendly export:
+// Mythic Tools (issue #572) is a phone app, and pasting what you copied out of it is much
+// less friction than saving a file and finding it in a file picker.
+type SourceType = 'link' | 'csv' | 'text'
 
 const open = ref(false)
 const sourceType = ref<SourceType>('link')
@@ -94,6 +102,7 @@ const saveLink = ref(props.source != null)
 // so re-importing a smart-saved link with a different mode doesn't silently downgrade it.
 const smartResync = ref(props.source?.smart ?? false)
 const csvFile = ref<File | null>(null)
+const pastedText = ref('')
 
 // The import lifecycle (mutations, the polled background job, busy/status/error/result)
 // lives in the composable; this component owns only the form inputs and `canSubmit`.
@@ -108,6 +117,7 @@ const {
   resetStatus,
   runLinkImport,
   runCsvImport,
+  runTextImport,
   removeLink: removeSavedLink,
 } = useCollectionImport(gameRef)
 
@@ -124,6 +134,7 @@ watch(open, (isOpen) => {
   // Seed the saved-link re-sync preference from the existing link (defaults off).
   smartResync.value = props.source?.smart ?? false
   csvFile.value = null
+  pastedText.value = ''
   resetStatus()
 })
 
@@ -134,15 +145,16 @@ watch(mode, (m) => {
 })
 
 // Switching tabs clears the previous tab's outcome/error so stale feedback never lingers.
-// Also drop any chosen file: the CSV tab's file input is remounted on the way back (v-if),
-// so it renders empty — clearing csvFile keeps Import's enabled state honest (no silently
-// staged, no-longer-visible upload).
+// Also drop any chosen file: the file tab's input is remounted on the way back (v-if), so
+// it renders empty — clearing csvFile keeps Import's enabled state honest (no silently
+// staged, no-longer-visible upload). Pasted text survives the switch: it's still visible
+// when you come back, so it can't become a hidden staged import.
 watch(sourceType, (type) => {
   resetStatus()
   csvFile.value = null
-  // Smart isn't offered for a CSV (there's no fetch to order / stop), so drop back to a
-  // valid mode when switching to the CSV tab.
-  if (type === 'csv' && mode.value === 'smart') mode.value = 'overwrite'
+  // Smart isn't offered for an upload or a paste (there's no fetch to order / stop), so
+  // drop back to a valid mode when leaving the link tab.
+  if (type !== 'link' && mode.value === 'smart') mode.value = 'overwrite'
 })
 
 function onCsvFile(file: File | null) {
@@ -150,10 +162,10 @@ function onCsvFile(file: File | null) {
   resetStatus()
 }
 
-// Smart is a link-only mode (it needs the newest-first fetch to stop early); the CSV
-// upload has no fetch, so it's hidden there.
+// Smart is a link-only mode (it needs the newest-first fetch to stop early); an upload or
+// a paste has no fetch, so it's hidden on those tabs.
 const visibleModes = computed(() =>
-  sourceType.value === 'csv' ? MODES.filter((m) => m.value !== 'smart') : MODES,
+  sourceType.value === 'link' ? MODES : MODES.filter((m) => m.value !== 'smart'),
 )
 
 const providerLabel = computed(
@@ -161,13 +173,19 @@ const providerLabel = computed(
 )
 const canSubmit = computed(() => {
   if (busy.value) return false
-  return sourceType.value === 'csv' ? csvFile.value != null : sourceInput.value.trim().length > 0
+  if (sourceType.value === 'csv') return csvFile.value != null
+  if (sourceType.value === 'text') return pastedText.value.trim().length > 0
+  return sourceInput.value.trim().length > 0
 })
 
 async function runImport() {
   if (!canSubmit.value) return
   if (sourceType.value === 'csv') {
     if (csvFile.value) await runCsvImport({ file: csvFile.value, mode: mode.value })
+    return
+  }
+  if (sourceType.value === 'text') {
+    await runTextImport({ text: pastedText.value, mode: mode.value })
     return
   }
   await runLinkImport({
@@ -214,15 +232,20 @@ const selectClass =
           Paste a public {{ providerLabel }} collection URL (or id) and choose how to reconcile it
           with your collection. We fetch it server-side — nothing is uploaded from your device.
         </template>
+        <template v-else-if="sourceType === 'csv'">
+          Upload a collection export from Mythic Tools, Archidekt or Moxfield and choose how to
+          reconcile it with your collection. We detect the format automatically.
+        </template>
         <template v-else>
-          Upload a collection CSV exported from Archidekt or Moxfield and choose how to reconcile it
-          with your collection. We detect which service it came from automatically.
+          Paste your collection as text — a card list, or a whole CSV export from Mythic Tools,
+          Archidekt or Moxfield — and choose how to reconcile it. We detect the format
+          automatically.
         </template>
       </DialogDescription>
 
       <div class="mt-5 space-y-5">
-        <!-- Source: paste a link vs upload a CSV file. -->
-        <div class="bg-muted grid grid-cols-2 gap-1 rounded-lg p-1" role="tablist">
+        <!-- Source: paste a link, upload a file, or paste the export's text. -->
+        <div class="bg-muted grid grid-cols-3 gap-1 rounded-lg p-1" role="tablist">
           <button
             type="button"
             role="tab"
@@ -249,7 +272,21 @@ const selectClass =
             "
             @click="sourceType = 'csv'"
           >
-            Upload a CSV
+            Upload a file
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="sourceType === 'text'"
+            class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="
+              sourceType === 'text'
+                ? 'bg-background shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            "
+            @click="sourceType = 'text'"
+          >
+            Paste a list
           </button>
         </div>
 
@@ -270,8 +307,11 @@ const selectClass =
           </div>
         </template>
 
-        <!-- CSV tab: file picker + how to export from each supported service. -->
-        <CsvImportFields v-else @file-change="onCsvFile" />
+        <!-- Upload tab: file picker + how to export from each supported service. -->
+        <CsvImportFields v-else-if="sourceType === 'csv'" @file-change="onCsvFile" />
+
+        <!-- Paste tab: one plain-text box, sniffed server-side (issue #572). -->
+        <PasteImportFields v-else v-model="pastedText" />
 
         <!-- Reconcile mode -->
         <fieldset class="space-y-2">
