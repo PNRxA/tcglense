@@ -29,7 +29,9 @@ import { formatReleaseLabel } from '@/lib/releaseDate'
 // left rail holding the image plus everything price/ownership shaped (price tiles,
 // collection + wish-list steppers, buy links), and a main column leading with the
 // at-a-glance overview strip whose chips jump to the composition / cards / containers
-// sections below it.
+// sections below it. The rail itself is vertical on phones and md+, but splits
+// image | price-stack across the ~640-768px band where a full-width image would
+// otherwise fill the screen (#573) — same shape as the card page's rail.
 const props = defineProps<{
   game: string
   id: string
@@ -141,45 +143,62 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
     <div
       class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:grid-rows-[auto_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
     >
-      <!-- Left rail: the image plus everything price/ownership shaped. -->
-      <aside class="space-y-4 md:col-start-1 md:row-start-1">
+      <!-- Left rail: the image plus everything price/ownership shaped. Below md the rail
+        is one full-width band, so an uncapped square image grew with the viewport — on
+        ~640-768px (an unfolded foldable, a small tablet) that put a box swallowing the
+        screen ahead of every piece of content (issue #573). In that band the rail turns
+        side-by-side instead: the image keeps the rail's own 18rem and the price/ownership
+        stack fills the width beside it. Phones stay stacked, md+ returns to the vertical
+        rail. Mirrors the card page's rail (CardDetailContent). -->
+      <aside class="flex flex-col gap-4 sm:flex-row md:col-start-1 md:row-start-1 md:flex-col">
         <template v-if="product">
-          <ProductImage
-            :game="game"
-            :id="product.id"
-            :name="product.name"
-            :has-image="product.has_image"
-            class="w-full"
-          />
-
-          <!-- Current prices -->
-          <div>
-            <h2 class="mb-2 text-sm font-semibold">Prices</h2>
-            <PriceStatGrid v-if="priceRows.length" :rows="priceRows" />
-            <p v-else class="text-muted-foreground text-sm">No current price.</p>
+          <div class="shrink-0 sm:w-72 md:w-auto">
+            <ProductImage
+              :game="game"
+              :id="product.id"
+              :name="product.name"
+              :has-image="product.has_image"
+              class="w-full"
+            />
           </div>
 
-          <!-- Watch this product's price (issue #525). In the shared body so it shows on both
-               the full page and the browse-grid modal; shown to everyone (the dialog nudges
-               signed-out visitors to make an account). -->
-          <SetPriceAlertButton
-            :game="game"
-            target-kind="product"
-            :external-id="product.id"
-            :name="product.name"
-            :finishes="alertFinishes"
-          />
+          <!-- Prices, watch, and the ownership steppers — the image's neighbour in the
+            sm band, its stack-mate everywhere else. -->
+          <div class="min-w-0 flex-1 space-y-4">
+            <!-- Current prices -->
+            <div>
+              <h2 class="mb-2 text-sm font-semibold">Prices</h2>
+              <PriceStatGrid v-if="priceRows.length" :rows="priceRows" />
+              <p v-else class="text-muted-foreground text-sm">No current price.</p>
+            </div>
 
-          <!-- Independent collection + wish-list sealed holdings (#364/#435). Both gate
-               internally on auth (matching the card page), so signed-out visitors see the
-               sign-in nudges rather than a missing section. -->
-          <ProductWishlistControls :game="game" :product="product" list="collection" />
-          <ProductWishlistControls :game="game" :product="product" list="wishlist" />
+            <!-- Watch this product's price (issue #525). In the shared body so it shows on
+                 both the full page and the browse-grid modal; shown to everyone (the dialog
+                 nudges signed-out visitors to make an account). -->
+            <SetPriceAlertButton
+              :game="game"
+              target-kind="product"
+              :external-id="product.id"
+              :name="product.name"
+              :finishes="alertFinishes"
+            />
+
+            <!-- Independent collection + wish-list sealed holdings (#364/#435). Both gate
+                 internally on auth (matching the card page), so signed-out visitors see the
+                 sign-in nudges rather than a missing section. -->
+            <ProductWishlistControls :game="game" :product="product" list="collection" />
+            <ProductWishlistControls :game="game" :product="product" list="wishlist" />
+          </div>
         </template>
         <template v-else>
-          <Skeleton class="aspect-square w-full rounded-lg" />
-          <Skeleton class="h-24 w-full" />
-          <Skeleton class="h-28 w-full" />
+          <!-- Mirrors the loaded layout, so the rail doesn't reflow when the query lands. -->
+          <div class="shrink-0 sm:w-72 md:w-auto">
+            <Skeleton class="aspect-square w-full rounded-lg" />
+          </div>
+          <div class="min-w-0 flex-1 space-y-4">
+            <Skeleton class="h-24 w-full" />
+            <Skeleton class="h-28 w-full" />
+          </div>
         </template>
       </aside>
 
