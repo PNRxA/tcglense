@@ -28,6 +28,8 @@ import { formatReleaseLabel } from '@/lib/releaseDate'
 // two-column body — a left rail holding the image plus everything price/ownership
 // shaped (price tiles, collection + wish-list steppers, buy links), and a main column
 // for the knowledge: rules text, details, price history, printings, sealed products.
+// The rail itself is vertical on phones and md+, but splits image | price-stack across
+// the ~640-768px band where a full-width image would otherwise fill the screen (#573).
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -144,69 +146,75 @@ const alertFinishes = computed<AlertFinish[]>(() => {
     <div
       class="mt-8 grid items-start gap-8 md:grid-cols-[minmax(0,17rem)_1fr] md:grid-rows-[auto_1fr] md:gap-y-4 lg:grid-cols-[minmax(0,20rem)_1fr]"
     >
-      <!-- Left rail: the image plus everything price/ownership shaped. -->
-      <aside class="space-y-4 md:col-start-1 md:row-start-1">
+      <!-- Left rail: the image plus everything price/ownership shaped. Below md the rail
+        is one full-width band, so an uncapped image grew with the viewport — on ~640-768px
+        (an unfolded foldable, a small tablet) that put a card taller than the screen ahead
+        of every piece of content (issue #573). In that band the rail turns side-by-side
+        instead: the image keeps the rail's own 18rem and the price/ownership stack fills
+        the width beside it. Phones stay stacked, md+ returns to the vertical rail. -->
+      <aside class="flex flex-col gap-4 sm:flex-row md:col-start-1 md:row-start-1 md:flex-col">
         <template v-if="card">
           <!-- Image(s): one per face only for layouts with separate face images.
-            Each is clickable to enlarge it in a lightbox (issue #53).
-            Below md the rail is a full-width stack, so an uncapped image grows with the
-            viewport — on the ~640-768px band (an unfolded foldable, a small tablet) that
-            meant a card taller than the screen before any of its content (issue #573).
-            Cap each image at the rail's own width from sm up and centre the row; phones
-            keep the full-bleed image, and md+ hands sizing back to the rail column. -->
-          <div
-            class="flex justify-center gap-4 md:justify-start"
-            :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''"
-          >
-            <template v-if="hasSeparateFaceImages">
+            Each is clickable to enlarge it in a lightbox (issue #53). Faces sit two-up
+            only on phones — from sm the column is 18rem wide, too narrow to split. -->
+          <div class="shrink-0 sm:w-72 md:w-auto">
+            <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row sm:flex-col' : ''">
+              <template v-if="hasSeparateFaceImages">
+                <CardImageZoom
+                  v-for="(face, index) in card.faces"
+                  :key="index"
+                  :game="game"
+                  :id="card.id"
+                  :name="face.name ?? card.name"
+                  :face="index"
+                  class="w-full"
+                />
+              </template>
               <CardImageZoom
-                v-for="(face, index) in card.faces"
-                :key="index"
+                v-else
                 :game="game"
                 :id="card.id"
-                :name="face.name ?? card.name"
-                :face="index"
-                class="w-full sm:max-w-72 md:max-w-none"
+                :name="card.name"
+                :has-image="card.has_image"
+                class="w-full"
               />
-            </template>
-            <CardImageZoom
-              v-else
-              :game="game"
-              :id="card.id"
-              :name="card.name"
-              :has-image="card.has_image"
-              class="w-full sm:max-w-72 md:max-w-none"
-            />
+            </div>
           </div>
 
-          <!-- Prices -->
-          <CardPriceSummary :card="card" />
+          <!-- Prices, watch, and the ownership steppers — the image's neighbour in the
+            sm band, its stack-mate everywhere else. -->
+          <div class="min-w-0 flex-1 space-y-4">
+            <!-- Prices -->
+            <CardPriceSummary :card="card" />
 
-          <!-- Watch this card's price (issue #525). In the shared body so it shows on both the
-               full page and the browse-grid modal; shown to everyone (the dialog nudges
-               signed-out visitors to make an account). -->
-          <SetPriceAlertButton
-            :game="game"
-            target-kind="card"
-            :external-id="card.id"
-            :name="card.name"
-            :finishes="alertFinishes"
-          />
+            <!-- Watch this card's price (issue #525). In the shared body so it shows on both
+                 the full page and the browse-grid modal; shown to everyone (the dialog nudges
+                 signed-out visitors to make an account). -->
+            <SetPriceAlertButton
+              :game="game"
+              target-kind="card"
+              :external-id="card.id"
+              :name="card.name"
+              :finishes="alertFinishes"
+            />
 
-          <!-- Track how many copies you own (signed-in users). -->
-          <CollectionControls :game="game" :card="card" />
+            <!-- Track how many copies you own (signed-in users). -->
+            <CollectionControls :game="game" :card="card" />
 
-          <!-- …and how many you want to buy — the wish-list twin (issue #167). Both
-               gate internally on auth, so signed-out visitors see the nudges. -->
-          <CollectionControls :game="game" :card="card" list="wishlist" />
+            <!-- …and how many you want to buy — the wish-list twin (issue #167). Both
+                 gate internally on auth, so signed-out visitors see the nudges. -->
+            <CollectionControls :game="game" :card="card" list="wishlist" />
+          </div>
         </template>
         <template v-else>
-          <!-- Same sm cap as the real image, so the loading state doesn't reflow. -->
-          <Skeleton
-            class="mx-auto aspect-[61/85] w-full rounded-[4.76%_/_3.42%] sm:max-w-72 md:mx-0 md:max-w-none"
-          />
-          <Skeleton class="h-24 w-full" />
-          <Skeleton class="h-28 w-full" />
+          <!-- Mirrors the loaded layout, so the rail doesn't reflow when the query lands. -->
+          <div class="shrink-0 sm:w-72 md:w-auto">
+            <Skeleton class="aspect-[61/85] w-full rounded-[4.76%_/_3.42%]" />
+          </div>
+          <div class="min-w-0 flex-1 space-y-4">
+            <Skeleton class="h-24 w-full" />
+            <Skeleton class="h-28 w-full" />
+          </div>
         </template>
       </aside>
 
