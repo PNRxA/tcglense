@@ -148,8 +148,16 @@ const alertFinishes = computed<AlertFinish[]>(() => {
       <aside class="space-y-4 md:col-start-1 md:row-start-1">
         <template v-if="card">
           <!-- Image(s): one per face only for layouts with separate face images.
-            Each is clickable to enlarge it in a lightbox (issue #53). -->
-          <div class="flex gap-4" :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''">
+            Each is clickable to enlarge it in a lightbox (issue #53).
+            Below md the rail is a full-width stack, so an uncapped image grows with the
+            viewport — on the ~640-768px band (an unfolded foldable, a small tablet) that
+            meant a card taller than the screen before any of its content (issue #573).
+            Cap each image at the rail's own width from sm up and centre the row; phones
+            keep the full-bleed image, and md+ hands sizing back to the rail column. -->
+          <div
+            class="flex justify-center gap-4 md:justify-start"
+            :class="hasSeparateFaceImages ? 'flex-row md:flex-col' : ''"
+          >
             <template v-if="hasSeparateFaceImages">
               <CardImageZoom
                 v-for="(face, index) in card.faces"
@@ -158,7 +166,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
                 :id="card.id"
                 :name="face.name ?? card.name"
                 :face="index"
-                class="w-full"
+                class="w-full sm:max-w-72 md:max-w-none"
               />
             </template>
             <CardImageZoom
@@ -167,7 +175,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
               :id="card.id"
               :name="card.name"
               :has-image="card.has_image"
-              class="w-full"
+              class="w-full sm:max-w-72 md:max-w-none"
             />
           </div>
 
@@ -193,7 +201,10 @@ const alertFinishes = computed<AlertFinish[]>(() => {
           <CollectionControls :game="game" :card="card" list="wishlist" />
         </template>
         <template v-else>
-          <Skeleton class="aspect-[61/85] w-full rounded-[4.76%_/_3.42%]" />
+          <!-- Same sm cap as the real image, so the loading state doesn't reflow. -->
+          <Skeleton
+            class="mx-auto aspect-[61/85] w-full rounded-[4.76%_/_3.42%] sm:max-w-72 md:mx-0 md:max-w-none"
+          />
           <Skeleton class="h-24 w-full" />
           <Skeleton class="h-28 w-full" />
         </template>

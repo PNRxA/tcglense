@@ -144,12 +144,17 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
       <!-- Left rail: the image plus everything price/ownership shaped. -->
       <aside class="space-y-4 md:col-start-1 md:row-start-1">
         <template v-if="product">
+          <!-- Below md the rail is a full-width stack, so an uncapped square image grows
+            with the viewport — on the ~640-768px band (an unfolded foldable, a small
+            tablet) that meant a box image swallowing the whole screen before any of its
+            content (issue #573). Cap it at the rail's own width from sm up and centre it;
+            phones keep the full-bleed image, and md+ hands sizing back to the rail. -->
           <ProductImage
             :game="game"
             :id="product.id"
             :name="product.name"
             :has-image="product.has_image"
-            class="w-full"
+            class="mx-auto w-full sm:max-w-72 md:mx-0 md:max-w-none"
           />
 
           <!-- Current prices -->
@@ -177,7 +182,10 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
           <ProductWishlistControls :game="game" :product="product" list="wishlist" />
         </template>
         <template v-else>
-          <Skeleton class="aspect-square w-full rounded-lg" />
+          <!-- Same sm cap as the real image, so the loading state doesn't reflow. -->
+          <Skeleton
+            class="mx-auto aspect-square w-full rounded-lg sm:max-w-72 md:mx-0 md:max-w-none"
+          />
           <Skeleton class="h-24 w-full" />
           <Skeleton class="h-28 w-full" />
         </template>
