@@ -236,6 +236,19 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Moxfield **URL** import is deliberately disabled
   (`Provider::network_import_enabled()` is the switch; CSV is the supported path) —
   a 422 there is not a regression.
+- **Not every `Provider` fetches.** Mythic Tools (issue #572) has no public API, so it's
+  file/paste-only: `network_import_enabled()` is `false` and every fetch/link path gates on
+  that before dispatching. Its collections arrive through `execute_file_import`, which backs
+  **both** `/import/csv` (upload) and `/import/text` (paste) and **sniffs** the format from
+  the content — Mythic Tools CSV (its `Amount` column is the fingerprint, checked before
+  Archidekt's Scryfall ID because its export has both), Archidekt CSV, Moxfield CSV, then a
+  plain-text card list as the fallback. Keep the text list *last* or a real CSV silently
+  degrades into it. That line grammar lives in `collection_import::text_list` and is
+  **shared with `deck_import::parser`** — extend the seam, don't fork a second dialect. A
+  text line naming no printing resolves to the newest printing of that name
+  (`reconcile::resolve_newest_printing_by_name`, also shared with deck import); a line that
+  *did* name a printing must stay unmatched when it doesn't resolve — never fall back to
+  another art at another price.
 - Card images are cached lazily on first view — self-hosts **never bulk-download**;
   image fetches are host-allow-listed with redirects disabled. **Don't add any bulk
   image path** — the one sanctioned exception is the opt-in fingerprint build

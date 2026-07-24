@@ -4,12 +4,19 @@
 use serde::{Deserialize, Serialize};
 
 /// A collection provider we can import from. One variant per external service.
+///
+/// Not every provider is reachable over the network: [`Provider::MythicTools`] is a
+/// **file/paste-only** provider (the app has no public collection API), so it exists here
+/// purely to label an import and to pick the right parse rules. Everything that fetches
+/// gates on [`Provider::network_import_enabled`] first, so those code paths refuse it
+/// before a fetch is ever attempted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CollectionProvider"))]
 pub enum Provider {
     Archidekt,
     Moxfield,
+    MythicTools,
 }
 
 impl Provider {
@@ -19,6 +26,7 @@ impl Provider {
         match self {
             Provider::Archidekt => "archidekt",
             Provider::Moxfield => "moxfield",
+            Provider::MythicTools => "mythictools",
         }
     }
 
@@ -27,6 +35,11 @@ impl Provider {
         match s.trim().to_ascii_lowercase().as_str() {
             "archidekt" => Some(Provider::Archidekt),
             "moxfield" => Some(Provider::Moxfield),
+            // Accept the spaced/hyphenated spellings a user might type; the canonical id
+            // on the wire and in stored rows stays `mythictools`.
+            "mythictools" | "mythic tools" | "mythic-tools" | "mythic_tools" => {
+                Some(Provider::MythicTools)
+            }
             _ => None,
         }
     }
@@ -36,14 +49,17 @@ impl Provider {
         match self {
             Provider::Archidekt => "Archidekt",
             Provider::Moxfield => "Moxfield",
+            Provider::MythicTools => "Mythic Tools",
         }
     }
 
-    /// Whether this provider can supply a collection for `game`. Both are Magic-only
+    /// Whether this provider can supply a collection for `game`. All are Magic-only
     /// (their card ids / printings key off Scryfall data).
     pub fn supports_game(self, game: &str) -> bool {
         match self {
-            Provider::Archidekt | Provider::Moxfield => game == crate::scryfall::GAME,
+            Provider::Archidekt | Provider::Moxfield | Provider::MythicTools => {
+                game == crate::scryfall::GAME
+            }
         }
     }
 
@@ -59,19 +75,29 @@ impl Provider {
     /// (see `handlers::collection::import`) and the web UI hides the disabled provider from
     /// the link-import picker. Re-enable by flipping the arm to `true` once an approved
     /// `MOXFIELD_USER_AGENT` is configured.
+    ///
+    /// Mythic Tools is `false` for a different, permanent reason: it's a mobile app with no
+    /// public collection API, so there is nothing to fetch or re-sync — its collections
+    /// arrive as an uploaded/pasted export (see `collection_import::execute_file_import`).
     pub fn network_import_enabled(self) -> bool {
         match self {
             Provider::Archidekt => true,
-            Provider::Moxfield => false,
+            Provider::Moxfield | Provider::MythicTools => false,
         }
     }
 
     /// A canonical, user-facing URL for a collection id on this provider (for linking
     /// back from the UI). `id` is a validated provider collection id.
+    ///
+    /// Empty for a provider with no addressable collection: a Mythic Tools import has no
+    /// location, so it can never be saved as a link (saving gates on
+    /// [`network_import_enabled`](Self::network_import_enabled)) and this is only ever
+    /// reached defensively, when shaping a stored row.
     pub fn collection_url(self, id: &str) -> String {
         match self {
             Provider::Archidekt => format!("https://archidekt.com/collection/v2/{id}"),
             Provider::Moxfield => format!("https://moxfield.com/collection/{id}"),
+            Provider::MythicTools => String::new(),
         }
     }
 }
@@ -151,18 +177,36 @@ mod tests {
 
     #[test]
     fn provider_ids_round_trip() {
-        for provider in [Provider::Archidekt, Provider::Moxfield] {
+        for provider in [
+            Provider::Archidekt,
+            Provider::Moxfield,
+            Provider::MythicTools,
+        ] {
             assert_eq!(Provider::from_id(provider.as_str()), Some(provider));
         }
         assert_eq!(Provider::from_id("MOXFIELD"), Some(Provider::Moxfield));
+        assert_eq!(
+            Provider::from_id("Mythic Tools"),
+            Some(Provider::MythicTools),
+            "the spaced spelling a user might type maps to the canonical id"
+        );
         assert_eq!(Provider::from_id("deckbox"), None);
     }
 
     #[test]
-    fn moxfield_network_import_is_disabled_but_archidekt_is_enabled() {
+    fn only_archidekt_has_a_live_network_import() {
         // Moxfield's live URL import / re-sync is turned off pending an approved
-        // User-Agent (its CSV upload is unaffected — that path never checks this).
+        // User-Agent (its CSV upload is unaffected — that path never checks this), and
+        // Mythic Tools has no public API at all — it's upload/paste-only.
         assert!(!Provider::Moxfield.network_import_enabled());
+        assert!(!Provider::MythicTools.network_import_enabled());
         assert!(Provider::Archidekt.network_import_enabled());
+    }
+
+    #[test]
+    fn mythic_tools_has_no_collection_url() {
+        // Nothing addressable to link back to, so a stored row degrades to a blank URL
+        // rather than a fabricated one.
+        assert!(Provider::MythicTools.collection_url("anything").is_empty());
     }
 }

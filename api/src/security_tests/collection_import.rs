@@ -548,3 +548,158 @@ async fn csv_import_sniffs_a_moxfield_export_and_resolves_by_set_and_number() {
         "the proxy and the unknown card were not imported"
     );
 }
+
+// ---- Pasted text (POST .../import/text) ----
+//
+// The paste endpoint is the same offline parse + reconcile as the upload, reached by
+// content rather than by file (issue #572 — Mythic Tools is a phone app). These cover the
+// boundaries that are its own: the route exists and is auth-gated like every other
+// per-user route, an empty paste can't ride a Replace into a wipe, and the format sniffing
+// really does accept both a card list and a pasted CSV.
+
+/// A `POST .../import/text` with a raw text/plain body and a bearer token.
+fn text_paste(uri: &str, token: &str, body: &'static str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .header(CONTENT_TYPE, "text/plain")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn text_import_requires_authentication() {
+    let app = test_app_with_catalog().await;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/collection/mtg/import/text?mode=overwrite")
+        .header(CONTENT_TYPE, "text/plain")
+        .body(Body::from("1 Card One (dmb) 1\n"))
+        .unwrap();
+    let (status, headers, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+}
+
+#[tokio::test]
+async fn text_import_rejects_a_bad_mode_an_empty_paste_or_unreadable_text() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "text-bad@example.com", "password123").await;
+
+    // No mode query param at all.
+    let (status, _, _) = send(
+        &app,
+        text_paste(
+            "/api/collection/mtg/import/text",
+            &token,
+            "1 Card One (dmb) 1\n",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Nothing pasted -> 422, never a silent no-op a Replace could ride into a wipe.
+    let (status, _, _) = send(
+        &app,
+        text_paste("/api/collection/mtg/import/text?mode=replace", &token, ""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Text with no card-shaped lines is refused with our JSON error, not read as an
+    // empty collection.
+    let (status, headers, body) = send(
+        &app,
+        text_paste(
+            "/api/collection/mtg/import/text?mode=replace",
+            &token,
+            "hello there\n",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert!(body["error"].is_string(), "error is JSON: {body:?}");
+}
+
+#[tokio::test]
+async fn text_import_unknown_game_is_404() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "text-game@example.com", "password123").await;
+    let (status, _, _) = send(
+        &app,
+        text_paste(
+            "/api/collection/pokemon/import/text?mode=overwrite",
+            &token,
+            "1 Card One (dmb) 1\n",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn text_import_reads_a_pasted_card_list_end_to_end() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "text-ok@example.com", "password123").await;
+
+    // A Mythic Tools-shaped TXT export: a comment, a section header a collection has no
+    // use for, a foil marker, the `3x` quantity spelling, and a line naming nothing.
+    let text = "# Trade binder\n\
+                Mainboard\n\
+                2 Card One (dmb) 1 *F*\n\
+                3x Card Two (DMB) 2\n\
+                1 Ghost (zzz) 999\n";
+    let (status, headers, body) = send(
+        &app,
+        text_paste(
+            "/api/collection/mtg/import/text?mode=overwrite",
+            &token,
+            text,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "import failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["provider"], "mythictools");
+    assert_eq!(body["matched_cards"], 2);
+    assert_eq!(body["unmatched_cards"], 1);
+    assert_eq!(body["foil_copies"], 2);
+    assert_eq!(body["regular_copies"], 3);
+
+    let (status, _, list) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 2);
+}
+
+#[tokio::test]
+async fn text_import_also_accepts_a_pasted_mythic_tools_csv() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "text-csv@example.com", "password123").await;
+
+    // Pasting the CSV export instead of the TXT one must work — the user shouldn't have
+    // to know which of their app's export formats they copied. "Amount" identifies the
+    // shape even though a Scryfall ID column is present too.
+    let csv = "Amount,Name,Set Code,Set Name,Collector Number,Condition,Finish,Language,\
+               Extra Info,Assigned Price,Notes,Scryfall ID\n\
+               2,Card One,dmb,Dummy,1,NM,foil,en,,,,dummy-dmb-0001\n\
+               3,Card Two,dmb,Dummy,2,NM,Nonfoil,en,,,,\n";
+    let (status, _, body) = send(
+        &app,
+        text_paste(
+            "/api/collection/mtg/import/text?mode=overwrite",
+            &token,
+            csv,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "import failed: {body:?}");
+    assert_eq!(body["provider"], "mythictools");
+    assert_eq!(body["matched_cards"], 2);
+    assert_eq!(
+        body["regular_copies"], 3,
+        "\"Nonfoil\" is a regular copy, not an unrecognised finish"
+    );
+    assert_eq!(body["foil_copies"], 2);
+}

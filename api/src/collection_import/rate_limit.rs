@@ -33,6 +33,10 @@ pub const MOXFIELD_REQUESTS_PER_MINUTE: u32 = 20;
 pub struct ProviderLimiters {
     archidekt: RateLimiter,
     moxfield: RateLimiter,
+    /// Unused today: Mythic Tools collections arrive as an uploaded/pasted export, so
+    /// nothing outbound is ever sent. Present so the dispatch stays exhaustive without
+    /// aliasing another provider's cap.
+    mythic_tools: RateLimiter,
 }
 
 impl ProviderLimiters {
@@ -41,14 +45,21 @@ impl ProviderLimiters {
         Self {
             archidekt: RateLimiter::per_minute(archidekt_per_minute),
             moxfield: RateLimiter::per_minute(moxfield_per_minute),
+            mythic_tools: RateLimiter::per_minute(ARCHIDEKT_REQUESTS_PER_MINUTE),
         }
     }
 
     /// The limiter governing requests to `provider`.
+    ///
+    /// A file/paste-only provider never reaches this (nothing fetches for it), but it still
+    /// gets its own limiter rather than borrowing another provider's: aliasing would make
+    /// one service's back-off silently throttle an unrelated one if a fetch path is ever
+    /// added.
     pub fn for_provider(&self, provider: Provider) -> &RateLimiter {
         match provider {
             Provider::Archidekt => &self.archidekt,
             Provider::Moxfield => &self.moxfield,
+            Provider::MythicTools => &self.mythic_tools,
         }
     }
 }

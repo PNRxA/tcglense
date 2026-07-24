@@ -27,8 +27,9 @@ export function formatImportSummaryLines(summary: ImportSummary): string[] {
   }
   if (summary.unmatched_cards > 0) {
     lines.push(
-      `${summary.unmatched_cards.toLocaleString()} card${summary.unmatched_cards === 1 ? '' : 's'} ` +
-        'weren’t in our catalog and were skipped.',
+      summary.unmatched_cards === 1
+        ? '1 card wasn’t in our catalog and was skipped.'
+        : `${summary.unmatched_cards.toLocaleString()} cards weren’t in our catalog and were skipped.`,
     )
   }
   if (summary.removed_cards > 0) {

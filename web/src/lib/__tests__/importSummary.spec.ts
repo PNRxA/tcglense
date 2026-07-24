@@ -53,6 +53,13 @@ describe('formatImportSummaryLines', () => {
     expect(lines[2]).toContain('mirror the list')
   })
 
+  it('agrees in number when exactly one card was skipped', () => {
+    const lines = formatImportSummaryLines(
+      summary({ matched_cards: 1, regular_copies: 1, unmatched_cards: 1 }),
+    )
+    expect(lines[1]).toBe('1 card wasn\u2019t in our catalog and was skipped.')
+  })
+
   it('localizes large counts', () => {
     const [lead] = formatImportSummaryLines(
       summary({ matched_cards: 1234, regular_copies: 2000, foil_copies: 500 }),
