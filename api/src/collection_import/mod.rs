@@ -839,4 +839,76 @@ mod tests {
         assert_eq!(summary.provider, "mythictools");
         assert_eq!(summary.matched_cards, 2);
     }
+    #[tokio::test]
+    async fn adversarial_bare_name_must_not_resolve_to_a_foil_star_variant() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "star@test.example").await;
+        // A Secret Lair pairing: `741` (nonfoil) and `741★` (its foil-only object). They
+        // share a name and a release date; the star is ingested second, so it has the
+        // higher id.
+        let base = insert_card_at(&db, "ext-base", "sld", "741").await;
+        let star = insert_card_at(&db, "ext-star", "sld", "741★").await;
+        for (id, finishes) in [(base, "nonfoil"), (star, "foil")] {
+            Card::update_many()
+                .col_expr(card::Column::Name, Expr::value("Sol Ring".to_string()))
+                .col_expr(card::Column::Finishes, Expr::value(finishes.to_string()))
+                .col_expr(
+                    card::Column::OracleId,
+                    Expr::value("oracle-sol".to_string()),
+                )
+                .col_expr(
+                    card::Column::ReleasedAt,
+                    Expr::value(chrono::NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()),
+                )
+                .filter(card::Column::Id.eq(id))
+                .exec(&db)
+                .await
+                .expect("stamp printing");
+        }
+
+        execute_file_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Overwrite,
+            b"4 Sol Ring\n",
+        )
+        .await
+        .expect("text import");
+
+        assert_eq!(
+            owned_counts(&db, user_id, base).await,
+            Some((4, 0)),
+            "a bare name is a regular copy of the base card, not 4 foils"
+        );
+        assert_eq!(owned_counts(&db, user_id, star).await, None);
+    }
+
+    #[tokio::test]
+    async fn adversarial_a_zero_match_paste_cannot_wipe_a_collection_in_replace_mode() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "paste-wipe@test.example").await;
+        let held = insert_card(&db, "ext-held").await;
+        insert_holding(&db, user_id, held, 7, 2).await;
+
+        // Every line is well-formed and readable — so the parse succeeds and the rows are
+        // *not* empty — but nothing resolves against the catalog. A Replace against that
+        // must be refused, not mirrored into a wipe.
+        let err = execute_file_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Replace,
+            b"3 Ghost One (zzz) 1\n2 Ghost Two\n",
+        )
+        .await
+        .expect_err("a zero-match replace must be refused");
+
+        assert!(matches!(err, ImportError::NoMatchingCards), "got {err:?}");
+        assert_eq!(
+            owned_counts(&db, user_id, held).await,
+            Some((7, 2)),
+            "the collection is untouched"
+        );
+    }
 }

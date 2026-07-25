@@ -236,9 +236,11 @@ fn parse_archidekt_rows(
 /// Number**. So a single export can yield both id-keyed holdings and pair-keyed rows, and
 /// each row takes whichever key it actually carries. A row with neither is skipped.
 ///
-/// Unlike the other two shapes nothing here is a required column beyond Amount: an export
-/// with only ids and one with only set/number are both legitimate, and the "no usable
-/// rows" case is already reported as an empty collection by the caller.
+/// Which card-key columns are present is flexible — an export with only ids and one with
+/// only set/number are both legitimate — but at least one key, and the **Finish** column,
+/// are required. Finish is not optional for the same reason it isn't for a Moxfield export:
+/// Mythic Tools lets the user choose which columns to export, and silently importing a foil
+/// collection as regular copies would corrupt both the counts and the valuation.
 fn parse_mythic_tools_rows(
     mut reader: csv::Reader<&[u8]>,
     headers: &csv::StringRecord,
@@ -247,7 +249,6 @@ fn parse_mythic_tools_rows(
     let id_idx = find_column(headers, ID_HEADERS);
     let set_idx = find_column(headers, MOX_EDITION_HEADERS);
     let number_idx = find_column(headers, MOX_NUMBER_HEADERS);
-    let finish_idx = find_column(headers, MOX_FOIL_HEADERS);
     let name_idx = find_column(headers, MOX_NAME_HEADERS);
     if id_idx.is_none() && (set_idx.is_none() || number_idx.is_none()) {
         return Err(ImportError::InvalidSource(
@@ -257,6 +258,14 @@ fn parse_mythic_tools_rows(
                 .to_string(),
         ));
     }
+    let finish_idx = find_column(headers, MOX_FOIL_HEADERS).ok_or_else(|| {
+        ImportError::InvalidSource(
+            "the Mythic Tools export is missing its \"Finish\" column — without it we'd \
+             import your foils as regular copies. Re-export with the default columns \
+             selected."
+                .to_string(),
+        )
+    })?;
 
     let mut holdings: Vec<FetchedHolding> = Vec::new();
     let mut printings: Vec<PrintingRow> = Vec::new();
@@ -267,7 +276,7 @@ fn parse_mythic_tools_rows(
         let Some(quantity) = positive_quantity(&record, amount_idx) else {
             continue;
         };
-        let foil = is_foil_finish(false, finish_idx.and_then(|idx| record.get(idx)));
+        let foil = is_foil_finish(false, record.get(finish_idx));
 
         // An id is the exact key, so prefer it and skip the pair lookup entirely.
         if let Some(external_card_id) =
@@ -771,10 +780,26 @@ mod tests {
     }
 
     #[test]
+    fn a_mythic_tools_export_without_a_finish_column_is_a_validation_error() {
+        // Mythic Tools lets the user pick export columns, so a Finish-less export is
+        // reachable — and importing it would file a whole foil collection as regular
+        // copies. Refuse, exactly as the Moxfield shape does for its Foil column.
+        let csv = format!(
+            "Amount,Name,Set Code,Collector Number,Scryfall ID\n\
+             1,Sol Ring,c21,263,{UID_A}\n"
+        );
+        let err = parse_csv(csv.as_bytes()).expect_err("missing Finish must fail");
+        let ImportError::InvalidSource(msg) = err else {
+            panic!("expected InvalidSource");
+        };
+        assert!(msg.contains("Finish"), "names the column: {msg}");
+    }
+
+    #[test]
     fn a_mythic_tools_export_with_no_card_key_at_all_is_a_validation_error() {
         // Amount identified the shape, but nothing in it names a card — refuse with an
         // actionable message rather than importing an empty collection.
-        let csv = "Amount,Name,Condition\n1,Sol Ring,NM\n";
+        let csv = "Amount,Name,Finish,Condition\n1,Sol Ring,Nonfoil,NM\n";
         let err = parse_csv(csv.as_bytes()).expect_err("no card key must fail");
         let ImportError::InvalidSource(msg) = err else {
             panic!("expected InvalidSource");

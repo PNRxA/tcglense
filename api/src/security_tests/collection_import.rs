@@ -703,3 +703,55 @@ async fn text_import_also_accepts_a_pasted_mythic_tools_csv() {
     );
     assert_eq!(body["foil_copies"], 2);
 }
+
+/// Mint an API key with the given scope for an account, via the session-only key route.
+async fn create_api_key(app: &TestApp, access: &str, scope: &str) -> String {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "POST",
+            "/api/auth/api-keys",
+            access,
+            serde_json::json!({ "name": format!("{scope} key"), "scope": scope }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create key failed: {body:?}");
+    body["key"].as_str().expect("plaintext key").to_string()
+}
+
+#[tokio::test]
+async fn text_import_is_a_write_so_a_read_only_api_key_is_403() {
+    // The paste route is a bulk write — in `replace` mode it can remove holdings — so it
+    // must sit behind `WritableUser` like every other mutation, not behind plain auth.
+    // 403 (valid credential, insufficient scope), never 401.
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "text-scope@example.com", "password123").await;
+    let key = create_api_key(&app, &access, "read").await;
+    let (status, headers, body) = send(
+        &app,
+        text_paste(
+            "/api/collection/mtg/import/text?mode=replace",
+            &key,
+            "2 Card One (dmb) 1\n",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // A writable key on the same account is accepted, so the 403 above is really the
+    // scope gate and not the route being broken for keys altogether.
+    let writable = create_api_key(&app, &access, "read_write").await;
+    let (status, _, body) = send(
+        &app,
+        text_paste(
+            "/api/collection/mtg/import/text?mode=overwrite",
+            &writable,
+            "2 Card One (dmb) 1\n",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["matched_cards"], 1);
+}

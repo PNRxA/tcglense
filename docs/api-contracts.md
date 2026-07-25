@@ -720,7 +720,10 @@ the very same holdings. It sniffs the shape from the content, in order:
 * **Mythic Tools** — identified by an `Amount` column (neither other service spells its
   quantity column that way, and its export also carries a Scryfall ID, so this must be
   checked first). Each row takes its Scryfall ID when present and falls back to
-  Set Code + Collector Number when not, so one export can yield both keyed shapes.
+  Set Code + Collector Number when not, so one export can yield both keyed shapes. At least
+  one card key **and** the `Finish` column are required — the app lets the user choose export
+  columns, and a missing finish would file a foil collection as regular copies (the same
+  refusal Moxfield's `Foil` column gets, for the same reason).
 * **Archidekt** — a Scryfall ID column (only Scryfall ID / Finish / Quantity are read).
 * **Moxfield** — no card id: Count / Edition / Collector Number / Foil, plus optional Name
   for unmatched labels and Proxy to skip proxies.
@@ -736,9 +739,16 @@ Rows carrying no card id pre-resolve to external ids by `(set_code, collector_nu
 per-set chunked lookups, with unmatched rows keeping a readable `"Name (set #num)"`
 placeholder that surfaces in the summary sample. A text line that names **no** printing at
 all resolves to the newest catalog printing of that exact name (`released_at` desc, id desc,
-NULLs last — the same shared rule the deck importer uses); a line that *did* name a printing
-never takes that fallback, so an unmatched `(set, number)` stays unmatched rather than
-silently importing different art at a different price.
+NULLs last, **excluding foil-`…★` variant objects** — the same shared rule the deck importer
+uses); a line that *did* name a printing never takes that fallback, so an unmatched
+`(set, number)` stays unmatched rather than silently importing different art at a different
+price.
+
+The `…★` exclusion is load-bearing, not tidiness: a star shares its base's name *and* release
+date and is ingested second, so it wins the id tie-break — and `consolidate` folds a star
+holding onto its base **as a foil**, which would turn `4 Sol Ring` into four foils at foil
+prices. Naming the star explicitly (`4 Sol Ring (SLD) 741★`) still resolves it, through the
+pair lookup.
 
 Every path is defensive (the `csv` crate handles quoting/escaping, a leading BOM is
 stripped, a non-UTF-8 body is rejected, rows are capped at `MAX_IMPORT_ROWS`, per-field

@@ -246,9 +246,12 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   degrades into it. That line grammar lives in `collection_import::text_list` and is
   **shared with `deck_import::parser`** — extend the seam, don't fork a second dialect. A
   text line naming no printing resolves to the newest printing of that name
-  (`reconcile::resolve_newest_printing_by_name`, also shared with deck import); a line that
-  *did* name a printing must stay unmatched when it doesn't resolve — never fall back to
-  another art at another price.
+  (`reconcile::resolve_newest_printing_by_name`, also shared with deck import) — which must keep
+  **excluding foil-`…★` variants**, or `4 Sol Ring` silently imports as four *foils* (the star
+  shares its base's name and date, wins the id tie-break, and `consolidate` folds it on as foil).
+  A line that *did* name a printing must stay unmatched when it doesn't resolve — never fall back
+  to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
+  columns are user-selectable), same refusal Moxfield's `Foil` column gets.
 - Card images are cached lazily on first view — self-hosts **never bulk-download**;
   image fetches are host-allow-listed with redirects disabled. **Don't add any bulk
   image path** — the one sanctioned exception is the opt-in fingerprint build
