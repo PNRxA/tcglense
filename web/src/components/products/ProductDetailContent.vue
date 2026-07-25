@@ -147,9 +147,10 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
         is one full-width band, so an uncapped square image grew with the viewport — on
         ~640-768px (an unfolded foldable, a small tablet) that put a box swallowing the
         screen ahead of every piece of content (issue #573). In that band the rail turns
-        side-by-side instead: the image keeps the rail's own 18rem and the price/ownership
-        stack fills the width beside it. Phones stay stacked, md+ returns to the vertical
-        rail. Mirrors the card page's rail (CardDetailContent). -->
+        side-by-side instead: the image takes a fixed 18rem — its own number, not the md/lg
+        rail widths, which the grid template owns — and the price/ownership stack fills the
+        width beside it. Phones stay stacked, md+ returns to the vertical rail. Mirrors the
+        card page's rail (CardDetailContent). -->
       <aside class="flex flex-col gap-4 sm:flex-row md:col-start-1 md:row-start-1 md:flex-col">
         <template v-if="product">
           <div class="shrink-0 sm:w-72 md:w-auto">
