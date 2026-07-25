@@ -6,6 +6,11 @@ import { filterDeckEntries, type DeckFilterColor } from '@/lib/deckFilter'
 // filter the loaded entries (text + colour pips), group them by section, and decide
 // which sections show. Owner-only concerns (mutations, export, sharing) stay in
 // useDeckEditor, which layers this engine; the public view uses it directly.
+//
+// It also owns the maybeboard split (issue #570): `deckCards` is the deck proper — every
+// card outside a section flagged `is_maybeboard` — which is what legality and the analytics
+// panel judge, matching the API's `summary`. `filteredCards` and the per-section grouping
+// stay whole, because the maybeboard is still *shown*; it just isn't counted.
 
 interface DeckCardDisplayOptions {
   cards: Ref<DeckCardEntry[]>
@@ -24,6 +29,19 @@ export function useDeckCardDisplay({ cards, sections, showEmpty }: DeckCardDispl
     filterQuery.value = ''
     filterColors.value = []
   }
+
+  // Which sections sit outside the deck proper, and the deck's own cards (issue #570).
+  // Unfiltered on purpose: what counts as "the deck" must not change when the user types
+  // in the filter box, or the legality banner and analytics would follow the filter.
+  const maybeboardSectionIds = computed(
+    () => new Set(sections.value.filter((section) => section.is_maybeboard).map((s) => s.id)),
+  )
+  const deckCards = computed(() =>
+    cards.value.filter((entry) => !maybeboardSectionIds.value.has(entry.section_id)),
+  )
+  const maybeboardCards = computed(() =>
+    cards.value.filter((entry) => maybeboardSectionIds.value.has(entry.section_id)),
+  )
 
   const filteredCards = computed(() =>
     filterDeckEntries(cards.value, filterQuery.value, filterColors.value),
@@ -65,6 +83,8 @@ export function useDeckCardDisplay({ cards, sections, showEmpty }: DeckCardDispl
     filterActive,
     clearFilters,
     filteredCards,
+    deckCards,
+    maybeboardCards,
     cardsBySection,
     visibleSections,
     sectionNavItems,

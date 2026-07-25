@@ -19,9 +19,9 @@ function entry(
 }
 
 const sections: DeckSection[] = [
-  { id: 1, name: 'Creatures', position: 0 },
-  { id: 2, name: 'Lands', position: 1 },
-  { id: 3, name: 'Sideboard', position: 2 },
+  { id: 1, name: 'Creatures', position: 0, is_maybeboard: false },
+  { id: 2, name: 'Lands', position: 1, is_maybeboard: false },
+  { id: 3, name: 'Sideboard', position: 2, is_maybeboard: false },
 ]
 // 5 copies across 3 entries: the island entry is multi-copy so the copy-weighted
 // counts are distinguishable from entry counts.
@@ -105,5 +105,45 @@ describe('useDeckCardDisplay', () => {
     expect(display.cardsBySection.value.get(2)?.map((e) => e.card.id)).toEqual(['island'])
     expect(display.sectionNavItems.value.map((item) => item.count)).toEqual([2, 1])
     expect(display.totalCount.value).toBe(5)
+  })
+  it('splits the deck proper from the maybeboard without hiding either', () => {
+    const withMaybeboard: DeckSection[] = [
+      { id: 1, name: 'Creatures', position: 0, is_maybeboard: false },
+      { id: 2, name: 'Lands', position: 1, is_maybeboard: false },
+      { id: 3, name: 'Cut candidates', position: 2, is_maybeboard: true },
+    ]
+    const display = useDeckCardDisplay({
+      cards: ref([...cards, entry('cut', 3, { name: 'Shock' })]),
+      sections: ref(withMaybeboard),
+      showEmpty: ref(false),
+    })
+
+    // The maybeboard card is out of the deck proper (what legality + analytics judge)...
+    expect(display.deckCards.value.map((e) => e.card.id)).toEqual(['goblin', 'bear', 'island'])
+    expect(display.maybeboardCards.value.map((e) => e.card.id)).toEqual(['cut'])
+    // ...but it is still grouped, still counted in the visible list, and its section still
+    // renders — a maybeboard is shown, just not counted.
+    expect(display.cardsBySection.value.get(3)?.map((e) => e.card.id)).toEqual(['cut'])
+    expect(display.visibleSections.value.map((s) => s.id)).toEqual([1, 2, 3])
+    expect(display.totalCount.value).toBe(6)
+  })
+
+  it('keeps the deck/maybeboard split independent of the filter box', () => {
+    const withMaybeboard: DeckSection[] = [
+      { id: 1, name: 'Creatures', position: 0, is_maybeboard: false },
+      { id: 2, name: 'Lands', position: 1, is_maybeboard: false },
+      { id: 3, name: 'Cut candidates', position: 2, is_maybeboard: true },
+    ]
+    const display = useDeckCardDisplay({
+      cards: ref([...cards, entry('cut', 3, { name: 'Shock' })]),
+      sections: ref(withMaybeboard),
+      showEmpty: ref(false),
+    })
+    display.filterQuery.value = 'Island'
+
+    // Typing in the filter must not change what counts as "the deck", or the legality
+    // banner and analytics would follow the filter.
+    expect(display.deckCards.value.map((e) => e.card.id)).toEqual(['goblin', 'bear', 'island'])
+    expect(display.maybeboardCards.value.map((e) => e.card.id)).toEqual(['cut'])
   })
 })

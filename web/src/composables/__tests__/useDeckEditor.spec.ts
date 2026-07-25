@@ -14,10 +14,16 @@ const deck: DeckDetail = {
   is_public: false,
   handle: null,
   summary: { unique_cards: 3, total_cards: 3, total_value_usd: null, bulk_value_usd: null },
+  maybeboard_summary: {
+    unique_cards: 0,
+    total_cards: 0,
+    total_value_usd: null,
+    bulk_value_usd: null,
+  },
   sections: [
-    { id: 1, name: 'Creatures', position: 0 },
-    { id: 2, name: 'Lands', position: 1 },
-    { id: 3, name: 'Sideboard', position: 2 },
+    { id: 1, name: 'Creatures', position: 0, is_maybeboard: false },
+    { id: 2, name: 'Lands', position: 1, is_maybeboard: false },
+    { id: 3, name: 'Sideboard', position: 2, is_maybeboard: false },
   ],
   cards: [
     {

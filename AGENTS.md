@@ -188,7 +188,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   ownership first — a deck that isn't the caller's is **404, not 403**. Per-deck sharing is an
   `is_public` **column** on the deck row (not a `collection_visibility`-style table — a deck is
   1:1 with the shareable unit), public at `/api/u/{handle}/decks/{id}` (username-first `409`,
-  reusing #361's `resolve_public_user`). Deck **import/export** (issue #389) lives in the sibling
+  reusing #361's `resolve_public_user`). A **maybeboard** is likewise a column
+  (`deck_sections.is_maybeboard`, issue #570), never a name match: its cards are still stored,
+  returned, and edited normally, but every "what is this deck" reader skips them — `summary`
+  (vs its sibling `maybeboard_summary`), the list's `card_count`, `needed`, and, client-side,
+  legality + analytics. A new such reader must split on the flag too, or the deck page's header
+  and the deck list will disagree. The **name** (`is_maybeboard_section_name`) only *seeds* the
+  flag where a section is born from untyped text — deck import, and migration 62's backfill of
+  pre-flag decks — so a renamed maybeboard stays out and a section merely called "Considering"
+  stays in. Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
   throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return

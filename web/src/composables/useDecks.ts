@@ -185,6 +185,7 @@ export interface SectionCreateVars {
   game: string
   deckId: number
   name: string
+  isMaybeboard?: boolean
 }
 export interface SectionUpdateVars {
   game: string
@@ -192,6 +193,7 @@ export interface SectionUpdateVars {
   sectionId: number
   name?: string
   position?: number
+  isMaybeboard?: boolean
 }
 export interface SectionIdVars {
   game: string
@@ -352,7 +354,7 @@ export function useCreateSectionMutation() {
   const qc = useQueryClient()
   const options = {
     mutationFn: (token: string, vars: SectionCreateVars) =>
-      createSection(token, vars.game, vars.deckId, vars.name),
+      createSection(token, vars.game, vars.deckId, vars.name, vars.isMaybeboard),
     onSettled: (_d: DeckSection | undefined, _e: ApiError | null, vars: SectionCreateVars) =>
       invalidateDeck(qc, vars.game, vars.deckId),
   }
@@ -366,6 +368,7 @@ export function useUpdateSectionMutation() {
       updateSection(token, vars.game, vars.deckId, vars.sectionId, {
         name: vars.name,
         position: vars.position,
+        is_maybeboard: vars.isMaybeboard,
       }),
     onSettled: (_d: DeckSection | undefined, _e: ApiError | null, vars: SectionUpdateVars) =>
       invalidateDeck(qc, vars.game, vars.deckId),

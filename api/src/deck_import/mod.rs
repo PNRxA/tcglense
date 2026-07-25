@@ -257,10 +257,16 @@ pub async fn create_deck_from_rows(
 
     let mut section_ids = HashMap::new();
     for (position, section_name) in section_order.into_iter().enumerate() {
+        // A provider's maybeboard / "considering" board lands as a flagged section (issue
+        // #570) so an imported deck's card count and analytics match what the provider
+        // showed. The name predicate is shared with the deck handlers so the two agree.
         let section = deck_section::ActiveModel {
             deck_id: Set(deck.id),
             name: Set(section_name.clone()),
             position: Set(position as i32),
+            is_maybeboard: Set(crate::handlers::decks::is_maybeboard_section_name(
+                &section_name,
+            )),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -271,9 +277,15 @@ pub async fn create_deck_from_rows(
         section_ids.insert(section_name, section.id);
     }
 
+    // The header's card count is the deck PROPER, excluding any maybeboard board the source
+    // carried (issue #570) — it feeds the same `DeckResponse.card_count` the deck list serves
+    // from `card_counts_by_deck`, and the two disagreeing for one deck would read as a bug.
     let card_count = aggregate
-        .values()
-        .map(|(regular, foil)| i64::from(clamp_count(*regular)) + i64::from(clamp_count(*foil)))
+        .iter()
+        .filter(|((section, _), _)| !crate::handlers::decks::is_maybeboard_section_name(section))
+        .map(|(_, (regular, foil))| {
+            i64::from(clamp_count(*regular)) + i64::from(clamp_count(*foil))
+        })
         .sum();
     let mut cards = Vec::with_capacity(aggregate.len());
     for ((section, card_id), (regular, foil)) in aggregate {

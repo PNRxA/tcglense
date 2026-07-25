@@ -50,8 +50,8 @@ fn copy_name(source: &str) -> String {
 ///
 /// `POST /api/u/{handle}/decks/{deck_id}/copy` -> duplicate a public deck (addressed by the
 /// owner's handle + deck id) into the caller's own decks, returning the new deck's full detail.
-/// The copy starts private and loose (no folder), carrying the source's sections (name +
-/// position) and cards (with their regular/foil counts) verbatim. `404` when the handle is
+/// The copy starts private and loose (no folder), carrying the source's sections (name,
+/// position, and maybeboard flag) and cards (with their regular/foil counts) verbatim. `404` when the handle is
 /// unknown or the source deck is private/absent (no existence oracle); `422` when the caller is
 /// already at their per-game deck cap.
 #[utoipa::path(
@@ -132,6 +132,7 @@ pub async fn copy_public_deck(
             deck_id: Set(new_deck.id),
             name: Set(section.name.clone()),
             position: Set(section.position),
+            is_maybeboard: Set(section.is_maybeboard),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
