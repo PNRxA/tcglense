@@ -82,9 +82,14 @@ struct RowCard {
 /// foil is caught whichever field the provider populates; a card is treated as regular
 /// only when *both* say so (modifier absent or "Normal", and the boolean `false`).
 ///
-/// `pub(super)` so the CSV importer ([`super::csv_import`]) can key a CSV row's `Finish`
-/// column off the exact same rule (a CSV has no `foil` boolean, so it passes `false`),
-/// keeping the two Archidekt ingestion formats consistent on what counts as a foil.
+/// `pub(crate)` so every other importer that reads a finish cell — the collection CSV
+/// parsers ([`super::csv_import`]), the plain-text list parser, and the deck importer —
+/// keys off the exact same rule (none of them has a `foil` boolean, so they pass `false`),
+/// keeping every ingestion format consistent on what counts as a foil.
+///
+/// [`NON_FOIL_FINISHES`] carries the spellings each service uses for "not a foil":
+/// Archidekt writes "Normal", Mythic Tools and Moxfield's deck export write "Nonfoil".
+/// Anything else non-empty (foil, etched, galaxy foil, …) is a foil in our two-bucket model.
 pub(crate) fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
     if foil {
         return true;
@@ -92,11 +97,17 @@ pub(crate) fn is_foil_finish(foil: bool, modifier: Option<&str>) -> bool {
     match modifier {
         Some(m) => {
             let m = m.trim();
-            !m.is_empty() && !m.eq_ignore_ascii_case("normal")
+            !m.is_empty()
+                && !NON_FOIL_FINISHES
+                    .iter()
+                    .any(|plain| m.eq_ignore_ascii_case(plain))
         }
         None => false,
     }
 }
+
+/// Finish spellings that mean "not a foil", across the services we ingest.
+const NON_FOIL_FINISHES: &[&str] = &["normal", "nonfoil", "non-foil", "non foil", "regular"];
 
 /// Extract the collection id from a user-supplied source: a full Archidekt URL
 /// (`https://archidekt.com/collection/v2/1042487`, `/collection/1042487`, with or

@@ -6,13 +6,14 @@ use std::collections::HashMap;
 use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    TransactionTrait,
 };
 
 use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 
-use super::consolidate;
+use super::consolidate::{self, FOIL_STAR};
 use super::{FetchedHolding, ImportError, ImportSummary, Provider, ReconcileMode};
 use super::{IN_CHUNK, UNMATCHED_SAMPLE_CAP};
 
@@ -130,6 +131,66 @@ pub(crate) async fn resolve_card_ids(
             .map_err(ImportError::Db)?;
         for (external_id, id) in rows {
             matched.insert(external_id, id);
+        }
+    }
+    Ok(matched)
+}
+
+/// Resolve exact card **names** to the newest catalog printing of each: `name -> (cards.id,
+/// cards.external_id)`. Names with no catalog match are simply absent.
+///
+/// This is the fallback for sources that name a card without naming a printing — a bare
+/// `3 Counterspell` line in a pasted list, or a deck-list text export. Which printing you
+/// get matters (art, and for a collection, price), so the choice is made **deterministically**:
+/// newest `released_at` first, ties broken by the highest `cards.id`. NULL release dates sort
+/// last explicitly — Postgres defaults to NULLS FIRST on a DESC order, which would otherwise
+/// hand back an undated printing there and a dated one on SQLite.
+///
+/// **Foil-`…★` variant objects are excluded.** Some printings model their foil as a separate
+/// card whose collector number is the base's plus a star (`sld` `741` / `741★`); the star
+/// shares the base's name *and* release date, and — being ingested second — wins the id
+/// tie-break, so it would otherwise be what every bare name resolved to. That is wrong twice
+/// over: the collection importer folds a star holding onto its base **as a foil**
+/// ([`super::consolidate`]), so `4 Sol Ring` would silently land as four foils at foil prices;
+/// and a deck row would point at a foil-only object it never asked for. A bare name means "the
+/// card", so the star is never the right answer — the foldable case always has its nonfoil base
+/// in the catalog, and a standalone star promo simply goes unmatched (reported to the user)
+/// rather than quietly changing the finish. Naming the star's printing explicitly
+/// (`4 Sol Ring (SLD) 741★`) still resolves it, through the pair lookup.
+///
+/// Shared by the collection importer ([`super::printing_rows_to_holdings`], which wants the
+/// external id) and the deck importer (which wants the internal id), so both dialects agree
+/// on which printing a bare name means.
+pub(crate) async fn resolve_newest_printing_by_name(
+    db: &DatabaseConnection,
+    game: &str,
+    names: &[String],
+) -> Result<HashMap<String, (i32, String)>, ImportError> {
+    let mut matched: HashMap<String, (i32, String)> = HashMap::new();
+    for chunk in names.chunks(IN_CHUNK) {
+        let rows: Vec<(String, i32, String)> = Card::find()
+            .select_only()
+            .column(card::Column::Name)
+            .column(card::Column::Id)
+            .column(card::Column::ExternalId)
+            .filter(card::Column::Game.eq(game))
+            .filter(card::Column::Name.is_in(chunk.iter().cloned()))
+            // The star suffix is a bound parameter and renders identically on SQLite and
+            // Postgres (same predicate as `m..044`'s partial index).
+            .filter(card::Column::CollectorNumber.not_like(format!("%{FOIL_STAR}")))
+            .order_by_with_nulls(
+                card::Column::ReleasedAt,
+                sea_orm::Order::Desc,
+                sea_orm::sea_query::NullOrdering::Last,
+            )
+            .order_by_desc(card::Column::Id)
+            .into_tuple()
+            .all(db)
+            .await
+            .map_err(ImportError::Db)?;
+        for (name, id, external_id) in rows {
+            // First row per name wins — the ordering above already put the newest first.
+            matched.entry(name).or_insert((id, external_id));
         }
     }
     Ok(matched)

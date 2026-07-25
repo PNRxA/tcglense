@@ -27,6 +27,7 @@ import {
   getCollectionSummary,
   getCollectionValueHistory,
   importCollectionCsv,
+  importCollectionText,
   setCollectionProductEntry,
 } from '../api'
 
@@ -470,5 +471,34 @@ describe('importCollectionCsv', () => {
     expect(init.headers.Authorization).toBe('Bearer tok')
     // The File is sent verbatim (not JSON-stringified), so it stays re-readable on retry.
     expect(init.body).toBe(file)
+  })
+})
+
+describe('importCollectionText', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('POSTs the pasted text verbatim with a text/plain content type and bearer token', async () => {
+    type FetchInit = { method: string; headers: Record<string, string>; body: unknown }
+    const fetchMock = vi.fn<(url: string, init: FetchInit) => Promise<Response>>(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ provider: 'mythictools', matched_cards: 2 }),
+        }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const list = '2 Sol Ring (C21) 263\n1 Counterspell\n'
+    const summary = await importCollectionText('tok', 'mtg', list, 'overwrite')
+
+    expect(summary).toEqual({ provider: 'mythictools', matched_cards: 2 })
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toContain('/api/collection/mtg/import/text?mode=overwrite')
+    expect(init.method).toBe('POST')
+    expect(init.headers['Content-Type']).toBe('text/plain')
+    expect(init.headers.Authorization).toBe('Bearer tok')
+    // Sent as-is: the server sniffs the format, so the client must not reshape the paste.
+    expect(init.body).toBe(list)
   })
 })

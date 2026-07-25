@@ -14,14 +14,14 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait, sea_query::NullOrdering,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QuerySelect, Set, TransactionTrait,
 };
 
-use crate::collection_import::csv_import::MoxfieldCsvRow;
-use crate::collection_import::reconcile::resolve_card_ids;
+use crate::collection_import::csv_import::PrintingRow;
+use crate::collection_import::reconcile::{resolve_card_ids, resolve_newest_printing_by_name};
 use crate::collection_import::{
-    ImportError, Provider, ProviderContext, UNMATCHED_SAMPLE_CAP, moxfield_rows_to_holdings,
+    ImportError, Provider, ProviderContext, UNMATCHED_SAMPLE_CAP, printing_rows_to_holdings,
 };
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::prelude::{Card, Deck, DeckCard};
@@ -46,6 +46,9 @@ pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportErr
     let id = match provider {
         Provider::Archidekt => archidekt::parse_deck_id(input),
         Provider::Moxfield => moxfield::parse_deck_id(input),
+        // No public API to link to; the handler gates on `network_import_enabled` first,
+        // so this is a defensive fallthrough (a Mythic Tools deck arrives as a file).
+        Provider::MythicTools => None,
     };
     id.ok_or_else(|| {
         ImportError::InvalidSource(format!(
@@ -64,6 +67,10 @@ pub async fn fetch_deck(
     match provider {
         Provider::Archidekt => archidekt::fetch_deck(ctx, deck_id).await,
         Provider::Moxfield => moxfield::fetch_deck(ctx, deck_id).await,
+        Provider::MythicTools => Err(ImportError::InvalidSource(format!(
+            "{} decks can't be fetched — upload the exported deck file instead",
+            provider.label()
+        ))),
     }
 }
 
@@ -111,9 +118,9 @@ pub async fn create_deck_from_rows(
             (row.set_code.clone(), row.collector_number.clone())
         {
             tuple_indexes.push(index);
-            tuple_rows.push(MoxfieldCsvRow {
-                set_code,
-                collector_number,
+            tuple_rows.push(PrintingRow {
+                set_code: Some(set_code),
+                collector_number: Some(collector_number),
                 name: row.card_name.clone(),
                 foil: row.foil,
                 quantity: row.quantity,
@@ -121,7 +128,7 @@ pub async fn create_deck_from_rows(
         }
     }
     if !tuple_rows.is_empty() {
-        let holdings = moxfield_rows_to_holdings(db, game, tuple_rows).await?;
+        let holdings = printing_rows_to_holdings(db, game, tuple_rows).await?;
         for (index, holding) in tuple_indexes.into_iter().zip(holdings) {
             let row = parsed.rows.get_mut(index).ok_or_else(|| {
                 ImportError::Db(sea_orm::DbErr::Custom(
@@ -305,6 +312,11 @@ pub async fn create_deck_from_rows(
     })
 }
 
+/// The catalog card id for each row that named a card but no printing. When a plain list
+/// names no printing we pick the newest catalog printing deterministically — the shared
+/// rule in [`resolve_newest_printing_by_name`], so a pasted list means the same printing
+/// whether it's imported as a deck or into a collection. Provider CSVs carrying
+/// set/number never take this fallback.
 async fn resolve_names(
     db: &DatabaseConnection,
     game: &str,
@@ -317,29 +329,11 @@ async fn resolve_names(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let mut result = HashMap::new();
-    for chunk in names.chunks(crate::collection_import::IN_CHUNK) {
-        let cards: Vec<(String, i32)> = Card::find()
-            .select_only()
-            .column(card::Column::Name)
-            .column(card::Column::Id)
-            .filter(card::Column::Game.eq(game))
-            .filter(card::Column::Name.is_in(chunk.iter().cloned()))
-            // When a plain list names no printing, pick the newest catalog printing
-            // deterministically; provider CSVs with set/number never take this fallback.
-            // NULLs last, or Postgres (NULLS FIRST on DESC) picks an undated printing
-            // while SQLite picks the newest dated one.
-            .order_by_with_nulls(card::Column::ReleasedAt, Order::Desc, NullOrdering::Last)
-            .order_by_desc(card::Column::Id)
-            .into_tuple()
-            .all(db)
-            .await
-            .map_err(ImportError::Db)?;
-        for (name, id) in cards {
-            result.entry(name).or_insert(id);
-        }
-    }
-    Ok(result)
+    Ok(resolve_newest_printing_by_name(db, game, &names)
+        .await?
+        .into_iter()
+        .map(|(name, (card_id, _external_id))| (name, card_id))
+        .collect())
 }
 
 async fn resolve_type_lines(

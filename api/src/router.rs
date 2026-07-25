@@ -47,9 +47,10 @@ use crate::{
             collection_sets, collection_summary, collection_value_history,
             delete_collection_source, export_collection, get_collection_entry,
             get_collection_product_entry, get_collection_source, get_import_job, import_collection,
-            import_collection_csv, list_collection, list_collection_product_sets,
-            list_collection_products, owned_counts, save_collection_source, set_collection_entry,
-            set_collection_product_entry, sync_collection_source,
+            import_collection_csv, import_collection_text, list_collection,
+            list_collection_product_sets, list_collection_products, owned_counts,
+            save_collection_source, set_collection_entry, set_collection_product_entry,
+            sync_collection_source,
         },
         config::public_config,
         currency::currency_rates,
@@ -238,12 +239,19 @@ pub fn build_router(state: AppState) -> Router {
         // Import / sync a collection from an external provider (Archidekt or Moxfield):
         // a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))
-        // CSV upload: the raw file is the request body, so this route overrides axum's
-        // default 2 MB body limit with our own (larger, but still bounded) cap. The limit
-        // is layered on just this method-router so no other route's body ceiling changes.
+        // File upload / pasted text: the raw content is the request body, so these routes
+        // override axum's default 2 MB body limit with our own (larger, but still bounded)
+        // cap. The limit is layered on just these method-routers so no other route's body
+        // ceiling changes. Both accept any supported export shape (Archidekt / Moxfield /
+        // Mythic Tools CSV, or a plain-text card list) — they differ only in how the
+        // content arrives.
         .route(
             "/api/collection/{game}/import/csv",
             post(import_collection_csv).layer(DefaultBodyLimit::max(MAX_CSV_UPLOAD_BYTES)),
+        )
+        .route(
+            "/api/collection/{game}/import/text",
+            post(import_collection_text).layer(DefaultBodyLimit::max(MAX_CSV_UPLOAD_BYTES)),
         )
         .route(
             "/api/collection/{game}/import/jobs/{job_id}",
