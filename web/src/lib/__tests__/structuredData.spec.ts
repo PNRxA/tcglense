@@ -9,6 +9,7 @@ import {
   cardProductNode,
   contentsSummary,
   graph,
+  marketOffers,
   productMetaDescription,
   sealedCrumbs,
   sealedProductNode,
@@ -278,9 +279,44 @@ describe('productMetaDescription', () => {
   })
 })
 
+describe('marketOffers', () => {
+  it('returns null when nothing is priced (null/empty/zero/negative/unparseable)', () => {
+    expect(marketOffers([], 'USD')).toBeNull()
+    expect(marketOffers([null, undefined, ''], 'USD')).toBeNull()
+    expect(marketOffers(['0', '0.00', '-1', 'n/a'], 'USD')).toBeNull()
+  })
+
+  it('emits a plain Offer for a single price, as a bare 2-dp numeric string', () => {
+    expect(marketOffers(['1234.5'], 'USD')).toEqual({
+      '@type': 'Offer',
+      price: '1234.50',
+      priceCurrency: 'USD',
+    })
+  })
+
+  it('collapses duplicate prices to one Offer rather than a zero-width range', () => {
+    expect(marketOffers(['2.00', '2'], 'USD')).toEqual({
+      '@type': 'Offer',
+      price: '2.00',
+      priceCurrency: 'USD',
+    })
+  })
+
+  it('emits an AggregateOffer spanning several prices, low to high, with the url', () => {
+    expect(marketOffers(['3.50', '1.20'], 'USD', 'https://example.com/x')).toEqual({
+      '@type': 'AggregateOffer',
+      lowPrice: '1.20',
+      highPrice: '3.50',
+      offerCount: 2,
+      priceCurrency: 'USD',
+      url: 'https://example.com/x',
+    })
+  })
+})
+
 describe('cardProductNode', () => {
-  it('builds a valid Product with the card facts and no purchasability claim', () => {
-    const node = cardProductNode(makeCard(), 'https://cdn.example.com/large.jpg')
+  it('builds a valid Product with the card facts and the tracked price as offers', () => {
+    const node = cardProductNode('mtg', makeCard(), 'https://cdn.example.com/large.jpg')!
     expect(node['@type']).toBe('Product')
     expect(node.name).toBe("Assassin's Trophy")
     expect(node.brand).toEqual({ '@type': 'Brand', name: 'Guilds of Ravnica' })
@@ -288,16 +324,43 @@ describe('cardProductNode', () => {
     expect(node.sku).toBe('GRN-152')
     expect(node.image).toBe('https://cdn.example.com/large.jpg')
     expect(node.releaseDate).toBe('2018-10-05')
+    // Regular + foil span an AggregateOffer, pointed at this card's own page.
+    expect(node.offers).toEqual({
+      '@type': 'AggregateOffer',
+      lowPrice: '1.20',
+      highPrice: '3.50',
+      offerCount: 2,
+      priceCurrency: 'USD',
+      url: `${ORIGIN}/cards/mtg/cards/card-abc`,
+    })
+  })
+
+  it('falls back to the EUR price when no USD price is tracked, and never uses tix', () => {
+    const node = cardProductNode(
+      'mtg',
+      makeCard({ prices: { usd: null, usd_foil: null, eur: '1.00', tix: '0.50' } }),
+    )!
+    expect(node.offers).toMatchObject({ '@type': 'Offer', price: '1.00', priceCurrency: 'EUR' })
+  })
+
+  it('drops the whole node when the card has no price at all (offers is mandatory)', () => {
+    // Without offers/review/aggregateRating the Product is a critical Search Console error,
+    // so no node ships at all — graph() then emits only the breadcrumbs.
+    const node = cardProductNode(
+      'mtg',
+      makeCard({ prices: { usd: null, usd_foil: null, eur: null, tix: '0.50' } }),
+    )
+    expect(node).toBeNull()
   })
 
   it('omits the image when none is passed and drops a non-ISO release date', () => {
-    const node = cardProductNode(makeCard({ released_at: 'sometime in 2018' }))
+    const node = cardProductNode('mtg', makeCard({ released_at: 'sometime in 2018' }))!
     expect('image' in node).toBe(false)
     expect('releaseDate' in node).toBe(false)
   })
 
   it('emits additionalProperty PropertyValues, omitting absent ones', () => {
-    const props = cardProductNode(makeCard()).additionalProperty as {
+    const props = cardProductNode('mtg', makeCard())!.additionalProperty as {
       name: string
       value: unknown
     }[]
@@ -313,7 +376,8 @@ describe('cardProductNode', () => {
   })
 
   it('includes a non-default language and drops rarity when null', () => {
-    const props = cardProductNode(makeCard({ lang: 'ja', rarity: null })).additionalProperty as {
+    const props = cardProductNode('mtg', makeCard({ lang: 'ja', rarity: null }))!
+      .additionalProperty as {
       name: string
     }[]
     const names = props.map((p) => p.name)
@@ -323,6 +387,7 @@ describe('cardProductNode', () => {
 
   it('joins both faces oracle text and strips mana braces in the description', () => {
     const node = cardProductNode(
+      'mtg',
       makeCard({
         oracle_text: null,
         faces: [
@@ -346,7 +411,7 @@ describe('cardProductNode', () => {
           },
         ],
       }),
-    )
+    )!
     const description = node.description as string
     expect(description).toContain(' // ')
     expect(description).toContain('T: Add G.')
@@ -375,13 +440,20 @@ describe('sealedProductNode', () => {
       'Kaldheim',
       linked,
       'https://cdn/x.jpg',
-    )
+    )!
     expect(node['@type']).toBe('Product')
     expect(node.brand).toEqual({ '@type': 'Brand', name: 'Kaldheim' })
     expect(node.category).toBe('Collector Booster Box')
     expect(node.sku).toBe('prod-1')
     expect(node.description).toContain('12× Collector Booster')
     expect(node.description).toContain('1× Foil Promo')
+    // The single tracked market price, pointed at our own page (this fixture has no buy URL).
+    expect(node.offers).toEqual({
+      '@type': 'Offer',
+      price: '199.99',
+      priceCurrency: 'USD',
+      url: `${ORIGIN}/sealed/mtg/prod-1`,
+    })
 
     const related = node.isRelatedTo as { name: string; url: string }[]
     expect(related).toHaveLength(2) // only the product + card components; deck/other excluded
@@ -391,8 +463,67 @@ describe('sealedProductNode', () => {
     ])
   })
 
+  it('prefers the real marketplace URL for the offer when the product carries one', () => {
+    const node = sealedProductNode(
+      'mtg',
+      makeProduct({ url: 'https://www.tcgplayer.com/product/123' }),
+      'Box',
+      'Kaldheim',
+      [],
+    )!
+    expect(node.offers).toMatchObject({ url: 'https://www.tcgplayer.com/product/123' })
+  })
+
+  it('falls back to the curated MSRP, tagged as a list price rather than a market offer', () => {
+    const node = sealedProductNode(
+      'mtg',
+      makeProduct({ prices: { usd: null, usd_foil: null }, msrp: '149.99' }),
+      'Box',
+      'Kaldheim',
+      [],
+    )!
+    expect(node.offers).toMatchObject({
+      '@type': 'Offer',
+      price: '149.99',
+      priceCurrency: 'USD',
+      priceSpecification: {
+        '@type': 'UnitPriceSpecification',
+        priceType: 'https://schema.org/MSRP',
+        price: '149.99',
+      },
+    })
+  })
+
+  it('never folds the MSRP into a range with a market price (different provenance)', () => {
+    const node = sealedProductNode(
+      'mtg',
+      makeProduct({ prices: { usd: '199.99', usd_foil: null }, msrp: '149.99' }),
+      'Box',
+      'Kaldheim',
+      [],
+    )!
+    expect(node.offers).toEqual({
+      '@type': 'Offer',
+      price: '199.99',
+      priceCurrency: 'USD',
+      url: `${ORIGIN}/sealed/mtg/prod-1`,
+    })
+  })
+
+  it('drops the whole node when there is neither a market price nor an MSRP', () => {
+    expect(
+      sealedProductNode(
+        'mtg',
+        makeProduct({ prices: { usd: null, usd_foil: null }, msrp: null }),
+        'Box',
+        'Kaldheim',
+        [],
+      ),
+    ).toBeNull()
+  })
+
   it('omits the brand when no set name is known', () => {
-    const node = sealedProductNode('mtg', makeProduct({ set_name: null }), 'Bundle', '', [])
+    const node = sealedProductNode('mtg', makeProduct({ set_name: null }), 'Bundle', '', [])!
     expect('brand' in node).toBe(false)
     expect('isRelatedTo' in node).toBe(false)
   })
@@ -401,36 +532,59 @@ describe('sealedProductNode', () => {
     const many = Array.from({ length: 25 }, (_, i) =>
       makeComponent({ name: `Pack ${i}`, product: makeProduct({ id: `p${i}` }) }),
     )
-    const node = sealedProductNode('mtg', makeProduct(), 'Box', 'Set', many)
+    const node = sealedProductNode('mtg', makeProduct(), 'Box', 'Set', many)!
     expect((node.isRelatedTo as unknown[]).length).toBe(20)
   })
 })
 
-describe('no-storefront constraint guard', () => {
-  // Neither node may claim purchasability — the deliberate price-tracker (not storefront)
-  // stance. This fails the build if offers/availability/rating markup ever leaks back in.
+describe('structured-data claim guard', () => {
+  // `offers` is REQUIRED (Google drops a Product snippet without offers/review/
+  // aggregateRating) — but it stays a bare price. Nothing here may claim stock, condition,
+  // a seller, or a rating we don't hold, and `hasPart` is out-of-domain on a Product.
+  // This fails the build if any of it leaks in.
   const banned = [
-    'offers',
     'availability',
+    'itemcondition',
+    'seller',
     'aggregaterating',
     '"review"',
-    'pricecurrency',
+    'pricevaliduntil',
     'haspart',
-    'aggregateoffer',
   ]
 
-  it('the card node emits no offer/availability/rating markup', () => {
-    const s = JSON.stringify(cardProductNode(makeCard(), 'https://cdn/x.jpg')).toLowerCase()
-    for (const b of banned) expect(s).not.toContain(b)
-  })
+  const cases: [string, () => Record<string, unknown>][] = [
+    ['card', () => cardProductNode('mtg', makeCard(), 'https://cdn/x.jpg')!],
+    [
+      'sealed',
+      () =>
+        sealedProductNode('mtg', makeProduct(), 'Box', 'Kaldheim', [
+          makeComponent({ product: makeProduct({ id: 'x' }) }),
+        ])!,
+    ],
+    [
+      'sealed (MSRP fallback)',
+      () =>
+        sealedProductNode(
+          'mtg',
+          makeProduct({ prices: { usd: null, usd_foil: null }, msrp: '149.99' }),
+          'Box',
+          'Kaldheim',
+          [],
+        )!,
+    ],
+  ]
 
-  it('the sealed node emits no offer/availability/rating markup', () => {
-    const node = sealedProductNode('mtg', makeProduct(), 'Box', 'Kaldheim', [
-      makeComponent({ product: makeProduct({ id: 'x' }) }),
-    ])
-    const s = JSON.stringify(node).toLowerCase()
-    for (const b of banned) expect(s).not.toContain(b)
-  })
+  for (const [label, build] of cases) {
+    it(`the ${label} node carries offers and no unsupportable claim`, () => {
+      const node = build()
+      const offers = node.offers as { priceCurrency?: string } | undefined
+      // The product-snippet requirement Search Console flags when absent.
+      expect(offers?.priceCurrency).toBe('USD')
+
+      const s = JSON.stringify(node).toLowerCase()
+      for (const b of banned) expect(s).not.toContain(b)
+    })
+  }
 })
 
 describe('breadcrumbs', () => {

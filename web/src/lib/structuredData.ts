@@ -2,13 +2,24 @@
 // keyword-rich meta descriptions, schema.org `Product` JSON-LD carrying "what's in the box"
 // and the card's stats, and a `BreadcrumbList` — all emitted through `usePageMeta` (seo.ts).
 //
-// Two deliberate constraints, mirroring the pre-existing views:
-//   1. NO `offers`/`availability`/`price`/`AggregateOffer` in the structured data. TCGLense is
-//      a price-TRACKING site, not a storefront; marking a card/product as purchasable here
-//      would be a false structured-data claim and risks Google suppressing the rich result.
-//      Prices appear only in the human-readable prose (a description string, not a machine
-//      offer). The `structuredData.spec.ts` guard test fails the build if any leaks back in.
-//   2. Contents are linked with `isRelatedTo` (domain `Product`), NOT `hasPart` (domain
+// Three deliberate constraints:
+//   1. A `Product` node MUST carry `offers` — Google's product-snippet validator requires one
+//      of `offers`/`review`/`aggregateRating`, and a `Product` without any is a *critical*
+//      Search Console error (the rich result is dropped). We emit `offers` and only `offers`:
+//      the tracked market price IS the datum this site publishes, so an `Offer`/`AggregateOffer`
+//      over it is the honest, aggregator-shaped answer. `review`/`aggregateRating` stay banned —
+//      TCGLense has no ratings, and inventing them is a structured-data policy violation.
+//      A node with NO price at all can't satisfy the requirement, so it is dropped entirely
+//      (`null` → `graph()` skips it) rather than shipped knowingly invalid.
+//   2. Still no claim we don't hold. TCGLense is a price *tracker*, not a storefront, so the
+//      offer omits `availability`/`itemCondition`/`seller` (we don't observe stock, condition,
+//      or the seller) and `priceValidUntil` (prices are re-snapshotted daily; a fabricated
+//      expiry is worse than none). Those are optional for a product snippet — Search Console
+//      may list them as non-critical "missing recommended field" hints; that's the trade.
+//      `offers.url` points at the real marketplace page when we have one (sealed products
+//      carry a TCGplayer URL), else at our own page, which is where the buy links live.
+//      The `structuredData.spec.ts` guard test fails the build if a banned claim leaks in.
+//   3. Contents are linked with `isRelatedTo` (domain `Product`), NOT `hasPart` (domain
 //      `CreativeWork`, out-of-domain on a `Product` → invalid markup).
 //
 // Pure functions with no Vue/query-client dependency, so they're unit-tested directly.
@@ -87,6 +98,47 @@ function prop(name: string, value: string | number | null | undefined): PropVal 
   return { '@type': 'PropertyValue', name, value }
 }
 
+// ---------- Offers ----------
+
+/** A canonical decimal price string → a positive finite number, else `null`. `"0"`, a negative,
+ * and anything unparseable are not offers (an unpriced row is what the API sends as `null`). */
+function priceNumber(raw: string | null | undefined): number | null {
+  if (!raw) return null
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * The schema.org `offers` node over a set of tracked prices in ONE currency (schema.org has no
+ * multi-currency offer, so callers pass one currency's fields and fall back to the next).
+ * One distinct price → an `Offer` with `price`; several (e.g. a card's regular + foil) → an
+ * `AggregateOffer` with `lowPrice`/`highPrice`/`offerCount`. Prices are deduped (so two equal
+ * finishes don't become a zero-width range) and emitted as bare 2-dp numeric strings — Google
+ * rejects currency symbols and thousands separators, which is why this doesn't go through
+ * `formatUsd`. `null` when nothing is priced; the caller then drops the whole `Product` node.
+ */
+export function marketOffers(
+  prices: (string | null | undefined)[],
+  currency: string,
+  url?: string,
+): Record<string, unknown> | null {
+  const values = [...new Set(prices.map(priceNumber).filter((n): n is number => n !== null))]
+  if (!values.length) return null
+  const money = (n: number) => n.toFixed(2)
+  const node: Record<string, unknown> =
+    values.length === 1
+      ? { '@type': 'Offer', price: money(Math.min(...values)), priceCurrency: currency }
+      : {
+          '@type': 'AggregateOffer',
+          lowPrice: money(Math.min(...values)),
+          highPrice: money(Math.max(...values)),
+          offerCount: values.length,
+          priceCurrency: currency,
+        }
+  if (url) node.url = url
+  return node
+}
+
 // ---------- Card ----------
 
 /** The SERP-snippet meta description for a card page: name — rarity/type · set · #number,
@@ -120,8 +172,27 @@ function cardJsonLdDescription(c: Card): string {
   return [head, body].filter(Boolean).join(' ').slice(0, MAX_JSON_LD_DESCRIPTION)
 }
 
-/** The schema.org `Product` node for a card. No `offers` (see the file header). */
-export function cardProductNode(c: Card, image?: string): Record<string, unknown> {
+/** A card's `offers`: the USD market prices (regular + foil) if tracked, else the EUR one.
+ * MTGO `tix` is deliberately never used — event tickets aren't an ISO 4217 currency. */
+function cardOffers(game: string, c: Card): Record<string, unknown> | null {
+  const url = absoluteUrl(`/cards/${game}/cards/${c.id}`)
+  return (
+    marketOffers([c.prices.usd, c.prices.usd_foil], 'USD', url) ??
+    marketOffers([c.prices.eur], 'EUR', url)
+  )
+}
+
+/** The schema.org `Product` node for a card, or `null` when the card has no tracked price —
+ * without `offers` the node can't be a valid product snippet, so it isn't emitted at all
+ * (see the file header). */
+export function cardProductNode(
+  game: string,
+  c: Card,
+  image?: string,
+): Record<string, unknown> | null {
+  const offers = cardOffers(game, c)
+  if (!offers) return null
+
   const props = [
     prop('Set', c.set_name),
     prop('Set code', c.set_code.toUpperCase()),
@@ -142,6 +213,7 @@ export function cardProductNode(c: Card, image?: string): Record<string, unknown
     brand: { '@type': 'Brand', name: c.set_name },
     description: cardJsonLdDescription(c),
     sku: `${c.set_code.toUpperCase()}-${c.collector_number}`,
+    offers,
     additionalProperty: props,
   }
   if (image) node.image = image
@@ -199,8 +271,29 @@ function productJsonLdDescription(
   return `${lead} Contents: ${all}.`.slice(0, MAX_JSON_LD_DESCRIPTION)
 }
 
-/** The schema.org `Product` node for a sealed product. Contents that resolve to a catalog
- * product/card are linked via `isRelatedTo` (valid on `Product`); no `offers` (see header). */
+/** A sealed product's `offers`: the tracked USD market prices, falling back to the curated
+ * MSRP when the product has no market price yet. The fallback is tagged with a `MSRP`
+ * `priceSpecification` so it doesn't read as a live market offer — the two have different
+ * provenance (see `tcgcsv::msrp`) and must not be aggregated into one range. */
+function productOffers(game: string, p: Product): Record<string, unknown> | null {
+  const url = p.url ?? absoluteUrl(`/sealed/${game}/${p.id}`)
+  const market = marketOffers([p.prices.usd, p.prices.usd_foil], 'USD', url)
+  if (market) return market
+
+  const list = marketOffers([p.msrp], 'USD', url)
+  if (!list) return null
+  list.priceSpecification = {
+    '@type': 'UnitPriceSpecification',
+    priceType: 'https://schema.org/MSRP',
+    price: list.price,
+    priceCurrency: 'USD',
+  }
+  return list
+}
+
+/** The schema.org `Product` node for a sealed product, or `null` when it has neither a market
+ * price nor an MSRP (see the file header). Contents that resolve to a catalog product/card are
+ * linked via `isRelatedTo` (valid on `Product`). */
 export function sealedProductNode(
   game: string,
   p: Product,
@@ -208,7 +301,10 @@ export function sealedProductNode(
   setName: string,
   components: ProductComponent[],
   image?: string,
-): Record<string, unknown> {
+): Record<string, unknown> | null {
+  const offers = productOffers(game, p)
+  if (!offers) return null
+
   const props = [
     prop('Set', setName || null),
     prop('Set code', p.set_code.toUpperCase()),
@@ -220,6 +316,7 @@ export function sealedProductNode(
     name: p.name,
     description: productJsonLdDescription(p, typeLabel, setName, components),
     sku: p.id,
+    offers,
     additionalProperty: props,
   }
   if (typeLabel) node.category = typeLabel
