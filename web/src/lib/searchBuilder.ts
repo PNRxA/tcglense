@@ -13,6 +13,7 @@
 import {
   hasFlag,
   readFilter,
+  readFlagValues,
   readRange,
   removeFilter,
   setFlag,
@@ -109,6 +110,7 @@ const POW_KEYS = ['pow', 'power'] as const
 const TOU_KEYS = ['tou', 'toughness'] as const
 const CN_KEYS = ['cn', 'number'] as const
 const IS_KEYS = ['is'] as const
+const ART_TAG_KEYS = ['art', 'arttag', 'atag'] as const
 
 const WUBRG = ['w', 'u', 'b', 'r', 'g']
 
@@ -329,6 +331,49 @@ export function setCardFlag(query: string, flag: string, on: boolean): string {
   return setFlag(query, IS_KEYS, 'is', flag, on)
 }
 
+// --- Art tags (Tagger `art:` filters) --------------------------------------------------
+
+/**
+ * Normalise a typed/picked tag into Tagger's slug shape: lowercase, quotes dropped,
+ * whitespace runs collapsed to single hyphens (`"Rashida Scalebane"` →
+ * `rashida-scalebane`) — the same normalisation the backend applies, so what the chip
+ * shows is what the filter matches.
+ */
+export function artTagSlug(value: string): string {
+  return unquote(value).replace(/"/g, '').toLowerCase().split(/\s+/).filter(Boolean).join('-')
+}
+
+/**
+ * The art tags currently in the query, as verbatim token values (quotes/casing
+ * intact) so [`removeArtTag`] can round-trip them. Display with [`artTagSlug`].
+ * Like `is:`, art tags are multi-valued: each tag is its own `art:` token.
+ */
+export function getArtTagValues(query: string): string[] {
+  return readFlagValues(query, ART_TAG_KEYS)
+}
+
+/** Add one art tag (slug-normalised); a tag already present (under any alias or
+ * quoting) is left alone rather than duplicated. */
+export function addArtTag(query: string, value: string): string {
+  const slug = artTagSlug(value)
+  if (!slug) return query
+  if (getArtTagValues(query).some((v) => artTagSlug(v) === slug)) return query
+  return setFlag(query, ART_TAG_KEYS, 'art', slug, true)
+}
+
+/** Remove one art tag by its verbatim token value, leaving other tags untouched. */
+export function removeArtTag(query: string, value: string): string {
+  return setFlag(query, ART_TAG_KEYS, 'art', value, false)
+}
+
+/** Toggle a tag: remove it when present (under any alias/quoting), else add it —
+ * the tag browser's click behaviour. */
+export function toggleArtTag(query: string, value: string): string {
+  const slug = artTagSlug(value)
+  const existing = getArtTagValues(query).find((v) => artTagSlug(v) === slug)
+  return existing != null ? removeArtTag(query, existing) : addArtTag(query, value)
+}
+
 // --- Aggregate helpers ---------------------------------------------------------------
 
 // The key-groups the builder owns — the single source of truth for both the active
@@ -347,6 +392,7 @@ const BUILDER_KEY_GROUPS = [
   TOU_KEYS,
   CN_KEYS,
   IS_KEYS,
+  ART_TAG_KEYS,
 ] as const
 
 /**

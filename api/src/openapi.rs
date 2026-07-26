@@ -123,9 +123,10 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::api_keys::create_api_key,
         crate::handlers::api_keys::list_api_keys,
         crate::handlers::api_keys::revoke_api_key,
-        // --- Cards: set sub-types, name autocomplete, import status, sealed membership, scanner ---
+        // --- Cards: set sub-types, name/art-tag autocomplete, import status, sealed membership, scanner ---
         crate::handlers::catalog::list_set_subtypes,
         crate::handlers::catalog::card_names,
+        crate::handlers::catalog::list_art_tags,
         crate::handlers::catalog::ingest_status,
         crate::handlers::catalog::card_sealed,
         crate::handlers::catalog::scan_cards,

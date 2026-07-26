@@ -1,5 +1,6 @@
 import { API_URL, listQuery, request } from './client'
 import type {
+  ArtTagEntry,
   Card,
   CardSet,
   DropGroup,
@@ -18,6 +19,7 @@ import type {
 // `@/lib/api` entrypoint.
 
 export type {
+  ArtTagEntry,
   Card,
   CardFace,
   CardPrices,
@@ -119,6 +121,28 @@ export function getCardNames(
   limit = CARD_NAME_SUGGESTION_LIMIT,
 ): Promise<{ data: string[] }> {
   return request<{ data: string[] }>(cardNamesPath(game, q, limit))
+}
+
+/** How many art-tag hints the advanced-search autocomplete requests. */
+export const ART_TAG_SUGGESTION_LIMIT = 10
+
+/** Relative `/api/games/{game}/art-tags` path — with `q` for autocomplete matches,
+ * without for the full tag list (the tag-browser payload). */
+export function artTagsPath(game: string, q?: string, limit = ART_TAG_SUGGESTION_LIMIT): string {
+  const base = `/api/games/${encodeURIComponent(game)}/art-tags`
+  if (q == null) return base
+  const search = new URLSearchParams({ q, limit: String(limit) })
+  return `${base}?${search.toString()}`
+}
+
+/** Art tags usable with the `art:` search filter: matches for `q` (starts-with
+ * ranked first), or the game's whole tag vocabulary when `q` is omitted. */
+export function getArtTags(
+  game: string,
+  q?: string,
+  limit = ART_TAG_SUGGESTION_LIMIT,
+): Promise<{ data: ArtTagEntry[] }> {
+  return request<{ data: ArtTagEntry[] }>(artTagsPath(game, q, limit))
 }
 
 /** Page size for exact-name printing discovery. The picker loads further pages on

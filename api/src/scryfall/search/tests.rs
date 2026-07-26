@@ -645,13 +645,40 @@ fn print_detail_filters_compile() {
 }
 
 #[test]
+fn art_tag_filter_compiles_to_exists_probe() {
+    // `art:` (and aliases) probe the ingest-expanded mapping with a correlated,
+    // game-scoped EXISTS — hierarchy resolution happened at ingest, not here.
+    let s = sql("atag:squirrel");
+    assert!(s.contains("EXISTS"), "{s}");
+    assert!(s.contains("card_art_tags"), "{s}");
+    assert!(s.contains("'squirrel'"), "{s}");
+    assert!(s.contains("illustration_id"), "{s}");
+    assert!(s.contains("'mtg'"), "{s}");
+    assert!(sql("art:squirrel").contains("card_art_tags"));
+    assert!(sql("arttag:squirrel").contains("card_art_tags"));
+    // Quoted multi-word input normalizes to Tagger's hyphenated slug shape.
+    assert!(
+        sql("art:\"Rashida Scalebane\"").contains("'rashida-scalebane'"),
+        "{}",
+        sql("art:\"Rashida Scalebane\"")
+    );
+    // `!=` and `-` negate to NOT EXISTS — the leaf is total, so a card with no
+    // illustration_id counts as "not tagged", mirroring Scryfall.
+    assert!(sql("art!=squirrel").contains("NOT EXISTS"));
+    assert!(sql("-art:squirrel").contains("NOT"));
+    // The Postgres rendering binds the same probe ($N renumbering happens inside
+    // raw_vals; inlined rendering here just confirms it compiles per-backend).
+    assert!(pg_sql("atag:squirrel").contains("card_art_tags"));
+    // Relational operators are meaningless for tags.
+    assert!(matches!(
+        err("art>squirrel"),
+        SearchError::UnsupportedOperator { .. }
+    ));
+}
+
+#[test]
 fn deferred_filters_still_422() {
-    for q in [
-        "cube:vintage",
-        "otag:removal",
-        "atag:squirrel",
-        "devotion:2",
-    ] {
+    for q in ["cube:vintage", "otag:removal", "devotion:2"] {
         assert!(
             matches!(
                 parse(q, Dialect::Sqlite),

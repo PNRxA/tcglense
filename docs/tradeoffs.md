@@ -548,6 +548,40 @@ catalog) is planned but not implemented.
   The parser assumes Scryfall's one-object-per-line bulk format; per-line length
   isn't capped, so a format change to a single-line array would not be parsed safely
   (it'd hit the zero-card guard but only after buffering).
+- **Tagger art tags (issue #140):** the `art:`/`arttag:`/`atag:` search filters are backed
+  by Scryfall's `art_tags` bulk file (~40 MB, refreshed daily; official, so no scraping and
+  no mirror-origin special-casing — consumers pull it through the generic
+  `/api/mirror/scryfall/file/art_tags` route like any bulk file). Design choices, in order
+  of consequence:
+  - **The tag hierarchy is expanded at ingest, not at query time.** The bulk file carries
+    only *direct* taggings — a parent tag like `animal` has none of its own — but Scryfall's
+    own `art:animal` matches every descendant's artwork. We materialise that: each tagging
+    also writes a row per ancestor tag, so the search compiles to a single indexed `EXISTS`
+    probe on `card_art_tags (game, tag_slug, illustration_id)` — no recursive SQL, nothing
+    dialect-sensitive, cheap on the weak prod Postgres. Cost: ~2× rows (~1M total after
+    scoping to stored artworks — trivial next to price history) rebuilt wholesale on each
+    changed tick inside one transaction (same atomic-swap + zero-row wipe-guard contract as
+    rulings; `card_art_tags.id` is i64 because the daily rebuild would exhaust an i32
+    Postgres sequence in a few years). The version gate folds the **card dataset's**
+    imported version in beside the tag file's `updated_at` — the mapping derives from both
+    inputs, so a card re-import (new sets → new artworks) rebuilds it; and an empty card
+    catalog (fresh DB, failed card import) **defers** the import without stamping the
+    version, so it can never latch empty tables as "complete".
+  - **Tag slugs are denormalized onto the mapping rows** (no join to `art_tags` on the hot
+    path). Scryfall warns slugs can drift — the durable id is stored in `art_tags` — but the
+    wholesale daily rebuild self-corrects any drift, so v1 trades referential purity for the
+    flat probe. The `art_tags` metadata table exists for the SPA's autocomplete/tag-browser
+    (`GET /api/games/{game}/art-tags`); tags whose expanded artwork set is empty (digital-only
+    art, empty branches) are dropped entirely so the browser never offers a zero-result tag.
+  - **Not stored (deliberately):** tagging `weight`s/annotations (Scryfall search ignores
+    them for plain `art:`, and an ancestor-expanded row has no single meaningful weight) and
+    tag `aliases` (1.3k across 11.4k tags; revisit if users ask). Oracle tags (`otag:`) stay
+    422 — same infra would work but they key on `oracle_id` and ship in a separate bulk file.
+  - **Known limitation — multi-face artworks:** `cards.illustration_id` is the catalog's
+    flattened artwork id (first face carrying one), so a tagging that applies only to a
+    non-first face (a transform card's back-face painting) is dropped at ingest and `art:`
+    won't match that card, where Scryfall would. Fixing it needs per-face artwork identity
+    on `cards` — it equally affects `unique:art` grouping — and is deferred with that work.
 - **Sealed products (TCGCSV):** sealed-product price tracking is **built** — a TCGCSV
   provider (`crate::tcgcsv`) feeds the `products` + `product_price_history` tables and the
   public `/api/games/{game}/products*` endpoints (`handlers::catalog::products`). [TCGCSV](https://tcgcsv.com)

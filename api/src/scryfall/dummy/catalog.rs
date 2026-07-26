@@ -455,12 +455,18 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
 /// the reprinted card show the same "Notes and Rules Information" offline.
 pub(super) const REPRINT_ORACLE_ID: &str = "dummy-oracle-reprint-0001";
 
+/// Artwork identities for the art-tag seed (`seed_art_tags`): the reprint pair shares
+/// one illustration (a reprint reuses the painting, which is exactly what art tags key
+/// on), and base #1 carries its own.
+pub(super) const REPRINT_ILLUSTRATION_ID: &str = "dummy-illustration-relic-0001";
+pub(super) const BASE_ONE_ILLUSTRATION_ID: &str = "dummy-illustration-base-0001";
+
 /// One printing of a card reprinted across sets: every printing shares the same
 /// name and `oracle_id` but lives in its own set with its own collector number and
 /// price. Seeding two of these gives the card-detail "other printings" list (issue
 /// #63) something to show offline.
 fn reprint_card(set: &SetDef, n: i32) -> ScryfallCard {
-    SeedCard {
+    let mut card = SeedCard {
         external_id: card_id(set.code, n),
         oracle_id: Some(REPRINT_ORACLE_ID.to_string()),
         name: "Dummy Reprinted Relic".to_string(),
@@ -477,7 +483,11 @@ fn reprint_card(set: &SetDef, n: i32) -> ScryfallCard {
         prices: dummy_prices(n),
         card_faces: None,
     }
-    .into_scryfall()
+    .into_scryfall();
+    // Both printings reuse the same painting, so the art-tag seed can prove `art:`
+    // matches by artwork (illustration), not by printing.
+    card.illustration_id = Some(REPRINT_ILLUSTRATION_ID.to_string());
+    card
 }
 
 /// The fabricated card list — the single source of truth for what gets seeded.
@@ -489,6 +499,9 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
     for n in 1..=BASE_NUMBERED {
         cards.push(numbered_card(&BASE_SET, n));
     }
+    // Base #1 gets its own artwork identity so the art-tag seed has a second,
+    // unrelated illustration to tag (`seed_art_tags`).
+    cards[0].illustration_id = Some(BASE_ONE_ILLUSTRATION_ID.to_string());
     cards.push(transform_card(&BASE_SET, BASE_NUMBERED + 1));
     cards.push(special_card(
         &BASE_SET,

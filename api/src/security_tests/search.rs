@@ -425,3 +425,134 @@ async fn set_drops_report_release_date() {
         "dateless drop -> null: {body:?}"
     );
 }
+
+/// End-to-end (issue #140): `art:` (and aliases) match by tagged **artwork** against
+/// the seeded dummy art tags — a tag matches every printing sharing the tagged
+/// illustration, the ingest-expanded ancestor tag matches the same artworks, negation
+/// stays total, an unknown tag matches nothing, and oracle tags remain 422.
+#[tokio::test]
+async fn art_tag_search_matches_by_artwork() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // Baseline catalog size, for the negation check below.
+    let (status, _, body) = send(&app, get(&format!("/api/games/{game}/cards?page_size=1"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let seeded_total = body["total"].as_u64().expect("total");
+
+    // `relic` tags the artwork the two "Dummy Reprinted Relic" printings share, so all
+    // three filter aliases return both printings; `object` is the seeded ancestor tag
+    // carrying the same (hierarchy-expanded) artwork row.
+    for q in ["art:relic", "arttag:relic", "atag:relic", "art:object"] {
+        let (status, _, body) = send(
+            &app,
+            get(&format!("/api/games/{game}/cards?q={}", url_encode(q))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{q}");
+        assert_eq!(body["total"].as_u64(), Some(2), "{q}: {body:?}");
+    }
+
+    // `squirrel` tags a single unrelated artwork — exactly one card.
+    let (status, _, body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?q={}",
+            url_encode("atag:squirrel")
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_u64(), Some(1), "{body:?}");
+
+    // The same artwork carries both `relic` and its ancestor: requiring one while
+    // negating the other matches nothing.
+    let (status, _, body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?q={}",
+            url_encode("art:relic -atag:object")
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_u64(), Some(0), "{body:?}");
+
+    // Negation is total: every card except the two tagged printings (cards with no
+    // illustration at all count as "not tagged", mirroring Scryfall).
+    let (status, _, body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?q={}",
+            url_encode("-art:relic")
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_u64(), Some(seeded_total - 2), "{body:?}");
+
+    // An unknown tag simply matches nothing (200, not an error), mirroring Scryfall.
+    let (status, _, body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?q={}",
+            url_encode("art:no-such-tag")
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_u64(), Some(0));
+
+    // Oracle tags are still deliberately unsupported (422).
+    let (status, _, _) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards?q={}",
+            url_encode("otag:removal")
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// The art-tag lookup endpoint: blank `q` returns the full slug-ordered vocabulary
+/// (the tag-browser payload), `q` ranks starts-with matches first, `limit` caps, and
+/// an unknown game is 404.
+#[tokio::test]
+async fn art_tag_lookup_lists_and_ranks_tags() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // Blank q -> the whole seeded vocabulary, ordered by slug.
+    let (status, _, body) = send(&app, get(&format!("/api/games/{game}/art-tags"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let tags = body["data"].as_array().expect("data array");
+    let slugs: Vec<&str> = tags.iter().filter_map(|t| t["slug"].as_str()).collect();
+    assert_eq!(slugs, ["object", "relic", "squirrel"], "{body:?}");
+    assert_eq!(tags[1]["label"].as_str(), Some("Relic"));
+    assert_eq!(tags[1]["count"].as_i64(), Some(1));
+
+    // `re` prefixes `relic` and merely appears inside `squirrel`: starts-with first.
+    let (status, _, body) = send(&app, get(&format!("/api/games/{game}/art-tags?q=re"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let slugs: Vec<&str> = body["data"]
+        .as_array()
+        .expect("data")
+        .iter()
+        .filter_map(|t| t["slug"].as_str())
+        .collect();
+    assert_eq!(slugs, ["relic", "squirrel"], "{body:?}");
+
+    // Labels match too (case-insensitively), and `limit` caps the suggestions.
+    let (status, _, body) = send(
+        &app,
+        get(&format!("/api/games/{game}/art-tags?q=Rel&limit=1")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"].as_array().expect("data").len(), 1);
+
+    // The handler validates the game first: unknown game -> 404.
+    let (status, _, _) = send(&app, get("/api/games/nope/art-tags")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

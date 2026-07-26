@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import ArtTagFilter from './ArtTagFilter.vue'
 import {
   activeFilterCount,
   CARD_FLAG_OPTIONS,
@@ -65,6 +66,11 @@ import {
 // hand-typed syntax and the builder stay in sync and compose, and free text / unrelated
 // filters are never disturbed. All the query↔control mapping lives in lib/searchBuilder.
 const query = defineModel<string>({ required: true })
+
+// The art-tag control fetches its suggestions per game. Every surface mounting the
+// panel is MTG-scoped today (the panel's whole syntax is), so the default keeps the
+// seven call sites untouched; a future TCG passes its own slug.
+withDefaults(defineProps<{ game?: string }>(), { game: 'mtg' })
 
 const activeCount = computed(() => activeFilterCount(query.value))
 
@@ -218,14 +224,20 @@ function clearAll() {
 }
 
 // A Select's dropdown is portalled to <body>, so interacting with it reads as "outside"
-// the popover and would dismiss the whole panel. Keep the panel open in that case; a
-// genuine outside click (or Escape) still closes it.
+// the popover and would dismiss the whole panel. The art-tag browser dialog (and its
+// overlay) is portalled the same way. Keep the panel open in those cases; a genuine
+// outside click (or Escape) still closes it.
 function keepOpenForSelect(event: {
   detail?: { originalEvent?: Event }
   preventDefault: () => void
 }) {
   const target = event.detail?.originalEvent?.target as HTMLElement | null | undefined
-  if (target?.closest('[data-slot="select-content"]')) event.preventDefault()
+  if (
+    target?.closest(
+      '[data-slot="select-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"]',
+    )
+  )
+    event.preventDefault()
 }
 
 // Stable, unique ids so each Select trigger pairs with its <Label for>, and each
@@ -544,6 +556,9 @@ const pipClass =
           />
         </div>
       </div>
+
+      <!-- Art tags (Tagger `art:` filters) -->
+      <ArtTagFilter v-model="query" :game="game" />
 
       <!-- Collector number -->
       <div class="space-y-2">

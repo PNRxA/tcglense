@@ -37,13 +37,14 @@ use super::ingest::{self, IngestError};
 use super::map;
 use super::price_history;
 use crate::entities::prelude::{
-    Card, CardRuling, Product, ProductPriceHistory, SealedComponent, SealedContent,
+    ArtTag, Card, CardArtTag, CardRuling, Product, ProductPriceHistory, SealedComponent,
+    SealedContent,
 };
 use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 use crate::entities::{
-    card, card_price_history, card_ruling, product, product_price_history, sealed_component,
-    sealed_content,
+    art_tag, card, card_art_tag, card_price_history, card_ruling, product, product_price_history,
+    sealed_component, sealed_content,
 };
 use catalog::{dummy_cards, dummy_sets};
 use prices::price_walk;
@@ -537,6 +538,98 @@ async fn seed_rulings(db: &DatabaseConnection) -> Result<u64, IngestError> {
     Ok(total)
 }
 
+/// Seed a few dummy Tagger art tags (issue #140) over the seeded artworks, so the
+/// `art:` search filter and the art-tag autocomplete/browser work offline. The shape
+/// mirrors what the real ingest produces post-expansion: `relic` tags the reprint
+/// pair's shared illustration, its ancestor `object` carries the same (expanded) row,
+/// and `squirrel` tags an unrelated artwork. **Upsert-only** like the rest of the
+/// dummy seed (never deletes — the module contract): keyed on the same unique indexes
+/// the real ingest's tables carry (`(game, slug)` / `(game, tag_slug,
+/// illustration_id)`), so a reseed overwrites its own three tags and leaves anything
+/// else alone. Returns the number of tag + mapping rows written.
+async fn seed_art_tags(db: &DatabaseConnection) -> Result<u64, IngestError> {
+    // (scryfall_id, slug, label, description, illustration_id)
+    let tags: &[(&str, &str, &str, Option<&str>, &str)] = &[
+        (
+            "dummy-art-tag-0001",
+            "relic",
+            "Relic",
+            Some("Fabricated offline tag — real tags come from Scryfall's `art_tags` bulk data."),
+            catalog::REPRINT_ILLUSTRATION_ID,
+        ),
+        (
+            "dummy-art-tag-0002",
+            "object",
+            "Object",
+            None,
+            catalog::REPRINT_ILLUSTRATION_ID,
+        ),
+        (
+            "dummy-art-tag-0003",
+            "squirrel",
+            "Squirrel",
+            None,
+            catalog::BASE_ONE_ILLUSTRATION_ID,
+        ),
+    ];
+
+    let now = Utc::now();
+    let tag_models: Vec<art_tag::ActiveModel> = tags
+        .iter()
+        .map(
+            |(scryfall_id, slug, label, description, _)| art_tag::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                scryfall_id: Set(scryfall_id.to_string()),
+                slug: Set(slug.to_string()),
+                label: Set(label.to_string()),
+                description: Set(description.map(str::to_string)),
+                taggings_count: Set(1),
+                created_at: Set(now),
+            },
+        )
+        .collect();
+    let mapping_models: Vec<card_art_tag::ActiveModel> = tags
+        .iter()
+        .map(
+            |(_, slug, _, _, illustration_id)| card_art_tag::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                tag_slug: Set(slug.to_string()),
+                illustration_id: Set(illustration_id.to_string()),
+            },
+        )
+        .collect();
+
+    let total = (tag_models.len() + mapping_models.len()) as u64;
+    ArtTag::insert_many(tag_models)
+        .on_conflict(
+            OnConflict::columns([art_tag::Column::Game, art_tag::Column::Slug])
+                .update_columns([
+                    art_tag::Column::ScryfallId,
+                    art_tag::Column::Label,
+                    art_tag::Column::Description,
+                    art_tag::Column::TaggingsCount,
+                ])
+                .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    CardArtTag::insert_many(mapping_models)
+        .on_conflict(
+            OnConflict::columns([
+                card_art_tag::Column::Game,
+                card_art_tag::Column::TagSlug,
+                card_art_tag::Column::IllustrationId,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    Ok(total)
+}
+
 /// Seed the dummy MTG catalog, recording status in `ingest_state`. On failure the
 /// state row is best-effort marked `"error"` (mirroring `super::ingest::refresh`) so
 /// `GET /status` stays honest, and the error is returned for the caller to log.
@@ -618,6 +711,11 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     // renders offline. Keyed on the reprinted card's oracle id (seeded above).
     let ruling_rows = seed_rulings(db).await?;
     tracing::info!(rows = ruling_rows, "seeded dummy card rulings");
+
+    // Tagger art tags over the seeded artworks, so `art:` searches and the tag
+    // browser work offline. Runs after the cards (it tags their illustrations).
+    let art_tag_rows = seed_art_tags(db).await?;
+    tracing::info!(rows = art_tag_rows, "seeded dummy art tags");
 
     // Record ONE ingest_state row under the same dataset key the real importer uses,
     // because `ingest_status` loads it with `.one()` filtered only by game (not

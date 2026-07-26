@@ -86,6 +86,13 @@ pub async fn refresh_all(
                 if let Err(err) = crate::scryfall::rulings::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "card rulings refresh failed");
                 }
+                // Tagger art tags (issue #140): community "what's in the artwork" labels
+                // keyed by illustration_id, behind the `art:` search filter. Runs after
+                // the card sync so taggings scope to stored artworks; version-gated
+                // independently, so an unchanged tick is skipped.
+                if let Err(err) = crate::scryfall::art_tags::refresh(db, client, source).await {
+                    tracing::error!(game = game.id, error = %err, "art tags refresh failed");
+                }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
                 if let Err(err) =

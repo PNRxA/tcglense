@@ -29,6 +29,7 @@ use crate::handlers::shared::{
 };
 use crate::scryfall::search::{cust_vals, escape_like};
 
+mod art_tags;
 mod cards;
 mod image;
 mod prices;
@@ -41,6 +42,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 
+pub use art_tags::list_art_tags;
 pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use image::card_image;
 pub use prices::card_prices;
@@ -58,6 +60,7 @@ pub use status::{ingest_status, list_games};
 // at `crate::handlers::catalog::__path_<fn>` (utoipa rewrites each handler path to its
 // sibling `__path_` struct, which lives in the private submodule where the handler is
 // defined). See `crate::openapi`.
+pub use art_tags::__path_list_art_tags;
 pub use cards::{__path_card_names, __path_card_prints, __path_get_card, __path_list_cards};
 pub use prices::__path_card_prices;
 pub use products::{

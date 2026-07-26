@@ -166,6 +166,25 @@ export function setFlag(
   return join(kept)
 }
 
+/**
+ * Every non-negated `key:value` value for `keys`, in query order, deduplicated
+ * case-insensitively — for multi-valued keys whose UI lists each value (art tags).
+ * Values come back verbatim (quotes and casing intact) so [`setFlag`] can round-trip
+ * them for removal.
+ */
+export function readFlagValues(query: string, keys: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const values: string[] = []
+  for (const token of tokenizeQuery(query)) {
+    const parsed = parseToken(token)
+    if (parsed && keyMatches(parsed, keys, [':']) && !seen.has(parsed.value.toLowerCase())) {
+      seen.add(parsed.value.toLowerCase())
+      values.push(parsed.value)
+    }
+  }
+  return values
+}
+
 /** The `{ min, max }` of a numeric range filter, read from its `>`/`>=` and `<`/`<=`
  * tokens (empty string when a bound isn't set). */
 export function readRange(query: string, keys: readonly string[]): { min: string; max: string } {
