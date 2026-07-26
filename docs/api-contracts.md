@@ -604,7 +604,8 @@ surface.
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
 | `POST /api/collection/{game}/import` | `{ provider, source, mode }` | **`202`** `ImportJob` `{ job_id, status: "queued" }` — enqueues a one-off import (runs async; poll the job below). Validated synchronously: `422` for an unknown provider / unparseable source; `503` if too many imports are queued. `provider` is `"archidekt"` or `"moxfield"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge`/`smart` (see below). Does not save a link |
-| `POST /api/collection/{game}/import/csv?mode=` | raw CSV body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded CSV export, sniffing the shape from the header row: **Archidekt** (a Scryfall ID column, plus Finish + Quantity) or **Moxfield** (no card id — Count + Edition + Collector Number + Foil, resolved against the catalog by set + collector number; `Proxy=True` rows are skipped). Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses the CSV, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly (its `provider` reflects the detected shape). A CSV is inherently one-off (no link is saved). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable CSV / one missing a required column / a header matching neither shape / an empty upload |
+| `POST /api/collection/{game}/import/csv?mode=` | raw file body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded collection export, sniffing the shape from the content: **Mythic Tools** (an `Amount` column — checked first, since its export also carries a Scryfall ID; rows take their Scryfall ID when present, else Set Code + Collector Number), **Archidekt** (a Scryfall ID column, plus Finish + Quantity), **Moxfield** (no card id — Count + Edition + Collector Number + Foil, resolved against the catalog by set + collector number; `Proxy=True` rows are skipped), or — when no CSV header matches — a **plain-text card list** (`2 Sol Ring (C21) 263 *F*`), so a `.txt` export imports here too. Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly (its `provider` reflects the detected shape). A file is inherently one-off (no link is saved). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable content / one missing a required column / a body matching no supported format / an empty upload |
+| `POST /api/collection/{game}/import/text?mode=` | raw text body (`text/plain`) | **`200`** `ImportSummary` — the same import from **pasted** text rather than a file (issue #572: Mythic Tools is a phone app, where copying an export out beats saving it and finding it in a file picker). Identical sniffing, validation, body limit, quota class and response as `import/csv` — a pasted card list *and* a pasted CSV both work, so the client never asks the user to name their format. `422` when nothing was pasted or the text holds no readable card lines |
 | `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, progress?, summary?, error? }` — poll an import/sync job. `status` ∈ `queued`/`running`/`complete`/`error`; `progress` (`ImportProgress = { fetched, total? }` — provider rows fetched so far + the provider-reported total when known; `total` absent for a smart sync, which has no meaningful total) present only while `running`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/source` | — | `CollectionSource` or `null` — the saved collection link for this game |
 | `PUT /api/collection/{game}/source` | `{ provider, source, smart? }` | `CollectionSource` — save/upsert the link (one per user+game; validates the source resolves; does not sync). `smart` (default `false`) records whether re-syncs use smart (incremental) sync vs. a full mirror |
@@ -712,8 +713,10 @@ one provider's spacing/back-off never stalls another's). If the provider still r
 larger `Retry-After`, capped at 5 min) so all imports for *that provider* pause, then
 retries the same page — giving up (`503`) after a few attempts.
 
-Providers are dispatched by a `Provider` enum (Archidekt + Moxfield, one module per
-service), each fetching + parsing to normalized `(external_card_id, foil, quantity)`
+Providers are dispatched by a `Provider` enum (Archidekt + Moxfield + Mythic Tools — the
+last one **file/paste-only**, with no public API to fetch from, so it exists to label an
+import and pick parse rules; everything that fetches gates on `network_import_enabled()`
+first). Each network provider fetches + parses to normalized `(external_card_id, foil, quantity)`
 holdings; the provider-independent engine aggregates by card (`(uid, foil)` — the same
 printing can span several provider rows), resolves each `external_card_id` to
 `cards.external_id` (for both providers that's the Scryfall id: Archidekt's `card.uid`,
@@ -721,30 +724,62 @@ Moxfield's `card.scryfall_id`) in chunked `IN` lookups, skips unmatched cards, t
 the chosen `ReconcileMode` in one transaction (atomic `ON CONFLICT` upserts + keyed
 deletes).
 
-The **CSV upload** path (`collection_import::csv_import` + `execute_csv_import`) is a second
-*source* of the very same holdings: it sniffs the export shape from the header row and
-parses an **Archidekt** export (only the Scryfall ID / Finish / Quantity columns) or a
-**Moxfield** export (no card id — Count / Edition / Collector Number / Foil, plus optional
-Name for unmatched labels and Proxy to skip proxies; rows pre-resolve to external ids by
-`(set_code, collector_number)`, per-set chunked lookups, with unmatched rows keeping a
-readable `"Name (set #num)"` placeholder that surfaces in the summary sample). Both paths
-are defensive (the `csv` crate handles quoting/escaping, a leading BOM is stripped, a
-non-UTF-8 body is rejected, rows are capped at `MAX_IMPORT_ROWS`, per-field length bounds,
-and the finish is keyed off the shared foil rules) and yield `Vec<FetchedHolding>`, then
-run the exact same aggregate/resolve/reconcile/apply engine — but with no upstream fetch, so
-no rate limiter or job, reconciling inline in the request (the handler bounds the body with
-a route-scoped `DefaultBodyLimit`).
+The **file upload / paste** path (`collection_import::csv_import` + `text_list` +
+`execute_file_import`, behind both `import/csv` and `import/text`) is a second *source* of
+the very same holdings. It sniffs the shape from the content, in order:
+
+* **Mythic Tools** — identified by an `Amount` column (neither other service spells its
+  quantity column that way, and its export also carries a Scryfall ID, so this must be
+  checked first). Each row takes its Scryfall ID when present and falls back to
+  Set Code + Collector Number when not, so one export can yield both keyed shapes. At least
+  one card key **and** the `Finish` column are required — the app lets the user choose export
+  columns, and a missing finish would file a foil collection as regular copies (the same
+  refusal Moxfield's `Foil` column gets, for the same reason).
+* **Archidekt** — a Scryfall ID column (only Scryfall ID / Finish / Quantity are read).
+* **Moxfield** — no card id: Count / Edition / Collector Number / Foil, plus optional Name
+  for unmatched labels and Proxy to skip proxies.
+* **A plain-text card list** — the fallback when no CSV header matches, so a genuine CSV
+  never silently degrades into it. The grammar (`collection_import::text_list`) is one line
+  per holding — `2 Sol Ring (C21) 263 *F*` — with the `4x` quantity spelling, `(SET)` or
+  `[SET]` printing keys, and `*F*` / `*E*` / `[foil]` / `[etched]` markers all accepted;
+  blank lines, `#` comments and non-card lines (a deck export's section headers) are
+  skipped. It is **shared with the deck importer**, which layers section tracking on top,
+  so a pasted list means the same thing in both surfaces.
+
+Rows carrying no card id pre-resolve to external ids by `(set_code, collector_number)` in
+per-set chunked lookups, with unmatched rows keeping a readable `"Name (set #num)"`
+placeholder that surfaces in the summary sample. A text line that names **no** printing at
+all resolves to the newest catalog printing of that exact name (`released_at` desc, id desc,
+NULLs last, **excluding foil-`…★` variant objects** — the same shared rule the deck importer
+uses); a line that *did* name a printing never takes that fallback, so an unmatched
+`(set, number)` stays unmatched rather than silently importing different art at a different
+price.
+
+The `…★` exclusion is load-bearing, not tidiness: a star shares its base's name *and* release
+date and is ingested second, so it wins the id tie-break — and `consolidate` folds a star
+holding onto its base **as a foil**, which would turn `4 Sol Ring` into four foils at foil
+prices. Naming the star explicitly (`4 Sol Ring (SLD) 741★`) still resolves it, through the
+pair lookup.
+
+Every path is defensive (the `csv` crate handles quoting/escaping, a leading BOM is
+stripped, a non-UTF-8 body is rejected, rows are capped at `MAX_IMPORT_ROWS`, per-field
+length bounds, and the finish is keyed off the shared foil rules — which know each
+service's "not a foil" spelling, `Normal` for Archidekt and `Nonfoil` for Mythic Tools).
+All yield `Vec<FetchedHolding>` and then run the exact same
+aggregate/resolve/reconcile/apply engine — but with no upstream fetch, so no rate limiter
+or job, reconciling inline in the request (the handler bounds the body with a route-scoped
+`DefaultBodyLimit`).
 
 `ImportSummary = { provider, mode, total_rows, distinct_cards, matched_cards,
 unmatched_cards, unmatched_sample, regular_copies, foil_copies, removed_cards,
 stopped_early }`. Import jobs live in-memory in `AppState.imports` (lost on restart; the
 client just re-imports). A saved link is `entities/collection_source.rs`
 (`collection_sources`, unique on `(user_id, game)`, `user_id` FK → `users` `ON DELETE
-CASCADE`, stores `provider` + `external_id` + `last_synced_at` + `smart`). Both providers
-are MTG-only. **Moxfield's live URL import is currently disabled**
+CASCADE`, stores `provider` + `external_id` + `last_synced_at` + `smart`). All three
+providers are MTG-only. **Moxfield's live URL import is currently disabled**
 (`Provider::network_import_enabled()` returns `false` pending an approved
 `MOXFIELD_USER_AGENT`): the handlers reject a Moxfield URL import, saved-link save, or
-re-sync with a `422` pointing at the CSV upload, and the web import dialog greys
+re-sync with a `422` pointing at the upload/paste tabs, and the web import dialog greys
 Moxfield out in the link picker — see `docs/tradeoffs.md`. Archidekt is fetched at `https://archidekt.com/api/collection/{id}/?page={n}`
 (25 rows/page, capped at `MAX_IMPORT_ROWS`); the id is validated all-digits. Moxfield is
 fetched at `https://api2.moxfield.com/v1/collections/search/{id}?pageNumber={n}&pageSize=100`
@@ -898,7 +933,8 @@ curated format list from `web/src/lib/legality.ts` with a "Custom…" free-text 
 hatch, and the deck views map whatever string is stored to a legality key client-side —
 issue #557), a nullable `folder_id`, and an `is_public` flag), `deck_section.rs`
 (`deck_sections` — the Archidekt-style categories a deck's cards are filed into, one row per
-`(deck, name)`, ordered by `position`), and `deck_card.rs` (`deck_cards` — one row per
+`(deck, name)`, ordered by `position`, each with an `is_maybeboard` flag putting it outside
+the deck proper — issue #570), and `deck_card.rs` (`deck_cards` — one row per
 `(deck, card, section)`, the same two-count `{ quantity, foil_quantity }` shape as a holding
 so it reuses the shared valuation/summary machinery; both counts zero deletes the row). Decks
 are grouped at the deck level into `deck_folder.rs` (`deck_folders`). All four cascade-delete
@@ -912,7 +948,7 @@ deck ids), matching the public-sharing surface.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections) |
+| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections **except maybeboards**, so it agrees with the deck page's own `summary.total_cards`) |
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
 | `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name, auto_categorize }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Explicit provider categories/boards become deck sections. `auto_categorize` defaults to `true` when omitted and files generic Mainboard rows into the matching preset type section; set it to `false` to preserve Mainboard exactly. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
@@ -925,8 +961,8 @@ deck ids), matching the public-sharing surface.
 | `POST /api/decks/{game}/folders` | `{ name }` | `DeckFolder` — create a folder. `409` if the name already exists; `422` over the cap (500) |
 | `PUT /api/decks/{game}/folders/{folder_id}` | `{ name }` | `DeckFolder` — rename |
 | `DELETE /api/decks/{game}/folders/{folder_id}` | — | `204` — delete (its decks are ungrouped, not deleted) |
-| `POST /api/decks/{game}/{deck_id}/sections` | `{ name }` | `DeckSection { id, name, position }` — add a custom section (appended). `409` duplicate name; `422` over the per-deck cap (200) |
-| `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` | `{ name?, position? }` | `DeckSection` — rename and/or reposition |
+| `POST /api/decks/{game}/{deck_id}/sections` | `{ name, is_maybeboard? }` | `DeckSection { id, name, position, is_maybeboard }` — add a custom section (appended); `is_maybeboard` defaults to `false`. `409` duplicate name; `422` over the per-deck cap (200) |
+| `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` | `{ name?, position?, is_maybeboard? }` | `DeckSection` — rename, reposition, and/or move the whole section in or out of the deck proper (no card rows are touched) |
 | `DELETE /api/decks/{game}/{deck_id}/sections/{section_id}` | — | `204` — delete a section, **moving its cards** to the deck's first remaining section (merging counts on a collision). `409` if it's the deck's only section (a deck must keep ≥ 1) |
 | `PUT /api/decks/{game}/{deck_id}/sections/reorder` | `{ section_ids }` | `{ data: DeckSection[] }` — set the section order; `section_ids` must be exactly the deck's sections (`422` otherwise) |
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}` | `{ quantity, foil_quantity, section_id }` | `{ quantity, foil_quantity }` — set the absolute counts for a card in one section (both zero removes it there). `404` unknown deck/section/card, `422` negative/oversized |
@@ -934,13 +970,28 @@ deck ids), matching the public-sharing surface.
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing` | `{ new_card_id, section_id }` | `{ quantity, foil_quantity }` — atomically replace a card with another printing of the same gameplay card in that section, preserving finish counts (or merging when the target printing is already present). Serialized with count-set and section-move writes through the parent deck row. `404` unknown/non-owned source row, `422` unrelated target card |
 
 `DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
-sections, cards, created_at, updated_at }` — `summary` is the shared `CollectionSummary`
-(reused for the value/copy aggregates; the deck UI ignores the bulk slice), `sections` are
-`DeckSection[]` in display order, and `cards` are `DeckCardEntry[]` (`{ card, section_id,
-quantity, foil_quantity }`, the full catalog `Card` plus which section it sits in — a
-deck-specific DTO, since a `CollectionEntry` has no section). The default seeded sections are
-Archidekt-flavoured (Commander, Creatures, …, the functional categories Ramp / Removal /
-Tutor / …, and Maybeboard). The SPA's default add target uses the front-face card type to
+maybeboard_summary, sections, cards, created_at, updated_at }` — `summary` and
+`maybeboard_summary` are both the shared `CollectionSummary` (reused for the value/copy
+aggregates; the deck UI ignores the bulk slice), `sections` are `DeckSection[]` in display
+order, and `cards` are `DeckCardEntry[]` (`{ card, section_id, quantity, foil_quantity }`, the
+full catalog `Card` plus which section it sits in — a deck-specific DTO, since a
+`CollectionEntry` has no section). The default seeded sections are Archidekt-flavoured
+(Commander, Creatures, …, the functional categories Ramp / Removal / Tutor / …, and
+Maybeboard).
+
+**Maybeboards (issue #570).** `deck_sections.is_maybeboard` marks a section as sitting
+*outside the deck proper* — cards the owner is only considering. `cards` still returns them
+(a maybeboard is shown, just not counted) and they're edited through the identical card
+routes, but every reader that answers "what is this deck" splits on the flag: `summary`
+covers the deck proper and `maybeboard_summary` the maybeboards, the deck list's `card_count`
+excludes them, and `GET /api/decks/{game}/needed` skips their demand (a card you're
+considering is not one you need to buy). It's a **column, not a name match**, so renaming a
+maybeboard keeps it excluded and a section merely *called* "Considering" stays in the deck;
+the name is only consulted when a section is first created from an untyped name — a provider
+maybeboard / "considering" board on import, and migration 62's backfill of pre-flag decks. A
+new deck seeds exactly one flagged section (`Maybeboard`), and a public copy carries every
+section's flag across. The SPA mirrors the same split client-side for format legality and the
+analytics panel. The SPA's default add target uses the front-face card type to
 pick the matching preset type bucket, while an explicit section choice always wins — see
 `docs/tradeoffs.md`. Unknown types use a Mainboard/Other catch-all when present; otherwise
 the SPA requires an explicit section instead of defaulting to the deck's first section.

@@ -49,7 +49,9 @@ const providers: { value: CollectionProvider; label: string; linkDisabled?: bool
   },
 ]
 
-const placeholders: Record<CollectionProvider, string> = {
+// Partial: only the providers listed above are selectable, and a paste-only one (Mythic
+// Tools) has no deck URL to show.
+const placeholders: Partial<Record<CollectionProvider, string>> = {
   archidekt: 'https://archidekt.com/decks/12345/deck-name',
   moxfield: 'https://moxfield.com/decks/4xUdq-66IEKK6X53bhUS8Q',
 }

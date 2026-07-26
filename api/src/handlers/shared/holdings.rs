@@ -444,6 +444,23 @@ pub(crate) trait SummaryRow {
     fn card_facts(&self) -> Option<CardSummaryFacts<'_>>;
 }
 
+/// A reference to a row is a row, so a caller that needs to summarise *part* of a fetched
+/// set can partition it into `Vec<&Row>` and fold each side without cloning the rows —
+/// what the deck detail does to split its cards on the maybeboard line (issue #570).
+impl<R: SummaryRow + ?Sized> SummaryRow for &R {
+    fn quantity(&self) -> i32 {
+        (**self).quantity()
+    }
+
+    fn foil_quantity(&self) -> i32 {
+        (**self).foil_quantity()
+    }
+
+    fn card_facts(&self) -> Option<CardSummaryFacts<'_>> {
+        (**self).card_facts()
+    }
+}
+
 impl<H: HoldingCounts> SummaryRow for (H, Option<card::Model>) {
     fn quantity(&self) -> i32 {
         self.0.quantity()

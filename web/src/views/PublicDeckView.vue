@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { Copy, Layers } from '@lucide/vue'
+import { ClipboardCopy, Copy, Layers } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
@@ -9,18 +9,23 @@ import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
+import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError, type DeckCardEntry } from '@/lib/api'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
+import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
+import { useDeckViewStore } from '@/stores/deckView'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
 // view; the only control is "Copy to my decks" for a signed-in visitor (issue #502).
@@ -75,20 +80,34 @@ const {
   filterActive,
   clearFilters,
   cardsBySection,
+  deckCards,
   visibleSections,
   sectionNavItems,
   matchCount,
   totalCount,
 } = useDeckCardDisplay({ cards: allCards, sections })
 const cardSize = useCardSizeStore()
+const deckView = useDeckViewStore()
 function copies(entry: DeckCardEntry): number {
   return entry.quantity + entry.foil_quantity
 }
 
-// Format legality (issue #557), mirroring the owner view: computed from the cards the
-// page already holds; null when the format isn't a legality-tracked one.
+// The visitor's copy of the shared list, for the text view's copy button.
+const copiedList = ref(false)
+function copyDeckList() {
+  const text = deckListText(visibleSections.value, cardsBySection.value)
+  if (!text) return
+  void navigator.clipboard.writeText(text).then(() => {
+    copiedList.value = true
+    setTimeout(() => (copiedList.value = false), 2000)
+  })
+}
+
+// Format legality (issue #557), mirroring the owner view: computed over the deck proper,
+// so a maybeboard card can't declare someone's shared deck illegal (issue #570); null when
+// the format isn't a legality-tracked one.
 const legality = computed(() =>
-  deck.value ? evaluateDeckLegality(deck.value.format, deck.value.cards) : null,
+  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value) : null,
 )
 // Breach chips sit bottom-right; the copy-count badge owns bottom-left here.
 const LEGALITY_CHIP_TEXT: Record<string, string> = {
@@ -122,6 +141,9 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
             <span v-if="deck.format"> · {{ deck.format }}</span>
             <span v-if="money.formatUsd(deck.summary.total_value_usd)">
               · {{ money.formatUsd(deck.summary.total_value_usd) }}</span
+            >
+            <span v-if="deck.maybeboard_summary.total_cards > 0">
+              · +{{ deck.maybeboard_summary.total_cards }} maybeboard</span
             >
           </p>
           <p v-if="deck.description" class="text-muted-foreground mt-2 text-sm">
@@ -159,7 +181,11 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
           aria-label="Filter cards by name, type, text, set, number, rarity, or language"
         />
         <DeckColorFilter v-model="filterColors" />
-        <CardSizeMenu />
+        <DeckViewMenu />
+        <CardSizeMenu v-if="deckView.mode === 'grid'" />
+        <Button v-if="deckView.mode === 'text'" variant="outline" size="sm" @click="copyDeckList">
+          <ClipboardCopy class="size-4" /> {{ copiedList ? 'Copied!' : 'Copy list' }}
+        </Button>
       </div>
       <p v-if="filterActive" class="text-muted-foreground mb-4 text-sm" aria-live="polite">
         Showing {{ matchCount }} of {{ totalCount }} card{{ totalCount === 1 ? '' : 's' }}.
@@ -186,13 +212,43 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
             :key="section.id"
             class="mb-8 scroll-mt-16"
           >
-            <h2 class="mb-3 border-b pb-1.5 font-medium">
+            <h2 class="mb-3 flex items-center gap-2 border-b pb-1.5 font-medium">
               {{ section.name }}
               <span class="text-muted-foreground text-sm"
                 >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
               >
+              <span
+                v-if="section.is_maybeboard"
+                class="text-muted-foreground rounded-md border px-1.5 py-0.5 text-xs font-medium"
+                title="Cards here are not counted in the deck's totals, legality, or analytics"
+                >Maybeboard</span
+              >
             </h2>
-            <div class="grid gap-3" :class="DECK_CARD_SIZE_GRID_CLASS[cardSize.size]">
+            <!-- Text view (issue #570): the shared list as plain names and counts, ready
+              to read or copy. -->
+            <DeckTextList
+              v-if="deckView.mode === 'text'"
+              :game="deck.game"
+              :entries="cardsBySection.get(section.id) ?? []"
+            />
+
+            <!-- Compact list view: the deck's facts in aligned columns; the copy count that
+              owns the tile's bottom-left corner becomes this row's leading column. -->
+            <div v-else-if="deckView.mode === 'list'" class="-mx-1.5 divide-y">
+              <DeckCardRow
+                v-for="entry in cardsBySection.get(section.id) ?? []"
+                :key="`${entry.card.id}-${entry.section_id}`"
+                :game="deck.game"
+                :entry="entry"
+                :legality-status="legality?.statusByCardId.get(entry.card.id) ?? null"
+              >
+                <template #control>
+                  <span class="text-sm font-medium tabular-nums">×{{ copies(entry) }}</span>
+                </template>
+              </DeckCardRow>
+            </div>
+
+            <div v-else class="grid gap-3" :class="DECK_CARD_SIZE_GRID_CLASS[cardSize.size]">
               <CardTile
                 v-for="entry in cardsBySection.get(section.id) ?? []"
                 :key="`${entry.card.id}-${entry.section_id}`"

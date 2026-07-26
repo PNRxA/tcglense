@@ -1,15 +1,14 @@
 //! Uploaded Archidekt/Moxfield deck-list parsers (CSV and Moxfield-style plain text).
 
-use regex::Regex;
-
 use crate::collection_import::archidekt::is_foil_finish as archidekt_foil;
 use crate::collection_import::csv_import::{find_column, parse_quantity, read_record};
+use crate::collection_import::text_list::{self, TextListLine};
 use crate::collection_import::{ImportError, Provider};
 
 use super::{DeckCardRow, DeckImportFileFormat, MAX_DECK_IMPORT_ROWS, ParsedDeck};
 
 const ID_HEADERS: &[&str] = &["scryfall id", "scryfall_id", "scryfallid"];
-const QUANTITY_HEADERS: &[&str] = &["quantity", "qty", "count"];
+const QUANTITY_HEADERS: &[&str] = &["quantity", "qty", "count", "amount"];
 const NAME_HEADERS: &[&str] = &["name", "card", "card name"];
 const FINISH_HEADERS: &[&str] = &["finish", "foil"];
 const CATEGORY_HEADERS: &[&str] = &["categories", "category", "section", "board"];
@@ -53,7 +52,10 @@ fn parse_csv(provider: Provider, bytes: &[u8]) -> Result<Vec<DeckCardRow>, Impor
     let section_idx = find_column(
         &headers,
         match provider {
-            Provider::Archidekt => CATEGORY_HEADERS,
+            // Mythic Tools exports a box/binder/list rather than boards, so it has no
+            // section column of its own; reading the Archidekt spellings is harmless and
+            // picks one up if a converted export happens to carry it.
+            Provider::Archidekt | Provider::MythicTools => CATEGORY_HEADERS,
             Provider::Moxfield => BOARD_HEADERS,
         },
     );
@@ -64,7 +66,8 @@ fn parse_csv(provider: Provider, bytes: &[u8]) -> Result<Vec<DeckCardRow>, Impor
     if provider == Provider::Archidekt && id_idx.is_none() {
         return Err(missing_column("Scryfall ID"));
     }
-    if provider == Provider::Moxfield
+    if provider != Provider::Archidekt
+        && id_idx.is_none()
         && name_idx.is_none()
         && (set_idx.is_none() || number_idx.is_none())
     {
@@ -112,10 +115,9 @@ fn parse_csv(provider: Provider, bytes: &[u8]) -> Result<Vec<DeckCardRow>, Impor
             external_card_id,
             set_code,
             collector_number,
-            foil: value(finish_idx).is_some_and(|finish| match provider {
-                Provider::Archidekt => archidekt_foil(false, Some(finish)),
-                Provider::Moxfield => !finish.eq_ignore_ascii_case("nonfoil"),
-            }),
+            // One finish rule for every provider (see `is_foil_finish`): it already knows
+            // each service's "not a foil" spellings ("Normal", "Nonfoil", …).
+            foil: value(finish_idx).is_some_and(|finish| archidekt_foil(false, Some(finish))),
             quantity,
         });
     }
@@ -126,10 +128,9 @@ fn parse_text(bytes: &[u8]) -> Result<Vec<DeckCardRow>, ImportError> {
     let text = std::str::from_utf8(bytes).map_err(|_| {
         ImportError::InvalidSource("the uploaded deck list is not UTF-8 text".into())
     })?;
-    // Moxfield's copy/export form is `1 Card Name (SET) 123 *F*`. Set/number are
-    // optional here so simple `4 Lightning Bolt` lists still import by exact name.
-    let printing = Regex::new(r"(?i)^(.+?)\s+\(([a-z0-9]+)\)\s+(\S+)$")
-        .map_err(|_| ImportError::InvalidSource("couldn't initialize deck parser".into()))?;
+    // The card-line grammar (`1 Card Name (SET) 123 *F*`, set/number/foil all optional) is
+    // shared with the collection text import — see `collection_import::text_list`. What's
+    // deck-specific and stays here: a non-card line is a section header.
     let mut section = "Mainboard".to_string();
     let mut rows = Vec::new();
     let mut lines_seen = 0usize;
@@ -142,14 +143,7 @@ fn parse_text(bytes: &[u8]) -> Result<Vec<DeckCardRow>, ImportError> {
             section = header.to_string();
             continue;
         }
-        let Some((quantity_token, remainder)) = line.split_once(char::is_whitespace) else {
-            if let Some(header) = custom_section_header(line) {
-                section = header;
-            }
-            continue;
-        };
-        let quantity_token = quantity_token.trim_end_matches(['x', 'X']);
-        let Some(quantity) = parse_quantity(quantity_token).filter(|q| *q > 0) else {
+        let TextListLine::Card(row) = text_list::parse_line(line) else {
             if let Some(header) = custom_section_header(line) {
                 section = header;
             }
@@ -162,36 +156,16 @@ fn parse_text(bytes: &[u8]) -> Result<Vec<DeckCardRow>, ImportError> {
                 max: MAX_DECK_IMPORT_ROWS,
             });
         }
-        let mut card = remainder.trim();
-        let foil = ["*F*", "*E*", "[foil]", "[etched]"]
-            .iter()
-            .find(|suffix| {
-                card.to_ascii_lowercase()
-                    .ends_with(&suffix.to_ascii_lowercase())
-            })
-            .is_some_and(|suffix| {
-                card = card[..card.len() - suffix.len()].trim_end();
-                true
-            });
-        let (card_name, set_code, collector_number) = match printing.captures(card) {
-            Some(captures) => (
-                captures[1].trim().to_string(),
-                Some(captures[2].to_ascii_lowercase()),
-                Some(captures[3].to_string()),
-            ),
-            None => (card.to_string(), None, None),
-        };
-        if card_name.is_empty() || card_name.chars().count() > MAX_CELL {
-            continue;
-        }
+        // A card-shaped line with no usable name still counted against the cap above.
+        let Some(row) = row else { continue };
         rows.push(DeckCardRow {
             section: section.clone(),
-            card_name,
+            card_name: row.name,
             external_card_id: None,
-            set_code,
-            collector_number,
-            foil,
-            quantity,
+            set_code: row.set_code,
+            collector_number: row.collector_number,
+            foil: row.foil,
+            quantity: row.quantity,
         });
     }
     Ok(rows)

@@ -49,18 +49,28 @@ describe('deck stats', () => {
     expect(drawProbability(0, 4, 7)).toBe(0)
   })
 
-  it('excludes command-zone and out-of-game sections from draw odds by default', () => {
+  it('excludes command-zone, out-of-game, and maybeboard sections from draw odds by default', () => {
     expect(
       defaultDrawSectionIds([
-        { id: 1, name: 'Commander' },
-        { id: 2, name: 'Creatures' },
-        { id: 3, name: 'Sideboard' },
-        { id: 4, name: 'Maybeboard' },
-        { id: 5, name: 'Signature Spells' },
-        { id: 6, name: 'Custom library pile' },
-        { id: 7, name: 'Considering' },
-        { id: 8, name: 'Command Zone' },
+        { id: 1, name: 'Commander', is_maybeboard: false },
+        { id: 2, name: 'Creatures', is_maybeboard: false },
+        { id: 3, name: 'Sideboard', is_maybeboard: false },
+        { id: 4, name: 'Maybeboard', is_maybeboard: true },
+        { id: 5, name: 'Signature Spells', is_maybeboard: false },
+        { id: 6, name: 'Custom library pile', is_maybeboard: false },
+        { id: 7, name: 'Cut candidates', is_maybeboard: true },
+        { id: 8, name: 'Command Zone', is_maybeboard: false },
       ]),
     ).toEqual([2, 6])
+  })
+
+  it('judges a maybeboard by its flag, never by its name', () => {
+    // A section merely *called* "Considering" that the owner kept in the deck is a library
+    // section — the old name heuristic silently excluded it.
+    expect(defaultDrawSectionIds([{ id: 1, name: 'Considering', is_maybeboard: false }])).toEqual([
+      1,
+    ])
+    // ...and a renamed maybeboard stays excluded, which no name list could manage.
+    expect(defaultDrawSectionIds([{ id: 1, name: 'Cuts', is_maybeboard: true }])).toEqual([])
   })
 })

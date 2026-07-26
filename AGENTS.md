@@ -188,7 +188,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   ownership first — a deck that isn't the caller's is **404, not 403**. Per-deck sharing is an
   `is_public` **column** on the deck row (not a `collection_visibility`-style table — a deck is
   1:1 with the shareable unit), public at `/api/u/{handle}/decks/{id}` (username-first `409`,
-  reusing #361's `resolve_public_user`). Deck **import/export** (issue #389) lives in the sibling
+  reusing #361's `resolve_public_user`). A **maybeboard** is likewise a column
+  (`deck_sections.is_maybeboard`, issue #570), never a name match: its cards are still stored,
+  returned, and edited normally, but every "what is this deck" reader skips them — `summary`
+  (vs its sibling `maybeboard_summary`), the list's `card_count`, `needed`, and, client-side,
+  legality + analytics. A new such reader must split on the flag too, or the deck page's header
+  and the deck list will disagree. The **name** (`is_maybeboard_section_name`) only *seeds* the
+  flag where a section is born from untyped text — deck import, and migration 62's backfill of
+  pre-flag decks — so a renamed maybeboard stays out and a section merely called "Considering"
+  stays in. Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
   throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
@@ -236,6 +244,22 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Moxfield **URL** import is deliberately disabled
   (`Provider::network_import_enabled()` is the switch; CSV is the supported path) —
   a 422 there is not a regression.
+- **Not every `Provider` fetches.** Mythic Tools (issue #572) has no public API, so it's
+  file/paste-only: `network_import_enabled()` is `false` and every fetch/link path gates on
+  that before dispatching. Its collections arrive through `execute_file_import`, which backs
+  **both** `/import/csv` (upload) and `/import/text` (paste) and **sniffs** the format from
+  the content — Mythic Tools CSV (its `Amount` column is the fingerprint, checked before
+  Archidekt's Scryfall ID because its export has both), Archidekt CSV, Moxfield CSV, then a
+  plain-text card list as the fallback. Keep the text list *last* or a real CSV silently
+  degrades into it. That line grammar lives in `collection_import::text_list` and is
+  **shared with `deck_import::parser`** — extend the seam, don't fork a second dialect. A
+  text line naming no printing resolves to the newest printing of that name
+  (`reconcile::resolve_newest_printing_by_name`, also shared with deck import) — which must keep
+  **excluding foil-`…★` variants**, or `4 Sol Ring` silently imports as four *foils* (the star
+  shares its base's name and date, wins the id tie-break, and `consolidate` folds it on as foil).
+  A line that *did* name a printing must stay unmatched when it doesn't resolve — never fall back
+  to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
+  columns are user-selectable), same refusal Moxfield's `Foil` column gets.
 - Card images are cached lazily on first view — self-hosts **never bulk-download**;
   image fetches are host-allow-listed with redirects disabled. **Don't add any bulk
   image path** — the one sanctioned exception is the opt-in fingerprint build

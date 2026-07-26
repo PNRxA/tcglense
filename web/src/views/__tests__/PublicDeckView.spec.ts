@@ -30,7 +30,13 @@ const deck: DeckDetail = {
   is_public: true,
   handle: 'alice-0001',
   summary: { unique_cards: 1, total_cards: 3, total_value_usd: null, bulk_value_usd: null },
-  sections: [{ id: 1, name: 'Creatures', position: 0 }],
+  maybeboard_summary: {
+    unique_cards: 0,
+    total_cards: 0,
+    total_value_usd: null,
+    bulk_value_usd: null,
+  },
+  sections: [{ id: 1, name: 'Creatures', position: 0, is_maybeboard: false }],
   cards: [
     {
       card: makeCard('c1', { name: 'Goblin', color_identity: ['R'] }),

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { Label } from '@/components/ui/label'
 
-// The CSV-upload tab's fields: the file picker plus the "how to export" hint for each
-// supported service (the server sniffs which shape an upload is from its header row).
-// The parent owns the chosen file and the reconcile mode; this just emits the picked
-// file (null when cleared). Rendered under v-if so the native file input remounts empty
-// when the user leaves and returns to this tab.
+// The upload tab's fields: the file picker plus the "how to export" hint for each
+// supported service (the server sniffs which shape an upload is, from its header row or —
+// for a plain-text card list — its lines). The parent owns the chosen file and the
+// reconcile mode; this just emits the picked file (null when cleared). Rendered under
+// v-if so the native file input remounts empty when the user leaves and returns.
 const emit = defineEmits<{ fileChange: [File | null] }>()
 
 function onChange(event: Event) {
@@ -16,11 +16,11 @@ function onChange(event: Event) {
 
 <template>
   <div class="space-y-2">
-    <Label for="import-csv">Collection CSV file</Label>
+    <Label for="import-csv">Collection export file</Label>
     <input
       id="import-csv"
       type="file"
-      accept=".csv,text/csv"
+      accept=".csv,.txt,text/csv,text/plain"
       class="border-input dark:bg-input/30 file:bg-muted file:text-foreground block w-full cursor-pointer rounded-md border bg-transparent text-sm file:mr-3 file:cursor-pointer file:border-0 file:px-3 file:py-2 file:text-sm file:font-medium focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] focus-visible:outline-none"
       @change="onChange"
     />
@@ -42,6 +42,13 @@ function onChange(event: Event) {
         <p class="mt-1">
           Open your collection and choose Export — the standard export already includes everything
           we need (Count, Edition, Collector Number, Foil).
+        </p>
+      </div>
+      <div>
+        <p class="text-foreground font-medium">Exporting from Mythic Tools</p>
+        <p class="mt-1">
+          Open a box, binder, or list and choose Export — either the CSV or the TXT format works.
+          From a phone, the “Paste a list” tab is usually quicker.
         </p>
       </div>
     </div>

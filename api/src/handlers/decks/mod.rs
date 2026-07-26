@@ -82,28 +82,48 @@ pub(crate) use read::deck_detail;
 
 /// The default sections seeded into a new deck (Archidekt-flavoured): the common
 /// type buckets first (so a client can auto-file a new card by its type), then the
-/// functional categories a user sorts cards into by hand, then `Maybeboard`.
-pub(crate) const DEFAULT_SECTIONS: &[&str] = &[
-    "Commander",
-    "Creatures",
-    "Artifacts",
-    "Enchantments",
-    "Instants",
-    "Sorceries",
-    "Planeswalkers",
-    "Lands",
-    "Ramp",
-    "Card Draw",
-    "Removal",
-    "Counters",
-    "Protection",
-    "Recursion",
-    "Tutor",
-    "Sac Outlet",
-    "Discard",
-    "Mill",
-    "Maybeboard",
+/// functional categories a user sorts cards into by hand, then `Maybeboard` — the one
+/// default seeded with `is_maybeboard` set (issue #570), so a fresh deck's card count
+/// and analytics ignore it out of the box.
+pub(crate) const DEFAULT_SECTIONS: &[(&str, bool)] = &[
+    ("Commander", false),
+    ("Creatures", false),
+    ("Artifacts", false),
+    ("Enchantments", false),
+    ("Instants", false),
+    ("Sorceries", false),
+    ("Planeswalkers", false),
+    ("Lands", false),
+    ("Ramp", false),
+    ("Card Draw", false),
+    ("Removal", false),
+    ("Counters", false),
+    ("Protection", false),
+    ("Recursion", false),
+    ("Tutor", false),
+    ("Sac Outlet", false),
+    ("Discard", false),
+    ("Mill", false),
+    (MAYBEBOARD_SECTION, true),
 ];
+
+/// The name the seeded maybeboard section carries — and the one the deck importer maps
+/// provider maybeboard / "considering" boards onto ([`crate::deck_import::parser`]), so
+/// the two agree on which imported section gets the flag.
+pub(crate) const MAYBEBOARD_SECTION: &str = "Maybeboard";
+
+/// Whether a section *name* means "outside the deck proper" — the spellings an import or a
+/// hand-typed section header can arrive as. This is a seeding rule only: it decides
+/// `is_maybeboard` when a section is first created from an untyped name (deck import, and
+/// migration 62's backfill of pre-flag decks). Afterwards the **column** is the source of
+/// truth, so renaming a maybeboard doesn't quietly fold it back into the deck and naming a
+/// normal section "Considering" doesn't quietly remove it.
+pub(crate) fn is_maybeboard_section_name(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "maybeboard" | "maybe board" | "considering"
+    )
+}
 
 /// Generous per-`(user, game)` deck cap — far above any real user, but bounded so the
 /// list stays cheap and a single account can't create unbounded rows.
@@ -177,6 +197,9 @@ pub struct DeckSectionResponse {
     pub id: i32,
     pub name: String,
     pub position: i32,
+    /// Whether this section sits outside the deck proper — its cards are excluded from
+    /// `summary`, legality, analytics, and the needed list (issue #570).
+    pub is_maybeboard: bool,
 }
 
 impl From<deck_section::Model> for DeckSectionResponse {
@@ -185,6 +208,7 @@ impl From<deck_section::Model> for DeckSectionResponse {
             id: s.id,
             name: s.name,
             position: s.position,
+            is_maybeboard: s.is_maybeboard,
         }
     }
 }
@@ -218,10 +242,17 @@ pub struct DeckDetail {
     pub is_public: bool,
     /// The owner's public handle (`alice-0001`), or null until they set a username.
     pub handle: Option<String>,
-    /// Value / copy aggregates over the deck's cards (reuses the shared summary shape;
-    /// the `bulk_value_usd` field is unused by the deck UI).
+    /// Value / copy aggregates over the deck **proper** — every card outside a
+    /// maybeboard section (issue #570). Reuses the shared summary shape; the
+    /// `bulk_value_usd` field is unused by the deck UI.
     pub summary: CollectionSummary,
+    /// The same aggregates over the maybeboard sections alone, so the UI can show what's
+    /// being considered without it inflating the deck's own totals. All-zero when the
+    /// deck has no maybeboard cards.
+    pub maybeboard_summary: CollectionSummary,
     pub sections: Vec<DeckSectionResponse>,
+    /// Every card in the deck, maybeboard included — each entry's `section_id` says
+    /// which side of the line it falls on.
     pub cards: Vec<DeckCardEntry>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
@@ -290,15 +321,18 @@ pub struct FolderNameRequest {
     pub name: String,
 }
 
-/// Body of `POST /api/decks/{game}/{deck_id}/sections`: create a custom section.
+/// Body of `POST /api/decks/{game}/{deck_id}/sections`: create a custom section,
+/// optionally as a maybeboard (defaults to part of the deck).
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CreateSectionRequest {
     pub name: String,
+    #[serde(default)]
+    pub is_maybeboard: bool,
 }
 
-/// Body of `PUT /api/decks/{game}/{deck_id}/sections/{section_id}`: rename and/or
-/// reposition a section (each field optional — absent leaves it unchanged).
+/// Body of `PUT /api/decks/{game}/{deck_id}/sections/{section_id}`: rename, reposition,
+/// and/or flip the maybeboard flag (each field optional — absent leaves it unchanged).
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct UpdateSectionRequest {
@@ -306,6 +340,8 @@ pub struct UpdateSectionRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub position: Option<i32>,
+    #[serde(default)]
+    pub is_maybeboard: Option<bool>,
 }
 
 /// Body of `PUT /api/decks/{game}/{deck_id}/sections/reorder`: the section ids in the
@@ -552,7 +588,10 @@ pub(crate) async fn touch_deck<C: sea_orm::ConnectionTrait>(
 ///
 /// **Inner-joins `cards`** so a holding whose catalog row is gone (a re-import) is skipped —
 /// matching `deck_detail`'s LEFT-join-then-skip fold, so the list `card_count` and the
-/// detail `summary.total_cards` agree for the same deck.
+/// detail `summary.total_cards` agree for the same deck. For the same reason it also
+/// **excludes maybeboard sections** (issue #570): the detail summary counts the deck
+/// proper, and a list card count that disagreed with the deck page's own header would
+/// read as a bug.
 pub(crate) async fn card_counts_by_deck(
     db: &sea_orm::DatabaseConnection,
     deck_ids: &[i32],
@@ -574,10 +613,27 @@ pub(crate) async fn card_counts_by_deck(
         )
         .inner_join(Card)
         .filter(deck_card::Column::DeckId.is_in(deck_ids.iter().copied()))
+        .filter(
+            deck_card::Column::SectionId.not_in_subquery(maybeboard_section_ids(deck_ids.to_vec())),
+        )
         .group_by(deck_card::Column::DeckId)
         .order_by_asc(deck_card::Column::DeckId)
         .into_tuple()
         .all(db)
         .await?;
     Ok(rows.into_iter().collect())
+}
+
+/// Sub-select of the maybeboard `deck_sections.id` belonging to `deck_ids` — the seam the
+/// deck-proper scans (`card_counts_by_deck`, the needed list) filter against, so "outside
+/// the deck" is expressed once in SQL rather than re-derived per caller. Built through the
+/// SeaORM query API (parameterised, dialect-neutral) like every other query here.
+pub(crate) fn maybeboard_section_ids(deck_ids: Vec<i32>) -> sea_orm::sea_query::SelectStatement {
+    use sea_orm::{QuerySelect, QueryTrait};
+    DeckSection::find()
+        .select_only()
+        .column(deck_section::Column::Id)
+        .filter(deck_section::Column::DeckId.is_in(deck_ids))
+        .filter(deck_section::Column::IsMaybeboard.eq(true))
+        .into_query()
 }
