@@ -30,8 +30,9 @@ use super::{
 /// Create deck section
 ///
 /// `POST /api/decks/{game}/{deck_id}/sections` -> add a custom section (appended after the
-/// last one). `422` for a blank/oversized name or over the per-deck cap; `409` if the deck
-/// already has a section with that name.
+/// last one). Set `is_maybeboard` to file it outside the deck proper. `422` for a
+/// blank/oversized name or over the per-deck cap; `409` if the deck already has a section
+/// with that name.
 #[utoipa::path(
     post,
     path = "/api/decks/{game}/{deck_id}/sections",
@@ -85,6 +86,7 @@ pub async fn create_section(
         deck_id: Set(deck.id),
         name: Set(name),
         position: Set(position),
+        is_maybeboard: Set(payload.is_maybeboard),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -98,8 +100,10 @@ pub async fn create_section(
 
 /// Update deck section
 ///
-/// `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` -> rename and/or reposition a
-/// section (each field optional). A rename collides-checks like [`create_section`].
+/// `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` -> rename, reposition, and/or
+/// flip the section's maybeboard flag (each field optional). A rename collides-checks like
+/// [`create_section`]; flipping `is_maybeboard` moves the section's cards in or out of the
+/// deck's own totals without touching the cards themselves.
 #[utoipa::path(
     put,
     path = "/api/decks/{game}/{deck_id}/sections/{section_id}",
@@ -138,6 +142,11 @@ pub async fn update_section(
     }
     if let Some(position) = payload.position {
         active.position = Set(position);
+    }
+    // Flipping the maybeboard flag moves the whole section in or out of the deck proper
+    // (issue #570) — no card rows change, only what the summaries and analytics count.
+    if let Some(is_maybeboard) = payload.is_maybeboard {
+        active.is_maybeboard = Set(is_maybeboard);
     }
     let now = Utc::now();
     active.updated_at = Set(now);

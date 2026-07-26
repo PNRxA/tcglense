@@ -922,7 +922,8 @@ curated format list from `web/src/lib/legality.ts` with a "Custom…" free-text 
 hatch, and the deck views map whatever string is stored to a legality key client-side —
 issue #557), a nullable `folder_id`, and an `is_public` flag), `deck_section.rs`
 (`deck_sections` — the Archidekt-style categories a deck's cards are filed into, one row per
-`(deck, name)`, ordered by `position`), and `deck_card.rs` (`deck_cards` — one row per
+`(deck, name)`, ordered by `position`, each with an `is_maybeboard` flag putting it outside
+the deck proper — issue #570), and `deck_card.rs` (`deck_cards` — one row per
 `(deck, card, section)`, the same two-count `{ quantity, foil_quantity }` shape as a holding
 so it reuses the shared valuation/summary machinery; both counts zero deletes the row). Decks
 are grouped at the deck level into `deck_folder.rs` (`deck_folders`). All four cascade-delete
@@ -936,7 +937,7 @@ deck ids), matching the public-sharing surface.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections) |
+| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections **except maybeboards**, so it agrees with the deck page's own `summary.total_cards`) |
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
 | `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name, auto_categorize }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Explicit provider categories/boards become deck sections. `auto_categorize` defaults to `true` when omitted and files generic Mainboard rows into the matching preset type section; set it to `false` to preserve Mainboard exactly. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
@@ -949,8 +950,8 @@ deck ids), matching the public-sharing surface.
 | `POST /api/decks/{game}/folders` | `{ name }` | `DeckFolder` — create a folder. `409` if the name already exists; `422` over the cap (500) |
 | `PUT /api/decks/{game}/folders/{folder_id}` | `{ name }` | `DeckFolder` — rename |
 | `DELETE /api/decks/{game}/folders/{folder_id}` | — | `204` — delete (its decks are ungrouped, not deleted) |
-| `POST /api/decks/{game}/{deck_id}/sections` | `{ name }` | `DeckSection { id, name, position }` — add a custom section (appended). `409` duplicate name; `422` over the per-deck cap (200) |
-| `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` | `{ name?, position? }` | `DeckSection` — rename and/or reposition |
+| `POST /api/decks/{game}/{deck_id}/sections` | `{ name, is_maybeboard? }` | `DeckSection { id, name, position, is_maybeboard }` — add a custom section (appended); `is_maybeboard` defaults to `false`. `409` duplicate name; `422` over the per-deck cap (200) |
+| `PUT /api/decks/{game}/{deck_id}/sections/{section_id}` | `{ name?, position?, is_maybeboard? }` | `DeckSection` — rename, reposition, and/or move the whole section in or out of the deck proper (no card rows are touched) |
 | `DELETE /api/decks/{game}/{deck_id}/sections/{section_id}` | — | `204` — delete a section, **moving its cards** to the deck's first remaining section (merging counts on a collision). `409` if it's the deck's only section (a deck must keep ≥ 1) |
 | `PUT /api/decks/{game}/{deck_id}/sections/reorder` | `{ section_ids }` | `{ data: DeckSection[] }` — set the section order; `section_ids` must be exactly the deck's sections (`422` otherwise) |
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}` | `{ quantity, foil_quantity, section_id }` | `{ quantity, foil_quantity }` — set the absolute counts for a card in one section (both zero removes it there). `404` unknown deck/section/card, `422` negative/oversized |
@@ -958,13 +959,28 @@ deck ids), matching the public-sharing surface.
 | `PUT /api/decks/{game}/{deck_id}/cards/{id}/printing` | `{ new_card_id, section_id }` | `{ quantity, foil_quantity }` — atomically replace a card with another printing of the same gameplay card in that section, preserving finish counts (or merging when the target printing is already present). Serialized with count-set and section-move writes through the parent deck row. `404` unknown/non-owned source row, `422` unrelated target card |
 
 `DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
-sections, cards, created_at, updated_at }` — `summary` is the shared `CollectionSummary`
-(reused for the value/copy aggregates; the deck UI ignores the bulk slice), `sections` are
-`DeckSection[]` in display order, and `cards` are `DeckCardEntry[]` (`{ card, section_id,
-quantity, foil_quantity }`, the full catalog `Card` plus which section it sits in — a
-deck-specific DTO, since a `CollectionEntry` has no section). The default seeded sections are
-Archidekt-flavoured (Commander, Creatures, …, the functional categories Ramp / Removal /
-Tutor / …, and Maybeboard). The SPA's default add target uses the front-face card type to
+maybeboard_summary, sections, cards, created_at, updated_at }` — `summary` and
+`maybeboard_summary` are both the shared `CollectionSummary` (reused for the value/copy
+aggregates; the deck UI ignores the bulk slice), `sections` are `DeckSection[]` in display
+order, and `cards` are `DeckCardEntry[]` (`{ card, section_id, quantity, foil_quantity }`, the
+full catalog `Card` plus which section it sits in — a deck-specific DTO, since a
+`CollectionEntry` has no section). The default seeded sections are Archidekt-flavoured
+(Commander, Creatures, …, the functional categories Ramp / Removal / Tutor / …, and
+Maybeboard).
+
+**Maybeboards (issue #570).** `deck_sections.is_maybeboard` marks a section as sitting
+*outside the deck proper* — cards the owner is only considering. `cards` still returns them
+(a maybeboard is shown, just not counted) and they're edited through the identical card
+routes, but every reader that answers "what is this deck" splits on the flag: `summary`
+covers the deck proper and `maybeboard_summary` the maybeboards, the deck list's `card_count`
+excludes them, and `GET /api/decks/{game}/needed` skips their demand (a card you're
+considering is not one you need to buy). It's a **column, not a name match**, so renaming a
+maybeboard keeps it excluded and a section merely *called* "Considering" stays in the deck;
+the name is only consulted when a section is first created from an untyped name — a provider
+maybeboard / "considering" board on import, and migration 62's backfill of pre-flag decks. A
+new deck seeds exactly one flagged section (`Maybeboard`), and a public copy carries every
+section's flag across. The SPA mirrors the same split client-side for format legality and the
+analytics panel. The SPA's default add target uses the front-face card type to
 pick the matching preset type bucket, while an explicit section choice always wins — see
 `docs/tradeoffs.md`. Unknown types use a Mainboard/Other catch-all when present; otherwise
 the SPA requires an explicit section instead of defaulting to the deck's first section.

@@ -13,10 +13,25 @@ import type { DeckCardEntry, DeckSection } from '@/lib/api'
 import { calculateDeckStats, defaultDrawSectionIds, drawProbability } from '@/lib/deckStats'
 
 const props = defineProps<{ cards: DeckCardEntry[]; sections: DeckSection[] }>()
-const stats = computed(() => calculateDeckStats(props.cards))
+
+// The headline composition describes the deck *proper*: cards in a maybeboard section are
+// under consideration, not played, so counting them would misreport the curve, the colours,
+// and the land count (issue #570). `cards` still arrives whole — the draw-odds selector
+// below lets a user opt a maybeboard section back in to test a swap, which only works if
+// its entries are still in scope here.
+const maybeboardSectionIds = computed(
+  () => new Set(props.sections.filter((section) => section.is_maybeboard).map((s) => s.id)),
+)
+const deckCards = computed(() =>
+  props.cards.filter((entry) => !maybeboardSectionIds.value.has(entry.section_id)),
+)
+const stats = computed(() => calculateDeckStats(deckCards.value))
 const drawSectionIds = ref<number[]>([])
 watch(
-  () => props.sections.map((section) => `${section.id}:${section.name}`).join('|'),
+  () =>
+    props.sections
+      .map((section) => `${section.id}:${section.name}:${section.is_maybeboard}`)
+      .join('|'),
   () => {
     drawSectionIds.value = defaultDrawSectionIds(props.sections)
   },
@@ -132,6 +147,11 @@ const probabilityLabel = computed(
                 class="accent-primary size-3.5 rounded border"
               />
               {{ section.name }}
+              <span
+                v-if="section.is_maybeboard"
+                class="text-muted-foreground text-[0.65rem] tracking-wide uppercase"
+                >maybe</span
+              >
             </label>
           </div>
           <p class="text-muted-foreground mt-1.5 text-xs">

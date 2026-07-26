@@ -3,4 +3,9 @@
 /**
  * One section (category) of a deck, in display order.
  */
-export type DeckSection = { id: number, name: string, position: number, };
+export type DeckSection = { id: number, name: string, position: number, 
+/**
+ * Whether this section sits outside the deck proper — its cards are excluded from
+ * `summary`, legality, analytics, and the needed list (issue #570).
+ */
+is_maybeboard: boolean, };

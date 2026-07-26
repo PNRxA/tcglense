@@ -1548,3 +1548,204 @@ async fn copying_a_deck_requires_a_writable_credential_and_a_public_source() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(now_private["error"], private_miss["error"]);
 }
+
+/// Find a section by name in a deck detail body.
+fn section_named<'a>(deck: &'a Value, name: &str) -> &'a Value {
+    deck["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|section| section["name"] == name)
+        .unwrap_or_else(|| panic!("deck has no section named {name}"))
+}
+
+/// A maybeboard section (issue #570) still holds and returns its cards, but every reader that
+/// answers "what is this deck" skips it: the detail `summary`, the list's `card_count`, and
+/// the cross-deck needed list. The split is driven by the section's `is_maybeboard` column,
+/// not its name, so flipping the flag moves the cards in or out with no card writes at all.
+#[tokio::test]
+async fn a_maybeboard_section_is_kept_out_of_the_decks_own_totals() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "maybeboarder@example.com", PW).await;
+    let cards = sample_card_ids(&app, 2).await;
+    let (played, considered) = (&cards[0], &cards[1]);
+
+    let deck = create_deck(&app, &access, "Maybe pile").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    // Only the seeded `Maybeboard` starts flagged; the type buckets are part of the deck.
+    let maybeboard_id = section_named(&deck, "Maybeboard")["id"]
+        .as_i64()
+        .expect("maybeboard id");
+    assert_eq!(section_named(&deck, "Maybeboard")["is_maybeboard"], true);
+    assert_eq!(section_named(&deck, "Creatures")["is_maybeboard"], false);
+    let creatures_id = section_named(&deck, "Creatures")["id"]
+        .as_i64()
+        .expect("creatures id");
+
+    add_deck_card(&app, &access, deck_id, creatures_id, played, 2).await;
+    add_deck_card(&app, &access, deck_id, maybeboard_id, considered, 3).await;
+
+    // The detail returns BOTH cards (the maybeboard is shown, just not counted), with the
+    // copies split across the two summaries.
+    let (status, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["cards"].as_array().expect("cards").len(), 2);
+    assert_eq!(detail["summary"]["total_cards"], 2);
+    assert_eq!(detail["maybeboard_summary"]["total_cards"], 3);
+
+    // The list's card_count must agree with the deck page's own header, so it excludes the
+    // maybeboard too.
+    let (status, _, list) = send(&app, get_with_bearer("/api/decks/mtg", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["data"][0]["card_count"], 2);
+
+    // A card you're only considering is not a card you need to buy.
+    let (status, _, needed) = send(&app, get_with_bearer("/api/decks/mtg/needed", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        needed_entry(&needed, played).expect("played card")["needed"],
+        2
+    );
+    assert!(
+        needed_entry(&needed, considered).is_none(),
+        "a maybeboard card must not appear in the needed list: {needed:?}"
+    );
+
+    // Flipping the flag off promotes the whole section into the deck — no card writes.
+    let (status, _, updated) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/sections/{maybeboard_id}"),
+            &access,
+            json!({ "is_maybeboard": false }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "section update failed: {updated:?}");
+    assert_eq!(updated["is_maybeboard"], false);
+    assert_eq!(updated["name"], "Maybeboard", "the name must be untouched");
+
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(detail["summary"]["total_cards"], 5);
+    assert_eq!(detail["maybeboard_summary"]["total_cards"], 0);
+    let (_, _, needed) = send(&app, get_with_bearer("/api/decks/mtg/needed", &access)).await;
+    assert_eq!(
+        needed_entry(&needed, considered).expect("promoted card")["needed"],
+        3,
+        "promoting the section makes its cards needed"
+    );
+}
+
+/// A custom section can be created as a maybeboard, and the flag survives a public copy
+/// (issue #570) — a copied deck must describe itself the same way the original did.
+#[tokio::test]
+async fn a_custom_maybeboard_section_is_created_and_survives_a_copy() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "alice-maybe@example.com", PW).await;
+    let (bob, _) = register(&app, "bob-maybe@example.com", PW).await;
+
+    let deck = create_deck(&app, &alice, "Cuts").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let (status, _, section) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/decks/mtg/{deck_id}/sections"),
+            &alice,
+            json!({ "name": "Cut candidates", "is_maybeboard": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create section failed: {section:?}");
+    assert_eq!(section["is_maybeboard"], true);
+    // Omitting the field keeps a section part of the deck.
+    let (status, _, plain) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/decks/mtg/{deck_id}/sections"),
+            &alice,
+            json!({ "name": "Wincons" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create section failed: {plain:?}");
+    assert_eq!(plain["is_maybeboard"], false);
+
+    let handle = publish_deck(&app, &alice, "alicemaybe", deck_id).await;
+    let (status, _, copy) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/u/{handle}/decks/{deck_id}/copy"),
+            &bob,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "copy failed: {copy:?}");
+    assert_eq!(
+        section_named(&copy, "Cut candidates")["is_maybeboard"],
+        true
+    );
+    assert_eq!(section_named(&copy, "Wincons")["is_maybeboard"], false);
+    assert_eq!(section_named(&copy, "Maybeboard")["is_maybeboard"], true);
+}
+
+/// A provider's maybeboard board arrives as a *flagged* section, not merely one named
+/// "Maybeboard" (issue #570), so an imported deck's card count matches what the source site
+/// showed. Explicit sections a provider names anything else stay part of the deck.
+#[tokio::test]
+async fn an_imported_maybeboard_board_lands_as_a_flagged_section() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "importer-maybe@example.com", PW).await;
+    let cards = sample_card_ids(&app, 2).await;
+
+    let csv = format!(
+        "Quantity,Name,Finish,Scryfall ID,Categories\n\
+         2,,Normal,{played},Ramp\n\
+         3,,Normal,{considered},Maybeboard\n",
+        played = cards[0],
+        considered = cards[1],
+    );
+    let (status, _, imported) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/import",
+            &access,
+            json!({
+                "provider": "archidekt",
+                "source": null,
+                "contents": csv,
+                "format": "csv",
+                "name": "Imported with a maybeboard"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "deck import failed: {imported:?}");
+    // The lightweight header already reports the deck proper, not every imported row.
+    assert_eq!(imported["deck"]["card_count"], 2);
+
+    let deck_id = imported["deck"]["id"].as_i64().expect("deck id");
+    let (status, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(section_named(&detail, "Maybeboard")["is_maybeboard"], true);
+    assert_eq!(section_named(&detail, "Ramp")["is_maybeboard"], false);
+    assert_eq!(detail["summary"]["total_cards"], 2);
+    assert_eq!(detail["maybeboard_summary"]["total_cards"], 3);
+}

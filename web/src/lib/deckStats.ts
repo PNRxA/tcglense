@@ -43,14 +43,16 @@ const CARD_TYPES = [
   'Battle',
 ] as const
 
+// Sections whose *name* says they're not part of the shuffled library. Maybeboard spellings
+// used to live here too; they don't any more, because a maybeboard is now a section property
+// (`is_maybeboard`, issue #570) that the owner sets explicitly — so a renamed maybeboard is
+// still excluded, and a section merely *called* "Considering" that the owner kept in the
+// deck is still counted.
 const NON_LIBRARY_SECTION_NAMES = new Set([
   'commander',
   'commanders',
   'sideboard',
   'sideboards',
-  'maybeboard',
-  'maybe board',
-  'considering',
   'companion',
   'companions',
   'command zone',
@@ -59,10 +61,16 @@ const NON_LIBRARY_SECTION_NAMES = new Set([
 ])
 
 /** Sections included in draw odds by default. Users can override the selection in the
- * analytics panel, while known command-zone and out-of-game boards start excluded. */
-export function defaultDrawSectionIds(sections: Array<Pick<DeckSection, 'id' | 'name'>>): number[] {
+ * analytics panel, while maybeboards and known command-zone / out-of-game boards start
+ * excluded. */
+export function defaultDrawSectionIds(
+  sections: Array<Pick<DeckSection, 'id' | 'name' | 'is_maybeboard'>>,
+): number[] {
   return sections
-    .filter((section) => !NON_LIBRARY_SECTION_NAMES.has(section.name.trim().toLowerCase()))
+    .filter(
+      (section) =>
+        !section.is_maybeboard && !NON_LIBRARY_SECTION_NAMES.has(section.name.trim().toLowerCase()),
+    )
     .map((section) => section.id)
 }
 

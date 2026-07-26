@@ -26,15 +26,28 @@ import type { Card, DeckSection } from '@/lib/api'
 // the shared debounce/serialize/flush machinery via an injected `saveFn` that writes a
 // (deck, section, card) row. Rendered only for the deck's owner (the public deck view is
 // read-only).
-const props = defineProps<{
-  game: string
-  deckId: number
-  sectionId: number
-  card: Card
-  quantity: number
-  foilQuantity: number
-  sections: DeckSection[]
-}>()
+// `variant` places the trigger, and only the trigger: 'overlay' (the default) pins it to a
+// card tile's bottom-left corner, while 'inline' leaves it in normal flow for the compact
+// list view (issue #570), where there's no image to overlay. The popover is identical either
+// way.
+const props = withDefaults(
+  defineProps<{
+    game: string
+    deckId: number
+    sectionId: number
+    card: Card
+    quantity: number
+    foilQuantity: number
+    sections: DeckSection[]
+    variant?: 'overlay' | 'inline'
+  }>(),
+  { variant: 'overlay' },
+)
+
+const TRIGGER_POSITION = {
+  overlay: 'absolute bottom-1.5 left-1.5 z-20',
+  inline: 'relative',
+} as const
 
 const open = ref(false)
 const printingOpen = ref(false)
@@ -118,7 +131,8 @@ async function openPrintingPicker() {
     <PopoverTrigger as-child>
       <button
         type="button"
-        class="group/add absolute bottom-1.5 left-1.5 z-20 inline-flex items-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
+        class="group/add focus-visible:ring-ring inline-flex items-center rounded-md outline-none transition focus-visible:ring-2"
+        :class="TRIGGER_POSITION[variant]"
         :aria-label="
           inDeck ? `Edit copies of ${card.name} in this deck` : `Add ${card.name} to this deck`
         "

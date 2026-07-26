@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { automaticDeckSection, presetDeckSection } from '../deckCategories'
 
 const sections = [
-  { id: 1, name: 'Commander', position: 0 },
-  { id: 2, name: 'Creatures', position: 1 },
-  { id: 3, name: 'Lands', position: 2 },
+  { id: 1, name: 'Commander', position: 0, is_maybeboard: false },
+  { id: 2, name: 'Creatures', position: 1, is_maybeboard: false },
+  { id: 3, name: 'Lands', position: 2, is_maybeboard: false },
 ]
 
 describe('deck category defaults', () => {
@@ -24,7 +24,10 @@ describe('deck category defaults', () => {
     expect(automaticDeckSection({ type_line: 'Instant' }, sections)).toBeUndefined()
     expect(automaticDeckSection({ type_line: null }, sections)).toBeUndefined()
 
-    const withMainboard = [...sections, { id: 4, name: 'Mainboard', position: 3 }]
+    const withMainboard = [
+      ...sections,
+      { id: 4, name: 'Mainboard', position: 3, is_maybeboard: false },
+    ]
     expect(automaticDeckSection({ type_line: 'Battle — Siege' }, withMainboard)?.id).toBe(4)
   })
 })

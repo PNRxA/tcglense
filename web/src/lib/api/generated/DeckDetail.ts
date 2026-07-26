@@ -19,7 +19,19 @@ game: string, name: string, description: string | null, format: string | null, f
  */
 handle: string | null, 
 /**
- * Value / copy aggregates over the deck's cards (reuses the shared summary shape;
- * the `bulk_value_usd` field is unused by the deck UI).
+ * Value / copy aggregates over the deck **proper** — every card outside a
+ * maybeboard section (issue #570). Reuses the shared summary shape; the
+ * `bulk_value_usd` field is unused by the deck UI.
  */
-summary: CollectionSummary, sections: Array<DeckSection>, cards: Array<DeckCardEntry>, created_at: string, updated_at: string, };
+summary: CollectionSummary, 
+/**
+ * The same aggregates over the maybeboard sections alone, so the UI can show what's
+ * being considered without it inflating the deck's own totals. All-zero when the
+ * deck has no maybeboard cards.
+ */
+maybeboard_summary: CollectionSummary, sections: Array<DeckSection>, 
+/**
+ * Every card in the deck, maybeboard included — each entry's `section_id` says
+ * which side of the line it falls on.
+ */
+cards: Array<DeckCardEntry>, created_at: string, updated_at: string, };

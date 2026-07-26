@@ -48,6 +48,8 @@ export function useDeckEditor(props: DeckEditorProps) {
     filterActive,
     clearFilters,
     cardsBySection,
+    deckCards,
+    maybeboardCards,
     visibleSections,
     sectionNavItems,
     matchCount,
@@ -205,6 +207,7 @@ export function useDeckEditor(props: DeckEditorProps) {
   const reorderSections = useReorderSectionsMutation()
   const newSectionOpen = ref(false)
   const newSectionName = ref('')
+  const newSectionMaybeboard = ref(false)
   const sectionDeleteTarget = ref<{ id: number; name: string; count: number } | null>(null)
   const sectionDeleteError = ref('')
 
@@ -214,9 +217,24 @@ export function useDeckEditor(props: DeckEditorProps) {
       game: props.game,
       deckId: deck.value.id,
       name: newSectionName.value.trim(),
+      isMaybeboard: newSectionMaybeboard.value,
     })
     newSectionName.value = ''
+    newSectionMaybeboard.value = false
     newSectionOpen.value = false
+  }
+
+  /** Move a whole section in or out of the deck proper (issue #570). No card moves — only
+   * what the header totals, the legality banner, the analytics, and the cross-deck needed
+   * list count changes. */
+  function toggleSectionMaybeboard(sectionId: number, isMaybeboard: boolean) {
+    if (!deck.value) return
+    void updateSection.mutateAsync({
+      game: props.game,
+      deckId: deck.value.id,
+      sectionId,
+      isMaybeboard,
+    })
   }
 
   function renameSection(sectionId: number, current: string) {
@@ -287,6 +305,8 @@ export function useDeckEditor(props: DeckEditorProps) {
     deck,
     sections,
     allCards,
+    deckCards,
+    maybeboardCards,
     cardsBySection,
     showEmpty,
     visibleSections,
@@ -323,7 +343,9 @@ export function useDeckEditor(props: DeckEditorProps) {
     copyShare,
     newSectionOpen,
     newSectionName,
+    newSectionMaybeboard,
     submitNewSection,
+    toggleSectionMaybeboard,
     renameSection,
     sectionDeleteTarget,
     sectionDeleteError,

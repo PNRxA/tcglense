@@ -83,14 +83,17 @@ pub async fn create_deck(
     .insert(&state.db)
     .await?;
 
-    // Seed the default sections so the new deck has a ready structure to sort into.
+    // Seed the default sections so the new deck has a ready structure to sort into. Each
+    // carries its maybeboard flag from the table, so the seeded `Maybeboard` starts outside
+    // the deck proper (issue #570).
     let sections: Vec<deck_section::ActiveModel> = DEFAULT_SECTIONS
         .iter()
         .enumerate()
-        .map(|(i, name)| deck_section::ActiveModel {
+        .map(|(i, (name, is_maybeboard))| deck_section::ActiveModel {
             deck_id: Set(deck.id),
             name: Set((*name).to_string()),
             position: Set(i as i32),
+            is_maybeboard: Set(*is_maybeboard),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()

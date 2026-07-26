@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
+  ClipboardCopy,
   Copy,
   FileDown,
   Globe,
-  Heart,
   Layers,
-  Library,
   Lock,
   MoreVertical,
   Plus,
@@ -42,19 +41,25 @@ import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
+import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
+import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckEditor } from '@/composables/useDeckEditor'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
+import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
+import { useDeckViewStore } from '@/stores/deckView'
 
 const props = defineProps<{ game: string; id: string }>()
 const money = useCurrency()
@@ -65,6 +70,7 @@ const {
   deck,
   sections,
   allCards,
+  deckCards,
   cardsBySection,
   showEmpty,
   visibleSections,
@@ -101,7 +107,9 @@ const {
   copyShare,
   newSectionOpen,
   newSectionName,
+  newSectionMaybeboard,
   submitNewSection,
+  toggleSectionMaybeboard,
   renameSection,
   sectionDeleteTarget,
   sectionDeleteError,
@@ -112,14 +120,27 @@ const {
   moveSection,
 } = useDeckEditor(props)
 const cardSize = useCardSizeStore()
+const deckView = useDeckViewStore()
 
 usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true })
 
-// Format legality (issue #557): evaluated client-side from the cards the page already
-// holds. Null when the deck's format isn't a legality-tracked one (custom text, Cube…).
+// Format legality (issue #557): evaluated over the deck PROPER — a card sitting in a
+// maybeboard is under consideration, so a banned one there shouldn't declare the deck
+// illegal (issue #570). Null when the deck's format isn't a legality-tracked one.
 const legality = computed(() =>
-  deck.value ? evaluateDeckLegality(deck.value.format, allCards.value) : null,
+  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value) : null,
 )
+
+// The whole deck as a paste-ready text list, for the text view's copy button.
+const copiedList = ref(false)
+function copyDeckList() {
+  const text = deckListText(visibleSections.value, cardsBySection.value)
+  if (!text) return
+  void navigator.clipboard.writeText(text).then(() => {
+    copiedList.value = true
+    setTimeout(() => (copiedList.value = false), 2000)
+  })
+}
 // Per-tile breach chips (bottom-right; the control sits bottom-left, ownership top-right).
 const LEGALITY_CHIP_TEXT: Record<string, string> = {
   banned: 'text-red-600 dark:text-red-400',
@@ -167,11 +188,16 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
       <header class="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
           <h1 class="truncate text-2xl font-semibold tracking-tight">{{ deck.name }}</h1>
+          <!-- The totals describe the deck proper; anything parked in a maybeboard gets its
+            own trailing clause so it never silently inflates "how big is this deck". -->
           <p class="text-muted-foreground mt-1 text-sm">
             {{ deck.summary.total_cards }} card{{ deck.summary.total_cards === 1 ? '' : 's' }}
             <span v-if="deck.format"> · {{ deck.format }}</span>
             <span v-if="money.formatUsd(deck.summary.total_value_usd)">
               · {{ money.formatUsd(deck.summary.total_value_usd) }}</span
+            >
+            <span v-if="deck.maybeboard_summary.total_cards > 0">
+              · +{{ deck.maybeboard_summary.total_cards }} maybeboard</span
             >
           </p>
         </div>
@@ -298,7 +324,18 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
           aria-label="Filter cards by name, type, text, set, number, rarity, or language"
         />
         <DeckColorFilter v-if="allCards.length > 0" v-model="filterColors" />
-        <CardSizeMenu />
+        <DeckViewMenu />
+        <!-- The size menu only means anything for the image grid; the list and text views
+          set their own density. -->
+        <CardSizeMenu v-if="deckView.mode === 'grid'" />
+        <Button
+          v-if="deckView.mode === 'text' && allCards.length > 0"
+          variant="outline"
+          size="sm"
+          @click="copyDeckList"
+        >
+          <ClipboardCopy class="size-4" /> {{ copiedList ? 'Copied!' : 'Copy list' }}
+        </Button>
         <div class="ml-auto flex flex-wrap items-center gap-3">
           <Dialog v-model:open="newSectionOpen">
             <DialogTrigger as-child>
@@ -311,6 +348,20 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
               <DialogDescription>Add a custom category to sort cards into.</DialogDescription>
               <form class="mt-2 space-y-3" @submit.prevent="submitNewSection">
                 <Input v-model="newSectionName" placeholder="Section name" autofocus />
+                <label class="text-muted-foreground flex items-start gap-2 text-sm">
+                  <input
+                    v-model="newSectionMaybeboard"
+                    type="checkbox"
+                    class="mt-0.5 rounded border"
+                  />
+                  <span>
+                    Maybeboard
+                    <span class="block text-xs">
+                      Cards here are kept out of the deck's card count, value, legality, and
+                      analytics.
+                    </span>
+                  </span>
+                </label>
                 <div class="flex justify-end gap-2">
                   <DialogClose :class="buttonVariants({ variant: 'ghost' })">Cancel</DialogClose>
                   <Button type="submit" :disabled="!newSectionName.trim()">Add</Button>
@@ -360,6 +411,12 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                 <span class="text-muted-foreground text-sm"
                   >({{ cardsBySection.get(section.id)?.length ?? 0 }})</span
                 >
+                <span
+                  v-if="section.is_maybeboard"
+                  class="text-muted-foreground rounded-md border px-1.5 py-0.5 text-xs font-medium"
+                  title="Cards here are not counted in the deck's totals, legality, or analytics"
+                  >Maybeboard</span
+                >
               </div>
               <div class="flex items-center gap-0.5">
                 <!-- Reordering is disabled while a filter narrows the list: the visible
@@ -392,6 +449,12 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                       >Rename</DropdownMenuItem
                     >
                     <DropdownMenuItem
+                      @click="toggleSectionMaybeboard(section.id, !section.is_maybeboard)"
+                      >{{
+                        section.is_maybeboard ? 'Count in deck' : 'Treat as maybeboard'
+                      }}</DropdownMenuItem
+                    >
+                    <DropdownMenuItem
                       class="text-destructive"
                       @click="requestSectionDelete(section.id, section.name)"
                       >Delete section</DropdownMenuItem
@@ -407,6 +470,45 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
             >
               No cards here yet.
             </p>
+            <!-- Text view (issue #570): names and counts only, no controls — it's for
+              reading and copying the list, and the other two modes are one menu click away. -->
+            <DeckTextList
+              v-else-if="deckView.mode === 'text'"
+              :game="game"
+              :entries="cardsBySection.get(section.id) ?? []"
+            />
+
+            <!-- Compact list view: the same per-card controls and indicators as the grid,
+              in aligned columns instead of over artwork. -->
+            <div v-else-if="deckView.mode === 'list'" class="-mx-1.5 divide-y">
+              <DeckCardRow
+                v-for="entry in cardsBySection.get(section.id) ?? []"
+                :key="`${entry.card.id}-${entry.section_id}`"
+                :game="game"
+                :entry="entry"
+                :legality-status="legality?.statusByCardId.get(entry.card.id) ?? null"
+              >
+                <template #control>
+                  <DeckCardControl
+                    :game="game"
+                    :deck-id="deck.id"
+                    :section-id="entry.section_id"
+                    :card="entry.card"
+                    :quantity="entry.quantity"
+                    :foil-quantity="entry.foil_quantity"
+                    :sections="sections"
+                    variant="inline"
+                  />
+                </template>
+                <template #badges>
+                  <DeckOwnershipBadges
+                    :owned="ownedInCollection(entry.card.id)"
+                    :wanted="wantedInWishlist(entry.card.id)"
+                  />
+                </template>
+              </DeckCardRow>
+            </div>
+
             <div v-else class="grid gap-3" :class="DECK_CARD_SIZE_GRID_CLASS[cardSize.size]">
               <CardTile
                 v-for="entry in cardsBySection.get(section.id) ?? []"
@@ -438,31 +540,11 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                   </span>
                   <!-- Ownership indicators (top-right): how many of this card you own
                    (collection) and want (wish list), each shown only when non-zero. -->
-                  <div
-                    v-if="
-                      ownedInCollection(entry.card.id) > 0 || wantedInWishlist(entry.card.id) > 0
-                    "
-                    class="absolute top-1.5 right-1.5 z-20 flex items-center gap-1"
-                  >
-                    <span
-                      v-if="ownedInCollection(entry.card.id) > 0"
-                      class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
-                      :title="`You own ${ownedInCollection(entry.card.id)} of this card`"
-                    >
-                      <Library class="size-3" aria-hidden="true" />{{
-                        ownedInCollection(entry.card.id)
-                      }}
-                    </span>
-                    <span
-                      v-if="wantedInWishlist(entry.card.id) > 0"
-                      class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
-                      :title="`You have ${wantedInWishlist(entry.card.id)} of this card on your wish list`"
-                    >
-                      <Heart class="size-3" aria-hidden="true" />{{
-                        wantedInWishlist(entry.card.id)
-                      }}
-                    </span>
-                  </div>
+                  <DeckOwnershipBadges
+                    :owned="ownedInCollection(entry.card.id)"
+                    :wanted="wantedInWishlist(entry.card.id)"
+                    overlay
+                  />
                 </template>
               </CardTile>
             </div>

@@ -120,8 +120,24 @@ pub(crate) async fn deck_detail(
         .all(&state.db)
         .await?;
 
-    // Value/copy aggregates reuse the shared fold (the bulk slice is unused by the deck UI).
-    let summary = summarize_holdings(&rows, resolve_bulk_threshold_cents(None));
+    // Value/copy aggregates reuse the shared fold (the bulk slice is unused by the deck UI),
+    // run twice over the same rows split on the maybeboard line (issue #570): `summary` is
+    // the deck proper — what the header, the deck list's `card_count`, and every "how big /
+    // how expensive is this deck" reader mean — and `maybeboard_summary` is what's merely
+    // being considered. The partition holds *references* (the fold takes any `SummaryRow`,
+    // and `&R` is one), so the split costs two pointer vectors rather than a second copy of
+    // every card row, and `rows` stays intact for the ordered card list below.
+    let maybeboard_sections: std::collections::HashSet<i32> = sections
+        .iter()
+        .filter(|section| section.is_maybeboard)
+        .map(|section| section.id)
+        .collect();
+    let (maybeboard_rows, deck_rows): (Vec<_>, Vec<_>) = rows
+        .iter()
+        .partition(|(item, _)| maybeboard_sections.contains(&item.section_id));
+    let bulk_threshold = resolve_bulk_threshold_cents(None);
+    let summary = summarize_holdings(&deck_rows, bulk_threshold);
+    let maybeboard_summary = summarize_holdings(&maybeboard_rows, bulk_threshold);
 
     let cards: Vec<DeckCardEntry> = rows
         .into_iter()
@@ -145,6 +161,7 @@ pub(crate) async fn deck_detail(
         is_public: deck.is_public,
         handle,
         summary,
+        maybeboard_summary,
         sections,
         cards,
         created_at: deck.created_at,

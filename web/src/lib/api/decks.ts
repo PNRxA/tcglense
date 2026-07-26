@@ -165,27 +165,28 @@ export function deleteFolder(token: string, game: string, folderId: number): Pro
 
 // ----- Sections -----
 
-/** Create a custom section (appended after the last). */
+/** Create a custom section (appended after the last), optionally as a maybeboard. */
 export function createSection(
   token: string,
   game: string,
   deckId: number,
   name: string,
+  isMaybeboard = false,
 ): Promise<DeckSection> {
   return request<DeckSection>(`${deckBase(game, deckId)}/sections`, {
     method: 'POST',
-    body: { name },
+    body: { name, is_maybeboard: isMaybeboard },
     token,
   })
 }
 
-/** Rename and/or reposition a section (each field optional). */
+/** Rename, reposition, and/or flip a section's maybeboard flag (each field optional). */
 export function updateSection(
   token: string,
   game: string,
   deckId: number,
   sectionId: number,
-  body: { name?: string; position?: number },
+  body: { name?: string; position?: number; is_maybeboard?: boolean },
 ): Promise<DeckSection> {
   return request<DeckSection>(`${deckBase(game, deckId)}/sections/${sectionId}`, {
     method: 'PUT',

@@ -11,7 +11,8 @@
 //! Reads only (`AuthUser`), in the no-store private group. A deck card has no `user_id`, so
 //! the demand scan is scoped to the deck ids the caller owns for the game (never queried by
 //! user directly); catalog rows gone after a re-import are skipped, exactly as the deck
-//! detail read does.
+//! detail read does, and so are maybeboard sections (issue #570) — a card a deck is only
+//! considering is not one you need to buy.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -76,10 +77,16 @@ pub async fn needed_cards(
     let deck_ids: Vec<i32> = decks.iter().map(|(id, _)| *id).collect();
 
     // Every deck card joined to its catalog row (a card gone after a re-import LEFT-joins to
-    // None and is skipped, matching the deck detail read).
+    // None and is skipped, matching the deck detail read). Maybeboard sections are excluded
+    // (issue #570) — a shopping list should name what the decks actually run, not everything
+    // their owners are still considering.
     let deck_rows: Vec<(deck_card::Model, Option<card::Model>)> = DeckCard::find()
         .find_also_related(Card)
         .filter(deck_card::Column::DeckId.is_in(deck_ids.iter().copied()))
+        .filter(
+            deck_card::Column::SectionId
+                .not_in_subquery(super::maybeboard_section_ids(deck_ids.clone())),
+        )
         .all(&state.db)
         .await?;
 

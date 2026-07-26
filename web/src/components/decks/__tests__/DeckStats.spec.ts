@@ -21,8 +21,8 @@ function entry(sectionId: number, id: string, name: string, quantity: number): D
 describe('DeckStats draw sections', () => {
   it('excludes sideboards by default and lets the viewer include them', async () => {
     const sections: DeckSection[] = [
-      { id: 1, name: 'Mainboard', position: 0 },
-      { id: 2, name: 'Sideboard', position: 1 },
+      { id: 1, name: 'Mainboard', position: 0, is_maybeboard: false },
+      { id: 2, name: 'Sideboard', position: 1, is_maybeboard: false },
     ]
     const wrapper = mount(DeckStats, {
       props: {
@@ -43,8 +43,8 @@ describe('DeckStats draw sections', () => {
 
   it('selects and deselects every section via the controls', async () => {
     const sections: DeckSection[] = [
-      { id: 1, name: 'Mainboard', position: 0 },
-      { id: 2, name: 'Sideboard', position: 1 },
+      { id: 1, name: 'Mainboard', position: 0, is_maybeboard: false },
+      { id: 2, name: 'Sideboard', position: 1, is_maybeboard: false },
     ]
     const wrapper = mount(DeckStats, {
       props: {
