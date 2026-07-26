@@ -197,8 +197,14 @@ theme on load; `stores/theme.ts` then owns it reactively for the rest of the ses
 
 **SEO / social previews:** this is a CSR SPA, so each view calls `usePageMeta()`
 (`lib/seo.ts`) to set a route-specific title, description, canonical URL, Open
-Graph / Twitter tags, and (card pages) JSON-LD `Product` data — picked up by
-JS-executing crawlers (Googlebot) and the browser tab. `index.html` carries a
+Graph / Twitter tags, and (card + sealed-product pages) JSON-LD `Product` +
+`BreadcrumbList` data (`lib/structuredData.ts`) — picked up by
+JS-executing crawlers (Googlebot) and the browser tab. A `Product` node **must** carry
+`offers` (Google drops the product snippet without one of `offers`/`review`/
+`aggregateRating`, and reports it as a critical Search Console issue), so the node carries the
+tracked market price and is **omitted entirely** for an unpriced card/product rather than
+shipped invalid; everything we can't observe — availability, condition, seller, rating,
+`priceValidUntil` — stays out, guarded by a unit test. `index.html` carries a
 baseline copy of those tags for crawlers that **don't** run JS (most social/link
 unfurlers), so shared links still get a decent preview. Every non-card page defaults its
 `og:image`/`twitter:image` to a branded 1200×630 banner (`DEFAULT_OG_IMAGE` →

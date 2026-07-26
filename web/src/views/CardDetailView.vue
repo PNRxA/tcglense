@@ -47,12 +47,16 @@ usePageMeta({
   canonicalPath: () => (card.value ? `/cards/${game.value}/cards/${card.value.id}` : undefined),
   image: cardImage,
   type: 'product',
-  // A schema.org `Product` node (name, stats, oracle text — deliberately NO `offers`; this is
-  // a price tracker, not a storefront) plus a `BreadcrumbList`, in one `@graph`. Builders +
-  // the no-offers rationale live in lib/structuredData.ts.
+  // A schema.org `Product` node (name, stats, oracle text, and the tracked price as `offers` —
+  // Google requires one of offers/review/aggregateRating) plus a `BreadcrumbList`, in one
+  // `@graph`. An unpriced card yields no Product node (breadcrumbs still ship); the builders +
+  // the full what-we-do-and-don't-claim rationale live in lib/structuredData.ts.
   jsonLd: () =>
     card.value
-      ? graph(cardProductNode(card.value, cardImage.value), breadcrumbList(crumbs.value))
+      ? graph(
+          cardProductNode(game.value, card.value, cardImage.value),
+          breadcrumbList(crumbs.value),
+        )
       : undefined,
 })
 

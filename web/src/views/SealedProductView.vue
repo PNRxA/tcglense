@@ -72,9 +72,10 @@ usePageMeta({
   canonicalPath: () => (product.value ? `/sealed/${game.value}/${product.value.id}` : undefined),
   image: productImage,
   type: 'product',
-  // A schema.org `Product` node (composition via `isRelatedTo`, deliberately NO `offers` — a
-  // price tracker, not a storefront) plus a `BreadcrumbList`, in one `@graph`. Builders + the
-  // no-offers rationale live in lib/structuredData.ts.
+  // A schema.org `Product` node (composition via `isRelatedTo`, plus the tracked price as
+  // `offers` — Google requires one of offers/review/aggregateRating) and a `BreadcrumbList`, in
+  // one `@graph`. A product with neither a market price nor an MSRP yields no Product node
+  // (breadcrumbs still ship); builders + the full rationale live in lib/structuredData.ts.
   jsonLd: () =>
     product.value
       ? graph(
