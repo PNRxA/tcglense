@@ -503,11 +503,30 @@ catalog) is planned but not implemented.
   text on the wire and is normalized (aliases: EDH, PDH, Comp. Brawl, …) to a legality key —
   a custom/unknown format means *no evaluation*, never "everything is illegal"; a card with
   missing/malformed legality data is counted as unknown, never flagged; `banned`/`not_legal`
-  always breach; `restricted` breaches only past 1 total copy per name (Vintage's rule).
-  Every section counts (there is no board-role enum to tell a maybeboard apart — see the
-  sections trade-off above). The malformed-JSON tolerance lives in one place
-  (`parse_legalities` in `handlers/shared/dto.rs`): a bad row degrades to `null`, it never
-  fails the request.
+  always breach; `restricted` breaches only past 1 total copy per name (Vintage's rule) —
+  except in Pauper Commander, where Scryfall writes `restricted` to mean "legal only as the
+  commander", so it breaches anywhere *but* the command zone. The malformed-JSON tolerance
+  lives in one place (`parse_legalities` in `handlers/shared/dto.rs`): a bad row degrades to
+  `null`, it never fails the request.
+- **Deck-construction rules are derived from the card payload, not a curated table
+  (`web/src/lib/deckRules.ts`).** The per-card ban list only answers "may this card be in
+  the format" — the questions players actually get wrong are deck-wide: 101 cards, two
+  commanders that don't pair, an off-colour card in the 99, a fifth Lightning Bolt. Those
+  live in a sibling module (`legality.ts` composes the two into one `DeckLegality`, so the
+  views still render a single thing), keyed by the same legality key, with a small rule
+  profile per format (deck size, copy limit, sideboard cap, command-zone kind). Card-level
+  facts are read from data the payload already carries rather than hard-coded lists:
+  `cardCopyLimit` parses "A deck can have any number of / up to <n> cards named …" out of
+  the oracle text (so Rat Colony, Seven Dwarves and any future member of either cycle work
+  with no code change), commander eligibility is the type line plus "can be your commander",
+  and pairing is the Partner / Partner with / Friends forever / Doctor's companion / Choose
+  a Background abilities. The **zone** is the one thing the wire can't tell us — a
+  `deck_card` has no board role — so it's read from the section *name*
+  (`Commander`/`Command Zone`/`Sideboard`/…), which is also what the importer writes.
+  Conservative by the same rule as above: a format with no profile gets no deck-wide
+  checks at all, an empty deck and an empty command zone are never judged, and "you aren't
+  finished yet" (under-size, no commander picked) is a **warning** severity that keeps the
+  banner amber instead of declaring a half-built deck illegal.
 - **Deck import/export is a sibling pipeline, not collection reconcile (issue #389).** The
   provider *deck* endpoints and uploaded deck-list rows carry a category/board that the flat
   collection intermediate cannot represent. `deck_import` therefore produces `DeckCardRow`

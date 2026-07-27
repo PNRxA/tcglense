@@ -3,17 +3,33 @@ import { mount } from '@vue/test-utils'
 import type { DeckLegality } from '@/lib/legality'
 import DeckLegalityBanner from '../DeckLegalityBanner.vue'
 
+/** A clean verdict, so each case spells out only what it asserts on. */
+function makeLegality(over: Partial<DeckLegality> = {}): DeckLegality {
+  const legality: DeckLegality = {
+    formatKey: 'modern',
+    formatLabel: 'Modern',
+    issues: [],
+    violations: [],
+    statusByCardId: new Map(),
+    unknownCount: 0,
+    legal: true,
+    ...over,
+  }
+  // `legal` is derived in evaluateDeckLegality; keep the fixture honest unless a case
+  // overrides it explicitly.
+  return 'legal' in over
+    ? legality
+    : {
+        ...legality,
+        legal:
+          legality.issues.length === 0 &&
+          !legality.violations.some((violation) => violation.severity === 'error'),
+      }
+}
+
 describe('DeckLegalityBanner', () => {
   it('renders a quiet success line when the deck has no issues', () => {
-    const legality: DeckLegality = {
-      formatKey: 'modern',
-      formatLabel: 'Modern',
-      issues: [],
-      statusByCardId: new Map(),
-      unknownCount: 0,
-    }
-
-    const wrapper = mount(DeckLegalityBanner, { props: { legality } })
+    const wrapper = mount(DeckLegalityBanner, { props: { legality: makeLegality() } })
 
     expect(wrapper.text()).toBe('No Modern legality issues')
     expect(wrapper.element.tagName).toBe('P')
@@ -23,7 +39,7 @@ describe('DeckLegalityBanner', () => {
   })
 
   it('summarizes and lists mixed legality issues', () => {
-    const legality: DeckLegality = {
+    const legality = makeLegality({
       formatKey: 'vintage',
       formatLabel: 'Vintage',
       issues: [
@@ -43,8 +59,7 @@ describe('DeckLegalityBanner', () => {
         ['expressive-iteration', 'not_legal'],
         ['ancestral-recall', 'restricted'],
       ]),
-      unknownCount: 0,
-    }
+    })
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
     const text = wrapper.text()
@@ -81,7 +96,7 @@ describe('DeckLegalityBanner', () => {
       'Kilo',
       'Lima',
     ]
-    const legality: DeckLegality = {
+    const legality = makeLegality({
       formatKey: 'standard',
       formatLabel: 'Standard',
       issues: names.map((name, index) => ({
@@ -90,9 +105,7 @@ describe('DeckLegalityBanner', () => {
         status: 'not_legal' as const,
         quantity: 1,
       })),
-      statusByCardId: new Map(),
-      unknownCount: 0,
-    }
+    })
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
     const rows = wrapper.findAll('li')
@@ -104,17 +117,69 @@ describe('DeckLegalityBanner', () => {
   })
 
   it('uses correct singular wording for one issue', () => {
-    const legality: DeckLegality = {
+    const legality = makeLegality({
       formatKey: 'legacy',
       formatLabel: 'Legacy',
       issues: [{ cardId: 'contract', name: 'Contract from Below', status: 'banned', quantity: 1 }],
       statusByCardId: new Map([['contract', 'banned']]),
-      unknownCount: 0,
-    }
+    })
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
 
     expect(wrapper.findAll('p')[1]!.text()).toBe('1 banned')
     expect(wrapper.text()).not.toContain('1 banneds')
+  })
+
+  it('stays amber and calls an under-built deck in progress, not illegal', () => {
+    const legality = makeLegality({
+      formatKey: 'commander',
+      formatLabel: 'Commander',
+      violations: [
+        { rule: 'deck-size', severity: 'warning', message: '63 of 100 cards — 37 to go.' },
+        {
+          rule: 'command-zone',
+          severity: 'warning',
+          message: 'No commander — put one in a section named "Commander".',
+        },
+      ],
+    })
+
+    const wrapper = mount(DeckLegalityBanner, { props: { legality } })
+    const text = wrapper.text()
+
+    expect(wrapper.classes()).toContain('border-amber-500/40')
+    expect(wrapper.classes()).not.toContain('border-red-500/40')
+    expect(text).toContain('Commander deck in progress')
+    expect(text).not.toContain('Not legal in')
+    expect(text).toContain('63 of 100 cards — 37 to go.')
+    expect(text).toContain('No commander')
+  })
+
+  it('lists construction breaches above the offending cards, errors first', () => {
+    const legality = makeLegality({
+      formatKey: 'commander',
+      formatLabel: 'Commander',
+      issues: [{ cardId: 'bolt', name: 'Lightning Bolt', status: 'off_colour', quantity: 1 }],
+      violations: [
+        { rule: 'deck-size', severity: 'warning', message: '99 of 100 cards — 1 to go.' },
+        {
+          rule: 'colour-identity',
+          severity: 'error',
+          message: "1 card falls outside Atraxa's colour identity ({W}{U}{B}{G}).",
+        },
+      ],
+      statusByCardId: new Map([['bolt', 'off_colour']]),
+    })
+
+    const wrapper = mount(DeckLegalityBanner, { props: { legality } })
+
+    expect(wrapper.classes()).toContain('border-red-500/40')
+    expect(wrapper.text()).toContain('Not legal in Commander')
+    expect(wrapper.text()).toContain("1 outside the commander's colour identity")
+    const messages = wrapper.findAll('li').map((row) => row.text())
+    expect(messages[0]).toContain("outside Atraxa's colour identity")
+    expect(messages[1]).toContain('99 of 100 cards')
+    expect(messages[2]).toContain('Lightning Bolt')
+    expect(messages[2]).toContain('Off Colour')
   })
 })
