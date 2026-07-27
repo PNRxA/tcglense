@@ -312,11 +312,34 @@ describe('command zone', () => {
     ])
   })
 
-  it('counts a second copy of one commander as two commanders', () => {
+  it('names a doubled commander as a doubled commander, not a failed pairing', () => {
     const solo = LEGEND('Alpha')
-    expect(messages('commander', deck([entry(COMMAND, solo, 2)], 98))[0]).toContain(
-      "can't be commanders together",
-    )
+    expect(messages('commander', deck([entry(COMMAND, solo, 2)], 98))).toEqual([
+      'Two copies of Alpha in the command zone — a deck has one commander.',
+    ])
+  })
+
+  it('leads a Pauper Commander deck with any creature, legendary or not', () => {
+    // PDH commanders are *uncommon* creatures and mostly aren't legendary; the rarity half
+    // of that rule is Scryfall's `restricted` marker, which legality.ts reads.
+    const strix = card('Baleful Strix', { type_line: 'Artifact Creature — Bird' })
+    expect(messages('paupercommander', deck([entry(COMMAND, strix)], 99))).toEqual([])
+
+    const ring = card('Sol Ring', { type_line: 'Artifact' })
+    expect(messages('paupercommander', deck([entry(COMMAND, ring)], 99))).toEqual([
+      "Sol Ring can't be your commander — a commander must be an uncommon creature.",
+    ])
+  })
+
+  it('accepts a commander that is only a creature outside the battlefield', () => {
+    // Grist is a legal (and popular) commander under rule 903.3a, and says nothing about
+    // being able to be your commander.
+    const grist = card('Grist, the Hunger Tide', {
+      type_line: 'Legendary Planeswalker — Grist',
+      oracle_text:
+        "As long as Grist, the Hunger Tide isn't on the battlefield, it's a 1/1 Insect creature in addition to its other types.",
+    })
+    expect(messages('commander', deck([entry(COMMAND, grist)], 99))).toEqual([])
   })
 
   it('accepts every sanctioned pairing', () => {

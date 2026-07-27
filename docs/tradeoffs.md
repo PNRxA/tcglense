@@ -518,7 +518,10 @@ catalog) is planned but not implemented.
   facts are read from data the payload already carries rather than hard-coded lists:
   `cardCopyLimit` parses "A deck can have any number of / up to <n> cards named …" out of
   the oracle text (so Rat Colony, Seven Dwarves and any future member of either cycle work
-  with no code change), commander eligibility is the type line plus "can be your commander",
+  with no code change), commander eligibility is the type line plus "can be your commander"
+  (plus rule 903.3a's creature-outside-the-battlefield clause, which is what makes Grist a
+  commander — read off its own text, not a card list; Pauper Commander instead wants any
+  creature, since the *uncommon* half of its rule is already Scryfall's `restricted` marker),
   and pairing is the Partner / Partner with / Friends forever / Doctor's companion / Choose
   a Background abilities. The **zone** is the one thing the wire can't tell us — a
   `deck_card` has no board role — so it's read from the section *name*

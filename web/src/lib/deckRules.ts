@@ -154,7 +154,7 @@ export function cardCopyLimit(card: Card): number | null {
 
 /** How a format's command zone works. `noun` names its card in messages. */
 interface CommandZoneRule {
-  kind: 'commander' | 'brawl' | 'oathbreaker'
+  kind: 'commander' | 'brawl' | 'pdh' | 'oathbreaker'
   noun: string
   /** Whether Partner / Friends forever / a Background can make the zone a pair. */
   allowPairs: boolean
@@ -175,6 +175,11 @@ const COMMANDER_ZONE: CommandZoneRule = { kind: 'commander', noun: 'commander', 
 // followed paper on Partner/Background, so pairs are allowed here too — being permissive
 // keeps a legal deck from being called illegal.
 const BRAWL_ZONE: CommandZoneRule = { kind: 'brawl', noun: 'commander', allowPairs: true }
+// Pauper Commander leads with an *uncommon creature* — legendary is not required, and most
+// PDH commanders aren't. The rarity half of that rule needs no check here: Scryfall marks
+// the eligible uncommons `restricted` in `paupercommander`, which `legality.ts` reads as
+// "legal only as the commander".
+const PDH_ZONE: CommandZoneRule = { kind: 'pdh', noun: 'commander', allowPairs: true }
 const OATHBREAKER_ZONE: CommandZoneRule = {
   kind: 'oathbreaker',
   noun: 'oathbreaker',
@@ -205,7 +210,7 @@ const FORMAT_RULES: Record<string, FormatRules> = {
   commander: EDH,
   duel: EDH,
   predh: EDH,
-  paupercommander: EDH,
+  paupercommander: { size: { exact: 100 }, maxCopies: 1, commandZone: PDH_ZONE },
   brawl: { size: { exact: 100 }, maxCopies: 1, commandZone: BRAWL_ZONE },
   // Both Arena Brawl queues that build off Standard are 60-card decks; the 100-card
   // variant is `brawl` above (Historic/Timeless Brawl).
@@ -227,11 +232,22 @@ export function hasDeckRules(formatKey: string): boolean {
 /** Whether a card may lead a deck in this kind of command zone. */
 function canLead(card: Card, kind: CommandZoneRule['kind']): boolean {
   if (kind === 'oathbreaker') return hasType(card, 'legendary', 'planeswalker')
+  if (kind === 'pdh') return hasType(card, 'creature')
   if (hasType(card, 'legendary', 'creature')) return true
   // "can be your commander" covers the designed-for-the-zone planeswalkers and oddities;
   // a Background is only ever a commander (paired with "Choose a Background").
   if (abilityLines(card).some((line) => line.includes('can be your commander'))) return true
   if (hasType(card, 'background')) return true
+  // Rule 903.3a reads the card's characteristics *outside* the battlefield, so a legendary
+  // card its own text turns into a creature everywhere but there (Grist, the Hunger Tide)
+  // leads a deck even though its printed front face is a planeswalker.
+  if (
+    hasType(card, 'legendary') &&
+    abilityLines(card).some(
+      (line) => line.includes("isn't on the battlefield") && line.includes('creature'),
+    )
+  )
+    return true
   return kind === 'brawl' && hasType(card, 'legendary', 'planeswalker')
 }
 
@@ -478,10 +494,16 @@ function commandZoneViolations(zone: CommandZoneRule, commanders: Card[]): DeckR
         : `${commanders.length} cards in the command zone — a deck has one ${zone.noun}.`,
     })
   } else if (commanders.length === 2 && !pairAllowed(commanders[0]!, commanders[1]!)) {
+    // Two copies of one card is a different mistake from two cards that don't pair, and
+    // "X and X can't be commanders together" would read as nonsense.
+    const [first, second] = commanders as [Card, Card]
     violations.push({
       rule: 'command-zone',
       severity: 'error',
-      message: `${joinNames(commanders.map((card) => card.name))} can't be commanders together — a pair needs Partner, Friends forever, Doctor's companion, or Choose a Background.`,
+      message:
+        first.name === second.name
+          ? `Two copies of ${first.name} in the command zone — a deck has one ${zone.noun}.`
+          : `${joinNames([first.name, second.name])} can't be commanders together — a pair needs Partner, Friends forever, Doctor's companion, or Choose a Background.`,
     })
   }
 
@@ -491,7 +513,9 @@ function commandZoneViolations(zone: CommandZoneRule, commanders: Card[]): DeckR
     const allowed =
       zone.kind === 'brawl'
         ? 'a legendary creature or planeswalker'
-        : 'a legendary creature (or a card that says it can be your commander)'
+        : zone.kind === 'pdh'
+          ? 'an uncommon creature'
+          : 'a legendary creature (or a card that says it can be your commander)'
     violations.push({
       rule: 'commander-eligibility',
       severity: 'error',
