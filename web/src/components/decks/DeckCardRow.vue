@@ -5,7 +5,7 @@ import { useCurrency } from '@/composables/useCurrency'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import type { DeckCardEntry } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
-import { legalityLabel, type DeckIssueStatus } from '@/lib/legality'
+import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel, type DeckIssueStatus } from '@/lib/legality'
 
 // One card as a compact row — the "list" deck view (issue #570). The image grid is the
 // right shape for building a deck; this is the right shape for *reading* one: a 100-card
@@ -42,12 +42,6 @@ const price = computed(() => {
 // The front face's types only — a modal DFC's back half would double the column's width
 // for no extra information at this density.
 const typeLine = computed(() => card.value.type_line?.split('//')[0]?.trim() ?? '')
-
-const LEGALITY_TEXT: Record<DeckIssueStatus, string> = {
-  banned: 'text-red-600 dark:text-red-400',
-  not_legal: 'text-muted-foreground',
-  restricted: 'text-amber-600 dark:text-amber-400',
-}
 </script>
 
 <template>
@@ -79,8 +73,8 @@ const LEGALITY_TEXT: Record<DeckIssueStatus, string> = {
     <span
       v-if="legalityStatus"
       class="shrink-0 text-xs font-medium"
-      :class="LEGALITY_TEXT[legalityStatus]"
-      >{{ legalityLabel(legalityStatus) }}</span
+      :class="DECK_ISSUE_TEXT_CLASS[legalityStatus]"
+      >{{ deckIssueLabel(legalityStatus) }}</span
     >
 
     <slot name="badges" />

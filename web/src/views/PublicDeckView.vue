@@ -22,7 +22,7 @@ import { ApiError, type DeckCardEntry } from '@/lib/api'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
-import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
+import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel, evaluateDeckLegality } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -105,16 +105,11 @@ function copyDeckList() {
 
 // Format legality (issue #557), mirroring the owner view: computed over the deck proper,
 // so a maybeboard card can't declare someone's shared deck illegal (issue #570); null when
-// the format isn't a legality-tracked one.
+// the format isn't a legality-tracked one. `sections` gives the deck-construction rules
+// the zone split (command zone / sideboard / deck proper) they read off section names.
 const legality = computed(() =>
-  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value) : null,
+  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value, sections.value) : null,
 )
-// Breach chips sit bottom-right; the copy-count badge owns bottom-left here.
-const LEGALITY_CHIP_TEXT: Record<string, string> = {
-  banned: 'text-red-600 dark:text-red-400',
-  not_legal: 'text-muted-foreground',
-  restricted: 'text-amber-600 dark:text-amber-400',
-}
 </script>
 
 <template>
@@ -266,9 +261,9 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                   <span
                     v-if="legality?.statusByCardId.get(entry.card.id)"
                     class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    :class="LEGALITY_CHIP_TEXT[legality.statusByCardId.get(entry.card.id)!]"
+                    :class="DECK_ISSUE_TEXT_CLASS[legality.statusByCardId.get(entry.card.id)!]"
                   >
-                    {{ legalityLabel(legality.statusByCardId.get(entry.card.id)!) }}
+                    {{ deckIssueLabel(legality.statusByCardId.get(entry.card.id)!) }}
                   </span>
                 </template>
               </CardTile>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { DeckCardEntry } from '@/lib/api'
+import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
 import {
+  DECK_ISSUE_STATUSES,
+  deckIssueLabel,
   evaluateDeckLegality,
   formatLabel,
   legalityLabel,
@@ -14,16 +16,22 @@ function entry(
   id: string,
   name: string,
   legalities: Record<string, string> | null,
-  over: Partial<Omit<DeckCardEntry, 'card'>> = {},
+  over: Partial<Omit<DeckCardEntry, 'card'>> & { card?: Partial<Card> } = {},
 ): DeckCardEntry {
+  const { card, ...rest } = over
   return {
-    card: makeCard(id, { name, legalities }),
+    card: makeCard(id, { name, legalities, ...card }),
     section_id: 1,
     quantity: 1,
     foil_quantity: 0,
-    ...over,
+    ...rest,
   }
 }
+
+const SECTIONS: DeckSection[] = [
+  { id: 1, name: 'Creatures', position: 0, is_maybeboard: false },
+  { id: 2, name: 'Commander', position: 1, is_maybeboard: false },
+]
 
 describe('normalizeFormatKey', () => {
   it('accepts every curated key and label', () => {
@@ -78,6 +86,17 @@ describe('formatLabel / legalityLabel', () => {
     expect(legalityLabel('not_legal')).toBe('Not Legal')
     expect(legalityLabel('banned')).toBe('Banned')
     expect(legalityLabel('restricted')).toBe('Restricted')
+  })
+
+  it('labels every deck breach, most severe first', () => {
+    expect(DECK_ISSUE_STATUSES.map(deckIssueLabel)).toEqual([
+      'Banned',
+      'Not Legal',
+      'Commander Only',
+      'Off Colour',
+      'Over Limit',
+      'Restricted',
+    ])
   })
 })
 
@@ -175,5 +194,130 @@ describe('evaluateDeckLegality', () => {
     ])
     expect(result!.issues).toEqual([])
     expect(result!.unknownCount).toBe(3)
+  })
+
+  it('reads Pauper Commander\'s "restricted" as commander-only, not a copy limit', () => {
+    const RESTRICTED = { paupercommander: 'restricted' }
+    const result = evaluateDeckLegality(
+      'Pauper Commander',
+      [
+        entry('lead', 'Uncommon Lead', RESTRICTED, { section_id: 2 }),
+        entry('stray', 'Uncommon Stray', RESTRICTED, { section_id: 1 }),
+      ],
+      SECTIONS,
+    )
+    // The commander itself is exactly where an uncommon belongs; the same card in the 99
+    // is not, even at a single copy.
+    expect(result!.issues).toEqual([
+      { cardId: 'stray', name: 'Uncommon Stray', status: 'commander_only', quantity: 1 },
+    ])
+    expect(result!.statusByCardId.has('lead')).toBe(false)
+  })
+})
+
+describe('evaluateDeckLegality + deck-construction rules', () => {
+  const LEGAL = { commander: 'legal' }
+  const legendary = { type_line: 'Legendary Creature — Phyrexian Angel Horror' }
+
+  function deck(over: Partial<Omit<DeckCardEntry, 'card'>> = {}, count = 1): DeckCardEntry[] {
+    return Array.from({ length: count }, (_, index) =>
+      entry(`filler-${index}`, `Filler ${index}`, LEGAL, { section_id: 1, ...over }),
+    )
+  }
+
+  it('carries the construction violations alongside the card issues', () => {
+    const result = evaluateDeckLegality(
+      'Commander',
+      [entry('atraxa', 'Atraxa', LEGAL, { section_id: 2, card: legendary }), ...deck({}, 10)],
+      SECTIONS,
+    )
+    expect(result!.issues).toEqual([])
+    expect(result!.violations).toEqual([
+      { rule: 'deck-size', severity: 'warning', message: '11 of 100 cards — 89 to go.' },
+    ])
+    // Warnings alone don't make a deck illegal — it just isn't finished.
+    expect(result!.legal).toBe(true)
+  })
+
+  it('marks the deck illegal on an error-severity violation', () => {
+    const result = evaluateDeckLegality(
+      'Commander',
+      [
+        entry('ring', 'Sol Ring', LEGAL, { section_id: 2, card: { type_line: 'Artifact' } }),
+        ...deck({}, 99),
+      ],
+      SECTIONS,
+    )
+    expect(result!.legal).toBe(false)
+    expect(result!.violations.map((violation) => violation.rule)).toEqual(['commander-eligibility'])
+  })
+
+  it('chips the deck-rule breaches onto the same per-card map', () => {
+    const result = evaluateDeckLegality(
+      'Commander',
+      [
+        entry('cmd', 'Commander', LEGAL, {
+          section_id: 2,
+          card: { ...legendary, color_identity: ['W'] },
+        }),
+        entry('bolt', 'Lightning Bolt', LEGAL, {
+          card: { type_line: 'Instant', color_identity: ['R'] },
+        }),
+        entry('ring', 'Sol Ring', LEGAL, {
+          card: { type_line: 'Artifact', color_identity: [] },
+          quantity: 2,
+        }),
+      ],
+      SECTIONS,
+    )
+    expect(result!.statusByCardId.get('bolt')).toBe('off_colour')
+    expect(result!.statusByCardId.get('ring')).toBe('over_limit')
+    expect(result!.issues.map((issue) => `${issue.status}:${issue.name}`)).toEqual([
+      'off_colour:Lightning Bolt',
+      'over_limit:Sol Ring',
+    ])
+    expect(result!.legal).toBe(false)
+  })
+
+  it('keeps the most severe status when two rules catch the same card', () => {
+    const result = evaluateDeckLegality(
+      'Commander',
+      [
+        entry('cmd', 'Commander', LEGAL, {
+          section_id: 2,
+          card: { ...legendary, color_identity: ['W'] },
+        }),
+        entry(
+          'bolt',
+          'Lightning Bolt',
+          { commander: 'banned' },
+          {
+            card: { type_line: 'Instant', color_identity: ['R'] },
+            quantity: 3,
+          },
+        ),
+      ],
+      SECTIONS,
+    )
+    expect(result!.statusByCardId.get('bolt')).toBe('banned')
+    expect(result!.issues).toEqual([
+      { cardId: 'bolt', name: 'Lightning Bolt', status: 'banned', quantity: 3 },
+    ])
+  })
+
+  it('skips every deck-wide check when no sections are supplied', () => {
+    const result = evaluateDeckLegality('Commander', [
+      entry('bolt', 'Lightning Bolt', LEGAL, {
+        card: { type_line: 'Instant', color_identity: ['R'] },
+        quantity: 2,
+      }),
+    ])
+    // Without sections there is no command zone to judge identity against, but the
+    // format's own singleton rule still applies.
+    expect(result!.statusByCardId.get('bolt')).toBe('over_limit')
+    expect(result!.violations.map((violation) => violation.rule)).toEqual([
+      'deck-size',
+      'command-zone',
+    ])
   })
 })

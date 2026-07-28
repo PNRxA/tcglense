@@ -5,8 +5,19 @@
 // picked or typed. This module owns the bridge between the two: the curated format
 // table (select options + display order), the free-text → format-key normalizer, and
 // the deck-wide legality evaluation the deck views render as a breach banner.
+//
+// Two halves make that verdict: the per-card one here (is this card banned/restricted in
+// the format?) and the deck-construction one in `lib/deckRules.ts` (deck size, the copy
+// limit, the command zone, colour identity). `evaluateDeckLegality` composes them into one
+// result so the views have a single thing to render.
 
-import type { Card, DeckCardEntry } from '@/lib/api'
+import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
+import {
+  commandZoneSectionIds,
+  evaluateDeckRules,
+  type DeckRuleCardStatus,
+  type DeckRuleViolation,
+} from '@/lib/deckRules'
 
 /** A legality value as Scryfall writes it. Anything else is treated as unknown. */
 export type LegalityStatus = 'legal' | 'not_legal' | 'banned' | 'restricted'
@@ -127,8 +138,50 @@ export function legalityLabel(status: LegalityStatus): string {
   }
 }
 
-/** A breach-worthy status (what the deck banner reports). */
-export type DeckIssueStatus = 'banned' | 'not_legal' | 'restricted'
+/**
+ * A breach-worthy status for one card (what the deck banner and the tile chips report).
+ * The first four come from the card's own legality data; `off_colour` and `over_limit`
+ * come from the deck-construction rules.
+ */
+export type DeckIssueStatus =
+  | 'banned'
+  | 'not_legal'
+  | 'commander_only'
+  | 'restricted'
+  | DeckRuleCardStatus
+
+/** Human label for a deck breach ("not_legal" -> "Not Legal"). */
+export function deckIssueLabel(status: DeckIssueStatus): string {
+  switch (status) {
+    case 'banned':
+      return 'Banned'
+    case 'not_legal':
+      return 'Not Legal'
+    case 'commander_only':
+      return 'Commander Only'
+    case 'off_colour':
+      return 'Off Colour'
+    case 'over_limit':
+      return 'Over Limit'
+    case 'restricted':
+      return 'Restricted'
+  }
+}
+
+/**
+ * Text colour per breach, for the chip both deck views overlay on a tile and the one
+ * DeckCardRow puts in its list column (the same three renderers, so it lives here rather
+ * than being copy-pasted a third time): red for outright illegal, muted for merely
+ * out-of-format, amber for "you're running it wrong".
+ */
+export const DECK_ISSUE_TEXT_CLASS: Record<DeckIssueStatus, string> = {
+  banned: 'text-red-600 dark:text-red-400',
+  not_legal: 'text-muted-foreground',
+  commander_only: 'text-amber-600 dark:text-amber-400',
+  off_colour: 'text-amber-600 dark:text-amber-400',
+  over_limit: 'text-amber-600 dark:text-amber-400',
+  restricted: 'text-amber-600 dark:text-amber-400',
+}
 
 /** One offending card name in a deck (all printings of a name fold into one issue). */
 export interface DeckLegalityIssue {
@@ -143,33 +196,59 @@ export interface DeckLegalityIssue {
 export interface DeckLegality {
   formatKey: string
   formatLabel: string
-  /** Sorted banned -> not legal -> restricted, alphabetical within each group. */
+  /** Sorted most severe first, alphabetical within each status. */
   issues: DeckLegalityIssue[]
+  /** Deck-wide construction breaches (size, command zone, colour identity). */
+  violations: DeckRuleViolation[]
   /** Per-printing status for every entry belonging to an offending name (tile chips). */
   statusByCardId: ReadonlyMap<string, DeckIssueStatus>
   /** Cards whose catalog row carries no legality data at all (not counted as issues). */
   unknownCount: number
+  /** No card issues and no error-severity violation — a deck you could sit down with. */
+  legal: boolean
 }
 
-const ISSUE_ORDER: Record<DeckIssueStatus, number> = { banned: 0, not_legal: 1, restricted: 2 }
+/**
+ * Every breach status, most severe first. Sorts the issue list, picks a card's worst
+ * status when two rules catch it, and gives the banner its summary order.
+ */
+export const DECK_ISSUE_STATUSES: readonly DeckIssueStatus[] = [
+  'banned',
+  'not_legal',
+  'commander_only',
+  'off_colour',
+  'over_limit',
+  'restricted',
+]
+
+const ISSUE_ORDER = Object.fromEntries(
+  DECK_ISSUE_STATUSES.map((status, index) => [status, index]),
+) as Record<DeckIssueStatus, number>
 
 /**
- * Evaluate a deck's cards against its format. Returns `null` when the format doesn't
- * map to a legality-tracked one (nothing to evaluate). Semantics:
+ * Evaluate a deck against its format. Returns `null` when the format doesn't map to a
+ * legality-tracked one (nothing to evaluate). Per-card semantics:
  *
  * - `banned` / `not_legal` in the format -> an issue, always.
  * - `restricted` -> an issue only when more than one total copy of that name is in
- *   the deck (Vintage's "max 1 copy" rule).
+ *   the deck (Vintage's "max 1 copy" rule). Pauper Commander is the exception: Scryfall
+ *   writes `restricted` there to mean "legal only as the commander" (an uncommon
+ *   creature), so it's an issue when the card sits anywhere *but* the command zone.
  * - A card with no legality data, or a legalities object missing this format's key,
  *   is counted in `unknownCount` and never flagged — a false "in breach" is worse
  *   than a miss.
  *
  * Copy counts fold across sections AND printings by card name, so 2x of one printing
  * of a restricted card plus 1x of another printing is still a breach.
+ *
+ * Deck-construction rules (size, the copy limit, the command zone, colour identity) come
+ * from `evaluateDeckRules` and need the deck's `sections` to tell the zones apart; pass
+ * them, or those checks simply don't run.
  */
 export function evaluateDeckLegality(
   format: string | null | undefined,
   entries: DeckCardEntry[],
+  sections: DeckSection[] = [],
 ): DeckLegality | null {
   const key = normalizeFormatKey(format)
   if (!key) return null
@@ -181,9 +260,9 @@ export function evaluateDeckLegality(
     copiesByName.set(entry.card.name, (copiesByName.get(entry.card.name) ?? 0) + copies)
   }
 
-  // Pass 2: judge each name once; remember every printing's id for the tile chips.
-  const issueByName = new Map<string, DeckLegalityIssue>()
-  const statusByCardId = new Map<string, DeckIssueStatus>()
+  // Pass 2: judge each printing against the card's own legality data.
+  const commandZone = commandZoneSectionIds(sections)
+  const found: DeckLegalityIssue[] = []
   let unknownCount = 0
   for (const entry of entries) {
     const status = statusOf(entry.card, key)
@@ -191,29 +270,50 @@ export function evaluateDeckLegality(
       unknownCount += 1
       continue
     }
-    const totalCopies = copiesByName.get(entry.card.name) ?? 0
+    const quantity = copiesByName.get(entry.card.name) ?? 0
     const issue: DeckIssueStatus | null =
       status === 'banned' || status === 'not_legal'
         ? status
-        : status === 'restricted' && totalCopies > 1
-          ? 'restricted'
-          : null
-    if (issue == null) continue
-    statusByCardId.set(entry.card.id, issue)
-    if (!issueByName.has(entry.card.name)) {
-      issueByName.set(entry.card.name, {
-        cardId: entry.card.id,
-        name: entry.card.name,
-        status: issue,
-        quantity: totalCopies,
-      })
-    }
+        : status !== 'restricted'
+          ? null
+          : key === 'paupercommander'
+            ? commandZone.has(entry.section_id)
+              ? null
+              : 'commander_only'
+            : quantity > 1
+              ? 'restricted'
+              : null
+    if (issue != null)
+      found.push({ cardId: entry.card.id, name: entry.card.name, status: issue, quantity })
+  }
+
+  // Pass 3: the deck-wide rules, whose per-card breaches join the same list.
+  const rules = evaluateDeckRules(key, entries, sections)
+  found.push(...rules.cardIssues)
+
+  // Fold to one issue per name and one chip per printing, keeping the worst status of each.
+  const issueByName = new Map<string, DeckLegalityIssue>()
+  const statusByCardId = new Map<string, DeckIssueStatus>()
+  for (const issue of found) {
+    const worseThan = (previous: DeckIssueStatus | undefined) =>
+      previous == null || ISSUE_ORDER[issue.status] < ISSUE_ORDER[previous]
+    if (worseThan(statusByCardId.get(issue.cardId))) statusByCardId.set(issue.cardId, issue.status)
+    const existing = issueByName.get(issue.name)
+    if (worseThan(existing?.status)) issueByName.set(issue.name, issue)
   }
 
   const issues = [...issueByName.values()].sort(
     (a, b) => ISSUE_ORDER[a.status] - ISSUE_ORDER[b.status] || a.name.localeCompare(b.name),
   )
-  return { formatKey: key, formatLabel: formatLabel(key), issues, statusByCardId, unknownCount }
+  return {
+    formatKey: key,
+    formatLabel: formatLabel(key),
+    issues,
+    violations: rules.violations,
+    statusByCardId,
+    unknownCount,
+    legal: issues.length === 0 && !rules.violations.some((v) => v.severity === 'error'),
+  }
 }
 
 /** A card's status in one format, or `null` when unknown (no data / unexpected value). */

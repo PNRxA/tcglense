@@ -56,7 +56,7 @@ import { useDeckEditor } from '@/composables/useDeckEditor'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
-import { evaluateDeckLegality, legalityLabel } from '@/lib/legality'
+import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel, evaluateDeckLegality } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -127,8 +127,10 @@ usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true }
 // Format legality (issue #557): evaluated over the deck PROPER — a card sitting in a
 // maybeboard is under consideration, so a banned one there shouldn't declare the deck
 // illegal (issue #570). Null when the deck's format isn't a legality-tracked one.
+// `sections` rides along so the deck-construction rules can tell the command zone,
+// the sideboard and the deck proper apart (they're distinguished by section name).
 const legality = computed(() =>
-  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value) : null,
+  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value, sections.value) : null,
 )
 
 // The whole deck as a paste-ready text list, for the text view's copy button.
@@ -140,12 +142,6 @@ function copyDeckList() {
     copiedList.value = true
     setTimeout(() => (copiedList.value = false), 2000)
   })
-}
-// Per-tile breach chips (bottom-right; the control sits bottom-left, ownership top-right).
-const LEGALITY_CHIP_TEXT: Record<string, string> = {
-  banned: 'text-red-600 dark:text-red-400',
-  not_legal: 'text-muted-foreground',
-  restricted: 'text-amber-600 dark:text-amber-400',
 }
 </script>
 
@@ -534,9 +530,9 @@ const LEGALITY_CHIP_TEXT: Record<string, string> = {
                   <span
                     v-if="legality?.statusByCardId.get(entry.card.id)"
                     class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    :class="LEGALITY_CHIP_TEXT[legality.statusByCardId.get(entry.card.id)!]"
+                    :class="DECK_ISSUE_TEXT_CLASS[legality.statusByCardId.get(entry.card.id)!]"
                   >
-                    {{ legalityLabel(legality.statusByCardId.get(entry.card.id)!) }}
+                    {{ deckIssueLabel(legality.statusByCardId.get(entry.card.id)!) }}
                   </span>
                   <!-- Ownership indicators (top-right): how many of this card you own
                    (collection) and want (wish list), each shown only when non-zero. -->

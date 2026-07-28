@@ -196,7 +196,14 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   and the deck list will disagree. The **name** (`is_maybeboard_section_name`) only *seeds* the
   flag where a section is born from untyped text — deck import, and migration 62's backfill of
   pre-flag decks — so a renamed maybeboard stays out and a section merely called "Considering"
-  stays in. Deck **import/export** (issue #389) lives in the sibling
+  stays in. **Legality is two client-side modules, not one:** `lib/legality.ts` judges each card
+  against the format's Scryfall data, `lib/deckRules.ts` judges the deck (size, copy limit,
+  command zone, colour identity) — `evaluateDeckLegality` composes them, so a new check belongs
+  in the rules module, not a third one. Its zone split reads the section **name** (`Commander`,
+  `Sideboard`, …) because a `deck_card` has no board role; keep those spellings in step with
+  `deck_import::parser`'s. Every deck-wide rule is skipped rather than guessed when the format
+  has no profile or the command zone is empty, and "not finished yet" is a `warning` severity —
+  a half-built deck must never be reported as illegal. Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
   throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
