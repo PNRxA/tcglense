@@ -20,8 +20,10 @@
  * verified dev account (see api/src/tasks.rs) used by the session flows.
  *
  * They need the backend running. The CI e2e job starts the API with the offline
- * dummy catalog (SEED_DUMMY_DATA) and waits for /api/health before invoking
- * Playwright. Locally (a bare `npm run test:e2e` with no API) they skip instead
+ * dummy catalog (SEED_DUMMY_DATA) and waits for /api/ready *and* a successful
+ * seeded login before invoking Playwright — liveness alone is up during the
+ * boot-migration window, when the startup gate still 503s application traffic.
+ * Locally (a bare `npm run test:e2e` with no API) they skip instead
  * of failing — hence the intentional API-availability guards below.
  */
 /* eslint-disable playwright/no-skipped-test */
@@ -33,9 +35,13 @@ const PASSWORD = 'password123'
 const SEEDED_EMAIL = 'e2e@tcglense.test'
 const SEEDED_PASSWORD = 'password123'
 
+// Readiness, not liveness: `/api/health` answers as soon as the listener binds and
+// stays up through the boot-migration window, during which the startup gate answers
+// every other route with a maintenance 503 — guarding on it would let these specs run
+// against a half-booted API and fail on a 503. `/api/ready` drains until the gate opens.
 async function apiReachable(request: APIRequestContext): Promise<boolean> {
   try {
-    const res = await request.get('/api/health')
+    const res = await request.get('/api/ready')
     return res.ok()
   } catch {
     return false
