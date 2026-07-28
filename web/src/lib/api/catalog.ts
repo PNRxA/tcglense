@@ -1,4 +1,4 @@
-import { API_URL, listQuery, request } from './client'
+import { API_URL, listQuery, request, requestBlob } from './client'
 import type {
   ArtTagEntry,
   Card,
@@ -102,6 +102,66 @@ export function listCards(
   return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`, {
     signal,
   })
+}
+
+// ---------- Card search export (public, plain text) ----------
+
+/**
+ * The plain-text shape a card-search export produces.
+ *
+ * `text` is `1 Name (SET) 123` per printing — the lingua franca every deck site (and
+ * this app's own importers) accepts on paste. `names` is bare card names, de-duplicated
+ * across printings, for a spreadsheet or another search box.
+ */
+export type CardExportFormat = 'text' | 'names'
+
+/** The export params a search view can carry — a subset of {@link CardListParams}
+ * (no paging: an export is the whole result set, capped server-side). */
+export interface CardExportParams {
+  q?: string
+  sort?: string
+  dir?: string
+  includeRelated?: boolean
+  format?: CardExportFormat
+}
+
+function exportQuery(params: CardExportParams = {}): string {
+  const search = new URLSearchParams()
+  if (params.q) search.set('q', params.q)
+  if (params.sort) search.set('sort', params.sort)
+  if (params.dir) search.set('dir', params.dir)
+  if (params.includeRelated) search.set('include_related', 'true')
+  // `text` is the server default, so only a non-default shape needs stating.
+  if (params.format && params.format !== 'text') search.set('format', params.format)
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
+/** Relative `/api/games/{game}/cards/export` path for the all-cards search. */
+export function cardExportPath(game: string, params?: CardExportParams): string {
+  return `/api/games/${encodeURIComponent(game)}/cards/export${exportQuery(params)}`
+}
+
+/** Relative `/api/games/{game}/sets/{code}/cards/export` path for a set's card search. */
+export function setCardExportPath(game: string, code: string, params?: CardExportParams): string {
+  const g = encodeURIComponent(game)
+  const c = encodeURIComponent(code)
+  return `/api/games/${g}/sets/${c}/cards/export${exportQuery(params)}`
+}
+
+/** Download the all-cards search's whole result set as a `.txt` file. A public
+ * catalog read, so no token — unlike the collection and deck exports. */
+export function exportCards(game: string, params?: CardExportParams): Promise<Blob> {
+  return requestBlob(cardExportPath(game, params))
+}
+
+/** Download a set's card search's whole result set as a `.txt` file. */
+export function exportSetCards(
+  game: string,
+  code: string,
+  params?: CardExportParams,
+): Promise<Blob> {
+  return requestBlob(setCardExportPath(game, code, params))
 }
 
 /** How many name hints the quick-add box requests (the server also caps this). */

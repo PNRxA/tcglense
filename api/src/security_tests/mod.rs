@@ -18,6 +18,7 @@ mod alerts;
 mod api_keys;
 mod caching;
 mod captcha;
+mod card_export;
 mod cli_auth;
 mod collection;
 mod collection_import;

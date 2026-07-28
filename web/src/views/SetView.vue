@@ -6,6 +6,7 @@ import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import { RouterLink } from 'vue-router'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
+import CardExportMenu from '@/components/cards/CardExportMenu.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
@@ -296,6 +297,21 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         />
         <span v-else />
         <div v-if="!isEmpty" class="flex gap-2">
+          <!-- Everywhere but the by-drop view. The flat and by-treatment views both
+               show exactly "the set's cards matching ?q", which is what the export
+               endpoint returns. The by-drop view additionally carries ?drop= (it
+               narrows the *drops*), and the endpoint has no notion of that — offering
+               the button there would hand back a file that quietly ignored an active
+               filter, so it hides instead. -->
+          <CardExportMenu
+            v-if="!byDrop"
+            :game="game"
+            :set-code="code"
+            :query="query"
+            :sort="sort"
+            :default-sort="SET_DEFAULT_SORT"
+            :include-related="includeRelated"
+          />
           <CardSizeMenu />
           <CardSortMenu v-model="sort" :options="SET_SORT_OPTIONS" />
         </div>

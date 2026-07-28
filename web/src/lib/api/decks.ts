@@ -1,4 +1,4 @@
-import { API_URL, apiErrorFromResponse, request } from './client'
+import { request, requestBlob } from './client'
 import type {
   ChangeDeckCardPrintingRequest,
   CollectionQuantities,
@@ -280,24 +280,13 @@ export function deckExportPath(game: string, deckId: number, format: DeckExportF
 }
 
 /** Download a deck export. File responses bypass the JSON request wrapper. */
-export async function exportDeckFile(
+export function exportDeckFile(
   token: string,
   game: string,
   deckId: number,
   format: DeckExportFormat,
 ): Promise<Blob> {
-  const response = await fetch(`${API_URL}${deckExportPath(game, deckId, format)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await apiErrorFromResponse(
-      response,
-      `Export failed with status ${response.status}`,
-    )
-    throw error
-  }
-  return response.blob()
+  return requestBlob(deckExportPath(game, deckId, format), token)
 }
 
 // ----- Public (unauthenticated, handle-addressed) -----

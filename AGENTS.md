@@ -252,6 +252,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`parent_set_code IS NULL`), a curated set-type allow-list, non-digital, never `sld` (drops
   handle that per-drop). Session-only channel settings, like price alerts; the two flags ride
   the `AlertChannels` DTO, so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
+- **Every export is a file-download response through `handlers/shared/download.rs`**
+  (`csv_download`/`text_download`) — don't re-roll the Content-Type + Content-Disposition
+  pair. The **card-search `.txt` export** (`/api/games/{game}/cards/export` and its
+  `.../sets/{code}/cards/export` sibling) is a *public catalog* read that must keep building
+  its query from the listing's own builders (`catalog::cards::all_cards_query` /
+  `catalog::sets::set_cards_query`) — a second query here means the file can silently
+  disagree with the grid it was exported from. It's capped at 10,000 rows and **says so** in
+  a trailing `#` comment; keep truncation visible, and keep the body otherwise pure card
+  lines so a paste stays clean. A view whose listing carries a filter the endpoint doesn't
+  know must **hide** the button rather than export a file that quietly ignores it — that's
+  exactly why `SetView` gates on `!byDrop` (the by-drop view owns `?drop=`) and not on
+  `!grouped` (the by-treatment view shows the same cards the export returns, so it keeps it).
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

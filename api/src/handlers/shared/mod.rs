@@ -8,6 +8,7 @@
 //! Nothing here may import from `handlers::catalog`, `handlers::collection`, or
 //! `handlers::wishlist` — the dependency only ever flows *into* `shared`.
 
+pub(crate) mod download;
 pub(crate) mod dto;
 pub(crate) mod grouping;
 pub(crate) mod holdings;
@@ -19,6 +20,7 @@ pub(crate) mod search;
 pub(crate) mod sort;
 pub(crate) mod valuation;
 
+pub(crate) use download::{csv_download, text_download};
 pub(crate) use dto::{CardResponse, stored_faces};
 pub(crate) use grouping::{
     filter_drops_by_title, group_into_drops, group_into_subtypes, paginate_buckets,

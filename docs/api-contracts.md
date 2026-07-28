@@ -238,6 +238,8 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated drop titles), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cheapest_prints_usd, cards: Card[] }` and `total` counts drops. `cheapest_prints_usd` is the drop's "cheapest prints" total — for each **distinct** card in the drop (by gameplay identity/`oracle_id`, so a foil-variant printing isn't double-counted), the price of its cheapest available printing *anywhere in the catalog* (the lower of that printing's regular and foil price, so a card is floored at a cheap reprint rather than its Secret Lair printing), summed. A canonical USD decimal string (the SPA renders it in the display currency), or `null` when no card in the drop has a priced printing. Computed with one extra indexed `(game, oracle_id)` lookup scoped to the page's cards. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
 | `GET /api/games/{game}/sets/{code}/subtypes?q&page&page_size` | a set's cards grouped by **sub-type** (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by sub-type** — `{ data: SubtypeGroup[], page, page_size, total, has_more }` where `SubtypeGroup = { slug, title, card_count, cards: Card[] }` and `total` counts sub-types. The sub-type is **derived** from the card's print attributes (see `crate::scryfall::subtypes`); every card classifies, so `Normal` heads the list, then treatments. Unlike `/drops` this never `404`s (any set groups — one `Normal` group if plain; the SPA gates the view on `has_subtypes`); optional `q` filters cards, dropping now-empty sub-types |
 | `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
+| `GET /api/games/{game}/cards/export?q&name&sort&dir&format` | the **whole result set** of that search as a `text/plain` attachment (no paging — see **Search export** below). `404` unknown game, `422` malformed `q`/`sort`/`format` |
+| `GET /api/games/{game}/sets/{code}/cards/export?q&include_related&sort&dir&format` | the same, scoped to a set (the set-cards listing's result set). `404` unknown game or set, `422` malformed `q`/`sort`/`format` |
 | `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection/wish-list quick-add autocomplete |
 | `GET /api/games/{game}/art-tags?q&limit` | `{ data: ArtTagEntry[] }` — Tagger **art tags** usable with the `art:` search filter, `ArtTagEntry = { slug, label, count, description }` (`count` = distinct stored artworks matching, hierarchy-expanded; tags matching nothing we store are absent). With `q`: up to `limit` (default 10, max 50) tags whose slug **or** label contains `q` (case-insensitive; starts-with matches first, then by `count`) — the advanced-search autocomplete. Without `q`: the game's **full** tag list ordered by slug — the SPA tag-browser payload (a few thousand entries; ETag/CDN-cached like every public catalog read) |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
@@ -341,6 +343,36 @@ don't ingest — Tagger **oracle** tags (`otag:`/`function:`, the remainder of i
 #140), `cube:` (issue #141), and the curated `is:` land-cycle subjects — plus
 malformed queries return **422** `{ error }` (surfaced in the UI under the search
 box). All user values bind as SeaORM/SQL parameters — never interpolated into SQL.
+
+### Search export (`.txt`)
+
+`GET /api/games/{game}/cards/export` and `GET /api/games/{game}/sets/{code}/cards/export`
+(`handlers::catalog::export`) return the **whole result set** of the corresponding card
+listing as a `text/plain; charset=utf-8` attachment, so a visitor can take a search away
+rather than paging a grid 60 cards at a time. Both are ordinary **public** catalog reads
+(no auth, same `PUBLIC_CATALOG_CACHE` + ETag as the listing they mirror) and accept the
+same params as their listing — `q` (the full search grammar above), `name`/`include_related`,
+`sort`, `dir` — minus paging, which an export has no use for. They build their query with
+the *listing's own* builders (`cards::all_cards_query` / `sets::set_cards_query`), so the
+file can never disagree with the grid it was triggered from.
+
+`?format=` picks the shape (unknown value = `422`, like a malformed `q`):
+
+| `format` | Body | Filename |
+|---|---|---|
+| `text` (default) | `1 Name (SET) 123`, one line per printing | `tcglense-{game}[-{set}]-cards.txt` |
+| `names` | bare card names, de-duplicated across printings, in query order | `tcglense-{game}[-{set}]-card-names.txt` |
+
+The `text` shape is the same line grammar the deck export's `moxfield-text` emits and
+`deck_import::parser` / `collection_import::text_list` read back, so an exported search
+re-imports here and pastes into any deck site. The leading `1` is the quantity the format
+requires, not a claim about owned copies (the catalog knows nothing about the caller).
+
+Exports are capped at **10,000 cards**. Past that the body ends with a single
+`# {n} more matching cards were not exported …` comment line stating exactly how many
+were left out — the truncation is never silent, and `#` is the comment marker every
+decklist parser involved already skips, so the note can't corrupt a paste. A complete
+export carries no comment at all.
 
 ### HTTP caching (CDN)
 
