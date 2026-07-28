@@ -57,8 +57,14 @@ DTOs) and the `format` gate, but still does **not** run lint/clippy — the chec
 above is the only thing catching those.
 
 **e2e gotcha:** Playwright starts only the *web* server. Start the API yourself with
-`SEED_DUMMY_DATA=true` first — the specs probe `/api/health` and **silently skip**
-when it's unreachable, so the suite can "pass" without testing anything.
+`SEED_DUMMY_DATA=true` first — the specs probe `/api/ready` and **silently skip**
+when it's unreachable, so the suite can "pass" without testing anything. Probe
+**readiness, never `/api/health`**: liveness answers the moment the listener binds and
+stays up through the boot-migration window, while the startup gate still answers every
+other route with a maintenance `503` — gating on it makes the first specs fail on a 503
+instead of skipping. The dummy seed (catalog, then the verified `e2e@tcglense.test`
+account) runs *after* the gate opens, so "fully booted" is a successful seeded login —
+that's what CI waits for.
 
 ## Where code lives
 

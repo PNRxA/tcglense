@@ -197,7 +197,7 @@ jobs:
         working-directory: web
         run: npm run build
 
-      # Start the API (offline dummy catalog), wait for it to be healthy, then
+      # Start the API (offline dummy catalog), wait for it to be *ready*, then
       # run Playwright. Playwright's own webServer config serves the built SPA
       # via `npm run preview` on :4173, which proxies /api to the API on :8080.
       # RATE_LIMIT_ENABLED=false: every browser request originates from the same
@@ -226,10 +226,23 @@ jobs:
           API_PID=$!
           trap 'kill "$API_PID" 2>/dev/null || true' EXIT
 
-          echo "Waiting for the API to become healthy..."
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8080/api/health >/dev/null; then
-              echo "API is up."
+          # Do NOT gate on /api/health: liveness answers the moment the listener
+          # binds, and the API deliberately keeps it up through the boot-migration
+          # window while the startup gate 503s every other route (api/src/router.rs).
+          # Waiting on it raced Playwright against boot and the first specs got a
+          # maintenance 503 instead of a 200. /api/ready drains during that gate, and
+          # the dummy seed runs after it opens — catalog first, then the verified e2e
+          # account — so a successful seeded login is the sentinel for "fully booted":
+          # it proves the gate is open *and* the seed has landed (without it the
+          # session specs would silently skip). Rate limiting is off in this job, so
+          # polling login costs nothing.
+          echo "Waiting for the API to become ready and the dummy seed to land..."
+          for i in $(seq 1 120); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/api/ready \
+              && curl -fsS -o /dev/null -X POST http://127.0.0.1:8080/api/auth/login \
+                -H 'content-type: application/json' \
+                -d '{"email":"e2e@tcglense.test","password":"password123"}'; then
+              echo "API is up and seeded."
               break
             fi
             if ! kill -0 "$API_PID" 2>/dev/null; then
@@ -237,8 +250,8 @@ jobs:
               cat "$RUNNER_TEMP/api.log" >&2
               exit 1
             fi
-            if [ "$i" -eq 60 ]; then
-              echo "API did not become healthy in time; log:" >&2
+            if [ "$i" -eq 120 ]; then
+              echo "API did not become ready in time; log:" >&2
               cat "$RUNNER_TEMP/api.log" >&2
               exit 1
             fi
