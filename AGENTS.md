@@ -252,6 +252,31 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`parent_set_code IS NULL`), a curated set-type allow-list, non-digital, never `sld` (drops
   handle that per-drop). Session-only channel settings, like price alerts; the two flags ride
   the `AlertChannels` DTO, so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
+- **Every export is a file-download response through `handlers/shared/download.rs`**
+  (`csv_download`/`text_download`) — don't re-roll the Content-Type + Content-Disposition
+  pair. The **card-search `.txt` export** (`/api/games/{game}/cards/export` and its
+  `.../sets/{code}/cards/export` sibling) is a *public catalog* read that must keep building
+  its query from the listing's own builders (`catalog::cards::all_cards_query` /
+  `catalog::sets::set_cards_query`) — a second query here means the file can silently
+  disagree with the grid it was exported from. It is **uncapped and streamed**: rows drain
+  through **one** SeaORM row stream into ~500-line chunks on a bounded channel, so peak
+  memory is a chunk, not a result set — and it selects **only** the three columns a line
+  needs, not all ~70 (that alone is 12x on a full-catalog drain). **Never hold a DB
+  connection while awaiting the client:** SeaORM's row stream owns its `PoolConnection` for
+  the stream's life and sea-orm pins SQLite (the default) to *one* connection, so streaming
+  a single query to the client let one slow reader take the whole API down. Hence the
+  two-phase drain — resolve ids in one query, then re-acquire per chunk — with the send
+  happening outside any checked-out connection. Bounded channel *and* connection-free
+  awaits; either alone is not enough. Don't give
+  the response a size hint (that's what stops `conditional_request_layer` buffering the
+  whole thing to compute an `ETag`), and don't turn a mid-stream failure into silence: it
+  appends a `#`-comment marker **and** errors the transfer, so a short file is never
+  mistaken for a whole one. Otherwise the body stays pure card lines so a paste is clean.
+  A view served by a **different endpoint** than the one the export reuses must **hide**
+  the button rather than hand back a file that isn't the rows on screen — that's why
+  `SetView` gates on `!grouped`: `/drops` owns a `?drop=` filter the export can't express,
+  and `/subtypes` parses the search's `unique:`/`order:` directives and then *discards*
+  them, so a `q=unique:cards` grid shows every printing while the export would fold them.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

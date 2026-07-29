@@ -6,6 +6,7 @@ import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
+import CardExportMenu from '@/components/cards/CardExportMenu.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
@@ -111,6 +112,13 @@ useClampPage(page, () => ({
 
     <template v-else>
       <div ref="resultsTop" class="mb-4 flex scroll-mt-24 flex-wrap justify-end gap-2">
+        <CardExportMenu
+          :game="game"
+          :query="query"
+          :sort="sort"
+          :default-sort="ALL_CARDS_DEFAULT_SORT"
+          :total="total"
+        />
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />
       </div>

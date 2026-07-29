@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use axum::extract::State;
-use axum::http::{HeaderValue, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use csv::{QuoteStyle, Terminator, WriterBuilder};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::Deserialize;
@@ -15,8 +14,7 @@ use crate::entities::prelude::{Card, DeckCard, DeckSection};
 use crate::entities::{card, deck_card, deck_section};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
-use crate::handlers::collection::export::csv_download;
-use crate::handlers::shared::require_game;
+use crate::handlers::shared::{csv_download, require_game, text_download};
 use crate::state::AppState;
 
 use super::load_deck;
@@ -278,22 +276,6 @@ fn text_row(card: &card::Model, quantity: i32, foil: bool) -> String {
         card.collector_number,
         if foil { " *F*" } else { "" }
     )
-}
-
-fn text_download(body: String, filename: &str) -> Result<Response, AppError> {
-    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-        .map_err(|_| AppError::Internal("invalid export filename".into()))?;
-    Ok((
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/plain; charset=utf-8"),
-            ),
-            (header::CONTENT_DISPOSITION, disposition),
-        ],
-        body,
-    )
-        .into_response())
 }
 
 #[cfg(test)]

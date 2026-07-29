@@ -88,6 +88,8 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::list_set_cards,
         crate::handlers::catalog::list_set_drops,
         crate::handlers::catalog::list_cards,
+        crate::handlers::catalog::export_cards,
+        crate::handlers::catalog::export_set_cards,
         crate::handlers::catalog::get_card,
         crate::handlers::catalog::card_prices,
         crate::handlers::catalog::card_prints,

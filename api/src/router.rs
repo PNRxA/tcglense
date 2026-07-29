@@ -34,11 +34,11 @@ use crate::{
             public_holdings_cache_layer,
         },
         catalog::{
-            card_image, card_names, card_prices, card_prints, card_rulings, card_sealed, get_card,
-            get_product, get_set, ingest_status, list_art_tags, list_cards, list_games,
-            list_products, list_set_cards, list_set_drops, list_set_subtypes, list_sets,
-            product_card_sections, product_cards, product_containers, product_contents,
-            product_facets, product_image, product_prices, scan_cards, set_icon,
+            card_image, card_names, card_prices, card_prints, card_rulings, card_sealed,
+            export_cards, export_set_cards, get_card, get_product, get_set, ingest_status,
+            list_art_tags, list_cards, list_games, list_products, list_set_cards, list_set_drops,
+            list_set_subtypes, list_sets, product_card_sections, product_cards, product_containers,
+            product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -464,12 +464,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/games/{game}/sets/{code}", get(get_set))
         .route("/api/games/{game}/sets/{code}/icon", get(set_icon))
         .route("/api/games/{game}/sets/{code}/cards", get(list_set_cards))
+        // The set search's whole result set as a `.txt` download. A static sibling of
+        // `.../cards` (there is no `.../cards/{id}` under a set, but keeping the
+        // suffix shape matches the all-cards export below).
+        .route(
+            "/api/games/{game}/sets/{code}/cards/export",
+            get(export_set_cards),
+        )
         .route("/api/games/{game}/sets/{code}/drops", get(list_set_drops))
         .route(
             "/api/games/{game}/sets/{code}/subtypes",
             get(list_set_subtypes),
         )
         .route("/api/games/{game}/cards", get(list_cards))
+        // The card search's whole result set as a `.txt` download. `export` is a static
+        // segment, so it wins over `/cards/{id}` in axum and can never be read as a
+        // card id — the same precedence `card-names` relies on below.
+        .route("/api/games/{game}/cards/export", get(export_cards))
         // Distinct card-name autocomplete for the collection quick-add box. A sibling
         // of `/cards` (not `/cards/{name}`) so it never collides with `/cards/{id}`.
         .route("/api/games/{game}/card-names", get(card_names))

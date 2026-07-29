@@ -1,10 +1,13 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 
 import {
+  cardExportPath,
   cardImageUrl,
   cardNamesPath,
+  exportCards,
   getCardPrintingsByName,
   priceHistoryPath,
+  setCardExportPath,
   setIconUrl,
 } from '../api'
 
@@ -85,5 +88,78 @@ describe('getCardPrintingsByName', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toContain(
       '/api/games/mtg/cards?page=3&page_size=200&sort=released&dir=desc&name=Island',
     )
+  })
+})
+
+describe('cardExportPath', () => {
+  it('is a bare path when the search carries no filters', () => {
+    expect(cardExportPath('mtg')).toBe('/api/games/mtg/cards/export')
+  })
+
+  it('carries the search and sort so the file matches the grid', () => {
+    expect(cardExportPath('mtg', { q: 'c:r t:goblin', sort: 'price', dir: 'desc' })).toBe(
+      '/api/games/mtg/cards/export?q=c%3Ar+t%3Agoblin&sort=price&dir=desc',
+    )
+  })
+
+  it('omits the default text format and states any other', () => {
+    expect(cardExportPath('mtg', { format: 'text' })).toBe('/api/games/mtg/cards/export')
+    expect(cardExportPath('mtg', { format: 'names' })).toBe(
+      '/api/games/mtg/cards/export?format=names',
+    )
+  })
+
+  it('never carries paging — an export is the whole result set', () => {
+    expect(cardExportPath('mtg', { q: 'goblin' })).not.toContain('page')
+  })
+
+  it('returns a relative path and encodes the game segment', () => {
+    const path = cardExportPath('a/b')
+    expect(path.startsWith('/api/')).toBe(true)
+    expect(path).toContain('a%2Fb')
+  })
+})
+
+describe('setCardExportPath', () => {
+  it('scopes to the set and encodes both segments', () => {
+    expect(setCardExportPath('mtg', 'neo')).toBe('/api/games/mtg/sets/neo/cards/export')
+    expect(setCardExportPath('mtg', 'a/b')).toContain('a%2Fb')
+  })
+
+  it('passes the related-group scope through', () => {
+    expect(setCardExportPath('mtg', 'neo', { includeRelated: true })).toBe(
+      '/api/games/mtg/sets/neo/cards/export?include_related=true',
+    )
+    // False is the default, so it drops out rather than pinning the flag in the URL.
+    expect(setCardExportPath('mtg', 'neo', { includeRelated: false })).toBe(
+      '/api/games/mtg/sets/neo/cards/export',
+    )
+  })
+})
+
+describe('exportCards', () => {
+  it('reads the response as a blob and surfaces a failure as an ApiError', async () => {
+    const blob = new Blob(['1 Sol Ring (LTC) 284\n'], { type: 'text/plain' })
+    const fetchMock = vi.fn<
+      (url: string) => Promise<{ ok: boolean; status: number; blob: () => Promise<Blob> }>
+    >(async () => ({ ok: true, status: 200, blob: async () => blob }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(exportCards('mtg', { q: 'goblin' })).resolves.toBe(blob)
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/games/mtg/cards/export?q=goblin')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<
+        (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>
+      >(async () => ({
+        ok: false,
+        status: 422,
+        json: async () => ({ error: 'unknown filter' }),
+      })),
+    )
+    await expect(exportCards('mtg', { q: 'bogus:1' })).rejects.toMatchObject({
+      status: 422,
+      message: 'unknown filter',
+    })
   })
 })

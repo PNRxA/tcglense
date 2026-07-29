@@ -117,6 +117,30 @@ export function listQuery(params: {
   return qs ? `?${qs}` : ''
 }
 
+/**
+ * Fetch a file endpoint and return its bytes.
+ *
+ * File responses can't go through `request` (which reads the body as text and parses it
+ * as JSON, hiding the raw bytes), so every export endpoint needs this shape instead:
+ * fetch, throw `ApiError` on a non-2xx, hand back the blob. Throwing rather than
+ * resolving is load-bearing for the authed callers — it's what lets the auth store's
+ * single 401-refresh-and-retry fire (a bare `fetch` resolves on 401 and would skip it).
+ *
+ * `token` is optional: the collection and deck exports are per-user and pass one, the
+ * card-search export is a public catalog read and doesn't. `credentials: 'include'`
+ * either way, matching `request` — a public read simply has no cookie to act on.
+ */
+export async function requestBlob(path: string, token?: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include',
+  })
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response, `Export failed with status ${response.status}`)
+  }
+  return response.blob()
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isRaw = options.rawBody != null
   const method = options.method ?? 'GET'

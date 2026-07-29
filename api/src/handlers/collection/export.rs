@@ -15,8 +15,7 @@
 //! MTGO ID) are emitted as `0`, matching Archidekt's own default for a card it can't map.
 
 use axum::extract::State;
-use axum::http::{HeaderValue, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use csv::{QuoteStyle, Terminator, WriterBuilder};
 use serde::Deserialize;
 
@@ -24,7 +23,7 @@ use crate::auth::extractor::AuthUser;
 use crate::entities::{card, collection_item};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
-use crate::handlers::shared::require_game;
+use crate::handlers::shared::{csv_download, require_game};
 use crate::state::AppState;
 
 use super::read::owned_with_cards;
@@ -399,24 +398,6 @@ fn split_type_line(type_line: Option<&str>) -> (String, String, String) {
 /// so there's no I/O to fail and every record matches the header width).
 fn csv_err(error: csv::Error) -> AppError {
     AppError::Internal(format!("failed to build export CSV: {error}"))
-}
-
-/// Wrap the CSV body in a file-download response (`text/csv` + a `Content-Disposition`
-/// attachment filename). Cache-Control is stamped `no-store` by the router's private group.
-pub(crate) fn csv_download(body: String, filename: &str) -> Result<Response, AppError> {
-    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-        .map_err(|_| AppError::Internal("invalid export filename".into()))?;
-    Ok((
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/csv; charset=utf-8"),
-            ),
-            (header::CONTENT_DISPOSITION, disposition),
-        ],
-        body,
-    )
-        .into_response())
 }
 
 #[cfg(test)]

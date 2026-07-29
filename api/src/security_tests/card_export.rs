@@ -1,0 +1,376 @@
+//! Public card-search `.txt` export — the same search as the grid, streamed in full
+//! however many rows it matches. Also pins the route shape: `export` is a static segment,
+//! so it must never be swallowed by the sibling `/cards/{id}` route.
+
+use super::harness::*;
+use crate::entities::card;
+use crate::test_support::url_encode;
+
+/// Card lines are `1 Name (SET) Number`; a `#` line only ever marks a failed export.
+fn card_lines(body: &str) -> Vec<&str> {
+    body.lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect()
+}
+
+#[tokio::test]
+async fn export_returns_a_plain_text_attachment_of_every_match() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // The JSON listing reports the match count; the export must contain exactly that
+    // many rows — the whole result set, not just the first page of 60.
+    let (list_status, _, list_body) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards?page=1&page_size=1")),
+    )
+    .await;
+    assert_eq!(list_status, StatusCode::OK);
+    let total = list_body["total"].as_u64().expect("total");
+    assert!(total > 1, "dummy catalog should have seeded several cards");
+
+    let (status, headers, body) =
+        send_text(&app, get(&format!("/api/games/{game}/cards/export"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type(&headers), Some("text/plain; charset=utf-8"));
+    assert_eq!(
+        headers
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok()),
+        Some("attachment; filename=\"tcglense-mtg-cards.txt\""),
+        "the browser must save the file rather than render it",
+    );
+    let lines = card_lines(&body);
+    assert_eq!(lines.len() as u64, total, "every match is exported");
+    // Every line is the importable `1 Name (SET) Number` grammar.
+    for line in &lines {
+        assert!(
+            line.starts_with("1 ") && line.contains('(') && line.contains(')'),
+            "unexpected export line: {line}"
+        );
+    }
+    // There is no row cap, so a successful export is pure card lines — the only `#` the
+    // body can ever carry is the marker for an export that died part-way.
+    assert!(!body.contains('#'), "a healthy export carries no note");
+    // Streamed, so it is chunk-framed with no length up front. The ETag layer must leave
+    // it alone rather than buffering the whole (unbounded) body back up to hash it.
+    assert_eq!(headers.get("content-length"), None);
+    assert_eq!(headers.get("etag"), None);
+}
+
+#[tokio::test]
+async fn the_whole_result_set_streams_even_though_it_spans_pages() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // The listing is capped at MAX_PAGE_SIZE per request; the export answers in one shot
+    // regardless, because it drains the query rather than serving a page of it.
+    let (_, _, first_page) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards?page=1&page_size=5")),
+    )
+    .await;
+    let total = first_page["total"].as_u64().expect("total");
+    assert!(
+        total > 5,
+        "the fixture must exceed one page for this to mean anything"
+    );
+
+    let (status, _, body) = send_text(&app, get(&format!("/api/games/{game}/cards/export"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let lines = card_lines(&body);
+    assert_eq!(lines.len() as u64, total);
+
+    // Walk every page of the listing and assert the export is exactly that multiset —
+    // nothing dropped and nothing repeated at a chunk or page boundary.
+    let mut listed: Vec<String> = Vec::new();
+    let mut page = 1;
+    loop {
+        let (_, _, body) = send(
+            &app,
+            get(&format!("/api/games/{game}/cards?page={page}&page_size=25")),
+        )
+        .await;
+        for card in body["data"].as_array().expect("data array") {
+            listed.push(format!(
+                "1 {} ({}) {}",
+                card["name"].as_str().expect("name"),
+                card["set_code"].as_str().expect("set_code").to_uppercase(),
+                card["collector_number"].as_str().expect("collector_number"),
+            ));
+        }
+        if !body["has_more"].as_bool().unwrap_or(false) {
+            break;
+        }
+        page += 1;
+    }
+    assert_eq!(listed.len() as u64, total);
+    assert_eq!(
+        lines, listed,
+        "same rows, same order, across every boundary"
+    );
+}
+
+#[tokio::test]
+async fn export_honours_the_same_search_and_sort_as_the_listing() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // Pick a filter that matches a strict subset, then assert the export and the JSON
+    // listing agree on both the membership and the order — the export must be the same
+    // query the grid renders, never a second implementation.
+    let query = url_encode("t:instant");
+    let listing = format!("/api/games/{game}/cards?q={query}&sort=name&dir=asc&page_size=200");
+    let (list_status, _, list_body) = send(&app, get(&listing)).await;
+    assert_eq!(list_status, StatusCode::OK);
+    let names: Vec<String> = list_body["data"]
+        .as_array()
+        .expect("data array")
+        .iter()
+        .map(|card| card["name"].as_str().expect("name").to_string())
+        .collect();
+    assert!(!names.is_empty(), "the filter should match some cards");
+    assert!(
+        (names.len() as u64) < list_body_total(&app, game).await,
+        "the filter should narrow the catalog"
+    );
+
+    let (status, _, body) = send_text(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards/export?q={query}&sort=name&dir=asc"
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let exported: Vec<String> = card_lines(&body)
+        .iter()
+        .map(|line| {
+            // `1 <name> (SET) <number>` -> the name between the leading count and the set.
+            let without_count = line.strip_prefix("1 ").expect("leading quantity");
+            without_count[..without_count.rfind(" (").expect("set marker")].to_string()
+        })
+        .collect();
+    assert_eq!(exported, names, "same cards, same order as the grid");
+}
+
+/// The unfiltered catalog total, for "the filter actually narrowed things" assertions.
+async fn list_body_total(app: &TestApp, game: &str) -> u64 {
+    let (_, _, body) = send(app, get(&format!("/api/games/{game}/cards?page_size=1"))).await;
+    body["total"].as_u64().expect("total")
+}
+
+#[tokio::test]
+async fn names_format_dedupes_printings() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // The dummy catalog reprints "Dummy Reprinted Relic" across two sets. The default
+    // shape lists each printing; `names` folds them to the one card a human would write.
+    let query = url_encode("Dummy Reprinted Relic");
+    let (_, _, text) = send_text(
+        &app,
+        get(&format!("/api/games/{game}/cards/export?q={query}")),
+    )
+    .await;
+    assert!(
+        card_lines(&text).len() > 1,
+        "the default shape keeps every printing: {text}"
+    );
+
+    let (status, headers, names) = send_text(
+        &app,
+        get(&format!(
+            "/api/games/{game}/cards/export?q={query}&format=names"
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok()),
+        Some("attachment; filename=\"tcglense-mtg-card-names.txt\""),
+    );
+    assert_eq!(card_lines(&names), vec!["Dummy Reprinted Relic"]);
+}
+
+#[tokio::test]
+async fn a_set_export_is_scoped_to_the_set_and_names_it() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    let (list_status, _, list_body) = send(
+        &app,
+        get(&format!("/api/games/{game}/sets/dmb/cards?page_size=1")),
+    )
+    .await;
+    assert_eq!(list_status, StatusCode::OK);
+    let set_total = list_body["total"].as_u64().expect("total");
+
+    let (status, headers, body) = send_text(
+        &app,
+        get(&format!("/api/games/{game}/sets/dmb/cards/export")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type(&headers), Some("text/plain; charset=utf-8"));
+    assert_eq!(
+        headers
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok()),
+        Some("attachment; filename=\"tcglense-mtg-dmb-cards.txt\""),
+    );
+    let lines = card_lines(&body);
+    assert_eq!(lines.len() as u64, set_total);
+    assert!(
+        lines.iter().all(|line| line.contains("(DMB)")),
+        "every row belongs to the requested set: {body}"
+    );
+
+    // The set is resolved before the format, so an unknown set is a 404 even with a
+    // bogus `?format=` — a missing thing outranks a malformed param.
+    let (nf_status, _, _) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/sets/nope/cards/export?format=bogus"
+        )),
+    )
+    .await;
+    assert_eq!(nf_status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn export_rejects_unknown_games_formats_and_queries() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // Unknown game -> 404 (the `export` segment never reaches a card-id lookup).
+    let (nf_status, _, _) = send(&app, get("/api/games/nope/cards/export")).await;
+    assert_eq!(nf_status, StatusCode::NOT_FOUND);
+
+    // Unknown format -> 422 with a message, not a silent fall back to the default.
+    let (bad_format, _, bad_body) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards/export?format=csv")),
+    )
+    .await;
+    assert_eq!(bad_format, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        bad_body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("csv")),
+        "the error names the rejected format: {bad_body:?}"
+    );
+
+    // A malformed search is a 422 here exactly as it is on the listing, never a 500.
+    let (bad_query, _, _) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards/export?q=boguskey:1")),
+    )
+    .await;
+    assert_eq!(bad_query, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // An injection payload stays a harmless literal name search.
+    let injection = url_encode("'; DROP TABLE cards;--");
+    let (inj_status, _, _) = send_text(
+        &app,
+        get(&format!("/api/games/{game}/cards/export?q={injection}")),
+    )
+    .await;
+    assert_eq!(inj_status, StatusCode::OK);
+    let (after_status, _, after_body) =
+        send(&app, get(&format!("/api/games/{game}/cards?page_size=1"))).await;
+    assert_eq!(after_status, StatusCode::OK);
+    assert!(after_body["total"].as_u64().is_some_and(|total| total > 0));
+}
+
+#[tokio::test]
+async fn export_is_a_public_cdn_cacheable_read() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // The export is a pure function of public catalog data + the query string, so it
+    // sits in the public catalog group and gets that group's shared-cache policy —
+    // not `no-store`, and not the holdings policy.
+    let (status, headers, _) =
+        send_text(&app, get(&format!("/api/games/{game}/cards/export"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+    );
+}
+
+/// Enough extra cards that a drain must park mid-export.
+///
+/// The body is only ever parked once the in-flight channel is full, i.e. after
+/// `EXPORT_CHANNEL_CHUNKS * EXPORT_CHUNK_CARDS` rendered lines. The dummy catalog is ~100
+/// cards, which drains in a single chunk and would make the starvation test below vacuous.
+const ROWS_TO_FORCE_A_PARKED_DRAIN: i32 = 2_500;
+
+#[tokio::test]
+async fn an_export_never_holds_a_db_connection_while_writing_to_the_client() {
+    use sea_orm::{EntityTrait, IntoActiveModel};
+
+    // Regression: the first cut of this endpoint streamed one SeaORM query straight to the
+    // response body. That stream owns its pooled connection for its whole life, and sea-orm
+    // pins SQLite — the default backend, and what this harness uses — to a single pooled
+    // connection. One slow reader therefore held the process's only connection and every
+    // other request died on the pool's 30s acquire timeout.
+    //
+    // Driving a genuinely slow socket isn't possible in-process, so pin the property that
+    // makes the DoS impossible instead: while an export's body sits un-consumed and its
+    // drain is parked, the pool must still serve somebody else. If the drain regresses to
+    // holding a connection across client-paced sends, this blocks until the test times out.
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // Give the export enough rows that its drain is genuinely parked, not finished.
+    let mut rows = Vec::with_capacity(ROWS_TO_FORCE_A_PARKED_DRAIN as usize);
+    for i in 0..ROWS_TO_FORCE_A_PARKED_DRAIN {
+        let id = 900_000 + i;
+        rows.push(
+            card::Model {
+                external_id: format!("starve-{i}"),
+                name: format!("Starvation Card {i:05}"),
+                ..crate::test_support::card_model(id)
+            }
+            .into_active_model(),
+        );
+    }
+    // `cards` has ~70 columns, so batches must stay under SQLite's 32k bound-variable cap.
+    for batch in rows.chunks(100) {
+        card::Entity::insert_many(batch.to_vec())
+            .exec(&app.state.db)
+            .await
+            .expect("seed rows");
+    }
+
+    let response = tower::ServiceExt::oneshot(
+        app.router.clone(),
+        get(&format!("/api/games/{game}/cards/export")),
+    )
+    .await
+    .expect("router is infallible");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Hold the streaming body without reading it, so the drain fills the channel and parks.
+    let body = response.into_body();
+    tokio::task::yield_now().await;
+
+    // ...and now demand the database from another request.
+    let (status, _, json) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        send(&app, get(&format!("/api/games/{game}/cards?page_size=1"))),
+    )
+    .await
+    .expect("a second DB-backed request must not be starved by an in-flight export");
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        json["total"]
+            .as_u64()
+            .is_some_and(|total| total > ROWS_TO_FORCE_A_PARKED_DRAIN as u64)
+    );
+    drop(body);
+}

@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
     sea_query::NullOrdering,
 };
 use serde::Serialize;
@@ -261,20 +261,43 @@ pub async fn list_set_cards(
     let game_meta = require_game(&game)?;
     let set = load_set(&state, &game, &code).await?;
     let (page, page_size) = params.page_and_size();
+
+    let query = set_cards_query(&state, &game, game_meta, &set, &params).await?;
+    let paginator = query.paginate(&state.db, page_size);
+
+    let total = paginator.num_items().await?;
+    let rows = paginator.fetch_page(page - 1).await?;
+    let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();
+    Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// The set-cards listing's filtered + sorted query, without pagination.
+///
+/// Shared by [`list_set_cards`] and the plain-text export
+/// ([`super::export::export_set_cards`]) so an export is provably the same search —
+/// same set scope, same `q`, same sort — as the grid it was triggered from. `set` is
+/// the already-loaded set row, so a caller has proved the set exists (404) first.
+pub(super) async fn set_cards_query(
+    state: &AppState,
+    game: &str,
+    game_meta: &crate::catalog::Game,
+    set: &card_set::Model,
+    params: &ListParams,
+) -> Result<Select<card::Entity>, AppError> {
     let include_related = params.include_related.unwrap_or(false);
     let dialect = state.dialect();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game.as_str()));
+    let mut query = Card::find().filter(card::Column::Game.eq(game));
     query = if include_related {
         // Resolve the group membership from the flat set list (one cheap query) via the
         // shared seam the collection include-related view also uses, so both span the
         // same sets.
-        let codes = load_group_set_codes(&state, &game, &set.code).await?;
+        let codes = load_group_set_codes(state, game, &set.code).await?;
         query.filter(card::Column::SetCode.is_in(codes))
     } else {
         query.filter(card::Column::SetCode.eq(set.code.as_str()))
     };
-    let (query, shape) = apply_search(query, game_meta, &params, dialect)?;
+    let (query, shape) = apply_search(query, game_meta, params, dialect)?;
 
     let (sort, dir) = params.sort_spec_with(SortField::Number, shape.order, shape.direction)?;
     // For the default collector-number order, the related-sets view keeps each
@@ -283,13 +306,7 @@ pub async fn list_set_cards(
     // field instead — grouping by set there would fight the sort.
     let group_by_set = include_related && sort == SortField::Number;
     let query = apply_unique(query, shape.unique, dialect);
-    let paginator =
-        apply_card_sort(query, sort, dir, group_by_set, dialect).paginate(&state.db, page_size);
-
-    let total = paginator.num_items().await?;
-    let rows = paginator.fetch_page(page - 1).await?;
-    let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();
-    Ok(Json(build_page(data, page, page_size, total)))
+    Ok(apply_card_sort(query, sort, dir, group_by_set, dialect))
 }
 
 /// List set drops

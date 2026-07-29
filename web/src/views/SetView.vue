@@ -6,6 +6,7 @@ import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import { RouterLink } from 'vue-router'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
+import CardExportMenu from '@/components/cards/CardExportMenu.vue'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
@@ -296,6 +297,23 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         />
         <span v-else />
         <div v-if="!isEmpty" class="flex gap-2">
+          <!-- Flat view only. Both grouped views serve a *different* endpoint from the
+               one the export reuses: `/drops` owns the `?drop=` filter, and `/subtypes`
+               parses the search's shaping directives and then discards them, so a
+               `q=unique:cards` grid still shows every printing while the export would
+               fold them. Either way the file would not be the rows on screen, so the
+               button hides rather than lie. `total` is a *group* count in those views
+               anyway (the flat query is disabled there), so it is not passed. -->
+          <CardExportMenu
+            v-if="!grouped"
+            :game="game"
+            :set-code="code"
+            :query="query"
+            :sort="sort"
+            :default-sort="SET_DEFAULT_SORT"
+            :include-related="includeRelated"
+            :total="grouped ? undefined : total"
+          />
           <CardSizeMenu />
           <CardSortMenu v-model="sort" :options="SET_SORT_OPTIONS" />
         </div>

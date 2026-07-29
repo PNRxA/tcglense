@@ -31,6 +31,7 @@ use crate::scryfall::search::{cust_vals, escape_like};
 
 mod art_tags;
 mod cards;
+mod export;
 mod image;
 mod prices;
 mod products;
@@ -44,6 +45,7 @@ mod tests;
 
 pub use art_tags::list_art_tags;
 pub use cards::{card_names, card_prints, get_card, list_cards};
+pub use export::{export_cards, export_set_cards};
 pub use image::card_image;
 pub use prices::card_prices;
 pub use products::{
@@ -62,6 +64,7 @@ pub use status::{ingest_status, list_games};
 // defined). See `crate::openapi`.
 pub use art_tags::__path_list_art_tags;
 pub use cards::{__path_card_names, __path_card_prints, __path_get_card, __path_list_cards};
+pub use export::{__path_export_cards, __path_export_set_cards};
 pub use prices::__path_card_prices;
 pub use products::{
     __path_card_sealed, __path_get_product, __path_list_products, __path_product_card_sections,
@@ -143,6 +146,10 @@ pub struct ListParams {
     /// within each drop — the two filters compose.
     #[serde(default)]
     pub drop: Option<String>,
+    /// Export endpoints only: which plain-text shape to produce (`text`, the
+    /// default, or `names`). Ignored by every listing endpoint — they answer JSON.
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 impl ListParams {
@@ -173,6 +180,12 @@ impl ListParams {
     /// The trimmed drop-title filter for the by-drop view, or `None` when absent/blank.
     fn drop_title_filter(&self) -> Option<&str> {
         trim_query(self.drop.as_deref())
+    }
+
+    /// The export shape from `?format=`, or a 422 when it names one we don't emit.
+    /// Only the export endpoints call this; a stray `?format=` elsewhere is inert.
+    fn export_format(&self) -> Result<export::ExportFormat, AppError> {
+        export::ExportFormat::parse(self.format.as_deref())
     }
 
     /// Resolve the `(field, direction)` sort from the URL `sort`/`dir` params, an

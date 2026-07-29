@@ -238,6 +238,8 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated drop titles), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cheapest_prints_usd, cards: Card[] }` and `total` counts drops. `cheapest_prints_usd` is the drop's "cheapest prints" total — for each **distinct** card in the drop (by gameplay identity/`oracle_id`, so a foil-variant printing isn't double-counted), the price of its cheapest available printing *anywhere in the catalog* (the lower of that printing's regular and foil price, so a card is floored at a cheap reprint rather than its Secret Lair printing), summed. A canonical USD decimal string (the SPA renders it in the display currency), or `null` when no card in the drop has a priced printing. Computed with one extra indexed `(game, oracle_id)` lookup scoped to the page's cards. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
 | `GET /api/games/{game}/sets/{code}/subtypes?q&page&page_size` | a set's cards grouped by **sub-type** (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by sub-type** — `{ data: SubtypeGroup[], page, page_size, total, has_more }` where `SubtypeGroup = { slug, title, card_count, cards: Card[] }` and `total` counts sub-types. The sub-type is **derived** from the card's print attributes (see `crate::scryfall::subtypes`); every card classifies, so `Normal` heads the list, then treatments. Unlike `/drops` this never `404`s (any set groups — one `Normal` group if plain; the SPA gates the view on `has_subtypes`); optional `q` filters cards, dropping now-empty sub-types |
 | `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
+| `GET /api/games/{game}/cards/export?q&name&sort&dir&format` | the **whole result set** of that search, streamed as a `text/plain` attachment (no paging, no row cap — see **Search export** below). `404` unknown game, `422` malformed `q`/`sort`/`format` |
+| `GET /api/games/{game}/sets/{code}/cards/export?q&include_related&sort&dir&format` | the same, scoped to a set (the set-cards listing's result set). `404` unknown game or set, `422` malformed `q`/`sort`/`format` |
 | `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection/wish-list quick-add autocomplete |
 | `GET /api/games/{game}/art-tags?q&limit` | `{ data: ArtTagEntry[] }` — Tagger **art tags** usable with the `art:` search filter, `ArtTagEntry = { slug, label, count, description }` (`count` = distinct stored artworks matching, hierarchy-expanded; tags matching nothing we store are absent). With `q`: up to `limit` (default 10, max 50) tags whose slug **or** label contains `q` (case-insensitive; starts-with matches first, then by `count`) — the advanced-search autocomplete. Without `q`: the game's **full** tag list ordered by slug — the SPA tag-browser payload (a few thousand entries; ETag/CDN-cached like every public catalog read) |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
@@ -341,6 +343,73 @@ don't ingest — Tagger **oracle** tags (`otag:`/`function:`, the remainder of i
 #140), `cube:` (issue #141), and the curated `is:` land-cycle subjects — plus
 malformed queries return **422** `{ error }` (surfaced in the UI under the search
 box). All user values bind as SeaORM/SQL parameters — never interpolated into SQL.
+
+### Search export (`.txt`)
+
+`GET /api/games/{game}/cards/export` and `GET /api/games/{game}/sets/{code}/cards/export`
+(`handlers::catalog::export`) return the **whole result set** of the corresponding card
+listing as a `text/plain; charset=utf-8` attachment, so a visitor can take a search away
+rather than paging a grid 60 cards at a time. Both are ordinary **public** catalog reads
+(no auth, same `PUBLIC_CATALOG_CACHE` as the listing they mirror — but no ETag; see below) and accept the
+same params as their listing — `q` (the full search grammar above), `name`/`include_related`,
+`sort`, `dir` — minus paging, which an export has no use for. They build their query with
+the *listing's own* builders (`cards::all_cards_query` / `sets::set_cards_query`), so the
+file can never disagree with the grid it was triggered from.
+
+`?format=` picks the shape (unknown value = `422`, like a malformed `q`):
+
+| `format` | Body | Filename |
+|---|---|---|
+| `text` (default) | `1 Name (SET) 123`, one line per printing | `tcglense-{game}[-{set}]-cards.txt` |
+| `names` | bare card names, de-duplicated across printings, in query order | `tcglense-{game}[-{set}]-card-names.txt` |
+
+The `text` shape is the same line grammar the deck export's `moxfield-text` emits and
+`deck_import::parser` / `collection_import::text_list` read back, so an exported search
+re-imports here and pastes into any deck site. The leading `1` is the quantity the format
+requires, not a claim about owned copies (the catalog knows nothing about the caller).
+
+**Uncapped, and streamed to stay that way.** There is no row limit — a search matching
+the whole catalog exports the whole catalog, and the response body is never materialised.
+
+The drain is deliberately **two-phase**, and the shape is load-bearing rather than an
+optimisation. SeaORM's row stream owns the pooled connection it was created from for the
+stream's entire life, and sea-orm pins the **SQLite** backend — the default — to a *single*
+pooled connection. Streaming one query straight to the client therefore let a single
+unauthenticated slow reader hold the process's only connection for as long as it cared to,
+after which every other request (`/api/ready` included) died on the pool's 30s acquire
+timeout. So instead:
+
+1. one query resolves the matching card **ids** in the listing's order (4 bytes a row, so a
+   whole-catalog export is a couple of MB, and it is never awaited against the client); then
+2. each chunk of ~500 ids is hydrated by its own short query and rendered out, with the
+   connection given back *before* the client-paced send.
+
+Combined with a bounded channel (so a slow reader backpressures the drain rather than piling
+chunks up), that is both memory-safe and availability-safe — either property alone is not.
+The stream also selects **only** the three columns a line is made of rather than hydrating
+all ~70; on a 300k-card catalog that alone took a full export from 31.5s to 2.5s. Measured on
+a release build: 300k rows / 11 MB in ~4s for no measurable change in RSS (the per-chunk
+re-acquire costs ~1.5s against a single streamed query — the price of the availability
+property above).
+
+The trade-off is snapshot consistency: the id list and each chunk are separate reads, so a
+card edited mid-export can render with newer values and one deleted mid-export drops out.
+For a catalog that changes on a daily sync that is a fair price for not being trivially
+DoS-able.
+
+Two further consequences. The response carries **no `Content-Length` and no `ETag`** (a
+streaming body reports no size hint, which is exactly what stops `conditional_request_layer`
+buffering it back up to hash it — that guard is load-bearing here, not defensive). And the
+`200` is committed before the first row is read, so a mid-export database error can't become
+a `500`: it appends `# This export failed part-way and is incomplete…` **and** ends the
+transfer in error, so neither a reader nor the browser mistakes a short file for the whole
+search. `#` is the comment marker every decklist parser involved already skips, so the
+marker can't corrupt a paste. A healthy export is pure card lines.
+
+The SPA flags a large download before it starts (`CardExportMenu`): at or above
+`LARGE_EXPORT_CARDS` (5,000 — a UI threshold only, mirroring no server constant) it shows
+"Exporting all 47,231 matches — this may take a moment." It informs rather than blocks,
+and stays silent for ordinary searches, since nothing is capped or withheld.
 
 ### HTTP caching (CDN)
 
