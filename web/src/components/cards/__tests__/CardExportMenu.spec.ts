@@ -102,6 +102,40 @@ describe('CardExportMenu', () => {
     expect(wrapper.text()).toContain('Export failed. Please try again.')
   })
 
+  it('states the export cap whenever the menu is open', async () => {
+    const wrapper = mountMenu({ total: 42 })
+    await wrapper.get('button').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.body.textContent).toContain('Up to 10,000 cards per export.')
+  })
+
+  it('warns with the real shortfall once the search exceeds the cap', async () => {
+    const wrapper = mountMenu({ total: 12_345 })
+    await wrapper.get('button').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The number a visitor needs is "how much am I losing", not the bare limit.
+    expect(document.body.textContent).toContain(
+      'Only the first 10,000 of 12,345 matches will be exported',
+    )
+    expect(document.body.textContent).not.toContain('Up to 10,000 cards per export.')
+  })
+
+  it('falls back to the plain cap note when the count is unknown', async () => {
+    // The set view's grouped modes count *groups*, so they pass no total rather than a
+    // wrong one — the cap must still be disclosed.
+    const wrapper = mountMenu({ total: undefined })
+    await wrapper.get('button').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.body.textContent).toContain('Up to 10,000 cards per export.')
+  })
+
+  it('exports anyway when over the cap — the note informs, it does not block', async () => {
+    const wrapper = mountMenu({ total: 12_345 })
+    await pick(wrapper, 'Card list')
+    expect(exportCards).toHaveBeenCalled()
+    expect(downloadBlob).toHaveBeenCalled()
+  })
+
   it('disables the trigger when there is nothing to export', () => {
     expect(mountMenu({ disabled: true }).get('button').attributes('disabled')).toBeDefined()
     expect(mountMenu().get('button').attributes('disabled')).toBeUndefined()

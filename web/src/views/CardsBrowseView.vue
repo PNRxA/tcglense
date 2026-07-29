@@ -117,6 +117,7 @@ useClampPage(page, () => ({
           :query="query"
           :sort="sort"
           :default-sort="ALL_CARDS_DEFAULT_SORT"
+          :total="total"
         />
         <CardSizeMenu />
         <CardSortMenu v-model="sort" :options="ALL_CARDS_SORT_OPTIONS" />

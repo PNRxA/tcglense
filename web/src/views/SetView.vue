@@ -302,7 +302,9 @@ const searchError = computed(() => searchErrorMessage(listError.value))
                endpoint returns. The by-drop view additionally carries ?drop= (it
                narrows the *drops*), and the endpoint has no notion of that — offering
                the button there would hand back a file that quietly ignored an active
-               filter, so it hides instead. -->
+               filter, so it hides instead. `total` counts cards only in the flat view —
+               the grouped views' count is of *groups*, and the flat query is disabled
+               there, so pass nothing and let the menu state the cap without a number. -->
           <CardExportMenu
             v-if="!byDrop"
             :game="game"
@@ -311,6 +313,7 @@ const searchError = computed(() => searchErrorMessage(listError.value))
             :sort="sort"
             :default-sort="SET_DEFAULT_SORT"
             :include-related="includeRelated"
+            :total="grouped ? undefined : total"
           />
           <CardSizeMenu />
           <CardSortMenu v-model="sort" :options="SET_SORT_OPTIONS" />

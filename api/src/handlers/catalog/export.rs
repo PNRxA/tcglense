@@ -48,6 +48,10 @@ use super::sets::set_cards_query;
 /// and a broad filter like `t:creature c:r` lands in the low thousands) while keeping
 /// the response a few hundred KB rather than the whole catalog. Beyond this the export
 /// truncates and says so.
+///
+/// The SPA mirrors this in `web/src/lib/api/catalog.ts` (`MAX_EXPORT_CARDS`) to state the
+/// cap in the export menu — change both. Drift there is cosmetic, not dangerous: this
+/// value is the only enforcement, and the body names the omitted count regardless.
 const MAX_EXPORT_CARDS: u64 = 10_000;
 
 /// The plain-text shape an export produces.

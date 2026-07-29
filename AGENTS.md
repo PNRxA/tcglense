@@ -260,7 +260,10 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `catalog::sets::set_cards_query`) — a second query here means the file can silently
   disagree with the grid it was exported from. It's capped at 10,000 rows and **says so** in
   a trailing `#` comment; keep truncation visible, and keep the body otherwise pure card
-  lines so a paste stays clean. A view whose listing carries a filter the endpoint doesn't
+  lines so a paste stays clean. The cap is disclosed **up front** in the export menu too
+  (`MAX_EXPORT_CARDS` is mirrored in `lib/api/catalog.ts` — change both), escalating to a
+  warning with the real shortfall when the live result count exceeds it; that note informs
+  and must not block the download, since the endpoint is the only enforcement. A view whose listing carries a filter the endpoint doesn't
   know must **hide** the button rather than export a file that quietly ignores it — that's
   exactly why `SetView` gates on `!byDrop` (the by-drop view owns `?drop=`) and not on
   `!grouped` (the by-treatment view shows the same cards the export returns, so it keeps it).

@@ -374,6 +374,13 @@ were left out — the truncation is never silent, and `#` is the comment marker 
 decklist parser involved already skips, so the note can't corrupt a paste. A complete
 export carries no comment at all.
 
+The SPA states the cap *before* the download too (`CardExportMenu`, mirroring the constant
+as `MAX_EXPORT_CARDS` in `lib/api/catalog.ts`): a quiet "Up to 10,000 cards per export."
+normally, escalating to a warning naming the real shortfall ("Only the first 10,000 of
+12,345 matches will be exported…") once the current search exceeds it. It informs rather
+than blocks — the export still runs, and this endpoint stays the sole enforcement, so a
+stale mirrored constant can only misstate the menu label, never truncate anything quietly.
+
 ### HTTP caching (CDN)
 
 The router splits routes into two cache policies via response middleware

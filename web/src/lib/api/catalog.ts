@@ -115,6 +115,14 @@ export function listCards(
  */
 export type CardExportFormat = 'text' | 'names'
 
+/**
+ * Most cards one export can contain (kept in sync with the API's `MAX_EXPORT_CARDS`).
+ * Used only to *tell* the visitor before they download — the server enforces the cap and
+ * appends a `#` note naming the omitted count, so a stale value here can't truncate
+ * anything silently, it can only misstate the number in the menu.
+ */
+export const MAX_EXPORT_CARDS = 10_000
+
 /** The export params a search view can carry — a subset of {@link CardListParams}
  * (no paging: an export is the whole result set, capped server-side). */
 export interface CardExportParams {

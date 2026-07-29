@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { FileDown } from '@lucide/vue'
+import { FileDown, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -10,7 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ApiError, type CardExportFormat, exportCards, exportSetCards } from '@/lib/api'
+import {
+  ApiError,
+  type CardExportFormat,
+  MAX_EXPORT_CARDS,
+  exportCards,
+  exportSetCards,
+} from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 import { downloadBlob } from '@/lib/download'
 
@@ -32,12 +38,26 @@ const props = defineProps<{
   defaultSort: string
   /** Set views only: whether the listing spans the set's related group. */
   includeRelated?: boolean
+  /** How many cards the search matched, so the menu can warn before the cap bites. */
+  total?: number
   /** Nothing to export (no results yet, or the query is in flight). */
   disabled?: boolean
 }>()
 
 const exporting = ref(false)
 const errorMessage = ref<string | null>(null)
+
+// The server caps an export and says so in the file, but a visitor shouldn't have to open
+// the download to find that out. State the cap up front, and when this particular search
+// actually exceeds it, say what will really happen instead of quoting a limit they then
+// have to compare against the result count themselves.
+const overCap = computed(() => (props.total ?? 0) > MAX_EXPORT_CARDS)
+const capNote = computed(() =>
+  overCap.value
+    ? `Only the first ${MAX_EXPORT_CARDS.toLocaleString()} of ${(props.total ?? 0).toLocaleString()} ` +
+      'matches will be exported — narrow your search for the rest.'
+    : `Up to ${MAX_EXPORT_CARDS.toLocaleString()} cards per export.`,
+)
 
 const params = computed(() => ({
   q: props.query || undefined,
@@ -98,6 +118,16 @@ async function download(format: CardExportFormat) {
             </span>
           </span>
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <!-- The export cap. Always stated; escalated to a warning (and the exact
+             shortfall) once this search actually exceeds it. -->
+        <p
+          class="px-2 py-1.5 text-xs"
+          :class="overCap ? 'text-amber-700 dark:text-amber-500' : 'text-muted-foreground'"
+        >
+          <TriangleAlert v-if="overCap" class="mr-1 inline size-3 align-[-2px]" />
+          {{ capNote }}
+        </p>
       </DropdownMenuContent>
     </DropdownMenu>
     <p v-if="errorMessage" class="text-destructive mt-2 text-sm" aria-live="polite">
