@@ -3,6 +3,7 @@
 //! so it must never be swallowed by the sibling `/cards/{id}` route.
 
 use super::harness::*;
+use crate::entities::card;
 use crate::test_support::url_encode;
 
 /// Card lines are `1 Name (SET) Number`; a `#` line only ever marks a failed export.
@@ -299,4 +300,77 @@ async fn export_is_a_public_cdn_cacheable_read() {
         cache_control(&headers),
         Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
     );
+}
+
+/// Enough extra cards that a drain must park mid-export.
+///
+/// The body is only ever parked once the in-flight channel is full, i.e. after
+/// `EXPORT_CHANNEL_CHUNKS * EXPORT_CHUNK_CARDS` rendered lines. The dummy catalog is ~100
+/// cards, which drains in a single chunk and would make the starvation test below vacuous.
+const ROWS_TO_FORCE_A_PARKED_DRAIN: i32 = 2_500;
+
+#[tokio::test]
+async fn an_export_never_holds_a_db_connection_while_writing_to_the_client() {
+    use sea_orm::{EntityTrait, IntoActiveModel};
+
+    // Regression: the first cut of this endpoint streamed one SeaORM query straight to the
+    // response body. That stream owns its pooled connection for its whole life, and sea-orm
+    // pins SQLite — the default backend, and what this harness uses — to a single pooled
+    // connection. One slow reader therefore held the process's only connection and every
+    // other request died on the pool's 30s acquire timeout.
+    //
+    // Driving a genuinely slow socket isn't possible in-process, so pin the property that
+    // makes the DoS impossible instead: while an export's body sits un-consumed and its
+    // drain is parked, the pool must still serve somebody else. If the drain regresses to
+    // holding a connection across client-paced sends, this blocks until the test times out.
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // Give the export enough rows that its drain is genuinely parked, not finished.
+    let mut rows = Vec::with_capacity(ROWS_TO_FORCE_A_PARKED_DRAIN as usize);
+    for i in 0..ROWS_TO_FORCE_A_PARKED_DRAIN {
+        let id = 900_000 + i;
+        rows.push(
+            card::Model {
+                external_id: format!("starve-{i}"),
+                name: format!("Starvation Card {i:05}"),
+                ..crate::test_support::card_model(id)
+            }
+            .into_active_model(),
+        );
+    }
+    // `cards` has ~70 columns, so batches must stay under SQLite's 32k bound-variable cap.
+    for batch in rows.chunks(100) {
+        card::Entity::insert_many(batch.to_vec())
+            .exec(&app.state.db)
+            .await
+            .expect("seed rows");
+    }
+
+    let response = tower::ServiceExt::oneshot(
+        app.router.clone(),
+        get(&format!("/api/games/{game}/cards/export")),
+    )
+    .await
+    .expect("router is infallible");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Hold the streaming body without reading it, so the drain fills the channel and parks.
+    let body = response.into_body();
+    tokio::task::yield_now().await;
+
+    // ...and now demand the database from another request.
+    let (status, _, json) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        send(&app, get(&format!("/api/games/{game}/cards?page_size=1"))),
+    )
+    .await
+    .expect("a second DB-backed request must not be starved by an in-flight export");
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        json["total"]
+            .as_u64()
+            .is_some_and(|total| total > ROWS_TO_FORCE_A_PARKED_DRAIN as u64)
+    );
+    drop(body);
 }

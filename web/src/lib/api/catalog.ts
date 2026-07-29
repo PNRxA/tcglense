@@ -125,7 +125,7 @@ export type CardExportFormat = 'text' | 'names'
 export const LARGE_EXPORT_CARDS = 5_000
 
 /** The export params a search view can carry — a subset of {@link CardListParams}
- * (no paging: an export is the whole result set, capped server-side). */
+ * (no paging: an export is the whole result set, uncapped and streamed). */
 export interface CardExportParams {
   q?: string
   sort?: string

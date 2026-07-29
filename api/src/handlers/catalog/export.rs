@@ -20,31 +20,44 @@
 //!   is for pasting into a spreadsheet or another search box.
 //!
 //! **Complete, and streamed to stay that way.** There is no row cap: a search matching
-//! the entire catalog exports the entire catalog. What keeps that affordable is that the
-//! response is never assembled in memory — rows are drained from the database
-//! incrementally and rendered into chunks that go out as they're produced, so peak memory
-//! is a chunk, not a result set (see [`render_export`]). Measured on a release build
-//! against a 300k-card catalog: the full 11 MB export runs in ~2.5s for **no** measurable
-//! change in RSS, and a slow client costs nothing either — the bounded channel makes it
-//! backpressure the drain rather than pile chunks up. What an export *does* cost is one
-//! sort of the matched rows, the same work the listing's first page already pays for; the
-//! per-IP limiter on the public catalog group governs how often a visitor can ask for it.
+//! the entire catalog exports the entire catalog. The response body is never assembled in
+//! memory — rows are read in chunks and rendered out as they're produced (see [`drain`]).
+//! Measured on a release build against a 300k-card catalog: the full 11 MB export runs in
+//! ~4s for no measurable change in RSS. (The per-chunk re-acquire costs ~1.5s against a
+//! single streamed query — the price of the availability property below, and worth it.)
+//!
+//! Two things the drain must keep doing, both learned the hard way:
+//!
+//! * **Never hold a database connection while awaiting the client.** SeaORM's row stream
+//!   owns its `PoolConnection` for the stream's whole life, and sea-orm pins the SQLite
+//!   backend — the default — to a *single* pooled connection. An earlier version of this
+//!   module streamed one query straight to the client, which let one unauthenticated slow
+//!   reader hold the process's only connection for as long as it liked; every other
+//!   request, `/api/ready` included, then died on the pool's 30s acquire timeout. So the
+//!   drain resolves ids first and re-acquires per chunk, and every `await` on the client
+//!   happens with nothing checked out.
+//! * **Keep the channel bounded**, so a slow reader backpressures the drain instead of
+//!   letting rendered chunks pile up. Bounded-but-connection-free is the combination that
+//!   is both memory-safe and availability-safe; either alone is not.
 //!
 //! A consequence worth knowing: the status line is committed before the first row is
-//! read, so a mid-stream database failure can't become a `500`. It instead appends a
+//! read, so a mid-export database failure can't become a `500`. It instead appends a
 //! `# …incomplete` comment **and** fails the transfer, so neither a human reading the
 //! file nor the browser downloading it mistakes a short file for the whole search.
 
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::response::Response;
-use futures_util::{StreamExt, stream};
-use sea_orm::{DatabaseConnection, QuerySelect, Select, SelectGetableTuple, Selector};
-use std::collections::HashSet;
+use futures_util::stream;
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect, Select,
+};
+use std::collections::{HashMap, HashSet};
 use std::io;
 use tokio::sync::mpsc;
 
 use crate::entities::card;
+use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{load_set, require_game, text_download_stream};
@@ -185,18 +198,8 @@ pub async fn export_set_cards(
 
 /// Run the (already filtered + sorted) query and hand back a streaming download.
 ///
-/// The rows are drained through SeaORM's row stream — **one** query, whose results the
-/// driver feeds us incrementally — and rendered into [`EXPORT_CHUNK_CARDS`]-sized text
-/// chunks pushed down a bounded channel that backs the response body. Nothing ever holds
-/// the whole result set: peak memory is a chunk of rows plus the text for that chunk,
-/// whether the search matched twelve cards or the entire catalog.
-///
-/// One query rather than N paged ones is a cost decision. `apply_card_sort` ends on an
-/// `id` tiebreaker, so the order is total and `LIMIT/OFFSET` batching would have been
-/// *correct* — but each page re-runs the sort and walks the offset, making a full drain
-/// O(rows²/page). Sorting the catalog once is already the expensive part (a 300k-row
-/// unindexed sort is seconds, not milliseconds); paying it six hundred times to save
-/// nothing is the trade this avoids.
+/// The work happens in a detached task feeding a bounded channel that backs the response
+/// body; see [`drain`] for the two-phase read and why it is shaped that way.
 fn render_export(
     state: &AppState,
     query: Select<card::Entity>,
@@ -206,8 +209,9 @@ fn render_export(
     // Bounded, so a client that reads slowly applies backpressure to the DB drain rather
     // than letting rendered chunks pile up in memory.
     let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(EXPORT_CHANNEL_CHUNKS);
-    // The stream borrows the connection, so the task owns its own handle
-    // (`DatabaseConnection` is a cheap `Arc` clone) and keeps it for the drain's duration.
+    // The task outlives this call, so it owns its own handle (`DatabaseConnection` is a
+    // cheap `Arc` clone). It borrows a *pooled connection* only per query, never across a
+    // send — see `drain`.
     let db = state.db.clone();
     tokio::spawn(async move { drain(db, query, format, tx).await });
 
@@ -228,69 +232,120 @@ fn render_export(
 /// uncapped export would pay it for every printing in the game.
 type ExportRow = (String, String, String);
 
-/// Re-shape the listing's query to select only [`ExportRow`]'s columns.
+/// Resolve the matching card ids, in the listing's order, with one query.
 ///
 /// The filters and ordering are untouched, so this stays the same search the grid ran —
 /// `apply_card_sort` orders by columns that aren't selected, which is fine in a plain
 /// `SELECT` on both backends (and the SQLite unique-mode `GROUP BY` tolerates it too).
-fn export_rows(query: Select<card::Entity>) -> Selector<SelectGetableTuple<ExportRow>> {
+async fn export_ids(
+    db: &DatabaseConnection,
+    query: Select<card::Entity>,
+) -> Result<Vec<i32>, DbErr> {
     query
         .select_only()
+        .column(card::Column::Id)
+        .into_tuple::<i32>()
+        .all(db)
+        .await
+}
+
+/// Hydrate one chunk of ids into [`ExportRow`]s, back in the order `ids` gives.
+///
+/// `IN (...)` returns rows in whatever order the backend likes, so the chunk's own order
+/// is re-imposed here — that's what preserves the listing's sort across chunks. An id that
+/// no longer resolves (deleted between the two phases) is simply skipped.
+async fn export_chunk(db: &DatabaseConnection, ids: &[i32]) -> Result<Vec<ExportRow>, DbErr> {
+    let fetched: Vec<(i32, String, String, String)> = Card::find()
+        .filter(card::Column::Id.is_in(ids.iter().copied()))
+        .select_only()
+        .column(card::Column::Id)
         .column(card::Column::Name)
         .column(card::Column::SetCode)
         .column(card::Column::CollectorNumber)
-        .into_tuple::<ExportRow>()
+        .into_tuple()
+        .all(db)
+        .await?;
+    let mut by_id: HashMap<i32, ExportRow> = fetched
+        .into_iter()
+        .map(|(id, name, set_code, number)| (id, (name, set_code, number)))
+        .collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
 
 /// Drain the query into rendered chunks on `tx`. Runs detached: a send failure means the
 /// client hung up, which is a normal end, not an error.
+///
+/// **Never holds a database connection while awaiting the client.** That is the whole
+/// shape of this function, and it is not an optimisation: SeaORM's row stream owns the
+/// `PoolConnection` it was created from for the stream's entire life, and the SQLite
+/// backend — the default — is pinned by sea-orm to a *single* pooled connection. Draining
+/// one stream across a client-paced transfer therefore let one unauthenticated slow reader
+/// hold the process's only connection indefinitely, and every other request (including
+/// `/api/ready`) then failed on the pool's acquire timeout. So instead: resolve the ids in
+/// one query, then re-acquire per chunk. Each `await` on `tx` happens with no connection
+/// checked out.
+///
+/// The cost of that is a snapshot: the id list and each chunk are separate reads, so a card
+/// edited mid-export can render with its newer values, and one deleted mid-export drops out.
+/// For a catalog that changes on a daily sync that is a fair trade for not being trivially
+/// DoS-able.
 async fn drain(
     db: DatabaseConnection,
     query: Select<card::Entity>,
     format: ExportFormat,
     tx: mpsc::Sender<Result<Bytes, io::Error>>,
 ) {
-    let mut rows = match export_rows(query).stream(&db).await {
-        Ok(rows) => rows,
+    // Phase 1: which rows, and in what order. One query, released as soon as it returns —
+    // it is never awaited against the client. Four bytes a row, so even a whole-catalog
+    // export is a couple of megabytes here rather than a result set.
+    let ids = match export_ids(&db, query).await {
+        Ok(ids) => ids,
         Err(error) => {
             // Nothing has been written yet, but the 200 is already on the wire, so this
             // can't become a 500 — say so in the body and fail the transfer.
             tracing::error!(%error, "card export query failed to start");
-            let _ = tx.send(Ok(Bytes::from_static(FAILED_NOTE))).await;
-            let _ = tx
-                .send(Err(io::Error::other("card export query failed")))
-                .await;
+            fail(&tx, None, "card export query failed").await;
             return;
         }
     };
 
+    // Phase 2: render a chunk at a time, re-acquiring a connection per chunk and giving it
+    // back before the (client-paced) send.
     let mut writer = ChunkWriter::new(format);
-    loop {
-        match rows.next().await {
-            Some(Ok(card)) => {
-                writer.push(&card);
-                if let Some(chunk) = writer.take_full_chunk()
-                    && tx.send(Ok(chunk)).await.is_err()
-                {
-                    return; // client hung up
-                }
-            }
-            None => break,
-            Some(Err(error)) => {
-                // Mid-stream failure. Flush what we have, then mark the file incomplete
-                // *and* fail the transfer, so neither a reader nor the browser mistakes a
-                // short file for the whole result set.
-                tracing::error!(%error, "card export stream failed part-way");
-                let _ = tx.send(Ok(writer.finish())).await;
-                let _ = tx.send(Ok(Bytes::from_static(FAILED_NOTE))).await;
-                let _ = tx
-                    .send(Err(io::Error::other("card export stream failed")))
-                    .await;
+    for chunk in ids.chunks(EXPORT_CHUNK_CARDS) {
+        let rows = match export_chunk(&db, chunk).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!(%error, "card export failed part-way");
+                fail(&tx, Some(writer.finish()), "card export failed part-way").await;
                 return;
             }
+        };
+        for row in &rows {
+            writer.push(row);
+        }
+        // `names` folds duplicates away, so a chunk of ids can render fewer than
+        // `EXPORT_CHUNK_CARDS` lines; flush whatever is ready rather than only full chunks.
+        if tx.send(Ok(writer.take())).await.is_err() {
+            return; // client hung up
         }
     }
     let _ = tx.send(Ok(writer.finish())).await;
+}
+
+/// End a broken export: flush anything already rendered, mark the file incomplete, then
+/// error the transfer — so neither a human reading the file nor the browser downloading it
+/// mistakes a short file for the whole result set.
+async fn fail(
+    tx: &mpsc::Sender<Result<Bytes, io::Error>>,
+    pending: Option<Bytes>,
+    message: &'static str,
+) {
+    if let Some(pending) = pending {
+        let _ = tx.send(Ok(pending)).await;
+    }
+    let _ = tx.send(Ok(Bytes::from_static(FAILED_NOTE))).await;
+    let _ = tx.send(Err(io::Error::other(message))).await;
 }
 
 /// Accumulates rendered card lines and hands them out a chunk at a time.
@@ -335,17 +390,12 @@ impl ChunkWriter {
         }
     }
 
-    /// The buffered text once it's a full chunk's worth, else `None`.
-    fn take_full_chunk(&mut self) -> Option<Bytes> {
-        (self.lines >= EXPORT_CHUNK_CARDS).then(|| self.take())
-    }
-
     /// Whatever is left (possibly empty — an export matching nothing is an empty file).
     fn finish(&mut self) -> Bytes {
         self.take()
     }
 
-    fn take(&mut self) -> Bytes {
+    pub(self) fn take(&mut self) -> Bytes {
         self.lines = 0;
         Bytes::from(std::mem::take(&mut self.buffer))
     }
@@ -368,18 +418,24 @@ mod tests {
         (name.to_string(), set_code.to_string(), number.to_string())
     }
 
-    /// Push every row, then drain — mirroring what `drain` does, minus the database.
+    /// Render every row through the same chunked path `drain` uses, minus the database:
+    /// push a chunk's worth, flush, repeat.
     fn render_all(rows: &[ExportRow], format: ExportFormat) -> String {
+        join(&chunks_of(rows, format))
+    }
+
+    /// The chunks a client would receive for `rows`, in order.
+    fn chunks_of(rows: &[ExportRow], format: ExportFormat) -> Vec<Bytes> {
         let mut writer = ChunkWriter::new(format);
         let mut out = Vec::new();
-        for card in rows {
-            writer.push(card);
-            if let Some(chunk) = writer.take_full_chunk() {
-                out.push(chunk);
+        for chunk in rows.chunks(EXPORT_CHUNK_CARDS) {
+            for row in chunk {
+                writer.push(row);
             }
+            out.push(writer.take());
         }
         out.push(writer.finish());
-        join(&out)
+        out
     }
 
     /// The chunks a client would receive, concatenated back into the delivered file.
@@ -455,15 +511,10 @@ mod tests {
             .map(|i| card(&format!("Card {i}"), "dmb", &i.to_string()))
             .collect();
 
-        let mut writer = ChunkWriter::new(ExportFormat::Text);
-        let mut chunks = Vec::new();
-        for card in &rows {
-            writer.push(card);
-            if let Some(chunk) = writer.take_full_chunk() {
-                chunks.push(chunk);
-            }
-        }
-        chunks.push(writer.finish());
+        let chunks: Vec<Bytes> = chunks_of(&rows, ExportFormat::Text)
+            .into_iter()
+            .filter(|c| !c.is_empty())
+            .collect();
 
         // Three sends: two full chunks and the remainder.
         assert_eq!(chunks.len(), 3);

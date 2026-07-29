@@ -297,16 +297,15 @@ const searchError = computed(() => searchErrorMessage(listError.value))
         />
         <span v-else />
         <div v-if="!isEmpty" class="flex gap-2">
-          <!-- Everywhere but the by-drop view. The flat and by-treatment views both
-               show exactly "the set's cards matching ?q", which is what the export
-               endpoint returns. The by-drop view additionally carries ?drop= (it
-               narrows the *drops*), and the endpoint has no notion of that — offering
-               the button there would hand back a file that quietly ignored an active
-               filter, so it hides instead. `total` counts cards only in the flat view —
-               the grouped views' count is of *groups*, and the flat query is disabled
-               there, so pass nothing and let the menu state the cap without a number. -->
+          <!-- Flat view only. Both grouped views serve a *different* endpoint from the
+               one the export reuses: `/drops` owns the `?drop=` filter, and `/subtypes`
+               parses the search's shaping directives and then discards them, so a
+               `q=unique:cards` grid still shows every printing while the export would
+               fold them. Either way the file would not be the rows on screen, so the
+               button hides rather than lie. `total` is a *group* count in those views
+               anyway (the flat query is disabled there), so it is not passed. -->
           <CardExportMenu
-            v-if="!byDrop"
+            v-if="!grouped"
             :game="game"
             :set-code="code"
             :query="query"

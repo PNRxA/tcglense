@@ -350,7 +350,7 @@ box). All user values bind as SeaORM/SQL parameters — never interpolated into 
 (`handlers::catalog::export`) return the **whole result set** of the corresponding card
 listing as a `text/plain; charset=utf-8` attachment, so a visitor can take a search away
 rather than paging a grid 60 cards at a time. Both are ordinary **public** catalog reads
-(no auth, same `PUBLIC_CATALOG_CACHE` + ETag as the listing they mirror) and accept the
+(no auth, same `PUBLIC_CATALOG_CACHE` as the listing they mirror — but no ETag; see below) and accept the
 same params as their listing — `q` (the full search grammar above), `name`/`include_related`,
 `sort`, `dir` — minus paging, which an export has no use for. They build their query with
 the *listing's own* builders (`cards::all_cards_query` / `sets::set_cards_query`), so the
@@ -369,26 +369,42 @@ re-imports here and pastes into any deck site. The leading `1` is the quantity t
 requires, not a claim about owned copies (the catalog knows nothing about the caller).
 
 **Uncapped, and streamed to stay that way.** There is no row limit — a search matching
-the whole catalog exports the whole catalog. The response is never materialised: the rows
-are drained through one SeaORM row stream and rendered into ~500-line chunks pushed down a
-bounded channel, so peak memory is a chunk rather than a result set. The stream also selects
-**only** the three columns a line is made of, rather than hydrating all ~70 (including the
-JSON blobs and image URLs) to render three — on a 300k-card catalog that alone took the full
-export from 31.5s to 2.5s. Measured on a release build: 300,104 rows / 11 MB in ~2.5s for no
-measurable change in RSS, and 0 KB with a slow client, since the bounded channel makes a slow
-reader backpressure the drain. One query rather than N paged ones is a cost decision, not a
-correctness one — `apply_card_sort` ends on an `id` tiebreaker so the order is total and
-`LIMIT/OFFSET` batching would also be correct, but each page re-runs the sort, making a full
-drain O(rows²/page).
+the whole catalog exports the whole catalog, and the response body is never materialised.
 
-Two consequences. The response carries **no `Content-Length` and no `ETag`** (a streaming
-body reports no size hint, which is exactly what stops `conditional_request_layer`
+The drain is deliberately **two-phase**, and the shape is load-bearing rather than an
+optimisation. SeaORM's row stream owns the pooled connection it was created from for the
+stream's entire life, and sea-orm pins the **SQLite** backend — the default — to a *single*
+pooled connection. Streaming one query straight to the client therefore let a single
+unauthenticated slow reader hold the process's only connection for as long as it cared to,
+after which every other request (`/api/ready` included) died on the pool's 30s acquire
+timeout. So instead:
+
+1. one query resolves the matching card **ids** in the listing's order (4 bytes a row, so a
+   whole-catalog export is a couple of MB, and it is never awaited against the client); then
+2. each chunk of ~500 ids is hydrated by its own short query and rendered out, with the
+   connection given back *before* the client-paced send.
+
+Combined with a bounded channel (so a slow reader backpressures the drain rather than piling
+chunks up), that is both memory-safe and availability-safe — either property alone is not.
+The stream also selects **only** the three columns a line is made of rather than hydrating
+all ~70; on a 300k-card catalog that alone took a full export from 31.5s to 2.5s. Measured on
+a release build: 300k rows / 11 MB in ~4s for no measurable change in RSS (the per-chunk
+re-acquire costs ~1.5s against a single streamed query — the price of the availability
+property above).
+
+The trade-off is snapshot consistency: the id list and each chunk are separate reads, so a
+card edited mid-export can render with newer values and one deleted mid-export drops out.
+For a catalog that changes on a daily sync that is a fair price for not being trivially
+DoS-able.
+
+Two further consequences. The response carries **no `Content-Length` and no `ETag`** (a
+streaming body reports no size hint, which is exactly what stops `conditional_request_layer`
 buffering it back up to hash it — that guard is load-bearing here, not defensive). And the
-`200` is committed before the first row is read, so a mid-stream database error can't
-become a `500`: it appends `# This export failed part-way and is incomplete…` **and** ends
-the transfer in error, so neither a reader nor the browser mistakes a short file for the
-whole search. `#` is the comment marker every decklist parser involved already skips, so
-the marker can't corrupt a paste. A healthy export is pure card lines.
+`200` is committed before the first row is read, so a mid-export database error can't become
+a `500`: it appends `# This export failed part-way and is incomplete…` **and** ends the
+transfer in error, so neither a reader nor the browser mistakes a short file for the whole
+search. `#` is the comment marker every decklist parser involved already skips, so the
+marker can't corrupt a paste. A healthy export is pure card lines.
 
 The SPA flags a large download before it starts (`CardExportMenu`): at or above
 `LARGE_EXPORT_CARDS` (5,000 — a UI threshold only, mirroring no server constant) it shows
