@@ -20,7 +20,7 @@ pub(crate) mod search;
 pub(crate) mod sort;
 pub(crate) mod valuation;
 
-pub(crate) use download::{csv_download, text_download};
+pub(crate) use download::{csv_download, text_download, text_download_stream};
 pub(crate) use dto::{CardResponse, stored_faces};
 pub(crate) use grouping::{
     filter_drops_by_title, group_into_drops, group_into_subtypes, paginate_buckets,

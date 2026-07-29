@@ -13,7 +13,7 @@ import {
 import {
   ApiError,
   type CardExportFormat,
-  MAX_EXPORT_CARDS,
+  LARGE_EXPORT_CARDS,
   exportCards,
   exportSetCards,
 } from '@/lib/api'
@@ -22,7 +22,7 @@ import { downloadBlob } from '@/lib/download'
 
 // Download the *whole* result set of the card search currently on screen as a .txt file
 // (the grid only ever shows one 60-card page of it). Sits beside the size/sort menus in
-// the catalog browse views; the server caps the file and notes anything it left out.
+// the catalog browse views; the endpoint streams the result set, however large.
 //
 // The search itself is not re-derived here — the same `q`/`sort`/`include_related` the
 // grid queried with are passed straight through, and the endpoint reuses the listing's
@@ -38,7 +38,7 @@ const props = defineProps<{
   defaultSort: string
   /** Set views only: whether the listing spans the set's related group. */
   includeRelated?: boolean
-  /** How many cards the search matched, so the menu can warn before the cap bites. */
+  /** How many cards the search matched, so the menu can flag a large download. */
   total?: number
   /** Nothing to export (no results yet, or the query is in flight). */
   disabled?: boolean
@@ -47,16 +47,13 @@ const props = defineProps<{
 const exporting = ref(false)
 const errorMessage = ref<string | null>(null)
 
-// The server caps an export and says so in the file, but a visitor shouldn't have to open
-// the download to find that out. State the cap up front, and when this particular search
-// actually exceeds it, say what will really happen instead of quoting a limit they then
-// have to compare against the result count themselves.
-const overCap = computed(() => (props.total ?? 0) > MAX_EXPORT_CARDS)
-const capNote = computed(() =>
-  overCap.value
-    ? `Only the first ${MAX_EXPORT_CARDS.toLocaleString()} of ${(props.total ?? 0).toLocaleString()} ` +
-      'matches will be exported — narrow your search for the rest.'
-    : `Up to ${MAX_EXPORT_CARDS.toLocaleString()} cards per export.`,
+// Exports are uncapped, so there is no limit to disclose — but a big one is a big file
+// and a slow download, and a visitor should know that before the browser stalls rather
+// than after. Warn only once the result set is genuinely large; below that the menu items
+// already say everything worth saying.
+const isLarge = computed(() => (props.total ?? 0) >= LARGE_EXPORT_CARDS)
+const sizeNote = computed(
+  () => `Exporting all ${(props.total ?? 0).toLocaleString()} matches — this may take a moment.`,
 )
 
 const params = computed(() => ({
@@ -118,16 +115,15 @@ async function download(format: CardExportFormat) {
             </span>
           </span>
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <!-- The export cap. Always stated; escalated to a warning (and the exact
-             shortfall) once this search actually exceeds it. -->
-        <p
-          class="px-2 py-1.5 text-xs"
-          :class="overCap ? 'text-amber-700 dark:text-amber-500' : 'text-muted-foreground'"
-        >
-          <TriangleAlert v-if="overCap" class="mr-1 inline size-3 align-[-2px]" />
-          {{ capNote }}
-        </p>
+        <!-- Heads-up for a large export: it's the whole result set, so say how big
+             that is. Absent for ordinary searches — nothing is capped or withheld. -->
+        <template v-if="isLarge">
+          <DropdownMenuSeparator />
+          <p class="text-muted-foreground px-2 py-1.5 text-xs">
+            <TriangleAlert class="mr-1 inline size-3 align-[-2px]" />
+            {{ sizeNote }}
+          </p>
+        </template>
       </DropdownMenuContent>
     </DropdownMenu>
     <p v-if="errorMessage" class="text-destructive mt-2 text-sm" aria-live="polite">

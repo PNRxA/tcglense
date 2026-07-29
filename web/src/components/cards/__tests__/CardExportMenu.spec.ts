@@ -102,35 +102,34 @@ describe('CardExportMenu', () => {
     expect(wrapper.text()).toContain('Export failed. Please try again.')
   })
 
-  it('states the export cap whenever the menu is open', async () => {
+  it('stays quiet about size for an ordinary search', async () => {
     const wrapper = mountMenu({ total: 42 })
     await wrapper.get('button').trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(document.body.textContent).toContain('Up to 10,000 cards per export.')
+    // Nothing is capped or withheld, so there is nothing to disclose.
+    expect(document.body.textContent).not.toContain('may take a moment')
   })
 
-  it('warns with the real shortfall once the search exceeds the cap', async () => {
-    const wrapper = mountMenu({ total: 12_345 })
+  it('flags a large export with the real match count', async () => {
+    const wrapper = mountMenu({ total: 47_231 })
     await wrapper.get('button').trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    // The number a visitor needs is "how much am I losing", not the bare limit.
     expect(document.body.textContent).toContain(
-      'Only the first 10,000 of 12,345 matches will be exported',
+      'Exporting all 47,231 matches — this may take a moment.',
     )
-    expect(document.body.textContent).not.toContain('Up to 10,000 cards per export.')
   })
 
-  it('falls back to the plain cap note when the count is unknown', async () => {
+  it('says nothing when the count is unknown', async () => {
     // The set view's grouped modes count *groups*, so they pass no total rather than a
-    // wrong one — the cap must still be disclosed.
+    // wrong one — better silent than warning off a number we don't have.
     const wrapper = mountMenu({ total: undefined })
     await wrapper.get('button').trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(document.body.textContent).toContain('Up to 10,000 cards per export.')
+    expect(document.body.textContent).not.toContain('may take a moment')
   })
 
-  it('exports anyway when over the cap — the note informs, it does not block', async () => {
-    const wrapper = mountMenu({ total: 12_345 })
+  it('exports a large result set anyway — the note informs, it does not block', async () => {
+    const wrapper = mountMenu({ total: 47_231 })
     await pick(wrapper, 'Card list')
     expect(exportCards).toHaveBeenCalled()
     expect(downloadBlob).toHaveBeenCalled()

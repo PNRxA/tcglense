@@ -12,6 +12,7 @@
 //! (`no-store` for the per-user private group, the public catalog value for the
 //! CDN-cacheable catalog group).
 
+use axum::body::Body;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 
@@ -54,6 +55,30 @@ pub(crate) fn text_download(body: String, filename: &str) -> Result<Response, Ap
         filename,
         HeaderValue::from_static("text/plain; charset=utf-8"),
     )
+}
+
+/// The same, for a body produced incrementally rather than built up front.
+///
+/// Used by the card-search export, whose result set is unbounded and so is never
+/// materialised. A streaming body reports no size hint, which is also what keeps
+/// [`super::super::cache::conditional_request_layer`] from buffering it back up to
+/// compute an `ETag` — that layer's unknown-size guard is load-bearing here, not merely
+/// defensive. The trade-off is no `Content-Length` (so no download progress bar) and no
+/// validator, which is the right call for a response we refuse to hold in memory.
+pub(crate) fn text_download_stream(body: Body, filename: &str) -> Result<Response, AppError> {
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+        .map_err(|_| AppError::Internal("invalid export filename".into()))?;
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/plain; charset=utf-8"),
+            ),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        body,
+    )
+        .into_response())
 }
 
 #[cfg(test)]

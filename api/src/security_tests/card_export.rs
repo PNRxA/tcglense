@@ -1,11 +1,11 @@
-//! Public card-search `.txt` export — same search as the grid, bounded, and never a
-//! silent truncation. Also pins the route shape: `export` is a static segment, so it
-//! must never be swallowed by the sibling `/cards/{id}` route.
+//! Public card-search `.txt` export — the same search as the grid, streamed in full
+//! however many rows it matches. Also pins the route shape: `export` is a static segment,
+//! so it must never be swallowed by the sibling `/cards/{id}` route.
 
 use super::harness::*;
 use crate::test_support::url_encode;
 
-/// Card lines are `1 Name (SET) Number`; the `#` comment (if any) is the truncation note.
+/// Card lines are `1 Name (SET) Number`; a `#` line only ever marks a failed export.
 fn card_lines(body: &str) -> Vec<&str> {
     body.lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -48,8 +48,66 @@ async fn export_returns_a_plain_text_attachment_of_every_match() {
             "unexpected export line: {line}"
         );
     }
-    // A complete export is pure card lines — the `#` note only appears when truncated.
-    assert!(!body.contains('#'), "an untruncated export carries no note");
+    // There is no row cap, so a successful export is pure card lines — the only `#` the
+    // body can ever carry is the marker for an export that died part-way.
+    assert!(!body.contains('#'), "a healthy export carries no note");
+    // Streamed, so it is chunk-framed with no length up front. The ETag layer must leave
+    // it alone rather than buffering the whole (unbounded) body back up to hash it.
+    assert_eq!(headers.get("content-length"), None);
+    assert_eq!(headers.get("etag"), None);
+}
+
+#[tokio::test]
+async fn the_whole_result_set_streams_even_though_it_spans_pages() {
+    let game = crate::scryfall::GAME;
+    let app = test_app_with_catalog().await;
+
+    // The listing is capped at MAX_PAGE_SIZE per request; the export answers in one shot
+    // regardless, because it drains the query rather than serving a page of it.
+    let (_, _, first_page) = send(
+        &app,
+        get(&format!("/api/games/{game}/cards?page=1&page_size=5")),
+    )
+    .await;
+    let total = first_page["total"].as_u64().expect("total");
+    assert!(
+        total > 5,
+        "the fixture must exceed one page for this to mean anything"
+    );
+
+    let (status, _, body) = send_text(&app, get(&format!("/api/games/{game}/cards/export"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let lines = card_lines(&body);
+    assert_eq!(lines.len() as u64, total);
+
+    // Walk every page of the listing and assert the export is exactly that multiset —
+    // nothing dropped and nothing repeated at a chunk or page boundary.
+    let mut listed: Vec<String> = Vec::new();
+    let mut page = 1;
+    loop {
+        let (_, _, body) = send(
+            &app,
+            get(&format!("/api/games/{game}/cards?page={page}&page_size=25")),
+        )
+        .await;
+        for card in body["data"].as_array().expect("data array") {
+            listed.push(format!(
+                "1 {} ({}) {}",
+                card["name"].as_str().expect("name"),
+                card["set_code"].as_str().expect("set_code").to_uppercase(),
+                card["collector_number"].as_str().expect("collector_number"),
+            ));
+        }
+        if !body["has_more"].as_bool().unwrap_or(false) {
+            break;
+        }
+        page += 1;
+    }
+    assert_eq!(listed.len() as u64, total);
+    assert_eq!(
+        lines, listed,
+        "same rows, same order, across every boundary"
+    );
 }
 
 #[tokio::test]

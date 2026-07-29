@@ -252,8 +252,11 @@ pub async fn conditional_request_layer(request: Request, next: Next) -> Response
     }
 
     // Buffer the (in-memory, bounded) body so we can hash it into the validator. A
-    // body of unknown or over-cap size is passed through untouched rather than
-    // buffered — defensive only; the catalog/sitemap bodies are always well under.
+    // body of unknown or over-cap size is passed through untouched rather than buffered.
+    // That guard is load-bearing, not merely defensive: the card-search export
+    // (`handlers::catalog::export`) streams an unbounded result set and reports no size
+    // hint, and buffering it here to compute a tag would undo the whole point of
+    // streaming it. Everything else on this router is a bounded JSON/XML body.
     let (mut parts, body) = response.into_parts();
     if body
         .size_hint()
