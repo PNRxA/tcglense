@@ -591,7 +591,7 @@ catalog) is planned but not implemented.
     version, so it can never latch empty tables as "complete".
   - **`card_art_tags` carries two indexes, one per read shape.** The `art:` search probes
     `(game, tag_slug, illustration_id)`; the card page's "Artwork tags" panel asks the
-    *transpose* — every tag on one artwork — and rides `m..064`'s
+    *transpose* — every tag on one artwork — and rides `m..066`'s
     `(game, illustration_id, tag_slug)`. Both are three-column and cover their query, and
     the third column on the second one is **load-bearing, not padding**: SQLite is the
     default backend and this schema never runs `ANALYZE`, so with no `sqlite_stat1` every

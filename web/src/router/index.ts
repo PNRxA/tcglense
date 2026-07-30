@@ -346,6 +346,39 @@ const router = createRouter({
       component: () => import('@/views/KeywordView.vue'),
       props: true,
     },
+    // Tools: the play aids that sit beside the catalog rather than inside it. Same shape as
+    // the keyword glossary — a game hub, each game's index, then the tool — so a second tool
+    // (or a second game's tools) needs no new route shape. The two hub pages are public and
+    // indexable; the counter itself is per-user, so its views prompt for sign-in in place
+    // rather than bouncing to /login (the collection idiom) and are `noindex`.
+    { path: '/tools', name: 'tools', component: () => import('@/views/ToolsView.vue') },
+    {
+      path: '/tools/:game',
+      name: 'game-tools',
+      component: () => import('@/views/GameToolsView.vue'),
+      props: true,
+    },
+    {
+      path: '/tools/:game/life',
+      name: 'life-counter',
+      component: () => import('@/views/LifeCounterView.vue'),
+      props: true,
+    },
+    // Static `decks` must be declared BEFORE the `:sessionId` sibling below, or a link to the
+    // deck records would resolve as a game whose id is "decks" (the same ordering the deck
+    // surface's own `/decks/:game/needed` relies on).
+    {
+      path: '/tools/:game/life/decks',
+      name: 'life-deck-records',
+      component: () => import('@/views/LifeDeckStatsView.vue'),
+      props: true,
+    },
+    {
+      path: '/tools/:game/life/:sessionId',
+      name: 'life-session',
+      component: () => import('@/views/LifeSessionView.vue'),
+      props: true,
+    },
     // Legal pages, linked from the site footer. Public and indexable.
     { path: '/terms', name: 'terms', component: () => import('@/views/TermsView.vue') },
     { path: '/privacy', name: 'privacy', component: () => import('@/views/PrivacyPolicyView.vue') },

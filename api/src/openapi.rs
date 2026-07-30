@@ -190,6 +190,20 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::change_deck_card_printing,
         crate::handlers::decks::export_deck,
         crate::handlers::decks::copy_public_deck,
+        // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
+        crate::handlers::tools::life::list_sessions,
+        crate::handlers::tools::life::create_session,
+        crate::handlers::tools::life::deck_records,
+        crate::handlers::tools::life::get_session,
+        crate::handlers::tools::life::update_session,
+        crate::handlers::tools::life::delete_session,
+        crate::handlers::tools::life::finish_session,
+        crate::handlers::tools::life::add_player,
+        crate::handlers::tools::life::reorder_players,
+        crate::handlers::tools::life::update_player,
+        crate::handlers::tools::life::remove_player,
+        crate::handlers::tools::life::adjust_life,
+        crate::handlers::tools::life::undo_life_event,
         // --- Public sharing (issues #361/#362/#363): handle-keyed public collection + decks ---
         crate::handlers::sharing::public_profile,
         crate::handlers::sharing::public_list,
@@ -239,6 +253,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         (name = "Wish list", description = "The signed-in user's wanted cards + sealed products (requires an API key)."),
         (name = "Decks", description = "The signed-in user's decks, folders, and sections (requires an API key)."),
         (name = "Public sharing", description = "Read-only, handle-addressed views of a user's public collection + decks (no authentication)."),
+        (name = "Tools", description = "Play aids backed by the signed-in user's own rows — today the life counter: tracked games, seats, life history, and per-deck records (requires an API key)."),
         (name = "API keys", description = "Mint, list, and revoke the personal API keys that authenticate the public API."),
     )
 )]

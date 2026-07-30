@@ -19,6 +19,7 @@ pub(crate) mod pricing;
 pub(crate) mod product_holdings;
 pub(crate) mod search;
 pub(crate) mod sort;
+pub(crate) mod validate;
 pub(crate) mod valuation;
 
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
@@ -45,6 +46,7 @@ pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
 pub(crate) use product_holdings::{ProductResponse, load_product, product_response, set_name_map};
 pub(crate) use search::search_condition;
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
+pub(crate) use validate::{validate_name, validate_optional};
 #[cfg(test)]
 pub(crate) use valuation::BULK_THRESHOLD_CENTS;
 pub(crate) use valuation::{cheapest_single_cents, format_cents};

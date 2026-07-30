@@ -45,6 +45,7 @@ import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
@@ -196,6 +197,9 @@ function copyDeckList() {
               · +{{ deck.maybeboard_summary.total_cards }} maybeboard</span
             >
           </p>
+          <!-- How this deck has actually done in games tracked with the life counter. Renders
+               nothing until it has been played, so a deck page never grows an empty 0-0 line. -->
+          <DeckMatchRecord class="mt-1" :game="game" :deck-id="deck.id" />
         </div>
 
         <div class="flex items-center gap-2">

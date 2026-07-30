@@ -30,6 +30,7 @@ mod email_verification;
 mod headers;
 mod holdings_card_export;
 mod keywords;
+mod life_counter;
 mod login;
 mod mirror;
 mod openapi;

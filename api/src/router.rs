@@ -79,6 +79,11 @@ use crate::{
             set_wishlist_visibility,
         },
         sitemap::{sitemap_child, sitemap_index},
+        tools::life::{
+            add_player, adjust_life, create_session, deck_records, delete_session, finish_session,
+            get_session, list_sessions, remove_player, reorder_players, undo_life_event,
+            update_player, update_session,
+        },
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
@@ -434,6 +439,55 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/u/{handle}/decks/{deck_id}/copy",
             post(copy_public_deck),
+        )
+        // Tools (`/api/tools/{game}/...`): the play aids that sit beside the catalog rather
+        // than inside it. Grouped under a `tools` namespace so a second tool adds a path
+        // segment instead of a new top-level route family — the API mirror of the SPA's
+        // `/tools` section.
+        //
+        // The life counter is a container surface like decks: many tracked games per user,
+        // each with seats (`players`) and a life history (`events`) hanging off it, so its
+        // routes nest a `{session_id}` and every seat/event route proves the parent session is
+        // the caller's first (a foreign id is a 404). Authenticated (AuthUser reads,
+        // WritableUser writes) and no-store. Static segments (`sessions`, `players`,
+        // `reorder`, `life`, `events`, `finish`, `decks`) win over the dynamic ids in axum, so
+        // none collide — the same guarantee the catalog's `/products/facets` relies on.
+        .route(
+            "/api/tools/{game}/life/sessions",
+            get(list_sessions).post(create_session),
+        )
+        // The per-deck win/loss record derived from finished games. A static sibling of
+        // `sessions`, not nested under it — it spans every session rather than belonging to one.
+        .route("/api/tools/{game}/life/decks", get(deck_records))
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}",
+            get(get_session).put(update_session).delete(delete_session),
+        )
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}/finish",
+            post(finish_session),
+        )
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}/players",
+            post(add_player),
+        )
+        // Static `reorder` wins over `{player_id}` below, like the decks sections' own.
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}/players/reorder",
+            put(reorder_players),
+        )
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}/players/{player_id}",
+            put(update_player).delete(remove_player),
+        )
+        // The hot path: one debounced commit per run of taps on the counter.
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}/players/{player_id}/life",
+            post(adjust_life),
+        )
+        .route(
+            "/api/tools/{game}/life/sessions/{session_id}/events/{event_id}",
+            delete(undo_life_event),
         )
         // Per-user price alerts (issue #525): notify a signed-in user when a card / sealed
         // product crosses a below/above price threshold, over their configured channels
