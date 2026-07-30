@@ -75,10 +75,13 @@ describe('NAV destinations', () => {
   })
 
   it('keeps `auth` in step with the router', () => {
-    for (const item of allNavItems()) {
-      const requiresAuth = router.resolve(item.landing).meta.requiresAuth === true
-      expect(item.auth ?? false, item.id).toBe(requiresAuth)
-    }
+    // Compared as two id-tagged lists rather than per-item assertions, so a mismatch names
+    // the offending item in the diff (expect's message argument is linted away here).
+    const declared = allNavItems().map((item) => `${item.id}: ${item.auth ?? false}`)
+    const routed = allNavItems().map(
+      (item) => `${item.id}: ${router.resolve(item.landing).meta.requiresAuth === true}`,
+    )
+    expect(declared).toEqual(routed)
   })
 
   it('gives every item a unique id', () => {

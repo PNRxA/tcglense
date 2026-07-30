@@ -56,10 +56,6 @@ export interface NavItem {
   icon: Component
   /** The all-games landing: the item's own destination. */
   landing: string
-  /** What the landing row says *inside an expanded panel*, where the item's own label is
-   * already the header ('Browse all games', 'All decks'). A consumer rendering the item as a
-   * single row uses `label`. */
-  landingLabel?: string
   /** Per-game expansion. Omitted = the item is a single link everywhere. */
   gameLinks?: (game: Game) => NavLink[]
   /** Mirrors `requiresAuth` in the router. Metadata, not a visibility switch — both navs
@@ -100,7 +96,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Cards',
             icon: Layers,
             landing: '/cards',
-            landingLabel: 'Browse all games',
             gameLinks: perGame('/cards'),
           },
           {
@@ -112,7 +107,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Sealed products',
             icon: Package,
             landing: '/sealed',
-            landingLabel: 'Browse all games',
             gameLinks: perGame('/sealed'),
           },
           {
@@ -120,7 +114,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Keyword glossary',
             icon: BookOpen,
             landing: '/keywords',
-            landingLabel: 'All games',
             gameLinks: perGame('/keywords'),
           },
         ],
@@ -134,7 +127,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Collection',
             icon: Library,
             landing: '/collection',
-            landingLabel: 'All collections',
             gameLinks: perGame('/collection'),
           },
           {
@@ -142,7 +134,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Decks',
             icon: BookCopy,
             landing: '/decks',
-            landingLabel: 'All decks',
             gameLinks: perGame('/decks'),
           },
           {
@@ -150,7 +141,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Wish list',
             icon: Heart,
             landing: '/wishlist',
-            landingLabel: 'All wish lists',
             gameLinks: perGame('/wishlist'),
           },
           {
@@ -181,7 +171,6 @@ export const NAV: readonly NavRoot[] = [
             label: 'Tools',
             icon: Wrench,
             landing: '/tools',
-            landingLabel: 'All tools',
             // The one bespoke expansion, and the reason `gameLinks` is a function rather than
             // a base path: a game's tools come from the `lib/tools` registry, so each tool is
             // linked directly (with a small number of tools the hop through the game index

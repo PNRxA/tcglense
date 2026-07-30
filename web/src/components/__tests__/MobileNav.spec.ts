@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Game } from '@/lib/api'
+import { allNavItems, itemWarmTargets, resolveItem } from '@/lib/nav'
 import MobileNav from '../MobileNav.vue'
 
 // reka-ui's primitives lean on ResizeObserver (for positioning), which jsdom
@@ -32,6 +33,13 @@ function makeRouter() {
       { path: '/collection/:game', component: { template: '<div />' } },
       { path: '/wishlist', component: { template: '<div />' } },
       { path: '/wishlist/:game', component: { template: '<div />' } },
+      { path: '/keywords', component: { template: '<div />' } },
+      { path: '/keywords/:game', component: { template: '<div />' } },
+      { path: '/decks', component: { template: '<div />' } },
+      { path: '/decks/:game', component: { template: '<div />' } },
+      { path: '/tools', component: { template: '<div />' } },
+      { path: '/tools/:game', component: { template: '<div />' } },
+      { path: '/tools/:game/:tool', component: { template: '<div />' } },
       { path: '/scan', component: { template: '<div />' } },
       { path: '/docs', component: { template: '<div />' } },
     ],
@@ -84,25 +92,38 @@ describe('MobileNav', () => {
     wrapper.unmount()
   })
 
-  it('reveals catalog, sealed, collection and wish-list links when opened', async () => {
+  it('reveals every registry destination when opened', async () => {
     const wrapper = await mountNav([MTG])
     await openDrawer(wrapper)
 
-    // The drawer content teleports to the body, so query the document, not the wrapper.
-    // The section titles are themselves the landing anchors now (no "Browse all games"
-    // rows); Scan cards and API docs live in the pinned footer.
+    // Registry-driven on purpose: a hand-written href list here would be a fifth copy of
+    // the IA — exactly what `lib/nav.ts` exists to end — and would go stale the moment a
+    // destination is added. `itemWarmTargets(resolveItem(...))` is the same flattening the
+    // drawer's template and its prefetch warming both derive from, so this pins that every
+    // resolved link actually reaches the DOM.
+    //
+    // The drawer content teleports to the body, so query the whole document, not the
+    // wrapper — and note `/scan` and `/docs` render in the pinned footer rather than the
+    // scrolling region, which is why this sweeps the drawer as a whole.
     const hrefs = Array.from(document.querySelectorAll('a')).map((a) => a.getAttribute('href'))
-    expect(hrefs).toContain('/cards')
-    expect(hrefs).toContain('/cards/mtg')
-    expect(hrefs).toContain('/sealed')
-    expect(hrefs).toContain('/sealed/mtg')
-    expect(hrefs).toContain('/collection')
-    expect(hrefs).toContain('/collection/mtg')
-    expect(hrefs).toContain('/wishlist')
-    expect(hrefs).toContain('/wishlist/mtg')
-    expect(hrefs).toContain('/scan')
-    expect(hrefs).toContain('/docs')
+    for (const item of allNavItems()) {
+      for (const to of itemWarmTargets(resolveItem(item, [MTG]))) {
+        expect(hrefs, `${item.id} → ${to}`).toContain(to)
+      }
+    }
 
+    wrapper.unmount()
+  })
+
+  it('has no Alerts link — it moved to UserMenu', async () => {
+    // The one deliberate removal in the nav consolidation: /alerts is account-scoped
+    // notification *settings*, so it lives in UserMenu, which renders at every width
+    // (App.vue, outside the `lg` gate). Named failing test rather than a silent absence,
+    // because re-adding it by reflex is the likely mistake.
+    const wrapper = await mountNav([MTG])
+    await openDrawer(wrapper)
+
+    expect(document.querySelector('a[href="/alerts"]')).toBeNull()
     wrapper.unmount()
   })
 
