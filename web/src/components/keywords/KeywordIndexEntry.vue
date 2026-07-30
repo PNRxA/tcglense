@@ -2,17 +2,17 @@
 import { RouterLink, useRouter } from 'vue-router'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import KeywordKindChip from '@/components/keywords/KeywordKindChip.vue'
-import { firstSentence } from '@/lib/keywords'
+import { firstSentence, keywordPath } from '@/lib/keywords'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 import type { KeywordEntry } from '@/lib/api'
 
 // One tile in the glossary index: the keyword and enough of its explanation to answer
 // the question without a click. The kind chip only shows for actions and ability words —
 // abilities are the bulk of the list, so chipping them would just add noise to every row.
-const props = defineProps<{ entry: KeywordEntry }>()
+const props = defineProps<{ game: string; entry: KeywordEntry }>()
 
 const router = useRouter()
-const to = () => `/keywords/${props.entry.slug}`
+const to = () => keywordPath(props.game, props.entry.slug)
 
 // Warm the target route's chunk on hover/focus, as the set tiles do.
 function warm() {

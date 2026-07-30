@@ -56,7 +56,7 @@ function router() {
     history: createWebHistory(),
     routes: [
       { path: '/', component: { template: '<div />' } },
-      { path: '/keywords/:slug', name: 'keyword', component: { template: '<div />' } },
+      { path: '/keywords/:game/:slug', name: 'keyword', component: { template: '<div />' } },
     ],
   })
 }
@@ -70,7 +70,7 @@ async function mountText(text: string, keywords = true, cardName?: string) {
   await instance.push('/')
   await instance.isReady()
   return mount(ManaSymbols, {
-    props: { text, keywords, cardName },
+    props: { text, keywords, game: 'mtg', cardName },
     global: { plugins: [[VueQueryPlugin, { queryClient }], instance] },
   })
 }
@@ -106,7 +106,7 @@ describe('ManaSymbols with keywords', () => {
 
   it('links each marker to that keyword page', async () => {
     const wrapper = await mountText('Flying')
-    expect(wrapper.get('a').attributes('href')).toBe('/keywords/flying')
+    expect(wrapper.get('a').attributes('href')).toBe('/keywords/mtg/flying')
   })
 
   it('renders mana symbols and keyword markers together', async () => {

@@ -229,7 +229,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
             class="bg-card rounded-xl border p-4 shadow-sm"
           >
             <p class="text-sm leading-relaxed whitespace-pre-line">
-              <ManaSymbols :text="card.oracle_text" keywords :card-name="card.name" />
+              <ManaSymbols :text="card.oracle_text" keywords :game="game" :card-name="card.name" />
             </p>
           </div>
 
@@ -253,6 +253,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
                 <ManaSymbols
                   :text="face.oracle_text"
                   keywords
+                  :game="game"
                   :card-name="face.name ?? card.name"
                 />
               </p>

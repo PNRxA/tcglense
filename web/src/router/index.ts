@@ -322,17 +322,26 @@ const router = createRouter({
     // the homepage, nav, and footer. Lazy-loaded — the Scalar bundle is heavy and must
     // stay out of the app's initial payload.
     { path: '/docs', name: 'docs', component: () => import('@/views/DocsView.vue') },
-    // The rules-keyword glossary: an A–Z index plus a page per keyword, which is what a
-    // search like "tcglense vigilance" is meant to land on. Public and indexable, and
-    // advertised in the sitemap (`pages_body` in api/src/handlers/sitemap.rs).
+    // The rules-keyword glossary: a game hub, each game's A–Z index, and a page per
+    // keyword — the last is what a search like "tcglense vigilance" is meant to land on.
+    // Public and indexable, and advertised in the sitemap (`pages_body` in
+    // api/src/handlers/sitemap.rs, which builds the same paths).
     //
-    // Deliberately game-flat rather than `/cards/:game/keywords`: the SERP URL stays one
-    // segment deep, and MTG is pinned by `GLOSSARY_GAME` in `lib/keywords.ts`. A second
-    // game's glossary adds `/keywords/:game` siblings — a static segment outranks `:slug`
-    // at the same depth, so these URLs never have to move.
-    { path: '/keywords', name: 'keywords', component: () => import('@/views/KeywordsView.vue') },
+    // Game-scoped like the rest of the catalog (`/cards/:game/…`, `/sealed/:game/…`), so
+    // a second TCG's glossary needs no new route shape and moves no existing URL.
     {
-      path: '/keywords/:slug',
+      path: '/keywords',
+      name: 'keywords',
+      component: () => import('@/views/KeywordGamesView.vue'),
+    },
+    {
+      path: '/keywords/:game',
+      name: 'game-keywords',
+      component: () => import('@/views/KeywordsView.vue'),
+      props: true,
+    },
+    {
+      path: '/keywords/:game/:slug',
       name: 'keyword',
       component: () => import('@/views/KeywordView.vue'),
       props: true,

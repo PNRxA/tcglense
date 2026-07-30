@@ -601,11 +601,11 @@ describe('keyword glossary nodes', () => {
   } as const
 
   it('describes a keyword as a DefinedTerm in the glossary set', () => {
-    const node = definedTermNode(vigilance)
+    const node = definedTermNode('mtg', 'Magic: The Gathering', vigilance)
     expect(node['@type']).toBe('DefinedTerm')
     expect(node.name).toBe('Vigilance')
     expect(node.description).toBe("Attacking doesn't cause this creature to tap.")
-    expect(node.url).toContain('/keywords/vigilance')
+    expect(node.url).toContain('/keywords/mtg/vigilance')
     expect((node.inDefinedTermSet as Record<string, unknown>)['@type']).toBe('DefinedTermSet')
   })
 
@@ -613,19 +613,25 @@ describe('keyword glossary nodes', () => {
     // A Product node without `offers` is a critical Search Console error, and a keyword
     // can never honestly have one. Modelling it as a DefinedTerm is what keeps this page
     // out of that trap; this test fails if someone reshapes it into a Product.
-    const s = JSON.stringify([definedTermNode(vigilance), definedTermSetNode()]).toLowerCase()
+    const s = JSON.stringify([
+      definedTermNode('mtg', 'Magic: The Gathering', vigilance),
+      definedTermSetNode('mtg', 'Magic: The Gathering'),
+    ]).toLowerCase()
     for (const banned of ['product', 'offers', 'price', 'availability', 'aggregaterating']) {
       expect(s).not.toContain(banned)
     }
   })
 
   it('caps a long description like the other JSON-LD builders', () => {
-    const node = definedTermNode({ ...vigilance, text: 'x'.repeat(900) })
+    const node = definedTermNode('mtg', 'Magic: The Gathering', {
+      ...vigilance,
+      text: 'x'.repeat(900),
+    })
     expect((node.description as string).length).toBe(500)
   })
 
   it('builds the glossary crumb trail', () => {
-    expect(keywordCrumbs('Vigilance').map((c) => c.label)).toEqual([
+    expect(keywordCrumbs('mtg', 'Vigilance').map((c) => c.label)).toEqual([
       'Home',
       'Keywords',
       'Vigilance',

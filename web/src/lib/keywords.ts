@@ -26,12 +26,18 @@
 
 import type { KeywordEntry, KeywordKind } from '@/lib/api'
 
-/** The game whose glossary the app's `/keywords` pages serve. The routes are
- * game-flat (`/keywords/{slug}`) because a one-segment URL is what someone searching
- * "tcglense vigilance" lands on; a second game means game-scoped routes on both sides.
- * Mirrored by `GLOSSARY_GAME` in `api/src/handlers/sitemap.rs`, which advertises these
- * URLs — the two must name the same game. */
-export const GLOSSARY_GAME = 'mtg'
+/** The path of one keyword's glossary page. Game-scoped like the rest of the catalog
+ * (`/cards/{game}/…`, `/sealed/{game}/…`), so a second TCG's glossary needs no new route
+ * shape and no URL moves. The sitemap builds the same paths in
+ * `api/src/handlers/sitemap.rs`. */
+export function keywordPath(game: string, slug: string): string {
+  return `/keywords/${encodeURIComponent(game)}/${slug}`
+}
+
+/** The path of a game's glossary index. */
+export function glossaryPath(game: string): string {
+  return `/keywords/${encodeURIComponent(game)}`
+}
 
 /** Human labels for the three kinds of glossary entry. */
 export const KIND_LABELS: Readonly<Record<KeywordKind, string>> = {

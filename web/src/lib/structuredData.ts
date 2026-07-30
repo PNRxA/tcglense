@@ -25,6 +25,7 @@
 // Pure functions with no Vue/query-client dependency, so they're unit-tested directly.
 
 import type { Card, KeywordEntry, Product, ProductComponent } from '@/lib/api'
+import { glossaryPath, keywordPath } from '@/lib/keywords'
 import { stripManaBraces } from '@/lib/mana'
 import { formatUsd } from '@/lib/money'
 import { absoluteUrl } from '@/lib/seo'
@@ -401,9 +402,14 @@ export function sealedCrumbs(game: string, p: Product): Crumb[] {
   return [{ label: 'Home', to: '/' }, { label: 'Sealed', to: `/sealed/${game}` }, { label: p.name }]
 }
 
-/** Home › Keywords › {Keyword} — the glossary trail. */
-export function keywordCrumbs(name: string): Crumb[] {
-  return [{ label: 'Home', to: '/' }, { label: 'Keywords', to: '/keywords' }, { label: name }]
+/** Home › Keywords › {Keyword} — the glossary trail. The middle crumb points at the
+ * game's own index, which is where "all keywords" means something. */
+export function keywordCrumbs(game: string, name: string): Crumb[] {
+  return [
+    { label: 'Home', to: '/' },
+    { label: 'Keywords', to: glossaryPath(game) },
+    { label: name },
+  ]
 }
 
 /** The SERP-snippet meta description for a keyword page.
@@ -430,23 +436,27 @@ export function keywordMetaDescription(keyword: KeywordEntry): string {
  * Deliberately without `hasDefinedTerm` children: listing all ~350 terms would put the
  * whole glossary in every page's `<head>` for no ranking gain — the visible links are
  * what carry the crawl. */
-export function definedTermSetNode(): Record<string, unknown> {
+export function definedTermSetNode(game: string, gameName: string): Record<string, unknown> {
   return {
     '@type': 'DefinedTermSet',
-    name: 'Magic: The Gathering keyword glossary',
-    url: absoluteUrl('/keywords'),
+    name: `${gameName} keyword glossary`,
+    url: absoluteUrl(glossaryPath(game)),
   }
 }
 
 /** One keyword as a schema.org `DefinedTerm`. Never a `Product` — a rules keyword has
  * no price and no offers, so the card/sealed nodes' shape would be a false claim. */
-export function definedTermNode(keyword: KeywordEntry): Record<string, unknown> {
+export function definedTermNode(
+  game: string,
+  gameName: string,
+  keyword: KeywordEntry,
+): Record<string, unknown> {
   return {
     '@type': 'DefinedTerm',
     name: keyword.name,
     // Text-only surface: a literal `{2}` in a search result reads as a template bug.
     description: stripManaBraces(keyword.text).slice(0, MAX_JSON_LD_DESCRIPTION),
-    url: absoluteUrl(`/keywords/${keyword.slug}`),
-    inDefinedTermSet: definedTermSetNode(),
+    url: absoluteUrl(keywordPath(game, keyword.slug)),
+    inDefinedTermSet: definedTermSetNode(game, gameName),
   }
 }

@@ -464,9 +464,9 @@ un-`ETag`ged).
 A DB-backed XML sitemap advertises the public catalog (`handlers::sitemap`).
 `GET /sitemap.xml` is a **sitemap index** pointing at child sitemaps:
 `/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, each game's flat
-sealed-product browse, the keyword glossary — its index plus one URL per keyword,
-from the static `crate::catalog::keywords` table, so no query — and the legal pages),
-`/sitemaps/sets.xml` (every card set,
+sealed-product browse, the keyword glossary — its game hub, each game's index, and one
+URL per keyword, from the static `crate::catalog::keywords` table, so no query — and the
+legal pages), `/sitemaps/sets.xml` (every card set,
 plus every sealed-catalog set that actually holds products), `/sitemaps/cards-{n}.xml`
 (cards), and `/sitemaps/products-{n}.xml` (sealed products). Cards and products are
 chunked at 5 000 URLs/file — well under the protocol's 50 000 cap, because Google

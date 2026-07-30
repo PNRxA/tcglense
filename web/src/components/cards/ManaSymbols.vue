@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import KeywordTooltip from '@/components/cards/KeywordTooltip.vue'
 import { useKeywordGlossary } from '@/composables/useKeywords'
 import { splitKeywords, type KeywordSegment, type KeywordSegmentToken } from '@/lib/keywords'
@@ -19,8 +19,11 @@ import { parseManaText, type ManaToken } from '@/lib/mana'
 // string, so a wrapper could only re-implement this same loop.
 const props = defineProps<{
   text: string
-  /** Explain rules keywords found in the text (oracle text and rulings — not costs). */
+  /** Explain rules keywords found in the text (oracle text and rulings — not costs).
+   * Requires `game`: the glossary is per-game, and so is each keyword's page. */
   keywords?: boolean
+  /** The game the text belongs to. Only read in `keywords` mode. */
+  game?: string
   /** The card's name, when known, so its own title is never mistaken for a keyword
    * ("Fear of Isolation" is not the keyword Fear). */
   cardName?: string
@@ -34,7 +37,8 @@ const props = defineProps<{
 //
 // The glossary resolves after first paint, so keywords render as plain text until then —
 // a marker appearing is a smaller jolt than the text reflowing.
-const glossary = props.keywords ? useKeywordGlossary() : undefined
+const glossary =
+  props.keywords && props.game ? useKeywordGlossary(toRef(() => props.game as string)) : undefined
 const entries = computed(() => glossary?.entries.value ?? [])
 
 /** The flat token list the template loops over once — every join between tokens has to
@@ -76,6 +80,7 @@ const tokens = computed<Token[]>(() => {
         :title="token.label"
       /><KeywordTooltip
         v-else-if="token.type === 'keyword'"
+        :game="props.game as string"
         :entry="token.entry"
         :label="token.value"
       /><template v-else>{{ token.value }}</template></template

@@ -10,9 +10,10 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import KeywordKindChip from '@/components/keywords/KeywordKindChip.vue'
 import { Button } from '@/components/ui/button'
+import { useGamesQuery } from '@/composables/useCatalog'
 import { useKeywordEntry } from '@/composables/useKeywords'
 import { listCards } from '@/lib/api'
-import { GLOSSARY_GAME, KIND_BLURBS, KIND_LABELS } from '@/lib/keywords'
+import { KIND_BLURBS, KIND_LABELS, glossaryPath, keywordPath } from '@/lib/keywords'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import { usePageMeta } from '@/lib/seo'
 import {
@@ -26,29 +27,35 @@ import {
 // One keyword's page — the landing target for a search like "tcglense vigilance". The
 // answer sits above the fold, then the page turns the visitor into a catalog visit:
 // cards that actually use the keyword, priced, and the search that finds the rest.
-const props = defineProps<{ slug: string }>()
+const props = defineProps<{ game: string; slug: string }>()
+const game = toRef(props, 'game')
 const slug = toRef(props, 'slug')
 
 const router = useRouter()
-const { query, entry, notFound, previous, next, related } = useKeywordEntry(slug)
+const { query, entry, notFound, previous, next, related } = useKeywordEntry(game, slug)
 
 // A non-canonical spelling that still resolved (`/keywords/First-Strike`) is replaced
 // with the canonical URL, so one page never renders at two addresses.
 watchEffect(() => {
   const found = entry.value
-  if (found && found.slug !== props.slug) router.replace(`/keywords/${found.slug}`)
+  if (found && found.slug !== props.slug) router.replace(keywordPath(props.game, found.slug))
 })
 
-const crumbs = computed(() => (entry.value ? keywordCrumbs(entry.value.name) : []))
+const gamesQuery = useGamesQuery()
+const gameName = computed(
+  () => gamesQuery.data.value?.data.find((row) => row.id === game.value)?.name ?? game.value,
+)
+
+const crumbs = computed(() => (entry.value ? keywordCrumbs(game.value, entry.value.name) : []))
 
 /** A few cards that carry the keyword, newest and priciest first — the `kw:` search
  * filter is exactly what this page wants, and it's the same query the "browse all"
  * button below hands to the catalog. */
 const cardsQuery = useQuery({
-  queryKey: ['keyword-cards', GLOSSARY_GAME, computed(() => entry.value?.name)],
+  queryKey: ['keyword-cards', game, computed(() => entry.value?.name)],
   queryFn: ({ signal }) =>
     listCards(
-      GLOSSARY_GAME,
+      game.value,
       { q: `kw:"${entry.value?.name}"`, pageSize: 8, sort: 'price', dir: 'desc' },
       signal,
     ),
@@ -59,26 +66,31 @@ const cardsQuery = useQuery({
 const exampleCards = computed(() => cardsQuery.data.value?.data ?? [])
 const exampleTotal = computed(() => cardsQuery.data.value?.total ?? 0)
 const browseAll = computed(() => ({
-  path: `/cards/${GLOSSARY_GAME}/cards`,
+  path: `/cards/${game.value}/cards`,
   query: { q: `kw:"${entry.value?.name}"` },
 }))
 
 usePageMeta({
   title: () =>
     entry.value
-      ? `${entry.value.name} — MTG ${KIND_LABELS[entry.value.kind].toLowerCase()}`
+      ? `${entry.value.name} — ${gameName.value} ${KIND_LABELS[entry.value.kind].toLowerCase()}`
       : undefined,
   // Lead with the definition, not the boilerplate: the snippet has to answer "what does
   // vigilance do" in the SERP itself. `assembleMetaDescription` drops a clause whole when
   // it won't fit, so putting the definition second lost it on most entries.
   description: () => (entry.value ? keywordMetaDescription(entry.value) : undefined),
-  canonicalPath: () => (entry.value ? `/keywords/${entry.value.slug}` : undefined),
+  canonicalPath: () => (entry.value ? keywordPath(game.value, entry.value.slug) : undefined),
   // The SPA answers 200 for any slug, so an unknown one has to say "don't index me"
   // itself — that plus the dropped canonical is the soft-404 signal. Deliberate; a
   // "simplification" here quietly fills the index with dead keyword URLs.
   noindex: () => notFound.value,
   jsonLd: () =>
-    entry.value ? graph(definedTermNode(entry.value), breadcrumbList(crumbs.value)) : undefined,
+    entry.value
+      ? graph(
+          definedTermNode(game.value, gameName.value, entry.value),
+          breadcrumbList(crumbs.value),
+        )
+      : undefined,
 })
 </script>
 
@@ -89,7 +101,7 @@ usePageMeta({
       <h1 class="mt-4 text-2xl font-semibold tracking-tight">Keyword not found</h1>
       <p class="text-muted-foreground mt-2">No glossary entry matches “{{ slug }}”.</p>
       <Button variant="outline" class="mt-6" as-child>
-        <RouterLink to="/keywords">Browse all keywords</RouterLink>
+        <RouterLink :to="glossaryPath(game)">Browse all keywords</RouterLink>
       </Button>
     </div>
 
@@ -118,7 +130,7 @@ usePageMeta({
         <h2 class="mb-3 text-lg font-semibold">Cards with {{ entry.name }}</h2>
         <CardGridSkeleton v-if="cardsQuery.isPending.value" />
         <template v-else>
-          <CardGrid :game="GLOSSARY_GAME" :cards="exampleCards" />
+          <CardGrid :game="game" :cards="exampleCards" />
           <Button variant="outline" class="mt-4" as-child>
             <RouterLink :to="browseAll">
               Browse all {{ exampleTotal }} cards with {{ entry.name }}
@@ -135,7 +147,7 @@ usePageMeta({
           <RouterLink
             v-for="item in related"
             :key="item.slug"
-            :to="`/keywords/${item.slug}`"
+            :to="keywordPath(game, item.slug)"
             class="bg-muted hover:bg-accent hover:text-accent-foreground rounded-md px-2.5 py-1 text-sm transition-colors"
           >
             {{ item.name }}
@@ -149,17 +161,17 @@ usePageMeta({
       >
         <RouterLink
           v-if="previous"
-          :to="`/keywords/${previous.slug}`"
+          :to="keywordPath(game, previous.slug)"
           class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 transition-colors"
         >
           <ArrowLeft class="size-4" />
           {{ previous.name }}
         </RouterLink>
         <span v-else />
-        <RouterLink to="/keywords" class="hover:underline">All keywords</RouterLink>
+        <RouterLink :to="glossaryPath(game)" class="hover:underline">All keywords</RouterLink>
         <RouterLink
           v-if="next"
-          :to="`/keywords/${next.slug}`"
+          :to="keywordPath(game, next.slug)"
           class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 transition-colors"
         >
           {{ next.name }}

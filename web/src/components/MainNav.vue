@@ -48,6 +48,7 @@ function warmSection(value: string) {
     for (const game of games.value) {
       warm(`/cards/${game.id}`)
       warm(`/sealed/${game.id}`)
+      warm(`/keywords/${game.id}`)
     }
   } else if (value === 'collection') {
     warm('/collection')
@@ -144,6 +145,16 @@ function warmSection(value: string) {
                   <BookOpen aria-hidden="true" />
                   Keyword glossary
                 </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <li v-for="game in games" :key="`keywords-${game.id}`">
+              <NavigationMenuLink as-child>
+                <RouterLink
+                  :to="`/keywords/${game.id}`"
+                  @pointerenter="warm(`/keywords/${game.id}`)"
+                  @focusin="warm(`/keywords/${game.id}`)"
+                  >{{ game.name }}</RouterLink
+                >
               </NavigationMenuLink>
             </li>
           </ul>

@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { KIND_LABELS } from '@/lib/keywords'
+import { KIND_LABELS, keywordPath } from '@/lib/keywords'
 import type { KeywordEntry } from '@/lib/api'
 
 // One keyword inside a card's rules text, turned into an explanation you can reach
@@ -22,6 +22,8 @@ import type { KeywordEntry } from '@/lib/api'
 // operable from the keyboard for free — the cost is one tab stop per distinct keyword,
 // which is the honest price of the feature being reachable at all.
 const props = defineProps<{
+  /** The game whose glossary this entry came from — the keyword page is under it. */
+  game: string
   /** The glossary entry this run of text refers to. */
   entry: KeywordEntry
   /** The matched text exactly as the card spells it, so casing survives. */
@@ -62,7 +64,7 @@ const TRIGGER_CLASS =
     where a newline in the template would render as a visible space mid-sentence. -->
   <Tooltip v-if="canHover"
     ><TooltipTrigger as-child
-      ><RouterLink :to="`/keywords/${props.entry.slug}`" :class="TRIGGER_CLASS">{{
+      ><RouterLink :to="keywordPath(props.game, props.entry.slug)" :class="TRIGGER_CLASS">{{
         props.label
       }}</RouterLink></TooltipTrigger
     >
@@ -84,7 +86,7 @@ const TRIGGER_CLASS =
       <p class="mt-0.5 font-medium">{{ props.entry.name }}</p>
       <p class="mt-1.5 text-sm leading-relaxed"><ManaSymbols :text="props.entry.text" /></p>
       <RouterLink
-        :to="`/keywords/${props.entry.slug}`"
+        :to="keywordPath(props.game, props.entry.slug)"
         class="text-primary mt-3 inline-block text-sm font-medium hover:underline"
         @click="open = false"
       >
