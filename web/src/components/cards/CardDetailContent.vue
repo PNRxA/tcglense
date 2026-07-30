@@ -229,7 +229,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
             class="bg-card rounded-xl border p-4 shadow-sm"
           >
             <p class="text-sm leading-relaxed whitespace-pre-line">
-              <ManaSymbols :text="card.oracle_text" />
+              <ManaSymbols :text="card.oracle_text" keywords :game="game" :card-name="card.name" />
             </p>
           </div>
 
@@ -250,7 +250,12 @@ const alertFinishes = computed<AlertFinish[]>(() => {
                 {{ face.type_line }}
               </p>
               <p v-if="face.oracle_text" class="mt-2 text-sm leading-relaxed whitespace-pre-line">
-                <ManaSymbols :text="face.oracle_text" />
+                <ManaSymbols
+                  :text="face.oracle_text"
+                  keywords
+                  :game="game"
+                  :card-name="face.name ?? card.name"
+                />
               </p>
               <p
                 v-if="face.power && face.toughness"
@@ -300,7 +305,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
         <!-- The card's "Notes and Rules Information" (rulings, issue #522), last on the page.
           Keyed off the route id so it mounts before the card loads; renders nothing when
           there are none. -->
-        <CardRulings :game="game" :id="id" />
+        <CardRulings :game="game" :id="id" :card-name="card?.name" />
       </div>
 
       <!-- Outbound "buy this card" links, grouped by region (issue #175). The rail's second

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import {
   Bell,
+  BookOpen,
   ChevronRight,
   Code,
   Heart,
@@ -59,6 +60,7 @@ function warmAll(open: boolean) {
   prefetchRouteChunks(router, '/scan')
   prefetchRouteChunks(router, '/decks')
   prefetchRouteChunks(router, '/alerts')
+  prefetchRouteChunks(router, '/keywords')
   prefetchRouteChunks(router, '/docs')
 }
 
@@ -176,6 +178,10 @@ const docsLinkClass =
         <RouterLink to="/alerts" :class="docsLinkClass">
           <Bell class="mx-0.5 size-4" aria-hidden="true" />
           Alerts
+        </RouterLink>
+        <RouterLink to="/keywords" :class="docsLinkClass">
+          <BookOpen class="mx-0.5 size-4" aria-hidden="true" />
+          Keyword glossary
         </RouterLink>
         <RouterLink to="/docs" :class="docsLinkClass">
           <Code class="mx-0.5 size-4" aria-hidden="true" />

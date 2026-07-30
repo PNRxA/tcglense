@@ -242,6 +242,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}/cards/export?q&include_related&sort&dir&format` | the same, scoped to a set (the set-cards listing's result set). `404` unknown game or set, `422` malformed `q`/`sort`/`format` |
 | `GET /api/games/{game}/card-names?q&limit` | `{ data: string[] }` — up to `limit` (default 10, max 25) **distinct** card names containing `q` (case-insensitive; names *starting* with `q` first, then alphabetical). `[]` for a blank/absent `q`. Powers the collection/wish-list quick-add autocomplete |
 | `GET /api/games/{game}/art-tags?q&limit` | `{ data: ArtTagEntry[] }` — Tagger **art tags** usable with the `art:` search filter, `ArtTagEntry = { slug, label, count, description }` (`count` = distinct stored artworks matching, hierarchy-expanded; tags matching nothing we store are absent). With `q`: up to `limit` (default 10, max 50) tags whose slug **or** label contains `q` (case-insensitive; starts-with matches first, then by `count`) — the advanced-search autocomplete. Without `q`: the game's **full** tag list ordered by slug — the SPA tag-browser payload (a few thousand entries; ETag/CDN-cached like every public catalog read) |
+| `GET /api/games/{game}/keywords` | `{ data: KeywordEntry[] }` — the game's **rules-keyword glossary**, name-ordered. `KeywordEntry = { name, slug, kind, text, parameterized, match_mode }`: `kind` is `"ability"` (a named ability a card *has*) / `"action"` (a verb the rules define) / `"ability_word"` (an italic label with no rules meaning); `text` is the official reminder text where one exists; `slug` is the `/keywords/{slug}` page segment, derived server-side so the sitemap and the SPA can't disagree; `parameterized` marks a keyword that carries a value (`Ward {2}`, `Annihilator 3`). `match_mode` tells the SPA how far the *name* can be trusted inside card text — `"anywhere"` (distinctive jargon), `"ability_line"` (also an everyday word, so only in keyword position), `"never"` (rules plumbing like `Tap`/`Destroy`: glossary page only, never linked inline). A **static table**, not a query (`crate::catalog::keywords`), so it answers in full on an unsynced instance and changes only with a release; a supported game with no table yet returns `200 []`, only an unknown game is `404` |
 | `GET /api/games/{game}/cards/{id}` | one `Card` |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
@@ -463,7 +464,9 @@ un-`ETag`ged).
 A DB-backed XML sitemap advertises the public catalog (`handlers::sitemap`).
 `GET /sitemap.xml` is a **sitemap index** pointing at child sitemaps:
 `/sitemaps/pages.xml` (static + per-game routes, the sealed hubs, each game's flat
-sealed-product browse, and the legal pages), `/sitemaps/sets.xml` (every card set,
+sealed-product browse, the keyword glossary — its game hub, each game's index, and one
+URL per keyword, from the static `crate::catalog::keywords` table, so no query — and the
+legal pages), `/sitemaps/sets.xml` (every card set,
 plus every sealed-catalog set that actually holds products), `/sitemaps/cards-{n}.xml`
 (cards), and `/sitemaps/products-{n}.xml` (sealed products). Cards and products are
 chunked at 5 000 URLs/file — well under the protocol's 50 000 cap, because Google

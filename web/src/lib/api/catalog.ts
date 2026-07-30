@@ -6,6 +6,7 @@ import type {
   DropGroup,
   Game,
   IngestStatus,
+  KeywordEntry,
   Page,
   PricePoint,
   Ruling,
@@ -27,6 +28,9 @@ export type {
   DropGroup,
   Game,
   IngestStatus,
+  KeywordEntry,
+  KeywordKind,
+  MatchMode,
   Page,
   PricePoint,
   Ruling,
@@ -212,6 +216,15 @@ export function getArtTags(
   limit = ART_TAG_SUGGESTION_LIMIT,
 ): Promise<{ data: ArtTagEntry[] }> {
   return request<{ data: ArtTagEntry[] }>(artTagsPath(game, q, limit))
+}
+
+/** The game's whole rules-keyword glossary — every keyword ability, keyword action and
+ * ability word, name-ordered, each with an explanation and the slug of its glossary
+ * page. A small static payload (it only changes with an API release), so callers cache
+ * it for the session and share one fetch between the card-text tooltips and the
+ * `/keywords` pages. */
+export function getKeywords(game: string): Promise<{ data: KeywordEntry[] }> {
+  return request<{ data: KeywordEntry[] }>(`/api/games/${encodeURIComponent(game)}/keywords`)
 }
 
 /** Page size for exact-name printing discovery. The picker loads further pages on

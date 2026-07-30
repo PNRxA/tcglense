@@ -322,6 +322,30 @@ const router = createRouter({
     // the homepage, nav, and footer. Lazy-loaded — the Scalar bundle is heavy and must
     // stay out of the app's initial payload.
     { path: '/docs', name: 'docs', component: () => import('@/views/DocsView.vue') },
+    // The rules-keyword glossary: a game hub, each game's A–Z index, and a page per
+    // keyword — the last is what a search like "tcglense vigilance" is meant to land on.
+    // Public and indexable, and advertised in the sitemap (`pages_body` in
+    // api/src/handlers/sitemap.rs, which builds the same paths).
+    //
+    // Game-scoped like the rest of the catalog (`/cards/:game/…`, `/sealed/:game/…`), so
+    // a second TCG's glossary needs no new route shape and moves no existing URL.
+    {
+      path: '/keywords',
+      name: 'keywords',
+      component: () => import('@/views/KeywordGamesView.vue'),
+    },
+    {
+      path: '/keywords/:game',
+      name: 'game-keywords',
+      component: () => import('@/views/KeywordsView.vue'),
+      props: true,
+    },
+    {
+      path: '/keywords/:game/:slug',
+      name: 'keyword',
+      component: () => import('@/views/KeywordView.vue'),
+      props: true,
+    },
     // Legal pages, linked from the site footer. Public and indexable.
     { path: '/terms', name: 'terms', component: () => import('@/views/TermsView.vue') },
     { path: '/privacy', name: 'privacy', component: () => import('@/views/PrivacyPolicyView.vue') },
