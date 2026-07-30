@@ -61,7 +61,16 @@ const searchFor = (slug: string) => ({
         :title="tag.description ?? undefined"
       >
         <span>{{ tag.label }}</span>
-        <span class="text-muted-foreground tabular-nums">{{ tag.count.toLocaleString() }}</span>
+        <!-- The count is *artworks*, while the link runs a card search — which returns
+          printings, so the two numbers legitimately differ (one painting, many reprints).
+          Spelled out here rather than left as a bare number the reader would read as a
+          result count. -->
+        <span
+          class="text-muted-foreground tabular-nums"
+          :title="`${tag.count.toLocaleString()} artworks tagged ${tag.label}`"
+        >
+          {{ tag.count.toLocaleString() }}
+        </span>
       </RouterLink>
     </div>
     <button

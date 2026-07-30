@@ -589,6 +589,21 @@ catalog) is planned but not implemented.
     inputs, so a card re-import (new sets → new artworks) rebuilds it; and an empty card
     catalog (fresh DB, failed card import) **defers** the import without stamping the
     version, so it can never latch empty tables as "complete".
+  - **`card_art_tags` carries two indexes, one per read shape.** The `art:` search probes
+    `(game, tag_slug, illustration_id)`; the card page's "Artwork tags" panel asks the
+    *transpose* — every tag on one artwork — and rides `m..064`'s
+    `(game, illustration_id, tag_slug)`. Both are three-column and cover their query, and
+    the third column on the second one is **load-bearing, not padding**: SQLite is the
+    default backend and this schema never runs `ANALYZE`, so with no `sqlite_stat1` every
+    index gets the same fixed row estimate and a *non*-covering `(game, illustration_id)`
+    loses to the covering search index — the planner then index-only-scans the whole
+    `game = 'mtg'` partition. Measured on ~1M rows: 76 ms per request two-column versus
+    0.01 ms three-column. Cost of the second B-tree: the once-daily wholesale rebuild
+    roughly doubles its index-write work (measured ~4.6 s → ~4.9 s per 1M rows locally;
+    a slow prod disk will feel it more). Accepted — it is a version-gated background tick,
+    and the alternative (reordering the *search* index to serve both reads, saving the
+    B-tree entirely) measurably slowed the shipped `art:` probe. Any third read shape here
+    should reuse one of these two orders rather than add a third index.
   - **Tag slugs are denormalized onto the mapping rows** (no join to `art_tags` on the hot
     path). Scryfall warns slugs can drift — the durable id is stored in `art_tags` — but the
     wholesale daily rebuild self-corrects any drift, so v1 trades referential purity for the
