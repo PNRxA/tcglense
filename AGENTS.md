@@ -70,7 +70,8 @@ that's what CI waits for.
 
 Skeleton only — the full annotated map is [`docs/architecture.md`](./docs/architecture.md).
 
-- `api/src/`: `router.rs` (every route + middleware) · `handlers/` · `entities/` +
+- `api/src/`: `router.rs` (every route + middleware) · `handlers/` (incl. `tools/` — the
+  play-aid namespace) · `entities/` +
   `migrator/` · `auth/` · `catalog/` (GAMES registry + per-game dispatch) · providers
   (`scryfall/`, `tcgcsv/`, `mtgjson/`) · `collection_import/` · `deck_import/` · `security_tests/`
   (HTTP-level suites driving the real router).
@@ -252,6 +253,34 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`parent_set_code IS NULL`), a curated set-type allow-list, non-digital, never `sld` (drops
   handle that per-drop). Session-only channel settings, like price alerts; the two flags ride
   the `AlertChannels` DTO, so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
+- **Tools** (`/api/tools/{game}/...`) is a *namespace*, not a surface: play aids backed by the
+  caller's own rows, grouped so a second tool adds a path segment rather than a new top-level
+  route family (the API mirror of the SPA's `/tools` section, placed the way `/keywords` is).
+  Today it holds the **life counter** — a container surface like decks (`life_sessions` /
+  `life_session_players` / `life_events`), not a holdings twin, so it rides no `makeHoldingApi`.
+  A seat and an event have **no `user_id`** (they hang off `session_id`), so every seat/event
+  route must `load_session` first — a foreign id is **404, not 403**. Four invariants:
+  **(1) a finished session is immutable** — every life/seat/undo write gates on
+  `require_active` and answers **409**, because a recorded result already counts towards the
+  per-deck record; start a rematch (`from_session_id`) instead. **(2) `life` is written in
+  exactly two places** — a tap appends one event and moves the seat by its delta, and an undo
+  re-folds the seat's whole chain through the pure `life/replay.rs` fold (which is why the fold
+  honours `set` as an absolute and `adjust` as relative, and clamps rather than overflowing);
+  nothing else may write it. **(3) a seat names what was played in one of two mutually exclusive
+  ways** — `deck_id` (one of *yours*, which is what builds a record) or `commander_card_id` (for the
+  opponents whose deck you'll never have); both at once is a **422**, because a deck already knows
+  its commander and the pair would surface as a wrong record rather than an error. **(4) both links
+  are FK-less and orphan-tolerant** (the call `price_alerts.card_id` makes) — deleting a played deck,
+  or a re-import dropping a card row, must neither fail nor delete history, so reads report the link
+  absent and `life/stats.rs` inner-joins `decks` *scoped to the caller*. A **rematch** distinguishes
+  a *copied* reference (dropped once it stops resolving, so an old pod stays re-playable) from an
+  *explicit* one (still a `404`).
+  The `layout` slug vocabulary + the per-count layout and per-seat rotation defaults are
+  **mirrored** in `web/src/lib/lifeLayout.ts` with tests pinning both sides; a slug added on one
+  side only is either rejected by the API or renders as something other than its name. The SPA
+  batches taps into **one** committed change per run (`composables/useLifeTaps.ts`) and
+  deliberately does **not** retry a failed commit — a request that failed in transit may still
+  have applied, so re-sending could double the loss.
 - **Every export is a file-download response through `handlers/shared/download.rs`**
   (`csv_download`/`text_download`) — don't re-roll the Content-Type + Content-Disposition
   pair. The **card-search `.txt` export** (`/api/games/{game}/cards/export` and its

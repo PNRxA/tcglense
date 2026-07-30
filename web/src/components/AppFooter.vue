@@ -3,6 +3,7 @@ import { Heart } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
 import { Button } from '@/components/ui/button'
+import { publicNavItems } from '@/lib/nav'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 
 // Build-time app version (injected via the `define` in vite.config.ts), shown next to the
@@ -14,6 +15,16 @@ const version = import.meta.env.VITE_APP_VERSION
 // links, and the required WotC Fan Content disclaimer — placed wherever card data/images
 // render (nearly every page). Fully static: no queries, no auth reads, identical signed in
 // or out.
+
+// The Product column is *derived* from the nav registry (`lib/nav.ts`), not hand-written:
+// it used to be the third copy of the app's information architecture and had already
+// drifted from both navs. Add a destination there and it appears here too. Deliberately
+// the pure `publicNavItems()` and not `useNav()` — the composable reads `useGamesQuery`,
+// which would cost this component its "fully static" promise; the footer lists the
+// all-games landings only and never expands per game. `publicNavItems()` also decides what
+// belongs here: account-gated items (Scan) are out, and so are the bare top-bar links —
+// which is why the API reference stays below in Project rather than moving up.
+const productItems = publicNavItems()
 
 // The legal pages are lazy-loaded route chunks; warm them on hover/focus so the click
 // lands on a loaded view (see lib/prefetch.ts — chunks only, never data/images). The
@@ -66,44 +77,12 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
               Product
             </h2>
             <ul class="mt-3 space-y-2">
-              <li>
+              <li v-for="item in productItems" :key="item.id">
                 <RouterLink
-                  to="/cards"
+                  :to="item.landing"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
                 >
-                  Cards
-                </RouterLink>
-              </li>
-              <li>
-                <RouterLink
-                  to="/sealed"
-                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
-                >
-                  Sealed products
-                </RouterLink>
-              </li>
-              <li>
-                <RouterLink
-                  to="/keywords"
-                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
-                >
-                  Keyword glossary
-                </RouterLink>
-              </li>
-              <li>
-                <RouterLink
-                  to="/collection"
-                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
-                >
-                  Collection
-                </RouterLink>
-              </li>
-              <li>
-                <RouterLink
-                  to="/wishlist"
-                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
-                >
-                  Wish list
+                  {{ item.label }}
                 </RouterLink>
               </li>
             </ul>

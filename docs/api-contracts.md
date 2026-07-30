@@ -1179,6 +1179,98 @@ The Discord webhook + Telegram/email dispatch rides a dedicated HTTP client
 webhook URL cannot bounce to an internal host and a hung endpoint cannot stall a send. Both
 credentials are redacted in the entity's `Debug` so they never reach logs.
 
+## Tools API contract — life counter
+
+`/api/tools/{game}/...` is the **tools** namespace: play aids backed by the caller's own rows,
+which are neither catalog reads nor holdings. Grouped under `tools` so a second tool adds a path
+segment rather than a new top-level route family — the API mirror of the SPA's `/tools` section
+(placed the way `/keywords` is: a hub, a per-game index, then the tool).
+
+Today there is one tool: the **life counter**. Authenticated (`AuthUser` reads /
+`WritableUser` writes), game-namespaced, in the router's `private` group (so every response is
+`Cache-Control: no-store` and per-user rate limited), and documented in the OpenAPI doc under the
+`Tools` tag — an API key can drive it.
+
+A tracked game is three tables: `entities/life_session.rs` (`life_sessions` — one game, carrying
+an optional `name`/`format`, its `starting_life`, a seat-placement `layout` slug, `status`
+(`active` / `finished`) and `started_at`/`finished_at`), `life_session_player.rs`
+(`life_session_players` — one **seat**: `position`, `name`, an optional `deck_id` **or**
+`commander_card_id`, its own `starting_life`, the current `life`, a screen `rotation`, and a
+`result`), and `life_event.rs`
+(`life_events` — one **life change**: `delta`, `life_after`, `kind`). Sessions cascade-delete from
+`users`; seats and events cascade from the session.
+
+**Ownership.** A seat and an event have no `user_id` — they hang off `session_id` — so every
+seat/event-scoped route first proves the parent session belongs to the token user; a session, seat
+or event that isn't the caller's is a **404** (never 403 — no existence oracle over session ids),
+matching the decks surface.
+
+**A finished game is immutable.** Life changes, seat edits, seat add/remove/reorder and undo all
+require `status == "active"` and answer **409** otherwise — a recorded result already counts
+towards the per-deck record, so letting the game move afterwards would rewrite history. Start a
+rematch instead (`from_session_id`).
+
+**A seat says what was played in one of two mutually exclusive ways.** `deck_id` names one of
+*your* decks, which is what builds a per-deck record. `commander_card_id` instead names a card — for
+the opponents you'll never have a deck for but whose commander you always know. A seat carrying both
+is a **422**: a deck already knows its own commander, so the pair would leave "what was played here"
+ambiguous, and it's the kind of ambiguity that shows up as a wrong record rather than an error.
+
+**Both links are orphan-tolerant.** Neither column carries a **foreign key** (the call
+`price_alerts.card_id` makes): deleting a deck you've played — or a catalog re-import removing a card
+row — must neither fail nor delete the game. Reads report the link as absent (both the id *and* the
+resolved name come back `null`), and the record read inner-joins `decks` scoped to the caller, so a
+deleted — or never-owned — deck contributes nothing rather than dangling. A **rematch** treats a
+*copied* reference differently from an explicit one: a copied id that no longer resolves is dropped
+so the old pod stays re-playable, where an explicit one is still a `404`.
+
+| Method & path | Body | Returns |
+|---------------|------|---------|
+| `GET /api/tools/{game}/life/sessions` | — | `{ data: LifeSession[] }` — the caller's tracked games, newest-started first, each with its seats inlined but **no** history. `?status=active\|finished` narrows (`422` for anything else); `?limit` is clamped to `1..=200` (default 50). Four queries regardless of page size |
+| `POST /api/tools/{game}/life/sessions` | `{ name?, format?, starting_life?, layout?, players[], from_session_id? }` | `LifeSessionDetail` — start a game. Each `players[]` entry is `{ name?, deck_id?, commander_card_id?, starting_life?, rotation? }` (`commander_card_id` is an **external** card id, and is mutually exclusive with `deck_id` — both is a `422`, one the catalog doesn't hold is a `404`); an unnamed seat becomes `Player {n}`, a seat with no `starting_life` inherits the session's (default 20), and a seat with no `rotation` takes the layout's own. `from_session_id` **rematches**: the seats, decks, rotations, starting life, layout and format of that earlier game are copied and a fresh game begins on full life; any field stated explicitly still wins, and a non-empty `players` replaces the copied seats. `422` no seats / more than 12 / unknown `layout` / off-vocabulary `rotation` / `starting_life` outside `1..=9999` / over the per-game cap (2000); `404` unknown game, a `from_session_id` that isn't the caller's, or a `deck_id` that isn't one of their decks. The session and its seats commit as one transaction |
+| `GET /api/tools/{game}/life/sessions/{session_id}` | — | `LifeSessionDetail` — one game in full: header, seats, and **every** recorded change in order (returned whole — a session is capped at 5000 changes) |
+| `PUT /api/tools/{game}/life/sessions/{session_id}` | `{ name?, format?, layout? }` | `LifeSession` — relabel or re-seat. Each field optional (absent = unchanged, blank clears `name`/`format`). Allowed on a finished game too: relabelling history isn't rewriting it |
+| `DELETE /api/tools/{game}/life/sessions/{session_id}` | — | `204` — delete the game (seats + history cascade; a finished game's contribution to the deck records goes with it) |
+| `POST /api/tools/{game}/life/sessions/{session_id}/finish` | `{ winner_player_id }` | `LifeSessionDetail` — record the result: the named seat is a `win` and every other a `loss`; `null` records a `draw` for the whole table. Stamps `finished_at`, flips `status`, and from here the game counts towards the per-deck record. `404` a winner that isn't one of the game's seats; `409` already finished |
+| `POST /api/tools/{game}/life/sessions/{session_id}/players` | `{ name?, deck_id?, commander_card_id?, starting_life?, rotation? }` | `LifeSessionDetail` — seat another player (appended, on their own full life). Takes the same seat shape as `players[]` above, so `deck_id`/`commander_card_id` stay mutually exclusive (`422` for both). `422` over 12 seats; `409` on a finished game |
+| `PUT /api/tools/{game}/life/sessions/{session_id}/players/reorder` | `{ player_ids }` | `LifeSessionDetail` — set the seat order (the other half of "where does everyone sit"). Must be **exactly** the game's seats, each once (`422` otherwise — a partial list would silently collapse the order the client didn't send). Positions are rewritten 0-based and gap-free |
+| `PUT /api/tools/{game}/life/sessions/{session_id}/players/{player_id}` | `{ name, deck_id?, commander_card_id?, rotation? }` | `LifeSeat` — a **full replace** of the seat's editable state, not a patch: an absent/null `deck_id`/`commander_card_id` unlinks what was there and an absent `rotation` resets the seat upright. The two links stay mutually exclusive (`422` for both). Life and starting life are deliberately not editable here — a wrong total is corrected through the life route, so it lands in the history |
+| `DELETE /api/tools/{game}/life/sessions/{session_id}/players/{player_id}` | — | `LifeSessionDetail` — remove a seat (its history goes with it) and renumber the rest. `422` on the last seat — delete the game instead |
+| `POST /api/tools/{game}/life/sessions/{session_id}/players/{player_id}/life` | `{ delta }` **or** `{ life }` | `LifeChange { player, event }` — the hot path. Send **exactly one** (`422` for neither or both): `delta` is a relative change (what the SPA commits after batching a run of taps, so the history reads "lost 5" rather than five "lost 1" rows, `\|delta\| <= 1000`), `life` an absolute correction recorded as `kind: "set"`. Totals clamp to `-9999..=9999` and the stored `delta` is the movement that **actually** happened, so a tap at the floor records `0`, not a phantom loss. Answers with just the seat and its event — deliberately not the whole game. `422` when the session's 5000-change cap is full |
+| `DELETE /api/tools/{game}/life/sessions/{session_id}/events/{event_id}` | — | `LifeSessionDetail` — undo one change, from **anywhere** in the history. The seat's remaining chain is re-folded from its starting life (`handlers/tools/life/replay.rs`), so a mis-tap found three turns later is undone correctly instead of leaving every later total off by the same amount: a relative change shifts, an absolute `set` still pins its own total and only its derived `delta` moves |
+| `GET /api/tools/{game}/life/decks` | — | `{ data: LifeDeckRecord[] }` — the per-deck win/loss record, most-played first (then by name). `?deck_id=` narrows to one deck (what a deck's own page asks for). Derived, never stored: only **finished** sessions with a recorded result count, so an abandoned game can't dilute a win rate |
+
+`LifeSession = { id, game, name, format, starting_life, layout, status, players, started_at,
+finished_at, created_at, updated_at }`, `LifeSessionDetail = { session, events }` (a wrapper
+rather than a second copy of the header's fields), `LifeSeat = { id, position, name, deck_id,
+deck_name, commander_card_id, commander_name, starting_life, life, rotation, result }` (the
+commander id is **external**, and both resolved names are `null` when the reference no longer looks
+up), `LifeEvent = { id, player_id, delta,
+life_after, kind, created_at }`, and `LifeDeckRecord = { deck_id, deck_name, games, wins, losses,
+draws, win_rate, last_played_at }` — `win_rate` is `wins / games` in `0.0..=1.0`, or **`null`**
+with no games (never a misleading `0%` for an unplayed deck; the SPA additionally withholds the
+figure below 5 games while still showing the raw W–L–D).
+
+**Vocabularies** (all validated server-side, so a stored value is always one the client can
+render). `status`: `active` / `finished`. `result`: `none` / `win` / `loss` / `draw`. `kind`:
+`adjust` / `set`. `rotation`: `0` / `90` / `180` / `270` degrees clockwise, naming the table edge
+that seat reads from — `0` the near edge, `90` the **left**, `180` the far, `270` the right (a
+clockwise quarter turn sends the text's "up" from the near edge to the left one). `layout`, each a
+physical arrangement rather than a cosmetic one:
+
+| Slug | Arrangement | Default at |
+|------|-------------|-----------|
+| `rows` | One seat per full-width row, all upright — one person holding a phone | 1 player |
+| `facing` | Two banks on opposite edges, the far bank rotated 180° — the device flat between two sides of a table | 2–3 players |
+| `pinwheel` | One seat per edge, each a quarter turn from the last — a pod around a device in the middle | 4 players |
+| `grid` | Two columns, all upright — one person holding a tablet | 5+ players |
+
+`web/src/lib/lifeLayout.ts` mirrors the slug list, the per-count defaults **and** the per-seat
+default rotations, with unit tests on each side pinning them together — a slug added on one side
+only would either be rejected by the API or render as something other than its name. The layout
+only *seeds* a seat's rotation; the stored `rotation` is the truth afterwards, so one player at an
+unexpected side of the table can be turned without changing the layout.
+
 ## Dataset mirror
 
 Optional public endpoints (`handlers::mirror`), wired **only when `MIRROR_ENABLED=true`**

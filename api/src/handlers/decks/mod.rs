@@ -31,6 +31,10 @@ use crate::entities::prelude::{Deck, DeckFolder, DeckSection};
 use crate::entities::{deck, deck_folder, deck_section};
 use crate::error::AppError;
 use crate::handlers::shared::{CardResponse, CollectionSummary};
+// The name/optional-text validators now live in `handlers::shared::validate` (the
+// life-counter tool wants the same two rules); re-exported here so the deck submodules
+// keep importing them from `super` as before.
+pub(crate) use crate::handlers::shared::{validate_name, validate_optional};
 use crate::state::AppState;
 
 use sea_orm::prelude::DateTimeUtc;
@@ -525,44 +529,6 @@ pub(crate) async fn resolve_folder_ref(
         return Err(AppError::NotFound("folder not found".to_string()));
     }
     Ok(Some(id))
-}
-
-/// Trim + validate a required name field (non-empty, at most `max` characters).
-pub(crate) fn validate_name(value: &str, field: &str, max: usize) -> Result<String, AppError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::Validation(format!("{field} must not be empty")));
-    }
-    if trimmed.chars().count() > max {
-        return Err(AppError::Validation(format!(
-            "{field} must be at most {max} characters"
-        )));
-    }
-    Ok(trimmed.to_string())
-}
-
-/// Trim + validate an optional text field: blank collapses to `None`; over `max`
-/// characters is a 422.
-pub(crate) fn validate_optional(
-    value: Option<String>,
-    field: &str,
-    max: usize,
-) -> Result<Option<String>, AppError> {
-    match value {
-        Some(v) => {
-            let trimmed = v.trim();
-            if trimmed.is_empty() {
-                return Ok(None);
-            }
-            if trimmed.chars().count() > max {
-                return Err(AppError::Validation(format!(
-                    "{field} must be at most {max} characters"
-                )));
-            }
-            Ok(Some(trimmed.to_string()))
-        }
-        None => Ok(None),
-    }
 }
 
 /// Bump a deck's `updated_at` so an edit to its cards or sections bubbles it to the top of

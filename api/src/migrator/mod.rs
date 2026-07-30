@@ -63,6 +63,8 @@ mod m20240101_000060_add_alert_channel_release_flags;
 mod m20240101_000061_create_release_notifications_table;
 mod m20240101_000062_add_deck_section_is_maybeboard;
 mod m20240101_000063_create_art_tags_tables;
+mod m20240101_000064_create_life_counter_tables;
+mod m20240101_000065_add_life_seat_commander;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -136,6 +138,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000061_create_release_notifications_table::Migration),
             Box::new(m20240101_000062_add_deck_section_is_maybeboard::Migration),
             Box::new(m20240101_000063_create_art_tags_tables::Migration),
+            Box::new(m20240101_000064_create_life_counter_tables::Migration),
+            Box::new(m20240101_000065_add_life_seat_commander::Migration),
         ]
     }
 }
