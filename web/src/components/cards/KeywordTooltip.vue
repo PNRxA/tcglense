@@ -52,23 +52,26 @@ const open = ref(false)
  *
  * A hairline dotted underline reads as typography rather than as "there is something
  * here", and it disappears entirely against the descenders of a paragraph of oracle text.
- * So the marker also carries a tinted plate behind the word, and its underline is
- * thickened and darkened. It stays *dotted* on purpose: a solid underline in body text
- * says "hyperlink", and these are definitions, not navigation.
+ * So the marker sets the word in semibold on a tinted plate, under a thickened, darkened
+ * underline. The underline stays *dotted* on purpose: a solid underline in body text says
+ * "hyperlink", and these are definitions, not navigation.
  *
- * Every property here is a **non-layout** one — `background-color`, `text-decoration` —
- * plus horizontal padding that is cancelled by an equal negative margin. That
- * matters twice over: the marker sits in a `whitespace-pre-line` paragraph whose line
- * rhythm any box of its own would break, and the glossary only resolves *after* first
- * paint, so anything that changed the text's measured width (real padding, a heavier
- * font) would reflow the card's rules text under the reader. The plate therefore bleeds
- * a hair past the glyphs instead of pushing them apart.
+ * Almost all of that is **non-layout** — `background-color`, `text-decoration` — plus
+ * horizontal padding cancelled by an equal negative margin, so the plate bleeds a hair
+ * past the glyphs instead of pushing them apart. That keeps the marker clear of the
+ * `whitespace-pre-line` paragraph's line rhythm, which a box of its own would break.
+ *
+ * `font-semibold` is the one exception and a deliberate one: it does change the text's
+ * measured width, so the *first* card page of a session reflows its rules text a little
+ * when the glossary lands after first paint. It costs that once — `useKeywordsQuery` is
+ * `staleTime: Infinity` on a single shared cache key, so every later card page already
+ * has the glossary and paints its markers bold from the start.
  *
  * `box-decoration-clone` is what lets a multi-word keyword wrap and still get a rounded,
  * padded plate on both lines rather than one box sliced in half. */
 const TRIGGER_CLASS =
   'cursor-help box-decoration-clone rounded-[0.25em] bg-foreground/[0.07] px-[0.15em] ' +
-  '-mx-[0.15em] underline decoration-dotted decoration-foreground/60 decoration-2 ' +
+  '-mx-[0.15em] font-semibold underline decoration-dotted decoration-foreground/60 decoration-2 ' +
   'underline-offset-2 transition-colors hover:bg-foreground/15 hover:decoration-foreground ' +
   'focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none'
 </script>
