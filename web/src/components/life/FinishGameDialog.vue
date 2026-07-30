@@ -80,8 +80,11 @@ function submit() {
           />
           <span class="min-w-0 flex-1">
             <span class="block truncate font-medium">{{ seat.name }}</span>
-            <span v-if="seat.deck_name" class="text-muted-foreground block truncate text-xs">
-              {{ seat.deck_name }}
+            <span
+              v-if="seat.deck_name ?? seat.commander_name"
+              class="text-muted-foreground block truncate text-xs"
+            >
+              {{ seat.deck_name ?? seat.commander_name }}
             </span>
           </span>
           <span class="shrink-0 text-lg font-semibold tabular-nums">{{ seat.life }}</span>

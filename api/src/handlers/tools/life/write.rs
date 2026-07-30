@@ -19,9 +19,10 @@ use super::{
     CreateLifeSessionRequest, FinishLifeSessionRequest, LifeSeatInput, LifeSessionDetail,
     LifeSessionResponse, MAX_FORMAT, MAX_PLAYER_NAME, MAX_PLAYERS, MAX_SESSION_NAME,
     MAX_SESSIONS_PER_GAME, RESULT_DRAW, RESULT_LOSS, RESULT_NONE, RESULT_WIN, STATUS_ACTIVE,
-    STATUS_FINISHED, UpdateLifeSessionRequest, deck_names_for, default_layout_for,
-    default_rotation_for, load_session, require_active, resolve_deck_ref, seats_of, session_detail,
-    session_response, validate_layout, validate_rotation, validate_starting_life,
+    STATUS_FINISHED, SeatRefs, UpdateLifeSessionRequest, default_layout_for, default_rotation_for,
+    load_session, require_active, require_single_link, resolve_commander_ref, resolve_deck_ref,
+    seats_of, session_detail, session_response, validate_layout, validate_rotation,
+    validate_starting_life,
 };
 
 /// The life total a game starts on when neither the request nor a copied session says.
@@ -31,6 +32,7 @@ const DEFAULT_STARTING_LIFE: i32 = 20;
 pub(super) struct ResolvedSeat {
     pub name: String,
     pub deck_id: Option<i32>,
+    pub commander_card_id: Option<i32>,
     pub starting_life: i32,
     pub rotation: i32,
 }
@@ -49,9 +51,9 @@ pub(super) struct SeatDefaults<'a> {
 /// `POST /api/tools/{game}/life/sessions` -> open a new game and return it in full.
 ///
 /// Describe the table with `players` (each seat optionally named, given a starting life, a
-/// rotation, and one of your decks), or pass `from_session_id` to **rematch**: the seats,
-/// decks, rotations, starting life, layout and format of that earlier game are copied and a
-/// fresh game begins on full life — which is what makes a per-deck record accumulate over an
+/// rotation, and either one of your decks or the commander they're playing), or pass
+/// `from_session_id` to **rematch**: the seats, their deck/commander links, rotations, starting
+/// life, layout and format of that earlier game are copied and a fresh game begins on full life — which is what makes a per-deck record accumulate over an
 /// evening without re-entering the pod each time. An explicit field always overrides the
 /// copied one.
 ///
@@ -68,8 +70,8 @@ pub(super) struct SeatDefaults<'a> {
         (status = 200, description = "The newly started game, its seats and its (empty) history.", body = LifeSessionDetail),
         (status = 401, description = "Missing or invalid API key."),
         (status = 403, description = "API key is read-only."),
-        (status = 404, description = "Unknown game, `from_session_id` is not the caller's, or a seat's `deck_id` is not one of their decks."),
-        (status = 422, description = "No seats, too many seats, a bad layout/rotation/starting life, or over the per-game session cap."),
+        (status = 404, description = "Unknown game, `from_session_id` is not the caller's, a seat's `deck_id` is not one of their decks, or its `commander_card_id` is not a card in the catalog."),
+        (status = 422, description = "No seats, too many seats, a seat naming both a deck and a commander, a bad layout/rotation/starting life, or over the per-game session cap."),
     ),
 )]
 pub async fn create_session(
@@ -108,12 +110,17 @@ pub async fn create_session(
                 // the old game un-rematchable — deleting a deck is documented as costing you its
                 // record, not your history. `deck_names_for` is already ownership-scoped, so it
                 // answers exactly "which of these still resolve for this caller".
-                let live = deck_names_for(&state.db, user.id, &game, &seats).await?;
+                let refs = SeatRefs::resolve(&state.db, user.id, &game, &seats).await?;
                 seats
                     .into_iter()
                     .map(|seat| LifeSeatInput {
                         name: Some(seat.name),
-                        deck_id: seat.deck_id.filter(|id| live.contains_key(id)),
+                        deck_id: seat.deck_id.filter(|id| refs.deck_names.contains_key(id)),
+                        // Copied back as the external id the input shape speaks, and dropped
+                        // likewise when the catalog no longer holds the card.
+                        commander_card_id: seat
+                            .commander_card_id
+                            .and_then(|id| refs.commanders.get(&id).map(|(ext, _)| ext.clone())),
                         starting_life: Some(seat.starting_life),
                         rotation: Some(seat.rotation),
                     })
@@ -193,6 +200,7 @@ pub async fn create_session(
             position: Set(index as i32),
             name: Set(seat.name),
             deck_id: Set(seat.deck_id),
+            commander_card_id: Set(seat.commander_card_id),
             starting_life: Set(seat.starting_life),
             // Everyone starts on their own full total; the history begins empty.
             life: Set(seat.starting_life),
@@ -235,9 +243,13 @@ pub(super) async fn resolve_seat(
         // Without an explicit rotation, seat the player the way the layout seats them.
         None => default_rotation_for(defaults.layout, position, defaults.player_count),
     };
+    let deck_id = resolve_deck_ref(state, user_id, game, input.deck_id).await?;
+    let commander_card_id = resolve_commander_ref(state, game, input.commander_card_id).await?;
+    require_single_link(deck_id, commander_card_id)?;
     Ok(ResolvedSeat {
         name,
-        deck_id: resolve_deck_ref(state, user_id, game, input.deck_id).await?,
+        deck_id,
+        commander_card_id,
         starting_life,
         rotation,
     })
@@ -289,8 +301,8 @@ pub async fn update_session(
     let session = active.update(&state.db).await?;
 
     let seats = seats_of(&state.db, session.id).await?;
-    let deck_names = deck_names_for(&state.db, user.id, &game, &seats).await?;
-    Ok(Json(session_response(&session, seats, &deck_names)))
+    let refs = SeatRefs::resolve(&state.db, user.id, &game, &seats).await?;
+    Ok(Json(session_response(&session, seats, &refs)))
 }
 
 /// Record the result

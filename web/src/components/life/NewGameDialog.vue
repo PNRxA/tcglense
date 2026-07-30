@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
-import DeckPickerField from '@/components/life/DeckPickerField.vue'
+import SeatLinkField from '@/components/life/SeatLinkField.vue'
 import LayoutPicker from '@/components/life/LayoutPicker.vue'
 import { defaultLayoutFor, PLAYER_COUNT_OPTIONS, STARTING_LIFE_PRESETS } from '@/lib/lifeLayout'
 import type { LifeLayout, StartLifeSessionBody } from '@/lib/api/life'
@@ -38,6 +38,7 @@ const setup = useLifeSetupStore()
 interface SeatRow {
   name: string
   deckId: number | null
+  commanderCardId: string | null
 }
 
 const name = ref('')
@@ -58,7 +59,7 @@ watch(open, (isOpen) => {
 function resizeSeats(count: number) {
   const next: SeatRow[] = []
   for (let index = 0; index < count; index += 1) {
-    next.push(seats.value[index] ?? { name: '', deckId: null })
+    next.push(seats.value[index] ?? { name: '', deckId: null, commanderCardId: null })
   }
   seats.value = next
 }
@@ -120,6 +121,7 @@ function submit() {
       // A blank name is left to the server, which fills in "Player 3".
       name: seat.name.trim() || undefined,
       deck_id: seat.deckId,
+      commander_card_id: seat.commanderCardId,
     })),
   })
   open.value = false
@@ -136,7 +138,8 @@ function submit() {
     >
       <DialogTitle>New game</DialogTitle>
       <DialogDescription>
-        Set the table up. Link a player to one of your decks to build its win record.
+        Set the table up. Link a player to one of your decks to build its win record, or just name
+        the commander they brought.
       </DialogDescription>
 
       <form class="mt-4 space-y-5" @submit.prevent="submit">
@@ -203,20 +206,21 @@ function submit() {
 
         <fieldset class="space-y-2">
           <legend class="mb-2 text-sm font-medium">Who's playing</legend>
-          <div
-            v-for="(seat, index) in seats"
-            :key="index"
-            class="grid grid-cols-1 gap-2 sm:grid-cols-2"
-          >
+          <div v-for="(seat, index) in seats" :key="index" class="rounded-lg border p-3">
             <Input
               v-model="seat.name"
               :placeholder="`Player ${index + 1}`"
               :aria-label="`Name for player ${index + 1}`"
             />
-            <DeckPickerField
-              v-model="seat.deckId"
+            <!-- Your deck, or just their commander — see SeatLinkField for why it's one control. -->
+            <SeatLinkField
+              class="mt-2"
               :game="game"
-              :label="`Deck for player ${index + 1}`"
+              :deck-id="seat.deckId"
+              :commander-card-id="seat.commanderCardId"
+              :seat-label="seat.name.trim() || `player ${index + 1}`"
+              @update:deck-id="(value) => (seat.deckId = value)"
+              @update:commander-card-id="(value) => (seat.commanderCardId = value)"
             />
           </div>
         </fieldset>

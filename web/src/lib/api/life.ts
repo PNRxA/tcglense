@@ -63,6 +63,9 @@ export type LifeRotation = 0 | 90 | 180 | 270
 export interface NewLifeSeat {
   name?: string
   deck_id?: number | null
+  /** The external card id of the commander this seat is playing — the alternative to a deck,
+   * for an opponent whose deck you'll never have. Mutually exclusive with `deck_id`. */
+  commander_card_id?: string | null
   starting_life?: number
   rotation?: LifeRotation
 }
@@ -168,7 +171,12 @@ export function updateLifePlayer(
   game: string,
   sessionId: number,
   playerId: number,
-  body: { name: string; deck_id?: number | null; rotation?: LifeRotation },
+  body: {
+    name: string
+    deck_id?: number | null
+    commander_card_id?: string | null
+    rotation?: LifeRotation
+  },
 ): Promise<LifeSeat> {
   return request<LifeSeat>(`${sessionBase(game, sessionId)}/players/${playerId}`, {
     method: 'PUT',

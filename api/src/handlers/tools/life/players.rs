@@ -22,7 +22,8 @@ use super::write::{SeatDefaults, resolve_seat};
 use super::{
     LifeSeatInput, LifeSeatResponse, LifeSessionDetail, MAX_PLAYER_NAME, MAX_PLAYERS, RESULT_NONE,
     ReorderLifeSeatsRequest, UpdateLifeSeatRequest, load_seat, load_session, require_active,
-    resolve_deck_ref, seat_response, seats_of, session_detail, touch_session, validate_rotation,
+    require_single_link, resolve_commander_ref, resolve_deck_ref, seat_response, seats_of,
+    session_detail, touch_session, validate_rotation,
 };
 
 /// Add a player
@@ -44,9 +45,9 @@ use super::{
         (status = 200, description = "The game with the new seat added.", body = LifeSessionDetail),
         (status = 401, description = "Missing or invalid API key."),
         (status = 403, description = "API key is read-only."),
-        (status = 404, description = "Unknown game, the session is not the caller's, or `deck_id` is not one of their decks."),
+        (status = 404, description = "Unknown game, the session is not the caller's, `deck_id` is not one of their decks, or `commander_card_id` is not a card in the catalog."),
         (status = 409, description = "The game is finished."),
-        (status = 422, description = "Too many players, or a bad rotation/starting life."),
+        (status = 422, description = "Too many players, both a deck and a commander, or a bad rotation/starting life."),
     ),
 )]
 pub async fn add_player(
@@ -80,6 +81,7 @@ pub async fn add_player(
         position: Set(position as i32),
         name: Set(seat.name),
         deck_id: Set(seat.deck_id),
+        commander_card_id: Set(seat.commander_card_id),
         starting_life: Set(seat.starting_life),
         life: Set(seat.starting_life),
         rotation: Set(seat.rotation),
@@ -99,10 +101,10 @@ pub async fn add_player(
 /// Edit a player
 ///
 /// `PUT /api/tools/{game}/life/sessions/{session_id}/players/{player_id}` -> replace the
-/// seat's name, deck link and rotation.
+/// seat's name, its deck-or-commander link, and its rotation.
 ///
-/// This is a **full replace**, not a patch: an absent or null `deck_id` unlinks the deck and an
-/// absent `rotation` seats the player upright, so a client changing one field sends the others
+/// This is a **full replace**, not a patch: an absent or null `deck_id`/`commander_card_id`
+/// unlinks what was there and an absent `rotation` seats the player upright, so a client changing one field sends the others
 /// as they stand. The seat's life and starting life are deliberately not editable here — a
 /// mis-set total is corrected through the life endpoint, which records it in the history
 /// instead of silently moving the number.
@@ -121,9 +123,9 @@ pub async fn add_player(
         (status = 200, description = "The updated seat.", body = LifeSeatResponse),
         (status = 401, description = "Missing or invalid API key."),
         (status = 403, description = "API key is read-only."),
-        (status = 404, description = "Unknown game, the session/seat is not the caller's, or `deck_id` is not one of their decks."),
+        (status = 404, description = "Unknown game, the session/seat is not the caller's, `deck_id` is not one of their decks, or `commander_card_id` is not a card in the catalog."),
         (status = 409, description = "The game is finished."),
-        (status = 422, description = "A blank/oversized name, or a bad rotation."),
+        (status = 422, description = "A blank/oversized name, both a deck and a commander, or a bad rotation."),
     ),
 )]
 pub async fn update_player(
@@ -140,11 +142,14 @@ pub async fn update_player(
     let name = validate_name(&payload.name, "player name", MAX_PLAYER_NAME)?;
     let rotation = validate_rotation(payload.rotation)?;
     let deck_id = resolve_deck_ref(&state, user.id, &game, payload.deck_id).await?;
+    let commander_card_id = resolve_commander_ref(&state, &game, payload.commander_card_id).await?;
+    require_single_link(deck_id, commander_card_id)?;
 
     let now = Utc::now();
     let mut active: life_session_player::ActiveModel = seat.into();
     active.name = Set(name);
     active.deck_id = Set(deck_id);
+    active.commander_card_id = Set(commander_card_id);
     active.rotation = Set(rotation);
     active.updated_at = Set(now);
     let seat = active.update(&state.db).await?;

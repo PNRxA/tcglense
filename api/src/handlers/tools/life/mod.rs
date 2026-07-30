@@ -43,8 +43,8 @@ use sea_orm::prelude::DateTimeUtc;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 
-use crate::entities::prelude::{Deck, LifeEvent, LifeSession, LifeSessionPlayer};
-use crate::entities::{deck, life_event, life_session, life_session_player};
+use crate::entities::prelude::{Card, Deck, LifeEvent, LifeSession, LifeSessionPlayer};
+use crate::entities::{card, deck, life_event, life_session, life_session_player};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -203,6 +203,11 @@ pub struct LifeSeatResponse {
     pub deck_id: Option<i32>,
     /// The linked deck's name, resolved for display so the client needs no second fetch.
     pub deck_name: Option<String>,
+    /// The linked commander's **external** card id — the alternative to a deck, for a player
+    /// whose deck you don't have — or null. A card the catalog no longer holds reads as null.
+    pub commander_card_id: Option<String>,
+    /// That commander's card name, resolved for display.
+    pub commander_name: Option<String>,
     pub starting_life: i32,
     pub life: i32,
     /// Screen rotation in degrees (`0`, `90`, `180`, `270`).
@@ -211,16 +216,30 @@ pub struct LifeSeatResponse {
     pub result: String,
 }
 
+/// A commander reference resolved for display: the card's external id and its name.
+pub(crate) type CommanderRef = (String, String);
+
 impl LifeSeatResponse {
-    fn from_model(seat: life_session_player::Model, deck_name: Option<String>) -> Self {
+    fn from_model(
+        seat: life_session_player::Model,
+        deck_name: Option<String>,
+        commander: Option<CommanderRef>,
+    ) -> Self {
+        let (commander_card_id, commander_name) = match commander {
+            Some((external_id, card_name)) => (Some(external_id), Some(card_name)),
+            None => (None, None),
+        };
         Self {
             id: seat.id,
             position: seat.position,
             name: seat.name,
             // A seat pointing at a deck that no longer exists (or was never the caller's)
-            // resolves to no name — so report the link as absent rather than dangling.
+            // resolves to no name — so report the link as absent rather than dangling. Same for
+            // a commander whose card row a catalog re-import has removed.
             deck_id: deck_name.is_some().then_some(seat.deck_id).flatten(),
             deck_name,
+            commander_card_id,
+            commander_name,
             starting_life: seat.starting_life,
             life: seat.life,
             rotation: seat.rotation,
@@ -335,8 +354,14 @@ pub struct LifeSeatInput {
     #[serde(default)]
     pub name: Option<String>,
     /// One of the caller's decks for the game, or null. A deck that isn't theirs is a `404`.
+    /// Mutually exclusive with `commander_card_id`.
     #[serde(default)]
     pub deck_id: Option<i32>,
+    /// The **external** card id of the commander this seat is playing — the alternative to a
+    /// deck, for an opponent whose deck you'll never have. A card the game's catalog doesn't
+    /// hold is a `404`; sending it alongside `deck_id` is a `422`.
+    #[serde(default)]
+    pub commander_card_id: Option<String>,
     #[serde(default)]
     pub starting_life: Option<i32>,
     /// `0` / `90` / `180` / `270`. Absent takes the layout's default for the seat.
@@ -394,14 +419,17 @@ pub struct FinishLifeSessionRequest {
 }
 
 /// Body of `PUT .../players/{player_id}`: replace the seat's editable state. This is a full
-/// replace, not a patch — `deck_id` absent or null unlinks the deck, and `rotation` absent
-/// resets the seat upright, so a client editing one field must send the others as they are.
+/// replace, not a patch — an absent or null `deck_id`/`commander_card_id` unlinks what was
+/// there, and `rotation` absent resets the seat upright, so a client editing one field must send
+/// the others as they are. The two links stay mutually exclusive (`422` for both).
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct UpdateLifeSeatRequest {
     pub name: String,
     #[serde(default)]
     pub deck_id: Option<i32>,
+    #[serde(default)]
+    pub commander_card_id: Option<String>,
     #[serde(default)]
     pub rotation: i32,
 }
@@ -535,11 +563,75 @@ pub(crate) async fn deck_names_for(
     Ok(rows.into_iter().collect())
 }
 
-/// Shape a session + its seats into the wire header, resolving each seat's deck name.
+/// Resolve the commanders a set of seats link to, keyed by `cards.id`.
+///
+/// Scoped to the session's game (a card id is only meaningful within one), and tolerant of a
+/// reference the catalog no longer holds — a re-import can remove a `cards` row, and the honest
+/// answer then is that the seat has no commander, not a dangling id.
+pub(crate) async fn commanders_for(
+    db: &sea_orm::DatabaseConnection,
+    game: &str,
+    seats: &[life_session_player::Model],
+) -> Result<HashMap<i32, CommanderRef>, AppError> {
+    let ids: Vec<i32> = seats.iter().filter_map(|s| s.commander_card_id).collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows: Vec<(i32, String, String)> = Card::find()
+        .select_only()
+        .column(card::Column::Id)
+        .column(card::Column::ExternalId)
+        .column(card::Column::Name)
+        .filter(card::Column::Id.is_in(ids))
+        .filter(card::Column::Game.eq(game))
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, external_id, name)| (id, (external_id, name)))
+        .collect())
+}
+
+/// Everything the seat shapers need to turn stored ids into display text, resolved once per
+/// read rather than per seat.
+pub(crate) struct SeatRefs {
+    pub deck_names: HashMap<i32, String>,
+    pub commanders: HashMap<i32, CommanderRef>,
+}
+
+impl SeatRefs {
+    /// Resolve both link kinds for a set of seats: two indexed lookups, whatever the seat count.
+    pub(crate) async fn resolve(
+        db: &sea_orm::DatabaseConnection,
+        user_id: i32,
+        game: &str,
+        seats: &[life_session_player::Model],
+    ) -> Result<Self, AppError> {
+        Ok(Self {
+            deck_names: deck_names_for(db, user_id, game, seats).await?,
+            commanders: commanders_for(db, game, seats).await?,
+        })
+    }
+
+    fn for_seat(
+        &self,
+        seat: &life_session_player::Model,
+    ) -> (Option<String>, Option<CommanderRef>) {
+        (
+            seat.deck_id
+                .and_then(|id| self.deck_names.get(&id).cloned()),
+            seat.commander_card_id
+                .and_then(|id| self.commanders.get(&id).cloned()),
+        )
+    }
+}
+
+/// Shape a session + its seats into the wire header, resolving each seat's deck or commander.
 pub(crate) fn session_response(
     session: &life_session::Model,
     seats: Vec<life_session_player::Model>,
-    deck_names: &HashMap<i32, String>,
+    refs: &SeatRefs,
 ) -> LifeSessionResponse {
     LifeSessionResponse {
         id: session.id,
@@ -552,8 +644,8 @@ pub(crate) fn session_response(
         players: seats
             .into_iter()
             .map(|seat| {
-                let deck_name = seat.deck_id.and_then(|id| deck_names.get(&id).cloned());
-                LifeSeatResponse::from_model(seat, deck_name)
+                let (deck_name, commander) = refs.for_seat(&seat);
+                LifeSeatResponse::from_model(seat, deck_name, commander)
             })
             .collect(),
         started_at: session.started_at,
@@ -571,28 +663,28 @@ pub(crate) async fn session_detail(
     session: &life_session::Model,
 ) -> Result<LifeSessionDetail, AppError> {
     let seats = seats_of(&state.db, session.id).await?;
-    let deck_names = deck_names_for(&state.db, user_id, &session.game, &seats).await?;
+    let refs = SeatRefs::resolve(&state.db, user_id, &session.game, &seats).await?;
     let events = LifeEvent::find()
         .filter(life_event::Column::SessionId.eq(session.id))
         .order_by_asc(life_event::Column::Id)
         .all(&state.db)
         .await?;
     Ok(LifeSessionDetail {
-        session: session_response(session, seats, &deck_names),
+        session: session_response(session, seats, &refs),
         events: events.into_iter().map(LifeEventResponse::from).collect(),
     })
 }
 
-/// Shape one seat for the wire, resolving its deck name.
+/// Shape one seat for the wire, resolving whichever link it carries.
 pub(crate) async fn seat_response(
     state: &AppState,
     user_id: i32,
     game: &str,
     seat: life_session_player::Model,
 ) -> Result<LifeSeatResponse, AppError> {
-    let names = deck_names_for(&state.db, user_id, game, std::slice::from_ref(&seat)).await?;
-    let deck_name = seat.deck_id.and_then(|id| names.get(&id).cloned());
-    Ok(LifeSeatResponse::from_model(seat, deck_name))
+    let refs = SeatRefs::resolve(&state.db, user_id, game, std::slice::from_ref(&seat)).await?;
+    let (deck_name, commander) = refs.for_seat(&seat);
+    Ok(LifeSeatResponse::from_model(seat, deck_name, commander))
 }
 
 /// Resolve a seat's deck reference: `None` stays `None`; a `Some(id)` must be one of the
@@ -616,6 +708,45 @@ pub(crate) async fn resolve_deck_ref(
         return Err(AppError::NotFound("deck not found".to_string()));
     }
     Ok(Some(id))
+}
+
+/// Resolve a seat's commander reference: `None` stays `None`; a `Some(external_id)` must name a
+/// card in the game's catalog (else 404, matching how every other card id on the wire behaves).
+pub(crate) async fn resolve_commander_ref(
+    state: &AppState,
+    game: &str,
+    external_id: Option<String>,
+) -> Result<Option<i32>, AppError> {
+    let Some(external_id) = external_id.filter(|id| !id.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let id: Option<i32> = Card::find()
+        .select_only()
+        .column(card::Column::Id)
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::ExternalId.eq(external_id.trim()))
+        .into_tuple()
+        .one(&state.db)
+        .await?;
+    id.map(Some)
+        .ok_or_else(|| AppError::NotFound("card not found".to_string()))
+}
+
+/// Refuse a seat that names both a deck and a commander.
+///
+/// They're alternatives, not a pair: a deck already knows its own commander, so a seat carrying
+/// both would leave "what was played here" ambiguous — and it's the kind of ambiguity that would
+/// quietly show up as a wrong per-deck record rather than as an error.
+pub(crate) fn require_single_link(
+    deck_id: Option<i32>,
+    commander_card_id: Option<i32>,
+) -> Result<(), AppError> {
+    if deck_id.is_some() && commander_card_id.is_some() {
+        return Err(AppError::Validation(
+            "a seat links to a deck or a commander, not both".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a layout slug against [`LAYOUTS`].

@@ -23,6 +23,7 @@ import {
   useAddLifePlayerMutation,
   useDeleteLifeSessionMutation,
   useRemoveLifePlayerMutation,
+  useReorderLifePlayersMutation,
   useStartLifeSessionMutation,
   useUpdateLifePlayerMutation,
 } from '@/composables/useLifeCounter'
@@ -71,6 +72,7 @@ onBeforeUnmount(life.stopTicker)
 const addPlayer = useAddLifePlayerMutation()
 const updatePlayer = useUpdateLifePlayerMutation()
 const removePlayer = useRemoveLifePlayerMutation()
+const reorderPlayers = useReorderLifePlayersMutation()
 const deleteSession = useDeleteLifeSessionMutation()
 const rematch = useStartLifeSessionMutation()
 
@@ -99,7 +101,12 @@ usePageMeta({
   noindex: true,
 })
 
-async function saveSeat(value: { name: string; deck_id: number | null; rotation: LifeRotation }) {
+async function saveSeat(value: {
+  name: string
+  deck_id: number | null
+  commander_card_id: string | null
+  rotation: LifeRotation
+}) {
   if (settingsFor.value === null) return
   await updatePlayer.mutateAsync({
     game: game.value,
@@ -120,6 +127,28 @@ async function dropSeat() {
     game: game.value,
     sessionId: sessionId.value,
     playerId: settingsFor.value,
+  })
+}
+
+/**
+ * Shift one seat a place earlier or later in the layout's seat order — the other half of
+ * "where does everyone sit" (Facing turns a tile; this swaps which spot of the layout it holds).
+ * Sent as the whole permutation, which is what the endpoint requires.
+ */
+async function moveSeat(direction: -1 | 1) {
+  const from = seats.value.findIndex((seat) => seat.id === settingsFor.value)
+  const to = from + direction
+  if (from < 0 || to < 0 || to >= seats.value.length) return
+  const ids = seats.value.map((seat) => seat.id)
+  const moved = ids[from]
+  const displaced = ids[to]
+  if (moved === undefined || displaced === undefined) return
+  ids[from] = displaced
+  ids[to] = moved
+  await reorderPlayers.mutateAsync({
+    game: game.value,
+    sessionId: sessionId.value,
+    playerIds: ids,
   })
 }
 
@@ -301,10 +330,16 @@ const finishedDuration = computed(() =>
       :seat="settingsSeat"
       :game="game"
       :removable="seats.length > 1"
-      :busy="updatePlayer.isPending.value || removePlayer.isPending.value"
+      :seat-count="seats.length"
+      :busy="
+        updatePlayer.isPending.value ||
+        removePlayer.isPending.value ||
+        reorderPlayers.isPending.value
+      "
       @update:open="(open) => !open && (settingsFor = null)"
       @save="saveSeat"
       @set-life="correctLife"
+      @move="moveSeat"
       @remove="dropSeat"
     />
   </div>

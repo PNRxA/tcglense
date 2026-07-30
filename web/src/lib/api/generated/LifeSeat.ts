@@ -16,7 +16,16 @@ deck_id: number | null,
 /**
  * The linked deck's name, resolved for display so the client needs no second fetch.
  */
-deck_name: string | null, starting_life: number, life: number, 
+deck_name: string | null, 
+/**
+ * The linked commander's **external** card id — the alternative to a deck, for a player
+ * whose deck you don't have — or null. A card the catalog no longer holds reads as null.
+ */
+commander_card_id: string | null, 
+/**
+ * That commander's card name, resolved for display.
+ */
+commander_name: string | null, starting_life: number, life: number, 
 /**
  * Screen rotation in degrees (`0`, `90`, `180`, `270`).
  */

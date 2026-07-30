@@ -7,8 +7,15 @@
 export type LifeSeatInput = { name: string | null, 
 /**
  * One of the caller's decks for the game, or null. A deck that isn't theirs is a `404`.
+ * Mutually exclusive with `commander_card_id`.
  */
-deck_id: number | null, starting_life: number | null, 
+deck_id: number | null, 
+/**
+ * The **external** card id of the commander this seat is playing — the alternative to a
+ * deck, for an opponent whose deck you'll never have. A card the game's catalog doesn't
+ * hold is a `404`; sending it alongside `deck_id` is a `422`.
+ */
+commander_card_id: string | null, starting_life: number | null, 
 /**
  * `0` / `90` / `180` / `270`. Absent takes the layout's default for the seat.
  */

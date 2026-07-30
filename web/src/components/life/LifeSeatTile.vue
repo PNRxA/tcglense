@@ -108,6 +108,16 @@ const announcement = computed(() => `${props.view.seat.name}: ${props.view.life}
         >
           {{ view.seat.deck_name }}
         </RouterLink>
+        <!-- A commander instead of a deck: the same slot, linked to the card rather than a deck
+             page (it's someone else's list, so there's no deck of ours to open). -->
+        <RouterLink
+          v-else-if="view.seat.commander_card_id && view.seat.commander_name"
+          :to="{ query: { ...$route.query, card: view.seat.commander_card_id } }"
+          class="text-muted-foreground hover:text-foreground block truncate text-xs hover:underline"
+          @click.stop
+        >
+          {{ view.seat.commander_name }}
+        </RouterLink>
       </div>
       <Crown
         v-if="winner"

@@ -77,8 +77,10 @@ const title = computed(
             aria-hidden="true"
           />
           {{ seat.name }}
-          <span v-if="seat.deck_name" class="text-muted-foreground/80 truncate"
-            >· {{ seat.deck_name }}</span
+          <span
+            v-if="seat.deck_name ?? seat.commander_name"
+            class="text-muted-foreground/80 truncate"
+            >· {{ seat.deck_name ?? seat.commander_name }}</span
           >
         </span>
       </p>

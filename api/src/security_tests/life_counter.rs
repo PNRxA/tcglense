@@ -1104,3 +1104,140 @@ async fn an_extreme_delta_is_refused_rather_than_panicking_the_handler() {
     assert_eq!(detail["session"]["players"][0]["life"], 20);
     assert_eq!(detail["events"].as_array().expect("events").len(), 0);
 }
+
+#[tokio::test]
+async fn a_seat_can_name_a_commander_instead_of_a_deck() {
+    // Needs the seeded catalog: a commander reference is a real card id, not a free-text name.
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "commander@example.com", PW).await;
+    let deck = create_deck(&app, &access, "My deck").await;
+
+    let (status, _, cards) = send(&app, get("/api/games/mtg/cards?page_size=2")).await;
+    assert_eq!(status, StatusCode::OK);
+    let card = cards["data"][0]["id"]
+        .as_str()
+        .expect("card id")
+        .to_string();
+    let card_name = cards["data"][0]["name"]
+        .as_str()
+        .expect("card name")
+        .to_string();
+
+    // The opponent you'll never have a deck for: name what they were playing instead.
+    let detail = start_game(
+        &app,
+        &access,
+        json!({
+            "players": [
+                { "name": "Me", "deck_id": deck },
+                { "name": "Them", "commander_card_id": card },
+            ],
+        }),
+    )
+    .await;
+    let id = session_id(&detail);
+    let them = player_id(&detail, 1);
+    let players = detail["session"]["players"].as_array().expect("players");
+    assert_eq!(players[1]["commander_card_id"], card);
+    assert_eq!(players[1]["commander_name"], card_name);
+    assert!(players[1]["deck_id"].is_null());
+    // ...and the two links don't bleed into each other.
+    assert_eq!(players[0]["deck_id"], deck);
+    assert!(players[0]["commander_card_id"].is_null());
+
+    // A seat naming both is refused rather than stored ambiguously.
+    let (status, _, out) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/tools/mtg/life/sessions",
+            &access,
+            json!({ "players": [{ "deck_id": deck, "commander_card_id": card }] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+
+    // A card the catalog doesn't hold is a 404, like every other card id on the wire.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/tools/mtg/life/sessions",
+            &access,
+            json!({ "players": [{ "commander_card_id": "no-such-card" }] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Editing a seat swaps one link for the other, and clears it when neither is sent.
+    let (status, _, seat) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/{them}"),
+            &access,
+            json!({ "name": "Them", "deck_id": deck }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{seat:?}");
+    assert_eq!(seat["deck_id"], deck);
+    assert!(
+        seat["commander_card_id"].is_null(),
+        "the commander is unlinked: {seat:?}"
+    );
+
+    let (status, _, seat) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/{them}"),
+            &access,
+            json!({ "name": "Them" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(seat["deck_id"].is_null());
+    assert!(seat["commander_card_id"].is_null());
+
+    // A commander link survives a rematch, like a deck link does.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/{them}"),
+            &access,
+            json!({ "name": "Them", "commander_card_id": card }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let rematch = start_game(&app, &access, json!({ "from_session_id": id })).await;
+    let copied = rematch["session"]["players"].as_array().expect("players");
+    assert_eq!(copied[1]["commander_card_id"], card);
+    assert_eq!(copied[1]["commander_name"], card_name);
+
+    // A commander is not a deck: it contributes nothing to the per-deck record.
+    let winner = player_id(&rematch, 1);
+    let rematch_id = session_id(&rematch);
+    send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/tools/mtg/life/sessions/{rematch_id}/finish"),
+            &access,
+            json!({ "winner_player_id": winner }),
+        ),
+    )
+    .await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/tools/mtg/life/decks", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().expect("data");
+    assert_eq!(rows.len(), 1, "only the deck seat has a record: {body:?}");
+    assert_eq!(rows[0]["deck_id"], deck);
+    assert_eq!(rows[0]["games"], 1);
+    assert_eq!(rows[0]["losses"], 1);
+}

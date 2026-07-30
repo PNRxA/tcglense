@@ -21,8 +21,8 @@ use crate::state::AppState;
 
 use super::{
     DEFAULT_SESSION_LIMIT, LifeSessionDetail, LifeSessionResponse, ListSessionsParams,
-    MAX_SESSION_LIMIT, STATUS_ACTIVE, STATUS_FINISHED, deck_names_for, load_session,
-    session_detail, session_response,
+    MAX_SESSION_LIMIT, STATUS_ACTIVE, STATUS_FINISHED, SeatRefs, load_session, session_detail,
+    session_response,
 };
 
 /// List tracked games
@@ -94,7 +94,7 @@ pub async fn list_sessions(
         .order_by_asc(life_session_player::Column::Id)
         .all(&state.db)
         .await?;
-    let deck_names = deck_names_for(&state.db, user.id, &game, &seats).await?;
+    let refs = SeatRefs::resolve(&state.db, user.id, &game, &seats).await?;
 
     let mut by_session: HashMap<i32, Vec<life_session_player::Model>> = HashMap::new();
     for seat in seats {
@@ -105,7 +105,7 @@ pub async fn list_sessions(
         .iter()
         .map(|session| {
             let seats = by_session.remove(&session.id).unwrap_or_default();
-            session_response(session, seats, &deck_names)
+            session_response(session, seats, &refs)
         })
         .collect();
     Ok(Json(DataBody { data }))

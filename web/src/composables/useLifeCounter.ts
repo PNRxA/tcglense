@@ -169,7 +169,12 @@ export interface AddPlayerVars extends SessionVars {
 }
 export interface UpdatePlayerVars extends SessionVars {
   playerId: number
-  body: { name: string; deck_id?: number | null; rotation?: LifeRotation }
+  body: {
+    name: string
+    deck_id?: number | null
+    commander_card_id?: string | null
+    rotation?: LifeRotation
+  }
 }
 export interface PlayerVars extends SessionVars {
   playerId: number

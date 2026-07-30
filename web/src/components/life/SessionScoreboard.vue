@@ -58,6 +58,9 @@ const lineFor = (playerId: number) => props.lines.find((line) => line.playerId =
         >
           {{ seat.deck_name }}
         </RouterLink>
+        <p v-else-if="seat.commander_name" class="text-muted-foreground truncate text-sm">
+          {{ seat.commander_name }}
+        </p>
         <p v-else class="text-muted-foreground text-sm">No deck linked</p>
       </div>
       <div class="hidden h-8 w-24 shrink-0 opacity-70 sm:block">

@@ -266,9 +266,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   exactly two places** — a tap appends one event and moves the seat by its delta, and an undo
   re-folds the seat's whole chain through the pure `life/replay.rs` fold (which is why the fold
   honours `set` as an absolute and `adjust` as relative, and clamps rather than overflowing);
-  nothing else may write it. **(3) the seat→deck link is FK-less and orphan-tolerant** (the call
-  `price_alerts.card_id` makes) — deleting a played deck must neither fail nor delete history, so
-  reads report the link absent and `life/stats.rs` inner-joins `decks` *scoped to the caller*.
+  nothing else may write it. **(3) a seat names what was played in one of two mutually exclusive
+  ways** — `deck_id` (one of *yours*, which is what builds a record) or `commander_card_id` (for the
+  opponents whose deck you'll never have); both at once is a **422**, because a deck already knows
+  its commander and the pair would surface as a wrong record rather than an error. **(4) both links
+  are FK-less and orphan-tolerant** (the call `price_alerts.card_id` makes) — deleting a played deck,
+  or a re-import dropping a card row, must neither fail nor delete history, so reads report the link
+  absent and `life/stats.rs` inner-joins `decks` *scoped to the caller*. A **rematch** distinguishes
+  a *copied* reference (dropped once it stops resolving, so an old pod stays re-playable) from an
+  *explicit* one (still a `404`).
   The `layout` slug vocabulary + the per-count layout and per-seat rotation defaults are
   **mirrored** in `web/src/lib/lifeLayout.ts` with tests pinning both sides; a slug added on one
   side only is either rejected by the API or renders as something other than its name. The SPA

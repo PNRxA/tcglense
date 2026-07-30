@@ -8,8 +8,11 @@ use sea_orm::entity::prelude::*;
 /// seat-scoped route must load the parent session to prove ownership first, exactly like a
 /// `deck_card`.
 ///
-/// `deck_id` optionally links the seat to one of the owner's `decks` rows, which is what
-/// makes the per-deck win/loss record possible. It is deliberately **orphan-tolerant** and
+/// A seat may name **what was being played** in one of two mutually exclusive ways.
+/// `deck_id` links it to one of the owner's `decks` rows, which is what makes the per-deck
+/// win/loss record possible; `commander_card_id` instead names a `cards` row, for an opponent
+/// whose deck you don't have but whose commander you know. The handler refuses both at once —
+/// a seat carrying each would leave "what was played here" ambiguous. It is deliberately **orphan-tolerant** and
 /// carries **no foreign key** (the same call `price_alerts.card_id` makes): a user may
 /// delete a deck they've played, and the honest outcome is that the old session keeps its
 /// row while the stats read — which inner-joins `decks` — simply stops counting it, rather
@@ -28,6 +31,10 @@ pub struct Model {
     pub name: String,
     /// One of the owner's `decks.id` this seat played, or null. No FK — see the type doc.
     pub deck_id: Option<i32>,
+    /// The `cards.id` of the commander this seat played, or null — the alternative to
+    /// `deck_id` for a player whose deck you'll never have. FK-less and orphan-tolerant for the
+    /// same reason, and for one more: a catalog re-import can remove the card row.
+    pub commander_card_id: Option<i32>,
     /// The total this seat started on (the session default unless overridden).
     pub starting_life: i32,
     /// The seat's current life total — the folded result of its `life_events`.

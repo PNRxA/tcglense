@@ -2,7 +2,8 @@
 
 /**
  * Body of `PUT .../players/{player_id}`: replace the seat's editable state. This is a full
- * replace, not a patch — `deck_id` absent or null unlinks the deck, and `rotation` absent
- * resets the seat upright, so a client editing one field must send the others as they are.
+ * replace, not a patch — an absent or null `deck_id`/`commander_card_id` unlinks what was
+ * there, and `rotation` absent resets the seat upright, so a client editing one field must send
+ * the others as they are. The two links stay mutually exclusive (`422` for both).
  */
-export type UpdateLifeSeatRequest = { name: string, deck_id: number | null, rotation: number, };
+export type UpdateLifeSeatRequest = { name: string, deck_id: number | null, commander_card_id: string | null, rotation: number, };
