@@ -4,7 +4,7 @@
 //! (issue #140) — the data behind the `art:` / `arttag:` / `atag:` search filters. They
 //! key on `illustration_id` (the artwork identity shared by reprints of the same
 //! painting), which `cards.illustration_id` stores. Like the rulings file, the bulk file
-//! is a single JSON array with one object per line, so it streams line-by-line; we keep
+//! carries one tag object per line, so it streams line-by-line; we keep
 //! only taggings whose artwork belongs to a card we actually store, expand the tag
 //! hierarchy at ingest ([`expand`]) so a parent tag like `animal` matches its
 //! descendants' artworks without a query-time tree walk, then swap both tables in one
@@ -29,8 +29,6 @@ use sea_orm::{
     ActiveValue::{NotSet, Set},
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, TransactionTrait,
 };
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio_util::io::StreamReader;
 
 use super::client;
 use super::ingest::IngestError;
@@ -117,7 +115,7 @@ async fn refresh_inner(
     let started = Utc::now();
     tracing::info!(
         updated_at = %entry.updated_at,
-        size_mb = entry.size.unwrap_or(0) / 1_000_000,
+        download_mb = entry.transfer_size().unwrap_or(0) / 1_000_000,
         "importing scryfall {DATASET_ART_TAGS}"
     );
     ingest_state::put(
@@ -136,11 +134,9 @@ async fn refresh_inner(
     )
     .await?;
 
-    // In mirror mode the file streams from the mirror (overriding the catalog's embedded
-    // upstream `download_uri`); upstream mode follows that `download_uri` directly.
-    let download_url = source
-        .scryfall_file_url(DATASET_ART_TAGS)
-        .unwrap_or_else(|| entry.download_uri.clone());
+    // In mirror mode the file streams from the mirror; upstream mode follows the location
+    // the catalog entry advertises.
+    let download_url = client::file_url(source, DATASET_ART_TAGS, &entry)?;
     let inputs = collect_tags(client, &download_url).await?;
     let expanded = expand::expand(inputs, &known);
 
@@ -200,13 +196,13 @@ async fn known_illustration_ids(db: &DatabaseConnection) -> Result<HashSet<Strin
     Ok(ids)
 }
 
-/// Stream the bulk art-tags file and parse each tag line. Each element sits on its own
-/// line, comma-terminated except the last, with the array brackets on their own lines —
-/// same shape as the card and rulings files (a single tag line can run to ~1MB; the
-/// reader's line buffer grows as needed).
+/// Stream the bulk art-tags file and parse each tag line. One tag per line — bare in the
+/// JSONL files, or comma-terminated inside array brackets in the legacy JSON ones, same
+/// shape as the card and rulings files (a single tag line can run to ~1MB; the reader's
+/// line buffer grows as needed).
 async fn collect_tags(client: &Client, url: &str) -> Result<Vec<TagInput>, IngestError> {
     let stream = client::download_stream(client, url).await?;
-    let mut lines = BufReader::with_capacity(64 * 1024, StreamReader::new(stream)).lines();
+    let mut lines = client::json_lines(stream).await?;
 
     let mut inputs: Vec<TagInput> = Vec::new();
     let mut seen_slugs: HashSet<String> = HashSet::new();

@@ -327,6 +327,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   drop the reseed-before-defer ordering or persist on a `304`/`Unchanged`. `drops::table()` returns an
   owned `Arc<DropTable>`, and `sld::derivation_version` reads the **live** snapshot (computed, not
   memoised) so a refresh propagates to the sealed-contents gate — keep both dynamic.
+- **Every field of a Scryfall bulk-catalog entry is optional, and the files are gzipped
+  JSONL.** `cards`, `rulings` and `art_tags` all start from the one `/bulk-data` document, so
+  a *required* field there is a single point of failure for the whole catalog: when upstream
+  swapped `download_uri`/`size` for `jsonl_download_uri`/`compressed_size` (2026-07), serde
+  rejected the list and every import died as "network error contacting the card-data source"
+  — silently, since existing rows just went stale. Read the location through
+  `BulkData::file_url`/`transfer_size`, never the fields. The files are served
+  `Content-Type: application/gzip` with **no `Content-Encoding`** (so reqwest's transparent
+  gzip never applies) and the mirror passes those bytes through compressed: `client::json_lines`
+  is the one seam that sniffs the gzip magic byte and inflates, and every bulk consumer must
+  read through it rather than wrapping the stream itself. `cargo test -- --ignored
+  live_bulk_catalog` is the manual canary when an import starts failing with a decode error.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling

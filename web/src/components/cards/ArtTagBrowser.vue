@@ -36,9 +36,11 @@ const { data, isPending, isError } = useArtTagList(
 
 const term = ref('')
 
+const vocabulary = computed<ArtTagEntry[]>(() => data.value?.data ?? [])
+
 // The vocabulary, narrowed by the filter box across slug, label, and description.
 const filtered = computed<ArtTagEntry[]>(() => {
-  const all = data.value?.data ?? []
+  const all = vocabulary.value
   const needle = term.value.trim().toLowerCase()
   if (!needle) return all
   return all.filter(
@@ -131,6 +133,13 @@ function jumpTo(letter: string) {
         <p v-if="isPending" class="text-muted-foreground py-8 text-center text-sm">Loading tags…</p>
         <p v-else-if="isError" class="text-muted-foreground py-8 text-center text-sm">
           Couldn't load the tag list. Close and try again.
+        </p>
+        <!-- An empty vocabulary is not an empty filter result: the tag list is only
+             populated once the server has imported Scryfall's art-tag dataset, and
+             reporting that as `No tags match ""` sends the reader hunting for a typo in a
+             filter box they never touched. -->
+        <p v-else-if="!vocabulary.length" class="text-muted-foreground py-8 text-center text-sm">
+          No art tags have been imported yet.
         </p>
         <p v-else-if="!sections.length" class="text-muted-foreground py-8 text-center text-sm">
           No tags match "{{ term.trim() }}".

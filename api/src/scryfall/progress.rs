@@ -4,9 +4,11 @@
 //! terminal just sits idle, and raw per-batch `tracing` lines are noisy. This
 //! wraps a [`tracing_indicatif`] span so the import shows a single live progress
 //! display: a spinner while set metadata is fetched, then a determinate byte bar
-//! as the bulk file streams. The byte bar is accurate because Scryfall's `size`
-//! is the *uncompressed* length and the gzip response is decompressed for us, so
-//! counting bytes read against `size` lines up.
+//! as the bulk file streams. The byte bar lines up because both sides of it are
+//! **wire** bytes: its total is `BulkData::transfer_size` (the *compressed* length,
+//! for today's gzipped JSONL files) and it advances by the chunks pulled off the
+//! socket, before `scryfall::client::json_lines` inflates them. Feeding it an
+//! uncompressed length instead would stall the bar a quarter of the way in.
 //!
 //! Driving the bar through `tracing-indicatif` (rather than a bare
 //! [`indicatif::ProgressBar`]) means concurrent log lines never clobber it, and
@@ -46,9 +48,10 @@ impl ImportProgress {
         Self { span, game }
     }
 
-    /// Switch to the determinate card-streaming phase. `total_bytes` is the
-    /// uncompressed bulk-file size; `None`/`0` falls back to a byte spinner with
-    /// no ETA (Scryfall always reports a size, so that path is a safety net).
+    /// Switch to the determinate card-streaming phase. `total_bytes` is the bulk file's
+    /// transfer size — compressed, for the gzipped JSONL files, matching the wire bytes
+    /// [`Self::add_bytes`] counts; `None`/`0` falls back to a byte spinner with no ETA
+    /// (Scryfall always reports a size, so that path is a safety net).
     pub fn begin_cards(&self, total_bytes: Option<u64>) {
         let total = total_bytes.unwrap_or(0);
         self.span.pb_set_style(&bar_style(total > 0));
@@ -58,7 +61,7 @@ impl ImportProgress {
             .pb_set_message(&format!("Importing {} cards", self.game));
     }
 
-    /// Advance the byte bar by `n` decompressed bytes read from the stream.
+    /// Advance the byte bar by `n` bytes pulled off the wire (before any inflate).
     pub fn add_bytes(&self, n: u64) {
         self.span.pb_inc(n);
     }
