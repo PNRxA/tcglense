@@ -9,3 +9,20 @@
   font-style: normal;
   font-display: block;
 }
+
+/* mana-font's generic-mana icons are `.ms-0`…`.ms-20`, `.ms-100`, `.ms-1000000` — the
+ * exact spelling of Tailwind's `ms-<n>` (`margin-inline-start`) utilities. Tailwind v4
+ * generates a utility for any such literal it finds while scanning sources, so a single
+ * `'ms-10'` in a test file was enough to emit `.ms-10 { margin-inline-start: 2.5rem }`
+ * and shove `{10}` 40px to the right of every other cost. Which numbers were affected
+ * therefore depended on which class names happened to appear as strings in the repo —
+ * `{2}` only escaped because mana-font's own `.ms-2 { margin-left: inherit !important }`
+ * outranked it.
+ *
+ * Neutralise the whole family here rather than chasing individual numbers: this rule is
+ * unlayered while Tailwind's utilities live in `@layer utilities`, so it wins on the
+ * cascade regardless of specificity or import order. The inline-end side is left alone —
+ * that's the inter-pip gap `ManaSymbols.vue` sets. */
+.ms {
+  margin-inline-start: 0;
+}
