@@ -12,11 +12,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sea_orm::sea_query::{Expr, SimpleExpr};
+use sea_orm::sea_query::{Expr, SelectStatement, SimpleExpr};
 use sea_orm::{
-    ColumnTrait, EntityTrait, FromQueryResult, QuerySelect, Select, SelectModel, Selector,
+    ColumnTrait, Condition, EntityTrait, FromQueryResult, QuerySelect, QueryTrait, Select,
+    SelectModel, SelectTwo, Selector,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::catalog::Game;
 
 use crate::scryfall::subtypes::PrintAttrs;
 
@@ -27,6 +30,7 @@ use crate::state::AppState;
 
 use crate::scryfall::drops::DropTable;
 
+use super::card_export::CardExportFormat;
 use super::dto::CardResponse;
 use super::grouping::{group_into_drops, group_into_subtypes, paginate_buckets};
 use super::lookup::load_group_set_codes;
@@ -34,6 +38,7 @@ use super::pagination::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
     resolve_page, trim_query,
 };
+use super::search::search_condition;
 use super::sort::{SortDir, SortField};
 use super::valuation::{Valuation, resolve_bulk_threshold_cents};
 
@@ -237,6 +242,10 @@ pub struct ListParams {
     /// collection mirror of the catalog's `include_related`. Ignored without a `set`.
     #[serde(default)]
     pub include_related: Option<bool>,
+    /// Export shape (`text`/`names`) — only the card-export endpoints read it; a stray
+    /// `?format=` on the list endpoints is inert, mirroring the catalog's `ListParams`.
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 /// Query params for the (optionally set-scoped) collection summary.
@@ -329,6 +338,12 @@ impl ListParams {
         self.include_related.unwrap_or(false)
     }
 
+    /// The export shape from `?format=`, or a 422 when it names one we don't emit.
+    /// Only the card-export endpoints call this; a stray `?format=` elsewhere is inert.
+    pub(crate) fn export_format(&self) -> Result<CardExportFormat, AppError> {
+        CardExportFormat::parse(self.format.as_deref())
+    }
+
     /// Resolve the requested 1-based page and clamp the page size for the by-drop
     /// view, which paginates over drops (not cards) and so has its own smaller bounds.
     pub(crate) fn drop_page_and_size(&self) -> (u64, u64) {
@@ -388,6 +403,67 @@ pub(crate) async fn resolve_set_scope(
         return Ok(Some(vec![code.to_string()]));
     }
     Ok(Some(load_group_set_codes(state, game, code).await?))
+}
+
+/// The resolved, entity-agnostic pieces of a holdings list request: the parsed search
+/// condition, the resolved set scope, and the validated sort. Produced by
+/// [`resolve_holdings_list`] so the list pages **and** the card exports of both twins
+/// resolve a request identically — the export must stay the very query the grid ran,
+/// and sharing the resolution makes that structural rather than a convention.
+pub(crate) struct HoldingsListQuery {
+    pub search: Option<Condition>,
+    pub set_codes: Option<Vec<String>>,
+    pub sort: CollectionSort,
+    pub dir: SortDir,
+}
+
+/// Resolve a holdings list/export request's shared pieces: validate the sort, parse the
+/// optional Scryfall-syntax query up front (so a malformed one 422s before we touch the
+/// DB, mirroring the catalog card lists), and resolve the optional set scope — a single
+/// set, or with `include_related` the set's whole group (root + related sub-sets),
+/// spanning exactly the sets the catalog does.
+pub(crate) async fn resolve_holdings_list(
+    state: &AppState,
+    game_meta: &'static Game,
+    game: &str,
+    params: &ListParams,
+) -> Result<HoldingsListQuery, AppError> {
+    let (sort, dir) = params.sort_spec()?;
+    let search = params
+        .search()
+        .map(|s| search_condition(game_meta, s, state.dialect()))
+        .transpose()?;
+    let set_codes = resolve_set_scope(state, game, params.set(), params.include_related()).await?;
+    Ok(HoldingsListQuery {
+        search,
+        set_codes,
+        sort,
+        dir,
+    })
+}
+
+/// Narrow a holdings list query (the twins' own `collection_query`/`wishlist_query`
+/// output, filters and sort untouched) to the three columns the card export drains —
+/// `(card_id, quantity, foil_quantity)`, in that order, matching what
+/// [`super::card_export::render_holdings_export`] decodes. Shared by the twins (which
+/// pass their own columns) so the projection can't drift between them; the listing
+/// query itself stays with each entity, per the module contract above.
+pub(crate) fn narrow_export_statement<E, C>(
+    query: SelectTwo<E, card::Entity>,
+    card_id: C,
+    quantity: C,
+    foil_quantity: C,
+) -> SelectStatement
+where
+    E: EntityTrait,
+    C: ColumnTrait,
+{
+    query
+        .select_only()
+        .column(card_id)
+        .column(quantity)
+        .column(foil_quantity)
+        .into_query()
 }
 
 /// Trim, drop blanks, and de-duplicate a batch of requested external card ids,

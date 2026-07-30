@@ -37,6 +37,7 @@ use crate::entities::wishlist_item;
 use crate::error::AppError;
 use crate::state::AppState;
 
+mod export;
 mod products;
 mod read;
 mod sets;
@@ -45,6 +46,7 @@ mod write;
 #[cfg(test)]
 mod tests;
 
+pub use export::export_wishlist_cards;
 pub use products::{
     get_wishlist_product_entry, list_wishlist_product_sets, list_wishlist_products,
     set_wishlist_product_entry, wishlist_product_counts, wishlist_product_summary,
@@ -64,6 +66,7 @@ pub(crate) use sets::{wanted_drop_page, wanted_sets, wanted_subtype_page};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::wishlist::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
+pub use export::__path_export_wishlist_cards;
 pub use products::{
     __path_get_wishlist_product_entry, __path_list_wishlist_product_sets,
     __path_list_wishlist_products, __path_set_wishlist_product_entry,

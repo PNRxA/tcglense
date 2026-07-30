@@ -23,6 +23,7 @@ fn params(page: Option<u64>, page_size: Option<u64>) -> ListParams {
         dir: None,
         set: None,
         include_related: None,
+        format: None,
     }
 }
 

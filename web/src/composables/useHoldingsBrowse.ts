@@ -542,6 +542,7 @@ export function useHoldingsBrowse(
     query,
     sort,
     sortOptions,
+    defaultSort,
     entries,
     groups,
     ghostCards,

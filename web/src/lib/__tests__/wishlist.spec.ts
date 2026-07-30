@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import {
+  exportWishlistCards,
   getWishlistCounts,
   getWishlistProductCounts,
   getWishlistProductEntry,
@@ -10,6 +11,7 @@ import {
   getWishlistSets,
   getWishlistSummary,
   setWishlistProductEntry,
+  wishlistCardExportPath,
   wishlistEntryPath,
   wishlistPath,
   wishlistProductCountsPath,
@@ -63,6 +65,50 @@ describe('wishlistPath', () => {
 
   it('encodes the game segment', () => {
     expect(wishlistPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('wishlistCardExportPath', () => {
+  it('is the bare cards-export path with no params', () => {
+    expect(wishlistCardExportPath('mtg')).toBe('/api/wishlist/mtg/cards/export')
+  })
+
+  it('carries the browse listing’s own q/set/sort params', () => {
+    expect(
+      wishlistCardExportPath('mtg', {
+        q: 't:goblin',
+        set: 'neo',
+        sort: 'quantity',
+        dir: 'desc',
+        format: 'names',
+      }),
+    ).toBe(
+      '/api/wishlist/mtg/cards/export?q=t%3Agoblin&set=neo&sort=quantity&dir=desc&format=names',
+    )
+  })
+
+  it('encodes the game segment', () => {
+    expect(wishlistCardExportPath('a/b')).toContain('a%2Fb')
+  })
+})
+
+describe('exportWishlistCards', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('GETs the cards export with the bearer token and returns the blob', async () => {
+    const txt = new Blob(['1 Sol Ring (LTC) 284\n'], { type: 'text/plain' })
+    type FetchInit = { headers: Record<string, string> }
+    const fetchMock = vi.fn<(url: string, init: FetchInit) => Promise<Response>>(
+      async () => ({ ok: true, status: 200, blob: async () => txt }) as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blob = await exportWishlistCards('tok', 'mtg')
+
+    expect(blob).toBe(txt)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toContain('/api/wishlist/mtg/cards/export')
+    expect(init.headers.Authorization).toBe('Bearer tok')
   })
 })
 

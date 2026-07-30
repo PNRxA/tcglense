@@ -1,7 +1,8 @@
-//! Collection CSV export: download the signed-in user's owned cards as an Archidekt-
-//! or Moxfield-shaped CSV.
+//! Collection exports: the whole collection as an Archidekt- or Moxfield-shaped CSV,
+//! and the collection browse's card-search results as a plain-text card list.
 //!
-//! The two shapes mirror the files those services export, so an exported file re-imports
+//! **CSV** ([`export_collection`]): the two shapes mirror the files those services
+//! export, so an exported file re-imports
 //! cleanly through [`crate::collection_import`] (a round trip): the Archidekt shape carries
 //! the `Scryfall ID` column the importer keys off directly, and the Moxfield shape carries
 //! the `Edition` (set code) + `Collector Number` pair it resolves by. See the import
@@ -13,6 +14,10 @@
 //! from those services uses (`NM`/`Near Mint`, `EN`/`English`, blank). Card metadata comes
 //! from the joined `cards` row; the few Archidekt columns we don't store (Multiverse Id,
 //! MTGO ID) are emitted as `0`, matching Archidekt's own default for a card it can't map.
+//!
+//! **Text** ([`export_collection_cards`]): the collection browse's mirror of the public
+//! catalog's card-search export, streamed through the shared engine
+//! ([`crate::handlers::shared::card_export`]) over the very query the browse grid runs.
 
 use axum::extract::State;
 use axum::response::Response;
@@ -23,10 +28,14 @@ use crate::auth::extractor::AuthUser;
 use crate::entities::{card, collection_item};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
-use crate::handlers::shared::{csv_download, require_game};
+use crate::handlers::shared::{
+    csv_download, narrow_export_statement, render_holdings_export, require_game,
+    resolve_holdings_list,
+};
 use crate::state::AppState;
 
-use super::read::owned_with_cards;
+use super::ListParams;
+use super::read::{collection_query, owned_with_cards};
 
 /// Query params for the export: which provider shape to produce.
 #[derive(Debug, Deserialize)]
@@ -172,6 +181,72 @@ pub async fn export_collection(
     let body = build_csv(format, &rows)?;
     let filename = format!("tcglense-{game}-collection-{}.csv", format.slug());
     csv_download(body, &filename)
+}
+
+/// Export collection card search results
+///
+/// `GET /api/collection/{game}/cards/export` -> the whole result set of the signed-in
+/// user's owned-card search as a `.txt` download, honouring the same
+/// `q`/`set`/`include_related`/`sort`/`dir` params as `/api/collection/{game}` — the
+/// collection browse's mirror of the catalog's card-search export. Lines carry the real
+/// owned counts, one line per non-empty finish (`4 Sol Ring (LTC) 284`, foil copies on a
+/// second ` *F*`-tagged line), so the file round-trips through the text importer.
+#[utoipa::path(
+    get,
+    path = "/api/collection/{game}/cards/export",
+    tag = "Collection",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter — the same grammar as the collection list"),
+        ("set" = Option<String>, Query, description = "Optional set-code scope"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
+        ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("format" = Option<String>, Query, description = "`text` (default, `N Name (SET) 123` per owned finish, foil tagged ` *F*`) or `names` (de-duplicated card names)"),
+    ),
+    responses(
+        (status = 200, description = "A streamed `text/plain` attachment listing every matching owned card — the whole result set, uncapped.", content_type = "text/plain"),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Malformed search query, sort, or export format."),
+    ),
+)]
+pub async fn export_collection_cards(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<ListParams>,
+) -> Result<Response, AppError> {
+    let game_meta = require_game(&game)?;
+    let format = params.export_format()?;
+    // The same resolution + query builder as `list_collection`, so the file is provably
+    // the search the browse grid rendered, never a second implementation.
+    let parts = resolve_holdings_list(&state, game_meta, &game, &params).await?;
+    let query = collection_query(
+        user.id,
+        &game,
+        parts.set_codes.as_deref(),
+        parts.search,
+        parts.sort,
+        parts.dir,
+        state.dialect(),
+    );
+    let statement = narrow_export_statement(
+        query,
+        collection_item::Column::CardId,
+        collection_item::Column::Quantity,
+        collection_item::Column::FoilQuantity,
+    );
+    // Scope-free filename (no set code): the holdings `?set=` is a filter param the
+    // catalog-style canonicalisation doesn't apply to, and a filename must never carry
+    // anything the visitor typed.
+    render_holdings_export(
+        &state,
+        statement,
+        format,
+        &format!("tcglense-{game}-collection"),
+    )
 }
 
 /// Order holdings by their card's name, then set code, then collector number (numeric run

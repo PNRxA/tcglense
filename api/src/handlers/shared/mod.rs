@@ -8,6 +8,7 @@
 //! Nothing here may import from `handlers::catalog`, `handlers::collection`, or
 //! `handlers::wishlist` — the dependency only ever flows *into* `shared`.
 
+pub(crate) mod card_export;
 pub(crate) mod download;
 pub(crate) mod dto;
 pub(crate) mod grouping;
@@ -20,7 +21,8 @@ pub(crate) mod search;
 pub(crate) mod sort;
 pub(crate) mod valuation;
 
-pub(crate) use download::{csv_download, text_download, text_download_stream};
+pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
+pub(crate) use download::{csv_download, text_download};
 pub(crate) use dto::{CardResponse, stored_faces};
 pub(crate) use grouping::{
     filter_drops_by_title, group_into_drops, group_into_subtypes, paginate_buckets,
@@ -31,8 +33,8 @@ pub(crate) use holdings::{
     CollectionSort, CollectionSubtypeGroup, CollectionSummary, HoldingSummaryRow, ListParams,
     MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams,
     SummaryParams, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
-    holding_subtype_page, narrow_summary_rows, resolve_set_scope, summarize_holdings,
-    validate_quantity,
+    holding_subtype_page, narrow_export_statement, narrow_summary_rows, resolve_holdings_list,
+    resolve_set_scope, summarize_holdings, validate_quantity,
 };
 pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};
 pub(crate) use pagination::{

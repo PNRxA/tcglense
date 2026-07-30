@@ -46,10 +46,10 @@ use crate::{
             MAX_CSV_UPLOAD_BYTES, collection_movers, collection_product_counts,
             collection_product_summary, collection_set_drops, collection_set_subtypes,
             collection_sets, collection_summary, collection_value_history,
-            delete_collection_source, export_collection, get_collection_entry,
-            get_collection_product_entry, get_collection_source, get_import_job, import_collection,
-            import_collection_csv, import_collection_text, list_collection,
-            list_collection_product_sets, list_collection_products, owned_counts,
+            delete_collection_source, export_collection, export_collection_cards,
+            get_collection_entry, get_collection_product_entry, get_collection_source,
+            get_import_job, import_collection, import_collection_csv, import_collection_text,
+            list_collection, list_collection_product_sets, list_collection_products, owned_counts,
             save_collection_source, set_collection_entry, set_collection_product_entry,
             sync_collection_source,
         },
@@ -80,7 +80,7 @@ use crate::{
         },
         sitemap::{sitemap_child, sitemap_index},
         wishlist::{
-            get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
+            export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
             set_wishlist_product_entry, wishlist_counts, wishlist_product_counts,
             wishlist_product_summary, wishlist_set_drops, wishlist_set_subtypes, wishlist_sets,
@@ -237,6 +237,14 @@ pub fn build_router(state: AppState) -> Router {
         // Download the whole collection as a provider-shaped CSV (Archidekt or Moxfield)
         // — the inverse of the CSV upload, and a re-importable round trip.
         .route("/api/collection/{game}/export", get(export_collection))
+        // The owned-card search's whole result set as a `.txt` download — the collection
+        // browse's mirror of the catalog's card-search export. `export` is a static
+        // segment, so it wins over `/cards/{id}` in axum and can never be read as a
+        // card id (the same precedence the catalog's `/cards/export` relies on).
+        .route(
+            "/api/collection/{game}/cards/export",
+            get(export_collection_cards),
+        )
         // Import / sync a collection from an external provider (Archidekt or Moxfield):
         // a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
         .route("/api/collection/{game}/import", post(import_collection))
@@ -323,6 +331,13 @@ pub fn build_router(state: AppState) -> Router {
         // in, wanted counts out). POST so a big page's id list can't blow the URL
         // length. `/counts`, not `/owned` — a wish list doesn't track ownership.
         .route("/api/wishlist/{game}/counts", post(wishlist_counts))
+        // The wanted-card search's whole result set as a `.txt` download — the wish-list
+        // twin of the collection's `/cards/export` (static segment, so it never collides
+        // with `/cards/{id}`).
+        .route(
+            "/api/wishlist/{game}/cards/export",
+            get(export_wishlist_cards),
+        )
         .route(
             "/api/wishlist/{game}/cards/{id}",
             get(get_wishlist_entry).put(set_wishlist_entry),

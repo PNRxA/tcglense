@@ -1,4 +1,5 @@
-import { listQuery, request } from './client'
+import { cardExportQuery, type CardExportParams } from './catalog'
+import { listQuery, request, requestBlob } from './client'
 import type {
   CollectionDropGroupPage,
   CollectionDropsParams,
@@ -154,6 +155,19 @@ export function makeHoldingApi(base: 'collection' | 'wishlist', countsLeaf: 'own
   const counts = (token: string, game: string, ids: string[]): Promise<OwnedCountsMap> =>
     postCountsBatched(`/api/${base}/${encodeURIComponent(game)}/${countsLeaf}`, token, ids)
 
+  /** Relative `/api/{base}/{game}/cards/export` path for the held-card search's `.txt`
+   * export. Takes the same `q`/`sort`/`dir` params as the catalog exports plus the
+   * holdings `set`/`includeRelated` scope — the very params the browse listing ran. */
+  const cardExportPath = (game: string, params: CardExportParams = {}): string =>
+    `/api/${base}/${encodeURIComponent(game)}/cards/export${cardExportQuery(params)}`
+
+  /** Download the held-card search's whole result set as a `.txt` file. Lines carry the
+   * real held counts, one per non-empty finish (foil copies tagged ` *F*`), so the file
+   * round-trips through the text importer. Per-user, so unlike the catalog export it
+   * takes a token and goes through the shared blob fetcher's 401-refresh path. */
+  const exportCardsFile = (token: string, game: string, params?: CardExportParams): Promise<Blob> =>
+    requestBlob(cardExportPath(game, params), token)
+
   /** How many copies of one card the user holds (zeros when not held). */
   const getEntry = (token: string, game: string, id: string): Promise<CollectionQuantities> =>
     request<CollectionQuantities>(entryPath(game, id), { token })
@@ -178,6 +192,8 @@ export function makeHoldingApi(base: 'collection' | 'wishlist', countsLeaf: 'own
     setSubtypesPath,
     getSetSubtypes,
     counts,
+    cardExportPath,
+    exportCardsFile,
     getEntry,
     setEntry,
   }

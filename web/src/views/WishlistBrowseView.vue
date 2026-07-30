@@ -3,6 +3,7 @@ import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
+import CardExportMenu from '@/components/cards/CardExportMenu.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import GhostToggle from '@/components/cards/GhostToggle.vue'
@@ -49,6 +50,7 @@ const auth = useAuthStore()
 const {
   game,
   code,
+  setCode,
   scoped,
   gameName,
   showGhosts,
@@ -70,6 +72,7 @@ const {
   query,
   sort,
   sortOptions,
+  defaultSort,
   entries,
   groups,
   ghostCards,
@@ -206,6 +209,23 @@ const {
             <GhostToggle :show-ghosts="showGhosts" list="wishlist" @toggle="setShowGhosts" />
           </div>
           <div v-if="hasCards" class="flex gap-2">
+            <!-- Flat views only: the grouped views serve different endpoints than the
+                 ones the exports reuse (the same reason the catalog SetView hides it
+                 while grouped), so the button hides rather than hand back a file that
+                 isn't the rows on screen. List mode exports the wish-list listing
+                 (real wanted counts, foils tagged); ghost mode *is* the catalog
+                 listing, so it exports the public catalog search. -->
+            <CardExportMenu
+              v-if="!grouped"
+              :game="game"
+              :set-code="setCode"
+              :list="showGhosts ? undefined : 'wishlist'"
+              :query="query"
+              :sort="sort"
+              :default-sort="defaultSort"
+              :include-related="includeRelated"
+              :total="total"
+            />
             <CardSizeMenu />
             <CardSortMenu v-model="sort" :options="sortOptions" />
           </div>

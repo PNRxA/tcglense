@@ -5,6 +5,8 @@ import { ApiError } from '@/lib/api'
 
 const exportCards = vi.fn<(...args: unknown[]) => Promise<Blob>>()
 const exportSetCards = vi.fn<(...args: unknown[]) => Promise<Blob>>()
+const exportCollectionCards = vi.fn<(...args: unknown[]) => Promise<Blob>>()
+const exportWishlistCards = vi.fn<(...args: unknown[]) => Promise<Blob>>()
 const downloadBlob = vi.fn<(...args: unknown[]) => void>()
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -13,11 +15,21 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     exportCards: (...args: unknown[]) => exportCards(...args),
     exportSetCards: (...args: unknown[]) => exportSetCards(...args),
+    exportCollectionCards: (...args: unknown[]) => exportCollectionCards(...args),
+    exportWishlistCards: (...args: unknown[]) => exportWishlistCards(...args),
   }
 })
 
 vi.mock('@/lib/download', () => ({
   downloadBlob: (...args: unknown[]) => downloadBlob(...args),
+}))
+
+// The holdings mode goes through the auth store's authFetch (per-user download); hand
+// the exporter a token straight away so no Pinia instance is needed.
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    authFetch: (call: (token: string) => Promise<Blob>) => call('tok'),
+  }),
 }))
 
 const blob = new Blob(['1 Sol Ring (LTC) 284\n'], { type: 'text/plain' })
@@ -46,6 +58,8 @@ describe('CardExportMenu', () => {
   beforeEach(() => {
     exportCards.mockReset().mockResolvedValue(blob)
     exportSetCards.mockReset().mockResolvedValue(blob)
+    exportCollectionCards.mockReset().mockResolvedValue(blob)
+    exportWishlistCards.mockReset().mockResolvedValue(blob)
     downloadBlob.mockReset()
   })
   afterEach(() => document.body.replaceChildren())
@@ -77,6 +91,46 @@ describe('CardExportMenu', () => {
       expect.objectContaining({ includeRelated: true, format: 'names' }),
     )
     expect(downloadBlob).toHaveBeenCalledWith(blob, 'tcglense-mtg-neo-card-names.txt')
+  })
+
+  it('exports the collection listing with the token and set scope', async () => {
+    const wrapper = mountMenu({ list: 'collection', setCode: 'neo', sort: 'updated:desc' })
+    await pick(wrapper, 'Card list')
+
+    // The holdings surface never touches the catalog endpoints...
+    expect(exportCards).not.toHaveBeenCalled()
+    expect(exportSetCards).not.toHaveBeenCalled()
+    // ...it downloads the user's own listing (authed), with the set as a query scope.
+    expect(exportCollectionCards).toHaveBeenCalledWith('tok', 'mtg', {
+      q: undefined,
+      sort: 'updated',
+      dir: 'desc',
+      includeRelated: false,
+      format: 'text',
+      set: 'neo',
+    })
+    // The filename mirrors the server's scope-free holdings name.
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'tcglense-mtg-collection-cards.txt')
+  })
+
+  it('describes holdings lines as carrying your counts', async () => {
+    const wrapper = mountMenu({ list: 'collection' })
+    await wrapper.get('button').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.body.textContent).toContain('with your counts')
+  })
+
+  it('exports the wish-list listing through the wish-list twin', async () => {
+    const wrapper = mountMenu({ list: 'wishlist' })
+    await pick(wrapper, 'Card names')
+
+    expect(exportCollectionCards).not.toHaveBeenCalled()
+    expect(exportWishlistCards).toHaveBeenCalledWith(
+      'tok',
+      'mtg',
+      expect.objectContaining({ format: 'names', set: undefined }),
+    )
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'tcglense-mtg-wishlist-card-names.txt')
   })
 
   it('drops an empty search rather than sending a blank q', async () => {
