@@ -28,6 +28,7 @@ mod decks;
 mod email_verification;
 mod headers;
 mod keywords;
+mod life_counter;
 mod login;
 mod mirror;
 mod openapi;

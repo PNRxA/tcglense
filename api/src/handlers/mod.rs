@@ -14,4 +14,5 @@ pub mod openapi;
 pub mod shared;
 pub mod sharing;
 pub mod sitemap;
+pub mod tools;
 pub mod wishlist;
