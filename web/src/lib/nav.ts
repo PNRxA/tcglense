@@ -105,7 +105,11 @@ export const NAV: readonly NavRoot[] = [
           },
           {
             id: 'sealed',
-            label: 'Sealed',
+            // "Sealed products", not the bare "Sealed" the two navs used as a compact label:
+            // this is the name the app uses everywhere else — the `/sealed` view's own <h1>
+            // and page title, the breadcrumbs, every section heading — and a registry label
+            // that disagrees with the page it lands on is the drift this file exists to end.
+            label: 'Sealed products',
             icon: Package,
             landing: '/sealed',
             landingLabel: 'Browse all games',
