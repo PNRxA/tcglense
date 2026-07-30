@@ -1,8 +1,9 @@
 //! Streaming import of Scryfall's `default_cards` bulk file into the `cards`
 //! and `card_sets` tables, plus the `/sets` metadata.
 //!
-//! The bulk file is a single JSON array with **one object per line**, so we
-//! stream it line-by-line (decompressing gzip on the fly) and upsert in batches
+//! The bulk file carries **one card object per line** (gzipped JSONL upstream; the
+//! legacy JSON-array files parse the same way — see [`client::json_lines`]), so we
+//! stream it line-by-line (inflating on the fly) and upsert in batches
 //! — memory stays bounded regardless of the ~500 MB download. Only paper cards
 //! and non-digital sets are stored. Progress and completion are recorded in
 //! `ingest_state` so the API/UI can report status and so an unchanged dataset
@@ -11,6 +12,7 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
+use futures_util::TryStreamExt;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
@@ -18,8 +20,6 @@ use sea_orm::{
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio_util::io::StreamReader;
 
 use super::client;
 use super::map;
@@ -37,10 +37,6 @@ pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.
 const PROGRESS_EVERY: u32 = 25;
-/// Push accumulated stream bytes to the progress bar in chunks this large, so it
-/// stays smooth even across long runs of filtered lines (which never flush a
-/// card batch) without locking the bar on every single line.
-const BYTES_PER_TICK: u64 = 1_000_000;
 
 /// Error type for the background import. Its `Display` wraps the inner
 /// reqwest/io/db error verbatim and is for **logs only** — the caller
@@ -168,7 +164,7 @@ async fn refresh_inner(
     let progress = ImportProgress::start(GAME_NAME);
     tracing::info!(
         updated_at = %entry.updated_at,
-        size_mb = entry.size.unwrap_or(0) / 1_000_000,
+        download_mb = entry.transfer_size().unwrap_or(0) / 1_000_000,
         "importing scryfall {DATASET}"
     );
     put_state(
@@ -205,13 +201,10 @@ async fn refresh_inner(
     .await?;
 
     // Switch the bar to its determinate phase now that the byte length is known.
-    progress.begin_cards(entry.size);
-    // In mirror mode the bulk file streams from the mirror (overriding the catalog's
-    // embedded upstream `download_uri`, which points at Scryfall's own CDN); upstream
-    // mode follows that `download_uri` directly.
-    let download_url = source
-        .scryfall_file_url(DATASET)
-        .unwrap_or_else(|| entry.download_uri.clone());
+    progress.begin_cards(entry.transfer_size());
+    // In mirror mode the bulk file streams from the mirror; upstream mode follows the
+    // location the catalog entry advertises.
+    let download_url = client::file_url(source, DATASET, &entry)?;
     let cards_imported = import_cards(
         db,
         client,
@@ -311,29 +304,24 @@ async fn import_cards(
     started: DateTimeUtc,
     progress: &ImportProgress,
 ) -> Result<i32, IngestError> {
-    let stream = client::download_stream(client, url).await?;
-    let mut lines = BufReader::with_capacity(64 * 1024, StreamReader::new(stream)).lines();
+    // Count bytes as they come off the wire rather than per decoded line: it matches the
+    // bar's total (`transfer_size`, which is the compressed size for a gzipped file), and
+    // it keeps the bar moving through long runs of filtered lines that store no card.
+    let stream = client::download_stream(client, url)
+        .await?
+        .inspect_ok(|chunk| progress.add_bytes(chunk.len() as u64));
+    let mut lines = client::json_lines(stream).await?;
 
     let now = Utc::now();
     let mut batch: Vec<card::ActiveModel> = Vec::with_capacity(CARD_BATCH);
     let mut total: i32 = 0;
     let mut batches_since_progress: u32 = 0;
     let mut skipped_parse: u64 = 0;
-    let mut bytes_since_tick: u64 = 0;
 
     while let Some(raw) = lines.next_line().await? {
-        // Account every byte read (incl. the stripped newline) toward the byte
-        // bar, pushing in ~1 MB ticks. Doing it here — before the paper filter —
-        // keeps the bar moving across long runs of filtered lines that never
-        // flush a card batch.
-        bytes_since_tick += raw.len() as u64 + 1;
-        if bytes_since_tick >= BYTES_PER_TICK {
-            progress.add_bytes(bytes_since_tick);
-            bytes_since_tick = 0;
-        }
-
-        // Each element sits on its own line, terminated by a comma except the
-        // last; the array brackets get their own lines.
+        // One card per line — bare in the JSONL files, comma-terminated with the array
+        // brackets on their own lines in the legacy JSON ones. Both shapes fall out of
+        // stripping a trailing comma and skipping the brackets.
         let line = raw.trim();
         let line = line.strip_suffix(',').unwrap_or(line).trim();
         if line.is_empty() || line == "[" || line == "]" {
@@ -388,10 +376,6 @@ async fn import_cards(
         flush_cards(db, batch).await?;
         total += n;
         progress.set_cards(total as u64);
-    }
-    // Push any bytes counted since the last tick so the bar reaches its end.
-    if bytes_since_tick > 0 {
-        progress.add_bytes(bytes_since_tick);
     }
     if skipped_parse > 0 {
         tracing::warn!(count = skipped_parse, "skipped unparseable card lines");

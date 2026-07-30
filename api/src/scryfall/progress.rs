@@ -46,9 +46,10 @@ impl ImportProgress {
         Self { span, game }
     }
 
-    /// Switch to the determinate card-streaming phase. `total_bytes` is the
-    /// uncompressed bulk-file size; `None`/`0` falls back to a byte spinner with
-    /// no ETA (Scryfall always reports a size, so that path is a safety net).
+    /// Switch to the determinate card-streaming phase. `total_bytes` is the bulk file's
+    /// transfer size — compressed, for the gzipped JSONL files, matching the wire bytes
+    /// [`Self::add_bytes`] counts; `None`/`0` falls back to a byte spinner with no ETA
+    /// (Scryfall always reports a size, so that path is a safety net).
     pub fn begin_cards(&self, total_bytes: Option<u64>) {
         let total = total_bytes.unwrap_or(0);
         self.span.pb_set_style(&bar_style(total > 0));
@@ -58,7 +59,7 @@ impl ImportProgress {
             .pb_set_message(&format!("Importing {} cards", self.game));
     }
 
-    /// Advance the byte bar by `n` decompressed bytes read from the stream.
+    /// Advance the byte bar by `n` bytes pulled off the wire (before any inflate).
     pub fn add_bytes(&self, n: u64) {
         self.span.pb_inc(n);
     }

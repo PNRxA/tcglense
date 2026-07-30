@@ -1173,14 +1173,28 @@ unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
 
 | Method & path | Returns |
 |---------------|---------|
-| `GET /api/mirror/scryfall/bulk-data` | Scryfall's bulk-data catalog JSON |
+| `GET /api/mirror/scryfall/bulk-data` | Scryfall's bulk-data catalog JSON, **unparsed** |
 | `GET /api/mirror/scryfall/sets` | Scryfall's sets listing |
-| `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated) |
+| `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated), **as served** — i.e. still gzipped |
 | `GET /api/mirror/scryfall/sld-drops` | the current Secret Lair drop snapshot (curated titles + collector numbers) as JSON, served from this origin's in-memory drop store (a strong content `ETag`, so an unchanged snapshot is a `304`) |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
 | `GET /api/mirror/currency` | the daily USD reference-rate (FX) feed proxied **verbatim** from the upstream provider (Frankfurter), so consumers pull exchange rates from this origin instead of the provider; shares the 1-hour meta TTL |
+
+**Scryfall bulk files are gzipped JSONL** (one dataset object per line), advertised by the
+catalog as `jsonl_download_uri` + `compressed_size` — the pre-2026-07 plain JSON array
+(`download_uri` + `size`) is still read if it reappears. They are served as
+`Content-Type: application/gzip` with **no `Content-Encoding`**, so no HTTP layer inflates
+them for us: `scryfall::client::json_lines` sniffs the gzip magic byte and inflates the
+stream itself, and the mirror deliberately proxies the compressed bytes through untouched
+(inflating at the mirror would multiply every consumer's transfer). Consequences worth
+knowing: the import progress bar counts **wire** bytes against `compressed_size`, and every
+field of a bulk-catalog entry is **optional** in our model — one dataset missing a URL must
+not fail the whole catalog for the others, since cards, rulings and art tags all start from
+this one document (a required field there took every Scryfall import down when upstream
+renamed it). `scryfall::client`'s `#[ignore]`d `live_bulk_catalog_parses_and_streams` test is
+the manual canary for this contract: `cargo test -- --ignored live_bulk_catalog`.
 
 The **fingerprint** route is not an upstream proxy: it serializes this origin's own
 in-memory index (built by the operator's `FINGERPRINT_BUILD_ENABLED` instance) into a

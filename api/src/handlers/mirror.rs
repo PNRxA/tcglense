@@ -203,9 +203,12 @@ async fn proxy_stream(
 }
 
 /// `GET /api/mirror/scryfall/bulk-data` — the Scryfall bulk-data catalog (small JSON
-/// describing each downloadable file). The consumer reads `updated_at`/`size` from it and
-/// builds the file URL from the mirror, so the embedded upstream `download_uri` is
-/// re-served verbatim but never followed by a mirror consumer.
+/// describing each downloadable file). The consumer reads `updated_at` + the transfer size
+/// from it and builds the file URL from the mirror, so the embedded upstream download URL
+/// is re-served verbatim but never followed by a mirror consumer. Passed through
+/// unparsed, which is what lets a consumer on a newer build cope with an upstream field
+/// change (like 2026-07's `download_uri` → `jsonl_download_uri`) without the mirror
+/// redeploying first.
 pub async fn scryfall_bulk_data(State(state): State<AppState>) -> Result<Response, AppError> {
     proxy_stream(
         &state,
@@ -260,7 +263,10 @@ pub async fn scryfall_sets(State(state): State<AppState>) -> Result<Response, Ap
 
 /// `GET /api/mirror/scryfall/file/{kind}` — stream the current bulk file for `kind`
 /// (e.g. `default_cards`). Resolves the live download URL from the catalog, then streams
-/// its bytes through (bounded memory).
+/// its bytes through (bounded memory). The bytes are passed through **as served**, i.e.
+/// still gzip-compressed for today's JSONL files — a consumer's
+/// `scryfall::client::json_lines` sniffs and inflates, so the mirror needn't (and must
+/// not: inflating here would multiply the bytes on every consumer's transfer).
 pub async fn scryfall_file(
     Path(kind): Path<String>,
     State(state): State<AppState>,
@@ -276,15 +282,12 @@ pub async fn scryfall_file(
         .into_iter()
         .find(|b| b.kind == kind)
         .ok_or_else(|| AppError::NotFound(format!("mirror: bulk dataset '{kind}' not found")))?;
-    proxy_stream(
-        &state,
-        "scryfall file",
-        &entry.download_uri,
-        None,
-        None,
-        MIRROR_FILE_CACHE,
-    )
-    .await
+    let url = entry.file_url().ok_or_else(|| {
+        AppError::BadGateway(format!(
+            "mirror: bulk dataset '{kind}' advertises no download url"
+        ))
+    })?;
+    proxy_stream(&state, "scryfall file", url, None, None, MIRROR_FILE_CACHE).await
 }
 
 /// `GET /api/mirror/scryfall/sld-drops` — the current Secret Lair drop snapshot (curated titles +

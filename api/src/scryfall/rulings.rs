@@ -2,8 +2,8 @@
 //!
 //! Rulings are the "Notes and Rules Information" shown on a card (issue #522) — official
 //! clarifications keyed by `oracle_id` (the gameplay identity shared across every
-//! printing). Like the card bulk file, the rulings file is a single JSON array with one
-//! object per line, so it streams line-by-line with bounded memory. We keep only rulings
+//! printing). Like the card bulk file, the rulings file carries one ruling object per
+//! line, so it streams line-by-line with bounded memory. We keep only rulings
 //! whose `oracle_id` matches a card we actually store (paper cards), then swap the whole
 //! game's rulings in one transaction so a refresh is atomic — a reader never sees a
 //! half-rebuilt list, and there's no natural per-ruling id to upsert on. Version-gated on
@@ -18,8 +18,6 @@ use sea_orm::{
     ActiveValue::{NotSet, Set},
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, TransactionTrait,
 };
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio_util::io::StreamReader;
 
 use super::client;
 use super::ingest::IngestError;
@@ -87,7 +85,7 @@ async fn refresh_inner(
     let started = Utc::now();
     tracing::info!(
         updated_at = %entry.updated_at,
-        size_mb = entry.size.unwrap_or(0) / 1_000_000,
+        download_mb = entry.transfer_size().unwrap_or(0) / 1_000_000,
         "importing scryfall {DATASET_RULINGS}"
     );
     ingest_state::put(
@@ -111,11 +109,9 @@ async fn refresh_inner(
     // bounds how many rows the stream collects.
     let known = known_oracle_ids(db).await?;
 
-    // In mirror mode the file streams from the mirror (overriding the catalog's embedded
-    // upstream `download_uri`); upstream mode follows that `download_uri` directly.
-    let download_url = source
-        .scryfall_file_url(DATASET_RULINGS)
-        .unwrap_or_else(|| entry.download_uri.clone());
+    // In mirror mode the file streams from the mirror; upstream mode follows the location
+    // the catalog entry advertises.
+    let download_url = client::file_url(source, DATASET_RULINGS, &entry)?;
     let rows = collect_rulings(client, &download_url, &known).await?;
     let count = rows.len() as i32;
 
@@ -168,15 +164,16 @@ async fn known_oracle_ids(db: &DatabaseConnection) -> Result<HashSet<String>, In
 }
 
 /// Stream the bulk rulings file and collect the rulings for a stored card into memory
-/// (bounded by the filter). Each element sits on its own line, comma-terminated except
-/// the last, with the array brackets on their own lines — same shape as the card file.
+/// (bounded by the filter). One ruling per line — bare in the JSONL files, or
+/// comma-terminated inside array brackets in the legacy JSON ones, same shape as the card
+/// file.
 async fn collect_rulings(
     client: &Client,
     url: &str,
     known: &HashSet<String>,
 ) -> Result<Vec<Row>, IngestError> {
     let stream = client::download_stream(client, url).await?;
-    let mut lines = BufReader::with_capacity(64 * 1024, StreamReader::new(stream)).lines();
+    let mut lines = client::json_lines(stream).await?;
 
     let mut rows: Vec<Row> = Vec::new();
     let mut skipped_parse: u64 = 0;
