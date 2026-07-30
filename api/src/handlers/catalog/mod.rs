@@ -24,8 +24,8 @@ use crate::entities::card;
 use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::handlers::shared::{
-    DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, SortDir,
-    SortField, resolve_page, search_condition, trim_query,
+    CardExportFormat, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE,
+    SortDir, SortField, resolve_page, search_condition, trim_query,
 };
 use crate::scryfall::search::{cust_vals, escape_like};
 
@@ -187,8 +187,8 @@ impl ListParams {
 
     /// The export shape from `?format=`, or a 422 when it names one we don't emit.
     /// Only the export endpoints call this; a stray `?format=` elsewhere is inert.
-    fn export_format(&self) -> Result<export::ExportFormat, AppError> {
-        export::ExportFormat::parse(self.format.as_deref())
+    fn export_format(&self) -> Result<CardExportFormat, AppError> {
+        CardExportFormat::parse(self.format.as_deref())
     }
 
     /// Resolve the `(field, direction)` sort from the URL `sort`/`dir` params, an

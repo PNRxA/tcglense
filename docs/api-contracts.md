@@ -412,6 +412,35 @@ The SPA flags a large download before it starts (`CardExportMenu`): at or above
 "Exporting all 47,231 matches — this may take a moment." It informs rather than blocks,
 and stays silent for ordinary searches, since nothing is capped or withheld.
 
+**Collection / wish-list card exports.** `GET /api/collection/{game}/cards/export` and
+`GET /api/wishlist/{game}/cards/export` (`handlers::{collection,wishlist}::export`) are the
+holdings twins of the catalog export: the **whole result set** of the corresponding holdings
+listing, through the same shared streaming engine (`handlers::shared::card_export` — every
+property above holds: uncapped, two-phase drain, bounded channel, no size hint/ETag, the
+`#`-marker failure contract). Differences from the catalog pair:
+
+- **Authenticated** (`AuthUser` — session JWT or any `tcgl_` key, a read) and `no-store`,
+  like every other holdings read — and in the per-user limiter's **Analytics** class
+  (`ratelimit/per_user.rs`), same as the CSV export: an uncapped whole-holdings drain is
+  too heavy for the General browse budget.
+- Params are the *holdings listing's* own — `q`, `set`, `include_related`, `sort`
+  (`updated`/`quantity`/card sorts), `dir`, plus `?format=` — resolved and built through
+  the very seams the listing uses (`resolve_holdings_list` +
+  `collection_query`/`wishlist_query`), so the file can never disagree with the browse grid.
+- `text` lines carry the **real held counts**, one line per non-empty finish: regular
+  copies as `4 Sol Ring (LTC) 284`, foil copies on a second ` *F*`-tagged line — exactly
+  the grammar `collection_import::text_list` reads back, so a collection round-trips
+  through the paste importer with quantities and finishes intact. `names` stays
+  de-duplicated bare names.
+- Filenames are scope-free (`tcglense-{game}-{collection,wishlist}-cards.txt` /
+  `…-card-names.txt`): the `?set=` scope is caller input, and a filename never carries
+  anything the visitor typed.
+
+The SPA offers these from the collection/wish-list browse views' flat modes (held mode →
+the holdings export; show-ghosts mode is the catalog listing, so it exports the public
+catalog search; the grouped by-drop/by-sub-type views hide the button, same as the
+catalog set view, because they serve a different endpoint than the export reuses).
+
 ### HTTP caching (CDN)
 
 The router splits routes into two cache policies via response middleware
@@ -684,6 +713,7 @@ surface.
 | `DELETE /api/collection/{game}/source` | — | `204` — forget the saved link (idempotent) |
 | `POST /api/collection/{game}/sync` | — | **`202`** `ImportJob` — enqueues a re-sync from the saved link (the worker stamps `last_synced_at` on success). Uses **smart** sync when the saved link opted in, otherwise **mirror/replace**. `404` if no link is saved |
 | `GET /api/collection/{game}/export?format=` | — | **`text/csv`** download (`Content-Disposition: attachment; filename="tcglense-{game}-collection-{format}.csv"`) of the whole collection in a provider shape — `?format=archidekt` (default) or `moxfield`. Unpaginated; one row per non-empty finish bucket (a card owned in both finishes yields a Normal/regular row **and** a Foil row), name-sorted. The inverse of the CSV upload, and a re-importable round trip (see **Export** below). `422` for an unknown `format` |
+| `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/`format` |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
 the full catalog `Card` shape (reusing the shared `CardResponse`).
@@ -927,6 +957,7 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 | `GET /api/wishlist/{game}/sets/{code}/drops?q&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
 | `GET /api/wishlist/{game}/sets/{code}/subtypes?q&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
 | `POST /api/wishlist/{game}/counts` `{ ids }` | `POST .../owned` (batch counts, listed cards only, > 500 ids `422`) — named `/counts` because a wish list doesn't track ownership |
+| `GET /api/wishlist/{game}/cards/export?q&set&include_related&sort&dir&format` | `GET /api/collection/{game}/cards/export` (the streamed `.txt` search export with real wanted counts; filename `tcglense-{game}-wishlist-…`) — see **Search export** in the catalog section |
 | `GET /api/wishlist/{game}/cards/{id}` | the single-card counts read (zeros if absent) |
 | `PUT /api/wishlist/{game}/cards/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero deletes, negative/oversized `422`) |
 
@@ -1265,14 +1296,28 @@ unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
 
 | Method & path | Returns |
 |---------------|---------|
-| `GET /api/mirror/scryfall/bulk-data` | Scryfall's bulk-data catalog JSON |
+| `GET /api/mirror/scryfall/bulk-data` | Scryfall's bulk-data catalog JSON, **unparsed** |
 | `GET /api/mirror/scryfall/sets` | Scryfall's sets listing |
-| `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated) |
+| `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated), **as served** — i.e. still gzipped |
 | `GET /api/mirror/scryfall/sld-drops` | the current Secret Lair drop snapshot (curated titles + collector numbers) as JSON, served from this origin's in-memory drop store (a strong content `ETag`, so an unchanged snapshot is a `304`) |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
 | `GET /api/mirror/currency` | the daily USD reference-rate (FX) feed proxied **verbatim** from the upstream provider (Frankfurter), so consumers pull exchange rates from this origin instead of the provider; shares the 1-hour meta TTL |
+
+**Scryfall bulk files are gzipped JSONL** (one dataset object per line), advertised by the
+catalog as `jsonl_download_uri` + `compressed_size` — the pre-2026-07 plain JSON array
+(`download_uri` + `size`) is still read if it reappears. They are served as
+`Content-Type: application/gzip` with **no `Content-Encoding`**, so no HTTP layer inflates
+them for us: `scryfall::client::json_lines` sniffs the gzip magic byte and inflates the
+stream itself, and the mirror deliberately proxies the compressed bytes through untouched
+(inflating at the mirror would multiply every consumer's transfer). Consequences worth
+knowing: the import progress bar counts **wire** bytes against `compressed_size`, and every
+field of a bulk-catalog entry is **optional** in our model — one dataset missing a URL must
+not fail the whole catalog for the others, since cards, rulings and art tags all start from
+this one document (a required field there took every Scryfall import down when upstream
+renamed it). `scryfall::client`'s `#[ignore]`d `live_bulk_catalog_parses_and_streams` test is
+the manual canary for this contract: `cargo test -- --ignored live_bulk_catalog`.
 
 The **fingerprint** route is not an upstream proxy: it serializes this origin's own
 in-memory index (built by the operator's `FINGERPRINT_BUILD_ENABLED` instance) into a

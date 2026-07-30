@@ -301,11 +301,20 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   whole thing to compute an `ETag`), and don't turn a mid-stream failure into silence: it
   appends a `#`-comment marker **and** errors the transfer, so a short file is never
   mistaken for a whole one. Otherwise the body stays pure card lines so a paste is clean.
+  That whole drain lives in **`handlers/shared/card_export.rs`**, shared with the
+  **collection/wish-list card exports** (`/api/{collection,wishlist}/{game}/cards/export`,
+  authed + no-store): those build from the twins' own listing builders through
+  `resolve_holdings_list` + `narrow_export_statement`, and their `text` lines carry the
+  **real held counts** — one line per non-empty finish, foil tagged ` *F*` (the grammar
+  `collection_import::text_list` reads back) — where a catalog line is always `1 …`.
   A view served by a **different endpoint** than the one the export reuses must **hide**
   the button rather than hand back a file that isn't the rows on screen — that's why
   `SetView` gates on `!grouped`: `/drops` owns a `?drop=` filter the export can't express,
   and `/subtypes` parses the search's `unique:`/`order:` directives and then *discards*
   them, so a `q=unique:cards` grid shows every printing while the export would fold them.
+  The holdings browse views gate the same way (`!grouped`), and additionally swap target
+  per mode: held mode exports the holdings listing, show-ghosts mode *is* the catalog
+  listing so it exports the public catalog search.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled
@@ -347,6 +356,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   drop the reseed-before-defer ordering or persist on a `304`/`Unchanged`. `drops::table()` returns an
   owned `Arc<DropTable>`, and `sld::derivation_version` reads the **live** snapshot (computed, not
   memoised) so a refresh propagates to the sealed-contents gate — keep both dynamic.
+- **Every field of a Scryfall bulk-catalog entry is optional, and the files are gzipped
+  JSONL.** `cards`, `rulings` and `art_tags` all start from the one `/bulk-data` document, so
+  a *required* field there is a single point of failure for the whole catalog: when upstream
+  swapped `download_uri`/`size` for `jsonl_download_uri`/`compressed_size` (2026-07), serde
+  rejected the list and every import died as "network error contacting the card-data source"
+  — silently, since existing rows just went stale. Read the location through
+  `BulkData::file_url`/`transfer_size`, never the fields. The files are served
+  `Content-Type: application/gzip` with **no `Content-Encoding`** (so reqwest's transparent
+  gzip never applies) and the mirror passes those bytes through compressed: `client::json_lines`
+  is the one seam that sniffs the gzip magic byte and inflates, and every bulk consumer must
+  read through it rather than wrapping the stream itself. `cargo test -- --ignored
+  live_bulk_catalog` is the manual canary when an import starts failing with a decode error.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling

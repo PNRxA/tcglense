@@ -11,14 +11,52 @@ pub struct BulkDataList {
 }
 
 /// One entry in the bulk-data catalog (e.g. the `default_cards` file).
+///
+/// Scryfall moved bulk data to **gzipped JSONL** in 2026-07: an entry now carries
+/// `jsonl_download_uri` + `compressed_size` where it used to carry `download_uri` +
+/// `size` (a plain JSON array). Both pairs are optional here so either shape
+/// deserializes — a required `download_uri` is what silently took every Scryfall import
+/// down when the field disappeared, since one missing field fails the whole list and
+/// cards, rulings and art tags all start from this catalog. Read the file location
+/// through [`Self::file_url`] and [`Self::transfer_size`], never the fields directly.
 #[derive(Debug, Deserialize)]
 pub struct BulkData {
     #[serde(rename = "type")]
     pub kind: String,
     pub updated_at: String,
-    pub download_uri: String,
+    /// Legacy plain-JSON-array file. Absent since the JSONL migration.
+    #[serde(default)]
+    pub download_uri: Option<String>,
+    /// Gzipped JSONL file — one dataset object per line, no array brackets.
+    #[serde(default)]
+    pub jsonl_download_uri: Option<String>,
+    /// Uncompressed size of [`Self::download_uri`], when that's what's on offer.
     #[serde(default)]
     pub size: Option<u64>,
+    /// Wire size of [`Self::jsonl_download_uri`] (i.e. gzipped, not the inflated size).
+    #[serde(default)]
+    pub compressed_size: Option<u64>,
+}
+
+impl BulkData {
+    /// The file to stream, preferring the JSONL variant. `None` if the entry offers
+    /// neither — a contract drift the caller turns into a failed (retried) import
+    /// rather than an empty dataset.
+    pub fn file_url(&self) -> Option<&str> {
+        self.jsonl_download_uri
+            .as_deref()
+            .or(self.download_uri.as_deref())
+    }
+
+    /// Bytes [`Self::file_url`]'s transfer carries, for the import progress bar — the
+    /// *compressed* size for a gzipped JSONL file, since that's what comes off the wire.
+    pub fn transfer_size(&self) -> Option<u64> {
+        if self.jsonl_download_uri.is_some() {
+            self.compressed_size
+        } else {
+            self.size
+        }
+    }
 }
 
 /// Envelope of `GET /sets` (and any paginated Scryfall list).
@@ -336,5 +374,59 @@ impl StoredFace {
             image_png: img.and_then(|u| u.png.clone()),
             image_art_crop: img.and_then(|u| u.art_crop.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A verbatim entry from the live bulk-data catalog (2026-07-30), pinning the shape
+    /// that replaced `download_uri`/`size`: a gzipped JSONL file and its compressed size.
+    const JSONL_ENTRY: &str = r#"{"object":"bulk_data","id":"48da5752-eeb6-4126-bf97-8829e20ad14f","type":"art_tags","updated_at":"2026-07-30T09:01:23.670+00:00","uri":"https://api.scryfall.com/bulk-data/48da5752-eeb6-4126-bf97-8829e20ad14f","name":"Art Tags","description":"A JSON file containing all art (illustration) tags sourced from Tagger, the Scryfall community tagging project.","jsonl_download_uri":"https://data.scryfall.io/art-tags/art-tags-20260730090123.jsonl.gz","compressed_size":12359045}"#;
+
+    /// The pre-migration entry shape, kept working so a mirror still serving the old
+    /// catalog (or a rollback upstream) imports rather than failing the whole list.
+    const LEGACY_ENTRY: &str = r#"{"object":"bulk_data","id":"48da5752","type":"art_tags","updated_at":"2026-07-23T09:01:23.670+00:00","download_uri":"https://data.scryfall.io/art-tags/art-tags-20260723090123.json","size":48000000}"#;
+
+    #[test]
+    fn reads_the_jsonl_catalog_entry() {
+        let entry: BulkData = serde_json::from_str(JSONL_ENTRY).expect("parses");
+        assert_eq!(entry.kind, "art_tags");
+        assert_eq!(entry.updated_at, "2026-07-30T09:01:23.670+00:00");
+        assert_eq!(
+            entry.file_url(),
+            Some("https://data.scryfall.io/art-tags/art-tags-20260730090123.jsonl.gz")
+        );
+        // The bar counts wire bytes, so the compressed size is the one that matches.
+        assert_eq!(entry.transfer_size(), Some(12_359_045));
+    }
+
+    #[test]
+    fn reads_the_legacy_catalog_entry() {
+        let entry: BulkData = serde_json::from_str(LEGACY_ENTRY).expect("parses");
+        assert_eq!(
+            entry.file_url(),
+            Some("https://data.scryfall.io/art-tags/art-tags-20260723090123.json")
+        );
+        assert_eq!(entry.transfer_size(), Some(48_000_000));
+    }
+
+    #[test]
+    fn prefers_jsonl_when_an_entry_offers_both() {
+        let both = r#"{"type":"rulings","updated_at":"x","download_uri":"https://old/rulings.json","size":10,"jsonl_download_uri":"https://new/rulings.jsonl.gz","compressed_size":3}"#;
+        let entry: BulkData = serde_json::from_str(both).expect("parses");
+        assert_eq!(entry.file_url(), Some("https://new/rulings.jsonl.gz"));
+        assert_eq!(entry.transfer_size(), Some(3));
+    }
+
+    /// An entry with no file at all still deserializes — one dataset missing its URL must
+    /// not fail the whole catalog for the others; the caller errors on use instead.
+    #[test]
+    fn an_entry_without_any_file_url_still_parses() {
+        let entry: BulkData =
+            serde_json::from_str(r#"{"type":"oracle_tags","updated_at":"x"}"#).expect("parses");
+        assert_eq!(entry.file_url(), None);
+        assert_eq!(entry.transfer_size(), None);
     }
 }

@@ -132,15 +132,21 @@ export const LARGE_EXPORT_CARDS = 5_000
  * (no paging: an export is the whole result set, uncapped and streamed). */
 export interface CardExportParams {
   q?: string
+  /** Holdings (collection / wish-list) exports only: the `?set=` scope. The catalog
+   * exports scope by path segment instead, so they never pass it. */
+  set?: string
   sort?: string
   dir?: string
   includeRelated?: boolean
   format?: CardExportFormat
 }
 
-function exportQuery(params: CardExportParams = {}): string {
+/** Build a card export's query string. Shared with the collection / wish-list card
+ * exports (`makeHoldingApi`), which take the same params plus the `set` scope. */
+export function cardExportQuery(params: CardExportParams = {}): string {
   const search = new URLSearchParams()
   if (params.q) search.set('q', params.q)
+  if (params.set) search.set('set', params.set)
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)
   if (params.includeRelated) search.set('include_related', 'true')
@@ -152,14 +158,14 @@ function exportQuery(params: CardExportParams = {}): string {
 
 /** Relative `/api/games/{game}/cards/export` path for the all-cards search. */
 export function cardExportPath(game: string, params?: CardExportParams): string {
-  return `/api/games/${encodeURIComponent(game)}/cards/export${exportQuery(params)}`
+  return `/api/games/${encodeURIComponent(game)}/cards/export${cardExportQuery(params)}`
 }
 
 /** Relative `/api/games/{game}/sets/{code}/cards/export` path for a set's card search. */
 export function setCardExportPath(game: string, code: string, params?: CardExportParams): string {
   const g = encodeURIComponent(game)
   const c = encodeURIComponent(code)
-  return `/api/games/${g}/sets/${c}/cards/export${exportQuery(params)}`
+  return `/api/games/${g}/sets/${c}/cards/export${cardExportQuery(params)}`
 }
 
 /** Download the all-cards search's whole result set as a `.txt` file. A public

@@ -20,7 +20,8 @@ use crate::handlers::shared::{
     CardResponse, CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary,
     HoldingSummaryRow, ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page,
     SortDir, SummaryParams, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card,
-    narrow_summary_rows, require_game, resolve_set_scope, search_condition, summarize_holdings,
+    narrow_summary_rows, require_game, resolve_holdings_list, resolve_set_scope,
+    summarize_holdings,
 };
 use crate::state::AppState;
 
@@ -77,28 +78,18 @@ pub(crate) async fn wanted_list_page(
     params: &ListParams,
 ) -> Result<Page<CollectionEntry>, AppError> {
     let (page, page_size) = params.page_and_size();
-    let (sort, dir) = params.sort_spec()?;
-    let dialect = state.dialect();
-    // Parse the optional Scryfall-syntax query up front so a malformed one 422s
-    // before we touch the DB (mirrors the catalog card lists).
-    let search = params
-        .search()
-        .map(|s| search_condition(game_meta, s, dialect))
-        .transpose()?;
-
-    // Resolve the (optional) set scope: a single set, or — with `include_related` — the
-    // set's whole group (root + related sub-sets), spanning exactly the sets the catalog
-    // does. `None` means the whole wish list.
-    let set_codes = resolve_set_scope(state, game, params.set(), params.include_related()).await?;
+    // Resolve the sort, the optional search condition, and the optional set scope through
+    // the shared resolver, so this list and the card export stay one and the same query.
+    let parts = resolve_holdings_list(state, game_meta, game, params).await?;
 
     let paginator = wishlist_query(
         user_id,
         game,
-        set_codes.as_deref(),
-        search,
-        sort,
-        dir,
-        dialect,
+        parts.set_codes.as_deref(),
+        parts.search,
+        parts.sort,
+        parts.dir,
+        state.dialect(),
     )
     .paginate(&state.db, page_size);
     let total = paginator.num_items().await?;

@@ -15,22 +15,33 @@ import {
   type CardExportFormat,
   LARGE_EXPORT_CARDS,
   exportCards,
+  exportCollectionCards,
   exportSetCards,
+  exportWishlistCards,
 } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 import { downloadBlob } from '@/lib/download'
+import { useAuthStore } from '@/stores/auth'
 
 // Download the *whole* result set of the card search currently on screen as a .txt file
 // (the grid only ever shows one 60-card page of it). Sits beside the size/sort menus in
-// the catalog browse views; the endpoint streams the result set, however large.
+// the catalog and holdings browse views; the endpoint streams the result set, however
+// large.
 //
 // The search itself is not re-derived here — the same `q`/`sort`/`include_related` the
 // grid queried with are passed straight through, and the endpoint reuses the listing's
 // own query builder, so the file can't disagree with what the visitor is looking at.
+// On a holdings surface (`list` set) the export is the signed-in user's own listing —
+// authed, `set`-scoped by query param, and rendered with the real held counts.
 const props = defineProps<{
   game: string
-  /** Set code when exporting a set's cards; absent = the all-cards search. */
+  /** Set code when exporting a set's cards; absent = the all-cards search. On a
+   * holdings surface this rides as the `?set=` scope instead of a path segment. */
   setCode?: string
+  /** Holdings surfaces: export the signed-in user's own held-card listing (real counts,
+   * foil lines tagged `*F*`) instead of the public catalog search. The browse views
+   * omit it in show-ghosts mode — the grid there *is* the catalog listing. */
+  list?: 'collection' | 'wishlist'
   /** The committed search (`?q`), if any. */
   query?: string
   /** The active `field:dir` sort value, and the view's default to compare it against. */
@@ -56,6 +67,14 @@ const sizeNote = computed(
   () => `Exporting all ${(props.total ?? 0).toLocaleString()} matches — this may take a moment.`,
 )
 
+// A holdings line carries the real held counts (and a foil marker); a catalog line is
+// always a single copy. Say which one this menu will produce.
+const textNote = computed(() =>
+  props.list
+    ? 'One line per printing and finish with your counts, e.g. “4 Sol Ring (LTC) 284”.'
+    : 'One line per printing, e.g. “1 Sol Ring (LTC) 284”.',
+)
+
 const params = computed(() => ({
   q: props.query || undefined,
   ...toSortParam(props.sort, props.defaultSort),
@@ -63,10 +82,13 @@ const params = computed(() => ({
 }))
 
 // Mirrors the server's own filename, so a visitor who opens the API directly and one who
-// clicks this button end up with identically-named files.
+// clicks this button end up with identically-named files. Holdings filenames are
+// scope-free (no set code): the server never puts the visitor-typed `?set=` in one.
 function filename(format: CardExportFormat): string {
+  const slug = format === 'names' ? 'card-names' : 'cards'
+  if (props.list) return `tcglense-${props.game}-${props.list}-${slug}.txt`
   const scope = props.setCode ? `${props.game}-${props.setCode}` : props.game
-  return `tcglense-${scope}-${format === 'names' ? 'card-names' : 'cards'}.txt`
+  return `tcglense-${scope}-${slug}.txt`
 }
 
 async function download(format: CardExportFormat) {
@@ -75,9 +97,20 @@ async function download(format: CardExportFormat) {
   errorMessage.value = null
   try {
     const request = { ...params.value, format }
-    const blob = props.setCode
-      ? await exportSetCards(props.game, props.setCode, request)
-      : await exportCards(props.game, request)
+    let blob: Blob
+    if (props.list) {
+      // Per-user download: through the auth store's authFetch (one 401-refresh-and-retry),
+      // with the set scope riding as a query param on the holdings listing.
+      const exportHolding = props.list === 'wishlist' ? exportWishlistCards : exportCollectionCards
+      const auth = useAuthStore()
+      blob = await auth.authFetch((token) =>
+        exportHolding(token, props.game, { ...request, set: props.setCode }),
+      )
+    } else {
+      blob = props.setCode
+        ? await exportSetCards(props.game, props.setCode, request)
+        : await exportCards(props.game, request)
+    }
     downloadBlob(blob, filename(format))
   } catch (err) {
     errorMessage.value = err instanceof ApiError ? err.message : 'Export failed. Please try again.'
@@ -103,7 +136,7 @@ async function download(format: CardExportFormat) {
           <span class="flex flex-col">
             <span class="font-medium">Card list (.txt)</span>
             <span class="text-muted-foreground text-xs">
-              One line per printing, e.g. “1 Sol Ring (LTC) 284”.
+              {{ textNote }}
             </span>
           </span>
         </DropdownMenuItem>

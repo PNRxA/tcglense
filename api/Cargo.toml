@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 argon2 = "0.5.3"
+# Streaming gzip inflate for the provider bulk downloads. Scryfall's bulk files are
+# served pre-compressed (`application/gzip`, no `Content-Encoding`), so reqwest's
+# transparent gzip never applies and we decode the stream ourselves; `flate2` below
+# only covers the whole-body MTGJSON download. Already in the tree via reqwest, so
+# naming it costs no extra build.
+async-compression = { version = "0.4.43", default-features = false, features = ["tokio", "gzip"] }
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 bytes = "1.12.0"
