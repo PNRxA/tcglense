@@ -100,16 +100,25 @@ pub async fn create_session(
     // Seats: the request's if it sent any, else the copied session's.
     let inputs: Vec<LifeSeatInput> = if payload.players.is_empty() {
         match &source {
-            Some(source) => seats_of(&state.db, source.id)
-                .await?
-                .into_iter()
-                .map(|seat| LifeSeatInput {
-                    name: Some(seat.name),
-                    deck_id: seat.deck_id,
-                    starting_life: Some(seat.starting_life),
-                    rotation: Some(seat.rotation),
-                })
-                .collect(),
+            Some(source) => {
+                let seats = seats_of(&state.db, source.id).await?;
+                // A copied deck reference is dropped when it no longer resolves, where an
+                // *explicit* one is a 404. The distinction matters: naming a deck you don't own
+                // is a client error, but a deck you played and have since deleted must not make
+                // the old game un-rematchable — deleting a deck is documented as costing you its
+                // record, not your history. `deck_names_for` is already ownership-scoped, so it
+                // answers exactly "which of these still resolve for this caller".
+                let live = deck_names_for(&state.db, user.id, &game, &seats).await?;
+                seats
+                    .into_iter()
+                    .map(|seat| LifeSeatInput {
+                        name: Some(seat.name),
+                        deck_id: seat.deck_id.filter(|id| live.contains_key(id)),
+                        starting_life: Some(seat.starting_life),
+                        rotation: Some(seat.rotation),
+                    })
+                    .collect()
+            }
             None => Vec::new(),
         }
     } else {

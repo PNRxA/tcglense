@@ -247,12 +247,17 @@ pub async fn reorder_players(
     let seats = seats_of(&state.db, session.id).await?;
     // Insist on a total permutation rather than tolerating a partial list: a client that lost
     // a seat mid-drag would otherwise silently collapse the order it didn't send.
+    //
+    // The length check is load-bearing and comes first: the sorted comparison below can't see a
+    // duplicate on its own (`[a, a, b]` compares equal to `[a, b]` once deduped), and a repeated
+    // id would leave two seats writing the same position and a hole where one of them should
+    // have been — which the layout maths indexes into, so a seat would render in the wrong cell.
     let mut requested = payload.player_ids.clone();
     requested.sort_unstable();
     requested.dedup();
     let mut existing: Vec<i32> = seats.iter().map(|s| s.id).collect();
     existing.sort_unstable();
-    if requested != existing {
+    if payload.player_ids.len() != existing.len() || requested != existing {
         return Err(AppError::Validation(
             "player_ids must list exactly the game's players, each once".to_string(),
         ));

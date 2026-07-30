@@ -922,3 +922,185 @@ async fn a_read_only_api_key_can_look_but_not_touch() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn a_rematch_survives_a_deck_deleted_since_the_game_was_played() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "rematcher@example.com", PW).await;
+    let keep = create_deck(&app, &access, "Krenko").await;
+    let doomed = create_deck(&app, &access, "Atraxa").await;
+
+    let detail = start_game(
+        &app,
+        &access,
+        json!({
+            "players": [
+                { "name": "Me", "deck_id": doomed },
+                { "name": "Them", "deck_id": keep },
+            ],
+        }),
+    )
+    .await;
+    let id = session_id(&detail);
+    let winner = player_id(&detail, 0);
+    send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/tools/mtg/life/sessions/{id}/finish"),
+            &access,
+            json!({ "winner_player_id": winner }),
+        ),
+    )
+    .await;
+
+    let (status, _, _) = send(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/decks/mtg/{doomed}"))
+            .header("authorization", format!("Bearer {access}"))
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // A *copied* deck reference that no longer resolves is DROPPED, not fatal: deleting a deck
+    // costs you its record, never your ability to play the same pod again.
+    let rematch = start_game(&app, &access, json!({ "from_session_id": id })).await;
+    let players = rematch["session"]["players"].as_array().expect("players");
+    assert_eq!(players.len(), 2);
+    assert_eq!(players[0]["name"], "Me");
+    assert!(
+        players[0]["deck_id"].is_null(),
+        "the deleted deck's link is dropped: {players:?}"
+    );
+    // The surviving deck is still linked, so a rematch isn't flattened wholesale.
+    assert_eq!(players[1]["deck_id"], keep);
+
+    // An *explicit* reference to a deck the caller doesn't own stays a 404 — that's a client
+    // error, not history.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/tools/mtg/life/sessions",
+            &access,
+            json!({ "players": [{ "name": "Me", "deck_id": doomed }] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn reorder_rejects_a_repeated_seat_rather_than_leaving_a_position_hole() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "reorderer@example.com", PW).await;
+    let detail = start_game(
+        &app,
+        &access,
+        json!({ "players": [{ "name": "A" }, { "name": "B" }, { "name": "C" }] }),
+    )
+    .await;
+    let id = session_id(&detail);
+    let a = player_id(&detail, 0);
+    let b = player_id(&detail, 1);
+
+    // A list of the right length but with a seat repeated: sorting and de-duplicating it makes it
+    // compare equal to the real seat set, so the *length* check is what catches this. Left
+    // unchecked, two seats would be written to the same position and one position would be left
+    // empty — and `position` is what the layout maths indexes into to place a seat on the mat.
+    let (status, _, out) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/reorder"),
+            &access,
+            json!({ "player_ids": [a, a, b] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+
+    // ...and the seats are untouched: still dense, still in their original order.
+    let (status, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let players = detail["session"]["players"].as_array().expect("players");
+    assert_eq!(
+        players
+            .iter()
+            .map(|p| (p["name"].as_str(), p["position"].as_i64()))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some("A"), Some(0)),
+            (Some("B"), Some(1)),
+            (Some("C"), Some(2))
+        ],
+    );
+
+    // A short list of the right shape is refused too, not just a repeat.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/reorder"),
+            &access,
+            json!({ "player_ids": [a, b] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn an_extreme_delta_is_refused_rather_than_panicking_the_handler() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "extremist@example.com", PW).await;
+    let detail = start_duel(&app, &access).await;
+    let id = session_id(&detail);
+    let alice = player_id(&detail, 0);
+    let uri = format!("/api/tools/mtg/life/sessions/{id}/players/{alice}/life");
+
+    // The extremes of the wire type, not just of the documented bound. A naive `abs()` bound
+    // check overflows on `i32::MIN` — a panic on a request path in debug, and in release a wrap
+    // straight back inside the bound, so the value slips past the check meant to reject it.
+    for delta in [i32::MIN, i32::MIN + 1, i32::MAX] {
+        let (status, _, out) = send(
+            &app,
+            json_with_bearer("POST", &uri, &access, json!({ "delta": delta })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "delta {delta} should be a 422: {out:?}"
+        );
+    }
+    for life in [i32::MIN, i32::MAX] {
+        let (status, _, out) = send(
+            &app,
+            json_with_bearer("POST", &uri, &access, json!({ "life": life })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "life {life} should be a 422: {out:?}"
+        );
+    }
+
+    // The seat is untouched by any of it.
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(detail["session"]["players"][0]["life"], 20);
+    assert_eq!(detail["events"].as_array().expect("events").len(), 0);
+}

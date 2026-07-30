@@ -652,7 +652,10 @@ pub(crate) fn validate_starting_life(life: i32) -> Result<i32, AppError> {
 
 /// Validate a relative life change.
 pub(crate) fn validate_delta(delta: i32) -> Result<i32, AppError> {
-    if delta.abs() <= MAX_DELTA {
+    // A range check, not `delta.abs() <= MAX_DELTA`: `i32::MIN.abs()` overflows, which panics on
+    // a request path in a debug build and wraps back to `i32::MIN` in a release one — where it
+    // then compares as *within* the bound and slips past the very check it was meant to fail.
+    if (-MAX_DELTA..=MAX_DELTA).contains(&delta) {
         return Ok(delta);
     }
     Err(AppError::Validation(format!(
@@ -764,6 +767,13 @@ mod tests {
         assert!(validate_starting_life(0).is_err());
         assert!(validate_delta(-1_000).is_ok());
         assert!(validate_delta(1_001).is_err());
+        // The extremes of the type, not just of the bound: a naive `abs()` check overflows on
+        // `i32::MIN` — panicking in debug, and wrapping back inside the bound in release.
+        assert!(validate_delta(i32::MIN).is_err());
+        assert!(validate_delta(i32::MAX).is_err());
+        assert!(validate_life(i32::MIN).is_err());
+        assert!(validate_life(i32::MAX).is_err());
+        assert!(validate_starting_life(i32::MIN).is_err());
         assert!(validate_life(LIFE_MIN).is_ok());
         assert!(validate_life(LIFE_MIN - 1).is_err());
     }
