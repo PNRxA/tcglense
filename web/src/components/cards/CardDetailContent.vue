@@ -304,7 +304,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
         <!-- The card's "Notes and Rules Information" (rulings, issue #522), last on the page.
           Keyed off the route id so it mounts before the card loads; renders nothing when
           there are none. -->
-        <CardRulings :game="game" :id="id" />
+        <CardRulings :game="game" :id="id" :card-name="card?.name" />
       </div>
 
       <!-- Outbound "buy this card" links, grouped by region (issue #175). The rail's second

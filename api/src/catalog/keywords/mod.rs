@@ -205,8 +205,15 @@ mod tests {
                 entry.name,
                 entry.text
             );
+            // A sentence, allowing a closing quote or bracket after the stop — several
+            // entries end by quoting the text a card gains ("… change \"target\" to
+            // \"each.\"") and must not grow a second full stop outside the quote.
             assert!(
-                entry.text.trim_end().ends_with('.'),
+                entry
+                    .text
+                    .trim_end()
+                    .trim_end_matches(['"', '\'', ')', ']'])
+                    .ends_with(['.', '!', '?']),
                 "'{}' explanation should read as a sentence: {:?}",
                 entry.name,
                 entry.text

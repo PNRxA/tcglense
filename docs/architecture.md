@@ -122,7 +122,7 @@ deterministic offline catalog and skips all syncing.
   module under `mod.rs`, over the shared `harness` (a capturing mailbox, an in-memory
   SQLite DB, and the full middleware stack): `alerts`, `api_keys`, `caching`, `captcha`,
   `card_export`, `cli_auth`, `collection`, `collection_import`, `collection_products`, `cors`,
-  `decks`, `email_verification`, `headers`, `login`, `mirror`, `openapi`, `pagination`,
+  `decks`, `email_verification`, `headers`, `keywords`, `login`, `mirror`, `openapi`, `pagination`,
   `password_reset`, `products`, `public_collection`, `public_wishlist`, `rate_limit`, `readiness`,
   `refresh`, `registration`, `request_body`, `request_params`, `rulings`, `scan`, `search`,
   `sharing`, `signup_toggle`, `sitemap`, `subtypes`, `web_root`, `wishlist`, `wishlist_products`

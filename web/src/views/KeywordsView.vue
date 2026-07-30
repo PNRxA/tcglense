@@ -49,8 +49,14 @@ watch(
   <div class="mx-auto max-w-6xl px-4 py-12">
     <header class="mb-6">
       <h1 class="text-3xl font-semibold tracking-tight">Magic: The Gathering keywords</h1>
-      <p class="text-muted-foreground mt-2">
+      <!-- The count only appears once the glossary lands — a placeholder "0 keyword
+        abilities" is worse than no number at all. The `, explained.` is hugged onto the
+        branches so it doesn't render with a space before the comma. -->
+      <p v-if="total" class="text-muted-foreground mt-2">
         {{ total }} keyword abilities, actions and ability words, explained.
+      </p>
+      <p v-else class="text-muted-foreground mt-2">
+        Every keyword ability, action and ability word, explained.
       </p>
     </header>
 
@@ -81,10 +87,12 @@ watch(
         v-for="section in sections"
         :id="section.id"
         :key="section.letter"
-        class="scroll-mt-28 [content-visibility:auto]"
+        class="scroll-mt-40 [content-visibility:auto] sm:scroll-mt-28"
       >
+        <!-- The filter bar wraps to two rows below `sm` (the search box goes full-width),
+          so the offset a letter heading has to clear is taller there. -->
         <div
-          class="bg-background/85 sticky top-15 z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur"
+          class="bg-background/85 sticky top-[6.75rem] z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur sm:top-15"
         >
           <h2 class="text-lg font-semibold">{{ section.letter }}</h2>
           <span class="text-muted-foreground text-xs tabular-nums">{{ section.group.length }}</span>

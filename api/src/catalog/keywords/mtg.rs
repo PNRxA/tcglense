@@ -1509,7 +1509,7 @@ pub(super) const ENTRIES: &[Entry] = &[
         name: "Investigate",
         kind: Action,
         text: "Create a Clue token. It's a colorless artifact with \"{2}, Sacrifice this artifact: \
-              Draw a card.\".",
+              Draw a card.\"",
         parameterized: false,
         match_mode: Anywhere,
     },
@@ -1932,7 +1932,7 @@ pub(super) const ENTRIES: &[Entry] = &[
         name: "Overload",
         kind: Ability,
         text: "You may cast this spell for its overload cost. If you do, change \"target\" in its \
-              text to \"each.\".",
+              text to \"each.\"",
         parameterized: true,
         match_mode: Anywhere,
     },

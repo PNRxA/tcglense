@@ -178,6 +178,16 @@ export function parseManaText(text: string): ManaToken[] {
   return tokens
 }
 
+/** Strip the braces from every `{…}` symbol, leaving its body as plain text
+ *  (`"Ward {2}"` -> `"Ward 2"`).
+ *
+ *  For the text-only surfaces that can't render icons — a meta description, a JSON-LD
+ *  `description` — where leaving the braces in would put literal `{2}` in a search
+ *  snippet. Anywhere a component can render, use `ManaSymbols` instead. */
+export function stripManaBraces(text: string): string {
+  return text.replace(SYMBOL_RE, '$1')
+}
+
 /** Build the `{…}` text for a list of colour letters (`color_identity`/`colors`,
  *  e.g. `["W","U"]`) so it can be rendered through the same symbol path. */
 export function colorLettersToText(letters: readonly string[]): string {

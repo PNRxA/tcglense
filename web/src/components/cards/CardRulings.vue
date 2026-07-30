@@ -9,7 +9,15 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 // A card's "Notes and Rules Information" (issue #522): the official rulings Scryfall
 // records for the card, keyed on its gameplay identity (oracle id) so every printing
 // shows the same list. Renders nothing when the card has no rulings.
-const props = defineProps<{ game: string; id: string }>()
+const props = defineProps<{
+  game: string
+  id: string
+  /** The card's name, forwarded to the keyword matcher. It matters more here than on
+   * oracle text: a ruling routinely opens with the card's own title ("Gift of
+   * Immortality returns to the battlefield…"), and without this the matcher would put
+   * the keyword action Gift on that first word. */
+  cardName?: string
+}>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 
@@ -58,7 +66,7 @@ watch(id, () => {
         class="border-b pb-3 last:border-b-0 last:pb-0"
       >
         <p class="text-sm leading-relaxed whitespace-pre-line">
-          <ManaSymbols :text="ruling.comment" keywords />
+          <ManaSymbols :text="ruling.comment" keywords :card-name="cardName" />
         </p>
         <p class="text-muted-foreground mt-1 text-xs">
           {{ sourceLabel(ruling.source) }}

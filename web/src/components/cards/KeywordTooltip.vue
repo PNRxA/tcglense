@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onScopeDispose, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { KIND_LABELS } from '@/lib/keywords'
@@ -69,7 +70,7 @@ const TRIGGER_CLASS =
       <p class="text-[0.65rem] tracking-wide uppercase opacity-70">
         {{ KIND_LABELS[props.entry.kind] }}
       </p>
-      <p class="mt-0.5 leading-relaxed">{{ props.entry.text }}</p>
+      <p class="mt-0.5 leading-relaxed"><ManaSymbols :text="props.entry.text" /></p>
     </TooltipContent>
   </Tooltip>
   <Popover v-else v-model:open="open"
@@ -81,7 +82,7 @@ const TRIGGER_CLASS =
         {{ KIND_LABELS[props.entry.kind] }}
       </p>
       <p class="mt-0.5 font-medium">{{ props.entry.name }}</p>
-      <p class="mt-1.5 text-sm leading-relaxed">{{ props.entry.text }}</p>
+      <p class="mt-1.5 text-sm leading-relaxed"><ManaSymbols :text="props.entry.text" /></p>
       <RouterLink
         :to="`/keywords/${props.entry.slug}`"
         class="text-primary mt-3 inline-block text-sm font-medium hover:underline"

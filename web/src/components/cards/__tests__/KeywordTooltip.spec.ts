@@ -15,6 +15,33 @@ const FLYING: KeywordEntry = {
   match_mode: 'anywhere',
 }
 
+const HASTE: KeywordEntry = {
+  name: 'Haste',
+  slug: 'haste',
+  kind: 'ability',
+  text: 'This creature can attack and {T} as soon as it comes under your control.',
+  parameterized: false,
+  match_mode: 'anywhere',
+}
+
+const UNEARTH: KeywordEntry = {
+  name: 'Unearth',
+  slug: 'unearth',
+  kind: 'ability',
+  text: 'Return this card from your graveyard to the battlefield.',
+  parameterized: true,
+  match_mode: 'anywhere',
+}
+
+const WARD: KeywordEntry = {
+  name: 'Ward',
+  slug: 'ward',
+  kind: 'ability',
+  text: 'Whenever this permanent becomes the target of a spell or ability an opponent controls, counter it unless that player pays the ward cost.',
+  parameterized: true,
+  match_mode: 'anywhere',
+}
+
 const VIGILANCE: KeywordEntry = {
   name: 'Vigilance',
   slug: 'vigilance',
@@ -38,7 +65,7 @@ function router() {
  * markers render synchronously (no network in tests). */
 async function mountText(text: string, keywords = true, cardName?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  queryClient.setQueryData(['keywords', 'mtg'], [FLYING, VIGILANCE])
+  queryClient.setQueryData(['keywords', 'mtg'], [FLYING, VIGILANCE, HASTE, UNEARTH, WARD])
   const instance = router()
   await instance.push('/')
   await instance.isReady()
@@ -100,6 +127,30 @@ describe('ManaSymbols with keywords', () => {
   it("does not mark the card's own name", async () => {
     const wrapper = await mountText('Flying Men can block.', true, 'Flying Men')
     expect(wrapper.findAll('a')).toHaveLength(0)
+  })
+
+  // Keywords are matched over the whole string BEFORE the mana-symbol split. Doing it
+  // the other way round fragments the text at every `{…}`, which quietly defeats two of
+  // the matcher's guards — these are the cases that catches.
+  it('keeps the reminder-text guard when the reminder contains a mana symbol', async () => {
+    // Dregscape Zombie's shape. Split symbols-first, the "(" and the "haste" inside it
+    // land in different runs once `{B}` is cut out, so the guard sees no parenthesis and
+    // marks the haste — plus a second Unearth, both inside the reminder.
+    const wrapper = await mountText(
+      'Unearth {B} ({B}: Return this card from your graveyard to the battlefield. ' +
+        'It gains haste and flying. Unearth only as a sorcery.)',
+    )
+    // Only the real keyword, ahead of the reminder text.
+    expect(wrapper.findAll('a').map((a) => a.text())).toEqual(['Unearth'])
+  })
+
+  it('marks a keyword once per block even across a mana symbol', async () => {
+    const wrapper = await mountText(
+      'Flying, ward {2}\nWhenever this creature attacks, target creature gains flying.',
+    )
+    // The second "flying" is a repeat, so it stays unmarked even though the `{2}` sits
+    // between the two mentions.
+    expect(wrapper.findAll('a').map((a) => a.text())).toEqual(['Flying', 'ward'])
   })
 
   it('uses a tap-friendly button trigger when the device cannot hover', async () => {

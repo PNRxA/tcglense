@@ -25,6 +25,7 @@
 // Pure functions with no Vue/query-client dependency, so they're unit-tested directly.
 
 import type { Card, KeywordEntry, Product, ProductComponent } from '@/lib/api'
+import { stripManaBraces } from '@/lib/mana'
 import { formatUsd } from '@/lib/money'
 import { absoluteUrl } from '@/lib/seo'
 
@@ -167,7 +168,7 @@ function cardJsonLdDescription(c: Card): string {
         .filter(Boolean)
         .join(' // ')
     : c.oracle_text
-  const body = oracle ? oracle.replace(/\{([^}]+)\}/g, '$1') : ''
+  const body = oracle ? stripManaBraces(oracle) : ''
   const head = descriptor ? `${c.name} — ${descriptor}.` : `${c.name}.`
   return [head, body].filter(Boolean).join(' ').slice(0, MAX_JSON_LD_DESCRIPTION)
 }
@@ -405,6 +406,25 @@ export function keywordCrumbs(name: string): Crumb[] {
   return [{ label: 'Home', to: '/' }, { label: 'Keywords', to: '/keywords' }, { label: name }]
 }
 
+/** The SERP-snippet meta description for a keyword page.
+ *
+ * Deliberately not built through {@link assembleMetaDescription}: that keeps a fixed lead
+ * and drops a clause *whole* when it won't fit, which put the boilerplate first and lost
+ * the actual definition on most of the glossary. Here the definition **is** the snippet —
+ * someone searching "what does vigilance do" should get the answer in the search result —
+ * so it leads, gets clipped at a word boundary if it must, and the call-to-action tail is
+ * appended only when there's room for it. */
+export function keywordMetaDescription(keyword: KeywordEntry): string {
+  const tail = 'See the cards that use it, with prices, on TCGLense.'
+  const lead = `${keyword.name}: ${stripManaBraces(keyword.text)}`.replace(/\s+/g, ' ').trim()
+  if (`${lead} ${tail}`.length <= MAX_DESCRIPTION) return `${lead} ${tail}`
+  if (lead.length <= MAX_DESCRIPTION) return lead
+  // Too long even alone: clip at the last word boundary that fits, ellipsis included.
+  const clipped = lead.slice(0, MAX_DESCRIPTION - 1)
+  const lastSpace = clipped.lastIndexOf(' ')
+  return `${(lastSpace > 0 ? clipped.slice(0, lastSpace) : clipped).replace(/[,;:]$/, '')}…`
+}
+
 /** The glossary itself as a schema.org `DefinedTermSet`.
  *
  * Deliberately without `hasDefinedTerm` children: listing all ~350 terms would put the
@@ -424,7 +444,8 @@ export function definedTermNode(keyword: KeywordEntry): Record<string, unknown> 
   return {
     '@type': 'DefinedTerm',
     name: keyword.name,
-    description: keyword.text.slice(0, MAX_JSON_LD_DESCRIPTION),
+    // Text-only surface: a literal `{2}` in a search result reads as a template bug.
+    description: stripManaBraces(keyword.text).slice(0, MAX_JSON_LD_DESCRIPTION),
     url: absoluteUrl(`/keywords/${keyword.slug}`),
     inDefinedTermSet: definedTermSetNode(),
   }

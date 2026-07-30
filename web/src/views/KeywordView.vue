@@ -12,15 +12,15 @@ import KeywordKindChip from '@/components/keywords/KeywordKindChip.vue'
 import { Button } from '@/components/ui/button'
 import { useKeywordEntry } from '@/composables/useKeywords'
 import { listCards } from '@/lib/api'
-import { GLOSSARY_GAME, KIND_BLURBS, KIND_LABELS, firstSentence } from '@/lib/keywords'
+import { GLOSSARY_GAME, KIND_BLURBS, KIND_LABELS } from '@/lib/keywords'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import { usePageMeta } from '@/lib/seo'
 import {
-  assembleMetaDescription,
   breadcrumbList,
   definedTermNode,
   graph,
   keywordCrumbs,
+  keywordMetaDescription,
 } from '@/lib/structuredData'
 
 // One keyword's page — the landing target for a search like "tcglense vigilance". The
@@ -68,14 +68,10 @@ usePageMeta({
     entry.value
       ? `${entry.value.name} — MTG ${KIND_LABELS[entry.value.kind].toLowerCase()}`
       : undefined,
-  description: () =>
-    entry.value
-      ? assembleMetaDescription(
-          `${entry.value.name} is a Magic: The Gathering ${KIND_LABELS[entry.value.kind].toLowerCase()}.`,
-          [firstSentence(entry.value.text)],
-          'See the cards that use it, with prices, on TCGLense.',
-        )
-      : undefined,
+  // Lead with the definition, not the boilerplate: the snippet has to answer "what does
+  // vigilance do" in the SERP itself. `assembleMetaDescription` drops a clause whole when
+  // it won't fit, so putting the definition second lost it on most entries.
+  description: () => (entry.value ? keywordMetaDescription(entry.value) : undefined),
   canonicalPath: () => (entry.value ? `/keywords/${entry.value.slug}` : undefined),
   // The SPA answers 200 for any slug, so an unknown one has to say "don't index me"
   // itself — that plus the dropped canonical is the soft-404 signal. Deliberate; a
