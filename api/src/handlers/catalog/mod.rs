@@ -44,7 +44,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 
-pub use art_tags::list_art_tags;
+pub use art_tags::{card_art_tags, list_art_tags};
 pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use export::{export_cards, export_set_cards};
 pub use image::card_image;
@@ -64,7 +64,7 @@ pub use status::{ingest_status, list_games};
 // at `crate::handlers::catalog::__path_<fn>` (utoipa rewrites each handler path to its
 // sibling `__path_` struct, which lives in the private submodule where the handler is
 // defined). See `crate::openapi`.
-pub use art_tags::__path_list_art_tags;
+pub use art_tags::{__path_card_art_tags, __path_list_art_tags};
 pub use cards::{__path_card_names, __path_card_prints, __path_get_card, __path_list_cards};
 pub use export::{__path_export_cards, __path_export_set_cards};
 pub use keywords::__path_list_keywords;

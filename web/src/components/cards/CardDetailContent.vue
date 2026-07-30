@@ -8,6 +8,7 @@ import CardPriceSummary from '@/components/cards/CardPriceSummary.vue'
 import CollectionControls from '@/components/collection/CollectionControls.vue'
 import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
 import CardLegalities from '@/components/cards/CardLegalities.vue'
+import CardArtTags from '@/components/cards/CardArtTags.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
@@ -283,6 +284,11 @@ const alertFinishes = computed<AlertFinish[]>(() => {
           <Skeleton class="h-24 w-full rounded-xl" />
           <Skeleton class="h-40 w-full rounded-xl" />
         </template>
+
+        <!-- What this card's artwork depicts, as community Tagger labels — each a link to
+          the `art:` search for it. Keyed off the route id so it mounts before the card
+          loads; renders nothing when the artwork carries no tags. -->
+        <CardArtTags :game="game" :id="id" />
 
         <!-- Price history over time. Keyed off game/id, so it mounts and fetches in
           parallel with the card query above. `toggleable` adds the regular/foil key so

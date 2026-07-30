@@ -309,6 +309,17 @@ export function getCardRulings(game: string, id: string): Promise<{ data: Ruling
   return request<{ data: Ruling[] }>(`/api/games/${g}/cards/${i}/rulings`)
 }
 
+/** The Tagger art tags on a card's **artwork**, most specific first (rarest tag first —
+ * `count` is how many catalog artworks carry it). Keyed by illustration, so every
+ * printing of the same painting returns the same list, and the list is
+ * hierarchy-expanded exactly like the `art:` filter: a `squirrel` artwork also carries
+ * `rodent`, `animal`, … Empty when the card's artwork is untagged. */
+export function getCardArtTags(game: string, id: string): Promise<{ data: ArtTagEntry[] }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: ArtTagEntry[] }>(`/api/games/${g}/cards/${i}/art-tags`)
+}
+
 /**
  * Window + resolution for the price-history chart. Longer ranges are downsampled
  * server-side to a coarser resolution; omitting it returns the full daily series.

@@ -39,12 +39,16 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 const sourceLabel = (source: string) => SOURCE_LABELS[source] ?? source
 
-// Collapsed by default, matching the other detail sections (issue #332). Section-local:
-// the component is reused across card-to-card navigation, so re-collapse when the id
-// changes.
-const expanded = ref(false)
+// Open by default — unlike the other collapsibles (#332), which hide long *lists* of
+// related rows (printings, sealed buckets). Rulings are the card's own rules text: a
+// card that has them usually has one or two, they're what a reader came to the page to
+// check, and the section is already hidden entirely when there are none — so there's
+// nothing to save by collapsing it. Section-local state: the component is reused across
+// card-to-card navigation, so re-open when the id changes (a reader who collapsed one
+// card's rulings hasn't asked for the next card's to be hidden).
+const expanded = ref(true)
 watch(id, () => {
-  expanded.value = false
+  expanded.value = true
 })
 </script>
 

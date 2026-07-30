@@ -538,67 +538,172 @@ async fn seed_rulings(db: &DatabaseConnection) -> Result<u64, IngestError> {
     Ok(total)
 }
 
-/// Seed a few dummy Tagger art tags (issue #140) over the seeded artworks, so the
-/// `art:` search filter and the art-tag autocomplete/browser work offline. The shape
-/// mirrors what the real ingest produces post-expansion: `relic` tags the reprint
-/// pair's shared illustration, its ancestor `object` carries the same (expanded) row,
-/// and `squirrel` tags an unrelated artwork. **Upsert-only** like the rest of the
-/// dummy seed (never deletes — the module contract): keyed on the same unique indexes
-/// the real ingest's tables carry (`(game, slug)` / `(game, tag_slug,
-/// illustration_id)`), so a reseed overwrites its own three tags and leaves anything
-/// else alone. Returns the number of tag + mapping rows written.
+/// One fabricated Tagger art tag in the offline seed: its stable id, slug, label,
+/// optional description, how many artworks it covers catalog-wide (`taggings_count` —
+/// the relevance/specificity signal both the autocomplete and the card page's
+/// rarest-first ordering read), and the artwork it hangs off.
+struct DummyArtTag {
+    scryfall_id: &'static str,
+    slug: &'static str,
+    label: &'static str,
+    description: Option<&'static str>,
+    taggings_count: i32,
+    illustration_id: &'static str,
+}
+
+/// Seed dummy Tagger art tags (issue #140) over the seeded artworks, so the `art:`
+/// search filter, the art-tag autocomplete/browser, and the card page's "Artwork tags"
+/// panel all work offline. The shape mirrors what the real ingest produces
+/// post-expansion: the reprint pair's shared illustration carries a specific tag plus
+/// the ancestors it expanded into (`relic` → `artifact-object` → `object`), and a second
+/// artwork carries its own little chain. `taggings_count` widens up each chain, since
+/// that's what makes a tag an ancestor — and it's what the card page orders by, so the
+/// offline catalog exercises the specific-first cut and its "show more" too, not just a
+/// two-chip stub. **Upsert-only** like the rest of the dummy seed (never deletes — the
+/// module contract): keyed on the same unique indexes the real ingest's tables carry
+/// (`(game, slug)` / `(game, tag_slug, illustration_id)`), so a reseed overwrites its own
+/// tags and leaves anything else alone. Returns the number of tag + mapping rows written.
 async fn seed_art_tags(db: &DatabaseConnection) -> Result<u64, IngestError> {
-    // (scryfall_id, slug, label, description, illustration_id)
-    let tags: &[(&str, &str, &str, Option<&str>, &str)] = &[
-        (
+    let tag =
+        |scryfall_id, slug, label, description, taggings_count, illustration_id| DummyArtTag {
+            scryfall_id,
+            slug,
+            label,
+            description,
+            taggings_count,
+            illustration_id,
+        };
+    let relic = catalog::REPRINT_ILLUSTRATION_ID;
+    let base_one = catalog::BASE_ONE_ILLUSTRATION_ID;
+    let tags: &[DummyArtTag] = &[
+        // The reprinted relic's painting: a specific subject, then the chain of
+        // progressively broader ancestors an ingest expansion would have added.
+        tag(
             "dummy-art-tag-0001",
             "relic",
             "Relic",
             Some("Fabricated offline tag — real tags come from Scryfall's `art_tags` bulk data."),
-            catalog::REPRINT_ILLUSTRATION_ID,
+            14,
+            relic,
         ),
-        (
-            "dummy-art-tag-0002",
-            "object",
-            "Object",
+        tag(
+            "dummy-art-tag-0004",
+            "carved-stone",
+            "Carved Stone",
             None,
-            catalog::REPRINT_ILLUSTRATION_ID,
+            61,
+            relic,
         ),
-        (
+        tag(
+            "dummy-art-tag-0005",
+            "glowing-rune",
+            "Glowing Rune",
+            None,
+            88,
+            relic,
+        ),
+        tag("dummy-art-tag-0014", "altar", "Altar", None, 96, relic),
+        tag(
+            "dummy-art-tag-0006",
+            "pedestal",
+            "Pedestal",
+            None,
+            137,
+            relic,
+        ),
+        tag(
+            "dummy-art-tag-0015",
+            "moonlight",
+            "Moonlight",
+            None,
+            248,
+            relic,
+        ),
+        tag("dummy-art-tag-0007", "ruins", "Ruins", None, 402, relic),
+        tag(
+            "dummy-art-tag-0008",
+            "gemstone",
+            "Gemstone",
+            None,
+            515,
+            relic,
+        ),
+        tag("dummy-art-tag-0016", "chain", "Chain", None, 733, relic),
+        tag("dummy-art-tag-0009", "stone", "Stone", None, 1_240, relic),
+        tag(
+            "dummy-art-tag-0017",
+            "magic-symbol",
+            "Magic Symbol",
+            None,
+            1_612,
+            relic,
+        ),
+        tag(
+            "dummy-art-tag-0010",
+            "artifact-object",
+            "Artifact Object",
+            None,
+            2_806,
+            relic,
+        ),
+        tag(
+            "dummy-art-tag-0011",
+            "no-creature",
+            "No Creature",
+            None,
+            4_130,
+            relic,
+        ),
+        tag("dummy-art-tag-0002", "object", "Object", None, 9_517, relic),
+        // A second artwork with its own chain, so `art:` provably narrows by artwork.
+        tag(
             "dummy-art-tag-0003",
             "squirrel",
             "Squirrel",
             None,
-            catalog::BASE_ONE_ILLUSTRATION_ID,
+            23,
+            base_one,
+        ),
+        tag(
+            "dummy-art-tag-0012",
+            "rodent",
+            "Rodent",
+            None,
+            190,
+            base_one,
+        ),
+        tag(
+            "dummy-art-tag-0013",
+            "animal",
+            "Animal",
+            None,
+            3_044,
+            base_one,
         ),
     ];
 
     let now = Utc::now();
     let tag_models: Vec<art_tag::ActiveModel> = tags
         .iter()
-        .map(
-            |(scryfall_id, slug, label, description, _)| art_tag::ActiveModel {
-                id: NotSet,
-                game: Set(GAME.to_string()),
-                scryfall_id: Set(scryfall_id.to_string()),
-                slug: Set(slug.to_string()),
-                label: Set(label.to_string()),
-                description: Set(description.map(str::to_string)),
-                taggings_count: Set(1),
-                created_at: Set(now),
-            },
-        )
+        .map(|t| art_tag::ActiveModel {
+            id: NotSet,
+            game: Set(GAME.to_string()),
+            scryfall_id: Set(t.scryfall_id.to_string()),
+            slug: Set(t.slug.to_string()),
+            label: Set(t.label.to_string()),
+            description: Set(t.description.map(str::to_string)),
+            taggings_count: Set(t.taggings_count),
+            created_at: Set(now),
+        })
         .collect();
     let mapping_models: Vec<card_art_tag::ActiveModel> = tags
         .iter()
-        .map(
-            |(_, slug, _, _, illustration_id)| card_art_tag::ActiveModel {
-                id: NotSet,
-                game: Set(GAME.to_string()),
-                tag_slug: Set(slug.to_string()),
-                illustration_id: Set(illustration_id.to_string()),
-            },
-        )
+        .map(|t| card_art_tag::ActiveModel {
+            id: NotSet,
+            game: Set(GAME.to_string()),
+            tag_slug: Set(t.slug.to_string()),
+            illustration_id: Set(t.illustration_id.to_string()),
+        })
         .collect();
 
     let total = (tag_models.len() + mapping_models.len()) as u64;
