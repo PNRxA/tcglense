@@ -1165,6 +1165,18 @@ catalog) is planned but not implemented.
   half-coloured mana (a couple of Un-set joke cards) has no single mana-font class —
   mana-font renders it via a wrapper `<span class="ms-half">`, which our one-`<i>`-per-
   symbol component doesn't emit, so those tokens fall back to literal `{HW}` text.
+  (3) **`ms-*` collides with Tailwind:** mana-font's generic-mana classes (`ms-0`…`ms-20`,
+  `ms-100`, `ms-1000000`) are spelled exactly like Tailwind's `ms-<n>`
+  (`margin-inline-start`) utilities, and Tailwind v4 emits a utility for any such literal
+  it finds while scanning sources — a single `'ms-10'` inside `lib/__tests__/mana.spec.ts`
+  was enough to give every `{10}` cost `margin-inline-start: 2.5rem` (`{100}` got 25rem).
+  Which numbers broke therefore depended on which class names happened to appear as
+  strings anywhere in the repo, so the fix neutralises the family rather than individual
+  numbers: `web/src/assets/mana-font.css` resets `margin-inline-start` on `.ms`, unlayered,
+  which outranks Tailwind's `@layer utilities` regardless of specificity or import order.
+  Don't add a *left/start* margin to a mana icon anywhere else — that reset is what stands
+  between the icons and the utility namespace (the inter-pip gap in `ManaSymbols.vue` is
+  deliberately on the *end* side).
 
 ## Visual card scanner
 
