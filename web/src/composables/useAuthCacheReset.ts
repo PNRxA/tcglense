@@ -4,8 +4,8 @@ import { useAuthStore } from '@/stores/auth'
 
 /**
  * Whether a query key addresses per-user data. Every per-user family is namespaced under
- * a `collection*` / `wishlist*` prefix (or the `import-job` poll); no public catalog key
- * uses those, so this never matches shared data.
+ * a `collection*` / `wishlist*` / `life*` prefix (or the `import-job` poll); no public
+ * catalog key uses those, so this never matches shared data.
  *
  * This is a belt to the `meta.authed` tag's braces: `useAuthedQuery` tags every per-user
  * *read*, but the per-card entry mutations write their result straight into the cache with
@@ -18,7 +18,10 @@ function isPerUserQueryKey(key: readonly unknown[]): boolean {
   const head = key[0]
   return (
     typeof head === 'string' &&
-    (head.startsWith('collection') || head.startsWith('wishlist') || head === 'import-job')
+    (head.startsWith('collection') ||
+      head.startsWith('wishlist') ||
+      head.startsWith('life') ||
+      head === 'import-job')
   )
 }
 

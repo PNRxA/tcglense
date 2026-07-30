@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BookOpen, Code, Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
+import { BookOpen, Code, Heart, Layers, Library, Package, ScanLine, Wrench } from '@lucide/vue'
 import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import {
   NavigationMenu,
@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/navigation-menu'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { prefetchRouteChunks } from '@/lib/prefetch'
+import { toolPath, toolsFor, toolsPath } from '@/lib/tools'
 
 // The top-bar primary nav: "Products" (the public catalog — Cards + Sealed products,
 // grouped in one dropdown), "Collection" and "Wish list" (per-user).
@@ -61,6 +62,13 @@ function warmSection(value: string) {
   } else if (value === 'wishlist') {
     warm('/wishlist')
     for (const game of games.value) warm(`/wishlist/${game.id}`)
+  } else if (value === 'tools') {
+    warm('/tools')
+    for (const game of games.value) {
+      warm(`/tools/${game.id}`)
+      // The tool itself is the destination; its chunk is the one worth having early.
+      for (const tool of toolsFor(game.id)) warm(toolPath(game.id, tool.slug))
+    }
   }
 }
 </script>
@@ -259,6 +267,63 @@ function warmSection(value: string) {
                 >
               </NavigationMenuLink>
             </li>
+          </ul>
+        </NavigationMenuContent>
+      </NavigationMenuItem>
+
+      <!-- Tools: the play aids (a life counter today) that sit beside the catalog rather than
+           inside it. Its own top-level item rather than another group inside "Products",
+           because a tool is not something you browse or buy — and the games registry drives the
+           per-game entries here exactly as it does in the other dropdowns, so a second TCG with
+           tools appears automatically. -->
+      <NavigationMenuItem value="tools">
+        <NavigationMenuTrigger>
+          <Wrench class="mr-1.5 size-4" aria-hidden="true" />
+          Tools
+        </NavigationMenuTrigger>
+        <!-- absolute top-full w-auto: floating dropdown at every width (see Products note, issue #259). -->
+        <NavigationMenuContent class="absolute top-full w-auto">
+          <ul class="grid w-60 gap-1">
+            <li>
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink to="/tools" @pointerenter="warm('/tools')" @focusin="warm('/tools')">
+                  <Wrench aria-hidden="true" />
+                  All tools
+                </RouterLink>
+              </NavigationMenuLink>
+            </li>
+            <!-- One group per game that has tools, each tool linked directly: with a small
+                 number of tools the extra hop through the game index buys nothing. -->
+            <template v-for="game in games" :key="`tools-${game.id}`">
+              <template v-if="toolsFor(game.id).length">
+                <li class="mt-1 border-t pt-2">
+                  <p class="text-muted-foreground px-2 pb-1 text-xs font-medium">
+                    {{ game.name }}
+                  </p>
+                </li>
+                <li v-for="tool in toolsFor(game.id)" :key="`${game.id}-${tool.slug}`">
+                  <NavigationMenuLink as-child>
+                    <RouterLink
+                      :to="toolPath(game.id, tool.slug)"
+                      @pointerenter="warm(toolPath(game.id, tool.slug))"
+                      @focusin="warm(toolPath(game.id, tool.slug))"
+                      >{{ tool.name }}</RouterLink
+                    >
+                  </NavigationMenuLink>
+                </li>
+                <li>
+                  <NavigationMenuLink as-child>
+                    <RouterLink
+                      :to="toolsPath(game.id)"
+                      class="text-muted-foreground"
+                      @pointerenter="warm(toolsPath(game.id))"
+                      @focusin="warm(toolsPath(game.id))"
+                      >All {{ game.name }} tools</RouterLink
+                    >
+                  </NavigationMenuLink>
+                </li>
+              </template>
+            </template>
           </ul>
         </NavigationMenuContent>
       </NavigationMenuItem>

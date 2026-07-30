@@ -11,6 +11,7 @@ import {
   Menu,
   Package,
   ScanLine,
+  Wrench,
 } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
@@ -61,6 +62,7 @@ function warmAll(open: boolean) {
   prefetchRouteChunks(router, '/decks')
   prefetchRouteChunks(router, '/alerts')
   prefetchRouteChunks(router, '/keywords')
+  prefetchRouteChunks(router, '/tools')
   prefetchRouteChunks(router, '/docs')
 }
 
@@ -182,6 +184,10 @@ const docsLinkClass =
         <RouterLink to="/keywords" :class="docsLinkClass">
           <BookOpen class="mx-0.5 size-4" aria-hidden="true" />
           Keyword glossary
+        </RouterLink>
+        <RouterLink to="/tools" :class="docsLinkClass">
+          <Wrench class="mx-0.5 size-4" aria-hidden="true" />
+          Tools
         </RouterLink>
         <RouterLink to="/docs" :class="docsLinkClass">
           <Code class="mx-0.5 size-4" aria-hidden="true" />

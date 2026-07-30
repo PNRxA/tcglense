@@ -92,6 +92,14 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
               </li>
               <li>
                 <RouterLink
+                  to="/tools"
+                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                >
+                  Tools
+                </RouterLink>
+              </li>
+              <li>
+                <RouterLink
                   to="/collection"
                   class="text-muted-foreground hover:text-foreground text-sm transition-colors"
                 >
