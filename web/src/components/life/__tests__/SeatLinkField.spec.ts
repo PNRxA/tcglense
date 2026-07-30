@@ -74,6 +74,37 @@ describe('SeatLinkField', () => {
     expect(wrapper.emitted('update:commanderCardId')).toEqual([[null]])
   })
 
+  // The specs above assert what the field *emits*; a real parent then applies that emit and feeds
+  // it straight back down as props. That round trip is where the mode used to be lost: the clear
+  // for the other link arrives as a prop change with both links null, which re-derives "Neither"
+  // and throws away the choice just made. So these drive the props the way the dialog does.
+  it('keeps the chosen mode when the parent applies the clear it just emitted', async () => {
+    const wrapper = mountField({ deckId: 7 })
+    await modeButton(wrapper, 'Commander').trigger('click')
+    // The parent handles `update:deckId` by writing null back into the prop.
+    await wrapper.setProps({ deckId: null })
+
+    expect(wrapper.findComponent({ name: 'CommanderPickerField' }).exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('Counts life only')
+  })
+
+  it('keeps "My deck" when the parent applies the commander clear', async () => {
+    const wrapper = mountField({ commanderCardId: 'abc', commanderName: 'Atraxa' })
+    await modeButton(wrapper, 'My deck').trigger('click')
+    await wrapper.setProps({ commanderCardId: null })
+
+    expect(wrapper.findComponent({ name: 'DeckPickerField' }).exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('Counts life only')
+  })
+
+  it('still follows a link that arrives from outside', async () => {
+    // The guard above must not make the field ignore its props altogether: a seat that gains a
+    // link elsewhere still opens on it.
+    const wrapper = mountField()
+    await wrapper.setProps({ deckId: 12 })
+    expect(wrapper.findComponent({ name: 'DeckPickerField' }).exists()).toBe(true)
+  })
+
   it('labels each control with the seat, so a table of six is navigable by screen reader', () => {
     const wrapper = mountField({ seatLabel: 'Priya' })
     const labels = wrapper.findAll('button').map((b) => b.attributes('aria-label'))

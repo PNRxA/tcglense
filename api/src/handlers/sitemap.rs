@@ -181,6 +181,13 @@ fn pages_body(base: &str) -> String {
             );
         }
     }
+    // The Tools section: the hub and each game's index. Both are public and indexable (the tools
+    // themselves are per-user, so they stop here), and like the entries above they come from a
+    // static registry rather than a query.
+    push_url(&mut body, &format!("{base}/tools"), None);
+    for game in catalog::GAMES {
+        push_url(&mut body, &format!("{base}/tools/{}", game.id), None);
+    }
     push_url(&mut body, &format!("{base}/terms"), None);
     push_url(&mut body, &format!("{base}/privacy"), None);
     body
@@ -573,6 +580,23 @@ mod tests {
             }
         }
         assert!(body.contains("<loc>https://x.test/keywords/mtg/vigilance</loc>"));
+    }
+
+    #[test]
+    fn pages_body_covers_the_tools_section() {
+        // The hub and each game's index are public landing pages with search-targeted titles,
+        // so — like the glossary above — they have to be advertised to be findable at all.
+        let body = pages_body("https://x.test");
+        assert!(body.contains("<loc>https://x.test/tools</loc>"));
+        for game in catalog::GAMES {
+            assert!(
+                body.contains(&format!("<loc>https://x.test/tools/{}</loc>", game.id)),
+                "missing sitemap entry for {}'s tools",
+                game.id
+            );
+        }
+        // The tools themselves are per-user, so nothing below the index is listed.
+        assert!(!body.contains("/tools/mtg/life"));
     }
 
     #[test]

@@ -46,9 +46,14 @@ const emit = defineEmits<{
       deck_id: number | null
       commander_card_id: string | null
       rotation: LifeRotation
+      /**
+       * A corrected total, when the user changed it. It rides the same event as the metadata so
+       * the two writes can be ordered: they touch the same seat row from different endpoints, and
+       * firing them concurrently lets whichever answers last put a stale field back on screen.
+       */
+      life?: number
     },
   ]
-  'set-life': [life: number]
   /** Shift this seat one place earlier or later in the layout's seat order. */
   move: [direction: -1 | 1]
   remove: []
@@ -97,15 +102,15 @@ function removeSeat() {
 function save() {
   const trimmed = name.value.trim()
   if (!trimmed) return
-  // The seat write is a full replace, so send every field as it now stands.
+  // The seat write is a full replace, so send every field as it now stands. A corrected total is
+  // still a separate, recorded change — it just travels together so the caller can order them.
   emit('save', {
     name: trimmed,
     deck_id: deckId.value,
     commander_card_id: commanderCardId.value,
     rotation: rotation.value,
+    ...(lifeChanged.value ? { life: lifeInput.value } : {}),
   })
-  // A corrected total is a separate, recorded change — not part of the seat's metadata.
-  if (lifeChanged.value) emit('set-life', lifeInput.value)
   emit('update:open', false)
 }
 </script>

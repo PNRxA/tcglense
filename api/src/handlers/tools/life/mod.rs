@@ -488,10 +488,21 @@ pub(crate) async fn load_session(
     game: &str,
     session_id: i32,
 ) -> Result<life_session::Model, AppError> {
+    load_session_on(&state.db, user_id, game, session_id).await
+}
+
+/// [`load_session`] against an arbitrary connection — a write re-reads the session *inside* its
+/// transaction, so the finished-game gate is evaluated against the state it is about to write to.
+pub(crate) async fn load_session_on<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    game: &str,
+    session_id: i32,
+) -> Result<life_session::Model, AppError> {
     LifeSession::find_by_id(session_id)
         .filter(life_session::Column::UserId.eq(user_id))
         .filter(life_session::Column::Game.eq(game))
-        .one(&state.db)
+        .one(db)
         .await?
         .ok_or_else(|| AppError::NotFound("session not found".to_string()))
 }
@@ -503,9 +514,19 @@ pub(crate) async fn load_seat(
     session_id: i32,
     player_id: i32,
 ) -> Result<life_session_player::Model, AppError> {
+    load_seat_on(&state.db, session_id, player_id).await
+}
+
+/// [`load_seat`] against an arbitrary connection — see [`load_session_on`]. A life write applies
+/// its delta relative to the seat's current total, so it must read that total under its own lock.
+pub(crate) async fn load_seat_on<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    session_id: i32,
+    player_id: i32,
+) -> Result<life_session_player::Model, AppError> {
     LifeSessionPlayer::find_by_id(player_id)
         .filter(life_session_player::Column::SessionId.eq(session_id))
-        .one(&state.db)
+        .one(db)
         .await?
         .ok_or_else(|| AppError::NotFound("player not found".to_string()))
 }

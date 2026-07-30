@@ -127,6 +127,21 @@ describe('extents', () => {
     )
     expect(lifeDuration(lines)).toBe(540_000)
   })
+
+  it('takes the latest point on a line, not its last one', () => {
+    // `lifeLines` clamps a timestamp that would run backwards (a clock skew, or two events
+    // recorded in the same instant), so a line's final point is not necessarily its latest —
+    // reading only the last one would collapse the chart's whole x extent.
+    const lines = lifeLines(
+      [seat({ id: 1, position: 0 })],
+      [
+        event({ id: 1, player_id: 1, created_at: '2026-07-30T12:08:00.000Z' }),
+        event({ id: 2, player_id: 1, created_at: '2026-07-30T12:01:00.000Z' }),
+      ],
+      START,
+    )
+    expect(lifeDuration(lines)).toBe(480_000)
+  })
 })
 
 describe('seatColor', () => {

@@ -39,11 +39,6 @@ export function toolsFor(game: string): ToolEntry[] {
   return TOOLS[game] ?? []
 }
 
-/** Games that have at least one tool, for the hub's tile list. */
-export function gamesWithTools(): string[] {
-  return Object.keys(TOOLS).filter((game) => (TOOLS[game]?.length ?? 0) > 0)
-}
-
 export function toolsPath(game: string): string {
   return `/tools/${encodeURIComponent(game)}`
 }

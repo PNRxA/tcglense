@@ -362,6 +362,135 @@ async fn another_users_session_seat_and_event_are_all_404_never_403() {
     assert_eq!(detail["events"].as_array().expect("events").len(), 1);
 }
 
+/// The cross-user cases above all 404 at `load_session`, which means the seat- and event-level
+/// session filters — the guards that exist *because* those rows carry no `user_id` — are never
+/// reached. This aims a foreign seat/event id at a session the caller genuinely owns, so the only
+/// thing that can produce the 404 is the scoping filter on the seat/event lookup itself.
+#[tokio::test]
+async fn a_seat_or_event_from_another_game_is_404_against_a_session_you_own() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "scoper@example.com", PW).await;
+    let (stranger, _) = register(&app, "scoperother@example.com", PW).await;
+
+    let mine = start_duel(&app, &access).await;
+    let other = start_duel(&app, &access).await;
+    let theirs = start_duel(&app, &stranger).await;
+
+    let mine_id = session_id(&mine);
+    // A seat and an event that exist, but belong to a different game.
+    let foreign_seat = player_id(&other, 0);
+    let strangers_seat = player_id(&theirs, 0);
+    let (_, _, change) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!(
+                "/api/tools/mtg/life/sessions/{}/players/{}/life",
+                session_id(&other),
+                foreign_seat
+            ),
+            &access,
+            json!({ "delta": -1 }),
+        ),
+    )
+    .await;
+    let foreign_event = change["event"]["id"].as_i64().expect("event id");
+
+    for seat in [foreign_seat, strangers_seat] {
+        let (status, _, out) = send(
+            &app,
+            json_with_bearer(
+                "POST",
+                &format!("/api/tools/mtg/life/sessions/{mine_id}/players/{seat}/life"),
+                &access,
+                json!({ "delta": -3 }),
+            ),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "tapping seat {seat}: {out:?}"
+        );
+
+        let (status, _, out) = send(
+            &app,
+            json_with_bearer(
+                "PUT",
+                &format!("/api/tools/mtg/life/sessions/{mine_id}/players/{seat}"),
+                &access,
+                json!({ "name": "Moved" }),
+            ),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "editing seat {seat}: {out:?}"
+        );
+
+        let (status, _, _) = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/tools/mtg/life/sessions/{mine_id}/players/{seat}"
+                ))
+                .header("authorization", format!("Bearer {access}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "removing seat {seat}");
+    }
+
+    // The same for an event: undoing one from another game must not reach across.
+    let (status, _, _) = send(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!(
+                "/api/tools/mtg/life/sessions/{mine_id}/events/{foreign_event}"
+            ))
+            .header("authorization", format!("Bearer {access}"))
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "undoing another game's event"
+    );
+
+    // A reorder naming another game's seat is refused rather than renumbering anything.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{mine_id}/players/reorder"),
+            &access,
+            json!({ "player_ids": [player_id(&mine, 0), foreign_seat] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Neither game moved.
+    for (detail, expected) in [(&mine, 20), (&other, 19)] {
+        let (_, _, now) = send(
+            &app,
+            get_with_bearer(
+                &format!("/api/tools/mtg/life/sessions/{}", session_id(detail)),
+                &access,
+            ),
+        )
+        .await;
+        assert_eq!(now["session"]["players"][0]["life"], expected);
+        assert_eq!(now["session"]["players"][0]["name"], "Alice");
+    }
+}
+
 #[tokio::test]
 async fn a_seat_cannot_link_to_another_users_deck() {
     let app = test_app().await;
@@ -422,6 +551,20 @@ async fn a_finished_game_is_immutable_and_can_be_rematched() {
     let alice = player_id(&detail, 0);
     let bob = player_id(&detail, 1);
 
+    // One recorded change, so the finished game has an event id for the undo gate below.
+    let (status, _, change) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/{alice}/life"),
+            &access,
+            json!({ "delta": -5 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{change:?}");
+    let event = change["event"]["id"].as_i64().expect("event id");
+
     let (status, _, finished) = send(
         &app,
         json_with_bearer(
@@ -478,6 +621,59 @@ async fn a_finished_game_is_immutable_and_can_be_rematched() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "re-finishing");
+
+    // The remaining gated writes, so "every edit" means every edit: dropping `require_active`
+    // from any one of these would otherwise leave the suite green.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/tools/mtg/life/sessions/{id}/players"),
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "seating another player");
+
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/reorder"),
+            &access,
+            json!({ "player_ids": [bob, alice] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "reordering a finished game");
+
+    for uri in [
+        format!("/api/tools/mtg/life/sessions/{id}/players/{bob}"),
+        format!("/api/tools/mtg/life/sessions/{id}/events/{event}"),
+    ] {
+        let (status, _, _) = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(&uri)
+                .header("authorization", format!("Bearer {access}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "DELETE {uri}");
+    }
+
+    // …and none of it moved anything.
+    let (_, _, after) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(after["session"]["players"][1]["name"], "Bob");
+    assert_eq!(after["session"]["players"][0]["life"], 35);
+    assert_eq!(after["events"].as_array().expect("events").len(), 1);
 
     // A rematch copies the table (names, decks, starting life, layout) onto a fresh game.
     let rematch = start_game(&app, &access, json!({ "from_session_id": id })).await;
@@ -994,6 +1190,57 @@ async fn a_rematch_survives_a_deck_deleted_since_the_game_was_played() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// "An explicit field always overrides the copied one" has to reach the seats too — a copied seat
+/// carrying its own starting life or rotation would otherwise override the very field the rematch
+/// asked to change, leaving a session header and its seats disagreeing.
+#[tokio::test]
+async fn a_rematch_honours_an_explicit_starting_life_and_layout() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "rematcher@example.com", PW).await;
+    let detail = start_game(
+        &app,
+        &access,
+        json!({
+            "starting_life": 40,
+            "layout": "pinwheel",
+            "players": [{ "name": "A" }, { "name": "B" }, { "name": "C" }, { "name": "D" }],
+        }),
+    )
+    .await;
+    let id = session_id(&detail);
+    assert_eq!(detail["session"]["players"][0]["starting_life"], 40);
+
+    let rematch = start_game(
+        &app,
+        &access,
+        json!({ "from_session_id": id, "starting_life": 20, "layout": "grid" }),
+    )
+    .await;
+    assert_eq!(rematch["session"]["starting_life"], 20);
+    assert_eq!(rematch["session"]["layout"], "grid");
+    let players = rematch["session"]["players"].as_array().expect("players");
+    assert_eq!(players.len(), 4);
+    for player in players {
+        assert_eq!(
+            player["starting_life"], 20,
+            "a copied seat must not keep the old starting life: {player:?}"
+        );
+        assert_eq!(
+            player["life"], 20,
+            "and it starts the new game on that total: {player:?}"
+        );
+    }
+    // The names still came across — this narrows what a rematch copies, it doesn't stop it.
+    assert_eq!(players[0]["name"], "A");
+    assert_eq!(players[3]["name"], "D");
+
+    // With nothing stated, the old game's shape is still copied wholesale.
+    let plain = start_game(&app, &access, json!({ "from_session_id": id })).await;
+    assert_eq!(plain["session"]["starting_life"], 40);
+    assert_eq!(plain["session"]["layout"], "pinwheel");
+    assert_eq!(plain["session"]["players"][0]["starting_life"], 40);
+}
+
 #[tokio::test]
 async fn reorder_rejects_a_repeated_seat_rather_than_leaving_a_position_hole() {
     let app = test_app().await;
@@ -1008,10 +1255,8 @@ async fn reorder_rejects_a_repeated_seat_rather_than_leaving_a_position_hole() {
     let a = player_id(&detail, 0);
     let b = player_id(&detail, 1);
 
-    // A list of the right length but with a seat repeated: sorting and de-duplicating it makes it
-    // compare equal to the real seat set, so the *length* check is what catches this. Left
-    // unchecked, two seats would be written to the same position and one position would be left
-    // empty — and `position` is what the layout maths indexes into to place a seat on the mat.
+    // A seat repeated in place of another: de-duplicating drops it to `[a, b]`, which no longer
+    // matches the seat set, so the *sorted comparison* is what catches this one.
     let (status, _, out) = send(
         &app,
         json_with_bearer(
@@ -1019,6 +1264,24 @@ async fn reorder_rejects_a_repeated_seat_rather_than_leaving_a_position_hole() {
             &format!("/api/tools/mtg/life/sessions/{id}/players/reorder"),
             &access,
             json!({ "player_ids": [a, a, b] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+
+    // And a repeat *added* to the full set, which is the case only the length check catches:
+    // de-duplicating `[a, a, b, c]` gives exactly the seat set, so the sorted comparison passes
+    // and the guard rests entirely on the length clause. Left unchecked, two seats would be
+    // written to the same position and one position left empty — and `position` is what the
+    // layout maths indexes into to place a seat on the mat.
+    let c = player_id(&detail, 2);
+    let (status, _, out) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/reorder"),
+            &access,
+            json!({ "player_ids": [a, a, b, c] }),
         ),
     )
     .await;
@@ -1170,6 +1433,31 @@ async fn a_seat_can_name_a_commander_instead_of_a_deck() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The same exclusivity holds on the *edit* route, not only at creation: a seat that named
+    // both would surface as a wrong per-deck record rather than an error.
+    let (status, _, out) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}/players/{them}"),
+            &access,
+            json!({ "name": "Them", "deck_id": deck, "commander_card_id": card }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+    // …and the seat kept the link it already had.
+    let (_, _, unchanged) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(
+        unchanged["session"]["players"][1]["commander_card_id"],
+        card
+    );
+    assert!(unchanged["session"]["players"][1]["deck_id"].is_null());
 
     // Editing a seat swaps one link for the other, and clears it when neither is sent.
     let (status, _, seat) = send(

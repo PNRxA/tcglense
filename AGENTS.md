@@ -259,7 +259,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Today it holds the **life counter** — a container surface like decks (`life_sessions` /
   `life_session_players` / `life_events`), not a holdings twin, so it rides no `makeHoldingApi`.
   A seat and an event have **no `user_id`** (they hang off `session_id`), so every seat/event
-  route must `load_session` first — a foreign id is **404, not 403**. Three invariants:
+  route must `load_session` first — a foreign id is **404, not 403**. Four invariants:
   **(1) a finished session is immutable** — every life/seat/undo write gates on
   `require_active` and answers **409**, because a recorded result already counts towards the
   per-deck record; start a rematch (`from_session_id`) instead. **(2) `life` is written in

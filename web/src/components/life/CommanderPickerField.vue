@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, onScopeDispose, ref, toRef, useId, watch } from 'vue'
 import { Loader2, X } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { listCards } from '@/lib/api'
@@ -32,12 +32,25 @@ const open = ref(false)
 const active = ref(-1)
 /** The name of whatever is currently linked — the server's on load, ours after a pick. */
 const linkedName = ref<string | null>(props.name ?? null)
+/**
+ * The id this field resolved itself. The `name` prop comes from the seat row, which still holds
+ * the *previous* commander until the seat is saved — so without this, replacing a commander would
+ * show the old name against the new id.
+ */
+const pickedId = ref<string | null>(null)
 
 watch(
   () => [props.modelValue, props.name] as const,
   ([id, name]) => {
-    linkedName.value = id ? (name ?? linkedName.value) : null
-    if (!id) term.value = ''
+    if (!id) {
+      linkedName.value = null
+      pickedId.value = null
+      term.value = ''
+      return
+    }
+    if (id === pickedId.value) return
+    // A link that arrived from outside: show its name, or nothing — never the last one's.
+    linkedName.value = name ?? null
   },
 )
 
@@ -62,6 +75,7 @@ async function pick(name: string) {
       return
     }
     linkedName.value = card.name
+    pickedId.value = card.id
     term.value = ''
     open.value = false
     active.value = -1
@@ -90,6 +104,28 @@ function clear() {
   resolveError.value = null
   emit('update:modelValue', null)
 }
+
+// Stable ids for the combobox/listbox ARIA wiring — the same shape `QuickAddBox` uses, so the
+// highlighted option is announced rather than only styled.
+const baseId = useId()
+const listboxId = `${baseId}-listbox`
+function optionId(index: number): string {
+  return `${baseId}-option-${index}`
+}
+const activeDescendant = computed(() =>
+  open.value && active.value >= 0 ? optionId(active.value) : undefined,
+)
+
+let blurTimer: ReturnType<typeof setTimeout> | undefined
+function onBlur() {
+  // Delay closing so an option's mousedown→click lands first (the option prevents its own
+  // mousedown default, so a click keeps focus, but a click elsewhere closes here). Without this
+  // the list stays open over whatever is beneath it once focus moves on.
+  blurTimer = setTimeout(() => {
+    open.value = false
+  }, 120)
+}
+onScopeDispose(() => clearTimeout(blurTimer))
 
 function onKeydown(event: KeyboardEvent) {
   if (!open.value || !suggestions.value.length) return
@@ -136,10 +172,13 @@ function onKeydown(event: KeyboardEvent) {
         placeholder="Commander name…"
         role="combobox"
         :aria-expanded="open && suggestions.length > 0"
+        :aria-controls="listboxId"
+        :aria-activedescendant="activeDescendant"
         aria-autocomplete="list"
         @focus="open = true"
         @input="onInput"
         @keydown="onKeydown"
+        @blur="onBlur"
       />
       <Loader2
         v-if="isFetching || resolving"
@@ -148,13 +187,17 @@ function onKeydown(event: KeyboardEvent) {
       />
       <ul
         v-if="open && canSuggest && suggestions.length"
+        :id="listboxId"
         role="listbox"
+        :aria-label="label ?? 'Commander suggestions'"
         class="bg-popover absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border p-1 shadow-md"
       >
         <li v-for="(name, index) in suggestions" :key="name">
           <button
+            :id="optionId(index)"
             type="button"
             role="option"
+            tabindex="-1"
             :aria-selected="index === active"
             class="hover:bg-accent w-full truncate rounded px-2 py-1.5 text-left text-sm"
             :class="index === active ? 'bg-accent' : ''"

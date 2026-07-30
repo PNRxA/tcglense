@@ -15,10 +15,7 @@
 
 use std::collections::HashMap;
 
-use axum::{
-    Json,
-    extract::{Query, State},
-};
+use axum::{Json, extract::State};
 use sea_orm::prelude::DateTimeUtc;
 use sea_orm::sea_query::JoinType;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, RelationTrait};
@@ -27,9 +24,12 @@ use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::LifeSessionPlayer;
 use crate::entities::{deck, life_session, life_session_player};
 use crate::error::AppError;
-use crate::extract::Path;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
+
+/// One grouped row of the record query: `(deck_id, deck_name, result, count, last_played_at)`.
+type RecordRow = (Option<i32>, String, String, i64, Option<DateTimeUtc>);
 
 use super::{
     DeckRecordParams, LifeDeckRecord, RESULT_DRAW, RESULT_LOSS, RESULT_NONE, RESULT_WIN,
@@ -99,7 +99,7 @@ pub async fn deck_records(
     if let Some(deck_id) = params.deck_id {
         query = query.filter(deck::Column::Id.eq(deck_id));
     }
-    let rows: Vec<(Option<i32>, String, String, i64, Option<DateTimeUtc>)> = query
+    let rows: Vec<RecordRow> = query
         .group_by(life_session_player::Column::DeckId)
         .group_by(deck::Column::Name)
         .group_by(life_session_player::Column::Result)

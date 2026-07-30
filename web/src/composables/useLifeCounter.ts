@@ -268,7 +268,12 @@ export function useUpdateLifePlayerMutation() {
               ...current,
               session: {
                 ...current.session,
-                players: current.session.players.map((p) => (p.id === seat.id ? seat : p)),
+                // This endpoint owns the seat's metadata, not its `life` — the total it echoes is
+                // whatever the row held when it was read. Keeping the cached life means a life
+                // write that resolves in the other order can't be reverted on screen by a rename.
+                players: current.session.players.map((p) =>
+                  p.id === seat.id ? { ...seat, life: p.life } : p,
+                ),
               },
             }
           : current,

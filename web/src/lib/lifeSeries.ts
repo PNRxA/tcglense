@@ -86,8 +86,9 @@ export function lifeExtent(lines: LifeLine[]): { min: number; max: number } {
 export function lifeDuration(lines: LifeLine[]): number {
   let max = 0
   for (const line of lines) {
-    const last = line.points[line.points.length - 1]
-    if (last && last.at > max) max = last.at
+    // Every point, not just the last: `lifeLines` clamps a timestamp that would run backwards, so
+    // a line's final point is not guaranteed to be its latest one.
+    for (const point of line.points) if (point.at > max) max = point.at
   }
   return max
 }

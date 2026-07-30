@@ -28,9 +28,18 @@ use crate::state::AppState;
 use super::replay::{ReplayEvent, clamp_life, replay};
 use super::{
     AdjustLifeRequest, KIND_ADJUST, KIND_SET, LifeChange, LifeEventResponse, LifeSessionDetail,
-    MAX_EVENTS_PER_SESSION, load_seat, load_session, require_active, seat_response, session_detail,
-    touch_session, validate_delta, validate_life,
+    MAX_EVENTS_PER_SESSION, load_seat, load_seat_on, load_session, load_session_on, require_active,
+    seat_response, session_detail, touch_session, validate_delta, validate_life,
 };
+
+/// Which of the two forms the request asked for, once validated — resolved before the write
+/// transaction opens, applied against the seat total read inside it.
+enum Change {
+    /// A relative change: a run of taps committed as one delta.
+    Adjust(i32),
+    /// An absolute correction, which pins the total whatever it was before.
+    Set(i32),
+}
 
 /// Change a life total
 ///
@@ -74,24 +83,39 @@ pub async fn adjust_life(
     require_game(&game)?;
     let session = load_session(&state, user.id, &game, session_id).await?;
     require_active(&session)?;
-    let seat = load_seat(&state, session.id, player_id).await?;
+    load_seat(&state, session.id, player_id).await?;
 
-    // Exactly one of the two forms. Accepting both would leave the server guessing which the
-    // user meant, and accepting neither would append an empty history row.
-    let (life_after, kind) = match (payload.delta, payload.life) {
-        (Some(delta), None) => {
-            let delta = validate_delta(delta)?;
-            (
-                clamp_life(i64::from(seat.life) + i64::from(delta)),
-                KIND_ADJUST,
-            )
-        }
-        (None, Some(life)) => (validate_life(life)?, KIND_SET),
+    // Exactly one of the two forms, validated before any lock is taken. Accepting both would
+    // leave the server guessing which the user meant, and accepting neither would append an
+    // empty history row.
+    let change = match (payload.delta, payload.life) {
+        (Some(delta), None) => Change::Adjust(validate_delta(delta)?),
+        (None, Some(life)) => Change::Set(validate_life(life)?),
         _ => {
             return Err(AppError::Validation(
                 "send exactly one of delta or life".to_string(),
             ));
         }
+    };
+
+    let now = Utc::now();
+    let txn = state.db.begin().await?;
+    // Serialize every write against this game through the parent session row, the way
+    // `decks::cards` serializes card writes through the deck row: it takes SQLite's single-writer
+    // lock (and Postgres' row lock) before the reads below, so a delta can't be computed against
+    // a total another request is in the middle of moving, and the finished-game gate can't be
+    // passed by a request that a concurrent `finish` is about to invalidate.
+    touch_session(&txn, session.id, now).await?;
+    let session = load_session_on(&txn, user.id, &game, session_id).await?;
+    require_active(&session)?;
+    let seat = load_seat_on(&txn, session.id, player_id).await?;
+
+    let (life_after, kind) = match change {
+        Change::Adjust(delta) => (
+            clamp_life(i64::from(seat.life) + i64::from(delta)),
+            KIND_ADJUST,
+        ),
+        Change::Set(life) => (life, KIND_SET),
     };
     // The delta stored is the movement that actually happened after clamping, so the history
     // never claims a change the total didn't make.
@@ -99,7 +123,7 @@ pub async fn adjust_life(
 
     let events = LifeEvent::find()
         .filter(life_event::Column::SessionId.eq(session.id))
-        .count(&state.db)
+        .count(&txn)
         .await?;
     if events >= MAX_EVENTS_PER_SESSION {
         return Err(AppError::Validation(format!(
@@ -107,8 +131,6 @@ pub async fn adjust_life(
         )));
     }
 
-    let now = Utc::now();
-    let txn = state.db.begin().await?;
     let event = life_event::ActiveModel {
         session_id: Set(session.id),
         player_id: Set(seat.id),
@@ -124,7 +146,6 @@ pub async fn adjust_life(
     active.life = Set(life_after);
     active.updated_at = Set(now);
     let seat = active.update(&txn).await?;
-    touch_session(&txn, session.id, now).await?;
     txn.commit().await?;
 
     Ok(Json(LifeChange {
@@ -170,20 +191,30 @@ pub async fn undo_life_event(
     let session = load_session(&state, user.id, &game, session_id).await?;
     require_active(&session)?;
 
+    let now = Utc::now();
+    let txn = state.db.begin().await?;
+    // Under the session lock, as in `adjust_life` — and here it is load-bearing rather than
+    // merely tidy: the fold below rebuilds the seat's total from the events it can see, so a tap
+    // that committed between an unlocked read and this write would be absent from `remaining`
+    // and silently reverted by the re-fold.
+    touch_session(&txn, session.id, now).await?;
+    let session = load_session_on(&txn, user.id, &game, session_id).await?;
+    require_active(&session)?;
+
     // Scoped to the session whose ownership was just proved, so an event id from another
     // user's game is a 404 like everything else here.
     let event = LifeEvent::find_by_id(event_id)
         .filter(life_event::Column::SessionId.eq(session.id))
-        .one(&state.db)
+        .one(&txn)
         .await?
         .ok_or_else(|| AppError::NotFound("life change not found".to_string()))?;
-    let seat = load_seat(&state, session.id, event.player_id).await?;
+    let seat = load_seat_on(&txn, session.id, event.player_id).await?;
 
     let remaining = LifeEvent::find()
         .filter(life_event::Column::PlayerId.eq(seat.id))
         .filter(life_event::Column::Id.ne(event.id))
         .order_by_asc(life_event::Column::Id)
-        .all(&state.db)
+        .all(&txn)
         .await?;
     let folded = replay(
         seat.starting_life,
@@ -193,8 +224,6 @@ pub async fn undo_life_event(
             .collect::<Vec<_>>(),
     );
 
-    let now = Utc::now();
-    let txn = state.db.begin().await?;
     LifeEvent::delete_by_id(event.id).exec(&txn).await?;
     for (row, (delta, life_after)) in remaining.iter().zip(folded.events.iter()) {
         // Only the rows the fold actually moved are written.
@@ -214,7 +243,6 @@ pub async fn undo_life_event(
     active.life = Set(folded.life);
     active.updated_at = Set(now);
     active.update(&txn).await?;
-    touch_session(&txn, session.id, now).await?;
     txn.commit().await?;
 
     Ok(Json(session_detail(&state, user.id, &session).await?))

@@ -86,6 +86,22 @@ const startingLife = computed({
   set: (value: number) => (setup.startingLife = value),
 })
 
+/**
+ * The custom box's own value, which may be empty while the user clears it to type a new number.
+ * The store behind it is persisted *and* submitted, so it only follows once there's a real number
+ * to follow — an empty box means "still typing", not "no starting life".
+ */
+const customLifeInput = ref<number | ''>(setup.startingLife)
+watch(
+  () => setup.startingLife,
+  (value) => {
+    if (Number(customLifeInput.value) !== value) customLifeInput.value = value
+  },
+)
+watch(customLifeInput, (value) => {
+  if (value !== '' && Number.isFinite(Number(value))) startingLife.value = Number(value)
+})
+
 const layout = computed({
   get: () => setup.layout,
   set: (value: LifeLayout) => (setup.layout = value),
@@ -184,7 +200,7 @@ function submit() {
             </ToggleGroup>
             <Input
               v-if="customLife"
-              v-model.number="startingLife"
+              v-model.number="customLifeInput"
               type="number"
               min="1"
               max="9999"

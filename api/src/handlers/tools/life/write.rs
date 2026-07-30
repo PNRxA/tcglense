@@ -87,6 +87,11 @@ pub async fn create_session(
         Some(id) => Some(load_session(&state, user.id, &game, id).await?),
         None => None,
     };
+    // "Explicit wins" has to reach the *seats*, not just the session header: a copied seat that
+    // carries its own starting life or rotation would override the very field the request asked
+    // to change, leaving a game whose header and seats disagree.
+    let explicit_life = payload.starting_life.is_some();
+    let explicit_layout = payload.layout.is_some();
 
     let name = validate_optional(payload.name, "name", MAX_SESSION_NAME)?;
     let format = validate_optional(payload.format, "format", MAX_FORMAT)?
@@ -121,8 +126,10 @@ pub async fn create_session(
                         commander_card_id: seat
                             .commander_card_id
                             .and_then(|id| refs.commanders.get(&id).map(|(ext, _)| ext.clone())),
-                        starting_life: Some(seat.starting_life),
-                        rotation: Some(seat.rotation),
+                        // Left to the defaults when the request stated one, so the new game's
+                        // own starting life and layout apply to every copied seat.
+                        starting_life: (!explicit_life).then_some(seat.starting_life),
+                        rotation: (!explicit_layout).then_some(seat.rotation),
                     })
                     .collect()
             }

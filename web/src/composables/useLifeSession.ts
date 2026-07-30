@@ -108,6 +108,9 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
   async function setLife(playerId: number, life: number) {
     if (!isActive.value) return
     taps.discard(playerId)
+    // A delta already sent for this seat is applied relative to the server's total, so letting it
+    // land after the absolute correction would move the number the user just set.
+    await taps.commit(playerId)
     await adjust.mutateAsync({
       game: game.value,
       sessionId: sessionId.value,
@@ -116,9 +119,13 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
     })
   }
 
-  /** Record the result. Pending taps are flushed first so the final totals are the real ones. */
+  /**
+   * Record the result. Pending taps are flushed *and awaited* first: finishing makes the session
+   * immutable, so a life write still in flight would come back 409 and the last hit of the game
+   * would be lost from the totals the result is read against.
+   */
   async function finishGame(winnerPlayerId: number | null) {
-    taps.flush()
+    await taps.flush()
     await finish.mutateAsync({ game: game.value, sessionId: sessionId.value, winnerPlayerId })
   }
 

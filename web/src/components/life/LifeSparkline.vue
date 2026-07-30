@@ -26,7 +26,9 @@ const path = computed(() => {
   const y = (life: number) => HEIGHT - ((life - min) / span) * HEIGHT
   // Index-spaced, not time-spaced: on a tile this small, time spacing collapses a flurry of
   // changes into one pixel and leaves the rest of the line empty.
-  const x = (index: number) => (points.length === 1 ? WIDTH : (index / (points.length - 1)) * WIDTH)
+  // A single point starts at the left edge so the `H WIDTH` below spans the tile — starting it at
+  // WIDTH would make that a zero-length segment, which renders as nothing at all.
+  const x = (index: number) => (points.length === 1 ? 0 : (index / (points.length - 1)) * WIDTH)
   let d = `M ${x(0)} ${y(points[0]?.life ?? 0)}`
   points.forEach((point, index) => {
     if (index === 0) return

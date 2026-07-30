@@ -132,6 +132,92 @@ describe('useLifeTaps', () => {
     stop()
   })
 
+  it('keeps the tapped delta on screen while its commit is in flight', async () => {
+    // The displayed total is the seat's committed life plus what's pending, and the committed
+    // life only moves when the response lands — so releasing the delta at dispatch would bounce
+    // the number back to its pre-tap value for the whole round trip.
+    const resolvers: (() => void)[] = []
+    const { value: taps, stop } = harness(
+      () => new Promise<void>((resolve) => resolvers.push(resolve)),
+    )
+
+    taps.bump(1, -3)
+    expect(taps.pendingFor(1)).toBe(-3)
+
+    vi.advanceTimersByTime(COMMIT_DELAY_MS)
+    await settle()
+    expect(commits).toEqual([{ playerId: 1, delta: -3 }])
+    // Sent, not yet confirmed: still counted, so the tile keeps showing the total the player
+    // tapped their way to.
+    expect(taps.pendingFor(1)).toBe(-3)
+    expect(taps.isCommitting.value).toBe(true)
+
+    resolvers[0]?.()
+    await settle()
+    // Now the server's own total carries it, so holding it here too would double-count.
+    expect(taps.pendingFor(1)).toBe(0)
+    stop()
+  })
+
+  it('drops the in-flight delta when the commit fails, snapping back to server truth', async () => {
+    const { value: taps, stop } = harness(() => Promise.reject(new Error('offline')))
+
+    taps.bump(1, -3)
+    vi.advanceTimersByTime(COMMIT_DELAY_MS)
+    await settle()
+    expect(taps.pendingFor(1)).toBe(0)
+    stop()
+  })
+
+  it('resolves flush only once every commit has settled', async () => {
+    // What finishing a game awaits: the session becomes immutable, so a life write still in
+    // flight would come back 409 and the last hit would be lost from the recorded totals.
+    const resolvers: (() => void)[] = []
+    const { value: taps, stop } = harness(
+      () => new Promise<void>((resolve) => resolvers.push(resolve)),
+    )
+
+    taps.bump(1, -1)
+    taps.bump(2, -2)
+    let settled = false
+    const flushed = taps.flush().then(() => {
+      settled = true
+    })
+    await settle()
+    expect(commits).toHaveLength(2)
+    expect(settled).toBe(false)
+
+    resolvers.forEach((resolve) => resolve())
+    await flushed
+    expect(settled).toBe(true)
+    stop()
+  })
+
+  it('flush also waits for a commit that was already in flight', async () => {
+    const resolvers: (() => void)[] = []
+    const { value: taps, stop } = harness(
+      () => new Promise<void>((resolve) => resolvers.push(resolve)),
+    )
+
+    // Dispatched by the timer, so it is in flight rather than pending when flush is called.
+    taps.bump(1, -1)
+    vi.advanceTimersByTime(COMMIT_DELAY_MS)
+    await settle()
+    expect(taps.isCommitting.value).toBe(true)
+
+    let settled = false
+    const flushed = taps.flush().then(() => {
+      settled = true
+    })
+    await settle()
+    expect(settled).toBe(false)
+
+    resolvers.forEach((resolve) => resolve())
+    await flushed
+    expect(settled).toBe(true)
+    stop()
+  })
+
   it('reports a failure and does not retry it', async () => {
     const failure = new Error('offline')
     const { value: taps, stop } = harness(() => Promise.reject(failure))

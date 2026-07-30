@@ -5,17 +5,14 @@
 
 use std::collections::HashMap;
 
-use axum::{
-    Json,
-    extract::{Query, State},
-};
+use axum::{Json, extract::State};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use crate::auth::extractor::AuthUser;
 use crate::entities::prelude::{LifeSession, LifeSessionPlayer};
 use crate::entities::{life_session, life_session_player};
 use crate::error::AppError;
-use crate::extract::Path;
+use crate::extract::{Path, Query};
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
 

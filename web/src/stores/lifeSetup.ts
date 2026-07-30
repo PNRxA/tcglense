@@ -15,12 +15,33 @@ import { LIFE_LAYOUTS, type LifeLayout } from '@/lib/api/life'
  * Seat names and deck links are deliberately **not** remembered — see `NewGameDialog`.
  */
 export const useLifeSetupStore = defineStore('lifeSetup', () => {
-  const playerCount = persistedNumberRef('tcglense_life_players', 4, (value) =>
-    Math.min(6, Math.max(1, Math.round(value))),
-  )
-  const startingLife = persistedNumberRef('tcglense_life_starting', 40, (value) =>
-    Math.min(9_999, Math.max(1, Math.round(value))),
-  )
+  const clampPlayers = (value: number) => Math.min(6, Math.max(1, Math.round(value)))
+  const clampLife = (value: number) => Math.min(9_999, Math.max(1, Math.round(value)))
+
+  const storedPlayerCount = persistedNumberRef('tcglense_life_players', 4, clampPlayers)
+  const storedStartingLife = persistedNumberRef('tcglense_life_starting', 40, clampLife)
+
+  /**
+   * Both counts are clamped on **write** as well as on read. `persistedNumberRef` sanitizes what
+   * it reads back out of storage, but these are bound to number inputs — which hand back `''`
+   * mid-edit — and the value is both persisted and sent to the API, where a non-number is a 422
+   * and a stored `''` reads back as 0 (clamping to 1 life) on the next visit.
+   */
+  const guarded = (stored: typeof storedPlayerCount, clamp: (value: number) => number) =>
+    computed<number>({
+      get: () => stored.value,
+      set: (value) => {
+        // `Number('')` is 0, not NaN, so an empty input has to be rejected by hand — clamping it
+        // would silently mean "1 player, 1 life" rather than "leave it alone".
+        const raw: unknown = value
+        if (raw === '' || raw === null || raw === undefined) return
+        const parsed = Number(raw)
+        if (Number.isFinite(parsed)) stored.value = clamp(parsed)
+      },
+    })
+
+  const playerCount = guarded(storedPlayerCount, clampPlayers)
+  const startingLife = guarded(storedStartingLife, clampLife)
   const format = persistedRef<string>(
     'tcglense_life_format',
     'commander',

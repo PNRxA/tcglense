@@ -36,6 +36,18 @@ function modeOf(): Mode {
 const mode = ref<Mode>(modeOf())
 watch(
   () => [props.deckId, props.commanderCardId],
+  () => {
+    const derived = modeOf()
+    // Only follow the props when they still name a link. A link going null is almost always this
+    // control clearing the *other* one as the user switches mode: following that back would
+    // re-derive "none" and snap the toggle to "Neither", discarding the choice just made.
+    if (derived !== 'none') mode.value = derived
+  },
+)
+// A reused instance (a seat removed from a v-for above this one) is a different seat, so its
+// mode is re-seeded from that seat's links rather than inherited.
+watch(
+  () => props.seatLabel,
   () => (mode.value = modeOf()),
 )
 

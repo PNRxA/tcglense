@@ -43,7 +43,7 @@ usePageMeta({
   <div class="mx-auto max-w-4xl px-4 py-8">
     <PageBreadcrumbs :items="crumbs" />
 
-    <LifeSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" />
+    <LifeSignInPrompt v-if="auth.sessionResolved && !auth.isAuthenticated" :game-name="gameName" />
 
     <template v-else>
       <header class="mb-6">

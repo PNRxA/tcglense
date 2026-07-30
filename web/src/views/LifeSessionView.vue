@@ -106,19 +106,20 @@ async function saveSeat(value: {
   deck_id: number | null
   commander_card_id: string | null
   rotation: LifeRotation
+  life?: number
 }) {
   if (settingsFor.value === null) return
+  const playerId = settingsFor.value
+  const { life: corrected, ...body } = value
   await updatePlayer.mutateAsync({
     game: game.value,
     sessionId: sessionId.value,
-    playerId: settingsFor.value,
-    body: value,
+    playerId,
+    body,
   })
-}
-
-async function correctLife(value: number) {
-  if (settingsFor.value === null) return
-  await life.setLife(settingsFor.value, value)
+  // Ordered, not concurrent: both writes return the whole seat row, so overlapping them lets the
+  // one that answers last echo a field the other had already changed.
+  if (corrected !== undefined) await life.setLife(playerId, corrected)
 }
 
 async function dropSeat() {
@@ -180,7 +181,7 @@ const finishedDuration = computed(() =>
 </script>
 
 <template>
-  <LifeSignInPrompt v-if="!auth.isAuthenticated" :game-name="gameName" />
+  <LifeSignInPrompt v-if="auth.sessionResolved && !auth.isAuthenticated" :game-name="gameName" />
 
   <div v-else-if="query.isPending.value" class="mx-auto max-w-4xl px-4 py-12">
     <LoadingRow label="Loading game…" />
@@ -338,7 +339,6 @@ const finishedDuration = computed(() =>
       "
       @update:open="(open) => !open && (settingsFor = null)"
       @save="saveSeat"
-      @set-life="correctLife"
       @move="moveSeat"
       @remove="dropSeat"
     />
