@@ -57,6 +57,11 @@ const SITEMAP_CONTENT_TYPE: &str = "application/xml; charset=utf-8";
 pub const SITEMAP_CACHE_CONTROL: &str =
     "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
 
+/// The game whose keyword glossary the SPA serves at its game-flat `/keywords` routes.
+/// Mirrors `GLOSSARY_GAME` in `web/src/lib/keywords.ts` — the two must name the same
+/// game or [`pages_body`] advertises URLs the SPA can't render.
+const GLOSSARY_GAME: &str = crate::scryfall::GAME;
+
 // ---------- Handlers ----------
 
 /// `GET /sitemap.xml` (and `/api/sitemap.xml`) -> the sitemap **index**: pointers to
@@ -162,6 +167,26 @@ fn pages_body(base: &str) -> String {
         );
     }
     push_url(&mut body, &format!("{base}/docs"), None);
+    // The rules-keyword glossary: its index plus one page per keyword. Like the game
+    // registry above these come from a static Rust table (`catalog::keywords`), so they
+    // need no query — and they're the URLs someone searching "tcglense vigilance" is
+    // meant to land on, so they have to be advertised. A few hundred entries,
+    // comfortably inside `MAX_URLS_PER_SITEMAP` alongside the pages above; the slugs are
+    // ASCII by construction, so they need no escaping. No `<lastmod>`: the table only
+    // changes with a release, exactly like the other entries here.
+    //
+    // Only the SPA's glossary game is listed, because its routes are game-flat
+    // (`/keywords/{slug}`, MTG pinned in `web/src/lib/keywords.ts`) — advertising a
+    // second game's slugs here would claim URLs the SPA has no page for. A second
+    // glossary means game-scoped routes on both sides, and this loop follows.
+    push_url(&mut body, &format!("{base}/keywords"), None);
+    for keyword in catalog::keywords::glossary(GLOSSARY_GAME) {
+        push_url(
+            &mut body,
+            &format!("{base}/keywords/{}", keyword.slug),
+            None,
+        );
+    }
     push_url(&mut body, &format!("{base}/terms"), None);
     push_url(&mut body, &format!("{base}/privacy"), None);
     body
@@ -531,5 +556,41 @@ mod tests {
                 game.id
             )));
         }
+    }
+
+    #[test]
+    fn pages_body_covers_the_keyword_glossary() {
+        let body = pages_body("https://x.test");
+        assert!(body.contains("<loc>https://x.test/keywords</loc>"));
+        // Every keyword's page is advertised — that's the whole point of the section:
+        // a search for "tcglense vigilance" has to have a crawlable URL to land on.
+        let glossary = catalog::keywords::glossary(GLOSSARY_GAME);
+        assert!(
+            !glossary.is_empty(),
+            "the glossary game should have entries"
+        );
+        for keyword in glossary {
+            assert!(
+                body.contains(&format!(
+                    "<loc>https://x.test/keywords/{}</loc>",
+                    keyword.slug
+                )),
+                "missing sitemap entry for {:?}",
+                keyword.name
+            );
+        }
+        assert!(body.contains("<loc>https://x.test/keywords/vigilance</loc>"));
+    }
+
+    #[test]
+    fn pages_body_stays_within_one_child_sitemap() {
+        // The glossary is the only unbounded-ish contributor here; if it ever grows past
+        // the per-file cap, `pages.xml` needs chunking like the cards/products sitemaps.
+        let body = pages_body("https://x.test");
+        let urls = body.matches("<loc>").count() as u64;
+        assert!(
+            urls < MAX_URLS_PER_SITEMAP,
+            "pages.xml holds {urls} URLs, over the {MAX_URLS_PER_SITEMAP} cap"
+        );
     }
 }

@@ -8,7 +8,10 @@ import {
   cardMetaDescription,
   cardProductNode,
   contentsSummary,
+  definedTermNode,
+  definedTermSetNode,
   graph,
+  keywordCrumbs,
   marketOffers,
   productMetaDescription,
   sealedCrumbs,
@@ -585,6 +588,49 @@ describe('structured-data claim guard', () => {
       for (const b of banned) expect(s).not.toContain(b)
     })
   }
+})
+
+describe('keyword glossary nodes', () => {
+  const vigilance = {
+    name: 'Vigilance',
+    slug: 'vigilance',
+    kind: 'ability',
+    text: "Attacking doesn't cause this creature to tap.",
+    parameterized: false,
+    match_mode: 'anywhere',
+  } as const
+
+  it('describes a keyword as a DefinedTerm in the glossary set', () => {
+    const node = definedTermNode(vigilance)
+    expect(node['@type']).toBe('DefinedTerm')
+    expect(node.name).toBe('Vigilance')
+    expect(node.description).toBe("Attacking doesn't cause this creature to tap.")
+    expect(node.url).toContain('/keywords/vigilance')
+    expect((node.inDefinedTermSet as Record<string, unknown>)['@type']).toBe('DefinedTermSet')
+  })
+
+  it('is never a Product — a rules keyword has no price, so it can carry no offer', () => {
+    // A Product node without `offers` is a critical Search Console error, and a keyword
+    // can never honestly have one. Modelling it as a DefinedTerm is what keeps this page
+    // out of that trap; this test fails if someone reshapes it into a Product.
+    const s = JSON.stringify([definedTermNode(vigilance), definedTermSetNode()]).toLowerCase()
+    for (const banned of ['product', 'offers', 'price', 'availability', 'aggregaterating']) {
+      expect(s).not.toContain(banned)
+    }
+  })
+
+  it('caps a long description like the other JSON-LD builders', () => {
+    const node = definedTermNode({ ...vigilance, text: 'x'.repeat(900) })
+    expect((node.description as string).length).toBe(500)
+  })
+
+  it('builds the glossary crumb trail', () => {
+    expect(keywordCrumbs('Vigilance').map((c) => c.label)).toEqual([
+      'Home',
+      'Keywords',
+      'Vigilance',
+    ])
+  })
 })
 
 describe('breadcrumbs', () => {

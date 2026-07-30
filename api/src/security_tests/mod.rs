@@ -27,6 +27,7 @@ mod cors;
 mod decks;
 mod email_verification;
 mod headers;
+mod keywords;
 mod login;
 mod mirror;
 mod openapi;

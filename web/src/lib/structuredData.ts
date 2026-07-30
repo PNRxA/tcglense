@@ -24,7 +24,7 @@
 //
 // Pure functions with no Vue/query-client dependency, so they're unit-tested directly.
 
-import type { Card, Product, ProductComponent } from '@/lib/api'
+import type { Card, KeywordEntry, Product, ProductComponent } from '@/lib/api'
 import { formatUsd } from '@/lib/money'
 import { absoluteUrl } from '@/lib/seo'
 
@@ -398,4 +398,34 @@ export function cardCrumbs(game: string, c: Card): Crumb[] {
  * a Set crumb would have to point at the cards set page, cross-sectioning the trail). */
 export function sealedCrumbs(game: string, p: Product): Crumb[] {
   return [{ label: 'Home', to: '/' }, { label: 'Sealed', to: `/sealed/${game}` }, { label: p.name }]
+}
+
+/** Home › Keywords › {Keyword} — the glossary trail. */
+export function keywordCrumbs(name: string): Crumb[] {
+  return [{ label: 'Home', to: '/' }, { label: 'Keywords', to: '/keywords' }, { label: name }]
+}
+
+/** The glossary itself as a schema.org `DefinedTermSet`.
+ *
+ * Deliberately without `hasDefinedTerm` children: listing all ~350 terms would put the
+ * whole glossary in every page's `<head>` for no ranking gain — the visible links are
+ * what carry the crawl. */
+export function definedTermSetNode(): Record<string, unknown> {
+  return {
+    '@type': 'DefinedTermSet',
+    name: 'Magic: The Gathering keyword glossary',
+    url: absoluteUrl('/keywords'),
+  }
+}
+
+/** One keyword as a schema.org `DefinedTerm`. Never a `Product` — a rules keyword has
+ * no price and no offers, so the card/sealed nodes' shape would be a false claim. */
+export function definedTermNode(keyword: KeywordEntry): Record<string, unknown> {
+  return {
+    '@type': 'DefinedTerm',
+    name: keyword.name,
+    description: keyword.text.slice(0, MAX_JSON_LD_DESCRIPTION),
+    url: absoluteUrl(`/keywords/${keyword.slug}`),
+    inDefinedTermSet: definedTermSetNode(),
+  }
 }

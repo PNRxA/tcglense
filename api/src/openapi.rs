@@ -129,6 +129,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::list_set_subtypes,
         crate::handlers::catalog::card_names,
         crate::handlers::catalog::list_art_tags,
+        crate::handlers::catalog::list_keywords,
         crate::handlers::catalog::ingest_status,
         crate::handlers::catalog::card_sealed,
         crate::handlers::catalog::scan_cards,

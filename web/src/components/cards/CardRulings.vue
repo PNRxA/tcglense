@@ -58,7 +58,7 @@ watch(id, () => {
         class="border-b pb-3 last:border-b-0 last:pb-0"
       >
         <p class="text-sm leading-relaxed whitespace-pre-line">
-          <ManaSymbols :text="ruling.comment" />
+          <ManaSymbols :text="ruling.comment" keywords />
         </p>
         <p class="text-muted-foreground mt-1 text-xs">
           {{ sourceLabel(ruling.source) }}

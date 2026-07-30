@@ -11,6 +11,7 @@ pub(crate) mod fingerprint_tasks;
 pub mod fingerprints;
 pub mod images;
 pub mod ingest_state;
+pub mod keywords;
 pub mod sld_product_dates;
 
 use reqwest::Client;

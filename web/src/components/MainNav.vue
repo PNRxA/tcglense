@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Code, Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
+import { BookOpen, Code, Heart, Layers, Library, Package, ScanLine } from '@lucide/vue'
 import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import {
   NavigationMenu,
@@ -44,6 +44,7 @@ function warmSection(value: string) {
   if (value === 'products') {
     warm('/cards')
     warm('/sealed')
+    warm('/keywords')
     for (const game of games.value) {
       warm(`/cards/${game.id}`)
       warm(`/sealed/${game.id}`)
@@ -127,6 +128,22 @@ function warmSection(value: string) {
                   @focusin="warm(`/sealed/${game.id}`)"
                   >{{ game.name }}</RouterLink
                 >
+              </NavigationMenuLink>
+            </li>
+            <!-- Reference: what the words on a card actually mean. -->
+            <li class="mt-1 border-t pt-2">
+              <p class="text-muted-foreground px-2 pb-1 text-xs font-medium">Reference</p>
+            </li>
+            <li>
+              <NavigationMenuLink as-child class="flex-row items-center gap-2 font-medium">
+                <RouterLink
+                  to="/keywords"
+                  @pointerenter="warm('/keywords')"
+                  @focusin="warm('/keywords')"
+                >
+                  <BookOpen aria-hidden="true" />
+                  Keyword glossary
+                </RouterLink>
               </NavigationMenuLink>
             </li>
           </ul>

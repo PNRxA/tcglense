@@ -229,7 +229,7 @@ const alertFinishes = computed<AlertFinish[]>(() => {
             class="bg-card rounded-xl border p-4 shadow-sm"
           >
             <p class="text-sm leading-relaxed whitespace-pre-line">
-              <ManaSymbols :text="card.oracle_text" />
+              <ManaSymbols :text="card.oracle_text" keywords :card-name="card.name" />
             </p>
           </div>
 
@@ -250,7 +250,11 @@ const alertFinishes = computed<AlertFinish[]>(() => {
                 {{ face.type_line }}
               </p>
               <p v-if="face.oracle_text" class="mt-2 text-sm leading-relaxed whitespace-pre-line">
-                <ManaSymbols :text="face.oracle_text" />
+                <ManaSymbols
+                  :text="face.oracle_text"
+                  keywords
+                  :card-name="face.name ?? card.name"
+                />
               </p>
               <p
                 v-if="face.power && face.toughness"
