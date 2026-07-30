@@ -48,13 +48,28 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
 
 const open = ref(false)
 
-/** Styling for the inline marker. Deliberately decoration-only — no padding, border or
- * `display` change — because it sits in a `whitespace-pre-line` paragraph where any box
- * of its own would break the line rhythm, and a multi-word keyword must still be able
- * to wrap. */
+/** Styling for the inline marker.
+ *
+ * A hairline dotted underline reads as typography rather than as "there is something
+ * here", and it disappears entirely against the descenders of a paragraph of oracle text.
+ * So the marker also carries a tinted plate behind the word, and its underline is
+ * thickened and darkened. It stays *dotted* on purpose: a solid underline in body text
+ * says "hyperlink", and these are definitions, not navigation.
+ *
+ * Every property here is a **non-layout** one — `background-color`, `text-decoration` —
+ * plus horizontal padding that is cancelled by an equal negative margin. That
+ * matters twice over: the marker sits in a `whitespace-pre-line` paragraph whose line
+ * rhythm any box of its own would break, and the glossary only resolves *after* first
+ * paint, so anything that changed the text's measured width (real padding, a heavier
+ * font) would reflow the card's rules text under the reader. The plate therefore bleeds
+ * a hair past the glyphs instead of pushing them apart.
+ *
+ * `box-decoration-clone` is what lets a multi-word keyword wrap and still get a rounded,
+ * padded plate on both lines rather than one box sliced in half. */
 const TRIGGER_CLASS =
-  'cursor-help rounded-sm underline decoration-dotted decoration-muted-foreground/70 ' +
-  'underline-offset-4 transition-colors hover:decoration-foreground ' +
+  'cursor-help box-decoration-clone rounded-[0.25em] bg-foreground/[0.07] px-[0.15em] ' +
+  '-mx-[0.15em] underline decoration-dotted decoration-foreground/60 decoration-2 ' +
+  'underline-offset-2 transition-colors hover:bg-foreground/15 hover:decoration-foreground ' +
   'focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none'
 </script>
 
