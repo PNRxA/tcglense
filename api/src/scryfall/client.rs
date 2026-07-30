@@ -3,7 +3,9 @@
 //! Per Scryfall's API guidelines every request carries a descriptive
 //! `User-Agent` (set on the shared client at build time) and an explicit
 //! `Accept` header. The `gzip` feature on the client transparently requests and
-//! decompresses gzip-encoded responses, including the large bulk download.
+//! decompresses gzip-*encoded* responses — which the bulk downloads are not: those are
+//! pre-compressed *files* (`Content-Type: application/gzip`, no `Content-Encoding`), so
+//! [`json_lines`] inflates them itself.
 
 use async_compression::tokio::bufread::GzipDecoder;
 use bytes::Bytes;

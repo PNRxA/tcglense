@@ -1,9 +1,17 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import type { ArtTagEntry } from '@/lib/api'
 import ArtTagBrowser from '../ArtTagBrowser.vue'
+
+// Only used by the still-loading case below; every other test primes the query cache, so the
+// fetcher is never reached.
+const getArtTags = vi.hoisted(() => vi.fn<() => Promise<{ data: ArtTagEntry[] }>>())
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  getArtTags,
+}))
 
 function tag(slug: string, count = 1): ArtTagEntry {
   return { slug, label: slug, count, description: null }
@@ -67,6 +75,22 @@ describe('ArtTagBrowser', () => {
     await flushPromises()
 
     expect(dialogText()).toContain('No tags match "dragon"')
+    expect(dialogText()).not.toContain('No art tags have been imported yet')
+  })
+
+  it('says it is loading while the vocabulary is still in flight', async () => {
+    // Pins the arm *order*: an unresolved fetch has no tags either, so an
+    // empty-vocabulary check placed above the pending one would claim nothing was ever
+    // imported while the request is still running.
+    getArtTags.mockReturnValue(new Promise(() => {}))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    wrapper = mount(ArtTagBrowser, {
+      props: { game: 'mtg', modelValue: '', open: true },
+      global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+    })
+    await flushPromises()
+
+    expect(dialogText()).toContain('Loading tags…')
     expect(dialogText()).not.toContain('No art tags have been imported yet')
   })
 

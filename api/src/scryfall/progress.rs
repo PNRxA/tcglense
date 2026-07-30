@@ -4,9 +4,11 @@
 //! terminal just sits idle, and raw per-batch `tracing` lines are noisy. This
 //! wraps a [`tracing_indicatif`] span so the import shows a single live progress
 //! display: a spinner while set metadata is fetched, then a determinate byte bar
-//! as the bulk file streams. The byte bar is accurate because Scryfall's `size`
-//! is the *uncompressed* length and the gzip response is decompressed for us, so
-//! counting bytes read against `size` lines up.
+//! as the bulk file streams. The byte bar lines up because both sides of it are
+//! **wire** bytes: its total is `BulkData::transfer_size` (the *compressed* length,
+//! for today's gzipped JSONL files) and it advances by the chunks pulled off the
+//! socket, before `scryfall::client::json_lines` inflates them. Feeding it an
+//! uncompressed length instead would stall the bar a quarter of the way in.
 //!
 //! Driving the bar through `tracing-indicatif` (rather than a bare
 //! [`indicatif::ProgressBar`]) means concurrent log lines never clobber it, and
