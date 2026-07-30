@@ -1,17 +1,18 @@
-//! Art-tag lookup endpoint: powers the advanced-search panel's art-tag autocomplete
-//! and its "browse all tags" dialog (issue #140). Tag data comes from the ingested
-//! `art_tags` metadata table (`crate::scryfall::art_tags`); the search filter itself
-//! (`art:`) is compiled by `crate::scryfall::search` against `card_art_tags`.
+//! Art-tag endpoints: the vocabulary lookup powering the advanced-search panel's
+//! autocomplete and its "browse all tags" dialog (issue #140), plus the per-card
+//! lookup behind the card page's "Artwork tags" panel. Tag data comes from the
+//! ingested `art_tags` metadata table (`crate::scryfall::art_tags`); the search filter
+//! itself (`art:`) is compiled by `crate::scryfall::search` against `card_art_tags`.
 
 use axum::{Json, extract::State};
 use sea_orm::{ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 
-use crate::entities::art_tag;
-use crate::entities::prelude::ArtTag;
+use crate::entities::prelude::{ArtTag, CardArtTag};
+use crate::entities::{art_tag, card_art_tag};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
-use crate::handlers::shared::{DataBody, require_game, trim_query};
+use crate::handlers::shared::{DataBody, load_card, require_game, trim_query};
 use crate::scryfall::search::{cust_vals, escape_like};
 use crate::state::AppState;
 
@@ -129,7 +130,84 @@ pub async fn list_art_tags(
         }
     }
 
-    let data = query
+    let data = collect_entries(&state, query).await?;
+
+    Ok(Json(DataBody { data }))
+}
+
+/// Get a card's art tags
+///
+/// `GET /api/games/{game}/cards/{id}/art-tags` -> the Tagger art tags on this card's
+/// **artwork**, most specific first. Tags key on `illustration_id`, so every printing
+/// reusing the same painting returns the same list, and a card whose artwork we have no
+/// identity for returns an empty list. The list is **hierarchy-expanded**, exactly like
+/// the `art:` filter it mirrors: an artwork tagged `squirrel` also carries its ancestors
+/// (`rodent`, `animal`, …), so every tag here provably matches the card. `404` if the
+/// game or card id is unknown.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}/art-tags",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+    ),
+    responses(
+        (status = 200, description = "The card artwork's tags, most specific first.", body = DataBody<Vec<ArtTagEntry>>),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
+pub async fn card_art_tags(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+) -> Result<Json<DataBody<Vec<ArtTagEntry>>>, AppError> {
+    require_game(&game)?;
+    let card = load_card(&state, &game, &id).await?;
+
+    // Art tags key on the artwork, not the printing; a card with no stored illustration
+    // identity (an unillustrated token, a layout whose faces the mapper couldn't flatten)
+    // can't have any.
+    let Some(illustration_id) = card.illustration_id.as_deref() else {
+        return Ok(Json(DataBody { data: Vec::new() }));
+    };
+
+    // Two narrow queries rather than a join: the mapping table carries no SeaORM relation
+    // to `art_tags` (the slug is denormalized onto it precisely so the hot `art:` probe
+    // needs no join), and an artwork carries tens of tags, not thousands.
+    let slugs: Vec<String> = CardArtTag::find()
+        .filter(card_art_tag::Column::Game.eq(game.as_str()))
+        .filter(card_art_tag::Column::IllustrationId.eq(illustration_id))
+        .select_only()
+        .column(card_art_tag::Column::TagSlug)
+        .into_tuple::<String>()
+        .all(&state.db)
+        .await?;
+    if slugs.is_empty() {
+        return Ok(Json(DataBody { data: Vec::new() }));
+    }
+
+    // Rarest tag first: `count` is how many stored artworks carry the tag, so ascending
+    // puts the specific labels (`goblin-shaman`) ahead of the broad ancestors (`creature`)
+    // they expanded from — which is the order a reader wants, and the order that makes the
+    // page's "show the first few" cut keep the descriptive ones. A slug with no metadata
+    // row can't happen (both tables are swapped in one transaction) and is dropped.
+    let query = ArtTag::find()
+        .filter(art_tag::Column::Game.eq(game.as_str()))
+        .filter(art_tag::Column::Slug.is_in(slugs))
+        .order_by_asc(art_tag::Column::TaggingsCount)
+        .order_by_asc(art_tag::Column::Slug);
+
+    Ok(Json(DataBody {
+        data: collect_entries(&state, query).await?,
+    }))
+}
+
+/// Run an already-filtered/ordered `art_tags` select, selecting just the wire columns.
+async fn collect_entries(
+    state: &AppState,
+    query: sea_orm::Select<art_tag::Entity>,
+) -> Result<Vec<ArtTagEntry>, AppError> {
+    Ok(query
         .select_only()
         .column(art_tag::Column::Slug)
         .column(art_tag::Column::Label)
@@ -145,7 +223,5 @@ pub async fn list_art_tags(
             count,
             description,
         })
-        .collect();
-
-    Ok(Json(DataBody { data }))
+        .collect())
 }

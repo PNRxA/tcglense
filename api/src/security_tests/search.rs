@@ -528,11 +528,22 @@ async fn art_tag_lookup_lists_and_ranks_tags() {
     assert_eq!(status, StatusCode::OK);
     let tags = body["data"].as_array().expect("data array");
     let slugs: Vec<&str> = tags.iter().filter_map(|t| t["slug"].as_str()).collect();
-    assert_eq!(slugs, ["object", "relic", "squirrel"], "{body:?}");
-    assert_eq!(tags[1]["label"].as_str(), Some("Relic"));
-    assert_eq!(tags[1]["count"].as_i64(), Some(1));
+    let mut sorted = slugs.clone();
+    sorted.sort_unstable();
+    assert_eq!(slugs, sorted, "the full listing is slug-ordered: {body:?}");
+    for expected in ["object", "relic", "squirrel"] {
+        assert!(slugs.contains(&expected), "{expected} missing: {body:?}");
+    }
+    // The entry shape: label and the artwork count, straight off the seeded metadata.
+    let relic = tags
+        .iter()
+        .find(|t| t["slug"] == "relic")
+        .expect("relic entry");
+    assert_eq!(relic["label"].as_str(), Some("Relic"));
+    assert_eq!(relic["count"].as_i64(), Some(14));
 
-    // `re` prefixes `relic` and merely appears inside `squirrel`: starts-with first.
+    // `re` prefixes `relic` and merely appears inside `squirrel` (and, via its label,
+    // `no-creature`): starts-with ranks first, then the contains-matches by count desc.
     let (status, _, body) = send(&app, get(&format!("/api/games/{game}/art-tags?q=re"))).await;
     assert_eq!(status, StatusCode::OK);
     let slugs: Vec<&str> = body["data"]
@@ -541,7 +552,7 @@ async fn art_tag_lookup_lists_and_ranks_tags() {
         .iter()
         .filter_map(|t| t["slug"].as_str())
         .collect();
-    assert_eq!(slugs, ["relic", "squirrel"], "{body:?}");
+    assert_eq!(slugs, ["relic", "no-creature", "squirrel"], "{body:?}");
 
     // Labels match too (case-insensitively), and `limit` caps the suggestions.
     let (status, _, body) = send(

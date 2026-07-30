@@ -34,12 +34,12 @@ use crate::{
             public_holdings_cache_layer,
         },
         catalog::{
-            card_image, card_names, card_prices, card_prints, card_rulings, card_sealed,
-            export_cards, export_set_cards, get_card, get_product, get_set, ingest_status,
-            list_art_tags, list_cards, list_games, list_keywords, list_products, list_set_cards,
-            list_set_drops, list_set_subtypes, list_sets, product_card_sections, product_cards,
-            product_containers, product_contents, product_facets, product_image, product_prices,
-            scan_cards, set_icon,
+            card_art_tags, card_image, card_names, card_prices, card_prints, card_rulings,
+            card_sealed, export_cards, export_set_cards, get_card, get_product, get_set,
+            ingest_status, list_art_tags, list_cards, list_games, list_keywords, list_products,
+            list_set_cards, list_set_drops, list_set_subtypes, list_sets, product_card_sections,
+            product_cards, product_containers, product_contents, product_facets, product_image,
+            product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -571,6 +571,10 @@ pub fn build_router(state: AppState) -> Router {
         // The card's rulings ("Notes and Rules Information", issue #522), keyed by
         // oracle_id. A static-suffix sibling of `/prices` + `/prints` + `/sealed`.
         .route("/api/games/{game}/cards/{id}/rulings", get(card_rulings))
+        // The Tagger art tags on this card's artwork (the card page's "Artwork tags"
+        // panel), keyed by illustration_id. Another static-suffix sibling; the
+        // vocabulary-wide lookup stays at `/api/games/{game}/art-tags` above.
+        .route("/api/games/{game}/cards/{id}/art-tags", get(card_art_tags))
         // Sealed products (booster boxes, bundles, decks, …) from TCGCSV. `facets`
         // is a static sibling of `/products/{id}` (static segments win in axum), so
         // it never collides with a product id.

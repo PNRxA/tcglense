@@ -1,9 +1,11 @@
 import { computed, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getArtTags } from '@/lib/api'
+import { getArtTags, getCardArtTags } from '@/lib/api'
+import { STRUCTURAL_CATALOG_STALE_MS } from '@/lib/queryClient'
 
-/** Public art-tag lookups for the advanced-search panel (issue #140): typed-term
- * suggestions for the tag input, and the whole vocabulary for the tag browser. */
+/** Public art-tag lookups (issue #140): typed-term suggestions and the whole
+ * vocabulary for the advanced-search panel, plus one card artwork's tags for the card
+ * page's "Artwork tags" panel. */
 
 /** Minimum characters before the tag input queries for suggestions. */
 export const ART_TAG_MIN_CHARS = 2
@@ -34,5 +36,17 @@ export function useArtTagList(game: Ref<string>, enabled: Ref<boolean>) {
     queryFn: () => getArtTags(game.value),
     enabled,
     staleTime: 60 * 60_000,
+  })
+}
+
+/** The tags on one card's artwork, most specific first — the card page's "Artwork
+ * tags" panel. Public endpoint, so a plain useQuery; the refs go straight into the
+ * queryKey so a card-to-card navigation refetches. Tags move only on the daily sync,
+ * so they're structural-cadence data, like the card's rulings. */
+export function useCardArtTags(game: Ref<string>, id: Ref<string>) {
+  return useQuery({
+    queryKey: ['card-art-tags', game, id],
+    queryFn: () => getCardArtTags(game.value, id.value),
+    staleTime: STRUCTURAL_CATALOG_STALE_MS,
   })
 }
