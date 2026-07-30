@@ -68,6 +68,15 @@ export const getWishlistSetSubtypes = api.getSetSubtypes
  * batched under the id cap. */
 export const getWishlistCounts = api.counts
 
+/** Relative `/api/wishlist/{game}/cards/export` path for the wanted-card search's
+ * `.txt` export — the wish-list twin of `collectionCardExportPath`. */
+export const wishlistCardExportPath = api.cardExportPath
+
+/** Download the wanted-card search's whole result set as a `.txt` file: real wanted
+ * counts, one line per non-empty finish (foil copies tagged ` *F*`), honouring the same
+ * `q`/`set`/`includeRelated`/`sort`/`dir` the browse grid queried with. */
+export const exportWishlistCards = api.exportCardsFile
+
 /** How many copies of one card the user wants (zeros when not on the wish list). */
 export const getWishlistEntry = api.getEntry
 

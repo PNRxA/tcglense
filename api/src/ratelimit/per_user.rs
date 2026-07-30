@@ -36,7 +36,8 @@ pub(super) enum UserRoute {
     General,
     /// The whole-collection analytics reads that scan every held card/product
     /// against its full captured daily price history (`value-history`, `movers`) or
-    /// stream the entire collection as CSV (`export`). Each is O(cards × days), far
+    /// stream the entire holding as a file (the CSV `export` and the uncapped
+    /// card-list `cards/export` drains, the wish-list twin included). Each is far
     /// heavier than a page read and un-cacheable (`no-store`, per-user), so it gets a
     /// bucket tighter than `General` — capping how fast one account can drive
     /// full-history revaluation scans against the weak prod Postgres — but roomier
@@ -51,9 +52,9 @@ pub(super) enum UserRoute {
 impl UserRoute {
     /// Classify an authenticated request path into its per-user quota class. `{game}`
     /// is a path variable, so this matches on the trailing segments after
-    /// `/api/collection/{game}` or `/api/decks/{game}`; everything else (reads,
-    /// edits, `me`, an unknown path) falls into the generous [`Self::General`]
-    /// bucket.
+    /// `/api/collection/{game}`, `/api/wishlist/{game}`, or `/api/decks/{game}`;
+    /// everything else (reads, edits, `me`, an unknown path) falls into the generous
+    /// [`Self::General`] bucket.
     pub(super) fn from_path(path: &str) -> Self {
         if let Some(rest) = path.strip_prefix("/api/collection/")
             && let Some((_game, tail)) = rest.split_once('/')
@@ -61,11 +62,20 @@ impl UserRoute {
             if matches!(tail, "import" | "import/csv" | "import/text" | "sync") {
                 return Self::Import;
             }
-            // Whole-collection × full-history scans (+ the CSV export stream): heavy
-            // and un-cacheable, so tighter than General but not as tight as Import.
-            if matches!(tail, "value-history" | "movers" | "export") {
+            // Whole-collection × full-history scans (+ the CSV and card-list export
+            // streams): heavy and un-cacheable, so tighter than General but not as
+            // tight as Import.
+            if matches!(tail, "value-history" | "movers" | "export" | "cards/export") {
                 return Self::Analytics;
             }
+        }
+
+        // The wish list's card-list export is the collection export's twin: the same
+        // uncapped whole-holdings drain, so the same tighter bucket.
+        if let Some(rest) = path.strip_prefix("/api/wishlist/")
+            && let Some((_game, "cards/export")) = rest.split_once('/')
+        {
+            return Self::Analytics;
         }
 
         if let Some(rest) = path.strip_prefix("/api/decks/")
@@ -385,13 +395,16 @@ mod tests {
             UserRoute::Import
         );
 
-        // The whole-collection × full-history analytics reads + the CSV export stream
-        // are the intermediate analytics class (heavier than a page read, cheaper than
-        // an import). A deck export is bounded to one deck, so it stays general.
+        // The whole-collection × full-history analytics reads + the export streams
+        // (CSV and the uncapped card-list drains, the wish-list twin included) are the
+        // intermediate analytics class (heavier than a page read, cheaper than an
+        // import). A deck export is bounded to one deck, so it stays general.
         for analytics in [
             "/api/collection/mtg/value-history",
             "/api/collection/mtg/movers",
             "/api/collection/mtg/export",
+            "/api/collection/mtg/cards/export",
+            "/api/wishlist/mtg/cards/export",
         ] {
             assert_eq!(
                 UserRoute::from_path(analytics),
@@ -401,7 +414,7 @@ mod tests {
         }
 
         // Reads, edits, job polling, and non-collection authenticated routes are general
-        // (the whole wishlist surface included — it has no expensive import twin).
+        // (the rest of the wishlist surface included — it has no expensive import twin).
         for general in [
             "/api/collection/mtg",
             "/api/collection/mtg/summary",

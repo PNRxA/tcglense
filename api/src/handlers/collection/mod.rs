@@ -42,7 +42,7 @@ mod write;
 #[cfg(test)]
 mod tests;
 
-pub use export::export_collection;
+pub use export::{export_collection, export_collection_cards};
 pub use import::{
     delete_collection_source, get_collection_source, get_import_job, import_collection,
     import_collection_csv, import_collection_text, save_collection_source, sync_collection_source,
@@ -67,7 +67,7 @@ pub(crate) use sets::{owned_drop_page, owned_sets, owned_subtype_page};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::collection::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
-pub use export::__path_export_collection;
+pub use export::{__path_export_collection, __path_export_collection_cards};
 pub use import::{
     __path_delete_collection_source, __path_get_collection_source, __path_get_import_job,
     __path_import_collection, __path_import_collection_csv, __path_import_collection_text,

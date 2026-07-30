@@ -27,6 +27,7 @@ mod cors;
 mod decks;
 mod email_verification;
 mod headers;
+mod holdings_card_export;
 mod keywords;
 mod login;
 mod mirror;

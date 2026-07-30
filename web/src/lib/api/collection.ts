@@ -155,6 +155,15 @@ export const getCollectionSetSubtypes = api.getSetSubtypes
  * they don't own are simply absent) — POSTed to `.../owned` and batched under the id cap. */
 export const getCollectionOwned = api.counts
 
+/** Relative `/api/collection/{game}/cards/export` path for the owned-card search's
+ * `.txt` export — the collection browse's mirror of the catalog's card-search export. */
+export const collectionCardExportPath = api.cardExportPath
+
+/** Download the owned-card search's whole result set as a `.txt` file: real owned
+ * counts, one line per non-empty finish (foil copies tagged ` *F*`), honouring the same
+ * `q`/`set`/`includeRelated`/`sort`/`dir` the browse grid queried with. */
+export const exportCollectionCards = api.exportCardsFile
+
 /** How many copies of one card the user owns (zeros when not in the collection). */
 export const getCollectionEntry = api.getEntry
 
