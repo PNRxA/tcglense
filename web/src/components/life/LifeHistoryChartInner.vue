@@ -216,10 +216,17 @@ const summary = computed(() =>
           :tick-line="false"
           :domain-line="false"
         />
+        <!-- `hideWhenFarFromPointer` defaults on, at 100px: the crosshair (and its tooltip)
+             blanks out whenever the snapped column is further than that from the pointer. On a
+             dense price series that never fires, but a column here is one *change*, so a short
+             game spaces them hundreds of pixels apart and the middle of every interval would
+             answer a hover with nothing. Off — the pointer is always nearest to *some* change,
+             and leaving the plot still hides it (the range checks are separate). -->
         <ChartCrosshair
           :x="x"
           :y="crosshairY"
           :color="crosshairColors"
+          :hide-when-far-from-pointer="false"
           :template="tooltipTemplate"
         />
         <ChartTooltip />
