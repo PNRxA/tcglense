@@ -112,7 +112,9 @@ const tooltipLabel = computed(() => {
                 {{ itemConfig?.label || value }}
               </span>
             </div>
-            <span v-if="value" class="text-foreground font-mono font-medium tabular-nums">
+            <!-- `!= null`, not truthiness: zero is a real reading (a dead player's life total,
+                 a holding worth nothing) and dropping it left the row's label with no number. -->
+            <span v-if="value != null" class="text-foreground font-mono font-medium tabular-nums">
               {{ value.toLocaleString() }}
             </span>
           </div>

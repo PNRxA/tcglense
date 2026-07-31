@@ -28,7 +28,7 @@ const emit = defineEmits<{ undo: [eventId: number] }>()
       <LifeHistoryChart :lines="lines" />
     </div>
     <div class="bg-card rounded-xl border px-4 py-2">
-      <h3 class="py-2 text-sm font-medium">Every change</h3>
+      <h3 class="py-2 text-sm font-medium">History</h3>
       <LifeEventList
         :events="events"
         :seats="seats"

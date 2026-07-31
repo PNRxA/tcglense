@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRef } from 'vue'
-import { History, Maximize2, Minimize2, Repeat2, Trash2, Undo2, UserPlus } from '@lucide/vue'
+import { Maximize2, Minimize2, MoreVertical, Repeat2, Trash2, Undo2, UserPlus } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -261,7 +261,7 @@ const finishedDuration = computed(() =>
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
             <Button variant="ghost" size="icon-sm" aria-label="Game options">
-              <History class="size-4" />
+              <MoreVertical class="size-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
