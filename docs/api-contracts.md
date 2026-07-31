@@ -1263,7 +1263,8 @@ physical arrangement rather than a cosmetic one:
 | Slug | Arrangement | Default at |
 |------|-------------|-----------|
 | `rows` | One seat per full-width row, all upright — one person holding a phone | 1 player |
-| `facing` | Two banks on opposite edges, the far bank rotated 180° — the device flat between two sides of a table | 2–3 players |
+| `facing` | Two banks on opposite edges, the far bank rotated 180° — the device flat between two sides of a table. An odd seat count joins the **near** bank (three players = two here, one across) | 2–3 players |
+| `facing-solo` | The same two banks with the odd seat sent to the **far** one instead (three players = you alone, two across) — the mirror of `facing`, so the lone seat can be on either side of the table. At an even count the banks split evenly and it coincides with `facing`, which is why the SPA only offers it at odd counts ≥ 3 | — |
 | `pinwheel` | One seat per edge, each a quarter turn from the last — a pod around a device in the middle | 4 players |
 | `grid` | Two columns, all upright — one person holding a tablet | 5+ players |
 

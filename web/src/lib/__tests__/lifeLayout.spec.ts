@@ -3,6 +3,7 @@ import { LIFE_LAYOUTS, type LifeLayout, type LifeRotation } from '@/lib/api/life
 import {
   defaultLayoutFor,
   defaultRotationFor,
+  layoutAvailableFor,
   layoutOptionsFor,
   matPlacement,
   resolveLayout,
@@ -76,7 +77,7 @@ describe('layout vocabulary', () => {
   it('matches the server, which validates against its own copy of the list', () => {
     // Mirrors LAYOUTS in api/src/handlers/tools/life/mod.rs. A slug added on one side only
     // would either be rejected by the API or render as something else, so pin them together.
-    expect([...LIFE_LAYOUTS].sort()).toEqual(['facing', 'grid', 'pinwheel', 'rows'])
+    expect([...LIFE_LAYOUTS].sort()).toEqual(['facing', 'facing-solo', 'grid', 'pinwheel', 'rows'])
   })
 
   it('defaults to the arrangement each player count is normally played in', () => {
@@ -95,8 +96,33 @@ describe('layout vocabulary', () => {
     // "Around the table" is a pod of three or four; at six it would just be the grid.
     expect(slugs(4)).toContain('pinwheel')
     expect(slugs(6)).not.toContain('pinwheel')
+    // The solo side only exists where a bank actually takes the odd seat — at an even count it
+    // would draw the identical mat to `facing`, which is a choice with no consequence.
+    expect(slugs(3)).toContain('facing-solo')
+    expect(slugs(5)).toContain('facing-solo')
+    expect(slugs(2)).not.toContain('facing-solo')
+    expect(slugs(4)).not.toContain('facing-solo')
+    expect(slugs(1)).not.toContain('facing-solo')
     // The count's default is offered first, so the preselected option is the top one.
     for (const count of COUNTS) expect(slugs(count)[0]).toBe(defaultLayoutFor(count))
+    // Every offered option agrees with the predicate the new-game dialog resets against.
+    for (const count of COUNTS) {
+      for (const layout of LIFE_LAYOUTS) {
+        expect(slugs(count).includes(layout), `${layout}/${count}`).toBe(
+          layoutAvailableFor(layout, count),
+        )
+      }
+    }
+  })
+
+  it('describes a facing table by the split it will actually draw', () => {
+    const hint = (layout: LifeLayout, count: number) =>
+      layoutOptionsFor(count).find((option) => option.value === layout)?.hint
+    // The two three-player arrangements are told apart by their copy, not just their preview.
+    expect(hint('facing', 3)).toBe('2 on your side, one across')
+    expect(hint('facing-solo', 3)).toBe('You alone, 2 across the table')
+    expect(hint('facing', 5)).toBe('3 on your side, 2 across')
+    expect(hint('facing-solo', 5)).toBe('2 on your side, 3 across')
   })
 
   it('falls back to a renderable layout for an unknown stored slug', () => {
@@ -115,6 +141,16 @@ describe('default rotations', () => {
     expect(facing(2)).toEqual([0, 180])
     expect(facing(3)).toEqual([0, 0, 180])
     expect(facing(5)).toEqual([0, 0, 0, 180, 180])
+
+    const solo = (count: number) =>
+      Array.from({ length: count }, (_, position) =>
+        defaultRotationFor('facing-solo', position, count),
+      )
+    // The odd seat goes across instead of staying near — the mirror of `facing`'s split.
+    expect(solo(3)).toEqual([0, 180, 180])
+    expect(solo(5)).toEqual([0, 0, 180, 180, 180])
+    // An even table splits evenly either way, so the two coincide there.
+    expect(solo(4)).toEqual(facing(4))
 
     const pinwheel = (count: number) =>
       Array.from({ length: count }, (_, position) =>
@@ -184,6 +220,23 @@ describe('mat placement', () => {
       'span 3',
       'span 3',
     ])
+  })
+
+  it('mirrors that split for a solo side, so the lone seat can be either bank', () => {
+    // The gap this closes: with `facing` the lone seat is always the far one. Here it's yours —
+    // one tile along the bottom, two upside-down across the top.
+    const three = matPlacement('facing-solo', 3)
+    expect(three.seats.map((seat) => seat.row)).toEqual(['2', '1', '1'])
+    expect(three.seats.map((seat) => seat.rotation)).toEqual([0, 180, 180])
+    expect(three.seats.map((seat) => seat.column)).toEqual(['span 2', 'span 1', 'span 1'])
+
+    // Exactly the mirror of `facing` at the same count: same rows, opposite banks.
+    const facing = matPlacement('facing', 3)
+    expect(three.columns).toBe(facing.columns)
+    expect(three.rows).toBe(facing.rows)
+    expect(three.seats.map((seat) => seat.row)).toEqual(
+      facing.seats.map((seat) => (seat.row === '1' ? '2' : '1')).reverse(),
+    )
   })
 
   it('seats a pinwheel one per edge, each cell on the side its player sits on', () => {
