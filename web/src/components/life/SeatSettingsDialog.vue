@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowLeft, ArrowRight, Trash2 } from '@lucide/vue'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Trash2 } from '@lucide/vue'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Dialog,
@@ -84,6 +84,14 @@ const rotationModel = computed({
     if (value) rotation.value = Number(value) as LifeRotation
   },
 })
+
+/** Each rotation option's arrow, by the screen edge it points at — see `ROTATION_OPTIONS`. */
+const ROTATION_ARROWS = {
+  up: ArrowUp,
+  down: ArrowDown,
+  left: ArrowLeft,
+  right: ArrowRight,
+}
 
 // A one-seat table has no order to change.
 const canReorder = computed(() => props.seatCount > 1)
@@ -175,16 +183,23 @@ function save() {
 
         <div class="space-y-2">
           <Label>Facing</Label>
+          <!-- Arrows, not words: the choice is "which side of the table are they on", and a
+               direction is quicker to point at than "Left edge" is to read. -->
           <ToggleGroup v-model="rotationModel" type="single" variant="outline" class="flex-wrap">
             <ToggleGroupItem
               v-for="option in ROTATION_OPTIONS"
               :key="option.value"
               :value="String(option.value)"
               :aria-label="option.label"
+              :title="option.label"
+              class="w-10"
             >
-              {{ option.label }}
+              <component :is="ROTATION_ARROWS[option.arrow]" class="size-4" />
             </ToggleGroupItem>
           </ToggleGroup>
+          <p class="text-muted-foreground text-xs">
+            Which side of the table this player is on — the tile turns to read upright for them.
+          </p>
         </div>
 
         <div class="space-y-2">

@@ -45,7 +45,15 @@ export type LifeSeatResult = 'none' | 'win' | 'loss' | 'draw'
  * `api/src/handlers/tools/life/mod.rs` — the server validates against its copy, so the two
  * lists must agree (pinned by a unit test on each side).
  */
-export const LIFE_LAYOUTS = ['rows', 'facing', 'facing-solo', 'grid', 'pinwheel'] as const
+export const LIFE_LAYOUTS = [
+  'rows',
+  'facing',
+  'facing-solo',
+  'sides',
+  'sides-solo',
+  'grid',
+  'pinwheel',
+] as const
 export type LifeLayout = (typeof LIFE_LAYOUTS)[number]
 
 /** A seat's screen rotation in degrees. */

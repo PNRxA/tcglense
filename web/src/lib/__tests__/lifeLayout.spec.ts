@@ -25,10 +25,24 @@ function trackCount(template: string): number {
 }
 
 /**
+ * One axis of a seat's grid shorthand: where it starts (null = leave it to auto-placement) and
+ * how many tracks it covers. Handles the three forms the placement maths emits — `span N`,
+ * a bare line number, and `N / span M`.
+ */
+function parseTrack(value: string): { start: number | null; span: number } {
+  const spanOnly = /^span (\d+)$/.exec(value)
+  if (spanOnly) return { start: null, span: Number(spanOnly[1]) }
+  const startSpan = /^(\d+) \/ span (\d+)$/.exec(value)
+  if (startSpan) return { start: Number(startSpan[1]), span: Number(startSpan[2]) }
+  return { start: Number(value), span: 1 }
+}
+
+/**
  * Every cell a placement covers, as `row:col` keys — so a hole or an overlap is visible.
  *
- * Models CSS auto-placement closely enough for these grids: a seat with a definite row packs
- * along that row, a fully auto seat takes the first run of free cells wide enough for its span.
+ * Models CSS auto-placement closely enough for these grids: a seat with a definite line on an
+ * axis is pinned there, and an auto one takes the first free block big enough for its span.
+ * The two-bank layouts pin both axes precisely so they don't depend on this model at all.
  */
 function coveredCells(layout: LifeLayout, count: number): string[] {
   const placement = matPlacement(layout, count)
@@ -37,25 +51,28 @@ function coveredCells(layout: LifeLayout, count: number): string[] {
   const taken = new Set<string>()
   const cells: string[] = []
 
+  const block = (row: number, column: number, rowSpan: number, columnSpan: number) =>
+    Array.from({ length: rowSpan }, (_, r) =>
+      Array.from({ length: columnSpan }, (_, c) => `${row + r}:${column + c}`),
+    ).flat()
+
   for (const seat of placement.seats) {
-    const span = seat.column.startsWith('span ') ? Number(seat.column.slice(5)) : 1
-    const explicitColumn = seat.column.startsWith('span ') ? null : Number(seat.column)
-    const explicitRow = seat.row.startsWith('span ') ? null : Number(seat.row)
+    const { start: columnStart, span: columnSpan } = parseTrack(seat.column)
+    const { start: rowStart, span: rowSpan } = parseTrack(seat.row)
     const candidateRows =
-      explicitRow !== null ? [explicitRow] : Array.from({ length: rowCount }, (_, i) => i + 1)
+      rowStart !== null
+        ? [rowStart]
+        : Array.from({ length: Math.max(1, rowCount - rowSpan + 1) }, (_, i) => i + 1)
     const candidateColumns =
-      explicitColumn !== null
-        ? [explicitColumn]
-        : Array.from({ length: Math.max(1, columnCount - span + 1) }, (_, i) => i + 1)
+      columnStart !== null
+        ? [columnStart]
+        : Array.from({ length: Math.max(1, columnCount - columnSpan + 1) }, (_, i) => i + 1)
 
     let placedRow = -1
     let placedColumn = -1
     for (const row of candidateRows) {
       for (const column of candidateColumns) {
-        const free = Array.from({ length: span }, (_, o) => `${row}:${column + o}`).every(
-          (key) => !taken.has(key),
-        )
-        if (free) {
+        if (block(row, column, rowSpan, columnSpan).every((key) => !taken.has(key))) {
           placedRow = row
           placedColumn = column
           break
@@ -64,8 +81,7 @@ function coveredCells(layout: LifeLayout, count: number): string[] {
       if (placedRow !== -1) break
     }
     expect(placedRow, `${layout}/${count}: a seat had nowhere to go`).toBeGreaterThan(0)
-    for (let offset = 0; offset < span; offset += 1) {
-      const key = `${placedRow}:${placedColumn + offset}`
+    for (const key of block(placedRow, placedColumn, rowSpan, columnSpan)) {
       cells.push(key)
       taken.add(key)
     }
@@ -77,7 +93,15 @@ describe('layout vocabulary', () => {
   it('matches the server, which validates against its own copy of the list', () => {
     // Mirrors LAYOUTS in api/src/handlers/tools/life/mod.rs. A slug added on one side only
     // would either be rejected by the API or render as something else, so pin them together.
-    expect([...LIFE_LAYOUTS].sort()).toEqual(['facing', 'facing-solo', 'grid', 'pinwheel', 'rows'])
+    expect([...LIFE_LAYOUTS].sort()).toEqual([
+      'facing',
+      'facing-solo',
+      'grid',
+      'pinwheel',
+      'rows',
+      'sides',
+      'sides-solo',
+    ])
   })
 
   it('defaults to the arrangement each player count is normally played in', () => {
@@ -96,13 +120,19 @@ describe('layout vocabulary', () => {
     // "Around the table" is a pod of three or four; at six it would just be the grid.
     expect(slugs(4)).toContain('pinwheel')
     expect(slugs(6)).not.toContain('pinwheel')
-    // The solo side only exists where a bank actually takes the odd seat — at an even count it
-    // would draw the identical mat to `facing`, which is a choice with no consequence.
-    expect(slugs(3)).toContain('facing-solo')
-    expect(slugs(5)).toContain('facing-solo')
-    expect(slugs(2)).not.toContain('facing-solo')
-    expect(slugs(4)).not.toContain('facing-solo')
-    expect(slugs(1)).not.toContain('facing-solo')
+    // A `-solo` variant only exists where a bank actually takes an odd seat — at an even count
+    // it draws the identical mat to its sibling, which is a choice with no consequence.
+    for (const solo of ['facing-solo', 'sides-solo'] as const) {
+      expect(slugs(3)).toContain(solo)
+      expect(slugs(5)).toContain(solo)
+      expect(slugs(2)).not.toContain(solo)
+      expect(slugs(4)).not.toContain(solo)
+      expect(slugs(1)).not.toContain(solo)
+    }
+    // Both axes stay on offer wherever they fit: the picker can't tell which way round the
+    // device is being held, so the landscape split is a choice, never inferred.
+    for (const count of [2, 3, 4, 5, 6]) expect(slugs(count)).toContain('sides')
+    expect(slugs(1)).not.toContain('sides')
     // The count's default is offered first, so the preselected option is the top one.
     for (const count of COUNTS) expect(slugs(count)[0]).toBe(defaultLayoutFor(count))
     // Every offered option agrees with the predicate the new-game dialog resets against.
@@ -115,14 +145,18 @@ describe('layout vocabulary', () => {
     }
   })
 
-  it('describes a facing table by the split it will actually draw', () => {
+  it('describes a two-bank table by the split it will actually draw', () => {
     const hint = (layout: LifeLayout, count: number) =>
       layoutOptionsFor(count).find((option) => option.value === layout)?.hint
-    // The two three-player arrangements are told apart by their copy, not just their preview.
+    // The four three-player arrangements are told apart by their copy, not just their preview —
+    // and each names the edge its lone seat is on, which is the whole point of having four.
     expect(hint('facing', 3)).toBe('2 on your side, one across')
     expect(hint('facing-solo', 3)).toBe('You alone, 2 across the table')
+    expect(hint('sides', 3)).toBe('2 on the left, one on the right')
+    expect(hint('sides-solo', 3)).toBe('You alone on the left, 2 on the right')
+    // The wording follows the count, not the slug.
     expect(hint('facing', 5)).toBe('3 on your side, 2 across')
-    expect(hint('facing-solo', 5)).toBe('2 on your side, 3 across')
+    expect(hint('sides-solo', 5)).toBe('2 on the left, 3 on the right')
   })
 
   it('falls back to a renderable layout for an unknown stored slug', () => {
@@ -142,15 +176,21 @@ describe('default rotations', () => {
     expect(facing(3)).toEqual([0, 0, 180])
     expect(facing(5)).toEqual([0, 0, 0, 180, 180])
 
-    const solo = (count: number) =>
-      Array.from({ length: count }, (_, position) =>
-        defaultRotationFor('facing-solo', position, count),
-      )
-    // The odd seat goes across instead of staying near — the mirror of `facing`'s split.
+    const rotations = (layout: LifeLayout) => (count: number) =>
+      Array.from({ length: count }, (_, position) => defaultRotationFor(layout, position, count))
+
+    // The odd seat goes across instead of staying in your bank — the mirror of the plain split.
+    const solo = rotations('facing-solo')
     expect(solo(3)).toEqual([0, 180, 180])
     expect(solo(5)).toEqual([0, 0, 180, 180, 180])
     // An even table splits evenly either way, so the two coincide there.
     expect(solo(4)).toEqual(facing(4))
+
+    // The left/right axis is the same split read from the side edges instead.
+    expect(rotations('sides')(3)).toEqual([90, 90, 270])
+    expect(rotations('sides-solo')(3)).toEqual([90, 270, 270])
+    expect(rotations('sides')(5)).toEqual([90, 90, 90, 270, 270])
+    expect(rotations('sides-solo')(5)).toEqual([90, 90, 270, 270, 270])
 
     const pinwheel = (count: number) =>
       Array.from({ length: count }, (_, position) =>
@@ -207,36 +247,79 @@ describe('mat placement', () => {
     expect(three.rows).toBe('repeat(2, minmax(0, 1fr))')
     expect(three.seats.map((seat) => seat.row)).toEqual(['2', '2', '1'])
     expect(three.seats.map((seat) => seat.rotation)).toEqual([0, 0, 180])
-    expect(three.seats[2]?.column).toBe('span 2')
+    expect(three.seats[2]?.column).toBe('1 / span 2')
 
     // Five players: banks of three and two over a shared six-column track, so every tile in
     // a bank is the same width and the row has no gap.
     const five = matPlacement('facing', 5)
     expect(five.columns).toBe('repeat(6, minmax(0, 1fr))')
     expect(five.seats.map((seat) => seat.column)).toEqual([
-      'span 2',
-      'span 2',
-      'span 2',
-      'span 3',
-      'span 3',
+      '1 / span 2',
+      '3 / span 2',
+      '5 / span 2',
+      '1 / span 3',
+      '4 / span 3',
     ])
   })
 
-  it('mirrors that split for a solo side, so the lone seat can be either bank', () => {
+  it('mirrors that split for a solo variant, so the lone seat can be either bank', () => {
     // The gap this closes: with `facing` the lone seat is always the far one. Here it's yours —
     // one tile along the bottom, two upside-down across the top.
     const three = matPlacement('facing-solo', 3)
     expect(three.seats.map((seat) => seat.row)).toEqual(['2', '1', '1'])
     expect(three.seats.map((seat) => seat.rotation)).toEqual([0, 180, 180])
-    expect(three.seats.map((seat) => seat.column)).toEqual(['span 2', 'span 1', 'span 1'])
+    expect(three.seats.map((seat) => seat.column)).toEqual([
+      '1 / span 2',
+      '1 / span 1',
+      '2 / span 1',
+    ])
 
-    // Exactly the mirror of `facing` at the same count: same rows, opposite banks.
+    // Exactly the mirror of `facing` at the same count: same grid, opposite banks.
     const facing = matPlacement('facing', 3)
     expect(three.columns).toBe(facing.columns)
     expect(three.rows).toBe(facing.rows)
     expect(three.seats.map((seat) => seat.row)).toEqual(
       facing.seats.map((seat) => (seat.row === '1' ? '2' : '1')).reverse(),
     )
+  })
+
+  it('turns the same two banks a quarter turn for a lengthways device', () => {
+    // `sides` is `facing` rotated: the banks become left and right columns, read from the left
+    // (90°) and right (270°) edges. This is the split a landscape screen wants.
+    const three = matPlacement('sides', 3)
+    expect(three.columns).toBe('repeat(2, minmax(0, 1fr))')
+    expect(three.rows).toBe('repeat(2, minmax(0, 1fr))')
+    expect(three.seats.map((seat) => seat.column)).toEqual(['1', '1', '2'])
+    expect(three.seats.map((seat) => seat.row)).toEqual(['1 / span 1', '2 / span 1', '1 / span 2'])
+    expect(three.seats.map((seat) => seat.rotation)).toEqual([90, 90, 270])
+
+    // And its solo variant moves the lone seat to the *left* — the landscape half of the ask.
+    const solo = matPlacement('sides-solo', 3)
+    expect(solo.seats.map((seat) => seat.column)).toEqual(['1', '2', '2'])
+    expect(solo.seats.map((seat) => seat.row)).toEqual(['1 / span 2', '1 / span 1', '2 / span 1'])
+    expect(solo.seats.map((seat) => seat.rotation)).toEqual([90, 270, 270])
+
+    // Both axes divide their tracks the same way — only which axis is split differs.
+    for (const count of COUNTS) {
+      const near = matPlacement('facing', count)
+      const side = matPlacement('sides', count)
+      expect(side.columns, `sides/${count}`).toBe(near.rows)
+      expect(side.rows, `sides/${count}`).toBe(near.columns)
+    }
+  })
+
+  it('pins both lines of a two-bank seat rather than trusting auto-placement', () => {
+    // A `left-right` bank is a definite column with a row span, and the auto-placement cursor
+    // only moves forward — by the second bank it has advanced past the top of its column and
+    // would grow a phantom row. Every two-bank cell therefore names its start line.
+    for (const layout of ['facing', 'facing-solo', 'sides', 'sides-solo'] as const) {
+      for (const count of COUNTS.filter((n) => n > 1)) {
+        for (const seat of matPlacement(layout, count).seats) {
+          expect(seat.column.startsWith('span '), `${layout}/${count} column`).toBe(false)
+          expect(seat.row.startsWith('span '), `${layout}/${count} row`).toBe(false)
+        }
+      }
+    }
   })
 
   it('seats a pinwheel one per edge, each cell on the side its player sits on', () => {

@@ -15,8 +15,8 @@ game: string, name: string | null, format: string | null,
  */
 starting_life: number, 
 /**
- * Seat-placement layout slug — one of `rows` / `facing` / `facing-solo` / `grid` /
- * `pinwheel`.
+ * Seat-placement layout slug — one of `rows` / `facing` / `facing-solo` / `sides` /
+ * `sides-solo` / `grid` / `pinwheel`.
  */
 layout: string, 
 /**
