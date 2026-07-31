@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { LifeEvent, LifeSeat } from '@/lib/api'
 import {
+  clockLabel,
   describeChange,
   durationLabel,
   elapsedLabel,
   lifeDuration,
   lifeExtent,
   lifeLines,
+  lifeSteps,
   seatColor,
   sessionDuration,
+  stepLabel,
   winRateLabel,
 } from '@/lib/lifeSeries'
 
@@ -141,6 +144,101 @@ describe('extents', () => {
       START,
     )
     expect(lifeDuration(lines)).toBe(480_000)
+  })
+})
+
+describe('lifeSteps', () => {
+  it('gives every change one evenly-spaced column, carrying untouched seats forward', () => {
+    const seats = [seat({ id: 1, position: 0 }), seat({ id: 2, position: 1 })]
+    const events = [
+      event({ id: 10, player_id: 1, delta: -3, life_after: 37 }),
+      event({ id: 11, player_id: 2, delta: -5, life_after: 35 }),
+      event({ id: 12, player_id: 1, delta: -2, life_after: 35 }),
+    ]
+    const steps = lifeSteps(lifeLines(seats, events, START))
+    // Three changes plus the starting column, indexed 0..3 — the spacing is the index.
+    expect(steps.map((s) => s.step)).toEqual([0, 1, 2, 3])
+    expect(steps.map((s) => s.eventId)).toEqual([null, 10, 11, 12])
+    // Seat 2 has no event in column 1, but it still has a total there: the line is continuous
+    // across the whole chart rather than gapping between its own changes.
+    expect(steps.map((s) => s.lives[1])).toEqual([40, 37, 37, 35])
+    expect(steps.map((s) => s.lives[2])).toEqual([40, 40, 35, 35])
+  })
+
+  it('keeps the clock on each column even though it no longer sets the spacing', () => {
+    // A long break between two changes: even spacing, honest timestamps.
+    const steps = lifeSteps(
+      lifeLines(
+        [seat({ id: 1, position: 0 })],
+        [
+          event({ id: 1, player_id: 1, created_at: '2026-07-30T12:00:20.000Z' }),
+          event({ id: 2, player_id: 1, created_at: '2026-07-30T12:40:00.000Z' }),
+        ],
+        START,
+      ),
+    )
+    expect(steps.map((s) => s.step)).toEqual([0, 1, 2])
+    expect(steps.map((s) => s.at)).toEqual([0, 20_000, 2_400_000])
+  })
+
+  it('orders columns by event id, not by a timestamp that can run backwards', () => {
+    // `lifeLines` clamps a row stamped before the game started; sorting on `at` would put that
+    // change first and rewrite every total after it.
+    const steps = lifeSteps(
+      lifeLines(
+        [seat({ id: 1, position: 0 })],
+        [
+          event({ id: 1, player_id: 1, life_after: 30, created_at: '2026-07-30T12:05:00.000Z' }),
+          event({ id: 2, player_id: 1, life_after: 12, created_at: '2026-07-30T11:59:00.000Z' }),
+        ],
+        START,
+      ),
+    )
+    expect(steps.map((s) => s.eventId)).toEqual([null, 1, 2])
+    expect(steps.map((s) => s.lives[1])).toEqual([40, 30, 12])
+  })
+
+  it('draws an untouched seat as one flat run rather than dropping it', () => {
+    const steps = lifeSteps(
+      lifeLines(
+        [seat({ id: 1, position: 0 }), seat({ id: 2, position: 1, starting_life: 20 })],
+        [event({ id: 1, player_id: 1, life_after: 39 })],
+        START,
+      ),
+    )
+    expect(steps.map((s) => s.lives[2])).toEqual([20, 20])
+  })
+
+  it('has no columns at all with nothing to chart', () => {
+    expect(lifeSteps([])).toEqual([])
+    // A line handed in with no points takes no key, rather than punching a hole in every row.
+    expect(lifeSteps([{ playerId: 1, position: 0, name: 'Nobody', points: [] }])).toEqual([])
+  })
+
+  it('is one column when the only changes belong to a removed seat', () => {
+    // `lifeLines` drops those events; the chart's wrapper reads this length to decide there's
+    // nothing worth drawing.
+    const steps = lifeSteps(
+      lifeLines([seat({ id: 1, position: 0 })], [event({ id: 1, player_id: 99 })], START),
+    )
+    expect(steps).toHaveLength(1)
+  })
+})
+
+describe('step labels', () => {
+  it('reads a game clock to the second', () => {
+    // Second resolution, unlike elapsedLabel: two changes seconds apart are now drawn side by
+    // side, and "start" for both would say nothing.
+    expect(clockLabel(0)).toBe('0:00')
+    expect(clockLabel(42_000)).toBe('0:42')
+    expect(clockLabel(12 * 60_000 + 7_000)).toBe('12:07')
+    expect(clockLabel(64 * 60_000 + 19_000)).toBe('1:04:19')
+    expect(clockLabel(-5)).toBe('0:00')
+  })
+
+  it('names the change and when it happened', () => {
+    expect(stepLabel({ step: 0, at: 0, eventId: null, lives: {} })).toBe('Start')
+    expect(stepLabel({ step: 3, at: 247_000, eventId: 12, lives: {} })).toBe('Change 3 · 4:07')
   })
 })
 

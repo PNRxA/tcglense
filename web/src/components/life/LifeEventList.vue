@@ -66,7 +66,11 @@ const rows = computed<Row[]>(() =>
         />
         <span class="min-w-0 flex-1 truncate text-sm">
           <span class="font-medium">{{ row.name }}</span>
-          <span class="text-muted-foreground"> {{ describeChange(row.event) }}</span>
+          <!-- `&nbsp;`, not a plain space: the compiler drops a whitespace-only text node at the
+               start of an element, which ran the name straight into the change ("Player 4lost 3").
+               A margin would have fixed the look and left the row reading (and copying) as one
+               word, so the gap belongs in the text. -->
+          <span class="text-muted-foreground">&nbsp;{{ describeChange(row.event) }}</span>
         </span>
         <span class="text-muted-foreground w-12 shrink-0 text-right text-sm tabular-nums">
           {{ row.event.life_after }}

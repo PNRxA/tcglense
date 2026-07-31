@@ -94,6 +94,60 @@ export function lifeDuration(lines: LifeLine[]): number {
 }
 
 /**
+ * One column of the history chart: every seat's total immediately after one recorded change.
+ *
+ * The chart plots these by their **index**, not their timestamp, so every change gets the same
+ * width. A game is a sequence of things happening, and the ten quiet minutes while someone reads
+ * a card are a break in play, not a hole in the chart — time spacing crushed a turn's worth of
+ * trades into a few pixels and drew a long flat corridor beside it. The clock isn't thrown away:
+ * it rides along on each step, and the axis ticks and the tooltip read it back out.
+ */
+export interface LifeStep {
+  /** Position on the (even) x axis — 0 is the starting totals, 1 the first change, and so on. */
+  step: number
+  /** ms since the game started, for the axis/tooltip labels. */
+  at: number
+  /** The event this step records, or null for the starting-life origin at step 0. */
+  eventId: number | null
+  /**
+   * Every seat's total at this step, keyed by seat id — carried forward for the seats this change
+   * didn't touch, so each line has a value in every column rather than gapping between its own
+   * events.
+   */
+  lives: Record<number, number>
+}
+
+/**
+ * Fold the per-seat lines back into one evenly-spaced column per recorded change.
+ *
+ * Ordering is by **event id**, not by timestamp: `lifeLines` clamps a row stamped before the game
+ * started, so `at` can run backwards while ids never do.
+ *
+ * A line's first point is that seat's starting total (which is what `lifeLines` guarantees), so
+ * every seat has a value at step 0 and an untouched seat still draws a flat line across the whole
+ * chart. A line with no points at all — a seat the caller handed in empty — takes no column and
+ * no key, rather than punching a hole in every row.
+ */
+export function lifeSteps(lines: LifeLine[]): LifeStep[] {
+  const lives: Record<number, number> = {}
+  const changes: { playerId: number; point: LifePoint }[] = []
+  for (const line of lines) {
+    const [origin, ...rest] = line.points
+    if (!origin) continue
+    lives[line.playerId] = origin.life
+    for (const point of rest) changes.push({ playerId: line.playerId, point })
+  }
+  if (Object.keys(lives).length === 0) return []
+  changes.sort((a, b) => (a.point.eventId ?? 0) - (b.point.eventId ?? 0))
+  const steps: LifeStep[] = [{ step: 0, at: 0, eventId: null, lives: { ...lives } }]
+  changes.forEach(({ playerId, point }, index) => {
+    lives[playerId] = point.life
+    steps.push({ step: index + 1, at: point.at, eventId: point.eventId, lives: { ...lives } })
+  })
+  return steps
+}
+
+/**
  * Seat colours, by position, over the theme's existing `--chart-*` tokens.
  *
  * The order is chosen so adjacent seats never share a hue family in either theme (the light
@@ -142,6 +196,28 @@ export function elapsedLabel(ms: number): string {
   if (minutes < 60) return `${minutes}m`
   const hours = Math.floor(minutes / 60)
   return `${hours}h ${minutes % 60}m`
+}
+
+/**
+ * A game clock ("0:42", "12:07", "1:04:19") for a point in the history.
+ *
+ * The history chart's x axis counts changes rather than minutes, so the clock is what puts the
+ * time back — to the second, because two changes seconds apart would both read as "start" at
+ * `elapsedLabel`'s minute resolution, which is exactly the pair the chart now draws side by side.
+ */
+export function clockLabel(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor(total / 60) % 60
+  const seconds = total % 60
+  const mm = hours > 0 ? String(minutes).padStart(2, '0') : String(minutes)
+  return `${hours > 0 ? `${hours}:` : ''}${mm}:${String(seconds).padStart(2, '0')}`
+}
+
+/** A history step's heading: which change it is, and when it happened. */
+export function stepLabel(step: LifeStep): string {
+  if (step.eventId === null) return 'Start'
+  return `Change ${step.step} · ${clockLabel(step.at)}`
 }
 
 /** How long a game ran, from its start and (optional) finish. Null while still in progress. */
