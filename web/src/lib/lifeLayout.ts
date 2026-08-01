@@ -30,33 +30,159 @@ import { LIFE_LAYOUTS, type LifeLayout, type LifeRotation } from '@/lib/api/life
 export interface LayoutOption {
   value: LifeLayout
   label: string
-  /** Why you'd pick it — the physical arrangement it matches. */
+  /** Why you'd pick it — the physical arrangement it matches, at this player count. */
   hint: string
 }
 
-const OPTIONS: Record<LifeLayout, Omit<LayoutOption, 'value'>> = {
-  rows: { label: 'Stacked', hint: 'One row each — someone holds the phone' },
-  grid: { label: 'Grid', hint: 'Two columns, all upright — a held tablet' },
-  facing: { label: 'Facing', hint: 'Two sides of a table, flat in the middle' },
-  pinwheel: { label: 'Around the table', hint: 'One seat per edge, each facing in' },
+/**
+ * The **two-bank** layouts: two facing edges of the device with the seats split between them.
+ *
+ * Four of them, from two independent choices — which is the honest model, because each
+ * combination is a different table rather than a different look at the same one:
+ *
+ * - **`axis`** — which pair of edges the banks sit on. `near-far` splits the mat into a bottom
+ *   and a top row, for a device lying with its short edge towards you; `left-right` splits it
+ *   into a left and a right column, for one lying lengthways *between* the two sides. On a
+ *   landscape screen that second split is the one that matches the room.
+ * - **`oddSeatCrosses`** — where the extra seat of an odd table goes. `false` keeps it in your
+ *   own bank (three players = two here, one across); `true` sends it over (three players = you
+ *   alone, two across). That's what lets the lone seat be on *either* side of the table.
+ *
+ * Neither is a rotation or a seat order a player can nudge into place, so each combination gets
+ * its own slug. At an even count the banks split evenly and the `oddSeatCrosses` pair coincides
+ * — see {@link layoutAvailableFor}.
+ *
+ * Mirrors `two_bank` in `api/src/handlers/tools/life/mod.rs`.
+ */
+interface TwoBank {
+  axis: 'near-far' | 'left-right'
+  oddSeatCrosses: boolean
+  /** Rotation for a seat in your own bank, and for one in the bank opposite. */
+  rotations: [LifeRotation, LifeRotation]
+}
+
+const TWO_BANK_LAYOUTS = [
+  'facing',
+  'facing-solo',
+  'sides',
+  'sides-solo',
+] as const satisfies readonly LifeLayout[]
+type TwoBankLayout = (typeof TWO_BANK_LAYOUTS)[number]
+
+const TWO_BANK: Record<TwoBankLayout, TwoBank> = {
+  facing: { axis: 'near-far', oddSeatCrosses: false, rotations: [0, 180] },
+  'facing-solo': { axis: 'near-far', oddSeatCrosses: true, rotations: [0, 180] },
+  // A left-edge player reads at 90° and a right-edge one at 270° — the same convention the
+  // pinwheel's side seats use, so a seat's cell is always on the side its player sits on.
+  sides: { axis: 'left-right', oddSeatCrosses: false, rotations: [90, 270] },
+  'sides-solo': { axis: 'left-right', oddSeatCrosses: true, rotations: [90, 270] },
+}
+
+/** The two-bank description of `layout`, or `undefined` for the single-bank layouts. */
+function twoBankOf(layout: LifeLayout): TwoBank | undefined {
+  return (TWO_BANK_LAYOUTS as readonly string[]).includes(layout)
+    ? TWO_BANK[layout as TwoBankLayout]
+    : undefined
 }
 
 /**
- * The layouts worth offering for a player count, in preference order.
+ * How many seats sit in **your own** bank of a two-bank table — the near one for a `near-far`
+ * split, the left one for `left-right`, in both cases the side the device is operated from.
  *
- * `facing` needs two banks and `pinwheel` reads as a table only for three or four seats, so
- * neither is offered outside that — an option that renders as something other than its own name
- * is worse than no option. `rows` and `grid` are held-device layouts and work at any count.
+ * Mirrors `near_bank_size` in `api/src/handlers/tools/life/mod.rs`.
  */
+function nearBankSize(layout: LifeLayout, playerCount: number): number {
+  return twoBankOf(layout)?.oddSeatCrosses
+    ? Math.floor(playerCount / 2)
+    : Math.ceil(playerCount / 2)
+}
+
+/**
+ * How a two-bank table's split reads in words.
+ *
+ * Worded from the bank sizes and the axis rather than fixed per slug, because that split is the
+ * *whole* difference between the four two-bank layouts and it changes with the player count —
+ * "you alone, two across" and "two on your side, three across" are the same layout at three
+ * seats and at five.
+ */
+function bankHint(axis: TwoBank['axis'], near: number, far: number): string {
+  if (axis === 'left-right') {
+    if (near === 1 && far === 1) return 'Lengthways between two sides'
+    if (near === 1) return `You alone on the left, ${far} on the right`
+    if (far === 1) return `${near} on the left, one on the right`
+    return `${near} on the left, ${far} on the right`
+  }
+  if (near === 1 && far === 1) return 'Across a table, flat in the middle'
+  if (near === 1) return `You alone, ${far} across the table`
+  if (far === 1) return `${near} on your side, one across`
+  return `${near} on your side, ${far} across`
+}
+
+/** The hint for a two-bank slug, resolved from the split it will actually draw at this count. */
+function twoBankHint(layout: TwoBankLayout, playerCount: number): string {
+  const near = nearBankSize(layout, playerCount)
+  return bankHint(TWO_BANK[layout].axis, near, playerCount - near)
+}
+
+const OPTIONS: Record<LifeLayout, { label: string; hint: (playerCount: number) => string }> = {
+  rows: { label: 'Stacked', hint: () => 'One row each — someone holds the phone' },
+  grid: { label: 'Grid', hint: () => 'Two columns, all upright — a held tablet' },
+  facing: { label: 'Facing', hint: (count) => twoBankHint('facing', count) },
+  // Labelled by the edge *you* sit at when you're the lone seat, in the same table-edge
+  // vocabulary as ROTATION_OPTIONS — "near" and "left" are the two sides the odd seat can take.
+  'facing-solo': { label: 'Solo near', hint: (count) => twoBankHint('facing-solo', count) },
+  sides: { label: 'Sideways', hint: (count) => twoBankHint('sides', count) },
+  'sides-solo': { label: 'Solo left', hint: (count) => twoBankHint('sides-solo', count) },
+  pinwheel: { label: 'Around the table', hint: () => 'One seat per edge, each facing in' },
+}
+
+/** Preference order for the picker, before the count's own default is pulled to the front. */
+const PREFERENCE: LifeLayout[] = [
+  'facing',
+  'facing-solo',
+  'sides',
+  'sides-solo',
+  'pinwheel',
+  'grid',
+  'rows',
+]
+
+/**
+ * Whether `layout` is worth offering at `playerCount` — an option that renders as something
+ * other than its own name is worse than no option.
+ *
+ * A two-bank layout needs two banks, so it wants at least two seats — and a `-solo` variant
+ * differs from its sibling only in which bank takes the *odd* seat, so at an even count the two
+ * draw the identical mat and offering both would be a choice with no consequence. `pinwheel`
+ * reads as a table only for three or four seats. `rows` and `grid` are held-device layouts and
+ * work at any count.
+ *
+ * Note both axes stay on offer at every count they fit: the picker can't see which way round the
+ * device is being held, and a pod may well rotate it mid-game, so `sides` is a choice rather
+ * than something inferred from the viewport.
+ *
+ * Shared with the new-game dialog, which has to move a no-longer-valid layout off when the
+ * player count changes — one predicate so the picker and that reset can't disagree.
+ */
+export function layoutAvailableFor(layout: LifeLayout, playerCount: number): boolean {
+  const bank = twoBankOf(layout)
+  if (bank) {
+    return bank.oddSeatCrosses ? playerCount >= 3 && playerCount % 2 === 1 : playerCount >= 2
+  }
+  if (layout === 'pinwheel') return playerCount === 3 || playerCount === 4
+  return true
+}
+
+/** The layouts worth offering for a player count, in preference order with the default first. */
 export function layoutOptionsFor(playerCount: number): LayoutOption[] {
-  const available: LifeLayout[] = []
-  if (playerCount >= 2) available.push('facing')
-  if (playerCount === 3 || playerCount === 4) available.push('pinwheel')
-  available.push('grid', 'rows')
-  // Preference order, minus duplicates, with the count's default first.
+  const available = PREFERENCE.filter((slug) => layoutAvailableFor(slug, playerCount))
   const preferred = defaultLayoutFor(playerCount)
   const ordered = [preferred, ...available.filter((slug) => slug !== preferred)]
-  return ordered.map((value) => ({ value, ...OPTIONS[value] }))
+  return ordered.map((value) => ({
+    value,
+    label: OPTIONS[value].label,
+    hint: OPTIONS[value].hint(playerCount),
+  }))
 }
 
 /** The layout each player count is normally played in — mirrors the server's default. */
@@ -77,14 +203,6 @@ export function resolveLayout(layout: string, playerCount: number): LifeLayout {
     : defaultLayoutFor(playerCount)
 }
 
-/**
- * How many seats sit on the near side in a `facing` table. The odd seat goes to the near bank,
- * since that's the side the device is being operated from.
- */
-function nearBankSize(playerCount: number): number {
-  return Math.ceil(playerCount / 2)
-}
-
 /** The rotation a layout seats each position at — mirrors the server's default. */
 export function defaultRotationFor(
   layout: LifeLayout,
@@ -93,7 +211,11 @@ export function defaultRotationFor(
 ): LifeRotation {
   // A single seat is the whole screen and always reads upright.
   if (playerCount <= 1) return 0
-  if (layout === 'facing') return position >= nearBankSize(playerCount) ? 180 : 0
+  const bank = twoBankOf(layout)
+  if (bank) {
+    const [own, opposite] = bank.rotations
+    return position >= nearBankSize(layout, playerCount) ? opposite : own
+  }
   if (layout === 'pinwheel') {
     if (playerCount === 3) return position === 1 ? 90 : position === 2 ? 270 : 0
     if (position === 1) return 90
@@ -170,29 +292,47 @@ export function matPlacement(
     }
   }
 
-  if (layout === 'facing') {
-    // Two banks, one per row: the near bank along the bottom and the far bank (rotated 180°)
-    // along the top. The banks can hold different numbers of seats, so the row is divided into
-    // the smallest number of equal columns both bank sizes fit — each near seat spans
-    // `cols/near`, each far seat `cols/far`. That keeps every tile in a bank the same width and
-    // leaves no gap, at 3 seats (2 vs 1) as much as at 5 (3 vs 2).
-    const near = nearBankSize(count)
+  const bank = twoBankOf(layout)
+  if (bank) {
+    // Two banks on opposite edges, one per track of the split axis: for `near-far` the bottom
+    // row is yours and the top row is across; for `left-right` the left column is yours and the
+    // right column is across. Either way you read your own total from the edge you're sitting at.
+    //
+    // The banks can hold different numbers of seats, so the *other* axis is divided into the
+    // smallest number of equal tracks both bank sizes fit — each seat spans `tracks/bank`. That
+    // keeps every tile in a bank the same size and leaves no gap, at 3 seats (2 vs 1, or 1 vs 2
+    // for a `-solo` variant) as much as at 5 (3 vs 2).
+    const near = nearBankSize(layout, count)
     const far = count - near
-    const columns = far === 0 ? near : (near * far) / gcd(near, far)
-    return {
-      columns: `repeat(${columns}, minmax(0, 1fr))`,
-      rows: 'repeat(2, minmax(0, 1fr))',
-      seats: Array.from({ length: count }, (_, position) => {
-        const isNear = position < near
-        const span = isNear ? columns / near : columns / far
-        return {
-          column: `span ${span}`,
-          // The near bank is the bottom row — you read your own total closest to you.
-          row: isNear ? '2' : '1',
-          rotation: rotationAt(position),
-        }
-      }),
-    }
+    const tracks = far === 0 ? near : (near * far) / gcd(near, far)
+
+    // Both lines are stated explicitly rather than left to auto-placement. A `left-right` bank
+    // is a definite *column* with a row span, and the grid auto-placement cursor only ever moves
+    // forward: by the time the second bank is placed the cursor has advanced past the top of its
+    // column, so it would grow a phantom extra row instead of starting again at the top. Naming
+    // the start line sidesteps the whole cursor — and doing it on both axes keeps one code path.
+    // Your own bank is the bottom row of a `near-far` mat and the left column of a `left-right`
+    // one; the bank opposite takes the other track.
+    const nearFar = bank.axis === 'near-far'
+    const ownTrack = nearFar ? '2' : '1'
+    const oppositeTrack = nearFar ? '1' : '2'
+
+    const seats = Array.from({ length: count }, (_, position) => {
+      const isNear = position < near
+      const span = tracks / (isNear ? near : far)
+      const start = (isNear ? position : position - near) * span + 1
+      const split = isNear ? ownTrack : oppositeTrack
+      const along = `${start} / span ${span}`
+      return {
+        column: nearFar ? along : split,
+        row: nearFar ? split : along,
+        rotation: rotationAt(position),
+      }
+    })
+
+    const split = 'repeat(2, minmax(0, 1fr))'
+    const along = `repeat(${tracks}, minmax(0, 1fr))`
+    return nearFar ? { columns: along, rows: split, seats } : { columns: split, rows: along, seats }
   }
 
   if (layout === 'pinwheel' && (count === 3 || count === 4)) {
@@ -262,12 +402,26 @@ export function rotationClass(rotation: LifeRotation): string {
   return ''
 }
 
-/** The rotations the seat control offers, labelled by the table edge each one reads from. */
-export const ROTATION_OPTIONS: { value: LifeRotation; label: string }[] = [
-  { value: 0, label: 'Near edge' },
-  { value: 90, label: 'Left edge' },
-  { value: 180, label: 'Far edge' },
-  { value: 270, label: 'Right edge' },
+/**
+ * The rotations the seat control offers.
+ *
+ * `arrow` points at the edge of the *screen* the seat's player is sitting at, which is what the
+ * control draws — "they're over there" is a direction you can point to, where "90°" is a number
+ * you have to decode. Note it is deliberately **not** the rotation applied to the tile: turning
+ * a tile 90° clockwise makes it readable from the **left**, so an arrow drawn from the rotation
+ * would point a left-hand player to the right.
+ *
+ * `label` stays the accessible name — an icon-only control still has to say what it does.
+ */
+export const ROTATION_OPTIONS: {
+  value: LifeRotation
+  label: string
+  arrow: 'up' | 'down' | 'left' | 'right'
+}[] = [
+  { value: 0, label: 'Sitting at the near edge', arrow: 'down' },
+  { value: 90, label: 'Sitting at the left edge', arrow: 'left' },
+  { value: 180, label: 'Sitting at the far edge', arrow: 'up' },
+  { value: 270, label: 'Sitting at the right edge', arrow: 'right' },
 ]
 
 /** Starting-life presets: 20 for a duel, 30 for Brawl, 40 for Commander. */

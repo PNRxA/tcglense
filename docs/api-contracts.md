@@ -1263,9 +1263,21 @@ physical arrangement rather than a cosmetic one:
 | Slug | Arrangement | Default at |
 |------|-------------|-----------|
 | `rows` | One seat per full-width row, all upright — one person holding a phone | 1 player |
-| `facing` | Two banks on opposite edges, the far bank rotated 180° — the device flat between two sides of a table | 2–3 players |
+| `facing` | Two banks split **near/far** (bottom and top rows), the far bank rotated 180° — the device flat between two sides of a table, short edge towards you. An odd seat count joins **your** bank (three players = two here, one across) | 2–3 players |
+| `facing-solo` | `facing` with the odd seat sent **across** instead (three players = you alone, two across) | — |
+| `sides` | Two banks split **left/right** (columns), read from the left (90°) and right (270°) edges — the device lying *lengthways* between the two sides, which is the split a landscape screen wants. Odd seat joins **your** (left) bank | — |
+| `sides-solo` | `sides` with the odd seat sent **across** instead (three players = you alone on the left, two on the right) | — |
 | `pinwheel` | One seat per edge, each a quarter turn from the last — a pod around a device in the middle | 4 players |
 | `grid` | Two columns, all upright — one person holding a tablet | 5+ players |
+
+The four **two-bank** slugs are one table (`two_bank` server-side, `TWO_BANK` in the SPA) crossing
+two independent choices — the **axis** the banks split on (`facing*` near/far vs `sides*`
+left/right) and where an odd table's **extra seat** goes (the plain slug keeps it in your bank,
+the `-solo` one sends it across, so the lone seat can be on either side). Neither is expressible
+as a rotation or a seat reorder, which is why each combination is its own slug; at an even count
+the banks split evenly and each `-solo` coincides with its sibling, so the SPA offers a `-solo`
+only at odd counts ≥ 3. Both axes stay on offer at every count they fit — the picker can't see
+which way round the device is being held, so `sides` is a choice rather than a viewport inference.
 
 `web/src/lib/lifeLayout.ts` mirrors the slug list, the per-count defaults **and** the per-seat
 default rotations, with unit tests on each side pinning them together — a slug added on one side

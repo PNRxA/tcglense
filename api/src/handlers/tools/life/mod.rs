@@ -96,16 +96,33 @@ pub(crate) const KIND_SET: &str = "set";
 /// a stored layout is always one the client can render (`web/src/lib/lifeLayout.ts` mirrors
 /// this list, pinned by a unit test on each side).
 ///
-/// Each slug is a physical arrangement, not a cosmetic one — which is why there are four and
+/// Each slug is a physical arrangement, not a cosmetic one — which is why there are several and
 /// not one with options:
 ///
 /// - `rows` — one seat per full-width row, all upright. One person holding the device.
 /// - `grid` — two columns, all upright. One person holding a *tablet* for a big pod.
-/// - `facing` — two banks on opposite edges of the device, the far bank rotated 180°. The
-///   device flat between two sides of a table; the common tabletop case at any count.
 /// - `pinwheel` — one seat per edge, each a quarter turn from the last, for a 3- or
 ///   4-player pod sitting around a device in the middle.
-pub(crate) const LAYOUTS: &[&str] = &["rows", "facing", "grid", "pinwheel"];
+/// - The four **two-bank** slugs — `facing`, `facing-solo`, `sides`, `sides-solo` — a device
+///   lying flat with the seats split between two opposite edges. They're four rather than one
+///   because they cross two independent choices, and each combination is a different table:
+///   the **axis** the banks split on (`facing*` = near/far, for a device held short-edge-on;
+///   `sides*` = left/right, for one lying lengthways between the two sides — the split that
+///   matches a landscape screen), and where an odd table's **extra seat** goes (the plain slug
+///   keeps it in your own bank, the `-solo` one sends it across, which is what lets the lone
+///   seat sit on either side). Neither is something a rotation or a seat reorder could express,
+///   and at an even count the banks split evenly so each `-solo` coincides with its sibling.
+///
+/// See [`two_bank`] for the table that gives each of the four its axis and rotations.
+pub(crate) const LAYOUTS: &[&str] = &[
+    "rows",
+    "facing",
+    "facing-solo",
+    "sides",
+    "sides-solo",
+    "grid",
+    "pinwheel",
+];
 
 /// The rotations a seat may be stored at, in degrees clockwise, applied to the seat's tile
 /// content. The convention (mirrored in `web/src/lib/lifeLayout.ts`): `0` reads upright to a
@@ -127,6 +144,46 @@ pub(crate) fn default_layout_for(player_count: usize) -> &'static str {
     }
 }
 
+/// One of the four two-bank arrangements: how it splits the mat, and how each bank reads.
+///
+/// Mirrored by `TWO_BANK` in `web/src/lib/lifeLayout.ts` — the SPA owns the cell geometry, but
+/// the rotations and the odd-seat rule have to agree or a server-created rematch would seat the
+/// table differently from the client that started it.
+pub(crate) struct TwoBank {
+    /// Rotation for a seat in your own bank, and for one in the bank opposite.
+    pub rotations: (i32, i32),
+    /// Whether an odd table's extra seat goes to the bank *opposite* yours.
+    pub odd_seat_crosses: bool,
+}
+
+/// The two-bank description of `layout`, or `None` for the single-bank layouts.
+pub(crate) fn two_bank(layout: &str) -> Option<TwoBank> {
+    // `facing*` splits near/far, so its banks read at 0° and 180°; `sides*` splits left/right,
+    // whose edges read at 90° and 270° — the same convention the pinwheel's side seats use.
+    let (rotations, odd_seat_crosses) = match layout {
+        "facing" => ((0, 180), false),
+        "facing-solo" => ((0, 180), true),
+        "sides" => ((90, 270), false),
+        "sides-solo" => ((90, 270), true),
+        _ => return None,
+    };
+    Some(TwoBank {
+        rotations,
+        odd_seat_crosses,
+    })
+}
+
+/// How many seats sit in **your own** bank of a two-bank table — the near one for a `facing*`
+/// split, the left one for `sides*`, in both cases the side the device is being operated from.
+/// Mirrored by `nearBankSize` in `web/src/lib/lifeLayout.ts`.
+pub(crate) fn near_bank_size(layout: &str, player_count: usize) -> usize {
+    if two_bank(layout).is_some_and(|bank| bank.odd_seat_crosses) {
+        player_count / 2
+    } else {
+        player_count.div_ceil(2)
+    }
+}
+
 /// The rotation `layout` seats `position` at, by seat index — so a server-created rematch
 /// reproduces the arrangement the client would have drawn rather than flattening every seat
 /// upright. Mirrored by `defaultRotationFor` in `web/src/lib/lifeLayout.ts`.
@@ -135,13 +192,18 @@ pub(crate) fn default_rotation_for(layout: &str, position: usize, player_count: 
     if player_count <= 1 {
         return 0;
     }
+    // Your own bank fills up from seat 0; everything after it is the edge opposite, which reads
+    // turned from where you're sitting. Which bank the odd seat lands in, and which pair of
+    // edges the banks sit on, are the layout's own business — see `two_bank`.
+    if let Some(bank) = two_bank(layout) {
+        let (own, opposite) = bank.rotations;
+        return if position >= near_bank_size(layout, player_count) {
+            opposite
+        } else {
+            own
+        };
+    }
     match layout {
-        // The near bank fills up from seat 0; everything after it is the far side of the
-        // table, which reads upside-down from where you're sitting.
-        "facing" => {
-            let near = player_count.div_ceil(2);
-            if position >= near { 180 } else { 0 }
-        }
         // One seat per edge, advancing a quarter turn: near, left, far, right. With three
         // seats the near player takes the whole bottom and the other two take the sides.
         "pinwheel" if player_count == 3 => match position {
@@ -288,7 +350,8 @@ pub struct LifeSessionResponse {
     pub format: Option<String>,
     /// The total a new seat in this session starts on.
     pub starting_life: i32,
-    /// Seat-placement layout slug — one of `rows` / `facing` / `grid` / `pinwheel`.
+    /// Seat-placement layout slug — one of `rows` / `facing` / `facing-solo` / `sides` /
+    /// `sides-solo` / `grid` / `pinwheel`.
     pub layout: String,
     /// `active` or `finished`. Only an active session accepts edits.
     pub status: String,
@@ -863,18 +926,81 @@ mod tests {
 
     #[test]
     fn facing_splits_the_table_into_a_near_and_a_far_bank() {
-        let banks = |count: usize| -> Vec<i32> {
-            (0..count)
-                .map(|p| default_rotation_for("facing", p, count))
-                .collect()
-        };
         // Two across a table: the far seat is upside-down from the near one.
-        assert_eq!(banks(2), vec![0, 180]);
+        assert_eq!(rotations_of("facing", 2), vec![0, 180]);
         // An odd count puts the extra seat on the near side, since the near bank is the one
         // whose player is holding (or sitting behind) the device.
-        assert_eq!(banks(3), vec![0, 0, 180]);
-        assert_eq!(banks(4), vec![0, 0, 180, 180]);
-        assert_eq!(banks(5), vec![0, 0, 0, 180, 180]);
+        assert_eq!(rotations_of("facing", 3), vec![0, 0, 180]);
+        assert_eq!(rotations_of("facing", 4), vec![0, 0, 180, 180]);
+        assert_eq!(rotations_of("facing", 5), vec![0, 0, 0, 180, 180]);
+    }
+
+    /// Every seat's default rotation under `layout`, at a table of `count`.
+    fn rotations_of(layout: &str, count: usize) -> Vec<i32> {
+        (0..count)
+            .map(|p| default_rotation_for(layout, p, count))
+            .collect()
+    }
+
+    #[test]
+    fn a_solo_variant_sends_the_odd_seat_across_instead_of_keeping_it_in_your_bank() {
+        // The point of the arrangement: three players is one seat here and two across, the
+        // mirror of what the plain slug draws for the same table.
+        assert_eq!(rotations_of("facing-solo", 3), vec![0, 180, 180]);
+        assert_eq!(rotations_of("facing-solo", 5), vec![0, 0, 180, 180, 180]);
+        assert_eq!(rotations_of("sides-solo", 3), vec![90, 270, 270]);
+        assert_eq!(rotations_of("sides-solo", 5), vec![90, 90, 270, 270, 270]);
+
+        for (plain, solo) in [("facing", "facing-solo"), ("sides", "sides-solo")] {
+            // An even table splits evenly either way, so the pair coincides there — which is why
+            // the picker only offers a `-solo` variant at odd counts.
+            for count in [2, 4, 6] {
+                assert_eq!(
+                    rotations_of(solo, count),
+                    rotations_of(plain, count),
+                    "{solo} at {count}"
+                );
+            }
+            // Never an empty bank: the seat operating the device always has a side, and so does
+            // the table opposite it.
+            for count in 2..=MAX_PLAYERS {
+                for layout in [plain, solo] {
+                    let near = near_bank_size(layout, count);
+                    assert!(near >= 1 && near < count, "{layout} at {count} -> {near}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_sides_table_splits_left_and_right_rather_than_near_and_far() {
+        // The landscape arrangement: the device lies lengthways between the two sides, so the
+        // banks read from the left (90°) and right (270°) edges instead of near and far.
+        assert_eq!(rotations_of("sides", 2), vec![90, 270]);
+        assert_eq!(rotations_of("sides", 3), vec![90, 90, 270]);
+        assert_eq!(rotations_of("sides", 4), vec![90, 90, 270, 270]);
+        // Same bank sizes as its `facing` counterpart — only the edges differ.
+        for count in 2..=MAX_PLAYERS {
+            assert_eq!(
+                near_bank_size("sides", count),
+                near_bank_size("facing", count),
+                "count {count}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_layout_is_either_two_bank_or_not_and_the_table_covers_all_four() {
+        let two_bank_slugs: Vec<&&str> = LAYOUTS.iter().filter(|l| two_bank(l).is_some()).collect();
+        assert_eq!(
+            two_bank_slugs,
+            vec![&"facing", &"facing-solo", &"sides", &"sides-solo"]
+        );
+        // The single-bank layouts must not fall into the two-bank arm, or a held device would
+        // start turning seats it should leave upright.
+        for layout in ["rows", "grid", "pinwheel"] {
+            assert!(two_bank(layout).is_none(), "{layout}");
+        }
     }
 
     #[test]
@@ -911,6 +1037,9 @@ mod tests {
     #[test]
     fn validators_reject_out_of_vocabulary_input() {
         assert!(validate_layout("pinwheel").is_ok());
+        assert!(validate_layout("facing-solo").is_ok());
+        assert!(validate_layout("sides").is_ok());
+        assert!(validate_layout("sides-solo").is_ok());
         assert!(validate_layout(" rows ").is_ok(), "slugs are trimmed");
         assert!(validate_layout("spiral").is_err());
         assert!(validate_rotation(270).is_ok());

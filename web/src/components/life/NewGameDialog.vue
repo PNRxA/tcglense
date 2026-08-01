@@ -16,7 +16,12 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import SeatLinkField from '@/components/life/SeatLinkField.vue'
 import LayoutPicker from '@/components/life/LayoutPicker.vue'
-import { defaultLayoutFor, PLAYER_COUNT_OPTIONS, STARTING_LIFE_PRESETS } from '@/lib/lifeLayout'
+import {
+  defaultLayoutFor,
+  layoutAvailableFor,
+  PLAYER_COUNT_OPTIONS,
+  STARTING_LIFE_PRESETS,
+} from '@/lib/lifeLayout'
 import type { LifeLayout, StartLifeSessionBody } from '@/lib/api/life'
 import { useLifeSetupStore } from '@/stores/lifeSetup'
 
@@ -70,16 +75,11 @@ const playerCount = computed({
     setup.playerCount = value
     resizeSeats(value)
     // A layout that doesn't exist at the new count would render as something else; move to the
-    // arrangement this count is normally played in instead.
-    if (!layoutValidFor(setup.layout, value)) setup.layout = defaultLayoutFor(value)
+    // arrangement this count is normally played in instead. The predicate is the picker's own,
+    // so the reset and the offered options can't drift apart.
+    if (!layoutAvailableFor(setup.layout, value)) setup.layout = defaultLayoutFor(value)
   },
 })
-
-function layoutValidFor(layout: LifeLayout, count: number): boolean {
-  if (layout === 'facing') return count >= 2
-  if (layout === 'pinwheel') return count === 3 || count === 4
-  return true
-}
 
 const startingLife = computed({
   get: () => setup.startingLife,
