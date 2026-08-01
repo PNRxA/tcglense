@@ -101,7 +101,6 @@ pub(crate) const KIND_SET: &str = "set";
 ///
 /// - `rows` — one seat per full-width row, all upright. One person holding the device.
 /// - `grid` — two columns, all upright. One person holding a *tablet* for a big pod.
-/// - `rows` / `grid` — held-device layouts (see above), every seat upright.
 /// - `pinwheel` — one seat per edge, each a quarter turn from the last, for a 3- or
 ///   4-player pod sitting around a device in the middle.
 /// - The four **two-bank** slugs — `facing`, `facing-solo`, `sides`, `sides-solo` — a device
