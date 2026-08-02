@@ -12,6 +12,12 @@ import type { LifeSeatInput } from "./LifeSeatInput";
  */
 export type CreateLifeSessionRequest = { name: string | null, format: string | null, starting_life: number | null, layout: string | null, 
 /**
+ * Which counters beyond life to track — any of `commander_damage` / `poison` / `energy` /
+ * `experience`. Absent takes the copied session's, else the format's default (a Commander
+ * pod opens with the damage matrix on). Naming `life` is a `422` — it is always tracked.
+ */
+counters: Array<string> | null, 
+/**
  * The seats to open the game with. May be empty only alongside `from_session_id`.
  */
 players: Array<LifeSeatInput>, 

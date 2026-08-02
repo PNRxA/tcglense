@@ -1,6 +1,15 @@
 import { computed, ref, type Ref } from 'vue'
-import type { LifeEvent, LifeSeat } from '@/lib/api'
+import type { LifeCounter, LifeEvent, LifeSeat } from '@/lib/api'
 import type { LifeRotation } from '@/lib/api/life'
+import {
+  COMMANDER_DAMAGE,
+  countersFor,
+  indexCounters,
+  lethalReason,
+  visibleCounters,
+  type LifeCounterKind,
+  type SeatCounters,
+} from '@/lib/lifeCounters'
 import { matPlacement, resolveLayout, type SeatPlacement } from '@/lib/lifeLayout'
 import { lifeLines, type LifeLine } from '@/lib/lifeSeries'
 import {
@@ -26,6 +35,28 @@ import { useWakeLock } from '@/composables/useWakeLock'
  *   finished scoreboard has no claim on your battery.
  */
 
+/**
+ * What a run of taps accumulates against: one seat's life, or one of its counters — and, for
+ * commander damage, one particular opponent's commander.
+ *
+ * This is the client's name for the server's replay chain (`replay_seat` folds one chain per
+ * `(counter, source)`), which is why batching keys by it: a 7-point commander hit becomes one
+ * history row rather than seven, and it can commit alongside the life tap that follows without
+ * either being applied against the other's value.
+ */
+export interface TapTarget {
+  playerId: number
+  /** Absent = the seat's life total. */
+  counter?: LifeCounterKind
+  /** Only ever set for `commander_damage`. */
+  sourcePlayerId?: number
+}
+
+/** The chain a target belongs to, as a stable key for the tap engine. */
+export function tapKey(target: TapTarget): string {
+  return `${target.playerId}:${target.counter ?? 'life'}:${target.sourcePlayerId ?? ''}`
+}
+
 /** One seat, ready to render: the server's row plus where it sits and what to show right now. */
 export interface LifeSeatView {
   seat: LifeSeat
@@ -36,6 +67,13 @@ export interface LifeSeatView {
   pending: number
   /** That seat's life over time, for its sparkline. */
   line: LifeLine | undefined
+  /** The seat's counters as the server derived them — never re-folded here. */
+  counters: SeatCounters
+  /**
+   * Why this seat is out, if it is ("21 commander damage") — a **suggestion** shown on the
+   * tile and offered when finishing, never something that finishes the game itself.
+   */
+  lethal: string | null
 }
 
 export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
@@ -46,17 +84,32 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
   const events = computed<LifeEvent[]>(() => detail.value?.events ?? [])
   const isActive = computed(() => session.value?.status === 'active')
 
+  // The counter state, exactly as the server folded it — indexed for lookup, never re-derived.
+  const counterRows = computed<LifeCounter[]>(() => detail.value?.counters ?? [])
+  const countersByPlayer = computed(() => indexCounters(counterRows.value))
+  /** Which counter rows the mat shows: the ones tracked, plus any that hold a value anyway. */
+  const shownCounters = computed<LifeCounterKind[]>(() =>
+    visibleCounters(session.value?.counters ?? [], counterRows.value),
+  )
+
   const adjust = useAdjustLifeMutation()
   const finish = useFinishLifeSessionMutation()
   const undo = useUndoLifeEventMutation()
 
-  const taps = useLifeTaps({
-    commit: (playerId, delta) =>
+  const taps = useLifeTaps<TapTarget>({
+    key: tapKey,
+    commit: (target, delta) =>
       adjust.mutateAsync({
         game: game.value,
         sessionId: sessionId.value,
-        playerId,
-        change: { delta },
+        playerId: target.playerId,
+        change: {
+          delta,
+          ...(target.counter ? { counter: target.counter } : {}),
+          ...(target.sourcePlayerId !== undefined
+            ? { source_player_id: target.sourcePlayerId }
+            : {}),
+        },
       }),
   })
 
@@ -78,13 +131,18 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
     )
     const byPlayer = new Map(lines.value.map((line) => [line.playerId, line]))
     return seats.value.map((seat, index) => {
-      const pending = taps.pendingFor(seat.id)
+      const pending = taps.pendingFor({ playerId: seat.id })
+      const counters = countersFor(countersByPlayer.value, seat.id)
       return {
         seat,
         placement: placement.seats[index] ?? { column: 'span 1', row: 'span 1', rotation: 0 },
         life: seat.life + pending,
         pending,
         line: byPlayer.get(seat.id),
+        counters,
+        // Read against the *displayed* life, so a seat tapped to zero reads as out before the
+        // commit lands — the same immediacy the total itself has.
+        lethal: lethalReason({ ...seat, life: seat.life + pending }, counters),
       }
     })
   })
@@ -97,7 +155,35 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
   /** A tap on a seat's + / − zone. Ignored on a finished game — the mat is read-only then. */
   function bump(playerId: number, delta: number) {
     if (!isActive.value) return
-    taps.bump(playerId, delta)
+    taps.bump({ playerId }, delta)
+  }
+
+  /**
+   * A tap on one of a seat's counters. Batched exactly like a life tap: a commander hit for 7 is
+   * seven taps of the same button, and it should read back as one 7-point hit.
+   */
+  function bumpCounter(target: TapTarget, delta: number) {
+    if (!isActive.value) return
+    taps.bump(target, delta)
+  }
+
+  /** The uncommitted delta for a counter chain, for the same "+3 in flight" chip life gets. */
+  function pendingCounter(target: TapTarget): number {
+    return taps.pendingFor(target)
+  }
+
+  /**
+   * The value to show for a counter: what the server folded, plus anything still uncommitted.
+   */
+  function counterValue(target: TapTarget): number {
+    const seat = countersFor(countersByPlayer.value, target.playerId)
+    const committed =
+      target.counter === COMMANDER_DAMAGE
+        ? (seat.commanderDamage.get(target.sourcePlayerId ?? -1) ?? 0)
+        : target.counter
+          ? (seat.values[target.counter] ?? 0)
+          : 0
+    return committed + taps.pendingFor(target)
   }
 
   /**
@@ -107,10 +193,11 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
    */
   async function setLife(playerId: number, life: number) {
     if (!isActive.value) return
-    taps.discard(playerId)
+    const target: TapTarget = { playerId }
+    taps.discard(target)
     // A delta already sent for this seat is applied relative to the server's total, so letting it
     // land after the absolute correction would move the number the user just set.
-    await taps.commit(playerId)
+    await taps.commit(target)
     await adjust.mutateAsync({
       game: game.value,
       sessionId: sessionId.value,
@@ -179,7 +266,12 @@ export function useLifeSession(game: Ref<string>, sessionId: Ref<number>) {
     stopTicker,
     wakeLock,
     taps,
+    shownCounters,
+    countersByPlayer,
     bump,
+    bumpCounter,
+    pendingCounter,
+    counterValue,
     setLife,
     finishGame,
     undoEvent,

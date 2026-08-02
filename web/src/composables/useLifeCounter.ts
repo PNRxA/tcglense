@@ -14,6 +14,7 @@ import {
   undoLifeEvent,
   updateLifePlayer,
   updateLifeSession,
+  type LifeChangeBody,
   type LifeLayout,
   type LifeRotation,
   type LifeSessionStatus,
@@ -23,6 +24,7 @@ import {
 import type {
   ApiError,
   LifeChange,
+  LifeCounter,
   LifeDeckRecord,
   LifeSeat,
   LifeSession,
@@ -114,12 +116,16 @@ export function adoptSession(qc: QueryClient, game: string, detail: LifeSessionD
 }
 
 /**
- * Fold one life change into the cached session: swap in the authoritative seat and append the
- * event.
+ * Fold one change into the cached session: swap in the authoritative seat, append the event,
+ * and — for a change to a counter rather than to life — swap in the counter's new value.
  *
  * The hot path deliberately doesn't adopt a whole session (the commit response is just the
  * seat + its event, so the round trip stays small), which means the patch has to be idempotent
  * against a concurrent read: an event id already present is not appended twice.
+ *
+ * The counter is *replaced*, never accumulated: the server sends where that counter now stands,
+ * so adding a delta here would be a second fold of the same history — the thing the whole
+ * derived-counter design exists to avoid.
  */
 export function applyLifeChange(
   qc: QueryClient,
@@ -129,6 +135,11 @@ export function applyLifeChange(
 ) {
   qc.setQueryData<LifeSessionDetail>(lifeSessionKey(game, sessionId), (current) => {
     if (!current) return current
+    const moved = change.counter
+    const sameChain = (row: LifeCounter) =>
+      row.player_id === moved?.player_id &&
+      row.counter === moved.counter &&
+      row.source_player_id === moved.source_player_id
     return {
       session: {
         ...current.session,
@@ -139,6 +150,11 @@ export function applyLifeChange(
       events: current.events.some((event) => event.id === change.event.id)
         ? current.events
         : [...current.events, change.event],
+      counters: !moved
+        ? current.counters
+        : current.counters.some(sameChain)
+          ? current.counters.map((row) => (sameChain(row) ? moved : row))
+          : [...current.counters, moved],
     }
   })
 }
@@ -159,7 +175,7 @@ export interface SessionVars {
   sessionId: number
 }
 export interface UpdateSessionVars extends SessionVars {
-  body: { name?: string; format?: string; layout?: LifeLayout }
+  body: { name?: string; format?: string; layout?: LifeLayout; counters?: string[] }
 }
 export interface FinishSessionVars extends SessionVars {
   winnerPlayerId: number | null
@@ -184,7 +200,7 @@ export interface ReorderPlayersVars extends SessionVars {
 }
 export interface AdjustLifeVars extends SessionVars {
   playerId: number
-  change: { delta: number } | { life: number }
+  change: LifeChangeBody
 }
 export interface UndoEventVars extends SessionVars {
   eventId: number

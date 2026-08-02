@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRef } from 'vue'
-import { Maximize2, Minimize2, MoreVertical, Repeat2, Trash2, Undo2, UserPlus } from '@lucide/vue'
+import {
+  Maximize2,
+  Minimize2,
+  MoreVertical,
+  Repeat2,
+  Sigma,
+  Trash2,
+  Undo2,
+  UserPlus,
+} from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,9 +21,11 @@ import {
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import FinishGameDialog from '@/components/life/FinishGameDialog.vue'
+import GameCountersDialog from '@/components/life/GameCountersDialog.vue'
 import LifeHistoryPanel from '@/components/life/LifeHistoryPanel.vue'
 import LifeMat from '@/components/life/LifeMat.vue'
 import LifeSignInPrompt from '@/components/life/LifeSignInPrompt.vue'
+import SeatCountersDialog from '@/components/life/SeatCountersDialog.vue'
 import SeatSettingsDialog from '@/components/life/SeatSettingsDialog.vue'
 import SessionScoreboard from '@/components/life/SessionScoreboard.vue'
 import WakeLockPill from '@/components/life/WakeLockPill.vue'
@@ -26,8 +37,10 @@ import {
   useReorderLifePlayersMutation,
   useStartLifeSessionMutation,
   useUpdateLifePlayerMutation,
+  useUpdateLifeSessionMutation,
 } from '@/composables/useLifeCounter'
 import { useLifeSession } from '@/composables/useLifeSession'
+import { countersFor, type LifeCounterKind } from '@/lib/lifeCounters'
 import { durationLabel } from '@/lib/lifeSeries'
 import { lifePath, lifeSessionPath, toolsPath } from '@/lib/tools'
 import { usePageMeta } from '@/lib/seo'
@@ -64,6 +77,8 @@ const {
   elapsed,
   wakeLock,
   taps,
+  shownCounters,
+  countersByPlayer,
 } = life
 
 onMounted(life.startTicker)
@@ -75,12 +90,33 @@ const removePlayer = useRemoveLifePlayerMutation()
 const reorderPlayers = useReorderLifePlayersMutation()
 const deleteSession = useDeleteLifeSessionMutation()
 const rematch = useStartLifeSessionMutation()
+const updateSession = useUpdateLifeSessionMutation()
 
 const finishOpen = ref(false)
+const countersOpen = ref(false)
 const settingsFor = ref<number | null>(null)
 const settingsSeat = computed(
   () => seats.value.find((seat) => seat.id === settingsFor.value) ?? null,
 )
+
+/** Which seat's counter sheet is open, if any. Separate from `settingsFor`: one is "who is this
+ * player", the other is "what are they carrying", and both are reachable from the same tile. */
+const counterSheetFor = ref<number | null>(null)
+const counterSeat = computed(
+  () => seats.value.find((seat) => seat.id === counterSheetFor.value) ?? null,
+)
+const counterSeatState = computed(() =>
+  countersFor(countersByPlayer.value, counterSheetFor.value ?? -1),
+)
+
+async function saveGameCounters(next: LifeCounterKind[]) {
+  countersOpen.value = false
+  await updateSession.mutateAsync({
+    game: game.value,
+    sessionId: sessionId.value,
+    body: { counters: next },
+  })
+}
 
 const winnerId = computed(() => seats.value.find((seat) => seat.result === 'win')?.id ?? null)
 
@@ -268,6 +304,9 @@ const finishedDuration = computed(() =>
             <DropdownMenuItem v-if="isActive" @select="seatAnother">
               <UserPlus class="size-4" /> Add a player
             </DropdownMenuItem>
+            <DropdownMenuItem v-if="isActive" @select="countersOpen = true">
+              <Sigma class="size-4" /> Counters
+            </DropdownMenuItem>
             <DropdownMenuItem v-if="!isActive" @select="playAgain">
               <Repeat2 class="size-4" /> Play again
             </DropdownMenuItem>
@@ -293,9 +332,11 @@ const finishedDuration = computed(() =>
         :grid="grid"
         :editable="true"
         :winner-id="winnerId"
+        :counters="shownCounters"
         :game-slug="game"
         @bump="life.bump"
         @settings="(id) => (settingsFor = id)"
+        @counters="(id) => (counterSheetFor = id)"
       />
       <div v-else class="h-full overflow-y-auto">
         <SessionScoreboard :seats="seats" :lines="lines" :game="game" />
@@ -317,6 +358,7 @@ const finishedDuration = computed(() =>
     <FinishGameDialog
       v-model:open="finishOpen"
       :seats="seats"
+      :seat-views="seatViews"
       :busy="life.isFinishing.value"
       @finish="
         (winner) => {
@@ -324,6 +366,25 @@ const finishedDuration = computed(() =>
           life.finishGame(winner)
         }
       "
+    />
+
+    <GameCountersDialog
+      v-model:open="countersOpen"
+      :counters="shownCounters"
+      :busy="updateSession.isPending.value"
+      @save="saveGameCounters"
+    />
+
+    <SeatCountersDialog
+      :open="counterSheetFor !== null"
+      :seat="counterSeat"
+      :counters="counterSeatState"
+      :seats="seats"
+      :shown="shownCounters"
+      :value="life.counterValue"
+      :editable="isActive"
+      @update:open="(open) => !open && (counterSheetFor = null)"
+      @bump="life.bumpCounter"
     />
 
     <SeatSettingsDialog

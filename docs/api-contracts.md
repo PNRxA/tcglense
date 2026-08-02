@@ -673,6 +673,45 @@ share their wire shaping, validation, pagination, and valuation with the wish li
 `handlers/shared/product_holdings.rs`, while each surface keeps its own SeaORM queries and
 rows:
 
+**A seat carries more than one number** (issue #595). Besides life it can hold `poison`,
+`energy`, `experience`, and **commander damage keyed by the seat whose commander dealt it** — one
+of the two ways a Commander game actually ends, and before this the pod that died to a commander
+was logged as if it died to life loss. Four things follow from how it is modelled:
+
+* **The counter rides the event, not the seat.** `life_events` gained one `counter` discriminator
+  (defaulting to `life`, so every pre-existing row backfills correctly) and one nullable
+  `source_player_id`. Nothing else changed, which means the finished-game gate, the 5000-change
+  cap, the session write lock and the whole undo/replay contract apply to every counter without
+  being written twice. `life_after` is the value *that counter* stood at afterwards.
+* **`life` is still written in exactly two places.** It is the only counter denormalised onto the
+  seat; the rest are folded out of the history. A commander-damage tap therefore does **not** move
+  the target's life — it is a separate counter the player reconciles against life, exactly as at a
+  real table, and moving it for them would double-count every hit already tapped in.
+* **The fold is per `(seat, counter, source)` chain.** `replay.rs`'s `replay_seat` splits a seat's
+  rows into chains and folds each from its own start (life from the seat's `starting_life`,
+  everything else from `0`) within its own bounds (life may go negative, no other counter can;
+  the rest cap at `999`). So 7 damage from one commander and 6 from another is never 13 from
+  either — the number 21 is measured against — and undoing a poison tap leaves life and every
+  other commander's damage exactly where they were.
+* **The source link is orphan-tolerant**, like `deck_id` and `commander_card_id`. A seat removed
+  mid-game cascades away with *its own* events, but the damage it dealt is the surviving seat's
+  history and stays. Reads keep reporting the id; the SPA renders it as "a player who left" and
+  offers no stepper for it.
+
+**Which counters a game tracks is a session setting**, not a global one: `life_sessions.counters`
+is a CSV of slugs (`life` implicit and never listed), defaulted from the format at creation — a
+Commander pod opens with the damage matrix on, a Standard pod with nothing — copied by a rematch,
+and editable afterwards. A write to a counter the session isn't tracking is a **422**: a value
+recorded against a row the mat doesn't show would be invisible state, and for commander damage
+that is the state deciding who won. Switching a counter **off** hides its row and **keeps** its
+values (the SPA shows any counter that still holds one) — a display choice must not rewrite
+history, which is also why an undo works on a counter the game has since stopped tracking.
+
+**Reaching a lethal counter suggests, never finishes.** 21 commander damage from one source and
+ten poison mark the seat as out on the mat and label it in the finish dialog. The server does not
+close the game: a recorded result is immutable and counts towards the per-deck record, and the
+last player standing still isn't reliably the winner.
+
 | Method & path | Body | Returns |
 |---------------|------|---------|
 | `GET /api/collection/{game}/products?page&page_size&set` | — | `Page<ProductHoldingEntry>`, most-recently-updated first (fixed recency sort, no `q`/`sort`), default page size 60 / max 200. Optional `set` restricts to one set code (an unknown/unheld code → empty page, `total` 0) — the set-scoped drill-in for the tiles below |
@@ -1199,8 +1238,9 @@ an optional `name`/`format`, its `starting_life`, a seat-placement `layout` slug
 (`life_session_players` — one **seat**: `position`, `name`, an optional `deck_id` **or**
 `commander_card_id`, its own `starting_life`, the current `life`, a screen `rotation`, and a
 `result`), and `life_event.rs`
-(`life_events` — one **life change**: `delta`, `life_after`, `kind`). Sessions cascade-delete from
-`users`; seats and events cascade from the session.
+(`life_events` — one **change**: `delta`, `life_after`, `kind`, plus the counter axis `counter` +
+`source_player_id`). Sessions cascade-delete from `users`; seats and events cascade from the
+session.
 
 **Ownership.** A seat and an event have no `user_id` — they hang off `session_id` — so every
 seat/event-scoped route first proves the parent session belongs to the token user; a session, seat
@@ -1229,33 +1269,38 @@ so the old pod stays re-playable, where an explicit one is still a `404`.
 | Method & path | Body | Returns |
 |---------------|------|---------|
 | `GET /api/tools/{game}/life/sessions` | — | `{ data: LifeSession[] }` — the caller's tracked games, newest-started first, each with its seats inlined but **no** history. `?status=active\|finished` narrows (`422` for anything else); `?limit` is clamped to `1..=200` (default 50). Four queries regardless of page size |
-| `POST /api/tools/{game}/life/sessions` | `{ name?, format?, starting_life?, layout?, players[], from_session_id? }` | `LifeSessionDetail` — start a game. Each `players[]` entry is `{ name?, deck_id?, commander_card_id?, starting_life?, rotation? }` (`commander_card_id` is an **external** card id, and is mutually exclusive with `deck_id` — both is a `422`, one the catalog doesn't hold is a `404`); an unnamed seat becomes `Player {n}`, a seat with no `starting_life` inherits the session's (default 20), and a seat with no `rotation` takes the layout's own. `from_session_id` **rematches**: the seats, decks, rotations, starting life, layout and format of that earlier game are copied and a fresh game begins on full life; any field stated explicitly still wins, and a non-empty `players` replaces the copied seats. `422` no seats / more than 12 / unknown `layout` / off-vocabulary `rotation` / `starting_life` outside `1..=9999` / over the per-game cap (2000); `404` unknown game, a `from_session_id` that isn't the caller's, or a `deck_id` that isn't one of their decks. The session and its seats commit as one transaction |
-| `GET /api/tools/{game}/life/sessions/{session_id}` | — | `LifeSessionDetail` — one game in full: header, seats, and **every** recorded change in order (returned whole — a session is capped at 5000 changes) |
-| `PUT /api/tools/{game}/life/sessions/{session_id}` | `{ name?, format?, layout? }` | `LifeSession` — relabel or re-seat. Each field optional (absent = unchanged, blank clears `name`/`format`). Allowed on a finished game too: relabelling history isn't rewriting it |
+| `POST /api/tools/{game}/life/sessions` | `{ name?, format?, starting_life?, layout?, counters?, players[], from_session_id? }` | `LifeSessionDetail` — start a game. Each `players[]` entry is `{ name?, deck_id?, commander_card_id?, starting_life?, rotation? }` (`commander_card_id` is an **external** card id, and is mutually exclusive with `deck_id` — both is a `422`, one the catalog doesn't hold is a `404`); an unnamed seat becomes `Player {n}`, a seat with no `starting_life` inherits the session's (default 20), and a seat with no `rotation` takes the layout's own. `from_session_id` **rematches**: the seats, decks, rotations, starting life, layout and format of that earlier game are copied and a fresh game begins on full life; any field stated explicitly still wins, and a non-empty `players` replaces the copied seats. `422` no seats / more than 12 / unknown `layout` / off-vocabulary `rotation` / `starting_life` outside `1..=9999` / over the per-game cap (2000); `404` unknown game, a `from_session_id` that isn't the caller's, or a `deck_id` that isn't one of their decks. `counters` is any of `commander_damage` / `poison` / `energy` / `experience` (naming `life` is a `422` — it is always tracked); absent takes the rematched game's, else the format's default. The session and its seats commit as one transaction |
+| `GET /api/tools/{game}/life/sessions/{session_id}` | — | `LifeSessionDetail` — one game in full: header, seats, **every** recorded change in order (returned whole — a session is capped at 5000 changes), and `counters`: where every non-life counter now stands, folded out of those same events by the same `replay_seat` an undo uses, so a client never re-implements the replay |
+| `PUT /api/tools/{game}/life/sessions/{session_id}` | `{ name?, format?, layout?, counters? }` | `LifeSession` — relabel, re-seat, or change what the game tracks. Each field optional (absent = unchanged, blank clears `name`/`format`, an empty `counters` array turns them all off). Allowed on a finished game too: relabelling history isn't rewriting it — and neither is choosing what to show of it, so a counter switched off keeps its recorded values |
 | `DELETE /api/tools/{game}/life/sessions/{session_id}` | — | `204` — delete the game (seats + history cascade; a finished game's contribution to the deck records goes with it) |
 | `POST /api/tools/{game}/life/sessions/{session_id}/finish` | `{ winner_player_id }` | `LifeSessionDetail` — record the result: the named seat is a `win` and every other a `loss`; `null` records a `draw` for the whole table. Stamps `finished_at`, flips `status`, and from here the game counts towards the per-deck record. `404` a winner that isn't one of the game's seats; `409` already finished |
 | `POST /api/tools/{game}/life/sessions/{session_id}/players` | `{ name?, deck_id?, commander_card_id?, starting_life?, rotation? }` | `LifeSessionDetail` — seat another player (appended, on their own full life). Takes the same seat shape as `players[]` above, so `deck_id`/`commander_card_id` stay mutually exclusive (`422` for both). `422` over 12 seats; `409` on a finished game |
 | `PUT /api/tools/{game}/life/sessions/{session_id}/players/reorder` | `{ player_ids }` | `LifeSessionDetail` — set the seat order (the other half of "where does everyone sit"). Must be **exactly** the game's seats, each once (`422` otherwise — a partial list would silently collapse the order the client didn't send). Positions are rewritten 0-based and gap-free |
 | `PUT /api/tools/{game}/life/sessions/{session_id}/players/{player_id}` | `{ name, deck_id?, commander_card_id?, rotation? }` | `LifeSeat` — a **full replace** of the seat's editable state, not a patch: an absent/null `deck_id`/`commander_card_id` unlinks what was there and an absent `rotation` resets the seat upright. The two links stay mutually exclusive (`422` for both). Life and starting life are deliberately not editable here — a wrong total is corrected through the life route, so it lands in the history |
 | `DELETE /api/tools/{game}/life/sessions/{session_id}/players/{player_id}` | — | `LifeSessionDetail` — remove a seat (its history goes with it) and renumber the rest. `422` on the last seat — delete the game instead |
-| `POST /api/tools/{game}/life/sessions/{session_id}/players/{player_id}/life` | `{ delta }` **or** `{ life }` | `LifeChange { player, event }` — the hot path. Send **exactly one** (`422` for neither or both): `delta` is a relative change (what the SPA commits after batching a run of taps, so the history reads "lost 5" rather than five "lost 1" rows, `\|delta\| <= 1000`), `life` an absolute correction recorded as `kind: "set"`. Totals clamp to `-9999..=9999` and the stored `delta` is the movement that **actually** happened, so a tap at the floor records `0`, not a phantom loss. Answers with just the seat and its event — deliberately not the whole game. `422` when the session's 5000-change cap is full |
-| `DELETE /api/tools/{game}/life/sessions/{session_id}/events/{event_id}` | — | `LifeSessionDetail` — undo one change, from **anywhere** in the history. The seat's remaining chain is re-folded from its starting life (`handlers/tools/life/replay.rs`), so a mis-tap found three turns later is undone correctly instead of leaving every later total off by the same amount: a relative change shifts, an absolute `set` still pins its own total and only its derived `delta` moves |
+| `POST /api/tools/{game}/life/sessions/{session_id}/players/{player_id}/life` | `{ delta }` **or** `{ life }`, plus `{ counter?, source_player_id? }` | `LifeChange { player, event, counter }` — the hot path. Send **exactly one** of `delta`/`life` (`422` for neither or both): `delta` is a relative change (what the SPA commits after batching a run of taps, so the history reads "lost 5" rather than five "lost 1" rows, `\|delta\| <= 1000`), `life` an absolute correction recorded as `kind: "set"`. `counter` picks which number moves — absent means `life`, so a pre-#595 client is unaffected; `commander_damage` **requires** a `source_player_id` and every other counter **refuses** one (both `422`), a source that isn't a seat of this game is a `404`, and a seat sourcing damage to itself is a `422`. Values clamp to the counter's own range (`-9999..=9999` for life, `0..=999` for the rest) and the stored `delta` is the movement that **actually** happened, so a tap at the floor records `0`, not a phantom loss. Answers with just the seat, its event, and — for a non-life counter — where that counter now stands, so the client patches its state without a re-read; deliberately not the whole game. `422` an untracked/unknown `counter`, or when the session's 5000-change cap is full |
+| `DELETE /api/tools/{game}/life/sessions/{session_id}/events/{event_id}` | — | `LifeSessionDetail` — undo one change, from **anywhere** in the history. The seat's remaining chains are re-folded from their starting values (`handlers/tools/life/replay.rs`), so a mis-tap found three turns later is undone correctly instead of leaving every later value off by the same amount: a relative change shifts, an absolute `set` still pins its own value and only its derived `delta` moves. Chains are independent, so undoing a poison tap leaves life — and every other commander's damage — untouched. Works on a counter the game has since stopped tracking: hiding a counter must not strand its rows |
 | `GET /api/tools/{game}/life/decks` | — | `{ data: LifeDeckRecord[] }` — the per-deck win/loss record, most-played first (then by name). `?deck_id=` narrows to one deck (what a deck's own page asks for). Derived, never stored: only **finished** sessions with a recorded result count, so an abandoned game can't dilute a win rate |
 
-`LifeSession = { id, game, name, format, starting_life, layout, status, players, started_at,
-finished_at, created_at, updated_at }`, `LifeSessionDetail = { session, events }` (a wrapper
-rather than a second copy of the header's fields), `LifeSeat = { id, position, name, deck_id,
+`LifeSession = { id, game, name, format, starting_life, layout, counters, status, players,
+started_at, finished_at, created_at, updated_at }`, `LifeSessionDetail = { session, events,
+counters }` (a wrapper rather than a second copy of the header's fields — the session's `counters`
+is *which* are tracked, the detail's is *where they stand*), `LifeSeat = { id, position, name, deck_id,
 deck_name, commander_card_id, commander_name, starting_life, life, rotation, result }` (the
 commander id is **external**, and both resolved names are `null` when the reference no longer looks
 up), `LifeEvent = { id, player_id, delta,
-life_after, kind, created_at }`, and `LifeDeckRecord = { deck_id, deck_name, games, wins, losses,
+life_after, kind, counter, source_player_id, created_at }`, `LifeCounter = { player_id, counter,
+source_player_id, value }` (only counters a seat's history has touched appear — an absent entry is
+`0`, and a seat's life is on the seat itself), and `LifeDeckRecord = { deck_id, deck_name, games, wins, losses,
 draws, win_rate, last_played_at }` — `win_rate` is `wins / games` in `0.0..=1.0`, or **`null`**
 with no games (never a misleading `0%` for an unplayed deck; the SPA additionally withholds the
 figure below 5 games while still showing the raw W–L–D).
 
 **Vocabularies** (all validated server-side, so a stored value is always one the client can
 render). `status`: `active` / `finished`. `result`: `none` / `win` / `loss` / `draw`. `kind`:
-`adjust` / `set`. `rotation`: `0` / `90` / `180` / `270` degrees clockwise, naming the table edge
+`adjust` / `set`. `counter`: `life` / `poison` / `energy` / `experience` / `commander_damage`
+(a session's own `counters` list is the same minus `life`, which is always tracked, in the display
+order `commander_damage`, `poison`, `energy`, `experience`). `rotation`: `0` / `90` / `180` / `270` degrees clockwise, naming the table edge
 that seat reads from — `0` the near edge, `90` the **left**, `180` the far, `270` the right (a
 clockwise quarter turn sends the text's "up" from the near edge to the left one). `layout`, each a
 physical arrangement rather than a cosmetic one:
@@ -1279,8 +1324,10 @@ the banks split evenly and each `-solo` coincides with its sibling, so the SPA o
 only at odd counts ≥ 3. Both axes stay on offer at every count they fit — the picker can't see
 which way round the device is being held, so `sides` is a choice rather than a viewport inference.
 
-`web/src/lib/lifeLayout.ts` mirrors the slug list, the per-count defaults **and** the per-seat
-default rotations, with unit tests on each side pinning them together — a slug added on one side
+`web/src/lib/lifeCounters.ts` mirrors the counter vocabulary and the format defaults the same
+way, also pinned by a unit test on each side. `web/src/lib/lifeLayout.ts` mirrors the slug list,
+the per-count defaults **and** the per-seat default rotations, with unit tests on each side
+pinning them together — a slug added on one side
 only would either be rejected by the API or render as something other than its name. The layout
 only *seeds* a seat's rotation; the stored `rotation` is the truth afterwards, so one player at an
 unexpected side of the table can be turned without changing the layout.

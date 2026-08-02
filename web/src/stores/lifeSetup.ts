@@ -2,10 +2,12 @@ import { computed } from 'vue'
 import { defineStore } from 'pinia'
 import { persistedNumberRef, persistedRef } from '@/lib/persistedRef'
 import { defaultLayoutFor } from '@/lib/lifeLayout'
+import { isCounterKind, type LifeCounterKind } from '@/lib/lifeCounters'
 import { LIFE_LAYOUTS, type LifeLayout } from '@/lib/api/life'
 
 /**
- * The life counter's remembered game *shape* — player count, starting life, format and seating.
+ * The life counter's remembered game *shape* — player count, starting life, format, seating and
+ * which counters are tracked.
  *
  * A pod plays the same shape of game over and over: four players, 40 life, Commander, sitting
  * the same way. Remembering that turns setup from a form into a confirmation, and makes a
@@ -68,5 +70,22 @@ export const useLifeSetupStore = defineStore('lifeSetup', () => {
     },
   })
 
-  return { playerCount, startingLife, format, layout }
+  const storedCounters = persistedRef<string[]>(
+    'tcglense_life_counters',
+    // A pod that plays Commander (the remembered default format) is counting commander damage,
+    // which is the same conclusion `default_counters_for` reaches server-side.
+    ['commander_damage'],
+    (value): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string'),
+  )
+
+  // Narrowed on read for the same reason `layout` is: a slug stored by another build must never
+  // reach the API, where it's a 422.
+  const counters = computed<LifeCounterKind[]>({
+    get: () => storedCounters.value.filter(isCounterKind),
+    set: (value) => {
+      storedCounters.value = [...value]
+    },
+  })
+
+  return { playerCount, startingLife, format, layout, counters }
 })
