@@ -70,20 +70,24 @@ export const useLifeSetupStore = defineStore('lifeSetup', () => {
     },
   })
 
-  const storedCounters = persistedRef<string[]>(
+  // Stored as the same CSV the server keeps `life_sessions.counters` in, because `persistedRef`
+  // persists with `String(value)` and validates the raw stored *string* — handing it an array
+  // would write `"poison,energy"` and then read it back through an `Array.isArray` guard that
+  // is always false, silently reverting the preference on every reload.
+  const storedCounters = persistedRef<string>(
     'tcglense_life_counters',
     // A pod that plays Commander (the remembered default format) is counting commander damage,
     // which is the same conclusion `default_counters_for` reaches server-side.
-    ['commander_damage'],
-    (value): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string'),
+    'commander_damage',
+    (value): value is string => typeof value === 'string' && value.length <= 100,
   )
 
   // Narrowed on read for the same reason `layout` is: a slug stored by another build must never
   // reach the API, where it's a 422.
   const counters = computed<LifeCounterKind[]>({
-    get: () => storedCounters.value.filter(isCounterKind),
+    get: () => storedCounters.value.split(',').filter(isCounterKind),
     set: (value) => {
-      storedCounters.value = [...value]
+      storedCounters.value = value.join(',')
     },
   })
 

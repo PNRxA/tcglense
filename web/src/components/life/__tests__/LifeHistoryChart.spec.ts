@@ -25,6 +25,8 @@ function event(over: Partial<LifeEvent> & { id: number; player_id: number }): Li
     delta: -1,
     life_after: 39,
     kind: 'adjust',
+    counter: 'life',
+    source_player_id: null,
     created_at: START,
     ...over,
   } as LifeEvent

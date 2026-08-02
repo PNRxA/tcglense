@@ -143,9 +143,15 @@ export function applyLifeChange(
     return {
       session: {
         ...current.session,
-        players: current.session.players.map((seat) =>
-          seat.id === change.player.id ? change.player : seat,
-        ),
+        players: current.session.players.map((seat) => {
+          if (seat.id !== change.player.id) return seat
+          // A counter commit owns the seat's counters, not its `life` — the total it echoes is
+          // whatever the row held inside that transaction. Since taps are batched per
+          // `(seat, counter, source)` chain, one seat can have several commits in flight at
+          // once, so adopting this one's stale total would revert a life tap that landed first.
+          // Same reasoning as `useUpdateLifePlayerMutation` below.
+          return change.counter ? { ...change.player, life: seat.life } : change.player
+        }),
       },
       events: current.events.some((event) => event.id === change.event.id)
         ? current.events

@@ -37,8 +37,15 @@ const props = defineProps<{
   counters: SeatCounters
   /** Every seat at the table, for the commander-damage rows. */
   seats: LifeSeat[]
-  /** Which counters this game tracks (plus any that hold a value anyway). */
+  /** Which counters to show: the tracked ones plus any that hold a value anyway. */
   shown: LifeCounterKind[]
+  /**
+   * Which the game actually **tracks**. Narrower than `shown` on purpose: a counter switched
+   * off keeps its recorded value and so keeps its row, but the server refuses a write to it
+   * (`require_enabled`, a 422), so its steppers have to go — the same guard a damage source
+   * that has left the table already gets.
+   */
+  tracked: readonly string[]
   /** The value to show for a chain, including anything still uncommitted. */
   value: (target: TapTarget) => number
   /** False on a finished game: the dialog becomes a read-only summary. */
@@ -81,6 +88,11 @@ const damageRows = computed<DamageRow[]>(() => {
   return rows
 })
 
+/** Whether a counter's steppers should be live: the game must still be on, and still tracking it. */
+function canEdit(kind: LifeCounterKind): boolean {
+  return props.editable && props.tracked.includes(kind)
+}
+
 /** The chain one damage row edits. */
 function damageTarget(sourceId: number): TapTarget {
   return {
@@ -91,7 +103,9 @@ function damageTarget(sourceId: number): TapTarget {
 }
 
 function bump(target: TapTarget, delta: number) {
-  if (!props.editable) return
+  // Belt and braces with the `v-if`s: the server would answer 422/404 anyway, and `useLifeTaps`
+  // deliberately never retries, so the number would just snap back with an error banner.
+  if (!target.counter || !canEdit(target.counter)) return
   emit('bump', target, delta)
 }
 </script>
@@ -125,7 +139,7 @@ function bump(target: TapTarget, delta: number) {
             <!-- A source that has left the table is reported, not edited: there is no commander
                  there to deal more, and the server would 404 the seat id. -->
             <Button
-              v-if="editable && row.position !== null"
+              v-if="canEdit('commander_damage') && row.position !== null"
               variant="outline"
               size="icon-sm"
               :aria-label="`Less commander damage from ${row.name}`"
@@ -144,7 +158,7 @@ function bump(target: TapTarget, delta: number) {
               {{ value(damageTarget(row.sourceId)) }}
             </span>
             <Button
-              v-if="editable && row.position !== null"
+              v-if="canEdit('commander_damage') && row.position !== null"
               variant="outline"
               size="icon-sm"
               :aria-label="`More commander damage from ${row.name}`"
@@ -169,7 +183,7 @@ function bump(target: TapTarget, delta: number) {
             <span class="text-muted-foreground block text-xs">{{ COUNTER_META[kind].hint }}</span>
           </span>
           <Button
-            v-if="editable"
+            v-if="canEdit(kind)"
             variant="outline"
             size="icon-sm"
             :aria-label="`Less ${COUNTER_META[kind].label.toLowerCase()}`"
@@ -188,7 +202,7 @@ function bump(target: TapTarget, delta: number) {
             {{ value({ playerId: seat.id, counter: kind }) }}
           </span>
           <Button
-            v-if="editable"
+            v-if="canEdit(kind)"
             variant="outline"
             size="icon-sm"
             :aria-label="`More ${COUNTER_META[kind].label.toLowerCase()}`"

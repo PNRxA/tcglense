@@ -54,6 +54,9 @@ function quickStart() {
     starting_life: setup.startingLife,
     layout: setup.layout,
     format: setup.format || undefined,
+    // Sent explicitly, like every other remembered field: leaving it out would let the server
+    // fall back to the format's default, handing back a counter this pod had turned off.
+    counters: [...setup.counters],
     players: Array.from({ length: setup.playerCount }, () => ({})),
   })
 }

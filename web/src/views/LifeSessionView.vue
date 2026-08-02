@@ -381,6 +381,7 @@ const finishedDuration = computed(() =>
       :counters="counterSeatState"
       :seats="seats"
       :shown="shownCounters"
+      :tracked="session.counters"
       :value="life.counterValue"
       :editable="isActive"
       @update:open="(open) => !open && (counterSheetFor = null)"
