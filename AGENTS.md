@@ -203,14 +203,29 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   and the deck list will disagree. The **name** (`is_maybeboard_section_name`) only *seeds* the
   flag where a section is born from untyped text — deck import, and migration 62's backfill of
   pre-flag decks — so a renamed maybeboard stays out and a section merely called "Considering"
-  stays in. **Legality is two client-side modules, not one:** `lib/legality.ts` judges each card
-  against the format's Scryfall data, `lib/deckRules.ts` judges the deck (size, copy limit,
-  command zone, colour identity) — `evaluateDeckLegality` composes them, so a new check belongs
-  in the rules module, not a third one. Its zone split reads the section **name** (`Commander`,
+  stays in. **Deck analysis is server-side** (issue #596): composition + draw odds
+  (`/stats`), the legality verdict (`/legality`), and a seeded sample hand (`/goldfish`) all
+  live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
+  mirrored under `/api/u/{handle}/decks/{id}/…` **through the same `analyse_*` core**, so a
+  shared deck and its owner's copy can never disagree. All three are **`GET`s taking
+  `AuthUser`** — they write nothing, so a read-only key must be able to call them.
+  **Legality is two modules, not one:** `analysis::legality` judges each card against the
+  format's Scryfall data, `analysis::rules` judges the deck (size, copy limit, command zone,
+  colour identity) and the former composes the latter, so a new check belongs in the rules
+  module, not a third one. Its zone split reads the section **name** (`Commander`,
   `Sideboard`, …) because a `deck_card` has no board role; keep those spellings in step with
   `deck_import::parser`'s. Every deck-wide rule is skipped rather than guessed when the format
   has no profile or the command zone is empty, and "not finished yet" is a `warning` severity —
-  a half-built deck must never be reported as illegal. Deck **import/export** (issue #389) lives in the sibling
+  a half-built deck must never be reported as illegal. The format table + the breach-severity
+  order are **mirrored** in `web/src/lib/legality.ts` (a dropdown must not wait on a request)
+  with tests pinning both sides, like `lifeLayout.ts`; `GET /api/games/{game}/formats`
+  publishes the server's copy. The **goldfish is stateless**: the hand is a pure function of
+  `(seed, mulligans, what was bottomed, how many drawn)`, all in the query string, so there is
+  no session table and a hand is reproducible from a URL — which is why its shuffle is a
+  hand-rolled SplitMix64 + Fisher–Yates rather than `rand`, whose generators don't promise a
+  stable stream across versions. Deck writes must invalidate the analysis query family
+  client-side (`invalidateDeckAnalysis`); it doesn't sit under the `['deck', …]` key.
+  Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
   throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
