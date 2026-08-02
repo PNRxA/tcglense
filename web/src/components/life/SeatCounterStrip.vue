@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Skull } from '@lucide/vue'
+import { Sigma, Skull } from '@lucide/vue'
 import {
   COMMANDER_DAMAGE,
   COUNTER_META,
@@ -57,29 +57,31 @@ const chips = computed<Chip[]>(() =>
 </script>
 
 <template>
+  <!-- Bordered and a full tap target's height: this is the only way into the counter sheet, and
+       it is pressed with a thumb across a table. A bare caption on a `py-0.5` band read as
+       decoration rather than as something you could press. -->
   <button
     type="button"
-    class="hover:bg-accent/60 flex w-full flex-wrap items-center justify-center gap-1 rounded-md px-2 py-0.5 transition-colors"
+    class="border-border/70 hover:bg-accent hover:border-border mx-2 mb-2 flex min-h-10 shrink-0 flex-wrap items-center justify-center gap-1.5 rounded-lg border px-2 py-1 transition-colors"
     :aria-label="`Counters for ${seatName}`"
     @click.stop="$emit('open')"
   >
     <span
       v-for="chip in chips"
       :key="chip.kind"
-      class="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.65rem] font-medium tabular-nums"
+      class="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
       :class="
-        chip.lethal
-          ? 'bg-destructive/15 text-destructive'
-          : 'bg-foreground/10 text-muted-foreground'
+        chip.lethal ? 'bg-destructive/15 text-destructive' : 'bg-foreground/10 text-foreground/80'
       "
     >
-      <Skull v-if="chip.lethal" class="size-3" aria-hidden="true" />
+      <Skull v-if="chip.lethal" class="size-3.5" aria-hidden="true" />
       {{ chip.label }} {{ chip.value }}
     </span>
     <span
       v-if="chips.length === 0"
-      class="text-muted-foreground/60 text-[0.65rem] font-medium uppercase tracking-wide"
+      class="text-muted-foreground flex items-center gap-1.5 text-xs font-medium"
     >
+      <Sigma class="size-3.5" aria-hidden="true" />
       Counters
     </span>
   </button>
