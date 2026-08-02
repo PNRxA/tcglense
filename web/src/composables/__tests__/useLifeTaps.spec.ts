@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope } from 'vue'
 import { COMMIT_DELAY_MS, useLifeTaps } from '@/composables/useLifeTaps'
+import { tapKey, type TapTarget } from '@/composables/useLifeSession'
 
 // The tap engine is the one piece of the life counter with real timing behaviour, so it's tested
-// directly: batching a run of taps into one commit, serialising a seat's commits so two deltas
+// directly: batching a run of taps into one commit, serialising a chain's commits so two deltas
 // can't interleave server-side, and NOT retrying a failed commit (which could double-apply).
+//
+// A *chain* is whatever the caller keys by — a seat's life, its poison, or the commander damage
+// it has taken from one particular opponent. The harness below keys the way `useLifeSession`
+// does, so these cases exercise the real key function rather than a test-only one.
 
-/** Drain the microtask queue: a commit rides its seat's promise chain, so it is dispatched on
+/** Drain the microtask queue: a commit rides its chain's promise queue, so it is dispatched on
  * a microtask rather than synchronously. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i += 1) await Promise.resolve()
@@ -19,7 +24,7 @@ function withScope<T>(body: () => T): { value: T; stop: () => void } {
   return { value, stop: () => scope.stop() }
 }
 
-let commits: { playerId: number; delta: number }[]
+let commits: { target: TapTarget; delta: number }[]
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -30,62 +35,91 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function harness(commit?: (playerId: number, delta: number) => Promise<unknown>) {
+function harness(commit?: (target: TapTarget, delta: number) => Promise<unknown>) {
   return withScope(() =>
-    useLifeTaps({
-      commit: (playerId, delta) => {
-        commits.push({ playerId, delta })
-        return commit ? commit(playerId, delta) : Promise.resolve()
+    useLifeTaps<TapTarget>({
+      key: tapKey,
+      commit: (target, delta) => {
+        commits.push({ target, delta })
+        return commit ? commit(target, delta) : Promise.resolve()
       },
     }),
   )
 }
 
+/** A seat's life chain, the common target. */
+const life = (playerId: number): TapTarget => ({ playerId })
+/** What a commit for a seat's life looks like in `commits`. */
+const lifeCommit = (playerId: number, delta: number) => ({ target: life(playerId), delta })
+
 describe('useLifeTaps', () => {
   it('shows a pending delta immediately and commits the run as one change', async () => {
     const { value: taps, stop } = harness()
 
-    taps.bump(1, -1)
-    taps.bump(1, -1)
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
+    taps.bump(life(1), -1)
+    taps.bump(life(1), -1)
     // The total on screen moves at once, before anything is sent.
-    expect(taps.pendingFor(1)).toBe(-3)
+    expect(taps.pendingFor(life(1))).toBe(-3)
     expect(taps.hasPending.value).toBe(true)
     expect(commits).toEqual([])
 
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     // One request, one history row: "lost 3", not three rows of "lost 1".
-    expect(commits).toEqual([{ playerId: 1, delta: -3 }])
-    expect(taps.pendingFor(1)).toBe(0)
+    expect(commits).toEqual([lifeCommit(1, -3)])
+    expect(taps.pendingFor(life(1))).toBe(0)
     stop()
   })
 
   it('restarts the window on each tap, so a slow run still commits once', async () => {
     const { value: taps, stop } = harness()
 
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS - 50)
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS - 50)
     await settle()
     expect(commits).toEqual([])
     vi.advanceTimersByTime(50)
     await settle()
-    expect(commits).toEqual([{ playerId: 1, delta: -2 }])
+    expect(commits).toEqual([lifeCommit(1, -2)])
     stop()
   })
 
   it('batches each seat separately — a whole pod taps at once', async () => {
     const { value: taps, stop } = harness()
 
-    taps.bump(1, -2)
-    taps.bump(2, 3)
+    taps.bump(life(1), -2)
+    taps.bump(life(2), 3)
+    vi.advanceTimersByTime(COMMIT_DELAY_MS)
+    await settle()
+    expect(commits).toEqual([lifeCommit(1, -2), lifeCommit(2, 3)])
+    stop()
+  })
+
+  it('batches each counter chain separately, including per damage source', async () => {
+    // A commander hit for 7 is seven taps of one button and should read back as one 7-point hit,
+    // and damage from two different commanders must not be added together — the chain key is
+    // what makes both true.
+    const { value: taps, stop } = harness()
+
+    const fromBob: TapTarget = { playerId: 1, counter: 'commander_damage', sourcePlayerId: 2 }
+    const fromCarol: TapTarget = { playerId: 1, counter: 'commander_damage', sourcePlayerId: 3 }
+    taps.bump(fromBob, 1)
+    taps.bump(fromBob, 1)
+    taps.bump(fromCarol, 1)
+    taps.bump(life(1), -3)
+    expect(taps.pendingFor(fromBob)).toBe(2)
+    expect(taps.pendingFor(fromCarol)).toBe(1)
+    expect(taps.pendingFor(life(1))).toBe(-3)
+
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     expect(commits).toEqual([
-      { playerId: 1, delta: -2 },
-      { playerId: 2, delta: 3 },
+      { target: fromBob, delta: 2 },
+      { target: fromCarol, delta: 1 },
+      lifeCommit(1, -3),
     ])
     stop()
   })
@@ -93,8 +127,8 @@ describe('useLifeTaps', () => {
   it('never sends a run that nets to zero', async () => {
     const { value: taps, stop } = harness()
 
-    taps.bump(1, 1)
-    taps.bump(1, -1)
+    taps.bump(life(1), 1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     // A mis-tap corrected before it committed is not a change that happened.
@@ -102,7 +136,7 @@ describe('useLifeTaps', () => {
     stop()
   })
 
-  it('serialises a seat’s commits so the server applies the deltas in order', async () => {
+  it('serialises a chain’s commits so the server applies the deltas in order', async () => {
     // The server applies a delta relative to the seat's current total, so a second commit must
     // not start before the first resolves.
     const resolvers: (() => void)[] = []
@@ -110,12 +144,12 @@ describe('useLifeTaps', () => {
       () => new Promise<void>((resolve) => resolvers.push(resolve)),
     )
 
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     expect(commits).toHaveLength(1)
 
-    taps.bump(1, -5)
+    taps.bump(life(1), -5)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     // Still one in flight: the second is queued behind it, not racing it.
@@ -124,10 +158,7 @@ describe('useLifeTaps', () => {
 
     resolvers[0]?.()
     await settle()
-    expect(commits).toEqual([
-      { playerId: 1, delta: -1 },
-      { playerId: 1, delta: -5 },
-    ])
+    expect(commits).toEqual([lifeCommit(1, -1), lifeCommit(1, -5)])
     resolvers[1]?.()
     stop()
   })
@@ -141,31 +172,31 @@ describe('useLifeTaps', () => {
       () => new Promise<void>((resolve) => resolvers.push(resolve)),
     )
 
-    taps.bump(1, -3)
-    expect(taps.pendingFor(1)).toBe(-3)
+    taps.bump(life(1), -3)
+    expect(taps.pendingFor(life(1))).toBe(-3)
 
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
-    expect(commits).toEqual([{ playerId: 1, delta: -3 }])
+    expect(commits).toEqual([lifeCommit(1, -3)])
     // Sent, not yet confirmed: still counted, so the tile keeps showing the total the player
     // tapped their way to.
-    expect(taps.pendingFor(1)).toBe(-3)
+    expect(taps.pendingFor(life(1))).toBe(-3)
     expect(taps.isCommitting.value).toBe(true)
 
     resolvers[0]?.()
     await settle()
     // Now the server's own total carries it, so holding it here too would double-count.
-    expect(taps.pendingFor(1)).toBe(0)
+    expect(taps.pendingFor(life(1))).toBe(0)
     stop()
   })
 
   it('drops the in-flight delta when the commit fails, snapping back to server truth', async () => {
     const { value: taps, stop } = harness(() => Promise.reject(new Error('offline')))
 
-    taps.bump(1, -3)
+    taps.bump(life(1), -3)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
-    expect(taps.pendingFor(1)).toBe(0)
+    expect(taps.pendingFor(life(1))).toBe(0)
     stop()
   })
 
@@ -177,8 +208,8 @@ describe('useLifeTaps', () => {
       () => new Promise<void>((resolve) => resolvers.push(resolve)),
     )
 
-    taps.bump(1, -1)
-    taps.bump(2, -2)
+    taps.bump(life(1), -1)
+    taps.bump(life(2), -2)
     let settled = false
     const flushed = taps.flush().then(() => {
       settled = true
@@ -200,7 +231,7 @@ describe('useLifeTaps', () => {
     )
 
     // Dispatched by the timer, so it is in flight rather than pending when flush is called.
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     expect(taps.isCommitting.value).toBe(true)
@@ -222,7 +253,7 @@ describe('useLifeTaps', () => {
     const failure = new Error('offline')
     const { value: taps, stop } = harness(() => Promise.reject(failure))
 
-    taps.bump(1, -4)
+    taps.bump(life(1), -4)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
 
@@ -230,7 +261,7 @@ describe('useLifeTaps', () => {
     expect(taps.error.value).toBe(failure)
     // The pending delta is gone rather than queued for another attempt: a request that failed
     // in transit may still have been applied, so re-sending it could double the loss.
-    expect(taps.pendingFor(1)).toBe(0)
+    expect(taps.pendingFor(life(1))).toBe(0)
 
     vi.advanceTimersByTime(COMMIT_DELAY_MS * 5)
     await settle()
@@ -244,27 +275,27 @@ describe('useLifeTaps', () => {
       fail ? Promise.reject(new Error('offline')) : Promise.resolve(),
     )
 
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     expect(taps.error.value).not.toBeNull()
 
     fail = false
-    taps.bump(1, -1)
+    taps.bump(life(1), -1)
     vi.advanceTimersByTime(COMMIT_DELAY_MS)
     await settle()
     expect(taps.error.value).toBeNull()
     stop()
   })
 
-  it('discards a seat’s pending taps without sending them', async () => {
+  it('discards a chain’s pending taps without sending them', async () => {
     // Used before an absolute correction: the taps described a change to a number that is
     // about to be replaced, so committing them afterwards would move the correction.
     const { value: taps, stop } = harness()
 
-    taps.bump(1, -3)
-    taps.discard(1)
-    expect(taps.pendingFor(1)).toBe(0)
+    taps.bump(life(1), -3)
+    taps.discard(life(1))
+    expect(taps.pendingFor(life(1))).toBe(0)
     vi.advanceTimersByTime(COMMIT_DELAY_MS * 2)
     await settle()
     expect(commits).toEqual([])
@@ -274,24 +305,21 @@ describe('useLifeTaps', () => {
   it('flushes every seat on demand', async () => {
     const { value: taps, stop } = harness()
 
-    taps.bump(1, -1)
-    taps.bump(2, -2)
+    taps.bump(life(1), -1)
+    taps.bump(life(2), -2)
     taps.flush()
     await settle()
-    expect(commits).toEqual([
-      { playerId: 1, delta: -1 },
-      { playerId: 2, delta: -2 },
-    ])
+    expect(commits).toEqual([lifeCommit(1, -1), lifeCommit(2, -2)])
     stop()
   })
 
   it('flushes pending work when the engine is disposed instead of losing it', async () => {
     const { value: taps, stop } = harness()
 
-    taps.bump(1, -7)
+    taps.bump(life(1), -7)
     // Leaving the counter (or navigating away) must not swallow a tap made a moment earlier.
     stop()
     await settle()
-    expect(commits).toEqual([{ playerId: 1, delta: -7 }])
+    expect(commits).toEqual([lifeCommit(1, -7)])
   })
 })

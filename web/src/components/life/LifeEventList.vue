@@ -32,6 +32,10 @@ interface Row {
   name: string
   position: number
   at: string
+  /** What the row reads as, counter and damage source included. */
+  change: string
+  /** The running total to show — only a `life` row's `life_after` is a life total. */
+  total: number | null
 }
 
 const rows = computed<Row[]>(() =>
@@ -46,6 +50,16 @@ const rows = computed<Row[]>(() =>
         name: seat?.name ?? 'Removed player',
         position: seat?.position ?? 0,
         at: elapsedLabel(Math.max(0, (Number.isNaN(at) ? origin.value : at) - origin.value)),
+        change: describeChange(
+          event,
+          event.source_player_id === null
+            ? undefined
+            : seatById.value.get(event.source_player_id)?.name,
+        ),
+        // Since #595 `life_after` holds whichever counter the row names, so printing it in the
+        // life column would report a 7-point commander hit as a life total of 7. The phrase
+        // already carries the counter's own number.
+        total: event.counter === 'life' ? event.life_after : null,
       }
     })
     .reverse(),
@@ -70,10 +84,10 @@ const rows = computed<Row[]>(() =>
                start of an element, which ran the name straight into the change ("Player 4lost 3").
                A margin would have fixed the look and left the row reading (and copying) as one
                word, so the gap belongs in the text. -->
-          <span class="text-muted-foreground">&nbsp;{{ describeChange(row.event) }}</span>
+          <span class="text-muted-foreground">&nbsp;{{ row.change }}</span>
         </span>
         <span class="text-muted-foreground w-12 shrink-0 text-right text-sm tabular-nums">
-          {{ row.event.life_after }}
+          {{ row.total ?? '' }}
         </span>
         <span class="text-muted-foreground w-12 shrink-0 text-right text-xs tabular-nums">
           {{ row.at }}
@@ -83,7 +97,7 @@ const rows = computed<Row[]>(() =>
           type="button"
           class="text-muted-foreground hover:text-foreground hover:bg-accent grid size-7 shrink-0 place-items-center rounded-md disabled:opacity-50"
           :disabled="busy"
-          :aria-label="`Undo: ${row.name} ${describeChange(row.event)}`"
+          :aria-label="`Undo: ${row.name} ${row.change}`"
           @click="emit('undo', row.event.id)"
         >
           <Undo2 class="size-4" aria-hidden="true" />

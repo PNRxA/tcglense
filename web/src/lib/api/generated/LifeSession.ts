@@ -20,6 +20,12 @@ starting_life: number,
  */
 layout: string, 
 /**
+ * Which counters beyond life this game tracks, in display order — any of
+ * `commander_damage` / `poison` / `energy` / `experience`. Empty for a game that only
+ * tracks life; `life` itself is always tracked and never listed.
+ */
+counters: Array<string>, 
+/**
  * `active` or `finished`. Only an active session accepts edits.
  */
 status: string, 

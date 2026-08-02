@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import LifeSeatTile from '@/components/life/LifeSeatTile.vue'
 import { seatCellStyle } from '@/lib/lifeLayout'
+import type { LifeCounterKind } from '@/lib/lifeCounters'
 import type { LifeSeatView } from '@/composables/useLifeSession'
 
 // The table: one CSS grid, one cell per seat, laid out by `lib/lifeLayout`'s pure placement
@@ -21,12 +22,15 @@ defineProps<{
   grid: { gridTemplateColumns: string; gridTemplateRows: string }
   editable: boolean
   winnerId: number | null
+  /** Which counter rows the tiles show — see `lib/lifeCounters`. */
+  counters: LifeCounterKind[]
   gameSlug: string
 }>()
 
 const emit = defineEmits<{
   bump: [playerId: number, delta: number]
   settings: [playerId: number]
+  counters: [playerId: number]
 }>()
 </script>
 
@@ -42,9 +46,11 @@ const emit = defineEmits<{
         :view="view"
         :editable="editable"
         :winner="winnerId === view.seat.id"
+        :counters="counters"
         :game-slug="gameSlug"
         @bump="(delta) => emit('bump', view.seat.id, delta)"
         @settings="emit('settings', view.seat.id)"
+        @counters="emit('counters', view.seat.id)"
       />
     </div>
   </div>

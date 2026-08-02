@@ -35,6 +35,8 @@ function event(over: Partial<LifeEvent> & { id: number; player_id: number }): Li
     delta: -1,
     life_after: 39,
     kind: 'adjust',
+    counter: 'life',
+    source_player_id: null,
     created_at: START,
     ...over,
   } as LifeEvent
@@ -271,6 +273,78 @@ describe('describeChange', () => {
     expect(describeChange(event({ id: 1, player_id: 1, delta: 0, life_after: -9999 }))).toBe(
       'no change',
     )
+  })
+
+  it('names the counter, and whose commander dealt it', () => {
+    // "gained 7" and "took 7 commander damage from Bao" are the same row shape but very
+    // different events — a ledger you undo from has to tell two adjacent ones apart.
+    const hit = event({
+      id: 1,
+      player_id: 1,
+      delta: 7,
+      life_after: 7,
+      counter: 'commander_damage',
+      source_player_id: 2,
+    })
+    expect(describeChange(hit, 'Bao')).toBe('took 7 commander damage from Bao')
+    // A source that has left the table has no name left to give.
+    expect(describeChange(hit)).toBe('took 7 commander damage')
+    expect(
+      describeChange(event({ id: 2, player_id: 1, delta: 4, life_after: 4, counter: 'poison' })),
+    ).toBe('took 4 poison')
+    // Removing counters is shedding them, not "losing life".
+    expect(
+      describeChange(event({ id: 3, player_id: 1, delta: -2, life_after: 2, counter: 'poison' })),
+    ).toBe('shed 2 poison')
+    expect(
+      describeChange(
+        event({ id: 4, player_id: 1, kind: 'set', delta: 3, life_after: 5, counter: 'energy' }),
+      ),
+    ).toBe('set energy to 5')
+    // A counter tap at its floor, which must not read as a life no-op either.
+    expect(
+      describeChange(event({ id: 5, player_id: 1, delta: 0, life_after: 0, counter: 'poison' })),
+    ).toBe('no change to poison')
+  })
+})
+
+describe('counters never leak into the life series', () => {
+  // Since #595 an event's `life_after` holds whichever counter its row names, so a
+  // commander-damage row folded into this series would draw a seat's life crashing to 7 when it
+  // never moved — and because `lifeSteps` carries each seat's last value forward and
+  // `lifeExtent` rescales across every line, one such point corrupts the whole pod's chart.
+  const damage = (id: number, player_id: number, value: number): LifeEvent =>
+    event({
+      id,
+      player_id,
+      delta: value,
+      life_after: value,
+      counter: 'commander_damage',
+      source_player_id: 2,
+    })
+
+  it('plots only life events', () => {
+    const lines = lifeLines(
+      [seat({ id: 1, position: 0, starting_life: 40 })],
+      [
+        event({ id: 1, player_id: 1, delta: -3, life_after: 37 }),
+        damage(2, 1, 7),
+        event({ id: 3, player_id: 1, delta: -5, life_after: 32 }),
+      ],
+      START,
+    )
+    expect(lines[0]?.points.map((p) => p.life)).toEqual([40, 37, 32])
+  })
+
+  it('leaves the axis alone when only counters moved', () => {
+    const lines = lifeLines(
+      [seat({ id: 1, position: 0, starting_life: 40 })],
+      [damage(1, 1, 7)],
+      START,
+    )
+    expect(lines[0]?.points.map((p) => p.life)).toEqual([40])
+    // A 7 in this extent would squash every other seat's line into the top of the chart.
+    expect(lifeExtent(lines).min).toBeGreaterThan(7)
   })
 })
 

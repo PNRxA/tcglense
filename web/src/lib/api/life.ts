@@ -23,6 +23,7 @@ export type {
   CreateLifeSessionRequest,
   FinishLifeSessionRequest,
   LifeChange,
+  LifeCounter,
   LifeDeckRecord,
   LifeEvent,
   LifeSeat,
@@ -60,6 +61,19 @@ export type LifeLayout = (typeof LIFE_LAYOUTS)[number]
 export type LifeRotation = 0 | 90 | 180 | 270
 
 /**
+ * How one change names the number it moves. Omitting `counter` means `life`, which is what the
+ * tap loop sends; `commander_damage` is the only one that needs a `source_player_id` (and the
+ * only one that accepts one) — see `lib/lifeCounters` for the vocabulary.
+ */
+export interface LifeCounterRef {
+  counter?: string
+  source_player_id?: number
+}
+
+/** The body of a life/counter change: exactly one of `delta` or `life`, plus which counter. */
+export type LifeChangeBody = ({ delta: number } | { life: number }) & LifeCounterRef
+
+/**
  * A seat as sent when starting a game or adding a player. Every field is optional — the
  * server names an unnamed seat `Player {n}`, inherits the session's starting life, and
  * rotates the seat the way the layout seats it.
@@ -84,6 +98,8 @@ export interface StartLifeSessionBody {
   format?: string
   starting_life?: number
   layout?: LifeLayout
+  /** Counters beyond life to track. Absent takes the rematched game's, else the format's. */
+  counters?: string[]
   players?: NewLifeSeat[]
   from_session_id?: number
 }
@@ -125,12 +141,16 @@ export function startLifeSession(
   return request<LifeSessionDetail>(`${base(game)}/sessions`, { method: 'POST', body, token })
 }
 
-/** Edit a game's label, format or seat layout (each field optional, absent = unchanged). */
+/**
+ * Edit a game's label, format, seat layout or tracked counters (each field optional, absent =
+ * unchanged). An empty `counters` array turns them all off; values already recorded against a
+ * counter switched off are kept, not deleted.
+ */
 export function updateLifeSession(
   token: string,
   game: string,
   sessionId: number,
-  body: { name?: string; format?: string; layout?: LifeLayout },
+  body: { name?: string; format?: string; layout?: LifeLayout; counters?: string[] },
 ): Promise<LifeSession> {
   return request<LifeSession>(sessionBase(game, sessionId), { method: 'PUT', body, token })
 }
@@ -223,15 +243,16 @@ export function reorderLifePlayers(
 // ----- Life changes -----
 
 /**
- * Move a seat's life and record it. Send exactly one of `delta` (a relative change — what a
- * run of taps commits) or `life` (an absolute correction).
+ * Move one of a seat's numbers and record it. Send exactly one of `delta` (a relative change —
+ * what a run of taps commits) or `life` (an absolute correction), plus `counter` when it isn't
+ * the seat's life total.
  */
 export function adjustLife(
   token: string,
   game: string,
   sessionId: number,
   playerId: number,
-  change: { delta: number } | { life: number },
+  change: LifeChangeBody,
 ): Promise<LifeChange> {
   return request<LifeChange>(`${sessionBase(game, sessionId)}/players/${playerId}/life`, {
     method: 'POST',

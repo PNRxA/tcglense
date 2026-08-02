@@ -27,7 +27,16 @@
 //!   result can't drift out from under the deck record it already contributed to.
 //! - **Life totals are never derived twice.** A tap appends one event and moves the seat by
 //!   its delta; an undo re-folds the seat's whole chain through the pure
-//!   [`replay`](replay::replay) fold. Nothing else writes `life_session_players.life`.
+//!   [`replay_seat`](replay::replay_seat) fold. Nothing else writes
+//!   `life_session_players.life` — and that survived the arrival of a second counter axis
+//!   precisely because the other counters got no column of their own.
+//!
+//! A seat carries more than one number (issue #595): poison, energy, experience, and commander
+//! damage keyed by the seat whose commander dealt it. They ride the **event**, not the seat —
+//! one `counter` discriminator and one nullable `source_player_id` on `life_events` — so the
+//! whole undo/replay contract above applies to them unchanged, and the current value of each is
+//! folded out of the history rather than denormalised. See [`counters`] for the vocabulary and
+//! [`replay`] for the per-`(counter, source)` fold.
 //!
 //! Every route is in the router's `private` group ([`AuthUser`] reads / [`WritableUser`]
 //! writes, `Cache-Control: no-store`, per-user rate limited).
@@ -48,6 +57,7 @@ use crate::entities::{card, deck, life_event, life_session, life_session_player}
 use crate::error::AppError;
 use crate::state::AppState;
 
+pub(crate) mod counters;
 mod events;
 mod players;
 mod read;
@@ -310,17 +320,23 @@ impl LifeSeatResponse {
     }
 }
 
-/// One recorded life change. `delta` is what the change was; `life_after` is what it left the
-/// seat on, so a history row and a chart point need no client-side fold.
+/// One recorded change. `delta` is what the change was; `life_after` is what it left the
+/// counter on, so a history row and a chart point need no client-side fold.
 #[derive(Debug, Serialize, PartialEq, Eq, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "LifeEvent"))]
 pub struct LifeEventResponse {
     pub id: i32,
     pub player_id: i32,
     pub delta: i32,
+    /// The value this row's `counter` stood at afterwards (the seat's life, for `life`).
     pub life_after: i32,
     /// `adjust` (relative) or `set` (absolute correction).
     pub kind: String,
+    /// Which counter moved: `life` / `poison` / `energy` / `experience` / `commander_damage`.
+    pub counter: String,
+    /// For `commander_damage`, the seat whose commander dealt it; null otherwise. A seat that
+    /// has since left the table still reads as its id — the history is the surviving seat's.
+    pub source_player_id: Option<i32>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
 }
@@ -333,9 +349,28 @@ impl From<life_event::Model> for LifeEventResponse {
             delta: e.delta,
             life_after: e.life_after,
             kind: e.kind,
+            counter: e.counter,
+            source_player_id: e.source_player_id,
             created_at: e.created_at,
         }
     }
+}
+
+/// Where one of a seat's counters currently stands — derived by folding the history, never
+/// stored, so there is exactly one writer for every number in a game.
+///
+/// Only counters a seat's history has touched appear — an absent entry is `0`, and a seat's
+/// life is on the seat itself rather than here.
+#[derive(Debug, Serialize, PartialEq, Eq, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "LifeCounter"))]
+pub struct LifeCounterResponse {
+    /// The seat carrying the counter.
+    pub player_id: i32,
+    /// `poison` / `energy` / `experience` / `commander_damage`.
+    pub counter: String,
+    /// For `commander_damage`, the seat whose commander dealt it; null otherwise.
+    pub source_player_id: Option<i32>,
+    pub value: i32,
 }
 
 /// A tracked game's header plus its seats — what the session list returns, and what every
@@ -353,6 +388,10 @@ pub struct LifeSessionResponse {
     /// Seat-placement layout slug — one of `rows` / `facing` / `facing-solo` / `sides` /
     /// `sides-solo` / `grid` / `pinwheel`.
     pub layout: String,
+    /// Which counters beyond life this game tracks, in display order — any of
+    /// `commander_damage` / `poison` / `energy` / `experience`. Empty for a game that only
+    /// tracks life; `life` itself is always tracked and never listed.
+    pub counters: Vec<String>,
     /// `active` or `finished`. Only an active session accepts edits.
     pub status: String,
     /// Seats in `position` order.
@@ -376,15 +415,23 @@ pub struct LifeSessionResponse {
 pub struct LifeSessionDetail {
     pub session: LifeSessionResponse,
     pub events: Vec<LifeEventResponse>,
+    /// Every non-life counter that has been moved, folded out of `events` — so a client gets
+    /// the table's full state without re-implementing the replay. Deterministically ordered
+    /// (by seat, then counter, then source seat).
+    pub counters: Vec<LifeCounterResponse>,
 }
 
-/// The result of one life change: the seat as it now stands and the event that moved it. Kept
-/// small deliberately — this is the hot path (a tap commit), so it doesn't re-send the game.
+/// The result of one change: the seat as it now stands and the event that moved it. Kept small
+/// deliberately — this is the hot path (a tap commit), so it doesn't re-send the game.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct LifeChange {
     pub player: LifeSeatResponse,
     pub event: LifeEventResponse,
+    /// Where the affected counter now stands, for a change to something other than `life`
+    /// (whose value is the seat's own `life`). Lets a client patch its counter state from the
+    /// hot-path response, exactly as it already swaps in `player`, without a re-read.
+    pub counter: Option<LifeCounterResponse>,
 }
 
 /// A deck's record across finished sessions: how it's actually performed. `games` counts only
@@ -450,6 +497,11 @@ pub struct CreateLifeSessionRequest {
     pub starting_life: Option<i32>,
     #[serde(default)]
     pub layout: Option<String>,
+    /// Which counters beyond life to track — any of `commander_damage` / `poison` / `energy` /
+    /// `experience`. Absent takes the copied session's, else the format's default (a Commander
+    /// pod opens with the damage matrix on). Naming `life` is a `422` — it is always tracked.
+    #[serde(default)]
+    pub counters: Option<Vec<String>>,
     /// The seats to open the game with. May be empty only alongside `from_session_id`.
     #[serde(default)]
     pub players: Vec<LifeSeatInput>,
@@ -470,6 +522,11 @@ pub struct UpdateLifeSessionRequest {
     pub format: Option<String>,
     #[serde(default)]
     pub layout: Option<String>,
+    /// Replace the tracked-counter set (an empty array turns them all off). Values already
+    /// recorded against a counter that gets switched off are **kept**, not deleted — turning a
+    /// counter off hides a row of the mat, it doesn't rewrite the game.
+    #[serde(default)]
+    pub counters: Option<Vec<String>>,
 }
 
 /// Body of `POST /api/tools/{game}/life/sessions/{session_id}/finish`: record the result.
@@ -505,16 +562,27 @@ pub struct ReorderLifeSeatsRequest {
     pub player_ids: Vec<i32>,
 }
 
-/// Body of `POST .../players/{player_id}/life`: change a seat's total. Send exactly one of
-/// `delta` (a relative change — what a run of taps commits) or `life` (an absolute
+/// Body of `POST .../players/{player_id}/life`: change one of a seat's numbers. Send exactly one
+/// of `delta` (a relative change — what a run of taps commits) or `life` (an absolute
 /// correction). Both, or neither, is a `422`.
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AdjustLifeRequest {
     #[serde(default)]
     pub delta: Option<i32>,
+    /// The absolute value to pin the counter to — named `life` because that is what it was, and
+    /// what it still means for the default counter.
     #[serde(default)]
     pub life: Option<i32>,
+    /// Which counter to move. Absent means `life`, so a client that predates counters keeps
+    /// working. A counter the game isn't tracking is a `422`.
+    #[serde(default)]
+    pub counter: Option<String>,
+    /// The seat whose commander dealt the damage. **Required** for `commander_damage` and
+    /// refused for every other counter (both `422`) — 21 damage is per commander, so a
+    /// sourceless damage row would be a number that can't decide anything.
+    #[serde(default)]
+    pub source_player_id: Option<i32>,
 }
 
 /// Query for `GET /api/tools/{game}/life/sessions`: narrow to games still in progress or
@@ -724,6 +792,7 @@ pub(crate) fn session_response(
         format: session.format.clone(),
         starting_life: session.starting_life,
         layout: session.layout.clone(),
+        counters: counters::parse_counters(&session.counters),
         status: session.status.clone(),
         players: seats
             .into_iter()
@@ -753,9 +822,13 @@ pub(crate) async fn session_detail(
         .order_by_asc(life_event::Column::Id)
         .all(&state.db)
         .await?;
+    // Fold before the seats are consumed by the response shaper: the counter state is derived
+    // from the very rows being returned, so a client that trusts either one gets the same game.
+    let counters = replay::counter_values(&seats, &events);
     Ok(LifeSessionDetail {
         session: session_response(session, seats, &refs),
         events: events.into_iter().map(LifeEventResponse::from).collect(),
+        counters,
     })
 }
 
@@ -875,16 +948,6 @@ pub(crate) fn validate_delta(delta: i32) -> Result<i32, AppError> {
     }
     Err(AppError::Validation(format!(
         "delta must be between -{MAX_DELTA} and {MAX_DELTA}"
-    )))
-}
-
-/// Validate an absolute life total.
-pub(crate) fn validate_life(life: i32) -> Result<i32, AppError> {
-    if (LIFE_MIN..=LIFE_MAX).contains(&life) {
-        return Ok(life);
-    }
-    Err(AppError::Validation(format!(
-        "life must be between {LIFE_MIN} and {LIFE_MAX}"
     )))
 }
 
@@ -1052,10 +1115,13 @@ mod tests {
         // `i32::MIN` — panicking in debug, and wrapping back inside the bound in release.
         assert!(validate_delta(i32::MIN).is_err());
         assert!(validate_delta(i32::MAX).is_err());
-        assert!(validate_life(i32::MIN).is_err());
-        assert!(validate_life(i32::MAX).is_err());
         assert!(validate_starting_life(i32::MIN).is_err());
-        assert!(validate_life(LIFE_MIN).is_ok());
-        assert!(validate_life(LIFE_MIN - 1).is_err());
+        // An absolute total is bounded by the counter's own range — see `counters` for the
+        // per-counter cases; these pin the life ones the module's own bounds define.
+        use counters::{COUNTER_LIFE, validate_value};
+        assert!(validate_value(COUNTER_LIFE, i32::MIN).is_err());
+        assert!(validate_value(COUNTER_LIFE, i32::MAX).is_err());
+        assert!(validate_value(COUNTER_LIFE, LIFE_MIN).is_ok());
+        assert!(validate_value(COUNTER_LIFE, LIFE_MIN - 1).is_err());
     }
 }

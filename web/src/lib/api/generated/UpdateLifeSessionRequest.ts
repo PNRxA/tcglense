@@ -5,4 +5,10 @@
  * or layout. Each field is optional — absent leaves it unchanged; an explicit blank string
  * clears `name`/`format`.
  */
-export type UpdateLifeSessionRequest = { name: string | null, format: string | null, layout: string | null, };
+export type UpdateLifeSessionRequest = { name: string | null, format: string | null, layout: string | null, 
+/**
+ * Replace the tracked-counter set (an empty array turns them all off). Values already
+ * recorded against a counter that gets switched off are **kept**, not deleted — turning a
+ * counter off hides a row of the mat, it doesn't rewrite the game.
+ */
+counters: Array<string> | null, };

@@ -1529,3 +1529,491 @@ async fn a_seat_can_name_a_commander_instead_of_a_deck() {
     assert_eq!(rows[0]["games"], 1);
     assert_eq!(rows[0]["losses"], 1);
 }
+
+// ---------- Counters (issue #595) ----------
+//
+// The second axis on `life_events`: poison / energy / experience, and commander damage keyed by
+// the seat whose commander dealt it. What these suites pin is the set of things that would each
+// silently produce a *wrong game* rather than an error — a counter tap moving life, damage from
+// two commanders being added together, a source that isn't at the table, and history vanishing
+// when the player who dealt it scoops.
+
+/// A three-player Commander pod, which opens with the damage matrix already on.
+async fn start_pod(app: &TestApp, token: &str) -> Value {
+    start_game(
+        app,
+        token,
+        json!({
+            "format": "Commander",
+            "starting_life": 40,
+            "players": [{ "name": "Alice" }, { "name": "Bob" }, { "name": "Carol" }],
+        }),
+    )
+    .await
+}
+
+/// Post one change to a seat's counter.
+async fn tap(
+    app: &TestApp,
+    token: &str,
+    session: i64,
+    player: i64,
+    body: Value,
+) -> (StatusCode, Value) {
+    let (status, _, out) = send(
+        app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/tools/mtg/life/sessions/{session}/players/{player}/life"),
+            token,
+            body,
+        ),
+    )
+    .await;
+    (status, out)
+}
+
+/// The value of one counter chain in a detail body, or `None` when it has never been moved.
+fn counter_value(detail: &Value, player: i64, counter: &str, source: Option<i64>) -> Option<i64> {
+    detail["counters"].as_array()?.iter().find_map(|row| {
+        let matches = row["player_id"].as_i64() == Some(player)
+            && row["counter"].as_str() == Some(counter)
+            && row["source_player_id"].as_i64() == source;
+        matches.then(|| row["value"].as_i64()).flatten()
+    })
+}
+
+#[tokio::test]
+async fn a_commander_pod_opens_with_the_damage_matrix_and_other_formats_do_not() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "profile@example.com", PW).await;
+
+    // Derived from the format label, since that is the only signal a new game carries.
+    let pod = start_pod(&app, &access).await;
+    assert_eq!(pod["session"]["counters"], json!(["commander_damage"]));
+
+    // A Standard pod has no business seeing a commander-damage matrix.
+    let standard = start_game(
+        &app,
+        &access,
+        json!({ "format": "standard", "players": [{ "name": "A" }, { "name": "B" }] }),
+    )
+    .await;
+    assert_eq!(standard["session"]["counters"], json!([]));
+
+    // An explicit set always wins, and normalises to display order rather than the order sent.
+    let explicit = start_game(
+        &app,
+        &access,
+        json!({
+            "format": "standard",
+            "counters": ["poison", "commander_damage"],
+            "players": [{ "name": "A" }, { "name": "B" }],
+        }),
+    )
+    .await;
+    assert_eq!(
+        explicit["session"]["counters"],
+        json!(["commander_damage", "poison"])
+    );
+
+    // A rematch inherits the pod's counters along with its seats.
+    let rematch = start_game(
+        &app,
+        &access,
+        json!({ "from_session_id": session_id(&pod) }),
+    )
+    .await;
+    assert_eq!(rematch["session"]["counters"], json!(["commander_damage"]));
+
+    // `life` is always tracked, so naming it would imply it could be left out.
+    for bad in [json!(["life"]), json!(["stun"])] {
+        let (status, _, out) = send(
+            &app,
+            json_with_bearer(
+                "POST",
+                "/api/tools/mtg/life/sessions",
+                &access,
+                json!({ "counters": bad, "players": [{ "name": "A" }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+    }
+}
+
+#[tokio::test]
+async fn commander_damage_is_tracked_per_source_and_never_moves_the_targets_life() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "cmdr@example.com", PW).await;
+    let pod = start_pod(&app, &access).await;
+    let id = session_id(&pod);
+    let (alice, bob, carol) = (player_id(&pod, 0), player_id(&pod, 1), player_id(&pod, 2));
+
+    // Bob's commander connects for 7, then Carol's for 6, then Bob's again for 7.
+    for (source, delta) in [(bob, 7), (carol, 6), (bob, 7)] {
+        let (status, change) = tap(
+            &app,
+            &access,
+            id,
+            alice,
+            json!({ "delta": delta, "counter": "commander_damage", "source_player_id": source }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{change:?}");
+        // The hot-path response carries the counter, so a client needs no re-read...
+        assert_eq!(change["counter"]["counter"], "commander_damage");
+        assert_eq!(change["counter"]["source_player_id"], source);
+        // ...and the seat's life is untouched. A commander-damage tap that also moved life would
+        // double-count every hit the player had already tapped in.
+        assert_eq!(change["player"]["life"], 40);
+    }
+
+    let (status, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // 7 from Bob and 6 from Carol is *not* 13 from either — which is exactly what decides
+    // whether the 21 threshold was reached.
+    assert_eq!(
+        counter_value(&detail, alice, "commander_damage", Some(bob)),
+        Some(14)
+    );
+    assert_eq!(
+        counter_value(&detail, alice, "commander_damage", Some(carol)),
+        Some(6)
+    );
+    assert_eq!(detail["session"]["players"][0]["life"], 40);
+    // The history reads as damage, not as life loss.
+    let events = detail["events"].as_array().expect("events");
+    assert_eq!(events.len(), 3);
+    assert!(events.iter().all(|e| e["counter"] == "commander_damage"));
+
+    // Life still works alongside it, in its own chain and on the seat row.
+    let (status, change) = tap(&app, &access, id, alice, json!({ "delta": -7 })).await;
+    assert_eq!(status, StatusCode::OK, "{change:?}");
+    assert_eq!(change["player"]["life"], 33);
+    assert_eq!(change["event"]["counter"], "life");
+    assert!(
+        change["counter"].is_null(),
+        "life lives on the seat, not in the counter list"
+    );
+}
+
+#[tokio::test]
+async fn a_counter_the_game_is_not_tracking_is_refused_until_it_is_turned_on() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "untracked@example.com", PW).await;
+    let detail = start_duel(&app, &access).await;
+    let id = session_id(&detail);
+    let alice = player_id(&detail, 0);
+
+    // A duel with no format tracks life only: a value recorded against a counter the mat doesn't
+    // show would be invisible state.
+    let (status, out) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 1, "counter": "poison" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+
+    // An unknown slug is a 422 too, not a silently-stored counter nothing can render.
+    let (status, out) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 1, "counter": "stun" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+
+    // Turn it on for the game, and the same tap lands.
+    let (status, _, session) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}"),
+            &access,
+            json!({ "counters": ["poison"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session:?}");
+    assert_eq!(session["counters"], json!(["poison"]));
+    let (status, change) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 4, "counter": "poison" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{change:?}");
+    assert_eq!(change["counter"]["value"], 4);
+
+    // Turning it back off hides the row but keeps what was recorded — a display choice must not
+    // rewrite the game's history.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/tools/mtg/life/sessions/{id}"),
+            &access,
+            json!({ "counters": [] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["session"]["counters"], json!([]));
+    assert_eq!(counter_value(&detail, alice, "poison", None), Some(4));
+}
+
+#[tokio::test]
+async fn commander_damage_needs_a_source_seat_that_is_someone_else_at_this_table() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "source@example.com", PW).await;
+    let (other, _) = register(&app, "elsewhere@example.com", PW).await;
+    let pod = start_pod(&app, &access).await;
+    let id = session_id(&pod);
+    let (alice, bob) = (player_id(&pod, 0), player_id(&pod, 1));
+    // A seat in a different game of the caller's, and one belonging to someone else entirely.
+    let elsewhere = start_duel(&app, &access).await;
+    let foreign_seat = player_id(&elsewhere, 0);
+    let theirs = start_duel(&app, &other).await;
+    let their_seat = player_id(&theirs, 0);
+
+    for (body, why) in [
+        (
+            json!({ "delta": 7, "counter": "commander_damage" }),
+            "no source — 21 damage is counted per commander",
+        ),
+        (
+            json!({ "delta": 7, "counter": "commander_damage", "source_player_id": alice }),
+            "a seat's own commander doesn't deal it commander damage",
+        ),
+        (
+            json!({ "delta": 1, "counter": "poison", "source_player_id": bob }),
+            "a source on a counter that has none",
+        ),
+    ] {
+        let (status, out) = tap(&app, &access, id, alice, body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {out:?}");
+    }
+
+    // A seat id from another game — the caller's own or another user's — is a 404, never a 403
+    // and never an accepted source: no existence oracle over seat ids.
+    for source in [foreign_seat, their_seat] {
+        let (status, out) = tap(
+            &app,
+            &access,
+            id,
+            alice,
+            json!({ "delta": 7, "counter": "commander_damage", "source_player_id": source }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{out:?}");
+    }
+}
+
+#[tokio::test]
+async fn undoing_a_counter_change_re_folds_only_its_own_chain() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "undo-counter@example.com", PW).await;
+    let pod = start_pod(&app, &access).await;
+    let id = session_id(&pod);
+    let (alice, bob, carol) = (player_id(&pod, 0), player_id(&pod, 1), player_id(&pod, 2));
+
+    let (_, first) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 7, "counter": "commander_damage", "source_player_id": bob }),
+    )
+    .await;
+    let first_event = first["event"]["id"].as_i64().expect("event id");
+    tap(&app, &access, id, alice, json!({ "delta": -5 })).await;
+    tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 6, "counter": "commander_damage", "source_player_id": carol }),
+    )
+    .await;
+    tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 7, "counter": "commander_damage", "source_player_id": bob }),
+    )
+    .await;
+
+    // Undo the FIRST hit from Bob: only Bob's chain re-folds (14 -> 7). Life and Carol's damage
+    // are untouched, which an all-events-are-one-chain fold would get wrong.
+    let (status, _, detail) = send(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!(
+                "/api/tools/mtg/life/sessions/{id}/events/{first_event}"
+            ))
+            .header("authorization", format!("Bearer {access}"))
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{detail:?}");
+    assert_eq!(
+        counter_value(&detail, alice, "commander_damage", Some(bob)),
+        Some(7)
+    );
+    assert_eq!(
+        counter_value(&detail, alice, "commander_damage", Some(carol)),
+        Some(6)
+    );
+    assert_eq!(detail["session"]["players"][0]["life"], 35);
+}
+
+#[tokio::test]
+async fn a_counter_floors_at_zero_and_records_the_movement_that_actually_happened() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "poison@example.com", PW).await;
+    let detail = start_game(
+        &app,
+        &access,
+        json!({ "counters": ["poison"], "players": [{ "name": "Alice" }] }),
+    )
+    .await;
+    let id = session_id(&detail);
+    let alice = player_id(&detail, 0);
+
+    tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 3, "counter": "poison" }),
+    )
+    .await;
+    // Removing more poison than a player has leaves them on none, and the row records the 3 that
+    // actually came off rather than the 10 it asked for.
+    let (status, change) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": -10, "counter": "poison" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{change:?}");
+    assert_eq!(change["event"]["delta"], -3);
+    assert_eq!(change["counter"]["value"], 0);
+
+    // Negative poison is not a state a game can be in, so an absolute correction below the floor
+    // is refused rather than clamped silently — life's floor is the one that goes negative.
+    let (status, out) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "life": -1, "counter": "poison" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{out:?}");
+}
+
+#[tokio::test]
+async fn damage_dealt_by_a_seat_that_leaves_the_table_stays_on_the_seat_that_took_it() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "scooped@example.com", PW).await;
+    let pod = start_pod(&app, &access).await;
+    let id = session_id(&pod);
+    let (alice, carol) = (player_id(&pod, 0), player_id(&pod, 2));
+
+    tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 9, "counter": "commander_damage", "source_player_id": carol }),
+    )
+    .await;
+
+    // Carol scoops and is taken off the table. Her own history cascades away with her seat — but
+    // the damage she dealt is Alice's history, and deleting it would rewrite how the game went.
+    let (status, _, detail) = send(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/tools/mtg/life/sessions/{id}/players/{carol}"))
+            .header("authorization", format!("Bearer {access}"))
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{detail:?}");
+    assert_eq!(detail["session"]["players"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        counter_value(&detail, alice, "commander_damage", Some(carol)),
+        Some(9),
+        "the source reference is orphan-tolerant, not a cascade"
+    );
+    // And the game still loads, rather than failing on a dangling reference.
+    let (status, _, reread) = send(
+        &app,
+        get_with_bearer(&format!("/api/tools/mtg/life/sessions/{id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        counter_value(&reread, alice, "commander_damage", Some(carol)),
+        Some(9)
+    );
+}
+
+#[tokio::test]
+async fn a_finished_game_refuses_a_counter_change_like_any_other() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "locked@example.com", PW).await;
+    let pod = start_pod(&app, &access).await;
+    let id = session_id(&pod);
+    let (alice, bob) = (player_id(&pod, 0), player_id(&pod, 1));
+
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/tools/mtg/life/sessions/{id}/finish"),
+            &access,
+            json!({ "winner_player_id": bob }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A recorded result already counts towards the per-deck record, so nothing that decided it
+    // may move afterwards — commander damage least of all.
+    let (status, out) = tap(
+        &app,
+        &access,
+        id,
+        alice,
+        json!({ "delta": 7, "counter": "commander_damage", "source_player_id": bob }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{out:?}");
+}

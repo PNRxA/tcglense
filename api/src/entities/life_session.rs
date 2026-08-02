@@ -37,6 +37,12 @@ pub struct Model {
     pub starting_life: i32,
     /// Seat-placement layout slug — see `handlers::tools::life::LAYOUTS`.
     pub layout: String,
+    /// Which counters beyond life this game tracks, as a CSV of slugs from
+    /// `handlers::tools::life::counters::OPTIONAL_COUNTERS` (`""` for none). Per-session
+    /// because a Standard pod has no business seeing a commander-damage matrix — the same
+    /// reason `layout` is a session column rather than a user preference. `life` is implicit
+    /// and never listed.
+    pub counters: String,
     /// `"active"` while the game is being played, `"finished"` once a result is recorded.
     pub status: String,
     pub started_at: DateTimeUtc,

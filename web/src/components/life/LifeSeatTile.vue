@@ -3,8 +3,10 @@ import { computed, onScopeDispose, ref } from 'vue'
 import { Crown, Minus, Plus, Settings2, Skull } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import LifeSparkline from '@/components/life/LifeSparkline.vue'
+import SeatCounterStrip from '@/components/life/SeatCounterStrip.vue'
 import { DANGER_LIFE, rotationClass } from '@/lib/lifeLayout'
 import { seatColor } from '@/lib/lifeSeries'
+import type { LifeCounterKind } from '@/lib/lifeCounters'
 import type { LifeSeatView } from '@/composables/useLifeSession'
 
 // One seat on the mat: a name, a very large total, and two full-height tap zones.
@@ -25,10 +27,12 @@ const props = defineProps<{
   editable: boolean
   /** Marks the winning seat once a result is recorded. */
   winner: boolean
+  /** Which counter rows this game shows; empty hides the strip entirely. */
+  counters: LifeCounterKind[]
   gameSlug: string
 }>()
 
-const emit = defineEmits<{ bump: [delta: number]; settings: [] }>()
+const emit = defineEmits<{ bump: [delta: number]; settings: []; counters: [] }>()
 
 /** How long a press waits before it starts repeating, and how fast it repeats after that. */
 const HOLD_DELAY_MS = 400
@@ -59,12 +63,15 @@ function startHold(delta: number) {
 
 onScopeDispose(stopHold)
 
-const dead = computed(() => props.view.life <= 0)
+// "Out" is broader than "on zero life": 21 commander damage from one player, or ten poison, ends
+// the game for this seat with its life total untouched — which is the whole point of tracking
+// them. It stays a *marker*: the game is finished by a person, never by a threshold.
+const dead = computed(() => props.view.lethal !== null)
 const danger = computed(() => !dead.value && props.view.life <= DANGER_LIFE)
 const accent = computed(() => seatColor(props.view.seat.position))
 
 const lifeClass = computed(() => {
-  if (dead.value) return 'text-destructive'
+  if (props.view.life <= 0) return 'text-destructive'
   if (danger.value) return 'text-amber-600 dark:text-amber-400'
   return ''
 })
@@ -124,7 +131,12 @@ const announcement = computed(() => `${props.view.seat.name}: ${props.view.life}
         class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
         aria-label="Winner"
       />
-      <Skull v-else-if="dead" class="text-destructive size-4 shrink-0" aria-label="Out of life" />
+      <Skull
+        v-else-if="dead"
+        class="text-destructive size-4 shrink-0"
+        :aria-label="`Out — ${view.lethal}`"
+        :title="`Out — ${view.lethal}`"
+      />
       <button
         type="button"
         class="text-muted-foreground hover:text-foreground hover:bg-accent -mr-1 grid size-7 shrink-0 place-items-center rounded-md"
@@ -189,6 +201,16 @@ const announcement = computed(() => `${props.view.seat.name}: ${props.view.life}
       <!-- One polite live region per seat: the committed total, announced without stealing focus. -->
       <span class="sr-only" aria-live="polite">{{ announcement }}</span>
     </div>
+
+    <!-- Counters, as a summary rather than more controls: the tap zones above are the thing
+         you use a hundred times a game, so the rarer numbers get one button that opens them. -->
+    <SeatCounterStrip
+      v-if="counters.length > 0"
+      :counters="view.counters"
+      :shown="counters"
+      :seat-name="view.seat.name"
+      @open="emit('counters')"
+    />
 
     <!-- The seat's own history, at a glance. -->
     <div class="h-6 px-2 pb-1.5 opacity-70">

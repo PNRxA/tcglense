@@ -13,6 +13,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import CounterPicker from '@/components/life/CounterPicker.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import SeatLinkField from '@/components/life/SeatLinkField.vue'
 import LayoutPicker from '@/components/life/LayoutPicker.vue'
@@ -22,6 +23,7 @@ import {
   PLAYER_COUNT_OPTIONS,
   STARTING_LIFE_PRESETS,
 } from '@/lib/lifeLayout'
+import { defaultCountersFor, type LifeCounterKind } from '@/lib/lifeCounters'
 import type { LifeLayout, StartLifeSessionBody } from '@/lib/api/life'
 import { useLifeSetupStore } from '@/stores/lifeSetup'
 
@@ -55,6 +57,7 @@ const customLife = ref(false)
 watch(open, (isOpen) => {
   if (!isOpen) return
   name.value = ''
+  countersTouched.value = false
   customLife.value = !STARTING_LIFE_PRESETS.includes(
     setup.startingLife as (typeof STARTING_LIFE_PRESETS)[number],
   )
@@ -107,6 +110,27 @@ const layout = computed({
   set: (value: LifeLayout) => (setup.layout = value),
 })
 
+const counters = computed({
+  get: () => setup.counters,
+  set: (value: LifeCounterKind[]) => (setup.counters = value),
+})
+
+/**
+ * Follow the format's default *until the user touches the counters themselves*.
+ *
+ * Picking "Commander" and getting the damage matrix is the behaviour that makes the toggles
+ * mostly unnecessary; silently re-enabling it after someone turned it off would make them
+ * useless. So the format only drives the counters while they're still whatever the last format
+ * chose — the flag is reset each time the dialog opens, along with the rest of the per-game state.
+ */
+const countersTouched = ref(false)
+watch(
+  () => setup.format,
+  (format) => {
+    if (!countersTouched.value) setup.counters = defaultCountersFor(format)
+  },
+)
+
 // A ToggleGroup's model is a string; these bridges keep the store numeric.
 const playerCountModel = computed({
   get: () => String(playerCount.value),
@@ -133,6 +157,7 @@ function submit() {
     format: setup.format || undefined,
     starting_life: startingLife.value,
     layout: layout.value,
+    counters: [...counters.value],
     players: seats.value.map((seat) => ({
       // A blank name is left to the server, which fills in "Player 3".
       name: seat.name.trim() || undefined,
@@ -218,6 +243,15 @@ function submit() {
         <div class="space-y-2">
           <Label>Seating</Label>
           <LayoutPicker v-model="layout" :player-count="playerCount" />
+        </div>
+
+        <div class="space-y-2">
+          <Label>Counters</Label>
+          <CounterPicker
+            v-model="counters"
+            id-prefix="new-game-counter"
+            @update:model-value="countersTouched = true"
+          />
         </div>
 
         <fieldset class="space-y-2">

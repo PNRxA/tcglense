@@ -18,7 +18,20 @@ import { seatColor } from '@/lib/lifeSeries'
 // is the one irreversible step here: it feeds the linked decks' win records and the game stops
 // accepting edits. Picking is one tap on the winner — the fast path — with a draw as an equal
 // first-class option rather than something buried.
-const props = defineProps<{ open: boolean; seats: LifeSeat[]; busy?: boolean }>()
+//
+// A seat that is already out — no life, 21 commander damage from someone, ten poison — is
+// **labelled**, never preselected or excluded. That's the deliberate half of issue #595's "does
+// reaching 21 auto-suggest a result?": the counters know who can't win, but the last player
+// standing still isn't reliably the winner (a pod can end in a concession), and a recorded
+// result is immutable and counts towards a deck's record. So the answer is shown and the choice
+// stays a person's.
+const props = defineProps<{
+  open: boolean
+  seats: LifeSeat[]
+  /** The rendered seats, for the "out — 21 commander damage" note. */
+  seatViews: { seat: LifeSeat; lethal: string | null }[]
+  busy?: boolean
+}>()
 const emit = defineEmits<{
   'update:open': [value: boolean]
   finish: [winnerPlayerId: number | null]
@@ -38,6 +51,11 @@ watch(
 
 /** Highest life first — the likely winner is the easiest to reach. */
 const ranked = computed(() => [...props.seats].sort((a, b) => b.life - a.life))
+
+/** Why a seat is out, by seat id — so a 21-damage kill reads as one rather than as full life. */
+const lethalById = computed(
+  () => new Map(props.seatViews.map((view) => [view.seat.id, view.lethal])),
+)
 
 const linkedDecks = computed(() => props.seats.filter((seat) => seat.deck_id !== null).length)
 
@@ -85,6 +103,11 @@ function submit() {
               class="text-muted-foreground block truncate text-xs"
             >
               {{ seat.deck_name ?? seat.commander_name }}
+            </span>
+            <!-- A seat on full life can still be dead — 21 commander damage doesn't touch the
+                 number beside it, so the reason is spelled out rather than inferred. -->
+            <span v-if="lethalById.get(seat.id)" class="text-destructive block truncate text-xs">
+              Out — {{ lethalById.get(seat.id) }}
             </span>
           </span>
           <span class="shrink-0 text-lg font-semibold tabular-nums">{{ seat.life }}</span>

@@ -266,7 +266,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   exactly two places** — a tap appends one event and moves the seat by its delta, and an undo
   re-folds the seat's whole chain through the pure `life/replay.rs` fold (which is why the fold
   honours `set` as an absolute and `adjust` as relative, and clamps rather than overflowing);
-  nothing else may write it. **(3) a seat names what was played in one of two mutually exclusive
+  nothing else may write it — and that survived the arrival of a **second counter axis** (#595)
+  precisely because the other counters got **no column**. **(3) a seat names what was played in one of two mutually exclusive
   ways** — `deck_id` (one of *yours*, which is what builds a record) or `commander_card_id` (for the
   opponents whose deck you'll never have); both at once is a **422**, because a deck already knows
   its commander and the pair would surface as a wrong record rather than an error. **(4) both links
@@ -275,10 +276,25 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   absent and `life/stats.rs` inner-joins `decks` *scoped to the caller*. A **rematch** distinguishes
   a *copied* reference (dropped once it stops resolving, so an old pod stays re-playable) from an
   *explicit* one (still a `404`).
+  **Counters beyond life** (#595 — poison/energy/experience, plus commander damage keyed by the
+  *source* seat) ride `life_events.counter` + `source_player_id` rather than five more seat columns,
+  so invariant 2 holds unchanged: they're folded out of the history by `replay_seat` (one chain per
+  `(counter, source)`, each from its own start — `starting_life` for life, `0` for the rest — and
+  within its own bounds, where only `life` may go negative), and a commander-damage tap deliberately
+  does **not** move the target's life (the player reconciles it, as at a real table). Damage is per
+  commander, so 7 from one and 6 from another is never 13 from either — that's what the 21 threshold
+  is measured against. The source link is FK-less and orphan-tolerant like invariant 4's pair: a seat
+  that leaves cascades away with *its own* events but not with the damage it dealt. Which counters a
+  game tracks is `life_sessions.counters` (CSV, defaulted from `format`, `life` implicit and never
+  listed); writing an untracked one is a **422**, switching one off keeps its recorded values (the
+  SPA shows any counter still holding one), and a lethal threshold (21 damage, 10 poison) only ever
+  *suggests* a result — a session must never finish itself, since a recorded result is immutable.
   The `layout` slug vocabulary + the per-count layout and per-seat rotation defaults are
-  **mirrored** in `web/src/lib/lifeLayout.ts` with tests pinning both sides; a slug added on one
+  **mirrored** in `web/src/lib/lifeLayout.ts` with tests pinning both sides — as is the counter
+  vocabulary in `web/src/lib/lifeCounters.ts`; a slug added on one
   side only is either rejected by the API or renders as something other than its name. The SPA
-  batches taps into **one** committed change per run (`composables/useLifeTaps.ts`) and
+  batches taps into **one** committed change per run (`composables/useLifeTaps.ts`, keyed by the
+  same `(seat, counter, source)` chain the server folds, so a 7-point commander hit is one row) and
   deliberately does **not** retry a failed commit — a request that failed in transit may still
   have applied, so re-sending could double the loss.
 - **Every export is a file-download response through `handlers/shared/download.rs`**

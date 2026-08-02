@@ -38,6 +38,11 @@ export interface LifeLine {
  * Every line begins with an origin point at `t=0` holding the seat's starting life, so a seat
  * that hasn't been touched still draws (a flat line at its starting total) instead of vanishing
  * from the chart — "nothing happened to me yet" is information.
+ *
+ * **Only `life` events plot here.** Since #595 `life_after` holds whatever counter its row
+ * names, so folding a commander-damage row into this series would draw a seat's life crashing
+ * to 7 when it never moved — and, because the chart carries each seat's last value forward and
+ * rescales its axis across every line, one such point corrupts the whole pod's chart.
  */
 export function lifeLines(seats: LifeSeat[], events: LifeEvent[], startedAt: string): LifeLine[] {
   const origin = Date.parse(startedAt)
@@ -47,6 +52,7 @@ export function lifeLines(seats: LifeSeat[], events: LifeEvent[], startedAt: str
     byPlayer.set(seat.id, [{ at: 0, life: seat.starting_life, eventId: null }])
   }
   for (const event of events) {
+    if (event.counter !== 'life') continue
     const points = byPlayer.get(event.player_id)
     // An event whose seat has been removed has no line to join — skip it rather than
     // inventing one.
@@ -172,16 +178,37 @@ export function seatColor(position: number): string {
 }
 
 /**
- * A short, plain description of one life change — what the ledger row reads as.
+ * A short, plain description of one change — what the ledger row reads as.
+ *
  * An absolute correction is described as "set to", not as a gain or loss, since that's what
- * happened.
+ * happened. A change to a **counter** names it (and, for commander damage, whose commander
+ * dealt it): "gained 7" and "took 7 commander damage from Bao" are the same row shape but very
+ * different events, and a ledger you undo from has to tell two adjacent ones apart.
+ *
+ * `sourceName` resolves the damage source; a source that has left the table has no name left to
+ * give, and the phrase falls back to naming the counter alone.
  */
-export function describeChange(event: LifeEvent): string {
-  if (event.kind === 'set') return `set to ${event.life_after}`
-  if (event.delta > 0) return `gained ${event.delta}`
-  if (event.delta < 0) return `lost ${Math.abs(event.delta)}`
-  // A tap at the life floor moves nothing; say so rather than "gained 0".
-  return 'no change'
+export function describeChange(event: LifeEvent, sourceName?: string): string {
+  const counter = event.counter === 'life' ? null : (COUNTER_LABELS[event.counter] ?? event.counter)
+  if (event.kind === 'set') {
+    return counter ? `set ${counter} to ${event.life_after}` : `set to ${event.life_after}`
+  }
+  if (event.delta === 0) {
+    // A tap at a floor or ceiling moves nothing; say so rather than "gained 0".
+    return counter ? `no change to ${counter}` : 'no change'
+  }
+  if (!counter) return event.delta > 0 ? `gained ${event.delta}` : `lost ${Math.abs(event.delta)}`
+  const from = sourceName ? ` from ${sourceName}` : ''
+  const verb = event.delta > 0 ? 'took' : 'shed'
+  return `${verb} ${Math.abs(event.delta)} ${counter}${from}`
+}
+
+/** How each counter reads inside a ledger phrase ("took 7 commander damage from Bao"). */
+const COUNTER_LABELS: Record<string, string> = {
+  commander_damage: 'commander damage',
+  poison: 'poison',
+  energy: 'energy',
+  experience: 'experience',
 }
 
 /**

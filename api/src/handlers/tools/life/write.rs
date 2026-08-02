@@ -15,6 +15,7 @@ use crate::extract::{JsonBody, Path};
 use crate::handlers::shared::{require_game, validate_name, validate_optional};
 use crate::state::AppState;
 
+use super::counters::{default_counters_for, join_counters, parse_counters, validate_counters};
 use super::{
     CreateLifeSessionRequest, FinishLifeSessionRequest, LifeSeatInput, LifeSessionDetail,
     LifeSessionResponse, MAX_FORMAT, MAX_PLAYER_NAME, MAX_PLAYERS, MAX_SESSION_NAME,
@@ -157,6 +158,18 @@ pub async fn create_session(
             .unwrap_or_else(|| default_layout_for(inputs.len()).to_string()),
     };
 
+    // Which counters the game tracks: what was asked for, else the rematched game's (a pod that
+    // was watching commander damage last game is watching it this game), else what the format
+    // implies. Derived from the *resolved* format, so a rematch that inherits "commander" also
+    // inherits its matrix.
+    let counters = match payload.counters {
+        Some(requested) => validate_counters(&requested)?,
+        None => match &source {
+            Some(source) => parse_counters(&source.counters),
+            None => default_counters_for(format.as_deref()),
+        },
+    };
+
     let count = LifeSession::find()
         .filter(life_session::Column::UserId.eq(user.id))
         .filter(life_session::Column::Game.eq(&game))
@@ -189,6 +202,7 @@ pub async fn create_session(
         format: Set(format),
         starting_life: Set(starting_life),
         layout: Set(layout),
+        counters: Set(join_counters(&counters)),
         status: Set(STATUS_ACTIVE.to_string()),
         started_at: Set(now),
         finished_at: Set(None),
@@ -264,9 +278,11 @@ pub(super) async fn resolve_seat(
 
 /// Edit a tracked game
 ///
-/// `PUT /api/tools/{game}/life/sessions/{session_id}` -> change the game's label, format or
-/// seat layout. Each field is optional (absent = unchanged); a blank `name`/`format` clears it.
-/// Works on a finished game too — relabelling history is not rewriting it.
+/// `PUT /api/tools/{game}/life/sessions/{session_id}` -> change the game's label, format, seat
+/// layout, or which counters it tracks. Each field is optional (absent = unchanged); a blank
+/// `name`/`format` clears it, and an empty `counters` array turns them all off. Works on a
+/// finished game too — relabelling history is not rewriting it, and neither is choosing what to
+/// show of it: values already recorded against a counter that gets switched off are kept.
 #[utoipa::path(
     put,
     path = "/api/tools/{game}/life/sessions/{session_id}",
@@ -303,6 +319,13 @@ pub async fn update_session(
     }
     if let Some(layout) = payload.layout {
         active.layout = Set(validate_layout(&layout)?);
+    }
+    if let Some(counters) = payload.counters {
+        // A replace, like `layout` — and one that only changes what the mat *shows*. Values
+        // already recorded against a counter being switched off are kept: turning the poison row
+        // off is a display choice, and deleting the game's history to honour it would be a
+        // rewrite the finished-game rule exists to prevent.
+        active.counters = Set(join_counters(&validate_counters(&counters)?));
     }
     active.updated_at = Set(Utc::now());
     let session = active.update(&state.db).await?;
