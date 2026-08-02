@@ -35,6 +35,12 @@ const MAX_OPENING: u32 = 40;
 /// Most cards a single request may draw past the opening hand — a whole long game, and a
 /// bound on the response size.
 const MAX_DRAWS: u32 = 500;
+/// Largest library this will shuffle. A deck row's counts are caller-controlled (up to a
+/// million per finish, and a deck has no cap on rows), and the shuffle materialises one slot
+/// per **copy** — so without this a single `GET` could ask the server to build and
+/// Fisher–Yates a multi-gigabyte vector to deal seven cards. Far above any real deck: a
+/// Commander deck is 100 and the largest cube anyone plays is a few thousand.
+const MAX_LIBRARY: i64 = 20_000;
 
 /// Query string of the goldfish read. Everything the hand depends on is here, so the same
 /// URL always yields the same hand.
@@ -167,6 +173,15 @@ pub(crate) fn analyse_goldfish(
     // Row indices, not references: a library slot has to map back to a catalog model, and
     // `models` is aligned with `input.entries`.
     let rows = input.row_indices_in_sections(&section_ids);
+    // Count before building: `library_slots` expands one slot per copy, so the refusal has
+    // to happen while the size is still just a sum.
+    let total: i64 = rows.iter().map(|row| input.entries[*row].copies()).sum();
+    if total > MAX_LIBRARY {
+        return Err(AppError::Validation(format!(
+            "this deck holds {total} cards in the selected sections — at most {MAX_LIBRARY} \
+             can be shuffled into a hand"
+        )));
+    }
     let mut library = library_slots(&input.entries, &rows);
     let library_total = library.len() as i64;
     shuffle(&mut library, seed, mulligans);

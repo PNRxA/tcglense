@@ -493,12 +493,38 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     .await;
     assert_eq!(public_legality, owner_legality);
 
-    let (status, _, public_hand) = send(
+    let (status, headers, public_hand) = send(
         &app,
         get(&format!("/api/u/{handle}/decks/{deck_id}/goldfish?seed=7")),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a seeded hand IS a function of its URL, so it's fine to cache"
+    );
+
+    // …but a seedless one isn't. The server mints a random seed, so a shared cache would pin
+    // whatever the first visitor rolled as *the* hand for the whole TTL.
+    let mut seeds = std::collections::HashSet::new();
+    for _ in 0..4 {
+        let (status, headers, body) = send(
+            &app,
+            get(&format!("/api/u/{handle}/decks/{deck_id}/goldfish")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            cache_control(&headers),
+            Some("no-store"),
+            "a hand that isn't a function of its URL must not be shared-cached"
+        );
+        seeds.insert(body["seed"].as_u64().expect("seed"));
+    }
+    assert!(
+        seeds.len() > 1,
+        "a seedless hand should differ between calls"
+    );
     let (_, _, owner_hand) = send(
         &app,
         get_with_bearer(
@@ -537,4 +563,132 @@ async fn the_format_vocabulary_is_public_and_cacheable() {
 
     let (status, _, _) = send(&app, get("/api/games/nope/formats")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_library_too_big_to_shuffle_is_refused_not_allocated() {
+    // A deck row's counts are caller-controlled (a million per finish) and a deck has no cap
+    // on rows, while the shuffle materialises one slot per *copy*. Without a bound, one GET
+    // — reachable unauthenticated once the owner shares the deck — could ask the server to
+    // build and Fisher–Yates a multi-gigabyte vector to deal seven cards.
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "huge-deck@example.com", PW).await;
+    let cards = sample_card_ids(&app, 1).await;
+    let (deck_id, _) = deck_with_cards(&app, &access, "Too big", "Modern", &[]).await;
+
+    // One row claiming a million copies.
+    let (status, _, deck) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let section = deck["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|s| s["name"] == "Creatures")
+        .expect("Creatures")["id"]
+        .as_i64()
+        .expect("id");
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{}", cards[0]),
+            &access,
+            json!({ "quantity": 1_000_000, "foil_quantity": 0, "section_id": section }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the deck surface accepts it: {body:?}"
+    );
+
+    // The goldfish refuses rather than allocating it.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/goldfish"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:?}");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("shuffled")),
+        "the refusal should say why: {body:?}"
+    );
+
+    // Legality still answers, promptly: it counts copies rather than expanding them, so a
+    // million-copy row is one fold step. (Modern's size rule is a floor, so a huge deck is
+    // not a size breach — the copy limit is what catches it.)
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/legality"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["data"]["issues"][0]["status"], "over_limit");
+    assert_eq!(body["data"]["issues"][0]["quantity"], 1_000_000);
+
+    // …and so do the stats: the composition is a fold, never an expansion.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/stats"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["deck"]["total_copies"], 1_000_000);
+
+    // Moving that row into the command zone of a format that has one is the path that would
+    // have materialised a `&CardFacts` per copy. It now reports the count instead.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}"),
+            &access,
+            json!({ "name": "Too big", "format": "Commander" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let commander = deck["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|s| s["name"] == "Commander")
+        .expect("Commander")["id"]
+        .as_i64()
+        .expect("id");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{}/move", cards[0]),
+            &access,
+            json!({ "from_section_id": section, "to_section_id": commander }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/legality"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(
+        body["data"]["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .any(|v| v["rule"] == "command-zone"
+                && v["message"]
+                    .as_str()
+                    .is_some_and(|m| m.starts_with("1000000 cards in the command zone"))),
+        "{body:?}"
+    );
 }

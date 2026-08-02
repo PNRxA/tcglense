@@ -108,7 +108,7 @@ pub async fn deck_legality(
         (status = 200, description = "The dealt hand, what was bottomed, and what's left in the library.", body = GoldfishHand),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game, or the deck is not the caller's."),
-        (status = 422, description = "A parameter is out of range, or a bottomed card isn't in the hand."),
+        (status = 422, description = "A parameter is out of range, the library is too large to shuffle, or a bottomed card isn't in the hand."),
     ),
 )]
 pub async fn deck_goldfish(

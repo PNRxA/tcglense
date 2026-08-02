@@ -1,4 +1,4 @@
-import { useQuery, type QueryClient } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery, type QueryClient } from '@tanstack/vue-query'
 import type { Ref } from 'vue'
 import {
   getDeckGoldfish,
@@ -22,7 +22,11 @@ import { useAuthedQuery } from '@/lib/queries'
 // Reactive params go INSIDE the query key as refs, so changing the library selection or the
 // goldfish's seed/mulligans/draws refetches. That is also what makes the goldfish cheap to
 // step through: each state is its own cache entry, so stepping back to a hand you have
-// already seen is instant, and it is the same URL a CLI would call.
+// already seen is instant, and it is the same URL a CLI would call.//
+// Every one of these keeps its previous response while a new one is in flight
+// (`placeholderData: keepPreviousData`). Without it, changing any control blanks `data` for
+// the round trip, which tears down the panel the user is mid-click in — a regression the
+// pre-server-side version couldn't have, since it computed from props.
 
 // ----- Authed reads (the caller's own deck) -----
 
@@ -37,6 +41,7 @@ export function useDeckStatsQuery(
     queryKey: ['deck-stats', game, deckId, params],
     queryFn: (token: string) => getDeckStats(token, game.value, deckId.value, params.value),
     enabled,
+    placeholderData: keepPreviousData,
   }
   return useAuthedQuery<DeckAnalytics>(options)
 }
@@ -66,6 +71,7 @@ export function useDeckGoldfishQuery(
     queryKey: ['deck-goldfish', game, deckId, params],
     queryFn: (token: string) => getDeckGoldfish(token, game.value, deckId.value, params.value),
     enabled,
+    placeholderData: keepPreviousData,
     // A hand is a pure function of its parameters, so once fetched it can never go stale.
     staleTime: Infinity,
   }
@@ -86,6 +92,7 @@ export function usePublicDeckStatsQuery(
     queryFn: () => getPublicDeckStats(handle.value, deckId.value, params.value),
     enabled,
     retry: false,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -116,6 +123,7 @@ export function usePublicDeckGoldfishQuery(
     queryFn: () => getPublicDeckGoldfish(handle.value, deckId.value, params.value),
     enabled,
     retry: false,
+    placeholderData: keepPreviousData,
     staleTime: Infinity,
   })
 }

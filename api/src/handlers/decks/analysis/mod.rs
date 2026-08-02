@@ -385,3 +385,61 @@ pub(crate) mod test_fixtures {
         DeckAnalysisInput { sections, entries }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::card_model;
+
+    /// Scryfall leaves the top-level `type_line` and `oracle_text` null on some multi-faced
+    /// cards and puts them on the faces, and `scryfall::map` stores that verbatim — so the
+    /// faces fallback is the only thing standing between a transforming commander and a
+    /// deck reported illegal because its commander read as typeless. Nothing else in the
+    /// suite exercises it: every other fixture sets the top-level fields directly.
+    #[test]
+    fn card_facts_fall_back_to_the_faces() {
+        let faces = serde_json::json!([
+            {
+                "name": "Delver of Secrets",
+                "type_line": "Legendary Creature — Human Wizard",
+                "oracle_text": "At the beginning of your upkeep, look at the top card."
+            },
+            { "name": "Insectile Aberration", "type_line": "Creature — Human Insect", "oracle_text": "Flying" }
+        ])
+        .to_string();
+        let model = card::Model {
+            type_line: None,
+            oracle_text: None,
+            card_faces: Some(faces),
+            ..card_model(1)
+        };
+
+        let facts = CardFacts::from(&model);
+        assert_eq!(facts.front_type_line, "legendary creature — human wizard");
+        assert!(facts.oracle_text.contains("beginning of your upkeep"));
+        assert!(
+            facts.oracle_text.contains("Flying"),
+            "both faces' rules text joins, so a back-face keyword still reads"
+        );
+        // Composition still counts types off the *raw* top-level line, which is absent here —
+        // the two readings answer different questions and this pins the difference.
+        assert_eq!(facts.type_line, None);
+    }
+
+    /// The top level wins when it is present, faces or no faces.
+    #[test]
+    fn card_facts_prefer_the_top_level_line() {
+        let model = card::Model {
+            type_line: Some("Creature — Bear // Land".to_string()),
+            oracle_text: Some("Vigilance".to_string()),
+            card_faces: Some(
+                serde_json::json!([{ "type_line": "Land", "oracle_text": "Tap for {G}." }])
+                    .to_string(),
+            ),
+            ..card_model(2)
+        };
+        let facts = CardFacts::from(&model);
+        assert_eq!(facts.front_type_line, "creature — bear ");
+        assert_eq!(facts.oracle_text, "Vigilance");
+    }
+}

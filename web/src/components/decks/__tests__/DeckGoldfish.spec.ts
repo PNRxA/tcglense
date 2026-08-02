@@ -18,6 +18,8 @@ interface Params {
 }
 
 const captured = vi.hoisted(() => ({ params: null as Ref<Params> | null }))
+/** Flip to make the next mounted panel's query report a failure. */
+const failNext = vi.hoisted(() => ({ value: false }))
 
 function card(id: string, name: string): Card {
   return { id, name, has_image: true } as Card
@@ -48,11 +50,18 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
   return {
     useDeckGoldfishQuery: (_game: unknown, _deckId: unknown, params: Ref<Params>) => {
       captured.params = params
+      const failing = failNext.value
       return {
-        data: computed(() => (params.value.seed === undefined ? undefined : hand(params.value))),
+        data: computed(() =>
+          failing || params.value.seed === undefined ? undefined : hand(params.value),
+        ),
+        error: computed(() => (failing ? new Error('That hand could not be dealt.') : null)),
       }
     },
-    usePublicDeckGoldfishQuery: () => ({ data: computed(() => undefined) }),
+    usePublicDeckGoldfishQuery: () => ({
+      data: computed(() => undefined),
+      error: computed(() => null),
+    }),
   }
 })
 
@@ -119,6 +128,7 @@ describe('DeckGoldfish', () => {
     await field.setValue('4242')
     await field.trigger('change')
     expect(captured.params!.value.seed).toBe(4242)
+    expect(field.element.value).toBe('4242')
     // A typed seed starts that hand over — carrying a draw step across would be applying
     // an old decision to a different shuffle.
     expect(captured.params!.value.draws).toBe(0)
@@ -136,5 +146,38 @@ describe('DeckGoldfish', () => {
     expect(captured.params!.value.seed).not.toBe(first)
     expect(captured.params!.value.mulligans).toBe(0)
     expect(captured.params!.value.bottom).toEqual([])
+  })
+
+  it('rejects a seed it cannot use and snaps the field back', async () => {
+    const wrapper = mountPanel()
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+    const seed = captured.params!.value.seed!
+    const field = wrapper.find<HTMLInputElement>('input[type="text"]')
+
+    for (const bad of ['not a seed', '-1', '1.5', '99999999999']) {
+      await field.setValue(bad)
+      await field.trigger('change')
+      expect(captured.params!.value.seed).toBe(seed)
+      // The box must not keep showing text that isn't the seed on screen.
+      expect(field.element.value).toBe(String(seed))
+    }
+
+    // Clearing the box (to paste a shared seed) is not "replay seed 0".
+    await field.setValue('')
+    await field.trigger('change')
+    expect(captured.params!.value.seed).toBe(seed)
+    expect(field.element.value).toBe(String(seed))
+  })
+
+  it('says so when a hand cannot be dealt', async () => {
+    failNext.value = true
+    const wrapper = mountPanel()
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+    expect(wrapper.text()).toContain('could not be dealt')
+    expect(wrapper.findAll('li')).toHaveLength(0)
+    // The way out is still on screen — with no hand, that's the same call to action as a
+    // fresh panel.
+    expect(buttonNamed(wrapper, 'Draw opening hand')).toBeTruthy()
+    failNext.value = false
   })
 })

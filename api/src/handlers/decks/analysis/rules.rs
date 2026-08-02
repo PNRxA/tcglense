@@ -527,7 +527,13 @@ pub(crate) fn evaluate_deck_rules(
     // Pass 1: split the deck into zones and fold copies by name (a name's total spans every
     // section and printing, so 3 of one art plus 2 of another is five copies). Insertion
     // order is preserved so the issue list reads in the deck's own card order.
-    let mut commanders: Vec<&CardFacts> = Vec::new();
+    // One entry per command-zone **row** with its copy count — never one per copy. A row's
+    // count is caller-controlled up to a million per finish, so expanding it here would let
+    // one `GET` allocate (and then linearly scan) an arbitrarily large vector. Only the
+    // count matters until it is small enough to reason about card-by-card, and the two
+    // places that need the cards expand it themselves, under a bound.
+    let mut commanders: Vec<(&CardFacts, i64)> = Vec::new();
+    let mut commander_count = 0i64;
     let mut folds: Vec<NameFold> = Vec::new();
     let mut fold_index: HashMap<&str, usize> = HashMap::new();
     let mut deck_copies = 0i64;
@@ -542,9 +548,8 @@ pub(crate) fn evaluate_deck_rules(
             .copied()
             .unwrap_or(DeckZone::Main);
         if zone == DeckZone::Command && rules.command_zone.is_some() {
-            for _ in 0..copies {
-                commanders.push(&entry.facts);
-            }
+            commanders.push((&entry.facts, copies));
+            commander_count += copies;
         }
         // A command-zone section in a format without one (a Modern deck still gets the
         // seeded `Commander` section) is just part of the deck.
@@ -626,19 +631,21 @@ pub(crate) fn evaluate_deck_rules(
 
     // ---- Command zone ----
     if let Some(zone) = rules.command_zone {
-        violations.extend(command_zone_violations(&zone, &commanders));
+        violations.extend(command_zone_violations(&zone, &commanders, commander_count));
         // Colour identity: the 99 may not stray outside the command zone's combined
         // identity. Skipped while the zone is empty — an unbuilt deck isn't off-colour.
-        if !commanders.is_empty() {
+        if commander_count > 0 {
             let identity: Vec<String> = unique_in_order(
                 commanders
                     .iter()
-                    .flat_map(|card| card.color_identity.iter().cloned()),
+                    .flat_map(|(card, _)| card.color_identity.iter().cloned()),
             );
             // By name, not by row: the commander's own identity defines the deck's, and a
             // second printing of it in the 99 is a copy-limit matter, not an off-colour one.
-            let commander_names: Vec<&str> =
-                commanders.iter().map(|card| card.name.as_str()).collect();
+            let commander_names: Vec<&str> = commanders
+                .iter()
+                .map(|(card, _)| card.name.as_str())
+                .collect();
             let off_colour: Vec<&NameFold> = folds
                 .iter()
                 .filter(|fold| {
@@ -662,7 +669,7 @@ pub(crate) fn evaluate_deck_rules(
             }
             if !off_colour.is_empty() {
                 let names = join_names(&unique_in_order(
-                    commanders.iter().map(|card| card.name.clone()),
+                    commanders.iter().map(|(card, _)| card.name.clone()),
                 ));
                 let count = off_colour.len();
                 let falls = if count == 1 {
@@ -689,15 +696,28 @@ pub(crate) fn evaluate_deck_rules(
 }
 
 /// The command zone's own rules: how many cards it holds, and whether they may lead.
+///
+/// `commanders` is one entry per **row** (`(card, copies)`) and `count` is their total, so
+/// a row claiming a million copies costs one entry rather than a million. Every branch that
+/// needs the cards *individually* only runs once the count is down to two, so it expands
+/// there — under a bound it has already checked.
 fn command_zone_violations(
     zone: &CommandZoneRule,
-    commanders: &[&CardFacts],
+    commanders: &[(&CardFacts, i64)],
+    count: i64,
 ) -> Vec<DeckRuleViolation> {
     let mut violations = Vec::new();
+    // The zone's cards, one per copy. Only ever called where `count <= 2`.
+    let expand = || -> Vec<&CardFacts> {
+        commanders
+            .iter()
+            .flat_map(|(card, copies)| std::iter::repeat_n(*card, *copies as usize))
+            .collect()
+    };
 
     if zone.kind == CommandZoneKind::Oathbreaker {
         // Two cards, and they must be one of each: the planeswalker and its signature spell.
-        if commanders.len() < 2 {
+        if count < 2 {
             violations.push(DeckRuleViolation {
                 rule: DeckRuleId::CommandZone,
                 severity: DeckRuleSeverity::Warning,
@@ -707,23 +727,23 @@ fn command_zone_violations(
             });
             return violations;
         }
-        if commanders.len() > 2 {
+        if count > 2 {
             violations.push(DeckRuleViolation {
                 rule: DeckRuleId::CommandZone,
                 severity: DeckRuleSeverity::Error,
                 message: format!(
-                    "{} cards in the command zone — an Oathbreaker deck has one oathbreaker \
-                     and one signature spell.",
-                    commanders.len()
+                    "{count} cards in the command zone — an Oathbreaker deck has one \
+                     oathbreaker and one signature spell."
                 ),
             });
             return violations;
         }
-        let walkers = commanders
+        let pair = expand();
+        let walkers = pair
             .iter()
             .filter(|card| can_lead(card, CommandZoneKind::Oathbreaker))
             .count();
-        let spells = commanders
+        let spells = pair
             .iter()
             .filter(|card| has_type(card, &["instant"]) || has_type(card, &["sorcery"]))
             .count();
@@ -735,7 +755,7 @@ fn command_zone_violations(
                     "{} can't lead the deck — an Oathbreaker deck needs exactly one legendary \
                      planeswalker and one instant or sorcery as its signature spell.",
                     join_names(
-                        &commanders
+                        &pair
                             .iter()
                             .map(|card| card.name.clone())
                             .collect::<Vec<_>>()
@@ -746,7 +766,7 @@ fn command_zone_violations(
         return violations;
     }
 
-    if commanders.is_empty() {
+    if count == 0 {
         violations.push(DeckRuleViolation {
             rule: DeckRuleId::CommandZone,
             severity: DeckRuleSeverity::Warning,
@@ -759,28 +779,29 @@ fn command_zone_violations(
     }
 
     let max_commanders = if zone.allow_pairs { 2 } else { 1 };
-    if commanders.len() > max_commanders {
+    if count > max_commanders {
         violations.push(DeckRuleViolation {
             rule: DeckRuleId::CommandZone,
             severity: DeckRuleSeverity::Error,
             message: if zone.allow_pairs {
                 format!(
-                    "{} cards in the command zone — a deck has one {}, or two that pair.",
-                    commanders.len(),
+                    "{count} cards in the command zone — a deck has one {}, or two that pair.",
                     zone.noun
                 )
             } else {
                 format!(
-                    "{} cards in the command zone — a deck has one {}.",
-                    commanders.len(),
+                    "{count} cards in the command zone — a deck has one {}.",
                     zone.noun
                 )
             },
         });
-    } else if commanders.len() == 2 && !pair_allowed(commanders[0], commanders[1]) {
+    } else if count == 2
+        && let pair = expand()
+        && !pair_allowed(pair[0], pair[1])
+    {
         // Two copies of one card is a different mistake from two cards that don't pair, and
         // "X and X can't be commanders together" would read as nonsense.
-        let (first, second) = (commanders[0], commanders[1]);
+        let (first, second) = (pair[0], pair[1]);
         violations.push(DeckRuleViolation {
             rule: DeckRuleId::CommandZone,
             severity: DeckRuleSeverity::Error,
@@ -799,10 +820,12 @@ fn command_zone_violations(
         });
     }
 
+    // By row: a name is reported once however many copies of it are in the zone, which is
+    // what `unique_in_order` below already collapsed it to.
     let ineligible: Vec<String> = commanders
         .iter()
-        .filter(|card| !can_lead(card, zone.kind))
-        .map(|card| card.name.clone())
+        .filter(|(card, _)| !can_lead(card, zone.kind))
+        .map(|(card, _)| card.name.clone())
         .collect();
     if !ineligible.is_empty() {
         let names = join_names(&unique_in_order(ineligible));
@@ -938,6 +961,81 @@ mod tests {
         let size = &result.violations[0];
         assert_eq!(size.severity, DeckRuleSeverity::Error);
         assert_eq!(size.message, "101 cards — 1 over the 100-card limit.");
+    }
+
+    #[test]
+    fn a_constructed_deck_is_judged_on_size_copies_and_its_sideboard() {
+        // The only coverage of the CONSTRUCTED profile, and the only assertion anywhere that
+        // the 15-card sideboard cap exists: `DeckZone::Sideboard` is reachable solely through
+        // a section *name*, so nothing else in the suite ever files a card into one.
+        let sections = [
+            section(1, "Creatures", false),
+            section(2, "Sideboard", false),
+        ];
+        let rows = [
+            entry("bolt", "Lightning Bolt", 1, 5, 0).type_line("Instant"),
+            entry("sb", "Pyroblast", 2, 16, 0).type_line("Instant"),
+        ];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("modern", &refs, &sections);
+
+        // 5 cards in the deck proper — the sideboard is beside the deck, not in it.
+        let size = result
+            .violations
+            .iter()
+            .find(|v| v.rule == DeckRuleId::DeckSize)
+            .expect("a 5-card Modern deck is short of 60");
+        assert_eq!(size.severity, DeckRuleSeverity::Warning);
+        assert_eq!(size.message, "5 of 60 cards — 55 to go.");
+
+        let sideboard = result
+            .violations
+            .iter()
+            .find(|v| v.rule == DeckRuleId::SideboardSize)
+            .expect("16 cards is over the 15-card sideboard cap");
+        assert_eq!(sideboard.severity, DeckRuleSeverity::Error);
+        assert_eq!(
+            sideboard.message,
+            "16 cards in the sideboard — the limit is 15."
+        );
+
+        // Four copies is the constructed limit; five is not, and the sideboard's 16 of one
+        // name breaches it too (the copy limit spans the sideboard).
+        assert_eq!(
+            result
+                .card_issues
+                .iter()
+                .filter(|i| i.status == DeckRuleCardStatus::OverLimit)
+                .count(),
+            2
+        );
+        // A format with no command zone never reports one, even though the deck has no
+        // commander at all.
+        assert!(
+            !result
+                .violations
+                .iter()
+                .any(|v| v.rule == DeckRuleId::CommandZone)
+        );
+    }
+
+    #[test]
+    fn a_command_zone_row_is_counted_not_expanded() {
+        // A row's copy count is caller-controlled up to a million per finish. The zone must
+        // report the true total without ever materialising one entry per copy — this would
+        // allocate ~16 MB and take seconds if it did.
+        let sections = [section(1, "Commander", false)];
+        let rows = [entry("a", "Krenko", 1, 1_000_000, 0)
+            .type_line("Legendary Creature — Goblin")
+            .colors("R")];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            result.violations.iter().any(|v| v.message
+                == "1000000 cards in the command zone — a deck has one commander, or two that pair."),
+            "got {:?}",
+            result.violations
+        );
     }
 
     #[test]

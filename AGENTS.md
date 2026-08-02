@@ -219,11 +219,20 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   a half-built deck must never be reported as illegal. The format table + the breach-severity
   order are **mirrored** in `web/src/lib/legality.ts` (a dropdown must not wait on a request)
   with tests pinning both sides, like `lifeLayout.ts`; `GET /api/games/{game}/formats`
-  publishes the server's copy. The **goldfish is stateless**: the hand is a pure function of
+  publishes the server's copy. The default library the odds and the goldfish shuffle is derived
+  from `rules::deck_zone`, **never a second list of names** — a section the stats called
+  non-library while the rules called it the command zone would deal an Oathbreaker deck its own
+  oathbreaker. The **goldfish is stateless**: the hand is a pure function of
   `(seed, mulligans, what was bottomed, how many drawn)`, all in the query string, so there is
   no session table and a hand is reproducible from a URL — which is why its shuffle is a
   hand-rolled SplitMix64 + Fisher–Yates rather than `rand`, whose generators don't promise a
-  stable stream across versions. Deck writes must invalidate the analysis query family
+  stable stream across versions. Two consequences of that statelessness are load-bearing:
+  the seedless public mirror answers **`no-store`** (a random seed makes the response not a
+  function of its URL, so a CDN would pin one visitor's roll for everyone), and the shuffle
+  is **bounded** — it materialises one slot per *copy* and a deck row's counts are
+  caller-controlled, so an oversized library is a `422`, never an allocation. For the same
+  reason the command-zone check counts copies instead of expanding them; **nothing on these
+  paths may go per-copy.** Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`); it doesn't sit under the `['deck', …]` key.
   Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written

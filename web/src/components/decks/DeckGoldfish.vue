@@ -77,6 +77,10 @@ const handQuery = props.handle
   ? usePublicDeckGoldfishQuery(handle, deckId, params, enabled)
   : useDeckGoldfishQuery(game, deckId, params, enabled)
 const hand = computed(() => (seed.value === null ? undefined : handQuery.data.value))
+// A refetch really can fail: edit the deck after bottoming a card and the invalidated query
+// re-asks with a `bottom` that is no longer in the reshuffled hand, which is a 422 the retry
+// policy won't retry. Without this the panel would just empty itself with nothing said.
+const handError = computed(() => (seed.value === null ? null : handQuery.error.value))
 
 const toBottom = computed(() => hand.value?.to_bottom ?? 0)
 const libraryLeft = computed(() => hand.value?.library_size ?? 0)
@@ -86,19 +90,36 @@ const cards = computed(() => hand.value?.hand ?? [])
 const firstDrawnIndex = computed(() => (hand.value ? hand.value.hand.length - hand.value.draws : 0))
 const keepLabel = computed(() => `Mulligan to ${Math.max(0, OPENING - mulligans.value - 1)}`)
 
-// A seed typed into the field replays that hand from the start; anything else would mean
-// applying an old bottoming decision to a different shuffle.
-const seedField = computed<string>({
-  get: () => (seed.value === null ? '' : String(seed.value)),
-  set: (value) => {
-    const parsed = Number(value)
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0xffff_ffff) return
-    seed.value = parsed
-    mulligans.value = 0
-    bottom.value = []
-    draws.value = 0
+// A seed typed into the field replays that hand from the start; carrying a mulligan or a
+// draw step across would apply an old decision to a different shuffle.
+//
+// The field keeps its own text state rather than being a computed over `seed`. A computed
+// setter that early-returns on bad input moves nothing reactive, so Vue never re-renders and
+// the box keeps displaying text that isn't the seed on screen. Here a rejected entry is
+// snapped back by the watcher below, and blank is rejected explicitly — `Number('')` is 0,
+// which would otherwise read as "replay seed 0" the moment someone cleared the box to paste.
+const seedField = ref('')
+watch(
+  seed,
+  (value) => {
+    seedField.value = value === null ? '' : String(value)
   },
-})
+  { immediate: true },
+)
+
+function applySeed() {
+  const text = seedField.value.trim()
+  const parsed = Number(text)
+  if (text === '' || !Number.isInteger(parsed) || parsed < 0 || parsed > 0xffff_ffff) {
+    seedField.value = seed.value === null ? '' : String(seed.value)
+    return
+  }
+  if (parsed === seed.value) return
+  seed.value = parsed
+  mulligans.value = 0
+  bottom.value = []
+  draws.value = 0
+}
 
 // Editing the deck invalidates the hand: it was dealt from a library that no longer exists.
 watch(
@@ -117,11 +138,13 @@ watch(
         <label v-if="hand" class="text-muted-foreground flex items-center gap-1.5 text-xs">
           Seed
           <input
-            v-model.lazy="seedField"
+            v-model="seedField"
             type="text"
             inputmode="numeric"
             class="border-input bg-background w-28 rounded-md border px-2 py-1 text-xs tabular-nums"
             aria-label="Shuffle seed — type one to replay that hand"
+            @change="applySeed"
+            @keyup.enter="applySeed"
           />
         </label>
         <Button size="sm" variant="outline" @click="newHand">
@@ -131,7 +154,16 @@ watch(
       </div>
     </CardHeader>
 
-    <CardContent v-if="hand" class="space-y-4">
+    <CardContent v-if="handError" class="space-y-3">
+      <p class="text-destructive text-sm" aria-live="polite">
+        {{ handError.message || 'That hand could not be dealt.' }}
+      </p>
+      <p class="text-muted-foreground text-sm">
+        The deck may have changed since it was shuffled — draw a new hand.
+      </p>
+    </CardContent>
+
+    <CardContent v-else-if="hand" class="space-y-4">
       <div class="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" :disabled="mulligans >= OPENING" @click="mulligan">
           {{ keepLabel }}

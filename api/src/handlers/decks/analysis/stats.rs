@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::handlers::decks::DeckSectionResponse;
 
+use super::rules::DeckZone;
 use super::{AnalysisEntry, DeckAnalysisInput};
 
 /// The largest "cards seen" the odds curve runs to — a whole opening hand plus a long
@@ -150,29 +151,20 @@ const CARD_TYPES: &[&str] = &[
     "Battle",
 ];
 
-/// Sections whose *name* says they're not part of the shuffled library. Maybeboards are
-/// excluded by their **column** rather than by name (issue #570) — so a renamed maybeboard
-/// stays out, and a section merely called "Considering" that the owner kept in the deck
+/// Sections included in draw odds — and in a goldfish hand — by default: the deck proper.
+///
+/// The zone split is [`super::rules::deck_zone`]'s, deliberately *not* a second list of
+/// names. A section this called non-library while the rules called it the command zone
+/// would deal an Oathbreaker deck its own oathbreaker and compute every probability against
+/// a pool inflated by two — which is what a duplicated table drifts into. Maybeboards are
+/// excluded by their **column** rather than by name (issue #570), so a renamed maybeboard
+/// stays out and a section merely called "Considering" that the owner kept in the deck
 /// stays in.
-const NON_LIBRARY_SECTION_NAMES: &[&str] = &[
-    "commander",
-    "commanders",
-    "sideboard",
-    "sideboards",
-    "companion",
-    "companions",
-    "command zone",
-    "signature spell",
-    "signature spells",
-];
-
-/// Sections included in draw odds by default.
 pub(crate) fn default_library_section_ids(sections: &[DeckSectionResponse]) -> Vec<i32> {
     sections
         .iter()
         .filter(|section| {
-            !section.is_maybeboard
-                && !NON_LIBRARY_SECTION_NAMES.contains(&section.name.trim().to_lowercase().as_str())
+            !section.is_maybeboard && super::rules::deck_zone(&section.name) == DeckZone::Main
         })
         .map(|section| section.id)
         .collect()
@@ -499,6 +491,13 @@ mod tests {
             section(3, "Sideboard", false),
             section(4, "Considering", false),
             section(5, "Cuts", true),
+            // The four the old hand-written list missed, and the reason this now derives
+            // from `deck_zone`: an oathbreaker dealt into its own opening hand is a wrong
+            // hand, not a cosmetic difference.
+            section(6, "Oathbreaker", false),
+            section(7, "Oathbreakers", false),
+            section(8, "Side Board", false),
+            section(9, "Command Zone", false),
         ];
         // "Considering" is in — it's a name, not the column (issue #570).
         assert_eq!(default_library_section_ids(&sections), vec![2, 4]);

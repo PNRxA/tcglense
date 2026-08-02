@@ -7,7 +7,12 @@
 //! unknown handle, private/absent deck — is the same `404` (no existence oracle). Lives in
 //! the router's `public_holdings` group (CDN-cacheable, ETag'd).
 
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderValue, header},
+    response::{IntoResponse, Response},
+};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::entities::deck;
@@ -236,17 +241,30 @@ pub async fn public_deck_legality(
         GoldfishParams,
     ),
     responses(
-        (status = 200, description = "The dealt hand, what was bottomed, and what's left in the library.", body = GoldfishHand),
+        (status = 200, description = "The dealt hand, what was bottomed, and what's left in the library. `Cache-Control: no-store` when `seed` was omitted (the hand is then not a function of the URL); otherwise shared-cacheable like the other public reads.", body = GoldfishHand),
         (status = 404, description = "Unknown handle, or the deck is private/absent."),
-        (status = 422, description = "A parameter is out of range, or a bottomed card isn't in the hand."),
+        (status = 422, description = "A parameter is out of range, the library is too large to shuffle, or a bottomed card isn't in the hand."),
     ),
 )]
 pub async fn public_deck_goldfish(
     State(state): State<AppState>,
     Path((handle, deck_id)): Path<(String, i32)>,
     Query(params): Query<GoldfishParams>,
-) -> Result<Json<GoldfishHand>, AppError> {
+) -> Result<Response, AppError> {
     let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
     let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
-    Ok(Json(analyse_goldfish(&input, &models, &params)?))
+    // This route sits in the CDN-cacheable `public_holdings` group, which is right for every
+    // *seeded* request: the hand is a pure function of the URL, so caching it caches the
+    // answer. Without `?seed=` the server mints a random one, and the first response would
+    // then be pinned as "the" hand for every visitor for the CDN's whole TTL. The cache
+    // layer defers to a header set here, so opt that one case out.
+    let volatile = params.seed.is_none();
+    let hand = analyse_goldfish(&input, &models, &params)?;
+    let mut response = Json(hand).into_response();
+    if volatile {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    Ok(response)
 }

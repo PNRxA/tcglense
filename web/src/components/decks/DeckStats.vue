@@ -46,6 +46,11 @@ watch(
   },
 )
 
+// Deliberately the raw pick, not the validated one below: the validated card is derived
+// *from* the response, so feeding it back into the request would be a cycle. The server
+// already defines the fallback for a `card=` it can't find (the most-copied one), so a pick
+// that has left the library costs nothing to keep sending — and it means re-adding the
+// section it lived in restores the viewer's choice rather than silently forgetting it.
 const params = computed(() => ({
   sections: chosenSections.value ?? undefined,
   card: chosenCard.value ?? undefined,
@@ -79,10 +84,21 @@ function deselectAllSections() {
   chosenSections.value = []
 }
 
+// A pick can leave the library — deselect the section it lived in — and the server then
+// falls back to the most-copied card. The select has to follow that fallback: showing the
+// dead pick would put a name on a percentage that belongs to a different card, and there
+// would be no matching option for it either.
+const activeCard = computed(() => {
+  const picked = chosenCard.value
+  if (picked == null) return null
+  const offered = library.value?.card_odds
+  return offered && !offered.some((item) => item.name === picked) ? null : picked
+})
+
 // The select shows the server's pick until the user chooses otherwise; writing to it is
 // what makes the next request ask about a different card.
 const selectedCard = computed<string>({
-  get: () => chosenCard.value ?? odds.value?.name ?? '',
+  get: () => activeCard.value ?? odds.value?.name ?? '',
   set: (value) => {
     chosenCard.value = value
   },
@@ -90,11 +106,15 @@ const selectedCard = computed<string>({
 
 // The response carries the whole odds curve (P(≥1) at 1..N cards seen), so the slider is
 // instant and the probability maths stays in the one place it now lives.
+//
+// The clamp is at READ time rather than a watcher writing back to `cardsSeen`: a watcher
+// only fires when `maxCardsSeen` *changes*, so a response already in the vue-query cache
+// (navigate away and back) would leave `cardsSeen` at 7 against a shorter curve and read
+// `undefined` — rendering 0% for a card that is certain to be drawn. Reading through also
+// means the slider keeps its position when the library grows back.
 const maxCardsSeen = computed(() => Math.max(1, odds.value?.curve.length ?? 1))
-watch(maxCardsSeen, (max) => {
-  cardsSeen.value = Math.min(Math.max(1, cardsSeen.value), max)
-})
-const selectedProbability = computed(() => odds.value?.curve[cardsSeen.value - 1] ?? 0)
+const seenIndex = computed(() => Math.min(Math.max(1, cardsSeen.value), maxCardsSeen.value))
+const selectedProbability = computed(() => odds.value?.curve[seenIndex.value - 1] ?? 0)
 const probabilityLabel = computed(
   () => `${(selectedProbability.value * 100).toFixed(1).replace('.0', '')}%`,
 )
@@ -212,14 +232,15 @@ const probabilityLabel = computed(
           </label>
           <label class="space-y-1.5 text-sm">
             <span class="flex justify-between gap-2 text-xs font-medium">
-              Cards seen <span class="tabular-nums">{{ cardsSeen }}</span>
+              Cards seen <span class="tabular-nums">{{ seenIndex }}</span>
             </span>
             <input
-              v-model.number="cardsSeen"
+              :value="seenIndex"
               type="range"
               min="1"
               :max="maxCardsSeen"
               class="accent-primary h-9 w-full"
+              @input="cardsSeen = Number(($event.target as HTMLInputElement).value)"
             />
           </label>
           <div class="bg-primary/10 min-w-24 rounded-md px-4 py-2 text-center">
