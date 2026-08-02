@@ -40,6 +40,7 @@ import type {
   NeededCard,
   UpdateDeckRequest,
 } from '@/lib/api'
+import { invalidateDeckAnalysis } from '@/composables/useDeckAnalysis'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
 // ---------- Deck query + mutation composables (issue #363) ----------
@@ -133,6 +134,9 @@ export function invalidateDeck(qc: QueryClient, game: string, deckId?: number) {
   qc.invalidateQueries({ queryKey: ['decks', game] })
   // A deck's card list feeds the "cards needed" shopping list, so refresh it too.
   qc.invalidateQueries({ queryKey: ['deck-needed', game] })
+  // …and the server-side analysis (issue #596), whose keys are their own family and would
+  // otherwise leave the page showing last edit's curve, verdict, and sample hand.
+  invalidateDeckAnalysis(qc, game, deckId)
 }
 
 // ----- Mutation variable shapes -----

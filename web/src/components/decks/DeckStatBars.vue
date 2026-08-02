@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { DeckStatItem } from '@/lib/deckStats'
+import type { DeckStatItem } from '@/lib/api'
 
 const props = defineProps<{ title: string; items: DeckStatItem[] }>()
 const maximum = computed(() => Math.max(1, ...props.items.map((item) => item.count)))

@@ -1,13 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { CircleCheck, TriangleAlert } from '@lucide/vue'
-import {
-  DECK_ISSUE_STATUSES,
-  deckIssueLabel,
-  type DeckIssueStatus,
-  type DeckLegality,
-  type DeckLegalityIssue,
-} from '@/lib/legality'
+import { DECK_ISSUE_STATUSES, deckIssueLabel } from '@/lib/legality'
+import type { DeckIssueStatus, DeckLegality, DeckLegalityIssue } from '@/lib/api'
 
 const props = defineProps<{
   legality: DeckLegality
@@ -74,7 +69,7 @@ function issueLabel(issue: DeckLegalityIssue): string {
       class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
       aria-hidden="true"
     />
-    No {{ legality.formatLabel }} legality issues
+    No {{ legality.format_label }} legality issues
   </p>
 
   <div
@@ -95,8 +90,8 @@ function issueLabel(issue: DeckLegalityIssue): string {
       <p class="font-semibold">
         {{
           state === 'error'
-            ? `Not legal in ${legality.formatLabel}`
-            : `${legality.formatLabel} deck in progress`
+            ? `Not legal in ${legality.format_label}`
+            : `${legality.format_label} deck in progress`
         }}
       </p>
       <p v-if="summary" class="text-muted-foreground mt-0.5">{{ summary }}</p>
@@ -108,7 +103,7 @@ function issueLabel(issue: DeckLegalityIssue): string {
       <ul v-if="visibleIssues.length" class="mt-2 space-y-1.5">
         <li
           v-for="issue in visibleIssues"
-          :key="issue.cardId"
+          :key="issue.card_id"
           class="flex flex-wrap items-center gap-1.5"
         >
           <span class="min-w-0 break-words">{{ issue.name }}</span>

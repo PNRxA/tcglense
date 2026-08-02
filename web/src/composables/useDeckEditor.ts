@@ -301,6 +301,7 @@ export function useDeckEditor(props: DeckEditorProps) {
   return {
     auth,
     game,
+    deckId,
     deckQuery,
     deck,
     sections,

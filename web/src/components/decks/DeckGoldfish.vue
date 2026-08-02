@@ -1,0 +1,204 @@
+<script setup lang="ts">
+import { computed, ref, toRef, watch } from 'vue'
+import { Dices, Redo2, Undo2 } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import CardImage from '@/components/cards/CardImage.vue'
+import { useDeckGoldfishQuery, usePublicDeckGoldfishQuery } from '@/composables/useDeckAnalysis'
+
+// "Test hand" (issue #596): shuffle up, draw seven, mulligan, and step through draws — the
+// thing every deckbuilder does a dozen times while tuning a list.
+//
+// The engine is the server's and it is stateless: a hand is a pure function of
+// `(seed, mulligans, what was bottomed, how many drawn)`, so this component holds exactly
+// those four values and the response is derived from them. That is what makes the seed
+// worth showing — type it back in and you get the same hand, in a browser or from `curl`,
+// which is what you want when a hand is worth reporting.
+//
+// `handle` puts it in public mode (a deck someone shared), like the analytics panel.
+const props = defineProps<{
+  game: string
+  deckId: number
+  handle?: string
+}>()
+
+/** The opening hand size the format deals. */
+const OPENING = 7
+
+const seed = ref<number | null>(null)
+const mulligans = ref(0)
+const bottom = ref<string[]>([])
+const draws = ref(0)
+
+/** A fresh 32-bit seed — the range the API round-trips exactly through JSON. */
+function rollSeed(): number {
+  return Math.floor(Math.random() * 0x1_0000_0000)
+}
+
+function newHand() {
+  seed.value = rollSeed()
+  mulligans.value = 0
+  bottom.value = []
+  draws.value = 0
+}
+
+/** London: reshuffle, draw a full hand again, and owe one more card to the bottom. */
+function mulligan() {
+  mulligans.value += 1
+  bottom.value = []
+  draws.value = 0
+}
+
+function putOnBottom(cardId: string) {
+  if (toBottom.value > 0) bottom.value = [...bottom.value, cardId]
+}
+
+function undoBottom() {
+  bottom.value = bottom.value.slice(0, -1)
+}
+
+function draw() {
+  draws.value += 1
+}
+
+const params = computed(() => ({
+  seed: seed.value ?? undefined,
+  mulligans: mulligans.value,
+  bottom: bottom.value,
+  draws: draws.value,
+  opening: OPENING,
+}))
+
+const game = toRef(props, 'game')
+const deckId = toRef(props, 'deckId')
+const handle = computed(() => props.handle ?? '')
+const enabled = computed(() => seed.value !== null)
+const handQuery = props.handle
+  ? usePublicDeckGoldfishQuery(handle, deckId, params, enabled)
+  : useDeckGoldfishQuery(game, deckId, params, enabled)
+const hand = computed(() => (seed.value === null ? undefined : handQuery.data.value))
+
+const toBottom = computed(() => hand.value?.to_bottom ?? 0)
+const libraryLeft = computed(() => hand.value?.library_size ?? 0)
+const cards = computed(() => hand.value?.hand ?? [])
+/** Cards past the opening hand were drawn this game — worth marking, so a new draw is
+ * visible without re-reading the whole hand. */
+const firstDrawnIndex = computed(() => (hand.value ? hand.value.hand.length - hand.value.draws : 0))
+const keepLabel = computed(() => `Mulligan to ${Math.max(0, OPENING - mulligans.value - 1)}`)
+
+// A seed typed into the field replays that hand from the start; anything else would mean
+// applying an old bottoming decision to a different shuffle.
+const seedField = computed<string>({
+  get: () => (seed.value === null ? '' : String(seed.value)),
+  set: (value) => {
+    const parsed = Number(value)
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0xffff_ffff) return
+    seed.value = parsed
+    mulligans.value = 0
+    bottom.value = []
+    draws.value = 0
+  },
+})
+
+// Editing the deck invalidates the hand: it was dealt from a library that no longer exists.
+watch(
+  () => props.deckId,
+  () => {
+    seed.value = null
+  },
+)
+</script>
+
+<template>
+  <Card class="mb-6">
+    <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+      <CardTitle class="text-base">Test hand</CardTitle>
+      <div class="flex flex-wrap items-center gap-2">
+        <label v-if="hand" class="text-muted-foreground flex items-center gap-1.5 text-xs">
+          Seed
+          <input
+            v-model.lazy="seedField"
+            type="text"
+            inputmode="numeric"
+            class="border-input bg-background w-28 rounded-md border px-2 py-1 text-xs tabular-nums"
+            aria-label="Shuffle seed — type one to replay that hand"
+          />
+        </label>
+        <Button size="sm" variant="outline" @click="newHand">
+          <Dices class="size-4" aria-hidden="true" />
+          {{ hand ? 'New hand' : 'Draw opening hand' }}
+        </Button>
+      </div>
+    </CardHeader>
+
+    <CardContent v-if="hand" class="space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" :disabled="mulligans >= OPENING" @click="mulligan">
+          {{ keepLabel }}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          :disabled="toBottom > 0 || libraryLeft === 0"
+          @click="draw"
+        >
+          <Redo2 class="size-4" aria-hidden="true" />
+          Draw
+        </Button>
+        <Button v-if="bottom.length" size="sm" variant="ghost" @click="undoBottom">
+          <Undo2 class="size-4" aria-hidden="true" />
+          Undo bottom
+        </Button>
+        <p class="text-muted-foreground text-xs">
+          {{ cards.length }} in hand · {{ libraryLeft }} in library
+          <template v-if="hand.draws"> · {{ hand.draws }} drawn</template>
+        </p>
+      </div>
+
+      <p v-if="toBottom > 0" class="text-amber-600 text-sm dark:text-amber-400">
+        Put {{ toBottom }} card{{ toBottom === 1 ? '' : 's' }} on the bottom — click
+        {{ toBottom === 1 ? 'one' : 'them' }} in your hand.
+      </p>
+
+      <ul v-if="cards.length" class="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
+        <li v-for="(card, index) in cards" :key="`${card.id}-${index}`" class="relative">
+          <component
+            :is="toBottom > 0 ? 'button' : 'div'"
+            :type="toBottom > 0 ? 'button' : undefined"
+            class="block w-full text-left"
+            :class="
+              toBottom > 0
+                ? 'focus-visible:ring-ring cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none'
+                : ''
+            "
+            :aria-label="toBottom > 0 ? `Put ${card.name} on the bottom` : undefined"
+            @click="toBottom > 0 && putOnBottom(card.id)"
+          >
+            <CardImage
+              :game="game"
+              :id="card.id"
+              :name="card.name"
+              size="normal"
+              :has-image="card.has_image"
+              class="rounded-lg"
+              :class="toBottom > 0 ? 'transition hover:brightness-110' : ''"
+            />
+          </component>
+          <span
+            v-if="index >= firstDrawnIndex"
+            class="bg-primary text-primary-foreground absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-medium"
+          >
+            drawn
+          </span>
+        </li>
+      </ul>
+      <p v-else class="text-muted-foreground text-sm">
+        This deck has no cards in the sections a hand is dealt from.
+      </p>
+
+      <p v-if="hand.bottomed.length" class="text-muted-foreground text-xs">
+        On the bottom: {{ hand.bottomed.map((card) => card.name).join(', ') }}
+      </p>
+    </CardContent>
+  </Card>
+</template>

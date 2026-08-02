@@ -64,6 +64,17 @@ vi.mock('@/composables/useDecks', async () => {
   }
 })
 
+// The analysis panels are the server's (issue #596) and have their own specs; stub the
+// queries so this view's own wiring is what's under test and no query client is needed.
+vi.mock('@/composables/useDeckAnalysis', async () => {
+  const { ref: vueRef } = await import('vue')
+  return {
+    usePublicDeckLegalityQuery: () => ({ data: vueRef({ data: null }) }),
+    usePublicDeckStatsQuery: () => ({ data: vueRef(undefined) }),
+    usePublicDeckGoldfishQuery: () => ({ data: vueRef(undefined) }),
+  }
+})
+
 vi.mock('@/composables/useCurrency', () => ({
   useCurrency: () => ({ formatUsd: () => '' }),
 }))
