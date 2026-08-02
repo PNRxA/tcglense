@@ -190,6 +190,12 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::change_deck_card_printing,
         crate::handlers::decks::export_deck,
         crate::handlers::decks::copy_public_deck,
+        // Deck analysis (issue #596): composition + draw odds, the legality verdict, a
+        // seeded goldfish hand, and the format vocabulary they are keyed by.
+        crate::handlers::decks::list_deck_formats,
+        crate::handlers::decks::deck_stats,
+        crate::handlers::decks::deck_legality,
+        crate::handlers::decks::deck_goldfish,
         // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
         crate::handlers::tools::life::list_sessions,
         crate::handlers::tools::life::create_session,
@@ -217,6 +223,9 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::public_owned_counts,
         crate::handlers::sharing::public_decks,
         crate::handlers::sharing::public_deck,
+        crate::handlers::sharing::public_deck_stats,
+        crate::handlers::sharing::public_deck_legality,
+        crate::handlers::sharing::public_deck_goldfish,
         // --- Public wish lists (issue #493): handle-keyed read-only mirror of the above ---
         crate::handlers::sharing::public_wishlist_list,
         crate::handlers::sharing::public_wishlist_summary,

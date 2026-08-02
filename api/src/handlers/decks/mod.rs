@@ -39,6 +39,7 @@ use crate::state::AppState;
 
 use sea_orm::prelude::DateTimeUtc;
 
+mod analysis;
 mod cards;
 mod copy;
 mod export;
@@ -49,6 +50,7 @@ mod read;
 mod sections;
 mod write;
 
+pub use analysis::{deck_goldfish, deck_legality, deck_stats, list_deck_formats};
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use copy::copy_public_deck;
 pub use export::export_deck;
@@ -61,6 +63,9 @@ pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibili
 
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
+pub use analysis::{
+    __path_deck_goldfish, __path_deck_legality, __path_deck_stats, __path_list_deck_formats,
+};
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
 pub use copy::__path_copy_public_deck;
 pub use export::__path_export_deck;
@@ -76,6 +81,14 @@ pub use sections::{
 pub use write::{
     __path_create_deck, __path_delete_deck, __path_move_deck_to_folder, __path_set_deck_visibility,
     __path_update_deck,
+};
+
+// The analysis entry points + loaders, reused by the public-sharing mirrors
+// (`crate::handlers::sharing::decks`) so a shared deck's analysis is the identical
+// computation its owner sees.
+pub(crate) use analysis::{
+    DeckAnalytics, DeckLegality, GoldfishHand, GoldfishParams, StatsParams, analyse_goldfish,
+    analyse_legality, analyse_stats, load_analysis, load_analysis_with_cards,
 };
 
 // The `deck_id`-parameterised detail core, reused by the public sharing handler
@@ -195,7 +208,7 @@ pub struct DeckFolderResponse {
 }
 
 /// One section (category) of a deck, in display order.
-#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
+#[derive(Clone, Debug, Serialize, PartialEq, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DeckSection"))]
 pub struct DeckSectionResponse {
     pub id: i32,

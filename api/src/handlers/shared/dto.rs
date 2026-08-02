@@ -177,7 +177,7 @@ pub(crate) fn stored_faces(card: &card::Model) -> Vec<StoredFace> {
 /// Parse the stored per-format legality object (`cards.legalities`, provider-written
 /// JSON) into the wire map. Tolerant by design: a missing column, non-JSON text, a
 /// non-object, or non-string values all yield `None` rather than failing the request.
-fn parse_legalities(raw: Option<&str>) -> Option<BTreeMap<String, String>> {
+pub(crate) fn parse_legalities(raw: Option<&str>) -> Option<BTreeMap<String, String>> {
     raw.and_then(|json| serde_json::from_str(json).ok())
 }
 
