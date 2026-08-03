@@ -99,6 +99,59 @@ describe('parseSetHint', () => {
     expect(parseSetHint('artist 264').collectorNumber).toBeUndefined()
   })
 
+  // 2022-and-later frames dropped the set total and print `R 0247` instead. The strings
+  // below are verbatim tesseract output (this project's OEM/PSM/whitelist) over the real
+  // bottom-left strip of two Avatar: The Last Airbender printings — trailing debris and
+  // all, which is the clipped `©2025` at the crop's right edge.
+  it('reads the rarity-anchored number modern frames print instead of a total', () => {
+    expect(parseSetHint('R 0247 L 2 O2\nTLA EN  EILENE CHERIE')).toEqual({
+      collectorNumber: '247',
+      setCode: 'TLA',
+    })
+    expect(parseSetHint('R 0362 0 O2\nTLA EN  FLAVIO GIRON')).toEqual({
+      collectorNumber: '362',
+      setCode: 'TLA',
+    })
+  })
+
+  it('reads a low collector number through its zero-padding', () => {
+    // The three-digit minimum above is safe only because modern frames pad to four —
+    // verified on BLB/OTJ/DSK/LTR/MKM, where card 1 prints `0001`, not `1`. So the shortest
+    // real number still clears the bar, and normalizeCollectorNumber strips the padding to
+    // the value the catalog stores.
+    expect(parseSetHint('C 0001\nBLB EN  ZOLTAN BOROS').collectorNumber).toBe('1')
+    expect(parseSetHint('C 0012\nDSK EN SEAN MURRAY').collectorNumber).toBe('12')
+    // Rules text bleeding in above the strip does not displace the real field.
+    expect(parseSetHint('J E\nU 0250\nMKM EN  EL MINAYA')).toEqual({
+      collectorNumber: '250',
+      setCode: 'MKM',
+    })
+  })
+
+  it('ignores the stray letter-then-digit pairs the clipped copyright leaves behind', () => {
+    // `L 2` and `0 O2` are debris from the same line the real `R 0247` sits on. Only the
+    // zero-padded run is a collector number; a one- or two-digit tail is never one.
+    expect(parseSetHint('L 2 O2\nTLA EN').collectorNumber).toBeUndefined()
+    expect(parseSetHint('C 9\nNEO EN').collectorNumber).toBeUndefined()
+  })
+
+  it('refuses a copyright year even when a rarity letter precedes it', () => {
+    expect(parseSetHint('R 2025 WIZARDS\nNEO EN').collectorNumber).toBeUndefined()
+    expect(parseSetHint('C 1993 WIZARDS\nLEA EN').collectorNumber).toBeUndefined()
+  })
+
+  it('still prefers the slashed form when a frame prints one', () => {
+    // Both forms present (rarity letter after the total): the explicit total wins.
+    expect(parseSetHint('0123/0264 R\nNEO • EN').collectorNumber).toBe('123')
+  })
+
+  it('does not read power/toughness bleeding in from the line above as a number', () => {
+    // SET_REGION starts at 90% of the card, so the last rules line can clip into the crop.
+    // A one-digit total is a P/T or a token's stats, never a real set's card count.
+    expect(parseSetHint('PUT TWO 1/1 COUNTERS ON IT\nTLA EN').collectorNumber).toBeUndefined()
+    expect(parseSetHint('A 3/3 CREATURE\nNEO EN').collectorNumber).toBeUndefined()
+  })
+
   it('never sets foil from OCR text — the star is detected visually, not read', () => {
     // tesseract cannot emit `★`, so parseSetHint deliberately makes no attempt at the finish
     // (a literal star in the raw string is treated as noise, like any other stray glyph).

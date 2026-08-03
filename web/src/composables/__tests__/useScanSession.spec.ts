@@ -297,6 +297,95 @@ describe('useScanSession printing resolution', () => {
   })
 })
 
+describe('useScanSession visual printing priority', () => {
+  // Two treatments of one card in one set: the listing can't order them meaningfully (same
+  // name, same release date), so only the fingerprint ranking says which one was scanned.
+  const fullArt = makeCard('tla-fullart', { set_code: 'tla', collector_number: '312' })
+  const normal = makeCard('tla-normal', { set_code: 'tla', collector_number: '41' })
+
+  // `setText` is the raw OCR of the bottom strip: 'TLA • EN' yields a set-code hint, '' yields
+  // none. The pagination path has to be exercised with no set code, or the pre-existing
+  // set-code branch drives the loading and the visual wait is never actually tested.
+  async function captureRanked(
+    ranked: Array<{ card: Card; distance: number }>,
+    { hasMore = false, setText = 'TLA • EN' } = {},
+  ) {
+    // Listing order puts the full-art treatment first, which used to become the pick.
+    picker.printings.value = [fullArt, normal]
+    picker.hasNextPage.value = hasMore
+    mocks.useScanMutation.mockReturnValue({
+      // A fresh array per call, as the real endpoint gives — a shared one would make a
+      // rescan a no-op for anything watching `candidates`.
+      mutateAsync: vi
+        .fn<(...args: unknown[]) => Promise<{ data: Array<{ card: Card; distance: number }> }>>()
+        .mockImplementation(async () => ({ data: ranked.map((m) => ({ ...m })) })),
+    })
+
+    const Host = defineComponent({
+      setup() {
+        session = useScanSession(ref('mtg'))
+        return () => null
+      },
+    })
+    wrapper = mount(Host)
+    await session.handleCapture({ fingerprints: [new Uint8Array(32)], setText, foil: false })
+    await flushPromises()
+  }
+
+  it('opens on the visually closest treatment, not the first of the hinted set', async () => {
+    // The set line reads cleanly but only names the set — every treatment shares it.
+    await captureRanked([
+      { card: normal, distance: 14 },
+      { card: fullArt, distance: 89 },
+    ])
+    expect(session.selectedId.value).toBe(normal.id)
+  })
+
+  it('paginates for the closest ranked printing even with no set code to go on', async () => {
+    // Nothing readable on the strip, so only `awaitingRankedPrinting` can drive the load —
+    // without it the pick would settle for the best of page one.
+    const later = makeCard('tla-later', { set_code: 'tla', collector_number: '7' })
+    picker.loadMore.mockImplementation(async () => {
+      picker.printings.value = [...picker.printings.value, later]
+      picker.hasNextPage.value = false
+    })
+    await captureRanked(
+      [
+        { card: later, distance: 11 },
+        { card: fullArt, distance: 84 },
+      ],
+      { hasMore: true, setText: '' },
+    )
+    await flushPromises()
+
+    expect(picker.loadMore).toHaveBeenCalled()
+    expect(session.selectedId.value).toBe(later.id)
+  })
+
+  it('keeps a candidate picked from the strip when the same card is rescanned', async () => {
+    // A strip pick can name a printing that isn't in the loaded pages. A rescan reassigns
+    // `candidates`, which re-runs the auto-pick — it must not quietly overwrite the choice.
+    const unloaded = makeCard('tla-unloaded', { set_code: 'tla', collector_number: '99' })
+    await captureRanked([
+      { card: normal, distance: 14 },
+      { card: fullArt, distance: 89 },
+    ])
+    expect(session.selectedId.value).toBe(normal.id)
+
+    session.pickCandidate(unloaded)
+    await flushPromises()
+    expect(session.selectedId.value).toBe(unloaded.id)
+
+    await session.handleCapture({
+      fingerprints: [new Uint8Array(32)],
+      setText: 'TLA • EN',
+      foil: false,
+    })
+    await flushPromises()
+    expect(session.selectedId.value).toBe(unloaded.id)
+  })
+})
+
 describe('useScanSession foil detection', () => {
   // Mount a session and feed one capture, resolving to a single already-loaded printing. `foil`
   // is the scanner's visual foil-star verdict (see lib/scan/foilStar).

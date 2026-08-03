@@ -1214,6 +1214,24 @@ catalog) is planned but not implemented.
   resolves the *exact printing*. Full-card pHash mathematically discards the tiny
   set-symbol / collector signal that distinguishes reprints, so replacing OCR with pHash
   would regress printing accuracy — the two are kept complementary.
+- **…but the visual ranking outranks the set line, because they answer different
+  questions.** pHash is the *only* signal that separates a card's treatments (normal vs
+  borderless vs full-art — different artwork, wholly different hashes); the set line is the
+  *only* signal that separates same-art reprints (different set, near-identical hashes). So
+  `matchPrinting` takes the closest ranked printing and lets the set code arbitrate **only**
+  among printings within `VISUAL_TIE_BITS` (16) of it — the band that separates "same art,
+  different set symbol" (a few bits) from "different art" (tens). A set code can no longer
+  promote a printing the fingerprint clearly ranked worse. Ordering them the other way round
+  was a real bug: a set-code-only hint resolved to "the newest printing in that set", but a
+  card's treatments share a name *and* a release date, so the printings listing
+  (`released_at DESC, name ASC, id ASC`) tiebreaks on the row id — the scanner opened on an
+  arbitrary treatment, often a full-art the camera plainly hadn't seen. Two asymmetries are
+  deliberate: a clean set **+ collector number** read still wins (the number is the one OCR
+  signal that separates a set's own treatments) unless the fingerprint ranked that exact
+  printing far worse, which means a misread digit; and a set code whose printings the scan
+  never ranked keeps its old meaning, since a missing fingerprint is no evidence against it.
+  The auto-pick also paginates until the closest ranked printing is loaded — the ranking is
+  global, so picking from a prefix would settle for the best of an arbitrary slice.
 - **Storage / NN search — opaque BLOB, no vector extension.** Fingerprints live in a
   narrow `card_fingerprint` table (never a column on the wide `cards` row) as a 32-byte
   BLOB/BYTEA, **never queried by content in SQL**. Nearest-neighbour is a brute-force
