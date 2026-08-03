@@ -39,7 +39,8 @@ const VISUAL_TIE_BITS = 16
 
 /** One printing the visual scan ranked: its catalog id and Hamming distance to the scanned
  * card (smaller is closer). The narrow shape — rather than the API's `ScanMatch` — keeps
- * these rules testable without building whole card payloads. */
+ * these rules testable without building whole card payloads. Callers pass these **in the
+ * scan's own nearest-first order**, which is what settles exact distance ties. */
 export interface VisualRank {
   id: string
   distance: number
@@ -88,14 +89,19 @@ function resolveSet(code: string, prints: Card[]): string | null {
 
 /** These printings that the scan actually ranked, closest first. Printings the scan did not
  * rank are absent (not "infinitely far"): a missing fingerprint is no evidence either way.
- * Ties keep the caller's order, so the result is deterministic. */
+ *
+ * Walks `visual`, not `prints` — with a stable sort, equal distances then keep the scan's
+ * order rather than the printings listing's. That matters precisely for the treatments this
+ * whole module exists to separate: two printings of one artwork routinely tie exactly, and
+ * resolving that tie by listing position would hand the pick straight back to the arbitrary
+ * row order. */
 function rankVisually(prints: Card[], visual: readonly VisualRank[]): RankedPrinting[] {
   if (!visual.length) return []
-  const byId = new Map(visual.map((rank) => [rank.id, rank.distance]))
-  return prints
-    .flatMap((card) => {
-      const distance = byId.get(card.id)
-      return distance === undefined ? [] : [{ card, distance }]
+  const byId = new Map(prints.map((card) => [card.id, card]))
+  return visual
+    .flatMap((rank) => {
+      const card = byId.get(rank.id)
+      return card ? [{ card, distance: rank.distance }] : []
     })
     .sort((a, b) => a.distance - b.distance)
 }

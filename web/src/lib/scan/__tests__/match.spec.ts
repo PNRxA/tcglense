@@ -190,6 +190,18 @@ describe('matchPrinting with a visual ranking', () => {
     expect(picked?.id).toBe('normal')
   })
 
+  it('settles an exact distance tie by the scan order, not the listing order', () => {
+    // Two printings of one artwork tie exactly all the time (they differ only in the set
+    // symbol and info line). Breaking that tie by listing position would hand the pick back
+    // to the arbitrary row order this module exists to escape, so the scan's own ranking —
+    // which the server tiebreaks deterministically — has to win.
+    const picked = matchPrinting(treatments, {}, [
+      { id: 'normal', distance: 62 },
+      { id: 'borderless', distance: 62 },
+    ])
+    expect(picked?.id).toBe('normal')
+  })
+
   it('ignores ranked cards that are not printings in the list', () => {
     // The scan ranks whole cards, so a different card's printing can outrank every printing
     // of the resolved name; it must not leak into this card's pick.
