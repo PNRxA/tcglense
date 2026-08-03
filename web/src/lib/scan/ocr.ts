@@ -95,6 +95,27 @@ const LANGUAGE_CODES = new Set([
   'SA',
 ])
 
+/** Rarity letters a card's info line prints beside its collector number: common,
+ * uncommon, rare, mythic, special, timeshifted, land, promo, bonus. */
+const RARITY_LETTERS = 'CURMSTLPB'
+
+/** `R 0247` — the 2022-and-later form: a rarity letter, then a zero-padded collector
+ * number. Anchoring on the rarity letter *and* requiring the padding is what makes a bare
+ * number safe to read here: the strip's right edge clips the card's copyright line, so raw
+ * OCR of it comes back like `R 0247 L 2 O2`, and the last rules line can bleed in from
+ * above. Three digits is the shortest a padded number gets, and it drops that debris. */
+const RARITY_ANCHORED_NUMBER = new RegExp(`\\b[${RARITY_LETTERS}]\\s+(\\d{3,5})\\b`)
+
+/** `123/264` — the 2015-2021 form, printed over the set total. The total must be at least
+ * two digits: every real set has one, while `1/1` and `3/3` are a token's or the card's own
+ * power/toughness bleeding into the crop from the line above. */
+const SLASHED_NUMBER = /(\d{1,5})\s*\/\s*\d{2,5}/
+
+/** A four-digit run in copyright-year range, which the clipped `©2025` at the strip's edge
+ * can leave behind. No printing numbers that high, and a modern number is zero-padded
+ * (`0247`) — which no year is — so this only ever rejects debris. */
+const COPYRIGHT_YEAR = /^(?:19|20)\d{2}$/
+
 /** Strip zero-padding from a collector number (`0123` -> `123`) while leaving a bare `0`
  * and any letter suffix (`0123a` -> `123a`) intact. */
 export function normalizeCollectorNumber(value: string): string {
@@ -105,18 +126,29 @@ export function normalizeCollectorNumber(value: string): string {
 }
 
 /**
- * Best-effort parse of the bottom-left info strip — printed as `123/264 R` over
- * `SET • EN` (plus the artist) — into a set code + collector number. Returns whatever it
- * can read; both fields are optional and advisory.
+ * Best-effort parse of the bottom-left info strip into a set code + collector number.
+ * Returns whatever it can read; both fields are optional and advisory.
+ *
+ * The strip has been printed two ways. Frames from 2015-2021 put the collector number over
+ * the set total (`123/264 R` above `SET • EN`); frames from 2022 dropped the total and
+ * print the rarity letter beside a zero-padded number instead (`R 0247`). Reading only the
+ * slashed form meant every modern card came back with no number at all — leaving the set
+ * code as the sole printing hint, which cannot tell a set's own treatments apart.
  */
 export function parseSetHint(raw: string): SetHint {
   const upper = raw.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()
   const hint: SetHint = {}
 
-  // Collector number: the "123/264" form is unambiguous (a bare number could be the
-  // card's power/toughness or CMC bleeding in, so only trust the slashed form).
-  const numbered = upper.match(/(\d{1,5})\s*\/\s*\d{1,5}/)?.[1]
-  if (numbered) hint.collectorNumber = normalizeCollectorNumber(numbered)
+  // Collector number, in whichever of the two printed forms this frame uses. Neither is
+  // read as a bare number — each is anchored on something only the real field carries (the
+  // set total, or the rarity letter plus zero-padding), because the crop also catches the
+  // card's clipped copyright line and the last line of rules text above it. A wrong number
+  // here would key an exact printing, so a missing hint beats a guessed one: the caller
+  // falls back to the visual ranking, which is the stronger signal anyway.
+  const numbered = upper.match(SLASHED_NUMBER)?.[1] ?? upper.match(RARITY_ANCHORED_NUMBER)?.[1]
+  if (numbered && !COPYRIGHT_YEAR.test(numbered)) {
+    hint.collectorNumber = normalizeCollectorNumber(numbered)
+  }
 
   // Set code: the first *whole* 3-5 char alphanumeric token that isn't a language code
   // or a pure number (the collector total). Splitting on non-alnum (rather than matching
