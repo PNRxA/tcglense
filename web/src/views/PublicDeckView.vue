@@ -11,10 +11,12 @@ import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
+import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
+import { usePublicDeckLegalityQuery } from '@/composables/useDeckAnalysis'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
 import { useAuthStore } from '@/stores/auth'
@@ -22,7 +24,7 @@ import { ApiError, type DeckCardEntry } from '@/lib/api'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
-import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel, evaluateDeckLegality } from '@/lib/legality'
+import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -80,7 +82,6 @@ const {
   filterActive,
   clearFilters,
   cardsBySection,
-  deckCards,
   visibleSections,
   sectionNavItems,
   matchCount,
@@ -103,13 +104,11 @@ function copyDeckList() {
   })
 }
 
-// Format legality (issue #557), mirroring the owner view: computed over the deck proper,
-// so a maybeboard card can't declare someone's shared deck illegal (issue #570); null when
-// the format isn't a legality-tracked one. `sections` gives the deck-construction rules
-// the zone split (command zone / sideboard / deck proper) they read off section names.
-const legality = computed(() =>
-  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value, sections.value) : null,
-)
+// Format legality (issues #557/#596), mirroring the owner view: the public mirror of the
+// same server read, so a shared deck and its owner's copy can never disagree about the
+// verdict. Null when the format isn't a legality-tracked one.
+const legalityQuery = usePublicDeckLegalityQuery(handle, deckId)
+const legality = computed(() => legalityQuery.data.value?.data ?? null)
 </script>
 
 <template>
@@ -164,7 +163,10 @@ const legality = computed(() =>
       <!-- Is this deck legal in its format? (issue #557) -->
       <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
 
-      <DeckStats :cards="deck.cards" :sections="deck.sections" />
+      <DeckStats :game="deck.game" :deck-id="deck.id" :sections="deck.sections" :handle="handle" />
+
+      <!-- Goldfish a sample hand from the shared deck (issue #596). -->
+      <DeckGoldfish :game="deck.game" :deck-id="deck.id" :handle="handle" />
 
       <!-- Card list controls (issue #562), mirroring the owner view: client-side text +
         colour filters over the loaded deck, and the shared card-size preference. -->
@@ -235,7 +237,7 @@ const legality = computed(() =>
                 :key="`${entry.card.id}-${entry.section_id}`"
                 :game="deck.game"
                 :entry="entry"
-                :legality-status="legality?.statusByCardId.get(entry.card.id) ?? null"
+                :legality-status="legality?.card_statuses[entry.card.id] ?? null"
               >
                 <template #control>
                   <span class="text-sm font-medium tabular-nums">×{{ copies(entry) }}</span>
@@ -259,11 +261,11 @@ const legality = computed(() =>
                     count owns bottom-left), matching the owner view; pointer-events-none
                     keeps the tile's stretched link clickable through it. -->
                   <span
-                    v-if="legality?.statusByCardId.get(entry.card.id)"
+                    v-if="legality?.card_statuses[entry.card.id]"
                     class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    :class="DECK_ISSUE_TEXT_CLASS[legality.statusByCardId.get(entry.card.id)!]"
+                    :class="DECK_ISSUE_TEXT_CLASS[legality.card_statuses[entry.card.id]!]"
                   >
-                    {{ deckIssueLabel(legality.statusByCardId.get(entry.card.id)!) }}
+                    {{ deckIssueLabel(legality.card_statuses[entry.card.id]!) }}
                   </span>
                 </template>
               </CardTile>

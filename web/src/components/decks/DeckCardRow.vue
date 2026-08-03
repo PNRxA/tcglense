@@ -3,9 +3,9 @@ import { computed } from 'vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
-import type { DeckCardEntry } from '@/lib/api'
+import type { DeckCardEntry, DeckIssueStatus } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
-import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel, type DeckIssueStatus } from '@/lib/legality'
+import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 
 // One card as a compact row — the "list" deck view (issue #570). The image grid is the
 // right shape for building a deck; this is the right shape for *reading* one: a 100-card

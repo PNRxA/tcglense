@@ -48,16 +48,18 @@ import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
+import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckEditor } from '@/composables/useDeckEditor'
+import { useDeckLegalityQuery } from '@/composables/useDeckAnalysis'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
-import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel, evaluateDeckLegality } from '@/lib/legality'
+import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -67,11 +69,11 @@ const money = useCurrency()
 const {
   auth,
   game,
+  deckId,
   deckQuery,
   deck,
   sections,
   allCards,
-  deckCards,
   cardsBySection,
   showEmpty,
   visibleSections,
@@ -125,14 +127,13 @@ const deckView = useDeckViewStore()
 
 usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true })
 
-// Format legality (issue #557): evaluated over the deck PROPER — a card sitting in a
-// maybeboard is under consideration, so a banned one there shouldn't declare the deck
-// illegal (issue #570). Null when the deck's format isn't a legality-tracked one.
-// `sections` rides along so the deck-construction rules can tell the command zone,
-// the sideboard and the deck proper apart (they're distinguished by section name).
-const legality = computed(() =>
-  deck.value ? evaluateDeckLegality(deck.value.format, deckCards.value, sections.value) : null,
-)
+// Format legality (issues #557/#596): the server's verdict over the deck PROPER — a card
+// sitting in a maybeboard is under consideration, so a banned one there shouldn't declare
+// the deck illegal (issue #570) — or null when the deck's format isn't a legality-tracked
+// one. It moved server-side so a CLI can ask the same question; the deck's own writes
+// invalidate it (see `invalidateDeckAnalysis`), so the banner tracks edits.
+const legalityQuery = useDeckLegalityQuery(game, deckId)
+const legality = computed(() => legalityQuery.data.value?.data ?? null)
 
 // The whole deck as a paste-ready text list, for the text view's copy button.
 const copiedList = ref(false)
@@ -301,7 +302,10 @@ function copyDeckList() {
       <!-- Is this deck legal in its format? (issue #557) -->
       <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
 
-      <DeckStats :cards="allCards" :sections="sections" />
+      <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
+
+      <!-- Goldfish a sample hand (issue #596). -->
+      <DeckGoldfish :game="game" :deck-id="deck.id" />
 
       <!-- Add cards -->
       <DeckAddCard
@@ -486,7 +490,7 @@ function copyDeckList() {
                 :key="`${entry.card.id}-${entry.section_id}`"
                 :game="game"
                 :entry="entry"
-                :legality-status="legality?.statusByCardId.get(entry.card.id) ?? null"
+                :legality-status="legality?.card_statuses[entry.card.id] ?? null"
               >
                 <template #control>
                   <DeckCardControl
@@ -532,11 +536,11 @@ function copyDeckList() {
                     ownership badges. pointer-events-none keeps the tile's stretched link
                     clickable through it; the banner above carries the full explanation. -->
                   <span
-                    v-if="legality?.statusByCardId.get(entry.card.id)"
+                    v-if="legality?.card_statuses[entry.card.id]"
                     class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    :class="DECK_ISSUE_TEXT_CLASS[legality.statusByCardId.get(entry.card.id)!]"
+                    :class="DECK_ISSUE_TEXT_CLASS[legality.card_statuses[entry.card.id]!]"
                   >
-                    {{ deckIssueLabel(legality.statusByCardId.get(entry.card.id)!) }}
+                    {{ deckIssueLabel(legality.card_statuses[entry.card.id]!) }}
                   </span>
                   <!-- Ownership indicators (top-right): how many of this card you own
                    (collection) and want (wish list), each shown only when non-zero. -->

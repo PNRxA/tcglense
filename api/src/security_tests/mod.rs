@@ -25,6 +25,7 @@ mod collection;
 mod collection_import;
 mod collection_products;
 mod cors;
+mod deck_analysis;
 mod decks;
 mod email_verification;
 mod headers;

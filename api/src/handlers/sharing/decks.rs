@@ -7,14 +7,23 @@
 //! unknown handle, private/absent deck — is the same `404` (no existence oracle). Lives in
 //! the router's `public_holdings` group (CDN-cacheable, ETag'd).
 
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderValue, header},
+    response::{IntoResponse, Response},
+};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::entities::deck;
 use crate::entities::prelude::Deck;
 use crate::error::AppError;
-use crate::extract::Path;
-use crate::handlers::decks::{DeckDetail, DeckResponse, card_counts_by_deck, deck_detail};
+use crate::extract::{Path, Query};
+use crate::handlers::decks::{
+    DeckAnalytics, DeckDetail, DeckLegality, DeckResponse, GoldfishHand, GoldfishParams,
+    StatsParams, analyse_goldfish, analyse_legality, analyse_stats, card_counts_by_deck,
+    deck_detail, load_analysis, load_analysis_with_cards,
+};
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
 
@@ -146,4 +155,116 @@ pub async fn public_deck(
     let (user, deck) = load_public_deck(&state, &handle, deck_id).await?;
     let handle = crate::auth::username::handle_of(&user);
     Ok(Json(deck_detail(&state, &deck, handle).await?))
+}
+
+// ---------- Analysis mirrors (issue #596) ----------
+//
+// The three deck-analysis reads, for a deck whose owner shared it. Each resolves the deck
+// through the same `load_public_deck` gate as `public_deck` — so an unknown handle and a
+// private deck stay the one indistinguishable 404 — and then calls the identical
+// `analyse_*` entry point the owner's own read uses. There is deliberately no second
+// implementation here: a public deck and its owner's copy must never disagree about the
+// deck's composition, its legality, or the hand a seed deals.
+
+/// Public deck analytics
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/stats` -> the composition and draw odds of a public
+/// deck, identical to what its owner sees. `404` when the handle is unknown or the deck is
+/// private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/stats",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+        StatsParams,
+    ),
+    responses(
+        (status = 200, description = "Composition of the deck and of its library, plus draw odds.", body = DeckAnalytics),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+        (status = 422, description = "A section id in `sections` is not a number."),
+    ),
+)]
+pub async fn public_deck_stats(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+    Query(params): Query<StatsParams>,
+) -> Result<Json<DeckAnalytics>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(analyse_stats(&input, &params)?))
+}
+
+/// Public deck legality
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/legality` -> a public deck's legality verdict
+/// against its own format. `data` is null when that format isn't one legality is tracked
+/// for. `404` when the handle is unknown or the deck is private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/legality",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "The deck's legality verdict, or null when its format isn't tracked.", body = DataBody<Option<DeckLegality>>),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
+pub async fn public_deck_legality(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DataBody<Option<DeckLegality>>>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(DataBody {
+        data: analyse_legality(deck.format.as_deref(), &input),
+    }))
+}
+
+/// Goldfish a public deck
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/goldfish` -> deal a sample hand from a public deck,
+/// with the same seeded, stateless engine the owner's own read uses — so a hand can be
+/// shared as a URL by anyone who can see the deck. `404` when the handle is unknown or the
+/// deck is private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/goldfish",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+        GoldfishParams,
+    ),
+    responses(
+        (status = 200, description = "The dealt hand, what was bottomed, and what's left in the library. `Cache-Control: no-store` when `seed` was omitted (the hand is then not a function of the URL); otherwise shared-cacheable like the other public reads.", body = GoldfishHand),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+        (status = 422, description = "A parameter is out of range, the library is too large to shuffle, or a bottomed card isn't in the hand."),
+    ),
+)]
+pub async fn public_deck_goldfish(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+    Query(params): Query<GoldfishParams>,
+) -> Result<Response, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
+    // This route sits in the CDN-cacheable `public_holdings` group, which is right for every
+    // *seeded* request: the hand is a pure function of the URL, so caching it caches the
+    // answer. Without `?seed=` the server mints a random one, and the first response would
+    // then be pinned as "the" hand for every visitor for the CDN's whole TTL. The cache
+    // layer defers to a header set here, so opt that one case out.
+    let volatile = params.seed.is_none();
+    let hand = analyse_goldfish(&input, &models, &params)?;
+    let mut response = Json(hand).into_response();
+    if volatile {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    Ok(response)
 }

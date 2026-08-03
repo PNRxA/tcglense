@@ -1,21 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import type { DeckLegality } from '@/lib/legality'
+import type { DeckLegality } from '@/lib/api'
 import DeckLegalityBanner from '../DeckLegalityBanner.vue'
 
 /** A clean verdict, so each case spells out only what it asserts on. */
 function makeLegality(over: Partial<DeckLegality> = {}): DeckLegality {
   const legality: DeckLegality = {
-    formatKey: 'modern',
-    formatLabel: 'Modern',
+    format_key: 'modern',
+    format_label: 'Modern',
     issues: [],
     violations: [],
-    statusByCardId: new Map(),
-    unknownCount: 0,
+    card_statuses: {},
+    unknown_count: 0,
     legal: true,
     ...over,
   }
-  // `legal` is derived in evaluateDeckLegality; keep the fixture honest unless a case
+  // `legal` is derived server-side; keep the fixture honest unless a case
   // overrides it explicitly.
   return 'legal' in over
     ? legality
@@ -40,25 +40,30 @@ describe('DeckLegalityBanner', () => {
 
   it('summarizes and lists mixed legality issues', () => {
     const legality = makeLegality({
-      formatKey: 'vintage',
-      formatLabel: 'Vintage',
+      format_key: 'vintage',
+      format_label: 'Vintage',
       issues: [
-        { cardId: 'black-lotus', name: 'Black Lotus', status: 'banned', quantity: 1 },
-        { cardId: 'chaos-orb', name: 'Chaos Orb', status: 'banned', quantity: 1 },
+        { card_id: 'black-lotus', name: 'Black Lotus', status: 'banned', quantity: 1 },
+        { card_id: 'chaos-orb', name: 'Chaos Orb', status: 'banned', quantity: 1 },
         {
-          cardId: 'expressive-iteration',
+          card_id: 'expressive-iteration',
           name: 'Expressive Iteration',
           status: 'not_legal',
           quantity: 1,
         },
-        { cardId: 'ancestral-recall', name: 'Ancestral Recall', status: 'restricted', quantity: 3 },
+        {
+          card_id: 'ancestral-recall',
+          name: 'Ancestral Recall',
+          status: 'restricted',
+          quantity: 3,
+        },
       ],
-      statusByCardId: new Map([
-        ['black-lotus', 'banned'],
-        ['chaos-orb', 'banned'],
-        ['expressive-iteration', 'not_legal'],
-        ['ancestral-recall', 'restricted'],
-      ]),
+      card_statuses: {
+        'black-lotus': 'banned',
+        'chaos-orb': 'banned',
+        'expressive-iteration': 'not_legal',
+        'ancestral-recall': 'restricted',
+      },
     })
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
@@ -97,10 +102,10 @@ describe('DeckLegalityBanner', () => {
       'Lima',
     ]
     const legality = makeLegality({
-      formatKey: 'standard',
-      formatLabel: 'Standard',
+      format_key: 'standard',
+      format_label: 'Standard',
       issues: names.map((name, index) => ({
-        cardId: `card-${index}`,
+        card_id: `card-${index}`,
         name,
         status: 'not_legal' as const,
         quantity: 1,
@@ -118,10 +123,10 @@ describe('DeckLegalityBanner', () => {
 
   it('uses correct singular wording for one issue', () => {
     const legality = makeLegality({
-      formatKey: 'legacy',
-      formatLabel: 'Legacy',
-      issues: [{ cardId: 'contract', name: 'Contract from Below', status: 'banned', quantity: 1 }],
-      statusByCardId: new Map([['contract', 'banned']]),
+      format_key: 'legacy',
+      format_label: 'Legacy',
+      issues: [{ card_id: 'contract', name: 'Contract from Below', status: 'banned', quantity: 1 }],
+      card_statuses: { contract: 'banned' },
     })
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
@@ -132,8 +137,8 @@ describe('DeckLegalityBanner', () => {
 
   it('stays amber and calls an under-built deck in progress, not illegal', () => {
     const legality = makeLegality({
-      formatKey: 'commander',
-      formatLabel: 'Commander',
+      format_key: 'commander',
+      format_label: 'Commander',
       violations: [
         { rule: 'deck-size', severity: 'warning', message: '63 of 100 cards — 37 to go.' },
         {
@@ -157,9 +162,9 @@ describe('DeckLegalityBanner', () => {
 
   it('lists construction breaches above the offending cards, errors first', () => {
     const legality = makeLegality({
-      formatKey: 'commander',
-      formatLabel: 'Commander',
-      issues: [{ cardId: 'bolt', name: 'Lightning Bolt', status: 'off_colour', quantity: 1 }],
+      format_key: 'commander',
+      format_label: 'Commander',
+      issues: [{ card_id: 'bolt', name: 'Lightning Bolt', status: 'off_colour', quantity: 1 }],
       violations: [
         { rule: 'deck-size', severity: 'warning', message: '99 of 100 cards — 1 to go.' },
         {
@@ -168,7 +173,7 @@ describe('DeckLegalityBanner', () => {
           message: "1 card falls outside Atraxa's colour identity ({W}{U}{B}{G}).",
         },
       ],
-      statusByCardId: new Map([['bolt', 'off_colour']]),
+      card_statuses: { bolt: 'off_colour' },
     })
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })

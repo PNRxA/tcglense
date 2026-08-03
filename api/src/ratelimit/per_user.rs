@@ -79,9 +79,21 @@ impl UserRoute {
         }
 
         if let Some(rest) = path.strip_prefix("/api/decks/")
-            && let Some((_game, "import")) = rest.split_once('/')
+            && let Some((_game, tail)) = rest.split_once('/')
         {
-            return Self::Import;
+            if tail == "import" {
+                return Self::Import;
+            }
+            // Deck analysis (issue #596): each of these folds every card in the deck, and the
+            // goldfish shuffles one slot per copy on top. Cheap for a real deck, but the same
+            // "whole-holdings scan per request" shape as the collection analytics above, so
+            // the same tighter bucket rather than the generous General one.
+            if matches!(
+                tail.rsplit('/').next(),
+                Some("stats" | "legality" | "goldfish")
+            ) {
+                return Self::Analytics;
+            }
         }
 
         Self::General

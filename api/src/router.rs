@@ -57,10 +57,11 @@ use crate::{
         currency::currency_rates,
         decks::{
             MAX_DECK_UPLOAD_BYTES, change_deck_card_printing, copy_public_deck, create_deck,
-            create_folder, create_section, delete_deck, delete_folder, delete_section, export_deck,
-            get_deck, import_deck, list_decks, list_folders, move_deck_card, move_deck_to_folder,
-            needed_cards, reorder_sections, set_deck_card, set_deck_visibility, update_deck,
-            update_folder, update_section,
+            create_folder, create_section, deck_goldfish, deck_legality, deck_stats, delete_deck,
+            delete_folder, delete_section, export_deck, get_deck, import_deck, list_deck_formats,
+            list_decks, list_folders, move_deck_card, move_deck_to_folder, needed_cards,
+            reorder_sections, set_deck_card, set_deck_visibility, update_deck, update_folder,
+            update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -69,14 +70,14 @@ use crate::{
         },
         openapi::openapi_json,
         sharing::{
-            get_collection_visibility, get_wishlist_visibility, public_deck, public_decks,
-            public_list, public_owned_counts, public_product_sets, public_product_summary,
-            public_products, public_profile, public_set_drops, public_set_subtypes, public_sets,
-            public_summary, public_wishlist_list, public_wishlist_owned_counts,
-            public_wishlist_product_sets, public_wishlist_product_summary,
-            public_wishlist_products, public_wishlist_set_drops, public_wishlist_set_subtypes,
-            public_wishlist_sets, public_wishlist_summary, set_collection_visibility,
-            set_wishlist_visibility,
+            get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_goldfish,
+            public_deck_legality, public_deck_stats, public_decks, public_list,
+            public_owned_counts, public_product_sets, public_product_summary, public_products,
+            public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
+            public_wishlist_list, public_wishlist_owned_counts, public_wishlist_product_sets,
+            public_wishlist_product_summary, public_wishlist_products, public_wishlist_set_drops,
+            public_wishlist_set_subtypes, public_wishlist_sets, public_wishlist_summary,
+            set_collection_visibility, set_wishlist_visibility,
         },
         sitemap::{sitemap_child, sitemap_index},
         tools::life::{
@@ -413,6 +414,14 @@ pub fn build_router(state: AppState) -> Router {
             put(set_deck_visibility),
         )
         .route("/api/decks/{game}/{deck_id}/export", get(export_deck))
+        // Deck analysis (issue #596): composition + draw odds, the legality verdict, and a
+        // seeded goldfish hand. All three are reads of a deck the caller already owns, so
+        // they take `AuthUser` (a read-only key may call them) and are `GET`s — the
+        // goldfish carries its whole state in the query string rather than a table, so a
+        // hand is reproducible from a URL by a CLI as easily as by the SPA.
+        .route("/api/decks/{game}/{deck_id}/stats", get(deck_stats))
+        .route("/api/decks/{game}/{deck_id}/legality", get(deck_legality))
+        .route("/api/decks/{game}/{deck_id}/goldfish", get(deck_goldfish))
         .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
         .route(
             "/api/decks/{game}/{deck_id}/sections/reorder",
@@ -561,6 +570,10 @@ pub fn build_router(state: AppState) -> Router {
         // its `/keywords` pages. A curated static table, so this is the cheapest read
         // in the group — and the most cacheable.
         .route("/api/games/{game}/keywords", get(list_keywords))
+        // The game's legality-tracked deck formats (issue #596) — the vocabulary
+        // `deck.format` is normalised against, published so a CLI can complete and validate
+        // it. Static sibling of `cards`/`sets`, public and CDN-cacheable like them.
+        .route("/api/games/{game}/formats", get(list_deck_formats))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
@@ -709,6 +722,20 @@ pub fn build_router(state: AppState) -> Router {
         // so no game segment is needed. Same CDN-cache + ETag layers as the reads above.
         .route("/api/u/{handle}/decks", get(public_decks))
         .route("/api/u/{handle}/decks/{deck_id}", get(public_deck))
+        // The same three analysis reads as the authed deck surface, for a deck whose owner
+        // shared it (issue #596) — same computation, same 404-not-oracle gate.
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/stats",
+            get(public_deck_stats),
+        )
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/legality",
+            get(public_deck_legality),
+        )
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/goldfish",
+            get(public_deck_goldfish),
+        )
         // Per-IP rate limiting (issue #413): these unauthenticated reads run the
         // same full-collection cores as the authed twins but the per-user limiter
         // never engages (no bearer), so this is their only throttle. Innermost, so
