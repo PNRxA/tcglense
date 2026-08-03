@@ -220,6 +220,29 @@ describe('matchPrinting with a visual ranking', () => {
     expect(picked?.id).toBe('normal')
   })
 
+  it('honours an exact collector number for a printing the scan never ranked', () => {
+    // The exact key only yields to a *demonstrated* visual objection. A printing absent from
+    // the ranking (no fingerprint for it yet, or it fell outside the returned top-k) has none
+    // — so the direct read of the number stands even though a sibling ranked well.
+    const picked = matchPrinting(treatments, { setCode: 'TLA', collectorNumber: '288' }, [
+      { id: 'normal', distance: 12 },
+      { id: 'fullart', distance: 88 },
+    ])
+    expect(picked?.id).toBe('borderless')
+  })
+
+  it('does not let the set code rescue a printing tens of bits off the best', () => {
+    // Pins the tie band from above: it has to stay narrow enough to separate "same art,
+    // different set symbol" (a few bits) from "different art" (tens), or the set code
+    // quietly regains the power to overrule the fingerprint that this module removed.
+    const reprint = print('clu-reprint', { set_code: 'clu', collector_number: '141' })
+    const picked = matchPrinting([...treatments, reprint], { setCode: 'TLA' }, [
+      { id: 'clu-reprint', distance: 20 },
+      { id: 'normal', distance: 52 },
+    ])
+    expect(picked?.id).toBe('clu-reprint')
+  })
+
   it('ignores ranked cards that are not printings in the list', () => {
     // The scan ranks whole cards, so a different card's printing can outrank every printing
     // of the resolved name; it must not leak into this card's pick.
