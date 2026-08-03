@@ -133,7 +133,7 @@ async function captureNow() {
     // card, an unrecognised frame, or a busy loop leaves the review section unchanged, so
     // there's nothing new to scroll to.
     const outcome = await handleCapture(captured)
-    if (outcome === 'matched' && shouldAutoScrollAfterMatch()) reviewMatch({ focus: false })
+    if (outcome === 'matched' && shouldAutoScroll()) reviewMatch({ focus: false })
   } finally {
     reading.value = false
   }
@@ -193,25 +193,51 @@ const captureLabel = computed(() => {
   return match.value ? 'Add & scan next' : 'Scan card'
 })
 
+const cameraSection = ref<HTMLElement | null>(null)
 const reviewSection = ref<HTMLElement | null>(null)
-// `focus` moves keyboard focus onto the results — right for the explicit "Review" tap
-// (deliberate navigation), but the automatic post-scan scroll only brings the panel into
-// view: stealing focus each scan would break the rapid "Add & scan next" rhythm, and the
-// aria-live region already announces the match to screen readers.
-function reviewMatch({ focus = true }: { focus?: boolean } = {}) {
-  const section = reviewSection.value
+
+function scrollSectionIntoView(section: HTMLElement | null, { focus = false } = {}) {
   if (!section) return
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   section.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
   if (focus) section.focus({ preventScroll: true })
 }
 
+// `focus` moves keyboard focus onto the results — right for the explicit "Review" tap
+// (deliberate navigation), but the automatic post-scan scroll only brings the panel into
+// view: stealing focus each scan would break the rapid "Add & scan next" rhythm, and the
+// aria-live region already announces the match to screen readers.
+function reviewMatch({ focus = true }: { focus?: boolean } = {}) {
+  scrollSectionIntoView(reviewSection.value, { focus })
+}
+
+// The return half of the same rhythm: finishing with a match ("Add card" / "Discard") ends
+// the review, so put the camera back on screen instead of leaving the user scrolled to an
+// empty panel with a manual scroll between them and the next card. Same no-focus rule as
+// the outbound scroll — the camera surface owns its own controls.
+function returnToCamera() {
+  scrollSectionIntoView(cameraSection.value)
+}
+
 // Auto-scroll only helps the single-column (mobile/tablet) layout, where the review section
 // sits below the camera and off-screen. On the two-column (lg+) layout it's already beside
 // the camera — and the toggle is hidden there — so a scroll would just yank the page around.
-function shouldAutoScrollAfterMatch() {
+function shouldAutoScroll() {
   if (!scanPrefs.autoScrollToReview) return false
   return !window.matchMedia('(min-width: 1024px)').matches
+}
+
+// Both scroll back only once the panel actually cleared: a failed save keeps the match on
+// screen (with its error) to retry, and a locked session ignores the tap outright — either
+// way the review is still where the user needs to be.
+async function confirmAndReturn() {
+  await confirmCurrent()
+  if (!match.value && shouldAutoScroll()) returnToCamera()
+}
+
+function discardAndReturn() {
+  discardCurrent()
+  if (!match.value && shouldAutoScroll()) returnToCamera()
 }
 </script>
 
@@ -243,18 +269,18 @@ function shouldAutoScrollAfterMatch() {
       </p>
     </header>
 
-    <!-- Auto-scroll toggle: only the single-column layout scrolls the review into view after a
-         scan, so the control lives here and is hidden on the two-column (lg+) layout where the
-         review is always beside the camera — matching where the behaviour itself applies. -->
+    <!-- Auto-scroll toggle: only the single-column layout moves between the camera and the
+         review, so the control lives here and is hidden on the two-column (lg+) layout where
+         both are always visible — matching where the behaviour itself applies. -->
     <div class="mb-3 flex items-center gap-2 lg:mb-6 lg:hidden">
       <Switch
         id="scan-auto-scroll"
         :checked="scanPrefs.autoScrollToReview"
-        aria-label="Auto-scroll to review"
+        aria-label="Auto-scroll between camera and review"
         @update:checked="scanPrefs.setAutoScrollToReview"
       />
       <label for="scan-auto-scroll" class="cursor-pointer text-sm select-none">
-        Auto-scroll to review
+        Auto-scroll between camera and review
       </label>
     </div>
 
@@ -263,7 +289,7 @@ function shouldAutoScrollAfterMatch() {
     </p>
 
     <div class="grid gap-0 lg:grid-cols-2 lg:grid-rows-[auto_1fr] lg:gap-x-6">
-      <section class="min-w-0 lg:col-start-1 lg:row-start-1">
+      <section ref="cameraSection" class="min-w-0 lg:col-start-1 lg:row-start-1">
         <ScanCameraSurface
           v-model:video="video"
           v-model:aspect="videoAspect"
@@ -362,8 +388,8 @@ function shouldAutoScrollAfterMatch() {
             @name="setName"
             @select="selectId"
             @adjust="adjust"
-            @confirm="confirmCurrent"
-            @discard="discardCurrent"
+            @confirm="confirmAndReturn"
+            @discard="discardAndReturn"
             @load-more="loadMorePrintings"
             @retry-printings="retryPrintings"
           />

@@ -8,7 +8,8 @@ const AUTO_SCROLL_TO_REVIEW_KEY = 'tcglense_scan_auto_scroll_review'
 export const useScanPreferencesStore = defineStore('scanPreferences', () => {
   // On the single-column (mobile/tablet) layout the review panel sits below the camera, so a
   // fresh match lands off-screen. When on (the default), a successful scan scrolls the review
-  // into view automatically; turn it off to keep the camera framed and review on demand.
+  // into view automatically and finishing with it (Add card / Discard) scrolls back to the
+  // camera; turn it off to keep the camera framed and move between them on demand.
   const autoScrollToReview = persistedBoolRef(AUTO_SCROLL_TO_REVIEW_KEY, true)
 
   function setAutoScrollToReview(next: boolean) {
