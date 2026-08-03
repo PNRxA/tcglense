@@ -8,6 +8,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckStatBars from '@/components/decks/DeckStatBars.vue'
 import { useDeckStatsQuery, usePublicDeckStatsQuery } from '@/composables/useDeckAnalysis'
 import type { DeckSection } from '@/lib/api'
@@ -67,6 +69,19 @@ const stats = computed(() => analytics.value?.deck)
 const library = computed(() => analytics.value?.library)
 const odds = computed(() => analytics.value?.odds ?? null)
 
+// Every number here is now a round trip (issue #596 moved the maths server-side), so the
+// panel has a latency the props-derived version couldn't have — and it needs to say so.
+//
+// `pending` is the first fetch: nothing has arrived, so the panel draws its own shape as a
+// skeleton instead of being absent until the response lands and then shoving the card list
+// down the page. `updating` is a fetch over numbers already on screen — a new library
+// selection, a different card, or a deck edit invalidating the analysis. Those keep the
+// previous response (keepPreviousData) rather than blanking, which is exactly why they need
+// a cue: without one, changing a checkbox looks like it did nothing at all.
+const pending = computed(() => statsQuery.isPending.value)
+const failed = computed(() => statsQuery.isError.value)
+const updating = computed(() => statsQuery.isFetching.value && !pending.value)
+
 // The checkbox model reads through to the server's default until the user overrides it, so
 // the panel never has to reproduce the rule that picks the default library.
 const drawSectionIds = computed<number[]>({
@@ -121,9 +136,54 @@ const probabilityLabel = computed(
 </script>
 
 <template>
-  <Card v-if="stats && stats.total_copies > 0" class="mb-6">
+  <!-- First load: the panel's own shape, so the numbers land in reserved space instead of
+    appearing out of nowhere and pushing the deck down the page. -->
+  <Card v-if="pending" class="mb-6" aria-busy="true">
+    <CardHeader class="flex flex-row items-center justify-between gap-3 space-y-0">
+      <CardTitle class="text-base">Deck analytics</CardTitle>
+      <span class="text-muted-foreground text-xs"><UpdatingCue label="Crunching numbers…" /></span>
+    </CardHeader>
+    <CardContent class="space-y-6">
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div v-for="tile in 4" :key="tile" class="bg-muted/50 rounded-md p-3">
+          <Skeleton class="h-3 w-24" />
+          <Skeleton class="mt-2 h-6 w-12" />
+        </div>
+      </div>
+      <div class="grid gap-6 md:grid-cols-3">
+        <section v-for="group in 3" :key="group">
+          <Skeleton class="mb-3 h-4 w-32" />
+          <div class="space-y-2">
+            <div v-for="bar in 4" :key="bar">
+              <Skeleton class="mb-1 h-3 w-20" />
+              <Skeleton class="h-2 w-full rounded-full" />
+            </div>
+          </div>
+        </section>
+      </div>
+      <section class="border-t pt-5">
+        <Skeleton class="h-4 w-32" />
+        <Skeleton class="mt-2 h-3 w-64" />
+        <Skeleton class="mt-4 h-9 w-full" />
+      </section>
+    </CardContent>
+  </Card>
+
+  <Card v-else-if="failed" class="mb-6">
     <CardHeader>
       <CardTitle class="text-base">Deck analytics</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p class="text-destructive text-sm">These numbers couldn't be worked out. Please retry.</p>
+    </CardContent>
+  </Card>
+
+  <Card v-else-if="stats && stats.total_copies > 0" class="mb-6" :aria-busy="updating || undefined">
+    <CardHeader class="flex flex-row items-center justify-between gap-3 space-y-0">
+      <CardTitle class="text-base">Deck analytics</CardTitle>
+      <span v-if="updating" class="text-muted-foreground text-xs" aria-live="polite">
+        <UpdatingCue label="Recalculating…" />
+      </span>
     </CardHeader>
     <CardContent class="space-y-6">
       <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -201,9 +261,15 @@ const probabilityLabel = computed(
               >
             </label>
           </div>
-          <p class="text-muted-foreground mt-1.5 text-xs">
-            {{ library?.total_copies ?? 0 }} cards from {{ drawSectionIds.length }} selected
-            {{ drawSectionIds.length === 1 ? 'section' : 'sections' }}.
+          <!-- The library size belongs to the response, not the checkboxes: while the next
+            one is in flight it describes the *previous* selection, so say that rather than
+            print a count that contradicts the boxes the viewer just ticked. -->
+          <p class="text-muted-foreground mt-1.5 text-xs" aria-live="polite">
+            <template v-if="updating"><UpdatingCue /></template>
+            <template v-else>
+              {{ library?.total_copies ?? 0 }} cards from {{ drawSectionIds.length }} selected
+              {{ drawSectionIds.length === 1 ? 'section' : 'sections' }}.
+            </template>
           </p>
         </fieldset>
         <p v-if="!odds" class="text-muted-foreground mt-4 text-sm">
@@ -243,7 +309,14 @@ const probabilityLabel = computed(
               @input="cardsSeen = Number(($event.target as HTMLInputElement).value)"
             />
           </label>
-          <div class="bg-primary/10 min-w-24 rounded-md px-4 py-2 text-center">
+          <!-- Dimmed rather than blanked while the next answer is in flight: the previous
+            percentage is the honest thing to leave on screen (the panel is built on
+            keepPreviousData), and swapping a two-line tile for a spinner would reflow the
+            row every time the card select changes. -->
+          <div
+            class="bg-primary/10 min-w-24 rounded-md px-4 py-2 text-center transition-opacity"
+            :class="{ 'opacity-40': updating }"
+          >
             <p class="text-primary text-2xl font-semibold tabular-nums">{{ probabilityLabel }}</p>
             <p class="text-muted-foreground text-xs">at least one</p>
           </div>

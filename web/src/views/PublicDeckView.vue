@@ -7,6 +7,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
@@ -160,8 +161,12 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
         </div>
       </header>
 
-      <!-- Is this deck legal in its format? (issue #557) -->
-      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+      <!-- Is this deck legal in its format? (issue #557) — the server's verdict (#596), so
+        it lands after the deck itself; the owner view says the same while it's in flight. -->
+      <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
+        <UpdatingCue label="Checking format legality…" />
+      </p>
+      <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
 
       <DeckStats :game="deck.game" :deck-id="deck.id" :sections="deck.sections" :handle="handle" />
 

@@ -39,6 +39,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
@@ -299,8 +300,12 @@ function copyDeckList() {
         {{ exportError }}
       </p>
 
-      <!-- Is this deck legal in its format? (issue #557) -->
-      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+      <!-- Is this deck legal in its format? (issue #557) — a verdict the server works out
+        (#596), so it arrives after the deck does and says so while it's on its way. -->
+      <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
+        <UpdatingCue label="Checking format legality…" />
+      </p>
+      <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
 

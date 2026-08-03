@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
@@ -20,6 +20,10 @@ interface Params {
 const captured = vi.hoisted(() => ({ params: null as Ref<Params> | null }))
 /** Flip to make the next mounted panel's query report a failure. */
 const failNext = vi.hoisted(() => ({ value: false }))
+/** The query's in-flight state for the next mounted panel: `fetching` alone is a hand being
+ * replaced (keepPreviousData holds the last one), `fetching` + `blank` is the opening deal
+ * with nothing yet to show. */
+const inFlight = vi.hoisted(() => ({ fetching: false, blank: false }))
 
 function card(id: string, name: string): Card {
   return { id, name, has_image: true } as Card
@@ -51,18 +55,27 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     useDeckGoldfishQuery: (_game: unknown, _deckId: unknown, params: Ref<Params>) => {
       captured.params = params
       const failing = failNext.value
+      const { fetching, blank } = inFlight
       return {
         data: computed(() =>
-          failing || params.value.seed === undefined ? undefined : hand(params.value),
+          failing || blank || params.value.seed === undefined ? undefined : hand(params.value),
         ),
         error: computed(() => (failing ? new Error('That hand could not be dealt.') : null)),
+        isFetching: computed(() => fetching),
       }
     },
     usePublicDeckGoldfishQuery: () => ({
       data: computed(() => undefined),
       error: computed(() => null),
+      isFetching: computed(() => false),
     }),
   }
+})
+
+beforeEach(() => {
+  failNext.value = false
+  inFlight.fetching = false
+  inFlight.blank = false
 })
 
 function mountPanel() {
@@ -178,6 +191,49 @@ describe('DeckGoldfish', () => {
     // The way out is still on screen — with no hand, that's the same call to action as a
     // fresh panel.
     expect(buttonNamed(wrapper, 'Draw opening hand')).toBeTruthy()
-    failNext.value = false
+  })
+})
+
+describe('DeckGoldfish loading states', () => {
+  it('draws the frames it is about to fill while the opening hand is in the air', async () => {
+    inFlight.fetching = true
+    inFlight.blank = true
+    const wrapper = mountPanel()
+
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+
+    // The card used to collapse to a bare header for the whole round trip.
+    expect(wrapper.text()).toContain('Shuffling up…')
+    expect(wrapper.findAll('[data-slot="skeleton"]')).toHaveLength(7)
+    // The spinner is in the button that was clicked, and it can't be clicked again.
+    const button = buttonNamed(wrapper, 'Draw opening hand').element as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.querySelector('.animate-spin')).not.toBeNull()
+  })
+
+  it('holds the hand on screen and says it is dealing the next one', async () => {
+    inFlight.fetching = true
+    const wrapper = mountPanel()
+
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+
+    // keepPreviousData means the hand stays put rather than blanking — so the cue is what
+    // separates "the click did nothing" from "the click is in the air".
+    expect(wrapper.findAll('li')).toHaveLength(7)
+    expect(wrapper.text()).toContain('Dealing…')
+    // The counts describe the hand *before* the click, so they don't get to claim otherwise.
+    expect(wrapper.text()).not.toContain('7 in hand · 33 in library')
+    // And the hand is inert: clicking a card mid-flight would bottom one twice.
+    expect(wrapper.find('[inert]').exists()).toBe(true)
+  })
+
+  it('leaves no cue behind once the hand has landed', async () => {
+    const wrapper = mountPanel()
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+
+    expect(wrapper.text()).toContain('7 in hand · 33 in library')
+    expect(wrapper.text()).not.toContain('Dealing…')
+    expect(wrapper.find('[inert]').exists()).toBe(false)
+    expect((buttonNamed(wrapper, 'New hand').element as HTMLButtonElement).disabled).toBe(false)
   })
 })

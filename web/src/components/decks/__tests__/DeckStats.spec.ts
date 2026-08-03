@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import DeckStats from '@/components/decks/DeckStats.vue'
@@ -67,8 +67,19 @@ function analytics(sections: number[] | undefined, card: string | undefined): De
   }
 }
 
+/** The query's own state, read at mount — each loading case mounts its own panel, the way
+ * the goldfish spec's `failNext` does. */
+const query = vi.hoisted(() => ({ pending: false, fetching: false, failed: false }))
+
 vi.mock('@/composables/useDeckAnalysis', async () => {
   const { computed: vueComputed } = await import('vue')
+  const flags = () => ({
+    isPending: vueComputed(() => query.pending),
+    isFetching: vueComputed(() => query.fetching || query.pending),
+    isError: vueComputed(() => query.failed),
+  })
+  const answer = (sections: number[] | undefined, card: string | undefined) =>
+    query.pending || query.failed ? undefined : analytics(sections, card)
   return {
     useDeckStatsQuery: (
       _game: unknown,
@@ -76,10 +87,22 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
       params: Ref<{ sections?: number[]; card?: string }>,
     ) => {
       captured.params = params
-      return { data: vueComputed(() => analytics(params.value.sections, params.value.card)) }
+      return {
+        data: vueComputed(() => answer(params.value.sections, params.value.card)),
+        ...flags(),
+      }
     },
-    usePublicDeckStatsQuery: () => ({ data: vueComputed(() => analytics(undefined, undefined)) }),
+    usePublicDeckStatsQuery: () => ({
+      data: vueComputed(() => answer(undefined, undefined)),
+      ...flags(),
+    }),
   }
+})
+
+beforeEach(() => {
+  query.pending = false
+  query.fetching = false
+  query.failed = false
 })
 
 const SECTIONS: DeckSection[] = [
@@ -183,6 +206,51 @@ describe('DeckStats public mode', () => {
     // The public hook was selected at mount, so the authed one never ran.
     expect(captured.params).toBeNull()
     expect(wrapper.text()).toContain('60 cards from 1 selected section')
+  })
+})
+
+describe('DeckStats loading states', () => {
+  it('draws its own shape while the first numbers are in flight', () => {
+    query.pending = true
+    const wrapper = mountPanel()
+
+    // The panel is present and says what it is doing, rather than the card being absent
+    // until the response lands and then shoving the deck down the page.
+    expect(wrapper.text()).toContain('Deck analytics')
+    expect(wrapper.text()).toContain('Crunching numbers…')
+    expect(wrapper.find('[data-slot="card"]').attributes('aria-busy')).toBe('true')
+    expect(wrapper.findAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+    // No numbers are invented for the skeleton.
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+  })
+
+  it('says so when the numbers cannot be worked out', () => {
+    query.failed = true
+    const wrapper = mountPanel()
+    expect(wrapper.text()).toContain("couldn't be worked out")
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+  })
+
+  it('marks the previous answer as being replaced while a new one is in flight', () => {
+    query.fetching = true
+    const wrapper = mountPanel()
+
+    // keepPreviousData deliberately leaves the last answer on screen, so the cue is the
+    // only thing distinguishing "your click did nothing" from "your click is in the air".
+    expect(wrapper.text()).toContain('Recalculating…')
+    expect(wrapper.find('[data-slot="card"]').attributes('aria-busy')).toBe('true')
+    // The count line describes the *previous* selection while the next is in flight.
+    expect(wrapper.text()).not.toContain('60 cards from 1 selected section')
+    expect(wrapper.text()).toContain('Updating…')
+    // The controls stay live — they are what addresses the next request.
+    expect(wrapper.find('input[type="range"]').exists()).toBe(true)
+  })
+
+  it('shows no cue at rest', () => {
+    const wrapper = mountPanel()
+    expect(wrapper.text()).not.toContain('Recalculating…')
+    expect(wrapper.text()).not.toContain('Updating…')
+    expect(wrapper.find('[data-slot="card"]').attributes('aria-busy')).toBeUndefined()
   })
 })
 
