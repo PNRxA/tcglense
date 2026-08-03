@@ -3,7 +3,7 @@ import type { Card, CollectionQuantities, ScanMatch as ApiScanMatch } from '@/li
 import { usePrintingPicker } from '@/composables/usePrintings'
 import { useCollectionEntryQuery, useSetCollectionEntryMutation } from '@/composables/useCollection'
 import { useScanMutation } from '@/composables/useScan'
-import { matchPrinting } from '@/lib/scan/match'
+import { matchPrinting, type VisualRank } from '@/lib/scan/match'
 import { parseSetHint, type SetHint } from '@/lib/scan/ocr'
 import type { ScanCapture } from '@/composables/useCardScanner'
 
@@ -91,13 +91,32 @@ export function useScanSession(game: Ref<string>) {
   const printsEnabled = computed(() => selectedName.value.length > 0)
   const printsPicker = usePrintingPicker(game, selectedName, { enabled: printsEnabled })
   const prints = printsPicker.printings
-  // A set-code OCR hint is resolved only after all pages are loaded. Picking against a
+
+  // The last capture's ranked fingerprint matches, narrowed to printings of the name in
+  // play — the signal that decides *which artwork*, since printings of one card share a
+  // release date and a name and so come back in an order that says nothing about treatment.
+  // Passed to matchPrinting, which weighs it against the OCR'd set line. `candidates` is
+  // already nearest-first, and filtering preserves that, so `visualRanks[0]` is the closest.
+  const visualRanks = computed<VisualRank[]>(() =>
+    candidates.value
+      .filter((candidate) => candidate.card.name === selectedName.value)
+      .map((candidate) => ({ id: candidate.card.id, distance: candidate.distance })),
+  )
+  // The closest-ranked printing isn't in the loaded pages yet, so picking now would settle
+  // for the best of an arbitrary prefix rather than the printing the camera actually saw.
+  // Only the closest one is worth paginating for: the ranking is global, so no later page
+  // can hold a nearer printing than one already loaded.
+  const awaitingRankedPrinting = computed(() => {
+    const closest = visualRanks.value[0]
+    return closest !== undefined && !prints.value.some((card) => card.id === closest.id)
+  })
+  // Both hints are resolved only once the pages they need are loaded. Picking against a
   // partial list could incorrectly fuzzy-match a similar set code while the exact old
   // printing sits beyond the first 200 results.
   const resolvingPrintingHint = computed(
     () =>
       !selectedId.value &&
-      Boolean(match.value?.hint.setCode) &&
+      (Boolean(match.value?.hint.setCode) || awaitingRankedPrinting.value) &&
       !printsPicker.failed.value &&
       (printsPicker.hasNextPage.value || printsPicker.isFetchingNextPage.value),
   )
@@ -176,32 +195,36 @@ export function useScanSession(game: Ref<string>) {
     applySelectedId(id)
   }
 
-  // Auto-pick a printing once the needed pages have settled: when OCR supplied a set code,
-  // load every page before matching so an old basic-land printing is not hidden beyond 200.
-  // Without a set code the newest loaded printing remains the honest default. A manual pick
-  // is never overridden.
-  watch([selectedName, prints, printsPicker.isPending, printsPicker.isFetchingNextPage], () => {
-    if (
-      !selectedName.value ||
-      printsPicker.isPending.value ||
-      printsPicker.isFetchingNextPage.value ||
-      !prints.value.length
-    ) {
-      return
-    }
-    if (selectedCard.value) return
-    if (match.value?.hint.setCode) {
-      // The hinted printing may still be outside the partial result set after a failed page.
-      // Never fall through to `prints[0]`; retry or a deliberate manual pick is required.
-      if (printsPicker.failed.value) return
-      if (printsPicker.hasNextPage.value) {
-        void printsPicker.loadMore()
+  // Auto-pick a printing once the needed pages have settled: when OCR supplied a set code —
+  // or the visual match ranked a printing we haven't loaded yet — load every page before
+  // matching, so an old basic-land printing is not hidden beyond 200. Without either signal
+  // the newest loaded printing remains the honest default. A manual pick is never overridden.
+  watch(
+    [selectedName, prints, visualRanks, printsPicker.isPending, printsPicker.isFetchingNextPage],
+    () => {
+      if (
+        !selectedName.value ||
+        printsPicker.isPending.value ||
+        printsPicker.isFetchingNextPage.value ||
+        !prints.value.length
+      ) {
         return
       }
-    }
-    const picked = matchPrinting(prints.value, match.value?.hint ?? {}) ?? prints.value[0]
-    if (picked) applySelectedId(picked.id)
-  })
+      if (selectedCard.value) return
+      if (match.value?.hint.setCode || awaitingRankedPrinting.value) {
+        // The hinted printing may still be outside the partial result set after a failed page.
+        // Never fall through to `prints[0]`; retry or a deliberate manual pick is required.
+        if (printsPicker.failed.value) return
+        if (printsPicker.hasNextPage.value) {
+          void printsPicker.loadMore()
+          return
+        }
+      }
+      const picked =
+        matchPrinting(prints.value, match.value?.hint ?? {}, visualRanks.value) ?? prints.value[0]
+      if (picked) applySelectedId(picked.id)
+    },
+  )
 
   // Seed the target counts off the settled holding: the base counts plus the scanned copy,
   // routed to foil when the scanner's visual detector found a printed foil star (else regular).

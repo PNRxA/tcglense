@@ -297,6 +297,66 @@ describe('useScanSession printing resolution', () => {
   })
 })
 
+describe('useScanSession visual printing priority', () => {
+  // Two treatments of one card in one set: the listing can't order them meaningfully (same
+  // name, same release date), so only the fingerprint ranking says which one was scanned.
+  const fullArt = makeCard('tla-fullart', { set_code: 'tla', collector_number: '312' })
+  const normal = makeCard('tla-normal', { set_code: 'tla', collector_number: '41' })
+
+  async function captureRanked(ranked: Array<{ card: Card; distance: number }>, hasMore = false) {
+    // Listing order puts the full-art treatment first, which used to become the pick.
+    picker.printings.value = [fullArt, normal]
+    picker.hasNextPage.value = hasMore
+    mocks.useScanMutation.mockReturnValue({
+      mutateAsync: vi
+        .fn<(...args: unknown[]) => Promise<{ data: Array<{ card: Card; distance: number }> }>>()
+        .mockResolvedValue({ data: ranked }),
+    })
+
+    const Host = defineComponent({
+      setup() {
+        session = useScanSession(ref('mtg'))
+        return () => null
+      },
+    })
+    wrapper = mount(Host)
+    // The set line reads cleanly but only names the set — every treatment shares it.
+    await session.handleCapture({
+      fingerprints: [new Uint8Array(32)],
+      setText: 'TLA • EN',
+      foil: false,
+    })
+    await flushPromises()
+  }
+
+  it('opens on the visually closest treatment, not the first of the hinted set', async () => {
+    await captureRanked([
+      { card: normal, distance: 14 },
+      { card: fullArt, distance: 89 },
+    ])
+    expect(session.selectedId.value).toBe(normal.id)
+  })
+
+  it('paginates until the closest ranked printing is loaded before picking', async () => {
+    const later = makeCard('tla-later', { set_code: 'tla', collector_number: '7' })
+    picker.loadMore.mockImplementation(async () => {
+      picker.printings.value = [...picker.printings.value, later]
+      picker.hasNextPage.value = false
+    })
+    await captureRanked(
+      [
+        { card: later, distance: 11 },
+        { card: fullArt, distance: 84 },
+      ],
+      true,
+    )
+    await flushPromises()
+
+    expect(picker.loadMore).toHaveBeenCalled()
+    expect(session.selectedId.value).toBe(later.id)
+  })
+})
+
 describe('useScanSession foil detection', () => {
   // Mount a session and feed one capture, resolving to a single already-loaded printing. `foil`
   // is the scanner's visual foil-star verdict (see lib/scan/foilStar).

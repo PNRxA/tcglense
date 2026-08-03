@@ -105,3 +105,98 @@ describe('matchPrinting', () => {
     expect(matchPrinting(both, { setCode: 'neo' })?.id).toBe('exact')
   })
 })
+
+// One set, three treatments of the same card — the shape that made the scanner open on a
+// wildly different artwork. They share a release date and a name, so the printings listing
+// tiebreaks on the row id: its order carries no information about which one was scanned.
+const treatments: Card[] = [
+  print('fullart', { set_code: 'tla', collector_number: '312' }),
+  print('borderless', { set_code: 'tla', collector_number: '288' }),
+  print('normal', { set_code: 'tla', collector_number: '41' }),
+]
+
+describe('matchPrinting with a visual ranking', () => {
+  it('picks the visually closest treatment over the listing order for a set-only hint', () => {
+    // The set code is right, but it cannot say *which* artwork — the fingerprint can.
+    const picked = matchPrinting(treatments, { setCode: 'TLA' }, [
+      { id: 'normal', distance: 14 },
+      { id: 'borderless', distance: 78 },
+      { id: 'fullart', distance: 91 },
+    ])
+    expect(picked?.id).toBe('normal')
+  })
+
+  it('picks the visually closest printing when the set line was unreadable', () => {
+    // Previously null (the caller then took prints[0] — here the full-art card).
+    const picked = matchPrinting(treatments, {}, [
+      { id: 'normal', distance: 12 },
+      { id: 'fullart', distance: 88 },
+    ])
+    expect(picked?.id).toBe('normal')
+  })
+
+  it('lets the set code choose among printings the fingerprint cannot separate', () => {
+    // Same artwork reprinted into another set: near-identical distances, so the OCR'd set
+    // line — the only signal that can tell them apart — decides.
+    const reprints: Card[] = [
+      print('reprint', { set_code: 'clu', collector_number: '141' }),
+      print('original', { set_code: 'neo', collector_number: '133' }),
+    ]
+    const picked = matchPrinting(reprints, { setCode: 'NEO' }, [
+      { id: 'reprint', distance: 17 },
+      { id: 'original', distance: 21 },
+    ])
+    expect(picked?.id).toBe('original')
+  })
+
+  it('does not let a set code promote a printing the fingerprint clearly ranked worse', () => {
+    // A misread set code (or a set holding an unrelated artwork) must not beat the visual
+    // verdict — that is the bug this ordering exists to prevent.
+    const picked = matchPrinting(
+      [...treatments, print('other-set', { set_code: 'clu', collector_number: '9' })],
+      { setCode: 'CLU' },
+      [
+        { id: 'normal', distance: 10 },
+        { id: 'other-set', distance: 84 },
+      ],
+    )
+    expect(picked?.id).toBe('normal')
+  })
+
+  it('keeps a set code whose printings the scan never ranked', () => {
+    // No fingerprint for that printing (an index built before the reprint shipped) is no
+    // evidence against it, so the direct read of the card still stands.
+    const picked = matchPrinting(prints, { setCode: 'CLU' }, [{ id: 'b', distance: 11 }])
+    expect(picked?.id).toBe('a')
+  })
+
+  it('still honours an exact set + collector number over the ranking', () => {
+    // The collector number is the one OCR signal that separates a set's own treatments, so
+    // a clean read of it outranks a fingerprint that merely ranked a sibling first.
+    const picked = matchPrinting(treatments, { setCode: 'TLA', collectorNumber: '288' }, [
+      { id: 'normal', distance: 18 },
+      { id: 'borderless', distance: 24 },
+    ])
+    expect(picked?.id).toBe('borderless')
+  })
+
+  it('overrides an exact collector number the fingerprint ranked far worse', () => {
+    // A misread digit keys a real-but-wrong treatment. The scanned card cannot look far
+    // less like its own reference than like a sibling's, so the ranking wins.
+    const picked = matchPrinting(treatments, { setCode: 'TLA', collectorNumber: '312' }, [
+      { id: 'normal', distance: 13 },
+      { id: 'fullart', distance: 87 },
+    ])
+    expect(picked?.id).toBe('normal')
+  })
+
+  it('ignores ranked cards that are not printings in the list', () => {
+    // The scan ranks whole cards, so a different card's printing can outrank every printing
+    // of the resolved name; it must not leak into this card's pick.
+    const picked = matchPrinting(treatments, {}, [
+      { id: 'some-other-card', distance: 3 },
+      { id: 'borderless', distance: 30 },
+    ])
+    expect(picked?.id).toBe('borderless')
+  })
+})
