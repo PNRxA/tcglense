@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
-import { Dices, Redo2, Undo2 } from '@lucide/vue'
+import { Dices, Loader2, Redo2, Undo2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import CardImage from '@/components/cards/CardImage.vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import { useDeckGoldfishQuery, usePublicDeckGoldfishQuery } from '@/composables/useDeckAnalysis'
 
 // "Test hand" (issue #596): shuffle up, draw seven, mulligan, and step through draws — the
@@ -82,6 +85,22 @@ const hand = computed(() => (seed.value === null ? undefined : handQuery.data.va
 // policy won't retry. Without this the panel would just empty itself with nothing said.
 const handError = computed(() => (seed.value === null ? null : handQuery.error.value))
 
+// Every button here is a round trip — the shuffle is the server's (issue #596) — so the
+// panel has to show one in flight or a click reads as a dead button.
+//
+// Two shapes, because there are two situations. `dealing` is the first hand of a run: there
+// is nothing on screen to keep, so the seven frames are drawn as skeletons and the card
+// stops collapsing to a bare header while the deal is in the air. `updating` is a mulligan,
+// a draw or a bottom, where keepPreviousData deliberately holds the hand already on screen —
+// which is exactly why it needs a cue of its own: the visible hand is the *previous* one.
+//
+// Stepping back to a hand already in the cache stays instant (the goldfish is a pure
+// function of its parameters, so `staleTime: Infinity`) — no fetch, so neither flag trips
+// and nothing flickers.
+const fetching = computed(() => seed.value !== null && handQuery.isFetching.value)
+const dealing = computed(() => fetching.value && !hand.value)
+const updating = computed(() => fetching.value && !!hand.value)
+
 const toBottom = computed(() => hand.value?.to_bottom ?? 0)
 const libraryLeft = computed(() => hand.value?.library_size ?? 0)
 const cards = computed(() => hand.value?.hand ?? [])
@@ -147,8 +166,15 @@ watch(
             @keyup.enter="applySeed"
           />
         </label>
-        <Button size="sm" variant="outline" @click="newHand">
-          <Dices class="size-4" aria-hidden="true" />
+        <!-- The spinner sits in the button that was clicked, which is where the eye already
+          is; the label stays put so the control doesn't resize under the cursor. -->
+        <Button size="sm" variant="outline" :disabled="fetching" @click="newHand">
+          <component
+            :is="fetching ? Loader2 : Dices"
+            class="size-4"
+            :class="{ 'animate-spin': fetching }"
+            aria-hidden="true"
+          />
           {{ hand ? 'New hand' : 'Draw opening hand' }}
         </Button>
       </div>
@@ -163,7 +189,18 @@ watch(
       </p>
     </CardContent>
 
-    <CardContent v-else-if="hand" class="space-y-4">
+    <!-- The opening deal: no hand to hold on to, so the frames it is about to fill are drawn
+      instead. Without this the card collapsed to its header for the whole round trip. -->
+    <CardContent v-else-if="dealing" class="space-y-4" aria-busy="true">
+      <p class="text-muted-foreground text-sm"><UpdatingCue label="Shuffling up…" /></p>
+      <ul class="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
+        <li v-for="slot in OPENING" :key="slot">
+          <Skeleton class="aspect-[61/85] w-full rounded-lg" />
+        </li>
+      </ul>
+    </CardContent>
+
+    <CardContent v-else-if="hand" class="space-y-4" :aria-busy="updating || undefined">
       <div class="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" :disabled="mulligans >= OPENING" @click="mulligan">
           {{ keepLabel }}
@@ -181,9 +218,15 @@ watch(
           <Undo2 class="size-4" aria-hidden="true" />
           Undo bottom
         </Button>
-        <p class="text-muted-foreground text-xs">
-          {{ cards.length }} in hand · {{ libraryLeft }} in library
-          <template v-if="hand.draws"> · {{ hand.draws }} drawn</template>
+        <!-- These counts describe the hand on screen, which during a fetch is the one
+          *before* the click — so say "dealing" rather than print a hand size that is about
+          to change. -->
+        <p class="text-muted-foreground text-xs" aria-live="polite">
+          <template v-if="updating"><UpdatingCue label="Dealing…" /></template>
+          <template v-else>
+            {{ cards.length }} in hand · {{ libraryLeft }} in library
+            <template v-if="hand.draws"> · {{ hand.draws }} drawn</template>
+          </template>
         </p>
       </div>
 
@@ -192,41 +235,47 @@ watch(
         {{ toBottom === 1 ? 'one' : 'them' }} in your hand.
       </p>
 
-      <ul v-if="cards.length" class="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
-        <li v-for="(card, index) in cards" :key="`${card.id}-${index}`" class="relative">
-          <component
-            :is="toBottom > 0 ? 'button' : 'div'"
-            :type="toBottom > 0 ? 'button' : undefined"
-            class="block w-full text-left"
-            :class="
-              toBottom > 0
-                ? 'focus-visible:ring-ring cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none'
-                : ''
-            "
-            :aria-label="toBottom > 0 ? `Put ${card.name} on the bottom` : undefined"
-            @click="toBottom > 0 && putOnBottom(card.id)"
-          >
-            <CardImage
-              :game="game"
-              :id="card.id"
-              :name="card.name"
-              size="normal"
-              :has-image="card.has_image"
-              class="rounded-lg"
-              :class="toBottom > 0 ? 'transition hover:brightness-110' : ''"
-            />
-          </component>
-          <span
-            v-if="index >= firstDrawnIndex"
-            class="bg-primary text-primary-foreground absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-medium"
-          >
-            drawn
-          </span>
-        </li>
-      </ul>
-      <p v-else class="text-muted-foreground text-sm">
-        This deck has no cards in the sections a hand is dealt from.
-      </p>
+      <!-- The hand the click is replacing stays put and dims, the way a paged grid does.
+        The overlay's `inert` matters here beyond the visual: while a bottom is in flight the
+        cards on screen are the pre-bottom hand, so a second click on the same card would
+        send a duplicate id the server rejects (422). -->
+      <UpdatingOverlay :loading="updating">
+        <ul v-if="cards.length" class="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
+          <li v-for="(card, index) in cards" :key="`${card.id}-${index}`" class="relative">
+            <component
+              :is="toBottom > 0 ? 'button' : 'div'"
+              :type="toBottom > 0 ? 'button' : undefined"
+              class="block w-full text-left"
+              :class="
+                toBottom > 0
+                  ? 'focus-visible:ring-ring cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none'
+                  : ''
+              "
+              :aria-label="toBottom > 0 ? `Put ${card.name} on the bottom` : undefined"
+              @click="toBottom > 0 && putOnBottom(card.id)"
+            >
+              <CardImage
+                :game="game"
+                :id="card.id"
+                :name="card.name"
+                size="normal"
+                :has-image="card.has_image"
+                class="rounded-lg"
+                :class="toBottom > 0 ? 'transition hover:brightness-110' : ''"
+              />
+            </component>
+            <span
+              v-if="index >= firstDrawnIndex"
+              class="bg-primary text-primary-foreground absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-medium"
+            >
+              drawn
+            </span>
+          </li>
+        </ul>
+        <p v-else class="text-muted-foreground text-sm">
+          This deck has no cards in the sections a hand is dealt from.
+        </p>
+      </UpdatingOverlay>
 
       <p v-if="hand.bottomed.length" class="text-muted-foreground text-xs">
         On the bottom: {{ hand.bottomed.map((card) => card.name).join(', ') }}

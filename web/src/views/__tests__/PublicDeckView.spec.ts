@@ -68,10 +68,17 @@ vi.mock('@/composables/useDecks', async () => {
 // queries so this view's own wiring is what's under test and no query client is needed.
 vi.mock('@/composables/useDeckAnalysis', async () => {
   const { ref: vueRef } = await import('vue')
+  // Settled, so the analysis panels render their loaded state rather than their loading one.
+  const settled = () => ({
+    isPending: vueRef(false),
+    isFetching: vueRef(false),
+    isError: vueRef(false),
+    error: vueRef(null),
+  })
   return {
-    usePublicDeckLegalityQuery: () => ({ data: vueRef({ data: null }) }),
-    usePublicDeckStatsQuery: () => ({ data: vueRef(undefined) }),
-    usePublicDeckGoldfishQuery: () => ({ data: vueRef(undefined) }),
+    usePublicDeckLegalityQuery: () => ({ data: vueRef({ data: null }), ...settled() }),
+    usePublicDeckStatsQuery: () => ({ data: vueRef(undefined), ...settled() }),
+    usePublicDeckGoldfishQuery: () => ({ data: vueRef(undefined), ...settled() }),
   }
 })
 
