@@ -114,6 +114,20 @@ describe('parseSetHint', () => {
     })
   })
 
+  it('reads a low collector number through its zero-padding', () => {
+    // The three-digit minimum above is safe only because modern frames pad to four —
+    // verified on BLB/OTJ/DSK/LTR/MKM, where card 1 prints `0001`, not `1`. So the shortest
+    // real number still clears the bar, and normalizeCollectorNumber strips the padding to
+    // the value the catalog stores.
+    expect(parseSetHint('C 0001\nBLB EN  ZOLTAN BOROS').collectorNumber).toBe('1')
+    expect(parseSetHint('C 0012\nDSK EN SEAN MURRAY').collectorNumber).toBe('12')
+    // Rules text bleeding in above the strip does not displace the real field.
+    expect(parseSetHint('J E\nU 0250\nMKM EN  EL MINAYA')).toEqual({
+      collectorNumber: '250',
+      setCode: 'MKM',
+    })
+  })
+
   it('ignores the stray letter-then-digit pairs the clipped copyright leaves behind', () => {
     // `L 2` and `0 O2` are debris from the same line the real `R 0247` sits on. Only the
     // zero-padded run is a collector number; a one- or two-digit tail is never one.
