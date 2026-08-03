@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import type { Ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import ScanView from '@/views/ScanView.vue'
 import ScanCameraSurface from '@/components/collection/ScanCameraSurface.vue'
 import ScanCaptureDock from '@/components/collection/ScanCaptureDock.vue'
+import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import { useScanPreferencesStore } from '@/stores/scanPreferences'
 
 // Typed mock helpers (the repo's lint requires a type parameter on vi.fn()).
@@ -18,6 +20,8 @@ const H = vi.hoisted(() => ({
   session: {} as Record<string, unknown>,
   capture: vi.fn<() => Promise<unknown>>(),
   handleCapture: vi.fn<() => Promise<string>>(),
+  confirmCurrent: vi.fn<() => Promise<void>>(),
+  discardCurrent: vi.fn<() => void>(),
 }))
 
 vi.mock('@/lib/seo', () => ({ usePageMeta: () => {} }))
@@ -78,8 +82,8 @@ vi.mock('@/composables/useScanSession', async () => {
       ...s,
       handleCapture: H.handleCapture,
       finalizeCurrent: asyncTrue(),
-      confirmCurrent: voidFn(),
-      discardCurrent: voidFn(),
+      confirmCurrent: H.confirmCurrent,
+      discardCurrent: H.discardCurrent,
       selectId: voidFn(),
       setName: voidFn(),
       adjust: voidFn(),
@@ -92,12 +96,20 @@ vi.mock('@/composables/useScanSession', async () => {
   }
 })
 
+// The session's current match, so a test can put a card on screen and let the mocked
+// confirm/discard clear it the way the real session does.
+const matchRef = () => H.session.match as Ref<unknown>
+const A_MATCH = { ocrName: 'Sol Ring', hint: {}, candidates: ['Sol Ring'], name: 'Sol Ring' }
+
 // jsdom implements neither of these; stub them so reviewMatch() can call them and be asserted.
 const scrollIntoView = vi.fn<() => void>()
 const focus = vi.fn<() => void>()
 let isDesktop = false
 
 beforeEach(() => {
+  // The scan preferences are persisted, so a test that flips the toggle would otherwise
+  // leak that setting into every test after it.
+  localStorage.clear()
   setActivePinia(createPinia())
   isDesktop = false
   scrollIntoView.mockClear()
@@ -106,6 +118,16 @@ beforeEach(() => {
   H.capture.mockResolvedValue({ fingerprints: [1], setText: '', foil: false })
   H.handleCapture.mockReset()
   H.handleCapture.mockResolvedValue('matched')
+  matchRef().value = null
+  // The real confirm/discard clear the panel; a failed save is the override a test sets.
+  H.confirmCurrent.mockReset()
+  H.confirmCurrent.mockImplementation(async () => {
+    matchRef().value = null
+  })
+  H.discardCurrent.mockReset()
+  H.discardCurrent.mockImplementation(() => {
+    matchRef().value = null
+  })
   Element.prototype.scrollIntoView = scrollIntoView
   HTMLElement.prototype.focus = focus
   window.matchMedia = vi.fn<(query: string) => MediaQueryList>().mockImplementation(
@@ -172,5 +194,49 @@ describe('ScanView auto-scroll to review', () => {
     await flushPromises()
     expect(scrollIntoView).toHaveBeenCalledOnce()
     expect(focus).toHaveBeenCalledOnce()
+  })
+})
+
+describe('ScanView scroll back to the camera', () => {
+  async function mountWithMatch(event: 'confirm' | 'discard') {
+    matchRef().value = A_MATCH
+    const wrapper = shallowMount(ScanView)
+    await wrapper.findComponent(ScanMatchPanel).vm.$emit(event)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('scrolls back after Add card, without stealing focus', async () => {
+    await mountWithMatch('confirm')
+    expect(H.confirmCurrent).toHaveBeenCalledOnce()
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ block: 'start' }),
+    )
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('scrolls back after Discard', async () => {
+    await mountWithMatch('discard')
+    expect(H.discardCurrent).toHaveBeenCalledOnce()
+    expect(scrollIntoView).toHaveBeenCalledOnce()
+  })
+
+  it('stays put when the save failed and the match is still on screen to retry', async () => {
+    H.confirmCurrent.mockImplementation(async () => {})
+    await mountWithMatch('confirm')
+    expect(H.confirmCurrent).toHaveBeenCalledOnce()
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('does not scroll on the two-column (lg+) layout, where the camera is already visible', async () => {
+    isDesktop = true
+    await mountWithMatch('confirm')
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('does not scroll when the toggle is off', async () => {
+    useScanPreferencesStore().setAutoScrollToReview(false)
+    await mountWithMatch('confirm')
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 })
