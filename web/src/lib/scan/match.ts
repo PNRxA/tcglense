@@ -122,6 +122,8 @@ function visuallyTied(candidate: RankedPrinting, best: RankedPrinting): boolean 
  *   within a set, and distinguishes a set's treatments from each other), so it wins — the
  *   one exception being a printing the fingerprint ranked *far* worse than another of this
  *   card's printings, which is a misread digit rather than the card in front of the lens.
+ *   Rejecting the number keeps the set code: they're separate tokens, and the number is the
+ *   flakier read, so the rest of the rules still run with the set in hand.
  * - Otherwise the visually closest printing wins, with the set code breaking ties: among
  *   printings the fingerprint can't separate, one from the OCR'd set is preferred. A set
  *   code can no longer promote a printing the fingerprint clearly ranked worse.
@@ -150,7 +152,11 @@ export function matchPrinting(
   // An exact set + collector number keys one printing outright. It only loses to the
   // fingerprint when that keyed printing was itself ranked and lost by more than a tie —
   // the scanned card can't look markedly less like its own reference than like another
-  // printing's, so a digit was misread.
+  // printing's, so a digit was misread. Discarding the *number* must not discard the set
+  // code with it: the two are read as separate tokens and the number is the flakier one
+  // (tiny glyphs, no checksum), so a rejected number falls through to the set-code tier
+  // rather than short-circuiting to the best rank — otherwise noise on the number could
+  // move the pick to a different set than the one printed on the card.
   if (set && number) {
     const exact = prints.find(
       (card) =>
@@ -160,7 +166,6 @@ export function matchPrinting(
     if (exact) {
       const keyed = ranked.find((entry) => entry.card.id === exact.id)
       if (!best || !keyed || visuallyTied(keyed, best)) return exact
-      return best.card
     }
   }
 

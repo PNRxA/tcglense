@@ -180,6 +180,24 @@ describe('matchPrinting with a visual ranking', () => {
     expect(picked?.id).toBe('borderless')
   })
 
+  it('keeps the set code when it rejects the collector number', () => {
+    // The number and the set code are separate tokens on the strip, and the number is the
+    // flakier read. Misread digits that happen to land on a real printing must not cost the
+    // set code too — otherwise a same-art reprint from another set wins on a 2-bit lead.
+    const reprint = print('clu-reprint', { set_code: 'clu', collector_number: '141' })
+    const picked = matchPrinting(
+      [...treatments, reprint],
+      { setCode: 'TLA', collectorNumber: '312' },
+      [
+        { id: 'clu-reprint', distance: 10 },
+        { id: 'normal', distance: 12 },
+        { id: 'fullart', distance: 87 },
+      ],
+    )
+    // #312 is real but visually hopeless, so it's dropped — and the pick stays in TLA.
+    expect(picked?.id).toBe('normal')
+  })
+
   it('overrides an exact collector number the fingerprint ranked far worse', () => {
     // A misread digit keys a real-but-wrong treatment. The scanned card cannot look far
     // less like its own reference than like a sibling's, so the ranking wins.

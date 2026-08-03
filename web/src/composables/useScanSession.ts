@@ -210,7 +210,12 @@ export function useScanSession(game: Ref<string>) {
       ) {
         return
       }
-      if (selectedCard.value) return
+      // Any printing already chosen — by an earlier auto-pick or by a tap on the candidate
+      // strip — stands. Gate on the *id*, not on `selectedCard`: a strip pick can name a
+      // printing that isn't in the loaded pages, and reading the resolved card would see
+      // null and quietly re-pick over the user's choice. `applySelectedId('')` clears this
+      // whenever a genuinely new match (or name) needs resolving.
+      if (selectedId.value) return
       if (match.value?.hint.setCode || awaitingRankedPrinting.value) {
         // The hinted printing may still be outside the partial result set after a failed page.
         // Never fall through to `prints[0]`; retry or a deliberate manual pick is required.
