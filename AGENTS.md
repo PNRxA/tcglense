@@ -203,7 +203,20 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   and the deck list will disagree. The **name** (`is_maybeboard_section_name`) only *seeds* the
   flag where a section is born from untyped text — deck import, and migration 62's backfill of
   pre-flag decks — so a renamed maybeboard stays out and a section merely called "Considering"
-  stays in. **Deck analysis is server-side** (issue #596): composition + draw odds
+  stays in. The deck **list header** carries two *derived* facets beside `card_count` —
+  `color_identity` and `commanders` (`handlers/decks/facets.rs`) — and **a deck's colours are
+  its command zone's when it has one, the union over its deck proper otherwise**: a Commander
+  deck is Mardu because its commander is, not because the 99 happen to play black yet. It must
+  keep borrowing *both* of the analysis module's answers, never re-deciding either: which
+  sections are the zone is `rules::deck_zone`'s (like the goldfish library's), and whether that
+  zone **leads** the deck is `rules::format_leads_with_command_zone`'s — every deck is seeded
+  with a `Commander` section, so in a format without a command zone the cards in it are just
+  part of the 60, as `evaluate_deck_rules` already treats them. Sideboards are outside the
+  union too (`card_count` counts them; colours don't), and `commanders` is capped + name-deduped
+  because neither list endpoint paginates. Every `DeckResponse` producer (authed list, public
+  list, import, rename, folder move) builds through the one `deck_headers`/`deck_header` seam —
+  a third derived field belongs there, not at a call site.
+  **Deck analysis is server-side** (issue #596): composition + draw odds
   (`/stats`), the legality verdict (`/legality`), and a seeded sample hand (`/goldfish`) all
   live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
   mirrored under `/api/u/{handle}/decks/{id}/…` **through the same `analyse_*` core**, so a

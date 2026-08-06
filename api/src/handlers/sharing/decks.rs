@@ -21,8 +21,8 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::{
     DeckAnalytics, DeckDetail, DeckLegality, DeckResponse, GoldfishHand, GoldfishParams,
-    StatsParams, analyse_goldfish, analyse_legality, analyse_stats, card_counts_by_deck,
-    deck_detail, load_analysis, load_analysis_with_cards,
+    StatsParams, analyse_goldfish, analyse_legality, analyse_stats, deck_detail, deck_headers,
+    load_analysis, load_analysis_with_cards,
 };
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
@@ -89,7 +89,8 @@ pub(super) async fn user_has_public_deck(
 
 /// List public decks
 ///
-/// `GET /api/u/{handle}/decks` -> the owner's public decks (across games), newest first.
+/// `GET /api/u/{handle}/decks` -> the owner's public decks (across games), newest first,
+/// each with its card count, colour identity, and commander(s).
 /// `404` when the handle is unknown **or** the user has no public deck — the same
 /// non-oracle stance as the public profile (a valid handle with nothing public is
 /// indistinguishable from an unknown one).
@@ -121,12 +122,7 @@ pub async fn public_decks(
         return Err(not_here());
     }
 
-    let ids: Vec<i32> = decks.iter().map(|d| d.id).collect();
-    let counts = card_counts_by_deck(&state.db, &ids).await?;
-    let data = decks
-        .iter()
-        .map(|d| DeckResponse::from_model(d, counts.get(&d.id).copied().unwrap_or(0)))
-        .collect();
+    let data = deck_headers(&state.db, &decks).await?;
     Ok(Json(DataBody { data }))
 }
 

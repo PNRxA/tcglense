@@ -14,14 +14,14 @@ use crate::handlers::shared::{CardResponse, DataBody, require_game, summarize_ho
 use crate::state::AppState;
 
 use super::{
-    DeckCardEntry, DeckDetail, DeckResponse, DeckSectionResponse, card_counts_by_deck, load_deck,
+    DeckCardEntry, DeckDetail, DeckResponse, DeckSectionResponse, deck_headers, load_deck,
 };
 
 /// List decks
 ///
 /// `GET /api/decks/{game}` -> the signed-in user's decks for a game, most-recently-updated
-/// first, each with its total card count. Not paginated (a user has few decks); returns
-/// `{ data: Deck[] }`.
+/// first, each with its total card count, colour identity, and commander(s). Not paginated
+/// (a user has few decks); returns `{ data: Deck[] }`.
 #[utoipa::path(
     get,
     path = "/api/decks/{game}",
@@ -51,13 +51,7 @@ pub async fn list_decks(
         .all(&state.db)
         .await?;
 
-    let ids: Vec<i32> = decks.iter().map(|d| d.id).collect();
-    let counts = card_counts_by_deck(&state.db, &ids).await?;
-
-    let data = decks
-        .iter()
-        .map(|d| DeckResponse::from_model(d, counts.get(&d.id).copied().unwrap_or(0)))
-        .collect();
+    let data = deck_headers(&state.db, &decks).await?;
     Ok(Json(DataBody { data }))
 }
 

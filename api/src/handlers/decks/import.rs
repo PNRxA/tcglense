@@ -10,7 +10,7 @@ use crate::extract::{JsonBody, Path};
 use crate::handlers::shared::require_game;
 use crate::state::AppState;
 
-use super::{DeckImportRequest, DeckImportResponse, DeckResponse, validate_name};
+use super::{DeckImportRequest, DeckImportResponse, deck_header, validate_name};
 
 /// Maximum decoded file contents accepted in the JSON import body. The router applies
 /// the same 16 MiB cap to the encoded request; this second check keeps the parser bound
@@ -124,8 +124,11 @@ pub async fn import_deck(
     let created =
         deck_import::create_deck_from_rows(&state.db, user.id, &game, parsed, auto_categorize)
             .await?;
+    // The header is re-derived rather than built from `created.card_count`: an import is
+    // exactly the moment a deck gains a commander, and the list the SPA returns to must
+    // agree with what it would have fetched.
     Ok(Json(DeckImportResponse {
-        deck: DeckResponse::from_model(&created.deck, created.card_count),
+        deck: deck_header(&state.db, &created.deck).await?,
         provider: created.provider.as_str().to_string(),
         total_rows: created.total_rows,
         matched_cards: created.matched_cards,

@@ -277,16 +277,6 @@ pub async fn create_deck_from_rows(
         section_ids.insert(section_name, section.id);
     }
 
-    // The header's card count is the deck PROPER, excluding any maybeboard board the source
-    // carried (issue #570) — it feeds the same `DeckResponse.card_count` the deck list serves
-    // from `card_counts_by_deck`, and the two disagreeing for one deck would read as a bug.
-    let card_count = aggregate
-        .iter()
-        .filter(|((section, _), _)| !crate::handlers::decks::is_maybeboard_section_name(section))
-        .map(|(_, (regular, foil))| {
-            i64::from(clamp_count(*regular)) + i64::from(clamp_count(*foil))
-        })
-        .sum();
     let mut cards = Vec::with_capacity(aggregate.len());
     for ((section, card_id), (regular, foil)) in aggregate {
         let section_id = section_ids.get(&section).copied().ok_or_else(|| {
@@ -315,7 +305,6 @@ pub async fn create_deck_from_rows(
 
     Ok(CreatedDeckImport {
         deck,
-        card_count,
         provider: parsed.provider,
         total_rows,
         matched_cards: matched_ids.len(),

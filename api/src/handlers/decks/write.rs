@@ -17,7 +17,7 @@ use crate::state::AppState;
 use super::{
     CreateDeckRequest, DEFAULT_SECTIONS, DeckResponse, DeckVisibility, MAX_DECK_DESCRIPTION,
     MAX_DECK_NAME, MAX_DECKS_PER_GAME, MAX_FORMAT, MoveDeckFolderRequest, SetDeckVisibilityRequest,
-    UpdateDeckRequest, card_counts_by_deck, load_deck, resolve_folder_ref, validate_name,
+    UpdateDeckRequest, deck_header, load_deck, resolve_folder_ref, validate_name,
     validate_optional,
 };
 use crate::handlers::decks::deck_detail;
@@ -146,12 +146,7 @@ pub async fn update_deck(
     active.updated_at = Set(Utc::now());
     let updated = active.update(&state.db).await?;
 
-    let count = card_counts_by_deck(&state.db, &[updated.id])
-        .await?
-        .get(&updated.id)
-        .copied()
-        .unwrap_or(0);
-    Ok(Json(DeckResponse::from_model(&updated, count)))
+    Ok(Json(deck_header(&state.db, &updated).await?))
 }
 
 /// Delete deck
@@ -221,12 +216,7 @@ pub async fn move_deck_to_folder(
     active.updated_at = Set(Utc::now());
     let updated = active.update(&state.db).await?;
 
-    let count = card_counts_by_deck(&state.db, &[updated.id])
-        .await?
-        .get(&updated.id)
-        .copied()
-        .unwrap_or(0);
-    Ok(Json(DeckResponse::from_model(&updated, count)))
+    Ok(Json(deck_header(&state.db, &updated).await?))
 }
 
 /// Set deck visibility
