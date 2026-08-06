@@ -28,12 +28,13 @@ pub struct ParsedDeck {
     pub rows: Vec<DeckCardRow>,
 }
 
-/// Internal result of the all-or-nothing create path. The handler returns a lightweight
-/// deck-list header; full sections/cards remain behind the normal deck detail endpoint.
+/// Internal result of the all-or-nothing create path. The handler shapes the new deck row
+/// into the same lightweight header the deck list serves (counts and derived facets come
+/// from `handlers::decks::deck_header`, so an imported deck reads identically to a listed
+/// one); full sections/cards remain behind the normal deck detail endpoint.
 #[derive(Debug)]
 pub struct CreatedDeckImport {
     pub deck: deck::Model,
-    pub card_count: i64,
     pub provider: Provider,
     pub total_rows: usize,
     pub matched_cards: usize,

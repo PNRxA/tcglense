@@ -327,6 +327,24 @@ fn format_rules(key: &str) -> Option<FormatRules> {
     })
 }
 
+/// Whether a deck in this (free-text) format is *led* by its command zone — so a reader
+/// outside the legality verdict can ask the same question this module answers internally at
+/// `evaluate_deck_rules`'s `rules.command_zone.is_some()` check, instead of guessing from the
+/// section name alone. Used by the deck list's facets to decide whether a card filed under
+/// `Commander` is the deck's commander or just a creature: every new deck is seeded with a
+/// `Commander` section, so a Modern deck can easily have one with cards in it, and this module
+/// already treats those as part of the 60.
+///
+/// A format with **no rule profile** — unknown, or simply unset — answers `true`: this module
+/// makes no claim about such a deck (it returns no verdict at all), so there is nothing to
+/// contradict, and the owner filing a card in the command zone is the only signal there is.
+pub(crate) fn format_leads_with_command_zone(format: Option<&str>) -> bool {
+    match super::formats::normalize_format_key(format).and_then(format_rules) {
+        Some(rules) => rules.command_zone.is_some(),
+        None => true,
+    }
+}
+
 // ---------- Command-zone eligibility ----------
 
 /// Whether a card may lead a deck in this kind of command zone.
@@ -453,7 +471,10 @@ pub(crate) struct DeckRuleResult {
     pub card_issues: Vec<DeckRuleCardIssue>,
 }
 
-const COLOUR_ORDER: &[&str] = &["W", "U", "B", "R", "G"];
+/// The five colours in canonical WUBRG order. Shared with the deck list's facets
+/// ([`crate::handlers::decks`]'s `facets`), so a deck's advertised colours and the colour
+/// identity a legality breach names are spelled the same way round.
+pub(crate) const COLOUR_ORDER: &[&str] = &["W", "U", "B", "R", "G"];
 
 /// Colour identity as its mana symbols in WUBRG order, or "colourless".
 fn identity_label(identity: &[String]) -> String {

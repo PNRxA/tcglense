@@ -1102,7 +1102,7 @@ deck ids), matching the public-sharing surface.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, created_at, updated_at }` (`card_count` = total copies across all sections **except maybeboards**, so it agrees with the deck page's own `summary.total_cards`) |
+| `GET /api/decks/{game}` | — | `{ data: Deck[] }` — the user's decks, most-recently-updated first (not paginated; a user has few decks). Each `Deck = { id, game, name, description, format, folder_id, is_public, card_count, color_identity, commanders, created_at, updated_at }` (`card_count` = total copies across all sections **except maybeboards**, so it agrees with the deck page's own `summary.total_cards`; `color_identity` + `commanders` are the derived facets below) |
 | `POST /api/decks/{game}` | `{ name, description?, format?, folder_id? }` | `DeckDetail` — creates a deck **seeded with the default sections** and returns its full detail. `422` blank/oversized name or over the per-game cap (1000); `404` if `folder_id` isn't one of the caller's folders |
 | `POST /api/decks/{game}/import` | `{ provider, source, contents, format, name, auto_categorize }` | `DeckImportResponse { deck: Deck, provider, total_rows, matched_cards, unmatched_cards, unmatched_sample }` — creates a new deck from exactly one source: a public deck URL/id (`source`; Archidekt live import) or uploaded file text (`contents`; Archidekt CSV or Moxfield CSV/plain text). `deck` is the lightweight list header; load `GET /api/decks/{game}/{deck_id}` for sections/cards. The unused source fields are `null`. Explicit provider categories/boards become deck sections. `auto_categorize` defaults to `true` when omitted and files generic Mainboard rows into the matching preset type section; set it to `false` to preserve Mainboard exactly. `422` for malformed/empty/zero-match sources or more than 2000 source rows; nothing is created on failure |
 | `GET /api/decks/{game}/{deck_id}` | — | `DeckDetail` — the full deck: metadata, the owner handle, a value summary, every section in order, and every card (returned whole — a deck is bounded — so the SPA groups `cards` by `section_id`). `404` if not the caller's |
@@ -1155,6 +1155,38 @@ full catalog `Card` plus which section it sits in — a deck-specific DTO, since
 `CollectionEntry` has no section). The default seeded sections are Archidekt-flavoured
 (Commander, Creatures, …, the functional categories Ramp / Removal / Tutor / …, and
 Maybeboard).
+
+**Deck-list facets.** The `Deck` header also carries the two things that make a shelf of decks
+scannable without opening each one, both **derived** (nothing is stored on the deck row) and
+folded for the whole list in three bounded queries (`handlers::decks::facets`):
+`color_identity` is WUBRG-ordered colour letters (`["W","U"]`; empty = colourless) and
+`commanders` is `DeckCommander[]` (`{ card_id, name }`, the **external** card id) — one entry
+for most Commander decks, two for a partner pair or an Oathbreaker + signature spell, empty
+for every deck without a command zone. **A deck's colours are its command zone's when it has
+one, and the union over its deck proper otherwise:** a Commander deck *is* Mardu because its
+commander is, even in a build that plays no black card yet, while a 60-card deck has no such
+declaration and can only be described by what's in it. Three rules keep that from
+contradicting the deck page:
+
+* Which sections *are* the command zone is `rules::deck_zone`'s — the same section-name split
+  legality and the goldfish library use, never a second list of names.
+* Whether the command zone **leads** the deck is the format's call
+  (`rules::format_leads_with_command_zone`). Every new deck is seeded with a `Commander`
+  section, so a Modern deck can easily have cards in one; in a format with no command zone
+  those are just part of the 60 (they colour the deck and name no commander), exactly as
+  `evaluate_deck_rules` treats them. A deck with **no format**, or one the rules have no
+  profile for, is taken at the owner's word — there is no verdict to contradict.
+* The union is over the **deck proper**: maybeboards are out by their column, and a
+  *sideboard* doesn't colour the deck either (the 75 you register isn't the deck you cast
+  from). `card_count` does count both sideboard and command zone, so the two fields describe
+  the deck at different grains — only `color_identity` claims to name its colours.
+
+`commanders` is capped at 4 entries per deck (deduplicated by card name, so a second printing
+of one legend isn't a second commander): neither list endpoint is paginated, and a real
+command zone holds one or two cards. Colours are folded from the whole command zone, so the
+cap can never change the pips. Both fields ride the identical header on the public list
+(`GET /api/u/{handle}/decks`), and every other endpoint returning a `Deck` (rename, folder
+move, import) builds it through the same `deck_headers`/`deck_header` seam.
 
 **Maybeboards (issue #570).** `deck_sections.is_maybeboard` marks a section as sitting
 *outside the deck proper* — cards the owner is only considering. `cards` still returns them

@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import DeckIdentity from '@/components/decks/DeckIdentity.vue'
 import type { Deck, DeckFolder } from '@/lib/api'
 
 // One deck in the game's deck list: a link to the builder plus a "…" menu to move it
@@ -29,6 +30,7 @@ const emit = defineEmits<{ move: [folderId: number | null]; remove: [] }>()
           aria-label="Public"
         />
       </div>
+      <DeckIdentity :deck="deck" />
       <p class="text-muted-foreground mt-1 text-sm">
         {{ deck.card_count }} card{{ deck.card_count === 1 ? '' : 's' }}
         <span v-if="deck.format"> · {{ deck.format }}</span>

@@ -2,6 +2,7 @@
 import { computed, toRef } from 'vue'
 import { RouterLink } from 'vue-router'
 import { Heart, Layers, Library, UserCircle } from '@lucide/vue'
+import DeckIdentity from '@/components/decks/DeckIdentity.vue'
 import { usePublicProfileQuery } from '@/composables/usePublicCollection'
 import { usePublicDecksQuery } from '@/composables/useDecks'
 import { useCurrency } from '@/composables/useCurrency'
@@ -165,6 +166,7 @@ usePageMeta({
                 <span class="truncate font-medium" :title="deck.name">{{ deck.name }}</span>
                 <span class="text-muted-foreground text-xs uppercase">{{ deck.game }}</span>
               </div>
+              <DeckIdentity :deck="deck" />
               <p class="text-muted-foreground mt-1 text-sm">
                 {{ deck.card_count }} card{{ deck.card_count === 1 ? '' : 's' }}
                 <span v-if="deck.format"> · {{ deck.format }}</span>

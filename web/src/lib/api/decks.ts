@@ -29,6 +29,7 @@ export type {
   CreateDeckRequest,
   Deck,
   DeckCardEntry,
+  DeckCommander,
   DeckDetail,
   DeckFolder,
   DeckImportFileFormat,

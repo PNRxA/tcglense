@@ -43,6 +43,7 @@ mod analysis;
 mod cards;
 mod copy;
 mod export;
+mod facets;
 mod folders;
 mod import;
 mod needed;
@@ -54,6 +55,10 @@ pub use analysis::{deck_goldfish, deck_legality, deck_stats, list_deck_formats};
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use copy::copy_public_deck;
 pub use export::export_deck;
+// The deck list's derived facets (colour identity + command zone). `DeckCommanderResponse`
+// is public because it rides `DeckResponse`; the query + the facet bundle stay crate-local.
+pub use facets::DeckCommanderResponse;
+pub(crate) use facets::{DeckFacets, deck_facets_by_deck};
 pub use folders::{create_folder, delete_folder, list_folders, update_folder};
 pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
 pub use needed::needed_cards;
@@ -159,7 +164,9 @@ const MAX_FOLDER_NAME: usize = 100;
 // ---------- Response DTOs ----------
 
 /// A deck header, for the deck list. `card_count` is the total copies (regular + foil)
-/// across every section — computed with one grouped aggregate, so the list stays cheap.
+/// across every section — computed with one grouped aggregate, so the list stays cheap;
+/// `color_identity` and `commanders` are the derived facets from [`facets`], folded for the
+/// whole list in three more bounded queries.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Deck"))]
 pub struct DeckResponse {
@@ -175,6 +182,16 @@ pub struct DeckResponse {
     pub is_public: bool,
     /// Total copies (regular + foil) across all sections.
     pub card_count: i64,
+    /// The deck's colour identity as WUBRG-ordered letters (`["W","U"]`) — its command
+    /// zone's when it has one, the union over its deck proper otherwise (see
+    /// [`facets::deck_facets_by_deck`]). `[]` means colourless; **`null` means there was
+    /// nothing to read a colour off** (an empty deck, or one whose only cards sit in a
+    /// sideboard or maybeboard, neither of which colours a deck) — a distinction
+    /// `card_count` can't be used to make, since it counts cards this doesn't.
+    pub color_identity: Option<Vec<String>>,
+    /// The card(s) in the deck's command zone — one for most Commander decks, two for
+    /// partners or an Oathbreaker pair. Empty for every deck that doesn't have one.
+    pub commanders: Vec<DeckCommanderResponse>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
     #[schema(value_type = String, format = DateTime)]
@@ -182,7 +199,7 @@ pub struct DeckResponse {
 }
 
 impl DeckResponse {
-    pub(crate) fn from_model(d: &deck::Model, card_count: i64) -> Self {
+    pub(crate) fn from_model(d: &deck::Model, card_count: i64, facets: DeckFacets) -> Self {
         Self {
             id: d.id,
             game: d.game.clone(),
@@ -192,10 +209,58 @@ impl DeckResponse {
             folder_id: d.folder_id,
             is_public: d.is_public,
             card_count,
+            color_identity: facets.color_identity,
+            commanders: facets.commanders,
             created_at: d.created_at,
             updated_at: d.updated_at,
         }
     }
+}
+
+/// Shape a page of deck rows into their wire headers: the grouped card counts and the
+/// derived facets, folded once for the whole list.
+///
+/// Every surface that returns a `DeckResponse` goes through here — the authed list, the
+/// public list, an import, a rename, a folder move — so a deck header means the same thing
+/// wherever it's read. Adding a third derived field should touch only this function; five
+/// call sites each assembling their own is exactly how the import's card count came to be
+/// computed a second way (from the parsed rows) and had to be kept in step by comment.
+pub(crate) async fn deck_headers(
+    db: &sea_orm::DatabaseConnection,
+    decks: &[deck::Model],
+) -> Result<Vec<DeckResponse>, AppError> {
+    let ids: Vec<i32> = decks.iter().map(|d| d.id).collect();
+    let counts = card_counts_by_deck(db, &ids).await?;
+    let mut facets = deck_facets_by_deck(db, decks).await?;
+    Ok(decks
+        .iter()
+        .map(|d| {
+            DeckResponse::from_model(
+                d,
+                counts.get(&d.id).copied().unwrap_or(0),
+                facets.remove(&d.id).unwrap_or_default(),
+            )
+        })
+        .collect())
+}
+
+/// [`deck_headers`] for a single deck — what the write endpoints return after they've
+/// changed one. Spelled out rather than `deck_headers(…).pop()` so there's no
+/// "can't happen" unwrap on a request path.
+pub(crate) async fn deck_header(
+    db: &sea_orm::DatabaseConnection,
+    deck: &deck::Model,
+) -> Result<DeckResponse, AppError> {
+    let count = card_counts_by_deck(db, &[deck.id])
+        .await?
+        .get(&deck.id)
+        .copied()
+        .unwrap_or(0);
+    let facets = deck_facets_by_deck(db, std::slice::from_ref(deck))
+        .await?
+        .remove(&deck.id)
+        .unwrap_or_default();
+    Ok(DeckResponse::from_model(deck, count, facets))
 }
 
 /// A deck folder (organises decks), with how many decks are filed under it.
