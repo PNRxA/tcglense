@@ -13,6 +13,8 @@ const state = vi.hoisted(() => ({
   query: '',
   sort: 'default',
   error: undefined as unknown,
+  // True while vue-query is holding the previous (filtered) manifest up through a refetch.
+  stale: false,
 }))
 
 vi.mock('@/composables/useProducts', () => ({
@@ -26,6 +28,12 @@ vi.mock('@/composables/useProducts', () => ({
     error: {
       get value() {
         return state.error
+      },
+    },
+    // The heading treats a stale (kept-previous) manifest as filtered, so the mount needs this.
+    isPlaceholderData: {
+      get value() {
+        return state.stale
       },
     },
   }),
@@ -55,12 +63,13 @@ function section(key: string, total = 1, boosterFamily: string | null = null): P
 function mountCards(
   manifest: ProductCardSection[],
   productType: string,
-  opts: { query?: string; sort?: string; error?: unknown } = {},
+  opts: { query?: string; sort?: string; error?: unknown; stale?: boolean } = {},
 ) {
   state.manifest = manifest
   state.query = opts.query ?? ''
   state.sort = opts.sort ?? 'default'
   state.error = opts.error
+  state.stale = opts.stale ?? false
   const wrapper = mount(ProductCards, {
     props: { game: 'mtg', id: '100', productType },
     global: {
@@ -91,6 +100,7 @@ beforeEach(() => {
   state.query = ''
   state.sort = 'default'
   state.error = undefined
+  state.stale = false
 })
 
 describe('ProductCards sections', () => {
@@ -224,8 +234,18 @@ describe('ProductCards heading', () => {
 
   it('hedges anything randomized with one voice', () => {
     expect(headingOf([section('variable', 12)])).toBe('What you might get (12)')
-    expect(headingOf([section('booster', 10), section('variable', 2)])).toBe(
-      'What you might get (12)',
+  })
+
+  it('keeps the pool legible when a randomized insert joins it', () => {
+    // A collector box is routinely pool + a randomized insert with nothing guaranteed — the
+    // shape the dummy catalog itself ships. Without the split line it reads as one number.
+    const { wrapper } = mountCards(
+      [section('booster', 600), section('variable', 2)],
+      'collector_display',
+    )
+    expect(wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe('What you might get (602)')
+    expect(wrapper.find('h2 + p').text()).toBe(
+      '600 in the pull pool · 2 sometimes included — a copy opens some of the pool, not all of it.',
     )
   })
 
@@ -234,6 +254,16 @@ describe('ProductCards heading', () => {
     // would be a brand-new lie.
     const filtered = mountCards([section('booster', 3)], 'play_pack', { query: 't:goblin' })
     expect(filtered.wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe(
+      'What you can pull (3)',
+    )
+  })
+
+  it('holds the pool-size claim back while a cleared search refetches', () => {
+    // `searching` flips the instant the URL clears, but keepPreviousData still holds the
+    // *filtered* counts — so for one refetch the heading would assert a 3-card pool over a
+    // 600-card one. The placeholder flag has to suppress the unit too.
+    const stale = mountCards([section('booster', 3)], 'play_pack', { stale: true })
+    expect(stale.wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe(
       'What you can pull (3)',
     )
   })

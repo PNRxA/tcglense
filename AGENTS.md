@@ -187,6 +187,20 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   landing (`PublicCollectionView`) renders them through the shared `ProductHoldingSection`
   (public mode = a `handle` prop) and the read-only `PublicProductBrowseView` (a `readonly`
   `ProductGrid`, owner's counts as a static badge).
+- **No number on a sealed product's page is a count of physical cards** — the API has no such
+  datum, so nothing may word one as containment. Of the card-section keys only `contains` is a
+  guarantee; `exclusive` is a **subset** of the `booster` pull pool (never added to it) and
+  `variable` is a randomized configuration, so a total summed across sections is a *pool* size —
+  a booster with a 600-card pool holds ~15 of them, which is what "Cards in this product (600)"
+  used to claim. `sealed_contents` also has **no quantity column**, so a section total counts
+  **distinct cards** (a precon's 30 Forests are one row); only `ProductComponent.quantity` counts
+  pieces, which is why "N items in the box" sums quantities rather than line items.
+  `web/src/lib/productCounts.ts` is the single seam that folds a manifest into per-certainty
+  counts and words the heading + the overview chips from them (shared so the two can't disagree);
+  it **mirrors** `CardSection::classify`'s key set, display order, and unknown-key→`variable`
+  fallback, like `lib/legality.ts` mirrors the format table — a fifth key or a reordering lands on
+  both sides. A label that names a pool must be true of the block it heads: the `booster` section
+  is the pool's *shared remainder* whenever `exclusive` was split out above it.
 - **Decks** (`/api/decks/{game}*`, issue #363) are a **container** surface — many per user,
   in `decks`/`deck_sections`/`deck_cards`/`deck_folders` — **not** a collection/wishlist twin,
   so they don't ride `makeHoldingApi`/`makeHoldingQueries`; they live beside it and only reuse

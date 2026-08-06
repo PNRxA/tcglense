@@ -81,10 +81,16 @@ describe('productCardsHeading', () => {
       count: '(12)',
       blurb: '',
     })
-    expect(heading([section('booster', 10), section('variable', 2)])).toEqual({
+  })
+
+  it('keeps the pool legible when a randomized insert joins it', () => {
+    // A collector box is routinely a big pull pool plus a randomized foil insert and nothing
+    // guaranteed. Without the split line this collapses to "(602)" — the original bug, back.
+    expect(heading([section('booster', 600), section('variable', 2)])).toEqual({
       title: 'What you might get',
-      count: '(12)',
-      blurb: '',
+      count: '(602)',
+      blurb:
+        '600 in the pull pool · 2 sometimes included — a copy opens some of the pool, not all of it.',
     })
   })
 
@@ -149,21 +155,21 @@ describe('productCardChips', () => {
     expect(chips.some((c) => c.label.includes('you can pull'))).toBe(false)
   })
 
-  it('back-references the exclusive slice to the pull chip that precedes it', () => {
+  it('names the exclusive slice as part of the pool the chip before it counts', () => {
     const chips = productCardChips(
       counts([section('exclusive', 8, 'collector_pack'), section('booster', 52)]),
       'Collector Booster',
     )
     expect(chips.map((c) => c.id)).toEqual(['pull', 'exclusive'])
     expect(chips[0]?.count).toBe(60)
-    expect(chips[1]?.label).toBe('of them exclusive to Collector Booster')
-    // Read alone by a screen reader, "of them" has no antecedent — the aria name names the pool.
-    expect(chips[1]?.aria).toBe('of the pull pool, exclusive to Collector Booster')
+    // Self-contained: "of them" would lose its antecedent the moment the flex row wrapped.
+    expect(chips[1]?.label).toBe('of the pool, exclusive to Collector Booster')
+    expect(chips.every((c) => !c.label.includes('of them'))).toBe(true)
   })
 
   it('goes generic when the backend names no booster family', () => {
     const chips = productCardChips(counts([section('exclusive', 8), section('booster', 52)]), null)
-    expect(chips[1]?.label).toBe('of them booster-exclusive')
+    expect(chips[1]?.label).toBe("of the pool, exclusive to this product's boosters")
   })
 
   it('drops the exclusives chip when the whole pool is exclusive (it would restate it)', () => {
@@ -198,7 +204,10 @@ describe('boxItemCount', () => {
     expect(boxItemCount([])).toBe(0)
   })
 
-  it('clamps a non-positive quantity to one, like the API does', () => {
-    expect(boxItemCount([component('Odd row', 0)])).toBe(1)
+  it('lets a malformed row contribute nothing, so the count never exceeds the rows shown', () => {
+    // The count exists to agree with the `N×` the rows render; counting a `0×` row as an item
+    // would break it in exactly the case a clamp was meant to cover.
+    expect(boxItemCount([component('Odd row', 0)])).toBe(0)
+    expect(boxItemCount([component('Pack', 3), component('Odd row', 0)])).toBe(3)
   })
 })

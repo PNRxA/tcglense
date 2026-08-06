@@ -769,7 +769,7 @@ catalog) is planned but not implemented.
   daily from price rebuilds, so it's useless as a gate).
 
   **Derived booster pull-pools + bundle exclusivity (issue #290).** A sealed product's
-  "Can be pulled from boosters" / "{family} exclusives" split needs a product to carry
+  shared-pool / family-exclusive split needs a product to carry
   `booster`-membership rows for the boosters it *offers*. MTGJSON's native `sealed` recursion
   gives most bundles their pool (a gift box that lists its play + collector boosters expands
   both), but two gaps remain, filled by **ingest-time synthesis** (`mtgjson::ingest`,

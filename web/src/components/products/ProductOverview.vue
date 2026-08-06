@@ -52,15 +52,12 @@ type OverviewChip = {
   // Extends the "Jump to …" tooltip where the label alone could still mislead (a pool size read
   // as a pack's worth, a distinct-card count read as copies).
   hint?: string
-  // Stands in for the visible label in the accessible name when that label leans on the chip
-  // beside it ("6 of them exclusive to …" has no antecedent read on its own).
-  aria?: string
 }
 
 // Certainty descends left to right — box pieces, guaranteed cards, the pull pool, the pool's
-// exclusive slice, randomized maybes, then the parents that bundle this product. The
-// exclusives chip says "of them", so it must stay adjacent to (and after) the pull chip it
-// back-references; productCardChips guarantees that order.
+// exclusive slice, randomized maybes, then the parents that bundle this product. Every card
+// label is self-contained (productCardChips), so the strip can wrap anywhere without a chip
+// losing the set it describes.
 const chips = computed<OverviewChip[]>(() =>
   [
     {
@@ -75,7 +72,6 @@ const chips = computed<OverviewChip[]>(() =>
       count: chip.count,
       label: chip.label,
       hint: chip.hint,
-      aria: chip.aria,
     })),
     {
       key: 'containers' as const,
@@ -95,7 +91,6 @@ const chips = computed<OverviewChip[]>(() =>
       type="button"
       class="bg-card hover:bg-muted/50 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors"
       :title="`Jump to ${chip.count.toLocaleString()} ${chip.label}${chip.hint ? ` — ${chip.hint}` : ''}`"
-      :aria-label="chip.aria ? `${chip.count.toLocaleString()} ${chip.aria}` : undefined"
       @click="emit('jump', chip.key)"
     >
       <component :is="chip.icon" class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />

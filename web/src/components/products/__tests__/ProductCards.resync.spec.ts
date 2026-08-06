@@ -14,6 +14,7 @@ vi.mock('@/composables/useProducts', () => ({
   useProductCardSectionsQuery: () => ({
     data: { value: { data: [{ key: 'booster', total: 1, booster_family: null }] } },
     error: { value: undefined },
+    isPlaceholderData: { value: false },
   }),
 }))
 

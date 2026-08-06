@@ -80,6 +80,24 @@ export function productCardsHeading(
   // Guaranteed-only (a precon deck, a Secret Lair, a fixed-promo product) — containment is
   // true, so the original wording stands.
   if (counts.possible === 0) return { title: 'Cards in this product', count: `(${n})`, blurb: '' }
+
+  // Any heading whose single number spans more than one certainty spells the split out beneath
+  // itself, because no per-section blurb below can reconcile a total that pools them. This is
+  // built before the branches on purpose: a collector box is routinely pool + a randomized
+  // insert with nothing guaranteed, and gating the line on `guaranteed > 0` would drop the pool
+  // framing from exactly the product the reported bug was about (600 pool + 2 inserts must not
+  // collapse back into one undifferentiated "602").
+  const parts: string[] = []
+  if (counts.guaranteed > 0) parts.push(`${counts.guaranteed.toLocaleString()} guaranteed`)
+  if (counts.pool > 0) parts.push(`${counts.pool.toLocaleString()} in the pull pool`)
+  if (counts.variable > 0) parts.push(`${counts.variable.toLocaleString()} sometimes included`)
+  const split =
+    parts.length < 2
+      ? ''
+      : counts.pool > 0
+        ? `${parts.join(' · ')} — a copy opens some of the pool, not all of it.`
+        : `${parts.join(' · ')}.`
+
   if (counts.guaranteed === 0) {
     // A pure pull pool — the case that read "600 cards in this product" for a 15-card booster.
     if (counts.variable === 0) {
@@ -92,32 +110,21 @@ export function productCardsHeading(
         blurb: '',
       }
     }
-    return { title: 'What you might get', count: `(${n})`, blurb: '' }
+    // Pool and/or randomized maybes, nothing guaranteed. The count carries no unit (it spans
+    // two kinds of "maybe"), so the split below is what keeps the pool legible.
+    return { title: 'What you might get', count: `(${n})`, blurb: split }
   }
-  // Mixed: one heading spanning two certainties, so it gets the page's only extra line — and it
-  // spells the split out, because a bundle's single total otherwise hides a ~600-card pull pool
-  // inside a number that looks like contents (1 promo + 600 pool reads as "601 cards").
-  const parts = [`${counts.guaranteed.toLocaleString()} guaranteed`]
-  if (counts.pool > 0) parts.push(`${counts.pool.toLocaleString()} in the pull pool`)
-  if (counts.variable > 0) parts.push(`${counts.variable.toLocaleString()} sometimes included`)
-  return {
-    title: "What's guaranteed, what's random",
-    count: `(${n})`,
-    blurb:
-      counts.pool > 0
-        ? `${parts.join(' · ')} — a copy opens some of the pool, not all of it.`
-        : `${parts.join(' · ')}.`,
-  }
+  return { title: "What's guaranteed, what's random", count: `(${n})`, blurb: split }
 }
 
 /** One at-a-glance chip. `id` picks the icon in ProductOverview; `hint` is appended to the
- * button's tooltip; `aria` replaces the visible label in the accessible name when that label
- * leans on the chip beside it (a screen reader may read the button alone). */
+ * button's tooltip. Every label is self-contained: the strip is `flex-wrap`, so a label that
+ * leaned on the chip beside it would lose its antecedent the moment the row wrapped — and a
+ * screen reader reads each button alone regardless. */
 export type ProductCardChip = {
   id: 'guaranteed' | 'pull' | 'exclusive' | 'variable'
   count: number
   label: string
-  aria?: string
   hint: string
 }
 
@@ -154,12 +161,11 @@ export function productCardChips(
     chips.push({
       id: 'exclusive',
       count: counts.exclusive,
-      label: family ? `of them exclusive to ${family}` : 'of them booster-exclusive',
-      // "of them" back-references the pull chip visually; read alone by a screen reader it has
-      // no antecedent, so the accessible name names the pool outright.
-      aria: family
-        ? `of the pull pool, exclusive to ${family}`
-        : "of the pull pool, exclusive to this product's boosters",
+      // "of the pool", not "of them" — the chip names what it is a slice of, so it survives the
+      // row wrapping away from the pull chip (and being read on its own).
+      label: family
+        ? `of the pool, exclusive to ${family}`
+        : "of the pool, exclusive to this product's boosters",
       hint: 'a slice of the pull pool, not extra cards',
     })
   if (counts.variable > 0)
@@ -175,9 +181,13 @@ export function productCardChips(
 /**
  * How many physical pieces the box holds: the sum of the component quantities, not the number
  * of line items — a booster box is one `30× Play Booster` row plus a topper, i.e. 31 items,
- * not 2. Clamped like the API's own `quantity >= 1`. This is the only count on the page that
- * *is* a count of things you physically get, and it still says nothing about cards.
+ * not 2. This is the only count on the page that *is* a count of things you physically get,
+ * and it still says nothing about cards.
+ *
+ * A malformed row contributes nothing rather than being clamped up to one: the count's whole
+ * job is to agree with the `N×` the rows underneath it render, so counting a `0×` row as an
+ * item would break it in exactly the case the clamp was meant to cover.
  */
 export function boxItemCount(components: ProductComponent[]): number {
-  return components.reduce((sum, component) => sum + Math.max(1, component.quantity), 0)
+  return components.reduce((sum, component) => sum + Math.max(0, component.quantity), 0)
 }

@@ -67,7 +67,13 @@ const counts = computed(() => productCardCounts(manifest.value))
 const total = computed(() => counts.value.total)
 // Heading noun + count + (mixed products only) a reconciling line. None of these numbers is a
 // count of physical cards — a booster's pool is not its pack size; see lib/productCounts.ts.
-const heading = computed(() => productCardsHeading(counts.value, searching.value))
+// `searching` flips the instant the URL changes, but the manifest is `keepPreviousData` — so on
+// *clearing* a filter the counts are still the filtered ones for a whole refetch. Treating that
+// window as filtered too is what stops "(3-card pool)" being asserted over a 600-card pool;
+// `isPlaceholderData` is the same signal ProductCardsSection already pages on.
+const heading = computed(() =>
+  productCardsHeading(counts.value, searching.value || sectionsQuery.isPlaceholderData.value),
+)
 
 // Show the whole section (heading + search box + blocks) whenever the product has cards —
 // or a search is active, so a query that currently matches nothing keeps the box on screen
