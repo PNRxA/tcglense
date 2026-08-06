@@ -761,6 +761,382 @@ async fn folders_organise_decks_and_ungroup_on_delete() {
     assert!(deck["folder_id"].is_null());
 }
 
+/// `n` seeded cards that are each exactly one colour, no two the same — so a test can tell
+/// "these colours came from this card" apart from "these colours came from that one".
+async fn sample_mono_coloured_cards(app: &Router, n: usize) -> Vec<(String, String)> {
+    let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=100")).await;
+    assert_eq!(status, StatusCode::OK, "listing seeded cards failed");
+    let mut picked: Vec<(String, String)> = Vec::new();
+    for card in body["data"].as_array().expect("cards data array") {
+        let identity = card["color_identity"].as_array().expect("color_identity");
+        let [colour] = identity.as_slice() else {
+            continue;
+        };
+        let colour = colour.as_str().expect("colour letter").to_string();
+        if picked.iter().any(|(_, held)| *held == colour) {
+            continue;
+        }
+        picked.push((
+            card["id"].as_str().expect("card id").to_string(),
+            colour.clone(),
+        ));
+        if picked.len() == n {
+            return picked;
+        }
+    }
+    panic!("need {n} distinctly mono-coloured seeded cards, got {picked:?}");
+}
+
+/// Create a deck carrying a format, and return its full detail.
+async fn create_deck_with_format(
+    app: &TestApp,
+    token: &str,
+    name: &str,
+    format: Option<&str>,
+) -> Value {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg",
+            token,
+            json!({ "name": name, "format": format }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create deck failed: {body:?}");
+    body
+}
+
+/// Add a named section to a deck and return its id.
+async fn add_section(app: &TestApp, token: &str, deck_id: i64, name: &str) -> i64 {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/decks/mtg/{deck_id}/sections"),
+            token,
+            json!({ "name": name }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create section failed: {body:?}");
+    body["id"].as_i64().expect("section id")
+}
+
+/// The deck list's header for one deck.
+async fn listed_deck(app: &TestApp, token: &str, deck_id: i64) -> Value {
+    let (status, _, body) = send(app, get_with_bearer("/api/decks/mtg", token)).await;
+    assert_eq!(status, StatusCode::OK, "deck list failed: {body:?}");
+    body["data"]
+        .as_array()
+        .expect("decks")
+        .iter()
+        .find(|d| d["id"] == deck_id)
+        .expect("our deck is listed")
+        .clone()
+}
+
+/// The colour letters in canonical WUBRG order, so a test can state an expected identity
+/// without depending on which colours the catalog sample happened to hand it.
+fn sorted_wubrg(colours: &[&String]) -> Vec<String> {
+    ["W", "U", "B", "R", "G"]
+        .iter()
+        .filter(|c| colours.iter().any(|held| held.as_str() == **c))
+        .map(|c| (*c).to_string())
+        .collect()
+}
+
+/// The deck **list** header carries the two facets that make a shelf of decks scannable:
+/// the colours it plays in and the card leading it. Both are derived, so this pins the
+/// derivation end to end — including the two places it deliberately differs from a naive
+/// union: a maybeboard card doesn't colour the deck, and once the command zone has a card,
+/// the deck's colours are *its* colours rather than the 99's.
+#[tokio::test]
+async fn the_deck_list_reports_colour_identity_and_the_command_zone() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "colours@example.com", PW).await;
+    let cards = sample_mono_coloured_cards(&app, 3).await;
+    let [
+        (boss, boss_colour),
+        (spell, spell_colour),
+        (maybe, maybe_colour),
+    ] = cards.as_slice()
+    else {
+        unreachable!("sample_mono_coloured_cards returns exactly three")
+    };
+
+    let deck = create_deck_with_format(&app, &access, "Facets", Some("Commander")).await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let command_zone = section_named(&deck, "Commander")["id"]
+        .as_i64()
+        .expect("section id");
+    let creatures = section_named(&deck, "Creatures")["id"]
+        .as_i64()
+        .expect("section id");
+    let maybeboard = section_named(&deck, "Maybeboard")["id"]
+        .as_i64()
+        .expect("section id");
+
+    // An empty deck states nothing: `null` colours (not `[]`, which would claim the deck is
+    // colourless) and no commander.
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert!(
+        header["color_identity"].is_null(),
+        "an unbuilt deck is not a colourless one: {header:?}"
+    );
+    assert_eq!(header["commanders"], json!([]));
+
+    // With no command zone, the colours are the union over the deck proper.
+    add_deck_card(&app, &access, deck_id, creatures, spell, 4).await;
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert_eq!(header["color_identity"], json!([spell_colour]));
+    assert_eq!(header["commanders"], json!([]));
+
+    // A maybeboard card is outside the deck, so it doesn't colour it (issue #570) — the
+    // same line `card_count` already draws.
+    add_deck_card(&app, &access, deck_id, maybeboard, maybe, 1).await;
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert_eq!(
+        header["color_identity"],
+        json!([spell_colour]),
+        "a maybeboard {maybe_colour} card must not colour the deck"
+    );
+    assert_eq!(header["card_count"], 4);
+
+    // Once the command zone holds a card, it defines the deck: the commander is named and
+    // the deck's colours are the commander's, not the 99's.
+    add_deck_card(&app, &access, deck_id, command_zone, boss, 1).await;
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert_eq!(header["color_identity"], json!([boss_colour]));
+    let commanders = header["commanders"].as_array().expect("commanders");
+    assert_eq!(commanders.len(), 1);
+    assert_eq!(commanders[0]["card_id"], *boss);
+    assert!(
+        commanders[0]["name"]
+            .as_str()
+            .is_some_and(|n| !n.is_empty()),
+        "the commander is named for display: {commanders:?}"
+    );
+
+    // The public list is the same header, through the same seam — a shared deck and its
+    // owner's copy can't advertise different colours.
+    let (status, _, u) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/username",
+            &access,
+            json!({ "username": "colourful" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let handle = u["handle"].as_str().expect("handle").to_string();
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/visibility"),
+            &access,
+            json!({ "public": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, list) = send(&app, get(&format!("/api/u/{handle}/decks"))).await;
+    assert_eq!(status, StatusCode::OK, "public deck list failed: {list:?}");
+    let public = &list["data"][0];
+    assert_eq!(public["id"], deck_id);
+    assert_eq!(public["color_identity"], header["color_identity"]);
+    assert_eq!(public["commanders"], header["commanders"]);
+}
+
+/// The command zone only names a deck in a format that *has* one. Every deck — Modern
+/// included — is seeded with a `Commander` section, so a card filed there in a 60-card
+/// format must read the way the legality rules already read it: part of the deck, not its
+/// commander. The sideboard is the other side of the same coin: `deck_zone` puts it beside
+/// the deck, so it doesn't colour it (even though `card_count` still counts it).
+#[tokio::test]
+async fn a_sixty_card_format_is_not_led_by_its_seeded_commander_section() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "modern@example.com", PW).await;
+    let cards = sample_mono_coloured_cards(&app, 3).await;
+    let [
+        (parked, parked_colour),
+        (spell, spell_colour),
+        (side, side_colour),
+    ] = cards.as_slice()
+    else {
+        unreachable!("sample_mono_coloured_cards returns exactly three")
+    };
+
+    let deck = create_deck_with_format(&app, &access, "Azorius Control", Some("Modern")).await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let command_zone = section_named(&deck, "Commander")["id"]
+        .as_i64()
+        .expect("section id");
+    let creatures = section_named(&deck, "Creatures")["id"]
+        .as_i64()
+        .expect("section id");
+    let sideboard = add_section(&app, &access, deck_id, "Sideboard").await;
+
+    add_deck_card(&app, &access, deck_id, creatures, spell, 4).await;
+    add_deck_card(&app, &access, deck_id, command_zone, parked, 1).await;
+
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert_eq!(
+        header["commanders"],
+        json!([]),
+        "a Modern deck has no commander, whatever is filed under `Commander`"
+    );
+    assert_eq!(
+        header["color_identity"],
+        json!(sorted_wubrg(&[spell_colour, parked_colour])),
+        "the parked {parked_colour} card is part of the deck, so it colours it"
+    );
+
+    // A sideboard card is beside the deck, not in it: counted, but never a colour.
+    add_deck_card(&app, &access, deck_id, sideboard, side, 2).await;
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert_eq!(
+        header["color_identity"],
+        json!(sorted_wubrg(&[spell_colour, parked_colour])),
+        "a {side_colour} sideboard card must not colour the deck"
+    );
+    assert_eq!(header["card_count"], 7, "but it is still counted");
+
+    // …and because it isn't a colour source, a deck whose *only* cards are its sideboard has
+    // nothing to say rather than "colourless" — the distinction `card_count` can't express,
+    // and the reason the field is nullable.
+    let sideboard_only =
+        create_deck_with_format(&app, &access, "Sideboard only", Some("Modern")).await;
+    let sb_id = sideboard_only["id"].as_i64().expect("deck id");
+    let sb_section = add_section(&app, &access, sb_id, "Sideboard").await;
+    add_deck_card(&app, &access, sb_id, sb_section, side, 3).await;
+    let header = listed_deck(&app, &access, sb_id).await;
+    assert!(
+        header["color_identity"].is_null(),
+        "a sideboard-only deck must not claim to be colourless: {header:?}"
+    );
+    assert_eq!(header["card_count"], 3);
+}
+
+/// The zone lists the facet scans select on must never be truncated: a deck with more
+/// command-zone- or sideboard-named sections than fit one query has to give the same answer,
+/// only in more round trips. Both halves broke silently when those lists were capped instead
+/// of chunked — a commander past the cap vanished from the list while `/legality` still named
+/// it, and a sideboard past the cap coloured the deck. Section names are unique
+/// case-sensitively, so `Sideboard`/`sideboard`/`SIDEBOARD` are three real sections that
+/// `deck_zone` reads as one zone, which is what makes this reachable rather than theoretical.
+#[tokio::test]
+async fn many_same_zone_sections_do_not_truncate_the_facets() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "manysections@example.com", PW).await;
+    let cards = sample_mono_coloured_cards(&app, 3).await;
+    let [
+        (boss, boss_colour),
+        (spell, spell_colour),
+        (side, side_colour),
+    ] = cards.as_slice()
+    else {
+        unreachable!("sample_mono_coloured_cards returns exactly three")
+    };
+
+    // The commander sits in the *last* of several command-zone sections, so a rule that kept
+    // only the first few would miss it entirely.
+    let edh = create_deck_with_format(&app, &access, "Late commander", Some("Commander")).await;
+    let edh_id = edh["id"].as_i64().expect("deck id");
+    let mut last_command = section_named(&edh, "Commander")["id"]
+        .as_i64()
+        .expect("section id");
+    for name in [
+        "Commanders",
+        "Command Zone",
+        "Oathbreaker",
+        "Signature Spell",
+    ] {
+        last_command = add_section(&app, &access, edh_id, name).await;
+    }
+    add_deck_card(&app, &access, edh_id, last_command, boss, 1).await;
+    let creatures = section_named(&edh, "Creatures")["id"]
+        .as_i64()
+        .expect("section id");
+    add_deck_card(&app, &access, edh_id, creatures, spell, 60).await;
+
+    let header = listed_deck(&app, &access, edh_id).await;
+    let commanders = header["commanders"].as_array().expect("commanders");
+    assert_eq!(
+        commanders.len(),
+        1,
+        "the commander in the 5th command-zone section is still found: {header:?}"
+    );
+    assert_eq!(commanders[0]["card_id"], *boss);
+    assert_eq!(
+        header["color_identity"],
+        json!([boss_colour]),
+        "and it, not the 99, colours the deck"
+    );
+
+    // The same for the exclusion half: a sideboard section past the front of the list must
+    // still be kept out of the union.
+    let modern = create_deck_with_format(&app, &access, "Many boards", Some("Modern")).await;
+    let modern_id = modern["id"].as_i64().expect("deck id");
+    let main = section_named(&modern, "Creatures")["id"]
+        .as_i64()
+        .expect("section id");
+    add_deck_card(&app, &access, modern_id, main, spell, 4).await;
+    let mut last_sideboard = 0;
+    for name in [
+        "Sideboard",
+        "sideboard",
+        "SIDEBOARD",
+        "Side Board",
+        "Companion",
+    ] {
+        last_sideboard = add_section(&app, &access, modern_id, name).await;
+    }
+    add_deck_card(&app, &access, modern_id, last_sideboard, side, 1).await;
+
+    let header = listed_deck(&app, &access, modern_id).await;
+    assert_eq!(
+        header["color_identity"],
+        json!([spell_colour]),
+        "the {side_colour} card in the 5th sideboard section must not colour the deck: {header:?}"
+    );
+}
+
+/// A deck built entirely from colourless cards *is* colourless — an empty list, which is a
+/// different answer from the `null` an unjudgeable deck gets, and the one that earns the
+/// `{C}` pip on the tile.
+#[tokio::test]
+async fn a_colourless_deck_reports_an_empty_colour_identity_not_null() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "eldrazi@example.com", PW).await;
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards?page_size=250")).await;
+    assert_eq!(status, StatusCode::OK);
+    let colourless = body["data"]
+        .as_array()
+        .expect("cards")
+        .iter()
+        .find(|c| c["color_identity"].as_array().is_some_and(|i| i.is_empty()))
+        .map(|c| c["id"].as_str().expect("card id").to_string())
+        .expect("the seeded catalog has a colourless card");
+
+    let deck = create_deck_with_format(&app, &access, "Eldrazi Ramp", Some("Legacy")).await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let creatures = section_named(&deck, "Creatures")["id"]
+        .as_i64()
+        .expect("section id");
+    add_deck_card(&app, &access, deck_id, creatures, &colourless, 4).await;
+
+    let header = listed_deck(&app, &access, deck_id).await;
+    assert_eq!(header["color_identity"], json!([]));
+    assert_eq!(header["card_count"], 4);
+}
+
 #[tokio::test]
 async fn public_sharing_requires_a_username_then_serves_a_cacheable_no_pii_view() {
     let app = test_app_with_catalog().await;

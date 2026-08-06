@@ -20,8 +20,8 @@
 //!   because **every** new deck is seeded with a `Commander` section — a Modern deck with a
 //!   card parked in it is a 60-card deck with a creature, exactly as `evaluate_deck_rules`
 //!   treats it.
-//! * Maybeboards are excluded by their **column** (issue #570), through the same
-//!   [`maybeboard_section_ids`] sub-select `card_counts_by_deck` filters on.
+//! * Maybeboards are excluded by their **column** (issue #570), as everywhere else — here in
+//!   the section scan, so a maybeboard section never reaches the zone split at all.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -34,7 +34,6 @@ use crate::error::AppError;
 use crate::handlers::shared::dto::split_csv;
 
 use super::analysis::rules::{COLOUR_ORDER, DeckZone, deck_zone, format_leads_with_command_zone};
-use super::maybeboard_section_ids;
 
 /// How many command-zone cards a deck header will name. A real command zone holds one card,
 /// or two (partners, or an Oathbreaker and its signature spell) — anything past that is a
@@ -45,13 +44,15 @@ use super::maybeboard_section_ids;
 /// the pips.
 const MAX_LIST_COMMANDERS: usize = 4;
 
-/// How many same-zone sections of one deck the card scans below will look in. A deck has one
-/// command zone and one sideboard; this is what keeps their **section ids out of an unbounded
-/// `IN (…)` list**, since the per-`(user, game)` caps allow 1,000 decks x 200 sections and
-/// 200,000 bind parameters exceed what SQLite (32,766) and Postgres (65,535) accept — the
-/// whole list would 500 rather than degrade. Sections are taken in display order, so the
-/// seeded `Commander` (position 0) is always among them.
-const MAX_ZONE_SECTIONS_PER_DECK: usize = 4;
+/// Section ids per statement in the two card scans. The per-`(user, game)` caps allow 1,000
+/// decks x 200 sections, and 200,000 bind parameters exceed what SQLite (32,766) and Postgres
+/// (65,535) accept — so the id lists are **chunked**, not truncated. Both are *inclusion*
+/// lists, so the union of the chunks is exactly the un-chunked result: a deck filed into
+/// absurdly many sections costs extra round trips, never a wrong answer. (Capping them
+/// instead is the trap: dropping ids from an inclusion list hides a real commander, and
+/// dropping them from an exclusion list lets a sideboard colour the deck — both silently, and
+/// both in disagreement with the legality verdict on the same deck.)
+const SECTION_IDS_PER_QUERY: usize = 8_192;
 
 /// One card in a deck's command zone, as the deck list names it. The **external** card id
 /// travels (like every card id on the wire), so a client can link to the printing; the deck
@@ -98,14 +99,14 @@ pub(crate) struct DeckFacets {
 /// cards are in its sideboard has a non-zero `card_count` and *nothing to say* about colour,
 /// which a reader could not otherwise tell from a deck that is genuinely colourless.
 ///
-/// Cost is three queries regardless of how many decks are listed: the decks' non-maybeboard
-/// sections, the command-zone cards, and — only for the decks that turned out to have none —
-/// one `DISTINCT` colour-identity scan. The card scans select the two or three columns they
-/// actually read and `DISTINCT` them, so a 100-card deck contributes at most a handful of
-/// rows rather than a hundred, and both the section ids they bind
-/// ([`MAX_ZONE_SECTIONS_PER_DECK`]) and the commanders they return
-/// ([`MAX_LIST_COMMANDERS`]) are bounded per deck — nothing here scales with a *count* a
-/// caller chose.
+/// Cost is three queries for any realistic list — the decks' non-maybeboard sections, the
+/// command-zone cards, and (only for the decks that turned out to have none) one `DISTINCT`
+/// colour-identity scan — plus one more per [`SECTION_IDS_PER_QUERY`] sections beyond the
+/// first chunk, which no real shelf of decks reaches. The card scans select the two or three
+/// columns they actually read and `DISTINCT` them, so a 100-card deck contributes a handful
+/// of rows rather than a hundred, and nothing here scales with a *count* a caller chose: the
+/// commanders that reach the wire are capped ([`MAX_LIST_COMMANDERS`]) and the colours are a
+/// five-element set however many cards fold into them.
 pub(crate) async fn deck_facets_by_deck(
     db: &DatabaseConnection,
     decks: &[deck::Model],
@@ -126,7 +127,7 @@ pub(crate) async fn deck_facets_by_deck(
         .map(|d| d.id)
         .collect();
     // Maybeboards are dropped in SQL (the column, as everywhere else); the zone split itself
-    // has to come back to Rust, and display order makes the per-deck cap below deterministic.
+    // has to come back to Rust.
     let sections: Vec<(i32, i32, String)> = DeckSection::find()
         .select_only()
         .column(deck_section::Column::Id)
@@ -134,31 +135,22 @@ pub(crate) async fn deck_facets_by_deck(
         .column(deck_section::Column::Name)
         .filter(deck_section::Column::DeckId.is_in(deck_ids.iter().copied()))
         .filter(deck_section::Column::IsMaybeboard.eq(false))
-        .order_by_asc(deck_section::Column::DeckId)
-        .order_by_asc(deck_section::Column::Position)
-        .order_by_asc(deck_section::Column::Id)
         .into_tuple()
         .all(db)
         .await?;
-    let mut command_section_ids: Vec<i32> = Vec::new();
-    let mut sideboard_section_ids: Vec<i32> = Vec::new();
-    let mut per_deck: HashMap<i32, (usize, usize)> = HashMap::new();
+    // Both lists are what the card scans below select *on*, so a section missing from either
+    // is a section whose cards go unread — never a section quietly folded in. `deck_proper`
+    // is Main + Command: in a format with no command zone a `Commander` section is simply
+    // part of the deck, which is how `evaluate_deck_rules` reads it too.
+    let mut command_sections: Vec<(i32, i32)> = Vec::new();
+    let mut deck_proper_sections: Vec<(i32, i32)> = Vec::new();
     for (id, deck_id, name) in &sections {
-        let seen = per_deck.entry(*deck_id).or_default();
-        match deck_zone(name) {
-            // In a format with no command zone, a `Commander` section is just part of the
-            // deck — so it's neither named here nor excluded from the union below.
-            DeckZone::Command
-                if led_by_command_zone.contains(deck_id) && seen.0 < MAX_ZONE_SECTIONS_PER_DECK =>
-            {
-                seen.0 += 1;
-                command_section_ids.push(*id);
-            }
-            DeckZone::Sideboard if seen.1 < MAX_ZONE_SECTIONS_PER_DECK => {
-                seen.1 += 1;
-                sideboard_section_ids.push(*id);
-            }
-            _ => {}
+        let zone = deck_zone(name);
+        if zone == DeckZone::Command && led_by_command_zone.contains(deck_id) {
+            command_sections.push((*deck_id, *id));
+        }
+        if zone != DeckZone::Sideboard {
+            deck_proper_sections.push((*deck_id, *id));
         }
     }
 
@@ -166,7 +158,9 @@ pub(crate) async fn deck_facets_by_deck(
     let mut letters: HashMap<i32, BTreeSet<String>> = HashMap::new();
 
     // ---- 2. The command-zone cards ----
-    if !command_section_ids.is_empty() {
+    // Selecting on the section ids alone already scopes the scan to our decks (a section
+    // belongs to exactly one), so the deck ids don't need binding a second time.
+    for chunk in section_ids(&command_sections).chunks(SECTION_IDS_PER_QUERY) {
         let rows: Vec<(i32, String, String, Option<String>)> = DeckCard::find()
             .select_only()
             .column(deck_card::Column::DeckId)
@@ -175,16 +169,15 @@ pub(crate) async fn deck_facets_by_deck(
             .column(card::Column::ColorIdentity)
             .distinct()
             .inner_join(Card)
-            .filter(deck_card::Column::DeckId.is_in(deck_ids.iter().copied()))
-            .filter(deck_card::Column::SectionId.is_in(command_section_ids))
+            .filter(deck_card::Column::SectionId.is_in(chunk.iter().copied()))
             .order_by_asc(card::Column::Name)
             .order_by_asc(card::Column::ExternalId)
             .into_tuple()
             .all(db)
             .await?;
         for (deck_id, card_id, name, identity) in rows {
-            // Every command-zone card colours the deck, including the ones past the cap and
-            // the second printing of one that's already named.
+            // Every command-zone card colours the deck, including the ones past the display
+            // cap and the second printing of one that's already named.
             letters
                 .entry(deck_id)
                 .or_default()
@@ -198,26 +191,25 @@ pub(crate) async fn deck_facets_by_deck(
             }
         }
     }
+    // Chunking means "first four by name" only held within a chunk; re-sort so the header a
+    // deck gets doesn't depend on how its sections happened to be split across queries.
+    for named in commanders.values_mut() {
+        named.sort_by(|a, b| a.name.cmp(&b.name));
+    }
 
     // ---- 3. The union fallback, for the decks with an empty command zone ----
-    let commanderless: Vec<i32> = deck_ids
-        .iter()
-        .copied()
-        .filter(|id| !commanders.contains_key(id))
+    let union_sections: Vec<(i32, i32)> = deck_proper_sections
+        .into_iter()
+        .filter(|(deck_id, _)| !commanders.contains_key(deck_id))
         .collect();
-    if !commanderless.is_empty() {
+    for chunk in section_ids(&union_sections).chunks(SECTION_IDS_PER_QUERY) {
         let rows: Vec<(i32, Option<String>)> = DeckCard::find()
             .select_only()
             .column(deck_card::Column::DeckId)
             .column(card::Column::ColorIdentity)
             .distinct()
             .inner_join(Card)
-            .filter(deck_card::Column::DeckId.is_in(commanderless.clone()))
-            .filter(
-                deck_card::Column::SectionId
-                    .not_in_subquery(maybeboard_section_ids(commanderless.clone())),
-            )
-            .filter(deck_card::Column::SectionId.is_not_in(sideboard_section_ids))
+            .filter(deck_card::Column::SectionId.is_in(chunk.iter().copied()))
             .into_tuple()
             .all(db)
             .await?;
@@ -241,6 +233,11 @@ pub(crate) async fn deck_facets_by_deck(
         );
     }
     Ok(facets)
+}
+
+/// Just the section ids out of a `(deck_id, section_id)` classification.
+fn section_ids(sections: &[(i32, i32)]) -> Vec<i32> {
+    sections.iter().map(|(_, id)| *id).collect()
 }
 
 /// The colour letters held, in canonical WUBRG order. Anything that isn't one of the five
@@ -304,5 +301,110 @@ mod tests {
         // at their word.
         assert!(format_leads_with_command_zone(None));
         assert!(format_leads_with_command_zone(Some("Kitchen Table")));
+    }
+}
+
+#[cfg(test)]
+mod probe_timing {
+    use crate::entities::{card, deck, deck_card, deck_section};
+    use crate::test_support::{card_model, migrated_memory_db};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, EntityTrait};
+
+    fn ts() -> sea_orm::prelude::DateTimeUtc {
+        "2024-01-01T00:00:00Z".parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn probe_timing_100_card_deck() {
+        let db = migrated_memory_db().await;
+        db.execute_unprepared("PRAGMA foreign_keys = OFF")
+            .await
+            .unwrap();
+        // 100 distinct cards
+        for i in 1..=100i32 {
+            card::Entity::insert(
+                card::ActiveModel::from(card::Model {
+                    color_identity: Some(if i % 3 == 0 { "G".into() } else { "R,W".into() }),
+                    ..card_model(i)
+                })
+                .reset_all(),
+            )
+            .exec(&db)
+            .await
+            .unwrap();
+        }
+        let d = deck::ActiveModel {
+            user_id: Set(1),
+            game: Set("mtg".into()),
+            folder_id: Set(None),
+            name: Set("D".into()),
+            description: Set(None),
+            format: Set(Some("Commander".into())),
+            is_public: Set(false),
+            created_at: Set(ts()),
+            updated_at: Set(ts()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let mut ids = Vec::new();
+        for (i, (name, maybe)) in [
+            ("Commander", false),
+            ("Creatures", false),
+            ("Lands", false),
+            ("Sideboard", false),
+            ("Maybeboard", true),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let s = deck_section::ActiveModel {
+                deck_id: Set(d.id),
+                name: Set((*name).into()),
+                position: Set(i as i32),
+                is_maybeboard: Set(*maybe),
+                created_at: Set(ts()),
+                updated_at: Set(ts()),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            ids.push(s.id);
+        }
+        // 100 cards spread over Creatures/Lands/Sideboard, command zone left EMPTY
+        for i in 1..=100i32 {
+            deck_card::ActiveModel {
+                deck_id: Set(d.id),
+                section_id: Set(ids[1 + (i as usize % 3)]),
+                card_id: Set(i),
+                quantity: Set(1),
+                foil_quantity: Set(0),
+                created_at: Set(ts()),
+                updated_at: Set(ts()),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        let n = 300;
+        // old path: the count aggregate alone
+        let t0 = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = super::super::card_counts_by_deck(&db, &[d.id])
+                .await
+                .unwrap();
+        }
+        let old = t0.elapsed() / n;
+        // new path: the whole header
+        let t1 = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = super::super::deck_header(&db, &d).await.unwrap();
+        }
+        let new = t1.elapsed() / n;
+        println!("@@@TIMING@@@ old(count only)={old:?} new(deck_header)={new:?}");
     }
 }
