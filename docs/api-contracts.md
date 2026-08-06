@@ -621,11 +621,20 @@ the display-section manifest: `key` is `contains` / `exclusive` / `booster` / `v
 value the `?section` filter takes), `total` its card count. `booster_family` is set **only on
 the `exclusive` section** — a representative `product_type` slug (e.g. `collector_pack`) naming
 the family those cards are exclusive to, so the SPA titles the block after the *contained*
-booster ("Collector Booster exclusives") even for a bundle whose own type carries no family;
-`null` on every other section. Only non-empty sections are returned, in display order — so the
-SPA renders one independently-paginated block per section (issue #224) and knows each's size
-without fetching its cards. The four sections are the membership buckets with the `booster`
-pool split by `exclusive`; their combined `total` is the whole card count.
+booster even for a bundle whose own type carries no family; `null` on every other section. Only
+non-empty sections are returned, in display order — so the SPA renders one
+independently-paginated block per section (issue #224) and knows each's size without fetching
+its cards. The four sections are the membership buckets with the `booster` pool split by
+`exclusive`; their combined `total` is the whole card count.
+
+**Only `contains` is a containment claim.** `exclusive` is a *subset* of the `booster` pull pool
+(never additional to it) and `variable` is a randomized configuration, so a `total` summed across
+sections is a pool size, not a pack's worth — a booster with a 600-card pool holds ~15 of them.
+`sealed_contents` carries no quantity either, so a `total` counts **distinct cards** (a precon's
+30 Forests are one row); only `ProductComponent.quantity` counts physical pieces.
+`web/src/lib/productCounts.ts` mirrors this key set, the display order, and the
+unknown-key-to-`variable` fallback, and words every heading and chip on the sealed-product page
+from it — a fifth key, or a reordering, has to land on both sides.
 
 `ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
 (the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is

@@ -335,14 +335,16 @@ pub struct ProductCardSectionsParams {
 /// order, and matches the ordering [`build_product_card_index`] sorts the cards into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CardSection {
-    /// Guaranteed cards (`contains` membership) — "In the box".
+    /// Guaranteed cards (`contains` membership) — the only section the SPA may word as
+    /// containment; every other one is a possibility (see `web/src/lib/productCounts.ts`).
     Contains,
     /// `booster` cards exclusive to this product's booster family (a collector booster's
     /// special printings that no other booster in the set can pull).
     Exclusive,
     /// `booster` cards shared with the set's other booster families (the wider pull pool).
     Booster,
-    /// `variable` cards (a randomized / either-or configuration) — "May be included".
+    /// `variable` cards (a randomized / either-or configuration) — "May be included". Also the
+    /// bucket an unrecognised membership falls into, so a new one is never read as guaranteed.
     Variable,
 }
 

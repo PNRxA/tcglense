@@ -44,8 +44,8 @@ export function productTypeLabel(slug: string): string {
 // The booster "family" name for each booster product-type slug (pack + box forms share
 // one label). Mirrors the API's `booster_family` (see `api/src/tcgcsv/classify.rs`): a card
 // exclusive to a family can't be pulled from any other, and the API flags such cards on the
-// product-cards read — this labels the section that groups them (e.g. "Collector Booster
-// exclusives"). A non-booster slug has no family, so no exclusive section is shown.
+// product-cards read — this labels the section that groups them (e.g. "Exclusive to Collector
+// Booster"). A non-booster slug has no family, so no exclusive section is shown.
 const BOOSTER_FAMILY_LABELS: Record<string, string> = {
   collector_pack: 'Collector Booster',
   collector_display: 'Collector Booster',

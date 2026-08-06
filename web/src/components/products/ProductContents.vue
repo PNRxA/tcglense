@@ -4,6 +4,7 @@ import { ChevronRight, Package } from '@lucide/vue'
 import type { ProductComponent } from '@/lib/api'
 import { cardImageUrl, productImageUrl } from '@/lib/api'
 import { useProductContentsQuery } from '@/composables/useProducts'
+import { boxItemCount } from '@/lib/productCounts'
 import { useDetailModalLink, type DetailModalKind } from '@/composables/useDetailModalLink'
 
 // The sealed product's structural composition — "what's in the box". Lists the nested
@@ -51,6 +52,9 @@ const rows = computed(() =>
   })),
 )
 const show = computed(() => rows.value.length > 0)
+// The physical piece count, not the row count — it must agree with the `30×` quantities the
+// rows below show, and with ProductOverview's "items in the box" chip.
+const itemTotal = computed(() => boxItemCount(contentsQuery.data.value?.data ?? []))
 </script>
 
 <template>
@@ -58,7 +62,7 @@ const show = computed(() => rows.value.length > 0)
     <h2 class="mb-1 flex items-baseline gap-2 text-base font-semibold tracking-tight">
       What's in the box
       <span class="text-muted-foreground text-xs font-normal">
-        {{ rows.length }} item{{ rows.length === 1 ? '' : 's' }}
+        {{ itemTotal.toLocaleString() }} item{{ itemTotal === 1 ? '' : 's' }}
       </span>
     </h2>
     <p class="text-muted-foreground mb-4 text-xs">

@@ -833,8 +833,8 @@ const rowLinkClass =
             Sealed product contents
           </p>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
-            Which cards live inside which sealed products — the data behind 'found in' on every card
-            page.
+            Which cards a sealed product contains — or can be pulled from — the data behind the
+            sealed sections on every card page.
           </p>
           <p class="text-muted-foreground mt-3 text-xs">mtgjson.com</p>
         </a>

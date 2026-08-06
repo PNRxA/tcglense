@@ -13,6 +13,8 @@ const state = vi.hoisted(() => ({
   query: '',
   sort: 'default',
   error: undefined as unknown,
+  // True while vue-query is holding the previous (filtered) manifest up through a refetch.
+  stale: false,
 }))
 
 vi.mock('@/composables/useProducts', () => ({
@@ -26,6 +28,12 @@ vi.mock('@/composables/useProducts', () => ({
     error: {
       get value() {
         return state.error
+      },
+    },
+    // The heading treats a stale (kept-previous) manifest as filtered, so the mount needs this.
+    isPlaceholderData: {
+      get value() {
+        return state.stale
       },
     },
   }),
@@ -55,12 +63,13 @@ function section(key: string, total = 1, boosterFamily: string | null = null): P
 function mountCards(
   manifest: ProductCardSection[],
   productType: string,
-  opts: { query?: string; sort?: string; error?: unknown } = {},
+  opts: { query?: string; sort?: string; error?: unknown; stale?: boolean } = {},
 ) {
   state.manifest = manifest
   state.query = opts.query ?? ''
   state.sort = opts.sort ?? 'default'
   state.error = opts.error
+  state.stale = opts.stale ?? false
   const wrapper = mount(ProductCards, {
     props: { game: 'mtg', id: '100', productType },
     global: {
@@ -91,6 +100,7 @@ beforeEach(() => {
   state.query = ''
   state.sort = 'default'
   state.error = undefined
+  state.stale = false
 })
 
 describe('ProductCards sections', () => {
@@ -101,37 +111,49 @@ describe('ProductCards sections', () => {
     )
     expect(sections.map((s) => s.key)).toEqual(['contains', 'exclusive', 'booster', 'variable'])
     expect(sections.map((s) => s.title)).toEqual([
-      'In the box',
-      'Collector Booster exclusives',
-      'Can be pulled from boosters',
+      'Guaranteed cards',
+      'Exclusive to Collector Booster',
+      // "Shared", not "Collector Booster pull pool": the exclusives split out above are part of
+      // that pool too, so this block is its remainder — the page must not state two sizes for
+      // one named pool.
+      'Shared Collector Booster pool',
       'May be included',
     ])
   })
 
   it('titles the exclusives block by the backend-provided contained booster family', () => {
     // A bundle's own product_type carries no family, but the backend names the collector
-    // booster it wraps — so the section reads "Collector Booster exclusives" (issue #290).
+    // booster it wraps — so the section reads "Exclusive to Collector Booster" (issue #290).
+    // The shared pool below it spans every family, so it stays generic on a bundle.
     const { sections } = mountCards(
       [section('exclusive', 1, 'collector_pack'), section('booster')],
       'bundle',
     )
     expect(sections.map((s) => s.title)).toEqual([
-      'Collector Booster exclusives',
-      'Can be pulled from boosters',
+      'Exclusive to Collector Booster',
+      'Shared booster pool',
     ])
   })
 
   it('falls back to the product’s own booster family when the backend hands none down', () => {
     const { sections } = mountCards([section('exclusive'), section('booster')], 'play_pack')
     expect(sections.map((s) => s.title)).toEqual([
-      'Play Booster exclusives',
-      'Can be pulled from boosters',
+      'Exclusive to Play Booster',
+      'Shared Play Booster pool',
     ])
   })
 
   it('falls back to a generic exclusives label with no booster family at all', () => {
     const { sections } = mountCards([section('exclusive')], 'bundle')
-    expect(sections.map((s) => s.title)).toEqual(['Booster exclusives'])
+    // Never "this booster" — the viewed product is a bundle, which is not one.
+    expect(sections.map((s) => s.title)).toEqual(["Exclusive to this product's boosters"])
+  })
+
+  it('names an unrecognised section key as a possible-cards bucket, never a containment claim', () => {
+    // Mirrors the server, which files an unknown membership into the weakest bucket — the raw
+    // wire slug must never surface as a heading.
+    const { sections } = mountCards([section('someday')], 'bundle')
+    expect(sections.map((s) => s.title)).toEqual(['Possible cards'])
   })
 
   it('sums the section counts into the heading total', () => {
@@ -140,7 +162,7 @@ describe('ProductCards sections', () => {
       'bundle',
     )
     expect(sections.map((s) => s.key)).toEqual(['contains', 'booster'])
-    // "Cards in this product (5)" — the grand total across sections (from the manifest).
+    // The grand total across sections (from the manifest).
     expect(wrapper.find('h2').text()).toContain('5')
   })
 
@@ -181,5 +203,86 @@ describe('ProductCards sections', () => {
     expect(sections).toHaveLength(0)
     expect(wrapper.text()).toContain('Malformed search.')
     expect(wrapper.text()).not.toContain('No cards match')
+  })
+})
+
+// The heading is the string that used to lie: it read "Cards in this product (600)" over a
+// booster's pull pool. It now takes its noun from the certainties the manifest holds.
+describe('ProductCards heading', () => {
+  const headingOf = (manifest: ProductCardSection[], productType = 'bundle') =>
+    mountCards(manifest, productType).wrapper.find('h2').text().replace(/\s+/g, ' ').trim()
+
+  it('keeps the containment wording when every card really is guaranteed', () => {
+    expect(headingOf([section('contains', 99)], 'commander_deck')).toBe(
+      'Cards in this product (99)',
+    )
+  })
+
+  it('calls a booster’s pool a pool, and puts the unit inside the number', () => {
+    // The reported bug: a pack holding ~15 cards announced its ~600-card pull pool as its
+    // contents. Both the noun and the parenthetical have to change.
+    const heading = headingOf([section('booster', 600)], 'play_pack')
+    expect(heading).toBe('What you can pull (600-card pool)')
+    expect(heading).not.toContain('in this product')
+  })
+
+  it('counts the family-exclusive slice into the same pool, never as extra cards', () => {
+    expect(headingOf([section('exclusive', 80), section('booster', 520)], 'collector_pack')).toBe(
+      'What you can pull (600-card pool)',
+    )
+  })
+
+  it('hedges anything randomized with one voice', () => {
+    expect(headingOf([section('variable', 12)])).toBe('What you might get (12)')
+  })
+
+  it('keeps the pool legible when a randomized insert joins it', () => {
+    // A collector box is routinely pool + a randomized insert with nothing guaranteed — the
+    // shape the dummy catalog itself ships. Without the split line it reads as one number.
+    const { wrapper } = mountCards(
+      [section('booster', 600), section('variable', 2)],
+      'collector_display',
+    )
+    expect(wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe('What you might get (602)')
+    expect(wrapper.find('h2 + p').text()).toBe(
+      '600 in the pull pool · 2 sometimes included — a copy opens some of the pool, not all of it.',
+    )
+  })
+
+  it('drops the pool-size claim while a search narrows the manifest', () => {
+    // Filtered, the number is what matched — asserting "(3-card pool)" over a 600-card pool
+    // would be a brand-new lie.
+    const filtered = mountCards([section('booster', 3)], 'play_pack', { query: 't:goblin' })
+    expect(filtered.wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe(
+      'What you can pull (3)',
+    )
+  })
+
+  it('holds the pool-size claim back while a cleared search refetches', () => {
+    // `searching` flips the instant the URL clears, but keepPreviousData still holds the
+    // *filtered* counts — so for one refetch the heading would assert a 3-card pool over a
+    // 600-card one. The placeholder flag has to suppress the unit too.
+    const stale = mountCards([section('booster', 3)], 'play_pack', { stale: true })
+    expect(stale.wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe(
+      'What you can pull (3)',
+    )
+  })
+
+  it('names both certainties on a mixed product, and spells the split out below', () => {
+    const { wrapper } = mountCards([section('contains', 2), section('booster', 600)], 'bundle')
+    expect(wrapper.find('h2').text().replace(/\s+/g, ' ').trim()).toBe(
+      "What's guaranteed, what's random (602)",
+    )
+    expect(wrapper.find('h2 + p').text()).toBe(
+      '2 guaranteed · 600 in the pull pool — a copy opens some of the pool, not all of it.',
+    )
+  })
+
+  it('gives a single-certainty product no reconciling line', () => {
+    expect(
+      mountCards([section('booster', 5)], 'play_pack')
+        .wrapper.find('h2 + p')
+        .exists(),
+    ).toBe(false)
   })
 })

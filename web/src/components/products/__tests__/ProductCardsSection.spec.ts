@@ -72,7 +72,7 @@ function mountSection(
       game: 'mtg',
       id: '100',
       sectionKey: 'exclusive',
-      title: 'Collector Booster exclusives',
+      title: 'Exclusive to Collector Booster',
       blurb: 'b',
       count: 5,
       search: '',
@@ -165,7 +165,7 @@ describe('ProductCardsSection', () => {
   it('starts collapsed (#291): header + manifest count only, and the paged query disabled', () => {
     const wrapper = mountSection({ data: undefined, isPending: true, props: { count: 42 } })
     // The header names the section and its (manifest) card count…
-    expect(wrapper.get('h3').text()).toContain('Collector Booster exclusives')
+    expect(wrapper.get('h3').text()).toContain('Exclusive to Collector Booster')
     expect(wrapper.get('h3').text()).toContain('42')
     expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('false')
     // …but no body — and no fetch: the enabled ref threaded into the query (7th arg) is off.
