@@ -11,7 +11,9 @@ import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
 
-// One independently-paginated block of a sealed product's "Cards in this product" section
+// One independently-paginated block of a sealed product's card sections — the title and blurb
+// come from the parent, which words them by how strong the section's claim is (see ProductCards
+// and lib/productCounts.ts); this block never asserts containment on its own
 // (issue #224): a collapsible heading + blurb (collapsed by default, issue #291), this
 // section's page of cards, and its own prev/next. Cards (and the page count) come from a
 // per-section paged query keyed on `sectionKey`, which the parent holds fixed by keying each
