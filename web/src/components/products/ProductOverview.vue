@@ -1,20 +1,23 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import { Boxes, Layers, Package, Sparkles } from '@lucide/vue'
+import { Boxes, Dices, Layers, Package, Shuffle, Sparkles } from '@lucide/vue'
 import {
   useProductCardSectionsQuery,
   useProductContainersQuery,
   useProductContentsQuery,
 } from '@/composables/useProducts'
 import { boosterFamilyLabel } from '@/lib/productType'
+import { boxItemCount, productCardChips, productCardCounts } from '@/lib/productCounts'
 
-// The sealed product's at-a-glance strip: how many items its box holds, how many cards
-// it contains or can pull (with the booster-family exclusives called out), and how many
-// parent products bundle it — each chip a jump link to the matching section further down
-// the page, so what's buried deep is surfaced at the top (the "cards in this product"
-// list especially). Every count rides a query key a section below shares — the contents
-// list, the card-sections manifest (unfiltered), the containers list — so this strip
-// adds no fetch of its own. Renders nothing when no count is known (yet).
+// The sealed product's at-a-glance strip: how many pieces its box holds, how many cards are
+// guaranteed, how many are only in the booster pull pool (with the booster-family exclusives
+// called out as a slice of that pool), how many a randomized configuration might add, and how
+// many parent products bundle it — each chip a jump link to the matching section further down
+// the page, so what's buried deep is surfaced at the top (the card list especially). The card
+// chips are split by certainty rather than summed: one "N cards inside" chip announced a
+// booster's whole pull pool as its contents. Every count rides a query key a section below
+// shares — the contents list, the card-sections manifest (unfiltered), the containers list —
+// so this strip adds no fetch of its own. Renders nothing when no count is known (yet).
 const props = defineProps<{ game: string; id: string }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -27,18 +30,38 @@ const contentsQuery = useProductContentsQuery(game, id)
 const sectionsQuery = useProductCardSectionsQuery(game, id, ref(''))
 const containersQuery = useProductContainersQuery(game, id)
 
-const boxItems = computed(() => contentsQuery.data.value?.data.length ?? 0)
+// Physical pieces, not line items: a booster box is one `30× pack` row plus a topper — 31
+// items, not 2. Shares boxItemCount with ProductContents' own heading so the two agree.
+const boxItems = computed(() => boxItemCount(contentsQuery.data.value?.data ?? []))
 const manifest = computed(() => sectionsQuery.data.value?.data ?? [])
-const cardTotal = computed(() => manifest.value.reduce((sum, s) => sum + s.total, 0))
-const exclusiveSection = computed(() => manifest.value.find((s) => s.key === 'exclusive'))
-const exclusiveLabel = computed(() => {
-  const family = exclusiveSection.value?.booster_family
-  const name = family ? boosterFamilyLabel(family) : null
-  return name ? `${name} exclusives` : 'booster exclusives'
+const counts = computed(() => productCardCounts(manifest.value))
+// The exclusives' booster family, when the backend names one. This strip takes no
+// `product_type`, so there's no own-family fallback — the chip goes generic instead.
+const exclusiveFamily = computed(() => {
+  const family = manifest.value.find((s) => s.key === 'exclusive')?.booster_family
+  return family ? boosterFamilyLabel(family) : null
 })
+const CHIP_ICONS = { guaranteed: Layers, pull: Dices, exclusive: Sparkles, variable: Shuffle }
 const containerCount = computed(() => containersQuery.data.value?.data.length ?? 0)
 
-const chips = computed(() =>
+type OverviewChip = {
+  key: 'contents' | 'cards' | 'containers'
+  icon: unknown
+  count: number
+  label: string
+  // Extends the "Jump to …" tooltip where the label alone could still mislead (a pool size read
+  // as a pack's worth, a distinct-card count read as copies).
+  hint?: string
+  // Stands in for the visible label in the accessible name when that label leans on the chip
+  // beside it ("6 of them exclusive to …" has no antecedent read on its own).
+  aria?: string
+}
+
+// Certainty descends left to right — box pieces, guaranteed cards, the pull pool, the pool's
+// exclusive slice, randomized maybes, then the parents that bundle this product. The
+// exclusives chip says "of them", so it must stay adjacent to (and after) the pull chip it
+// back-references; productCardChips guarantees that order.
+const chips = computed<OverviewChip[]>(() =>
   [
     {
       key: 'contents' as const,
@@ -46,18 +69,14 @@ const chips = computed(() =>
       count: boxItems.value,
       label: boxItems.value === 1 ? 'item in the box' : 'items in the box',
     },
-    {
+    ...productCardChips(counts.value, exclusiveFamily.value).map((chip) => ({
       key: 'cards' as const,
-      icon: Layers,
-      count: cardTotal.value,
-      label: cardTotal.value === 1 ? 'card inside' : 'cards inside',
-    },
-    {
-      key: 'cards' as const,
-      icon: Sparkles,
-      count: exclusiveSection.value?.total ?? 0,
-      label: exclusiveLabel.value,
-    },
+      icon: CHIP_ICONS[chip.id],
+      count: chip.count,
+      label: chip.label,
+      hint: chip.hint,
+      aria: chip.aria,
+    })),
     {
       key: 'containers' as const,
       icon: Boxes,
@@ -75,7 +94,8 @@ const chips = computed(() =>
       :key="i"
       type="button"
       class="bg-card hover:bg-muted/50 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors"
-      :title="`Jump to ${chip.count.toLocaleString()} ${chip.label}`"
+      :title="`Jump to ${chip.count.toLocaleString()} ${chip.label}${chip.hint ? ` — ${chip.hint}` : ''}`"
+      :aria-label="chip.aria ? `${chip.count.toLocaleString()} ${chip.aria}` : undefined"
       @click="emit('jump', chip.key)"
     >
       <component :is="chip.icon" class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />

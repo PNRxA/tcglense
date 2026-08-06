@@ -66,8 +66,10 @@ describe('ProductContents', () => {
       comp({ kind: 'other', name: 'Card storage box', quantity: 1 }),
     ])
     // Heading carries the section title plus a live item count (SEO enrichment, issue #302).
+    // The count is the physical pieces (9 boosters + 1 box = 10), not the 2 line items — it
+    // has to agree with the `9×` the row below it shows.
     expect(wrapper.find('h2').text()).toContain("What's in the box")
-    expect(wrapper.find('h2').text()).toContain('2 items')
+    expect(wrapper.find('h2').text()).toContain('10 items')
     const items = wrapper.findAll('li')
     expect(items).toHaveLength(2)
     expect(items[0]!.text()).toContain('9×')
