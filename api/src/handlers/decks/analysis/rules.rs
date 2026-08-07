@@ -10,6 +10,12 @@
 //! false "in breach" is worse than a miss, so an unrecognised format, an empty deck, or a
 //! card we can't read confidently is **skipped rather than guessed at**, and "you haven't
 //! finished building this yet" is a `warning`, never an `error`.
+//!
+//! Some commanders rewrite these rules for their own deck — Mystery Booster Commander
+//! Edition's **Rulebreaker** keyword is nothing *but* such a rewrite. [`rulebreaker`] reads
+//! those abilities off the command zone by the same principle (a grammar over the card's
+//! text, not a list of card ids); the two rules they widen are applied below, at the deck
+//! size and at the colour-identity check.
 
 use std::collections::HashMap;
 
@@ -18,6 +24,10 @@ use serde::Serialize;
 use crate::handlers::decks::DeckSectionResponse;
 
 use super::{AnalysisEntry, CardFacts};
+
+mod rulebreaker;
+
+use rulebreaker::{CardMatcher, Rulebreakers};
 
 // ---------- Zones ----------
 
@@ -520,6 +530,73 @@ struct NameFold<'a> {
     copies: i64,
 }
 
+/// Which colours a Rulebreaker's "`N` colour(s) of your choice not in your commander's
+/// colour identity" clause is best spent on: the combination that puts the most of the deck
+/// back inside the rules, since the choice is the player's and they make it knowing what
+/// they built. Ties go to the first in WUBRG order, so the verdict is stable.
+///
+/// Bounded by the five colours however large `count` is, so the subset scan is at most 32
+/// combinations of at most five candidates — the deck itself never enters the exponent.
+fn best_extra_colours(
+    off_colour: &[&NameFold],
+    identity: &[String],
+    cards: &CardMatcher,
+    count: usize,
+) -> Vec<String> {
+    // Only a colour some named card actually needs is worth choosing, and only a real WUBRG
+    // colour can be chosen at all — which is what bounds the scan.
+    let candidates: Vec<String> = COLOUR_ORDER
+        .iter()
+        .filter(|colour| {
+            off_colour.iter().any(|fold| {
+                cards.matches(fold.facts)
+                    && fold
+                        .facts
+                        .color_identity
+                        .iter()
+                        .any(|held| held == *colour && !identity.contains(held))
+            })
+        })
+        .map(|colour| (*colour).to_string())
+        .collect();
+    if count >= candidates.len() {
+        return candidates;
+    }
+    let covers = |chosen: &[String]| {
+        off_colour
+            .iter()
+            .filter(|fold| {
+                cards.matches(fold.facts)
+                    && fold
+                        .facts
+                        .color_identity
+                        .iter()
+                        .all(|colour| identity.contains(colour) || chosen.contains(colour))
+            })
+            .count()
+    };
+    let mut best: Vec<String> = Vec::new();
+    let mut best_saved = 0usize;
+    for mask in 0u32..(1u32 << candidates.len()) {
+        if mask.count_ones() as usize != count {
+            continue;
+        }
+        let chosen: Vec<String> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask >> index & 1 == 1)
+            .map(|(_, colour)| colour.clone())
+            .collect();
+        let saved = covers(&chosen);
+        // Strictly greater, and masks ascend, so the earliest WUBRG combination wins a tie.
+        if saved > best_saved {
+            best_saved = saved;
+            best = chosen;
+        }
+    }
+    best
+}
+
 /// Judge a deck against its format's construction rules. `entries` must already be the deck
 /// proper (maybeboard excluded, like everything else that answers "what is this deck"), and
 /// `sections` supplies the names the zone split reads.
@@ -596,11 +673,21 @@ pub(crate) fn evaluate_deck_rules(
         }
     }
 
+    // Rulebreaker abilities are read off the command zone alone — every one of them is
+    // worded "a deck with **this commander**", so the same card in the 99 grants nothing,
+    // and a format without a command zone (where `commanders` stays empty) grants nothing
+    // either.
+    let rulebreakers = Rulebreakers::collect(commanders.iter().map(|(facts, _)| *facts));
+
     // ---- Deck size ----
     let (exact, required) = match rules.size {
         DeckSize::Exact(count) => (Some(count), count),
         DeckSize::Min(count) => (None, count),
     };
+    // "A deck with this commander has no maximum deck size" (Whtz, the Bibliophile) turns
+    // the exact size into a floor: the deck is still short of legal at 99 cards, it may
+    // simply keep going past 100.
+    let exact = exact.filter(|_| !rulebreakers.lifts_maximum_deck_size());
     if deck_copies > 0 && deck_copies < required {
         violations.push(DeckRuleViolation {
             rule: DeckRuleId::DeckSize,
@@ -667,7 +754,7 @@ pub(crate) fn evaluate_deck_rules(
                 .iter()
                 .map(|(card, _)| card.name.as_str())
                 .collect();
-            let off_colour: Vec<&NameFold> = folds
+            let mut off_colour: Vec<&NameFold> = folds
                 .iter()
                 .filter(|fold| {
                     !commander_names.contains(&fold.facts.name.as_str())
@@ -676,8 +763,29 @@ pub(crate) fn evaluate_deck_rules(
                             .color_identity
                             .iter()
                             .any(|colour| !identity.contains(colour))
+                        // "…can have Angel cards of any color identity" and its cousins put
+                        // the cards they name outside this rule altogether.
+                        && !rulebreakers.exempts_from_colour_identity(fold.facts)
                 })
                 .collect();
+            // "…the color identity of instant and sorcery cards in your deck can include one
+            // color of your choice" (Tolabow, Loch Rascal) is a single choice shared by every
+            // card the clause names. The player makes it *after* building the deck, so the
+            // colours that put the most of it back inside the rules are the ones they'd pick.
+            for (cards, count) in rulebreakers.extra_colour_clauses() {
+                if off_colour.is_empty() {
+                    break;
+                }
+                let chosen = best_extra_colours(&off_colour, &identity, cards, count);
+                off_colour.retain(|fold| {
+                    !cards.matches(fold.facts)
+                        || fold
+                            .facts
+                            .color_identity
+                            .iter()
+                            .any(|colour| !identity.contains(colour) && !chosen.contains(colour))
+                });
+            }
             for fold in &off_colour {
                 for card_id in &fold.card_ids {
                     card_issues.push(DeckRuleCardIssue {
@@ -1104,6 +1212,298 @@ mod tests {
                 .card_issues
                 .iter()
                 .any(|i| i.card_id == "bad" && i.status == DeckRuleCardStatus::OffColour)
+        );
+    }
+
+    /// Whtz, the Bibliophile — "A deck with this commander has no maximum deck size." The
+    /// 100 becomes a floor, not a target.
+    #[test]
+    fn a_rulebreaker_can_lift_the_maximum_deck_size() {
+        let sections = [section(1, "Commander", false), section(2, "Lands", false)];
+        let whtz = entry("w", "Whtz, the Bibliophile", 1, 1, 0)
+            .type_line("Legendary Creature — Homunculus")
+            .colors("W,U")
+            .oracle("Rulebreaker — A deck with this commander has no maximum deck size.");
+        let big = [
+            whtz.clone(),
+            entry("l", "Wastes", 2, 199, 0).type_line("Basic Land"),
+        ];
+        let refs: Vec<&AnalysisEntry> = big.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            !result
+                .violations
+                .iter()
+                .any(|v| v.rule == DeckRuleId::DeckSize),
+            "200 cards is fine under Whtz, got {:?}",
+            result.violations
+        );
+
+        // The floor is untouched — an unfinished deck still says so.
+        let short = [whtz, entry("l", "Wastes", 2, 50, 0).type_line("Basic Land")];
+        let refs: Vec<&AnalysisEntry> = short.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        let size = result
+            .violations
+            .iter()
+            .find(|v| v.rule == DeckRuleId::DeckSize)
+            .expect("51 cards is still short of 100");
+        assert_eq!(size.severity, DeckRuleSeverity::Warning);
+        assert_eq!(size.message, "51 of 100 cards — 49 to go.");
+    }
+
+    /// The colour-identity exemptions: each Rulebreaker widens the rule for the cards it
+    /// names and for nothing else.
+    #[test]
+    fn a_rulebreaker_exempts_only_the_cards_it_names() {
+        let sections = [section(1, "Commander", false), section(2, "Main", false)];
+        let judge = |commander: AnalysisEntry, rows: Vec<AnalysisEntry>| -> Vec<String> {
+            let all: Vec<AnalysisEntry> = std::iter::once(commander).chain(rows).collect();
+            let refs: Vec<&AnalysisEntry> = all.iter().collect();
+            evaluate_deck_rules("commander", &refs, &sections)
+                .card_issues
+                .iter()
+                .filter(|issue| issue.status == DeckRuleCardStatus::OffColour)
+                .map(|issue| issue.name.clone())
+                .collect()
+        };
+
+        // Seluma, Light of Aysen — "…can have Angel cards of any color identity and any
+        // basic land cards."
+        let seluma = entry("s", "Seluma", 1, 1, 0)
+            .type_line("Legendary Creature — Angel Warrior")
+            .colors("W")
+            .oracle(
+                "Rulebreaker — A deck with this commander can have Angel cards of any color \
+                 identity and any basic land cards.\nFlying",
+            );
+        assert_eq!(
+            judge(
+                seluma,
+                vec![
+                    entry("a", "Archangel of Wrath", 2, 1, 0)
+                        .type_line("Creature — Angel")
+                        .colors("B"),
+                    entry("i", "Island", 2, 1, 0)
+                        .type_line("Basic Land — Island")
+                        .colors("U"),
+                    entry("c", "Counterspell", 2, 1, 0)
+                        .type_line("Instant")
+                        .colors("U"),
+                ],
+            ),
+            vec!["Counterspell".to_string()],
+            "the Angel and the basic are exempt; the instant is not"
+        );
+
+        // Grizzlegom, Hurloon Hero — "…can have any land cards" (nonbasics included).
+        let grizzlegom = entry("g", "Grizzlegom", 1, 1, 0)
+            .type_line("Legendary Creature — Minotaur Warrior")
+            .colors("R,G")
+            .oracle("Rulebreaker — A deck with this commander can have any land cards.");
+        assert_eq!(
+            judge(
+                grizzlegom,
+                vec![
+                    entry("t", "Tundra", 2, 1, 0)
+                        .type_line("Land — Plains Island")
+                        .colors("W,U"),
+                    entry("c", "Counterspell", 2, 1, 0)
+                        .type_line("Instant")
+                        .colors("U"),
+                ],
+            ),
+            vec!["Counterspell".to_string()]
+        );
+
+        // Maular, the Next Evolution — the mana-value qualifier narrows the descriptor.
+        let maular = entry("m", "Maular", 1, 1, 0)
+            .type_line("Legendary Creature — Dinosaur Mutant")
+            .colors("G")
+            .oracle(
+                "Rulebreaker — A deck with this commander can have creature cards with mana \
+                 value 7 or greater of any color identity and any basic land cards.",
+            );
+        assert_eq!(
+            judge(
+                maular,
+                vec![
+                    entry("b", "Blightsteel Colossus", 2, 1, 0)
+                        .type_line("Artifact Creature — Golem")
+                        .colors("U")
+                        .cmc(12.0),
+                    entry("s", "Shriekmaw", 2, 1, 0)
+                        .type_line("Creature — Elemental")
+                        .colors("B")
+                        .cmc(5.0),
+                ],
+            ),
+            vec!["Shriekmaw".to_string()],
+            "mana value 7 or greater, so the five-drop stays off-colour"
+        );
+
+        // The Everforger — two alternatives in one descriptor.
+        let everforger = entry("e", "The Everforger", 1, 1, 0)
+            .type_line("Legendary Artifact Creature — Construct")
+            .oracle(
+                "Rulebreaker — A deck with this commander can have artifact creature and \
+                 Equipment cards of any color identity and any basic land cards.",
+            );
+        assert_eq!(
+            judge(
+                everforger,
+                vec![
+                    entry("k", "Kaldra Compleat", 2, 1, 0)
+                        .type_line("Legendary Artifact — Equipment")
+                        .colors("W"),
+                    entry("p", "Phyrexian Metamorph", 2, 1, 0)
+                        .type_line("Artifact Creature — Shapeshifter")
+                        .colors("U"),
+                    entry("c", "Counterspell", 2, 1, 0)
+                        .type_line("Instant")
+                        .colors("U"),
+                ],
+            ),
+            vec!["Counterspell".to_string()]
+        );
+
+        // Valko Indorian reads a creature *subtype*; The Unluckiest Planeswalker an
+        // enchantment one.
+        let valko = entry("v", "Valko Indorian", 1, 1, 0)
+            .type_line("Legendary Creature — Human Wizard")
+            .colors("B")
+            .oracle(
+                "Rulebreaker — A deck with this commander can have Phyrexian cards of any \
+                 color identity and any basic land cards.",
+            );
+        assert_eq!(
+            judge(
+                valko,
+                vec![
+                    entry("a", "Atraxa", 2, 1, 0)
+                        .type_line("Legendary Creature — Phyrexian Angel Horror")
+                        .colors("W,U,B,G"),
+                    entry("c", "Counterspell", 2, 1, 0)
+                        .type_line("Instant")
+                        .colors("U"),
+                ],
+            ),
+            vec!["Counterspell".to_string()]
+        );
+
+        let unluckiest = entry("u", "The Unluckiest Planeswalker", 1, 1, 0)
+            .type_line("Legendary Planeswalker")
+            .colors("R")
+            .oracle(
+                "Rulebreaker — A deck with this commander can have Aura cards of any color \
+                 identity and any basic land cards.\n\
+                 The Unluckiest Planeswalker can be your commander.",
+            );
+        assert_eq!(
+            judge(
+                unluckiest,
+                vec![
+                    entry("r", "Rancor", 2, 1, 0)
+                        .type_line("Enchantment — Aura")
+                        .colors("G"),
+                    entry("c", "Counterspell", 2, 1, 0)
+                        .type_line("Instant")
+                        .colors("U"),
+                ],
+            ),
+            vec!["Counterspell".to_string()]
+        );
+    }
+
+    /// A planeswalker that says so leads the deck — the Rulebreaker cycle's one commander
+    /// that isn't a legendary creature.
+    #[test]
+    fn the_unluckiest_planeswalker_may_lead_a_commander_deck() {
+        let sections = [section(1, "Commander", false)];
+        let rows = [entry("u", "The Unluckiest Planeswalker", 1, 1, 0)
+            .type_line("Legendary Planeswalker")
+            .colors("R")
+            .oracle("The Unluckiest Planeswalker can be your commander.")];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            !result
+                .violations
+                .iter()
+                .any(|v| v.rule == DeckRuleId::CommanderEligibility)
+        );
+    }
+
+    /// Tolabow, Loch Rascal — one colour of your choice, for instants and sorceries only.
+    /// The choice is the player's, so it is spent where it saves the most cards.
+    #[test]
+    fn a_chosen_colour_is_spent_where_it_saves_the_most() {
+        let sections = [section(1, "Commander", false), section(2, "Main", false)];
+        let rows = [
+            entry("t", "Tolabow", 1, 1, 0)
+                .type_line("Legendary Creature — Otter")
+                .colors("U")
+                .oracle(
+                    "Rulebreaker — If Tolabow, Loch Rascal is your commander, the color \
+                     identity of instant and sorcery cards in your deck can include one \
+                     color of your choice not in your commander's color identity, and your \
+                     deck can have any basic land cards.",
+                ),
+            entry("d", "Dark Ritual", 2, 1, 0)
+                .type_line("Instant")
+                .colors("B"),
+            entry("n", "Night's Whisper", 2, 1, 0)
+                .type_line("Sorcery")
+                .colors("B"),
+            entry("g", "Giant Growth", 2, 1, 0)
+                .type_line("Instant")
+                .colors("G"),
+            entry("z", "Zombie", 2, 1, 0)
+                .type_line("Creature — Zombie")
+                .colors("B"),
+        ];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        let flagged: Vec<&str> = result
+            .card_issues
+            .iter()
+            .filter(|issue| issue.status == DeckRuleCardStatus::OffColour)
+            .map(|issue| issue.name.as_str())
+            .collect();
+        // {B} is the choice worth making — it rescues two spells where {G} rescues one — and
+        // it buys the black *creature* nothing, because the clause names spells.
+        assert_eq!(flagged, vec!["Giant Growth", "Zombie"]);
+    }
+
+    /// A Rulebreaker whose text this build can't parse must never make a deck illegal: it
+    /// can only ever have widened a rule, so the rules it might have widened stand down.
+    #[test]
+    fn an_unreadable_rulebreaker_is_never_a_breach() {
+        let sections = [section(1, "Commander", false), section(2, "Main", false)];
+        let rows = [
+            entry("f", "Future Legend", 1, 1, 0)
+                .type_line("Legendary Creature — Wizard")
+                .colors("W")
+                .oracle("Rulebreaker — A deck with this commander plays by tomorrow's rules."),
+            entry("c", "Counterspell", 2, 1, 0)
+                .type_line("Instant")
+                .colors("U"),
+            entry("l", "Wastes", 2, 200, 0).type_line("Basic Land"),
+        ];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            result.card_issues.is_empty(),
+            "got {:?}",
+            result.card_issues
+        );
+        assert!(
+            !result
+                .violations
+                .iter()
+                .any(|v| v.severity == DeckRuleSeverity::Error),
+            "got {:?}",
+            result.violations
         );
     }
 

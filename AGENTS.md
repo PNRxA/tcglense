@@ -243,7 +243,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `Sideboard`, …) because a `deck_card` has no board role; keep those spellings in step with
   `deck_import::parser`'s. Every deck-wide rule is skipped rather than guessed when the format
   has no profile or the command zone is empty, and "not finished yet" is a `warning` severity —
-  a half-built deck must never be reported as illegal. The format table + the breach-severity
+  a half-built deck must never be reported as illegal. The rules module's one submodule,
+  `rules::rulebreaker`, reads the commanders that **rewrite** those rules for their own deck
+  (MBC's **Rulebreaker** keyword: Whtz lifts the maximum deck size, the other seven widen
+  colour identity for the cards they name). It is a **grammar over the card's own text**, not
+  a list of ids — the same principle as `card_copy_limit` reading "any number of cards named"
+  — gated on the `Rulebreaker` keyword line, which every phrase it keys on is exclusive to.
+  Three couplings: the effects are read off the **command zone only** ("a deck with *this*
+  commander"), so a format with no command zone grants none; a Rulebreaker the grammar
+  **can't** parse stands the widened rules down rather than reporting a deck illegal against
+  rules the card may have lifted; and Tolabow's "one colour of your choice" is spent on the
+  colours that save the most cards, because the player chooses after building — bounded by
+  the five colours, so nothing there scales with the deck. The format table + the breach-severity
   order are **mirrored** in `web/src/lib/legality.ts` (a dropdown must not wait on a request)
   with tests pinning both sides, like `lifeLayout.ts`; `GET /api/games/{game}/formats`
   publishes the server's copy. The default library the odds and the goldfish shuffle is derived
