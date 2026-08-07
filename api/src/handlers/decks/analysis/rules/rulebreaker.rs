@@ -132,6 +132,13 @@ impl Rulebreakers {
     /// Read the Rulebreaker abilities off a deck's command zone. Callers pass the command
     /// zone's cards only — every clause is worded "a deck with this commander", so the same
     /// card in the 99 grants nothing.
+    ///
+    /// Effects are **deduplicated**, and callers pass one entry per *distinct* card rather
+    /// than one per deck row. Both matter: every effect held here is later tested against
+    /// every card name in the deck, and a deck's command-zone row count is caller-controlled
+    /// (nothing stops one deck filing the same commander in two hundred sections), so
+    /// keeping a duplicate per row would make the colour-identity check quadratic in data an
+    /// attacker chooses. Held this way, the set is bounded by the printed Rulebreakers.
     pub(super) fn collect<'a>(cards: impl IntoIterator<Item = &'a CardFacts>) -> Self {
         let mut found = Self::default();
         for card in cards {
@@ -139,11 +146,18 @@ impl Rulebreakers {
                 let Some(clause) = rulebreaker_clause(&line) else {
                     continue;
                 };
-                let effects = parse_clause(clause);
-                if effects.is_empty() {
-                    found.unreadable = true;
-                } else {
-                    found.effects.extend(effects);
+                match parse_clause(clause) {
+                    Some(effects) if !effects.is_empty() => {
+                        for effect in effects {
+                            if !found.effects.contains(&effect) {
+                                found.effects.push(effect);
+                            }
+                        }
+                    }
+                    // Either the grammar failed outright, or it read the line and found it
+                    // granted nothing — a Rulebreaker that grants nothing is one we have
+                    // not understood.
+                    _ => found.unreadable = true,
                 }
             }
         }
@@ -189,10 +203,13 @@ fn rulebreaker_clause(line: &str) -> Option<&str> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Every effect one Rulebreaker clause grants. The three shapes are independent scans
-/// rather than one sentence parse: Tolabow's clause carries both a colour choice and a
-/// "can have" exemption, and reading each on its own marker keeps them from interfering.
-fn parse_clause(text: &str) -> Vec<RulebreakerEffect> {
+/// Every effect one Rulebreaker clause grants, or `None` when the grammar met something it
+/// couldn't read — which the caller turns into [`Rulebreakers::unreadable`]. The three
+/// shapes are independent scans rather than one sentence parse: Tolabow's clause carries
+/// both a colour choice and a "can have" exemption, and reading each on its own marker keeps
+/// them from interfering. A failure in *any* of them fails the whole clause, so a card whose
+/// second half we misread can't be honoured on its first half alone.
+fn parse_clause(text: &str) -> Option<Vec<RulebreakerEffect>> {
     let mut effects = Vec::new();
     if text.contains("no maximum deck size") {
         effects.push(RulebreakerEffect::NoMaximumDeckSize);
@@ -204,64 +221,70 @@ fn parse_clause(text: &str) -> Vec<RulebreakerEffect> {
     while let Some(index) = rest.find("can have ") {
         rest = &rest[index + "can have ".len()..];
         effects.extend(
-            parse_descriptors(rest)
+            parse_descriptors(rest)?
                 .into_iter()
                 .map(RulebreakerEffect::AnyColourIdentity),
         );
     }
-    effects
+    Some(effects)
 }
 
 /// The card descriptors following a "can have": one per `[any ]<types> cards[ with mana
-/// value N or greater][ of any color identity]`, joined by "and".
+/// value N or greater][ of any color identity]`, joined by "and". `None` means the text
+/// after the "can have" is not a descriptor list this grammar knows.
 ///
-/// Terminates because every pass consumes at least the ` cards` it found, and stops at the
-/// end of the sentence: the words on the far side of a full stop aren't type words, so
-/// [`CardMatcher::parse`] rejects the descriptor they'd form.
-fn parse_descriptors(text: &str) -> Vec<CardMatcher> {
+/// The list must be accounted for **whole**: every descriptor ends either on an "and" that
+/// introduces another or at the end of its sentence, and anything else — a qualifier in a
+/// word order we don't know, a clause never printed before — fails the parse rather than
+/// being quietly dropped. Silently stopping mid-list is the dangerous failure: it keeps the
+/// descriptors already read (too generous) *and* discards the ones still to come (too
+/// strict, and a false "in breach" is the thing this module must never produce).
+///
+/// Terminates because every pass consumes at least the ` cards` it found.
+fn parse_descriptors(text: &str) -> Option<Vec<CardMatcher>> {
     let mut matchers = Vec::new();
     let mut rest = text;
+    let mut first = true;
     loop {
         let mut head = rest.trim_start();
         head = head.strip_prefix("and ").unwrap_or(head).trim_start();
         head = head.strip_prefix("any ").unwrap_or(head).trim_start();
         let Some(end) = head.find(CARDS) else {
-            break;
+            // On the first pass this simply wasn't a "can have <some> cards" clause, and the
+            // clause may still grant something through another marker. After an "and" it is
+            // a continuation we promised to read and couldn't.
+            return first.then_some(matchers);
         };
         let types = &head[..end];
-        let (min_mana_value, tail) = strip_mana_value(&head[end + CARDS.len()..]);
+        let (min_mana_value, tail) = strip_mana_value(&head[end + CARDS.len()..])?;
         rest = tail.strip_prefix(" of any color identity").unwrap_or(tail);
-        match CardMatcher::parse(types, min_mana_value) {
-            Some(matcher) => matchers.push(matcher),
-            // Not a descriptor at all — the scan has run past the sentence, and anything
-            // after it is somebody else's text.
-            None => break,
-        }
-        // A further descriptor only ever follows on "and".
+        matchers.push(CardMatcher::parse(types, min_mana_value)?);
+        first = false;
+        // A further descriptor only ever follows on "and"; otherwise the sentence must end
+        // here, or we have not understood it.
         match rest.strip_prefix(" and ") {
             Some(next) => rest = next,
-            None => break,
+            None if rest.is_empty() || rest.starts_with(['.', ',', ';']) => return Some(matchers),
+            None => return None,
         }
     }
-    matchers
 }
 
-/// Split a leading " with mana value N or greater" qualifier off `rest`, returning N when
-/// there is one and whatever follows it. Anything else leaves `rest` untouched.
-fn strip_mana_value(rest: &str) -> (Option<f64>, &str) {
+/// Split a leading " with mana value N or greater" qualifier off `rest`, returning N and
+/// what follows it. Text with no qualifier at all yields `(None, rest)`; a *qualifier we
+/// can't read* — "6 or less", "3 or 4" — yields `None`, because dropping it would silently
+/// widen the descriptor it was there to narrow.
+#[allow(clippy::type_complexity)]
+fn strip_mana_value(rest: &str) -> Option<(Option<f64>, &str)> {
     const PREFIX: &str = " with mana value ";
     const SUFFIX: &str = " or greater";
     let Some(after) = rest.strip_prefix(PREFIX) else {
-        return (None, rest);
+        return Some((None, rest));
     };
     let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-    let Ok(value) = digits.parse::<f64>() else {
-        return (None, rest);
-    };
-    match after[digits.len()..].strip_prefix(SUFFIX) {
-        Some(tail) => (Some(value), tail),
-        None => (None, rest),
-    }
+    let value: f64 = digits.parse().ok()?;
+    let tail = after[digits.len()..].strip_prefix(SUFFIX)?;
+    Some((Some(value), tail))
 }
 
 /// "the color identity of `<types>` cards in your deck can include `<n>` color(s) of your
@@ -550,6 +573,64 @@ mod tests {
         assert!(
             !read.exempts_from_colour_identity(&card("b", "Bear").type_line("Creature — Bear"))
         );
+    }
+
+    /// A descriptor list must be read **whole**. Stopping mid-list would keep the
+    /// descriptors already read and silently drop the rest — too generous about one half of
+    /// the sentence and too strict about the other, which is how a legal deck gets reported
+    /// as illegal. Each of these is a shape the grammar doesn't know, and each must fail the
+    /// clause rather than half-succeed.
+    #[test]
+    fn half_a_descriptor_list_is_no_descriptor_list() {
+        // A qualifier that isn't "or greater": dropping it would widen the descriptor it was
+        // printed to narrow, *and* sever the "and any basic land cards" that follows it.
+        let inverted = card("i", "Inverted").oracle(
+            "Rulebreaker — A deck with this commander can have creature cards with mana \
+             value 6 or less of any color identity and any basic land cards.",
+        );
+        let read = Rulebreakers::collect([&inverted]);
+        assert!(read.unreadable, "got {read:?}");
+        assert!(read.effects.is_empty());
+
+        // The same qualifier in a word order the grammar doesn't know.
+        let flipped = card("f", "Flipped").oracle(
+            "Rulebreaker — A deck with this commander can have creature cards of any color \
+             identity with mana value 7 or greater and any basic land cards.",
+        );
+        assert!(Rulebreakers::collect([&flipped]).unreadable);
+
+        // A continuation we promised to read ("and …") and couldn't.
+        let trailing = card("t", "Trailing").oracle(
+            "Rulebreaker — A deck with this commander can have Angel cards of any color \
+             identity and whatever else it fancies.",
+        );
+        assert!(Rulebreakers::collect([&trailing]).unreadable);
+
+        // And the whole clause fails together: Tolabow's shape, with its second half
+        // unreadable, must not be honoured on its first half alone.
+        let partial = card("p", "Partial").oracle(
+            "Rulebreaker — If Partial is your commander, the color identity of instant and \
+             sorcery cards in your deck can include one color of your choice not in your \
+             commander's color identity, and your deck can have any basic land cards of the \
+             third kind.",
+        );
+        let read = Rulebreakers::collect([&partial]);
+        assert!(read.unreadable, "got {read:?}");
+        assert!(read.extra_colour_clauses().is_empty());
+    }
+
+    /// Effects are held once however many command-zone rows carry them. Every effect here is
+    /// tested against every card name in the deck, and the row count is caller-controlled,
+    /// so a duplicate per row would make the colour-identity check quadratic in chosen data.
+    #[test]
+    fn effects_are_held_once_however_many_rows_grant_them() {
+        let one = Rulebreakers::collect([&seluma()]);
+        let many = Rulebreakers::collect([&seluma(), &seluma(), &seluma(), &seluma()]);
+        assert_eq!(many.effects.len(), one.effects.len());
+        assert_eq!(many.effects, one.effects);
+        // Distinct commanders still contribute their own.
+        let pair = Rulebreakers::collect([&seluma(), &valko()]);
+        assert!(pair.effects.len() > one.effects.len());
     }
 
     /// The grammar reads its numbers and mana values off the card, so a Rulebreaker printed

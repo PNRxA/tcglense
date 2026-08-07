@@ -17,7 +17,7 @@
 //! text, not a list of card ids); the two rules they widen are applied below, at the deck
 //! size and at the colour-identity check.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -543,36 +543,34 @@ fn best_extra_colours(
     cards: &CardMatcher,
     count: usize,
 ) -> Vec<String> {
+    // What each card the clause names still needs, resolved **once** — the mask scan below
+    // runs up to 32 times, and re-testing the matcher inside it would multiply the deck by a
+    // constant for no reason.
+    let needs: Vec<Vec<&String>> = off_colour
+        .iter()
+        .filter(|fold| cards.matches(fold.facts))
+        .map(|fold| {
+            fold.facts
+                .color_identity
+                .iter()
+                .filter(|colour| !identity.contains(*colour))
+                .collect()
+        })
+        .collect();
     // Only a colour some named card actually needs is worth choosing, and only a real WUBRG
     // colour can be chosen at all — which is what bounds the scan.
     let candidates: Vec<String> = COLOUR_ORDER
         .iter()
-        .filter(|colour| {
-            off_colour.iter().any(|fold| {
-                cards.matches(fold.facts)
-                    && fold
-                        .facts
-                        .color_identity
-                        .iter()
-                        .any(|held| held == *colour && !identity.contains(held))
-            })
-        })
+        .filter(|colour| needs.iter().flatten().any(|held| *held == *colour))
         .map(|colour| (*colour).to_string())
         .collect();
     if count >= candidates.len() {
         return candidates;
     }
     let covers = |chosen: &[String]| {
-        off_colour
+        needs
             .iter()
-            .filter(|fold| {
-                cards.matches(fold.facts)
-                    && fold
-                        .facts
-                        .color_identity
-                        .iter()
-                        .all(|colour| identity.contains(colour) || chosen.contains(colour))
-            })
+            .filter(|wanted| wanted.iter().all(|colour| chosen.contains(*colour)))
             .count()
     };
     let mut best: Vec<String> = Vec::new();
@@ -676,8 +674,16 @@ pub(crate) fn evaluate_deck_rules(
     // Rulebreaker abilities are read off the command zone alone — every one of them is
     // worded "a deck with **this commander**", so the same card in the 99 grants nothing,
     // and a format without a command zone (where `commanders` stays empty) grants nothing
-    // either.
-    let rulebreakers = Rulebreakers::collect(commanders.iter().map(|(facts, _)| *facts));
+    // either. By **distinct card**, not by row: `commanders` is one entry per deck row and a
+    // deck may file the same commander in as many sections as it likes, so parsing per row
+    // would put caller-controlled data in front of work that is later done per card name.
+    let mut zone_seen: HashSet<&str> = HashSet::new();
+    let rulebreakers = Rulebreakers::collect(
+        commanders
+            .iter()
+            .filter(|(facts, _)| zone_seen.insert(facts.id.as_str()))
+            .map(|(facts, _)| *facts),
+    );
 
     // ---- Deck size ----
     let (exact, required) = match rules.size {
@@ -1473,6 +1479,67 @@ mod tests {
         // {B} is the choice worth making — it rescues two spells where {G} rescues one — and
         // it buys the black *creature* nothing, because the clause names spells.
         assert_eq!(flagged, vec!["Giant Growth", "Zombie"]);
+    }
+
+    /// The coupling the whole feature rests on: a Rulebreaker grants its effects from the
+    /// **command zone**, because that is what "a deck with this commander" means. Reading
+    /// them off the deck instead — a one-token slip at the `Rulebreakers::collect` call —
+    /// leaves every other test in this module green, so it is pinned here from both sides.
+    #[test]
+    fn a_rulebreaker_grants_nothing_from_outside_the_command_zone() {
+        let seluma = |section: i32| {
+            entry("s", "Seluma", section, 1, 0)
+                .type_line("Legendary Creature — Angel Warrior")
+                .colors("W")
+                .oracle(
+                    "Rulebreaker — A deck with this commander can have Angel cards of any \
+                     color identity and any basic land cards.\nFlying",
+                )
+        };
+
+        // Seluma in the 99 of somebody else's deck is just a white legend: the off-colour
+        // Angel beside it is still off-colour.
+        let sections = [section(1, "Commander", false), section(2, "Main", false)];
+        let rows = [
+            entry("k", "Sram, Senior Edificer", 1, 1, 0)
+                .type_line("Legendary Creature — Dwarf Advisor")
+                .colors("W"),
+            seluma(2),
+            entry("a", "Archangel of Wrath", 2, 1, 0)
+                .type_line("Creature — Angel")
+                .colors("B"),
+        ];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            result
+                .card_issues
+                .iter()
+                .any(|issue| issue.card_id == "a" && issue.status == DeckRuleCardStatus::OffColour),
+            "got {:?}",
+            result.card_issues
+        );
+
+        // Gladiator is 100-card singleton with **no command zone**, so the cards filed in
+        // every deck's seeded `Commander` section are simply part of the 100 — and a
+        // Rulebreaker among them lifts nothing.
+        let sections = [section(1, "Commander", false), section(2, "Lands", false)];
+        let rows = [
+            entry("w", "Whtz, the Bibliophile", 1, 1, 0)
+                .type_line("Legendary Creature — Homunculus")
+                .colors("W,U")
+                .oracle("Rulebreaker — A deck with this commander has no maximum deck size."),
+            entry("l", "Wastes", 2, 150, 0).type_line("Basic Land"),
+        ];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("gladiator", &refs, &sections);
+        let size = result
+            .violations
+            .iter()
+            .find(|v| v.rule == DeckRuleId::DeckSize)
+            .expect("a format with no command zone keeps its exact size");
+        assert_eq!(size.severity, DeckRuleSeverity::Error);
+        assert_eq!(size.message, "151 cards — 51 over the 100-card limit.");
     }
 
     /// A Rulebreaker whose text this build can't parse must never make a deck illegal: it

@@ -249,12 +249,22 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   colour identity for the cards they name). It is a **grammar over the card's own text**, not
   a list of ids — the same principle as `card_copy_limit` reading "any number of cards named"
   — gated on the `Rulebreaker` keyword line, which every phrase it keys on is exclusive to.
-  Three couplings: the effects are read off the **command zone only** ("a deck with *this*
-  commander"), so a format with no command zone grants none; a Rulebreaker the grammar
-  **can't** parse stands the widened rules down rather than reporting a deck illegal against
-  rules the card may have lifted; and Tolabow's "one colour of your choice" is spent on the
-  colours that save the most cards, because the player chooses after building — bounded by
-  the five colours, so nothing there scales with the deck. The format table + the breach-severity
+  Four couplings. The effects are read off the **command zone only** ("a deck with *this*
+  commander"), so the same card in the 99 — or in a format with no command zone, where every
+  deck still carries a seeded `Commander` section — grants nothing; tests pin both halves,
+  because reading them off the whole deck instead leaves every other test in the module green.
+  A Rulebreaker the grammar **can't** parse stands the widened rules down rather than
+  reporting a deck illegal against rules the card may have lifted — and a descriptor list is
+  therefore read **whole or not at all**: stopping mid-list would keep the descriptors already
+  read *and* drop the rest, which is both too generous and, on the half it drops, a false "in
+  breach". Tolabow's "one colour of your choice" is spent on the colours that save the most
+  cards, because the player chooses after building; the search is bounded by the five colours
+  and resolves each named card's needs once, so neither the deck nor its copy counts enters
+  the exponent. Finally, effects are **deduplicated and collected per distinct card**, never
+  per deck row: every effect is later tested against every card name, and a deck's
+  command-zone row count is caller-controlled (section names are unique only
+  case-sensitively, so all 200 sections can read as `Commander`) — holding one copy per row
+  made a public `…/legality` read 137x slower on a deck built to do it. The format table + the breach-severity
   order are **mirrored** in `web/src/lib/legality.ts` (a dropdown must not wait on a request)
   with tests pinning both sides, like `lifeLayout.ts`; `GET /api/games/{game}/formats`
   publishes the server's copy. The default library the odds and the goldfish shuffle is derived
