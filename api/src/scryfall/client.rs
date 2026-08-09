@@ -211,8 +211,10 @@ mod tests {
         assert!(lines_of(Vec::new()).await.is_empty());
     }
 
-    /// Live contract canary — **not run by CI** (network). Run it by hand after a provider
-    /// bump or when an import starts failing with a decode error:
+    /// Live contract canary — **not run by CI** (network): `#[ignore]` keeps it out of the
+    /// default suite, and the workflow's gated-integration job, which does run `--ignored`
+    /// for its Postgres/Redis service tests, skips this one by name. Run it by hand after a
+    /// provider bump or when an import starts failing with a decode error:
     /// `cargo test -- --ignored live_bulk_catalog`. It drives the real path end to end:
     /// parse the upstream catalog, then stream the first lines of the smallest dataset. A
     /// field rename like 2026-07's `download_uri` → `jsonl_download_uri` fails it here,
