@@ -177,8 +177,17 @@ function onOpenChange(value: boolean) {
 
 <template>
   <Dialog :open="open" @update:open="onOpenChange">
+    <!-- Top-anchored, not centred (see DialogContent's `anchor`): this body fills in over
+      several independent fetches — art tags, the price chart, other printings, sealed
+      products, rulings — and a centred panel re-centres on every one of them, sliding the
+      left rail's collection/wish-list steppers up by half the delta. That is a mis-tap
+      waiting to happen: "Regular +" moves out from under a finger already on its way to it
+      and the tap lands on "Foil +", the row directly below. Pinned at the top, late content
+      only ever extends downward, below everything already on screen — and the panel also
+      stops drifting when a mobile URL bar hides or reveals. -->
     <DialogContent
       v-if="game && itemId"
+      anchor="top"
       class="bg-background max-h-[90svh] w-[min(96vw,64rem)] overflow-y-auto rounded-xl border p-5 shadow-lg sm:p-8"
       @keydown="onKeydown"
     >
