@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ChevronLeft, ChevronRight, Expand, X } from '@lucide/vue'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import DetailOriginCrumb from '@/components/shared/DetailOriginCrumb.vue'
+import { useHoldingListFreeze } from '@/composables/holdingListFreeze'
 import { DETAIL_ORIGIN_KEY, parseDetailOrigin } from '@/lib/detailOrigin'
 import type { NavStoreApi } from '@/stores/nav'
 
@@ -57,6 +58,13 @@ const game = computed(() => {
   return typeof q === 'string' && q ? q : null
 })
 const open = computed(() => itemId.value !== null && game.value !== null)
+
+// This modal overlays a browse grid, and its body carries the collection/wish-list steppers.
+// Editing counts in here would otherwise refetch and resort that recency-sorted grid
+// underneath, so closing the modal drops the user onto a list that rearranged while it was
+// covered — and the next tile tap opens the wrong card. Hold the grid still while the modal
+// is open; it settles the moment it closes. A no-op on pages with no holdings grid.
+useHoldingListFreeze(open)
 
 // Every label is this one noun in a fixed frame — "Card details" / "Sealed product details",
 // "Previous card" / "Previous sealed product" — so the wrappers stay honestly parallel.

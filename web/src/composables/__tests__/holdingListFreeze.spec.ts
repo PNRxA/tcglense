@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { h, ref } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, QueryObserver } from '@tanstack/vue-query'
 import {
   deferHoldingRefetch,
@@ -7,6 +8,7 @@ import {
   freezeHoldingLists,
   isHoldingListFrozen,
   refetchOnFocusUnlessFrozen,
+  useHoldingListFreeze,
 } from '@/composables/holdingListFreeze'
 import { invalidateCollectionData, invalidateCollectionProducts } from '@/composables/useCollection'
 import { invalidateWishlistData } from '@/composables/useWishlist'
@@ -75,6 +77,23 @@ describe('holding list freeze', () => {
     // Drained: a later close doesn't re-run an already-replayed refetch.
     flushDeferredHoldingRefetches(qc)
     expect(refetchQueries).toHaveBeenCalledTimes(1)
+  })
+
+  it('takes and releases the hold in a tree with no QueryClient', () => {
+    // `useHoldingListFreeze` is called from the generic detail-modal shell, which is mounted
+    // on its own in its own suite. A tree with no QueryClient has no holdings queries to
+    // defer either, so the composable must degrade to a no-op instead of throwing and
+    // dragging a vue-query dependency into every caller.
+    const wrapper = mount({
+      setup() {
+        useHoldingListFreeze(ref(true))
+        return () => h('div')
+      },
+    })
+    expect(isHoldingListFrozen()).toBe(true)
+    wrapper.unmount()
+    // Unmounting while open still releases — a leaked hold would freeze every later write.
+    expect(isHoldingListFrozen()).toBe(false)
   })
 
   it('defers a window-focus refetch of a holdings list while a popover is open', () => {

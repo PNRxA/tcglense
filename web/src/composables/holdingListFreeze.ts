@@ -83,19 +83,30 @@ export function refetchOnFocusUnlessFrozen(query: { queryKey: QueryKey }): boole
 }
 
 /**
- * Freeze the holdings grids for as long as `active` is true — call it from a control that
- * floats over a tile (the quick-add popovers). Releasing replays whatever was deferred, so
- * the grid resorts the moment the panel closes instead of under the user's finger.
+ * Freeze the holdings grids for as long as `active` is true — call it from anything that
+ * floats over a tile: the quick-add popovers, and the detail modal (whose body carries the
+ * same steppers, and which would otherwise leave the user on a grid that rearranged while it
+ * was covered). Releasing replays whatever was deferred, so the grid resorts the moment the
+ * panel closes rather than under the user's finger.
  */
 export function useHoldingListFreeze(active: Ref<boolean>): void {
-  const qc = useQueryClient()
+  // The mounted QueryClient is what there is to hold back. A tree without one has no
+  // holdings queries to defer either, so resolve it defensively and degrade to a plain
+  // no-op — this is called from the generic detail-modal shell, which must stay mountable
+  // on its own rather than inheriting a vue-query dependency it doesn't otherwise have.
+  let qc: QueryClient | null = null
+  try {
+    qc = useQueryClient()
+  } catch {
+    qc = null
+  }
   let release: (() => void) | null = null
 
   function stop() {
     if (!release) return
     release()
     release = null
-    flushDeferredHoldingRefetches(qc)
+    if (qc) flushDeferredHoldingRefetches(qc)
   }
 
   watch(
