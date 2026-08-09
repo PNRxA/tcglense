@@ -34,6 +34,8 @@ const props = defineProps<{
   target: CollectionQuantities
   ready: boolean
   resolving: boolean
+  /** The current printing's holding failed to load — a terminal state, not a slow one. */
+  ownedError: boolean
   disabled: boolean
   /** Ranked visual matches from the last capture — their art backs the name corrector. */
   candidates: ScanCandidate[]
@@ -62,6 +64,31 @@ const price = computed(() => {
 // (the names are derived from these matches, so one always exists while the corrector shows).
 function nameCard(name: string): Card | null {
   return props.candidates.find((candidate) => candidate.card.name === name)?.card ?? null
+}
+
+// `target` still carries the previous card's counts until the newly matched printing's
+// holding settles and re-seeds them (`ready`), so the steppers must not show a number
+// that is about to change under the user. But "not seeded" is not the same as "still
+// working": a failed holding read, a failed printings page with nothing picked, and a
+// name that resolves to no printings at all are all terminal — the panel already shows
+// its own error text and a Retry for each. Spinning there would assert progress that
+// will never come, so only a genuinely in-flight resolution gets the spinner; the rest
+// get the same neutral placeholder the art slot falls back to.
+const countsPending = computed(
+  () =>
+    !props.ready &&
+    !props.ownedError &&
+    (props.resolving || props.printsLoading || props.selectedCard !== null),
+)
+
+// What the stepper's count reads as: the settled number, or why there isn't one — the
+// spinner and the placeholder are both silent to a screen reader on their own, and
+// "reading count" on a state that has stopped reading would contradict the panel's
+// own error text.
+function countLabel(value: number): string {
+  if (countsPending.value) return 'reading count'
+  if (!props.ready) return 'count unavailable'
+  return String(value)
 }
 
 const rows = computed(() => [
@@ -166,7 +193,7 @@ const rows = computed(() => [
             <span class="flex items-center gap-1.5 text-sm">
               <component :is="row.icon" v-if="row.icon" class="size-3.5" aria-hidden="true" />
               {{ row.label }}
-              <span v-if="row.was > 0" class="text-muted-foreground text-xs"
+              <span v-if="ready && row.was > 0" class="text-muted-foreground text-xs"
                 >(had {{ row.was }})</span
               >
             </span>
@@ -183,12 +210,21 @@ const rows = computed(() => [
               >
                 <Minus />
               </Button>
+              <!-- One aria-live element across all three states, so a settled count is
+                 announced as an update rather than a freshly inserted region. -->
               <span
-                class="w-8 text-center text-sm font-medium tabular-nums"
+                class="flex w-8 items-center justify-center text-center text-sm font-medium tabular-nums"
                 aria-live="polite"
-                :aria-label="`${row.label}: ${row.value}`"
-                >{{ row.value }}</span
+                :aria-label="`${row.label}: ${countLabel(row.value)}`"
               >
+                <Loader2
+                  v-if="countsPending"
+                  class="text-muted-foreground size-4 animate-spin"
+                  aria-hidden="true"
+                />
+                <span v-else-if="!ready" class="text-muted-foreground" aria-hidden="true">—</span>
+                <template v-else>{{ row.value }}</template>
+              </span>
               <Button
                 variant="outline"
                 size="icon"

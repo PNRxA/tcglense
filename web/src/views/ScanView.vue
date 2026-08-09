@@ -383,6 +383,7 @@ function discardAndReturn() {
             :target="target"
             :ready="ready"
             :resolving="resolving"
+            :owned-error="ownedError"
             :candidates="candidates"
             :disabled="finalizing || resolving || undoing"
             @name="setName"
