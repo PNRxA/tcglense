@@ -12,6 +12,7 @@ import ScanCaptureDock from '@/components/collection/ScanCaptureDock.vue'
 import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
 import ScanSessionList from '@/components/collection/ScanSessionList.vue'
 import { useCardScanner } from '@/composables/useCardScanner'
+import { onPageHidden } from '@/composables/usePageHidden'
 import { useScanSession } from '@/composables/useScanSession'
 import { printingMetadataLabel } from '@/lib/printings'
 import { usePageMeta } from '@/lib/seo'
@@ -31,6 +32,7 @@ const {
   errorMessage,
   ocrLoading,
   cvStatus,
+  interrupted,
   detectedQuad,
   start,
   stop,
@@ -156,6 +158,24 @@ async function stopScanning() {
 onBeforeUnmount(() => {
   if (successTimer !== null) window.clearTimeout(successTimer)
   void finalizeCurrent()
+})
+
+// Leaving the page ends the scan: `useCardScanner` releases the camera itself, and the
+// tentative card is saved here — same loss-prevention contract Stop and navigation follow,
+// for the same reason they have it. It matters more here, not less: a backgrounded mobile tab
+// can be discarded by the OS without ever unmounting, so this is the last moment the card on
+// screen can be written at all, and an unwanted add is one tap of Undo in the session log.
+// Best-effort by nature — the panel is only cleared if the save actually landed, so a card
+// that couldn't be written is still there (with its error) when the user comes back.
+// Clear only the card this finalize actually saved. Unlike Stop and route-leave, this can run
+// with a capture in flight (tap Scan, then leave), and that capture's handleCapture swaps a
+// brand-new match in while the save settles — discarding "whatever is on screen now" would
+// wipe a card that was scanned but never written.
+onPageHidden(() => {
+  const pending = match.value
+  void finalizeCurrent().then((saved) => {
+    if (saved && match.value === pending) discardCurrent()
+  })
 })
 
 onBeforeRouteLeave(async () => {
@@ -297,6 +317,7 @@ function discardAndReturn() {
           :error-message="errorMessage"
           :ocr-loading="ocrLoading"
           :cv-status="cvStatus"
+          :interrupted="interrupted"
           :detected-quad="detectedQuad"
           :capture-enabled="captureEnabled"
           :capture-label="captureLabel"

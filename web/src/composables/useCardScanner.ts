@@ -2,6 +2,7 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 // tesseract.js is a CommonJS `export =` namespace, so the type comes in via a default
 // import (esModuleInterop) and the runtime via a lazy dynamic import().
 import type Tesseract from 'tesseract.js'
+import { onPageHidden } from '@/composables/usePageHidden'
 import { createCardLock } from '@/lib/scan/cardLock'
 import { detectCardQuad, quadArea, toGray, warpToRect, type Quad } from '@/lib/scan/detect'
 import { cropImageData, priorSearchWindow } from '@/lib/scan/guidedDetect'
@@ -113,6 +114,10 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
   /** OpenCV readiness. Detection waits during ordinary warm-up and only enters the
    * lightweight fallback after an actual load failure. */
   const cvStatus = ref<CvStatus>('loading')
+  /** True when the page going hidden released a live camera, so the idle state can say why
+   * scanning stopped instead of looking like the camera dropped out on its own. Cleared by
+   * the next start(). */
+  const interrupted = ref(false)
   /** The card the live loop currently detects, as NORMALISED corners (0..1 of the frame),
    * or null when none is found — drives the on-screen outline and the capture crop. */
   const detectedQuad = ref<Quad | null>(null)
@@ -192,9 +197,25 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     errorMessage.value = 'The camera was disconnected. Start scanning again to retry.'
   }
 
+  // The page stopped being visible — the phone's home button, the app switcher, another tab,
+  // a screen lock, or the browser being closed. A camera the user can't see must not stay
+  // open: the capture indicator keeps burning (and, to anyone looking at it, the app is
+  // filming from the background), the stream keeps costing battery, and the detection loop's
+  // timers are throttled to a crawl, so a resumed tab shows a stale, frozen viewfinder anyway.
+  // stop() also bumps the generation, so a getUserMedia still in flight when the user left
+  // stops its own orphaned stream rather than going live on a hidden page. Restarting is
+  // deliberate (a tap) rather than automatic: permission is already granted, so re-opening the
+  // camera on return would silently film a user who came back for something else.
+  onPageHidden(() => {
+    if (status.value !== 'ready' && status.value !== 'starting') return
+    stop()
+    interrupted.value = true
+  })
+
   async function start(): Promise<void> {
     if (status.value === 'starting' || status.value === 'ready') return
     errorMessage.value = null
+    interrupted.value = false
     if (!cameraSupported()) {
       status.value = 'unavailable'
       errorMessage.value =
@@ -720,6 +741,7 @@ export function useCardScanner(video: Ref<HTMLVideoElement | null>) {
     facingMode,
     ocrLoading,
     cvStatus,
+    interrupted,
     detectedQuad,
     start,
     stop,

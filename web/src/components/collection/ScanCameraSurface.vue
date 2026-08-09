@@ -11,6 +11,10 @@ const props = defineProps<{
   errorMessage: string | null
   ocrLoading: boolean
   cvStatus: CvStatus
+  /** The camera was released because the page went hidden (tab switch, app backgrounded,
+   * browser closed) rather than by the user — the idle state explains that instead of
+   * silently showing the first-run copy again. */
+  interrupted: boolean
   detectedQuad: Quad | null
   captureEnabled: boolean
   captureLabel: string
@@ -209,13 +213,17 @@ function syncVideoAspect() {
       class="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
     >
       <Camera class="scan-idle-icon size-10 opacity-60" aria-hidden="true" />
-      <p class="scan-idle-copy max-w-xs text-sm">
+      <p v-if="interrupted" class="scan-idle-copy max-w-xs text-sm" role="status">
+        Scanning stopped when you left the page, so the camera was switched off. Your session is
+        still here — resume when you're ready.
+      </p>
+      <p v-else class="scan-idle-copy max-w-xs text-sm">
         Camera access is needed to scan. Your photo never leaves your device — only a small
         fingerprint is sent to identify the card.
       </p>
       <Button class="min-h-11" @click="emit('start')">
         <ScanLine class="size-4" aria-hidden="true" />
-        Start scanning
+        {{ interrupted ? 'Resume scanning' : 'Start scanning' }}
       </Button>
     </div>
 
