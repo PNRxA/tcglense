@@ -53,6 +53,9 @@ const defaults = {
   collectionFilter: false,
   collectionOnly: false,
   collectionLoading: false,
+  heldFirst: false,
+  heldFirstLabel: 'Owned first',
+  held: undefined as ReadonlySet<string> | undefined,
 }
 
 function mountGrid(props: Partial<typeof defaults> = {}) {
@@ -169,5 +172,62 @@ describe('PrintingPickerGrid', () => {
 
     await wrapper.get('select[aria-label="Sort"]').setValue('released:asc')
     expect(renderedIds(wrapper)).toEqual(['old', 'mid', 'new'])
+  })
+
+  describe('held-first ordering', () => {
+    const cards = [
+      makeCard('old', { released_at: '2019-01-01' }),
+      makeCard('new', { released_at: '2024-01-01' }),
+      makeCard('mid', { released_at: '2021-01-01' }),
+    ]
+
+    it('defaults to the held-first option and offers it under the caller’s label', () => {
+      const wrapper = mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 3,
+        heldFirst: true,
+        heldFirstLabel: 'On my wish list first',
+        held: new Set(['old']),
+      })
+
+      const select = wrapper.get('select[aria-label="Sort"]')
+      expect((select.element as HTMLSelectElement).value).toBe('held:desc')
+      expect(select.findAll('option').map((o) => o.text())[0]).toBe('On my wish list first')
+      expect(renderedIds(wrapper)).toEqual(['old', 'new', 'mid'])
+    })
+
+    it('shows the plain order until the held set arrives, then regroups once', async () => {
+      const wrapper = mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 3,
+        heldFirst: true,
+      })
+      expect(renderedIds(wrapper)).toEqual(['new', 'mid', 'old'])
+
+      await wrapper.setProps({ held: new Set(['old']) })
+      expect(renderedIds(wrapper)).toEqual(['old', 'new', 'mid'])
+    })
+
+    it('drops the grouping once another sort is chosen', async () => {
+      const wrapper = mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 3,
+        heldFirst: true,
+        held: new Set(['old']),
+      })
+
+      await wrapper.get('select[aria-label="Sort"]').setValue('released:desc')
+      expect(renderedIds(wrapper)).toEqual(['new', 'mid', 'old'])
+    })
+
+    it('leaves a caller that does not opt in on the newest-first default', () => {
+      const wrapper = mountGrid({ printings: cards, filteredPrintings: cards, total: 3 })
+      const select = wrapper.get('select[aria-label="Sort"]')
+      expect((select.element as HTMLSelectElement).value).toBe('released:desc')
+      expect(select.findAll('option').map((o) => o.text())).not.toContain('Owned first')
+    })
   })
 })

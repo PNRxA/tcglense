@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import {
   Dialog,
   DialogClose,
@@ -57,6 +57,56 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
     ? (ownership.value[card.id] ?? { quantity: 0, foil_quantity: 0 })
     : undefined
 }
+
+// Held-first ordering: a card you're quick-adding is usually one you already have a copy of,
+// and its printings can run into the hundreds — so the ones on the target list lead the grid
+// instead of being hunted for behind a set filter. It rides the counts fetched above, at no
+// extra request.
+//
+// The grid is ordered off *this set*, never off those live counts, because the counts are the
+// very thing the tiles edit. Each printing's held-ness is decided **once**, the first time its
+// count is authoritative, and never revised: the set only grows, as later pages resolve. That
+// is what keeps the grid still. Ordering off the live map instead would move it three ways —
+// a `+` click would float the tile out from under the pointer ~350ms later (the editor's
+// debounce), and every counts *refetch* (a save's invalidation, a "Load more" widening the
+// batch key, a window refocus at `staleTime: 0`) would blank the map mid-session, snapping the
+// whole grid to newest-first and back. So the opening order is the answer to "what did I
+// already own when I opened this", which is the question being asked.
+const heldPrintings = ref<ReadonlySet<string>>(new Set())
+// Ids already decided, so a refetch can't re-judge one. Plain (non-reactive) — nothing renders
+// off it; `heldPrintings` is reassigned when it actually changes, which is what re-sorts.
+const decided = new Set<string>()
+// A fresh picker (another name, another game, or simply reopening) re-snapshots, so copies
+// added last time lead the next one.
+let session = ''
+
+watch(
+  [game, name, open, seedReady, picker.printings],
+  () => {
+    const key = JSON.stringify([game.value, name.value, open.value])
+    if (key !== session) {
+      session = key
+      decided.clear()
+      heldPrintings.value = new Set()
+    }
+    if (!open.value || !seedReady.value) return
+    let next: Set<string> | null = null
+    for (const card of picker.printings.value) {
+      if (decided.has(card.id)) continue
+      decided.add(card.id)
+      const counts = ownership.value[card.id]
+      if (!counts || counts.quantity + counts.foil_quantity <= 0) continue
+      next ??= new Set(heldPrintings.value)
+      next.add(card.id)
+    }
+    if (next) heldPrintings.value = next
+  },
+  { immediate: true },
+)
+
+const heldFirstLabel = computed(() =>
+  props.list === 'wishlist' ? 'On my wish list first' : 'Owned first',
+)
 </script>
 
 <template>
@@ -79,6 +129,9 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
       <PrintingPickerGrid
         v-model:filter="picker.filter.value"
         scrollable
+        held-first
+        :held-first-label="heldFirstLabel"
+        :held="heldPrintings"
         class="mt-4 min-h-0 flex-1"
         :printings="picker.printings.value"
         :filtered-printings="picker.filteredPrintings.value"
