@@ -55,8 +55,12 @@ async function choose(printing: Card) {
 
 <template>
   <Dialog v-model:open="open">
+    <!-- Top-anchored (see DialogContent's `anchor`): its printing list paginates, and a
+      centred panel shifts every tile up by half of each page's height as it arrives —
+      landing a tap on the printing next to the one that was aimed at. -->
     <DialogContent
-      class="bg-background max-h-[90vh] w-[min(94vw,64rem)] max-w-5xl overflow-y-auto rounded-xl border p-6 shadow-xl"
+      anchor="top"
+      class="bg-background max-h-[90svh] w-[min(94vw,64rem)] max-w-5xl overflow-y-auto rounded-xl border p-6 shadow-xl"
     >
       <DialogTitle>Change printing</DialogTitle>
       <DialogDescription>

@@ -44,12 +44,22 @@ const loginTo = computed(() => ({ path: '/login', query: { redirect: route.fullP
 
 <template>
   <section class="bg-card rounded-xl border p-4 shadow-sm">
-    <div class="mb-3 flex items-center justify-between gap-2">
-      <h2 class="text-sm font-semibold">{{ wishlist ? 'Your wish list' : 'Your collection' }}</h2>
+    <!-- Fixed-height header row. The status beside the heading changes as you edit
+      ("Saving…" → "Saved", or the longer failure text), and in the detail page's ~17rem
+      left rail the pair can outgrow one line — wrapping the row taller and pushing the
+      regular/foil steppers directly below it down mid-edit, which is exactly how a tap
+      meant for "Regular +" ends up on "Foil +". `h-5` matches the heading's own line box,
+      the status never wraps, and the heading truncates instead (only ever reachable in
+      the rare failure state, where the message is what matters). Mirrors the quick-add
+      popover's `shrink-0` status. -->
+    <div class="mb-3 flex h-5 items-center justify-between gap-2">
+      <h2 class="truncate text-sm font-semibold">
+        {{ wishlist ? 'Your wish list' : 'Your collection' }}
+      </h2>
       <!-- Save status (signed-in only). -->
       <span
         v-if="auth.isAuthenticated"
-        class="text-muted-foreground flex items-center gap-1 text-xs"
+        class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs whitespace-nowrap"
         aria-live="polite"
       >
         <template v-if="saveError">

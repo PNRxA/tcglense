@@ -33,6 +33,7 @@ import {
   useFoldersQuery,
   useMoveDeckToFolderMutation,
 } from '@/composables/useDecks'
+import { useStableOrder } from '@/composables/useStableOrder'
 import { ApiError, type Deck } from '@/lib/api'
 import { defaultFormatFor } from '@/lib/deckFormats'
 import { useAuthStore } from '@/stores/auth'
@@ -51,7 +52,16 @@ usePageMeta({ title: computed(() => `Your ${gameName.value} decks`), noindex: tr
 
 const decksQuery = useDecksQuery(game)
 const foldersQuery = useFoldersQuery(game)
-const decks = computed(() => decksQuery.data.value?.data ?? [])
+// The API returns decks `updated_at DESC`, so the deck you last edited comes back FIRST —
+// and every deck write marks this list stale. Arriving here from a deck you just edited
+// therefore paints the cached (old) order, then swaps a reordered list in a moment later,
+// pushing every tile below the mover down a full row while you're reaching for one. Pin the
+// order this visit painted: each refetch still refreshes every tile's name, count and colours
+// in place, it just can't move them. The true order lands on the next visit.
+const decks = useStableOrder(
+  () => decksQuery.data.value?.data ?? [],
+  (deck) => deck.id,
+)
 const folders = computed(() => foldersQuery.data.value?.data ?? [])
 
 // Decks grouped: one bucket per folder (even empty ones), then the loose decks.

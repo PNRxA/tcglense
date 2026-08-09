@@ -14,6 +14,11 @@ import type {
   OwnedCountsMap,
 } from '@/lib/api'
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
+import {
+  deferHoldingRefetch,
+  isHoldingListFrozen,
+  refetchUnlessFrozen,
+} from '@/composables/holdingListFreeze'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
@@ -109,7 +114,10 @@ export interface HoldingQueriesConfig {
    * entry's own wanted counts only until the overlay settles so it never blanks on a cold
    * load/page — once settled, an absent card is trusted as unwanted so a quick-remove clears it.
    * The collection twin leaves this off: its grid's count chips read each entry's own list
-   * counts, so its list + summary must refetch on a write to update them. */
+   * counts, so its list + summary must refetch on a write to update them. It gets the narrower
+   * guarantee instead — `composables/holdingListFreeze.ts` holds every grid-shaped refetch
+   * (both surfaces') back only *while* a quick-add popover is open and replays it on close, so
+   * no grid reflows under an anchored panel even where the order can't stay frozen for a visit. */
   deferListRefetch: boolean
 }
 
@@ -188,23 +196,42 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
    * to the edited card; an import touches many cards, so it invalidates the whole game.
    */
   function invalidate(qc: QueryClient, game: string, opts?: { entryId?: string }) {
-    // The wish list marks its browse list AND summary stale but skips their active refetch (see
-    // `deferListRefetch`) so a per-card count edit neither resorts the recency-sorted tiles under
-    // an open quick-add popover nor updates the summary-fed header out from under the frozen list
-    // total (keeping count/completion coherent with value/copies). The collection refetches both
-    // to update its list-sourced count chips and its stats.
-    const deferOpts = cfg.deferListRefetch ? { refetchType: 'none' as const } : {}
-    qc.invalidateQueries({ queryKey: [prefix, game], ...deferOpts })
-    qc.invalidateQueries({ queryKey: [`${prefix}-summary`, game], ...deferOpts })
+    // A grid-shaped key: refetching it re-lays-out (and, for the recency-sorted list, resorts)
+    // the tiles. Two things hold one of those back.
+    //   - The wish list marks its browse list AND summary stale but skips their active refetch
+    //     (see `deferListRefetch`) so a per-card count edit neither resorts the recency-sorted
+    //     tiles under an open quick-add popover nor updates the summary-fed header out from
+    //     under the frozen list total (keeping count/completion coherent with value/copies).
+    //     The collection refetches both to update its list-sourced count chips and its stats.
+    //   - EITHER surface holds every grid-shaped key back while a quick-add popover is open
+    //     (`holdingListFreeze`) and replays it on close: a grid that reflows under an anchored
+    //     popover drags the panel out from under the finger already reaching for it, so the
+    //     "Regular +" tap lands on "Foil +" one row below. `frozen` is the narrower, temporary
+    //     twin of `deferListRefetch` — the collection can't freeze its order for a whole visit
+    //     (its chips come from the list) but it must not reflow *right now*.
+    const frozen = isHoldingListFrozen()
+    const skipRefetch = { refetchType: 'none' as const }
+    /** Invalidate a key whose refetch would reflow the grid. `deferred` marks the wish list's
+     * hold-until-navigation pair, which is never replayed on popover close (that would defeat
+     * `deferListRefetch`); everything else held only by the freeze is. */
+    const reflowing = (queryKey: unknown[], deferred = false) => {
+      const hold = deferred || frozen
+      qc.invalidateQueries({ queryKey, ...(hold ? skipRefetch : {}) })
+      if (frozen && !deferred) deferHoldingRefetch(queryKey)
+    }
+    reflowing([prefix, game], cfg.deferListRefetch)
+    reflowing([`${prefix}-summary`, game], cfg.deferListRefetch)
     if (cfg.invalidateValueHistory) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
       qc.invalidateQueries({ queryKey: ['collection-movers', game] })
     }
+    // The per-card entry and the batch counts repaint tiles IN PLACE (order-independent), so
+    // they're never frozen — they're what keeps an open control's own numbers honest.
     qc.invalidateQueries({
       queryKey: opts?.entryId ? [`${prefix}-entry`, game, opts.entryId] : [`${prefix}-entry`, game],
     })
-    qc.invalidateQueries({ queryKey: [`${prefix}-drops`, game] })
-    qc.invalidateQueries({ queryKey: [`${prefix}-sets`, game] })
+    reflowing([`${prefix}-drops`, game])
+    reflowing([`${prefix}-sets`, game])
     qc.invalidateQueries({ queryKey: [cfg.countsKey, game] })
   }
 
@@ -246,8 +273,13 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       // The wish list freezes its tile order until navigation (see `deferListRefetch`): stop a
       // window-focus refetch from resorting the stale recency-sorted list under an open quick-add
       // popover. Scoped to this list query only — mounts/navigation still refetch. The collection
-      // leaves it at the client default (on), so its list-sourced chips refresh on refocus.
-      ...(cfg.deferListRefetch ? { refetchOnWindowFocus: false as const } : {}),
+      // keeps refetching on refocus (its list-sourced chips need it), but not *while* a quick-add
+      // popover is open: coming back to the tab is the most common way the grid used to resort
+      // under an open panel, and it's exactly when the user is reaching for a stepper. Deferred,
+      // not dropped — `useHoldingListFreeze` replays it when the popover closes.
+      ...(cfg.deferListRefetch
+        ? { refetchOnWindowFocus: false as const, refetchOnReconnect: refetchUnlessFrozen }
+        : { refetchOnWindowFocus: refetchUnlessFrozen, refetchOnReconnect: refetchUnlessFrozen }),
     }
     return useAuthedQuery<CollectionPage>(options)
   }
@@ -273,6 +305,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<CollectionDropGroupPage>(options)
   }
@@ -297,6 +331,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<CollectionSubtypeGroupPage>(options)
   }
@@ -329,6 +365,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
             bulkMaxCents.value,
           ),
         enabled: opts.enabled,
+        refetchOnWindowFocus: refetchUnlessFrozen,
+        refetchOnReconnect: refetchUnlessFrozen,
       }
       return useAuthedQuery<CollectionSummary>(options)
     }
@@ -337,6 +375,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       queryFn: (token: string) =>
         cfg.getSummary(token, game.value, setCode.value || undefined, includeRelated.value),
       enabled: opts.enabled,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<CollectionSummary>(options)
   }
@@ -351,12 +391,16 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       const options = {
         queryKey: [`${prefix}-sets`, game, bulkMaxCents],
         queryFn: (token: string) => cfg.getSets(token, game.value, bulkMaxCents.value),
+        refetchOnWindowFocus: refetchUnlessFrozen,
+        refetchOnReconnect: refetchUnlessFrozen,
       }
       return useAuthedQuery<{ data: CollectionSet[] }>(options)
     }
     const options = {
       queryKey: [`${prefix}-sets`, game],
       queryFn: (token: string) => cfg.getSets(token, game.value),
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<{ data: CollectionSet[] }>(options)
   }

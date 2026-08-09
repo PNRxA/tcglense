@@ -111,8 +111,14 @@ const heldFirstLabel = computed(() =>
 
 <template>
   <Dialog v-model:open="open">
+    <!-- Top-anchored (see DialogContent's `anchor`): the printing list accumulates 200-card
+      pages, so a centred panel would grow in both directions and slide each tile's
+      regular/foil steppers up under the user between one tap and the next. `svh` so the
+      panel below it stays inside the visible viewport on mobile, where `vh` measures the
+      URL-bar-hidden height and would push the "Done" button off-screen. -->
     <DialogContent
-      class="bg-background flex max-h-[85vh] w-[min(94vw,44rem)] flex-col overflow-hidden rounded-xl border p-6 shadow-xl"
+      anchor="top"
+      class="bg-background flex max-h-[85svh] w-[min(94vw,44rem)] flex-col overflow-hidden rounded-xl border p-6 shadow-xl"
       @close-auto-focus="emit('closeAutoFocus', $event)"
     >
       <DialogTitle class="text-lg font-semibold">

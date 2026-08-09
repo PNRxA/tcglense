@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
 import { useCollectionEntryQuery } from '@/composables/useCollection'
 import { useWishlistEntryQuery } from '@/composables/useWishlist'
+import { useHoldingListFreeze } from '@/composables/holdingListFreeze'
 import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 
 // Quick-add control overlaid on a card tile (issue #95): a corner trigger showing the
@@ -50,6 +51,15 @@ const props = withDefaults(
 const open = ref(false)
 const game = toRef(props, 'game')
 const cardId = toRef(props, 'cardId')
+
+// This panel is ANCHORED to a tile in a recency-sorted grid, so any holdings refetch that
+// resorts or re-lays-out that grid while it's open drags the panel out from under the user:
+// a finger already on its way to "Regular +" lands on "Foil +", the row directly below (or
+// on another card entirely) — it reads as "my touch is off". Freezing those refetches for
+// as long as the popover is open (and replaying them on close) keeps the rows where the
+// user is aiming; the per-card entry and batch-count queries stay live, so the numbers in
+// here are still authoritative.
+useHoldingListFreeze(open)
 
 // Fetch the authoritative collection holding only once the popover is open (a big grid must
 // not fire one request per tile). `staleTime: 0` forces a re-fetch every time it re-opens,

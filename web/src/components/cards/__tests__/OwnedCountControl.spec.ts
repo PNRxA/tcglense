@@ -71,6 +71,7 @@ vi.mock('@/composables/useWishlist', async () => {
   }
 })
 
+import { isHoldingListFrozen } from '@/composables/holdingListFreeze'
 import OwnedCountControl from '../OwnedCountControl.vue'
 
 function mountControl(
@@ -286,5 +287,51 @@ describe('OwnedCountControl wish-list quick-add row (issue #364)', () => {
     expect(byLabel('Add one copy of Card c1 to your wish list')!.disabled).toBe(true)
 
     wrapper.unmount()
+  })
+})
+
+describe('OwnedCountControl holds the grid still while it is open', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    h.collectionEntry.data.value = { quantity: 0, foil_quantity: 0 }
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
+
+  // `holdingListFreeze.spec.ts` pins the composable's own take/release contract, but nothing
+  // pinned that this control actually CALLS it — deleting the one line left the whole suite
+  // green while the mechanism became permanently dead (`isHoldingListFrozen()` can never be
+  // true, so `invalidate()` always takes the resort-immediately branch and the 1560-1883px
+  // jump under the open panel comes straight back). These assertions are what fails if that
+  // line goes.
+  it('freezes while the popover is open and releases when it closes', async () => {
+    expect(isHoldingListFrozen()).toBe(false)
+
+    const wrapper = mountControl()
+    // Merely mounting a grid of these must not freeze anything — only an OPEN panel does.
+    expect(isHoldingListFrozen()).toBe(false)
+
+    await openPopover(wrapper, 'Add Card c1 to your collection')
+    expect(isHoldingListFrozen()).toBe(true)
+
+    // Escape / outside click / a re-tap on the trigger all route through the same `open` model.
+    await wrapper.find('[aria-label="Add Card c1 to your collection"]').trigger('click')
+    await flush()
+    expect(isHoldingListFrozen()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('releases the freeze when unmounted while still open', async () => {
+    // The grid repaints and navigation both drop an open control without closing it. A hold
+    // leaked here would freeze every later holdings write for the rest of the session.
+    const wrapper = mountControl()
+    await openPopover(wrapper, 'Add Card c1 to your collection')
+    expect(isHoldingListFrozen()).toBe(true)
+
+    wrapper.unmount()
+    expect(isHoldingListFrozen()).toBe(false)
   })
 })

@@ -71,6 +71,7 @@ vi.mock('@/composables/useCollection', async () => {
   }
 })
 
+import { isHoldingListFrozen } from '@/composables/holdingListFreeze'
 import ProductCountControl from '../ProductCountControl.vue'
 
 function mountControl(
@@ -239,5 +240,37 @@ describe('ProductCountControl unified sealed quick add', () => {
     expect(byLabel(ADD_WISHLIST)!.disabled).toBe(true)
 
     wrapper.unmount()
+  })
+})
+
+describe('ProductCountControl holds the grid still while it is open', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
+
+  // The product twin of OwnedCountControl's wiring assertions: `holdingListFreeze.spec.ts`
+  // pins the composable, but only this pins that the control CALLS it. Without these,
+  // deleting `useHoldingListFreeze(open)` leaves the whole suite green while the sealed
+  // grid goes back to resorting under the open panel.
+  it('freezes while the popover is open, and releases on close and on unmount', async () => {
+    expect(isHoldingListFrozen()).toBe(false)
+
+    const wrapper = mountControl()
+    expect(isHoldingListFrozen()).toBe(false)
+
+    await openPopover(wrapper, 'Add Booster Box to your collection')
+    expect(isHoldingListFrozen()).toBe(true)
+
+    await wrapper.find('[aria-label="Add Booster Box to your collection"]').trigger('click')
+    await flush()
+    expect(isHoldingListFrozen()).toBe(false)
+
+    // Reopen, then drop the control without closing it — a grid repaint or a navigation.
+    await openPopover(wrapper, 'Add Booster Box to your collection')
+    expect(isHoldingListFrozen()).toBe(true)
+    wrapper.unmount()
+    expect(isHoldingListFrozen()).toBe(false)
   })
 })

@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
 import { useCollectionProductEntryQuery } from '@/composables/useCollection'
 import { useWishlistProductEntryQuery } from '@/composables/useWishlist'
+import { useHoldingListFreeze } from '@/composables/holdingListFreeze'
 import { useOwnedCountEditor, type OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 
 // Unified quick-add control overlaid on a sealed-product tile (issues #95/#364/#435): the
@@ -39,6 +40,11 @@ const props = withDefaults(
 const open = ref(false)
 const game = toRef(props, 'game')
 const productId = toRef(props, 'productId')
+
+// Anchored to a tile, exactly like OwnedCountControl: hold back every holdings refetch that
+// would re-lay-out the grid underneath while this panel is open, so its rows can't shift out
+// from under a finger already reaching for a stepper. Replayed the moment it closes.
+useHoldingListFreeze(open)
 
 // Fetch the authoritative holding only once the popover is open (a big grid must not fire one
 // request per tile). `staleTime: 0` forces a re-fetch every reopen, and `ready` waits for
