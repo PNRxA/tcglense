@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import type { Card, OwnedCountsMap } from '@/lib/api'
+import type { Card } from '@/lib/api'
 import type { SortOption } from '@/lib/cardSort'
 import {
   heldFirstSortOptions,
@@ -39,15 +39,16 @@ const props = withDefaults(
      */
     heldFirst?: boolean
     /** The held-first option's label, naming the target list ("Owned first" / its wish-list
-     * wording) — the map below is whichever list the caller is adding to. */
+     * wording) — the set below is whichever list the caller is adding to. */
     heldFirstLabel?: string
     /**
-     * Counts for the loaded printings on that list, used only by the held-first sort. Pass it
-     * as `undefined` until the counts are authoritative: the grid then holds the plain
-     * newest-first order rather than briefly reading a half-loaded map as "nothing held" and
-     * reshuffling underneath a click. Sorting settles in the same tick the tiles do.
+     * Which of the loaded printings the user holds on that list, read only by the held-first
+     * sort. A **set of ids the caller only ever adds to**, never the live counts: a tile's
+     * counts are edited in place here, so ordering off them would float the tile under the
+     * pointer to the top mid-click and resnap the grid on every counts refetch. Start it empty
+     * (the grid then shows the plain newest-first order) and grow it as printings resolve.
      */
-    ownership?: OwnedCountsMap
+    held?: ReadonlySet<string>
     /** Show the "In my collection" checkbox that narrows the loaded printings to owned ones. */
     collectionFilter?: boolean
     /** Whether that checkbox is currently on (v-model). */
@@ -68,7 +69,7 @@ const props = withDefaults(
     sortOptions: () => PRINTING_SORT_OPTIONS,
     heldFirst: false,
     heldFirstLabel: 'Owned first',
-    ownership: undefined,
+    held: undefined,
     collectionFilter: false,
     collectionOnly: false,
     collectionLoading: false,
@@ -96,7 +97,7 @@ const options = computed(() =>
   props.heldFirst ? heldFirstSortOptions(props.heldFirstLabel) : props.sortOptions,
 )
 const sortedPrintings = computed(() =>
-  sortPrintings(props.filteredPrintings, sort.value, props.ownership),
+  sortPrintings(props.filteredPrintings, sort.value, props.held),
 )
 
 const filterActive = computed(() => props.filter.trim().length > 0 || props.collectionOnly)

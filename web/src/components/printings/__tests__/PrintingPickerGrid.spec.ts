@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
-import type { OwnedCountsMap } from '@/lib/api'
 import { makeCard } from '@/test/fixtures'
 
 const ButtonStub = defineComponent({
@@ -56,7 +55,7 @@ const defaults = {
   collectionLoading: false,
   heldFirst: false,
   heldFirstLabel: 'Owned first',
-  ownership: undefined as OwnedCountsMap | undefined,
+  held: undefined as ReadonlySet<string> | undefined,
 }
 
 function mountGrid(props: Partial<typeof defaults> = {}) {
@@ -189,7 +188,7 @@ describe('PrintingPickerGrid', () => {
         total: 3,
         heldFirst: true,
         heldFirstLabel: 'On my wish list first',
-        ownership: { old: { quantity: 1, foil_quantity: 0 } },
+        held: new Set(['old']),
       })
 
       const select = wrapper.get('select[aria-label="Sort"]')
@@ -198,9 +197,7 @@ describe('PrintingPickerGrid', () => {
       expect(renderedIds(wrapper)).toEqual(['old', 'new', 'mid'])
     })
 
-    it('holds the plain order until the counts arrive, then regroups', async () => {
-      // `ownership` is withheld while the counts load, so the grid never briefly reads a
-      // half-loaded map as "nothing held" and reshuffles under a click.
+    it('shows the plain order until the held set arrives, then regroups once', async () => {
       const wrapper = mountGrid({
         printings: cards,
         filteredPrintings: cards,
@@ -209,7 +206,7 @@ describe('PrintingPickerGrid', () => {
       })
       expect(renderedIds(wrapper)).toEqual(['new', 'mid', 'old'])
 
-      await wrapper.setProps({ ownership: { old: { quantity: 0, foil_quantity: 2 } } })
+      await wrapper.setProps({ held: new Set(['old']) })
       expect(renderedIds(wrapper)).toEqual(['old', 'new', 'mid'])
     })
 
@@ -219,7 +216,7 @@ describe('PrintingPickerGrid', () => {
         filteredPrintings: cards,
         total: 3,
         heldFirst: true,
-        ownership: { old: { quantity: 1, foil_quantity: 0 } },
+        held: new Set(['old']),
       })
 
       await wrapper.get('select[aria-label="Sort"]').setValue('released:desc')

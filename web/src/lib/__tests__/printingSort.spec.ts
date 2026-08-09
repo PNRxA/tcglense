@@ -113,11 +113,8 @@ describe('held-first printing sort', () => {
   })
 
   it('floats held printings above unheld ones, each group newest-first', () => {
-    const ownership = {
-      'held-old': { quantity: 1, foil_quantity: 0 },
-      'held-new': { quantity: 0, foil_quantity: 2 },
-    }
-    expect(ids(sortPrintings(printings, PRINTING_HELD_FIRST_SORT, ownership))).toEqual([
+    const held = new Set(['held-old', 'held-new'])
+    expect(ids(sortPrintings(printings, PRINTING_HELD_FIRST_SORT, held))).toEqual([
       'held-new',
       'held-old',
       'newest',
@@ -125,31 +122,18 @@ describe('held-first printing sort', () => {
     ])
   })
 
-  it('treats a zero holding (and one absent from the map) as unheld', () => {
-    const ownership = {
-      'held-old': { quantity: 0, foil_quantity: 0 },
-      'held-new': { quantity: 1, foil_quantity: 0 },
-    }
-    expect(ids(sortPrintings(printings, PRINTING_HELD_FIRST_SORT, ownership))).toEqual([
-      'held-new',
-      'newest',
-      'middle',
-      'held-old',
-    ])
-  })
-
-  it('falls back to the newest-first default with no ownership map', () => {
-    // What the picker renders while the counts are still loading: the pre-existing order,
-    // never a claim that nothing is held.
-    expect(ids(sortPrintings(printings, PRINTING_HELD_FIRST_SORT))).toEqual(
-      ids(sortPrintings(printings, PRINTING_DEFAULT_SORT)),
-    )
+  it('falls back to the newest-first default with no set (or an empty one)', () => {
+    // What the picker renders before any printing's counts have resolved: the pre-existing
+    // order, never a claim that nothing is held.
+    const plain = ids(sortPrintings(printings, PRINTING_DEFAULT_SORT))
+    expect(ids(sortPrintings(printings, PRINTING_HELD_FIRST_SORT))).toEqual(plain)
+    expect(ids(sortPrintings(printings, PRINTING_HELD_FIRST_SORT, new Set()))).toEqual(plain)
   })
 
   it('is dropped by any other sort — an explicit pick means exactly what it says', () => {
-    const ownership = { 'held-old': { quantity: 1, foil_quantity: 0 } }
+    const held = new Set(['held-old'])
     // The held printing stays where its release date puts it — last.
-    expect(ids(sortPrintings(printings, 'released:desc', ownership))).toEqual([
+    expect(ids(sortPrintings(printings, 'released:desc', held))).toEqual([
       'newest',
       'held-new',
       'middle',
